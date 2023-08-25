@@ -21,7 +21,7 @@ import string
 import time
 from argparse import RawTextHelpFormatter
 from collections import OrderedDict as OD
-from typing import Optional
+from typing import Optional, Any
 from typing import Set, Dict, Union, List
 
 from asciitree import LeftAligned
@@ -1270,6 +1270,8 @@ class EnterpriseUserCommand(EnterpriseCommand):
         return enterprise_user_parser
 
     def execute(self, params, **kwargs):
+         # type: (KeeperParams, Optional[Any]) ->  List[Optional[Dict[str, Any]]] or None
+        results = []
         if kwargs.get('delete') and kwargs.get('add'):
             raise CommandError('enterprise-user', "'add' and 'delete' parameters are mutually exclusive.")
 
@@ -1348,7 +1350,9 @@ class EnterpriseUserCommand(EnterpriseCommand):
             if not unmatched_emails and not matched_users:
                 raise CommandError('enterprise-user', 'No email address to invite.')
 
-            for email in unmatched_emails:
+            new_user_ids = self.get_enterprise_ids(params, len(unmatched_emails))
+
+            for i, email in enumerate(unmatched_emails):
                 dt = {}
                 if user_name:
                     dt['displayname'] = user_name
@@ -1357,7 +1361,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                     crypto.encrypt_aes_v1(json.dumps(dt).encode('utf-8'), params.enterprise['unencrypted_tree_key']))
                 rq = {
                     'command': 'enterprise_user_add',
-                    'enterprise_user_id': self.get_enterprise_id(params),
+                    'enterprise_user_id': new_user_ids[i],
                     'node_id': node_id,
                     'encrypted_data': encrypted_data,
                     'enterprise_user_username': email
@@ -1664,8 +1668,8 @@ class EnterpriseUserCommand(EnterpriseCommand):
                         request_batch.append(rq)
 
         if request_batch:
-            rss = api.execute_batch(params, request_batch)
-            for rq, rs in zip(request_batch, rss):
+            results = api.execute_batch(params, request_batch)
+            for rq, rs in zip(request_batch, results):
                 command = rq.get('command')
                 if command == 'enterprise_user_add':
                     if rs['result'] == 'success':
@@ -1748,6 +1752,8 @@ class EnterpriseUserCommand(EnterpriseCommand):
             for user in matched_users:
                 self.display_user(params, user, is_verbose)
                 print('\n')
+
+        return results
 
     def display_user(self, params, user, is_verbose=False):
         enterprise_user_id = user['enterprise_user_id']
