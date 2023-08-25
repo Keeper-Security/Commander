@@ -146,7 +146,7 @@ action_report_parser.add_argument('--target-user', action='store', help=target_u
 action_report_parser.add_argument('--dry-run', '-n', dest='dry_run', default=False, action='store_true',
                                   help='flag to enable dry-run mode')
 force_action_help = 'skip confirmation prompt when applying irreversible admin actions (e.g., delete, transfer)'
-action_report_parser.add_argument('--force', action='store_true', help=force_action_help)
+action_report_parser.add_argument('--force', '-f', action='store_true', help=force_action_help)
 
 syslog_templates = None  # type: Optional[List[str]]
 
@@ -1821,19 +1821,17 @@ class ActionReportCommand(EnterpriseCommand):
         def get_action_results_text(cmd, cmd_status, server_msg, affected):
             return f'\tCOMMAND: {cmd}\n\tSTATUS: {cmd_status}\n\tSERVER MESSAGE: {server_msg}\n\tAFFECTED: {affected}'
 
-        def batch_apply_cmd(users, api_cmd_rq=None, dryrun=False, userid_field='enterprise_user_id'):
-            user_ids = [user.get(userid_field) for user in users]
-            cmd_status = 'aborted' if api_cmd_rq else 'n/a'
+        def run_cmd(users, cmd_exec_fn=None, cmd_name='None', dryrun=False):
+            cmd_status = 'aborted' if cmd_exec_fn else 'n/a'
             affected = 0
             server_msg = 'n/a'
-            cmd = 'NONE (No action specified)' if api_cmd_rq is None else api_cmd_rq.get('command')
-            if api_cmd_rq is not None and len(users):
-                cmd_rqs = [{**api_cmd_rq, userid_field: user_id} for user_id in user_ids]
+            cmd = 'NONE (No action specified)' if cmd_exec_fn is None else cmd_name
+            if cmd_exec_fn is not None and len(users):
                 if dryrun:
                     cmd_status = 'dry run'
                 else:
-                    responses = api.execute_batch(params, cmd_rqs)
-                    fails = [rs for rs in responses if rs.get('result') != 'success']
+                    responses = cmd_exec_fn()
+                    fails = [rs for rs in responses if rs.get('result') != 'success'] if responses else []
                     affected = len(users) - len(fails)
                     cmd_status = 'fail' if not responses \
                         else 'incomplete' if any(fails) \
@@ -1894,10 +1892,13 @@ class ActionReportCommand(EnterpriseCommand):
                                  f'value must be one of {actions_allowed})'
             is_valid_action = action in actions_allowed
 
+            from keepercommander.commands.enterprise import EnterpriseUserCommand
+            exec_fn = EnterpriseUserCommand().execute
+            emails = [u.get('username') for u in users]
             action_handlers = {
-                'none': partial(batch_apply_cmd, users, None, dryrun),
-                'lock': partial(batch_apply_cmd, users, cmd_rq('enterprise_user_lock', lock='locked'), dryrun),
-                'delete': partial(batch_apply_cmd, users, cmd_rq('enterprise_user_delete'), dryrun),
+                'none': partial(run_cmd, users, None, None, dryrun),
+                'lock': partial(run_cmd, users, lambda: exec_fn(params, email=emails, lock=True, force=True), 'lock', dry_run),
+                'delete': partial(run_cmd, users, lambda: exec_fn(params, email=emails, delete=True, force=True), 'delete', dry_run),
                 'transfer': partial(transfer_accounts, users, kwargs.get('target_user'), dryrun)
             }
 

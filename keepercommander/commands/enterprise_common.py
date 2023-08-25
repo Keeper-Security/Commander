@@ -307,6 +307,36 @@ class EnterpriseCommand(Command):
         if rs['result'] == 'success':
             return rs['base_id']
 
+    @staticmethod
+    def get_enterprise_ids(params, num_ids=1):
+        enterprise_ids = []
+        if num_ids < 1:
+            return enterprise_ids
+        rqs = []
+        rq_max_ids = 100
+        num_requested = num_ids
+        while num_requested:
+            batch_num_ids = min(num_ids, rq_max_ids)
+            num_requested -= batch_num_ids
+            rq = {
+                'command': 'enterprise_allocate_ids',
+                'number_requested': batch_num_ids
+            }
+            rqs.append(rq)
+        if rqs:
+            rss = api.execute_batch(params, rqs) if num_ids > rq_max_ids else [api.communicate(params, rqs[0])]
+            for i, rs in enumerate(rss):
+                if rs.get('result') == 'success':
+                    base_id = rs.get('base_id')
+                    number_allocated = rs.get('number_allocated')
+                    batch_ids = [base_id + i for i in range(number_allocated)]
+                    enterprise_ids.extend(batch_ids)
+                else:
+                    # Batch of new enterprise ids could not be allocated (
+                    rq = rqs[i]
+                    enterprise_ids.extend([None for _ in range(rq.get('number_requested', 0))])
+        return enterprise_ids
+
     def get_node_path(self, params, node_id, omit_root=False):
         if self._node_map is None:
             self._node_map = {
