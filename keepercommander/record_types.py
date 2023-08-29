@@ -23,8 +23,7 @@ FieldTypes = {x[0]: x for x in (
     FieldType('host', {'hostName': '', 'port': ''}, 'multiple fields to capture host information'),
     FieldType('phone', {'region': '', 'number': '', 'ext': '', 'type': ''}, 'numbers and symbols only plus tag'),
     FieldType('name', {'first': '', 'middle': '', 'last': ''}, 'multiple fields to capture name'),
-    FieldType('address', {'street1': '', 'street2': '', 'citd'
-                                                        'y': '', 'state': '', 'zip': '', 'country': ''},
+    FieldType('address', {'street1': '', 'street2': '', 'city': '', 'state': '', 'zip': '', 'country': ''},
               'multiple fields to capture address'),
     FieldType('addressRef', '', 'reference to the address field on another record'),
     FieldType('cardRef', '', 'reference to the card record type'),
