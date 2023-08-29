@@ -113,6 +113,10 @@ def register_commands(commands, aliases, command_info):
     commands['2fa'] = TwoFaCommand()
     command_info['2fa'] = '2FA management'
 
+    from . import discoveryrotation
+    discoveryrotation.register_commands(commands)
+    discoveryrotation.register_command_info(aliases, command_info)
+
 
 def register_enterprise_commands(commands, aliases, command_info):
     from . import enterprise
@@ -126,9 +130,6 @@ def register_enterprise_commands(commands, aliases, command_info):
     enterprise_create_user.register_command_info(aliases, command_info)
     from .. import importer
     importer.register_enterprise_commands(commands)
-    from . import discoveryrotation
-    discoveryrotation.register_commands(commands)
-    discoveryrotation.register_command_info(aliases, command_info)
     from . import scim
     scim.register_commands(commands)
     scim.register_command_info(aliases, command_info)
