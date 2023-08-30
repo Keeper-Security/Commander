@@ -1312,120 +1312,116 @@ class PAMCreateGatewayCommand(Command):
 
 ############################################## TUNNELING ###############################################################
 
-
-
-
-
-
-
 class PAMTunnelListCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-list-command')
-    pam_cmd_parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
-                                help='Used to list all tunnels for the given Gateway UID')
     pam_cmd_parser.add_argument('--uid', '-u', required=False, dest='record_uid', action='store',
                                 help='Filter list with UID of the PAM record that was used to create the tunnel')
+    pam_cmd_parser.add_argument('--conversation-id', '-c', required=False, dest='convo_id', action='store',
+                                help='The connection ID of the Tunnel to list')
 
     def get_parser(self):
         return PAMTunnelListCommand.pam_cmd_parser
 
     def execute(self, params, **kwargs):
+        def print_thread(thread):
+            # {"thread": t, "host": host, "port": port, "rhost": rhost, "rport": rport, "name": listener_name,
+            # "started": datetime.now(), "record_uid": record_uid}
+            run_time = None
+            hours = 0
+            minutes = 0
+            seconds = 0
+            if thread.get('started'):
+                run_time = datetime.now() - thread.get('started')
+                hours, remainder = divmod(run_time.seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+
+            text_line = f"{bcolors.OKGREEN}Tunnel {thread.get('name', '')} '{thread.get('convo_id', '')}'"
+            text_line += f", Host: {thread.get('host')}" if thread.get('host') else ''
+            text_line += f", Port: {thread.get('port')}" if thread.get('port') else ''
+            text_line += f", Remote Host: {thread.get('rhost')}" if thread.get('rhost') else ''
+            text_line += f", Remote Port: {thread.get('rport')}" if thread.get('rport') else ''
+            text_line += f", Record UID: {thread.get('record_uid')}" if thread.get('record_uid') else ''
+            text_line += f", Up time:"
+            text_line += f" days {run_time.days}" if run_time.days > 0 else ''
+            text_line += f" hours {hours}" if hours > 0 or run_time.days > 0 else ''
+            text_line += f" minutes {minutes}"
+            text_line += f" seconds {seconds}"
+            text_line += f"{bcolors.ENDC}"
+            print(text_line)
+
+        convo_id = kwargs.get('convo_id', None)
+
+        record_uid = kwargs.get('record_uid', None)
 
         if not params.tunnel_threads:
             logging.warning(f"{bcolors.OKBLUE}No Tunnels running{bcolors.ENDC}")
             return
 
-        for i, convo_id in enumerate(params.tunnel_threads):
-            print(f"{bcolors.OKGREEN}Tunnel {i + 1}:{bcolors.ENDC} {convo_id} - {params.tunnel_threads[convo_id]}")
+        if convo_id:
+            if convo_id in params.tunnel_threads:
+                print_thread(params.tunnel_threads[convo_id])
+            else:
+                print(f"{bcolors.FAIL}Tunnel {convo_id} not found{bcolors.ENDC}")
+            return
 
-        # if params.tunnel_process == {}:
-        #     logging.warning(f"{bcolors.OKBLUE}No Tunnels found{bcolors.ENDC}")
-        #     return
-        # record_uid = kwargs.get('record_uid', None)
-        # gateway_uid = kwargs.get('gateway', None)
-        #
-        # tunnels = {key: obj for key, obj in params.tunnel_process.items()
-        #            if (record_uid is None or obj.record_uid == record_uid) and
-        #            (gateway_uid is None or obj.gateway_uid == gateway_uid)}
-        #
-        # # If record_uid is None and gateway_uid is None, then all items will be included in tunnels.
-        # # If record_uid is provided, only items with a matching record_uid will be included.
-        # # If gateway_uid is provided, only items with a matching gateway_uid will be included.
-        # # If both are provided, only items with both matching record_uid and gateway_uid will be included.
-        # if len(tunnels) == 0:
-        #     logging.info(f'{bcolors.OKBLUE}No tunnels found.{bcolors.ENDC}')
-        # else:
-        #     logging.info(f'{bcolors.OKGREEN}Tunnels:{bcolors.ENDC}')
-        #     for k in tunnels.keys():
-        #         tunnel = params.tunnel_process[k]
-        #         opening = bcolors.OKGREEN
-        #         if not tunnel.is_connected:
-        #             opening = bcolors.WARNING
-        #         logging.warning(f'{opening}[{tunnel.convo_id}], connected: {tunnel.is_connected}, port: "{tunnel.port}"'
-        #                         f', Uptime: "{tunnel.uptime}";{bcolors.ENDC}')
+        if record_uid:
+            # Print out all tunnels for record uid
+            for convo_id in params.tunnel_threads:
+                if params.tunnel_threads[convo_id].get("record_uid", "") == record_uid:
+                    print_thread(params.tunnel_threads[convo_id])
+                    return
+            print(f"{bcolors.FAIL}Tunnel for record {record_uid} not found{bcolors.ENDC}")
+            return
+
+        for i, convo_id in enumerate(params.tunnel_threads):
+            print_thread(params.tunnel_threads[convo_id])
 
 
 class PAMTunnelStopCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-stop-command')
-    pam_cmd_parser.add_argument('--task-id', '-t', required=False, dest='convo_id', action='store',
+    pam_cmd_parser.add_argument('--conversation-id', '-c', required=False, dest='convo_id', action='store',
                                 help='The connection ID of the Tunnel to stop')
-    # pam_cmd_parser.add_argument('--clean-up-stale', '-c', required=False, default=False,
-    #                             dest='clean_up_stale', action='store_true',
-    #                             help='Remove all tunnels that are not running')
-    # pam_cmd_parser.add_argument('--dest', '-d', nargs='*', type=str, action='store', dest='destinations',
-    #                             help='Destination, usually Controller Client ID')
-    # pam_cmd_parser.add_argument('command', nargs='*', type=str, action='store', help='Controller command')
+
+    def actual_cleanup(self, params, convo_id):
+        tunnel_data = params.tunnel_threads.get(convo_id, None)
+        if not tunnel_data:
+            return
+
+        for task_name in ["ws_reader", "ws_writer", "connect"]:
+            task = tunnel_data.get(task_name)
+            if task:
+                task.cancel()
+                print(f"Cancelled {task_name} for {convo_id}")
+
+        del params.tunnel_threads[convo_id]
+        print(f"Cleaned up data for {convo_id}")
 
     def get_parser(self):
         return PAMTunnelStopCommand.pam_cmd_parser
 
     def execute(self, params, **kwargs):
+        convo_id = kwargs.get('convo_id')
+        tunnel_data = params.tunnel_threads.get(convo_id, None)
 
-        # if one task ID then cancel it, if more than one, then show error message saying that there are more
-        # than one task ID so user have to provide at least one task ID
+        if tunnel_data is None:
+            print(f"{bcolors.WARNING}No data found for conversation ID {convo_id}{bcolors.ENDC}")
+            return
 
-        # task = tasks[index]
-        # print(f"Interacting with {task.get_name()}")
-        #
-        # # Cancel the task
-        # task.cancel()
-        # try:
-        #     await task
-        # except asyncio.CancelledError:
-        #     print(f"{task.get_name()} has been cancelled.")
+        # Stop the asyncio event loop
+        loop = tunnel_data.get("loop", None)
+        if not loop:
+            return
 
-        print("Not implemented yet")
-        pass
+        # Retrieve the entrance object
+        entrance = tunnel_data.get("entrance", None)
 
+        if entrance:
+            # Run the disconnect method in the event loop
+            loop.create_task(entrance.disconnect())
+            print(f"Disconnected entrance for {convo_id}")
 
+        loop.call_soon_threadsafe(self.actual_cleanup, params, convo_id)
 
-        # def close_tunnel(_id):
-        #     loop = asyncio.new_event_loop()
-        #     asyncio.set_event_loop(loop)
-        #     coroutine = params.tunnel_process[_id].disconnect()
-        #     loop.run_until_complete(coroutine)
-        #     loop.close()
-        #     del params.tunnel_process[_id]
-        # if params.tunnel_process == {}:
-        #     logging.warning(f"{bcolors.OKBLUE}No Tunnels found{bcolors.ENDC}")
-        #     return
-        # convo_id = kwargs.get('convo_id', None)
-        # if convo_id is None:
-        #     if len(params.tunnel_process) == 1:
-        #         # if only one tunnel is running, stop it
-        #         convo_id = list(params.tunnel_process.keys())[0]
-        #         close_tunnel(convo_id)
-        #     else:
-        #         # we have more than one tunnel running, ask user to specify which one to stop
-        #         logging.error(f"{bcolors.FAIL}More than one Tunnel found and TunnelId was not specified. "
-        #                       f"Please specify TunnelId{bcolors.ENDC}")
-        # elif convo_id in params.tunnel_process:
-        #     close_tunnel(convo_id)
-        # else:
-        #     logging.warning(f"{bcolors.FAIL}TunnelId {convo_id} not found in the list of running tunnels{bcolors.ENDC}")
-        # if kwargs.get('clean_up_stale', False):
-        #     for k in list(params.tunnel_process.keys()):
-        #         if not params.tunnel_process[k].is_connected:
-        #             close_tunnel(k)
 
 class PAMTunnelTailCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-tail-command')
@@ -1440,35 +1436,20 @@ class PAMTunnelTailCommand(Command):
 
         log_queue = params.tunnel_threads_queue.get(convo_id)
         if log_queue:
-            while not log_queue.empty():
-                print(f'    {bcolors.OKBLUE}{log_queue.get()}{bcolors.ENDC}')
+            try:
+                while True:
+                    while not log_queue.empty():
+                        print(f'    {bcolors.OKBLUE}{log_queue.get()}{bcolors.ENDC}')
+            except KeyboardInterrupt:
+                print(f'    {bcolors.WARNING}Exiting tail command{bcolors.ENDC}')
+                return
+
+            except Exception as e:
+                print(f'    {bcolors.WARNING}Exiting due to exception: {e}{bcolors.ENDC}')
+                return
         else:
             print(f'    {bcolors.FAIL}Invalid conversation ID{bcolors.ENDC}')
-
-        pass
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+            return
 
 
 class PAMTunnelStartCommand(Command):
@@ -1502,19 +1483,34 @@ class PAMTunnelStartCommand(Command):
     def get_parser(self):
         return PAMTunnelStartCommand.pam_cmd_parser
 
+    class QueueHandler(logging.Handler):
+        # Custom logging handler that will put messages into a queue of the tunnel threads
+        def __init__(self, log_queue):
+            super().__init__()
+            self.log_queue = log_queue
 
+        def emit(self, record):
+            log_entry = self.format(record)
+            try:
+                self.log_queue.put_nowait(log_entry)
+            except queue.Full:
+                # If the queue is full, remove the oldest (first) item
+                self.log_queue.get_nowait()
+                # Then add the new log entry
+                self.log_queue.put_nowait(log_entry)
 
-    @staticmethod
-    async def connect(params, record_uid, convo_id, gateway_uid, host, port, rhost, rport, listener_name, encrypt_tunnel, log_queue):
-
-        # Setup custom logging to put logs into log_queue
+    def setup_logging(self, convo_id, log_queue):
         logger = logging.getLogger(convo_id)
         logger.setLevel(logging.DEBUG)
-        queue_handler = QueueHandler(log_queue)
+        queue_handler = self.QueueHandler(log_queue)
         logger.addHandler(queue_handler)
-
         logger.info("Logging setup complete.")
+        return logger
 
+    async def connect(self, params, record_uid, convo_id, gateway_uid, host, port, rhost, rport, listener_name, encrypt_tunnel, log_queue):
+
+        # Setup custom logging to put logs into log_queue
+        logger = self.setup_logging(convo_id, log_queue)
 
         transmission_key = utils.generate_aes_key()
         server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
@@ -1565,39 +1561,51 @@ class PAMTunnelStartCommand(Command):
             gateway_uid)
 
         tunnel = tunnel_connected.ConnectedTunnel(entrance_ws)
-        entrance = endpoint.TunnelEntrance(tunnel, listener_name)
-        t1 = tunnel.ws_reader()
-        t2 = tunnel.ws_writer()
-        t3 = entrance.connect(host=host, port=port)
+        entrance = endpoint.TunnelEntrance(tunnel, listener_name, logger=logger)
+
+        t1 = asyncio.create_task(tunnel.ws_reader())
+        t2 = asyncio.create_task(tunnel.ws_writer())
+        t3 = asyncio.create_task(entrance.connect(host=host, port=port))
+        params.tunnel_threads[convo_id].update({"ws_reader": t1, "ws_writer": t2, "connect": t3, "entrance": entrance})
 
         print("--> 3. START LISTENING FOR MESSAGES FROM GATEWAY --------")
         await asyncio.gather(t1, t2, t3)
 
-    def pre_connect(self, params, record_uid, convo_id, gateway_uid, host, port, rhost, rport, listener_name, encrypt_tunnel):
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        output_queue = queue.Queue()
-        params.tunnel_threads_queue[convo_id] = output_queue
-        loop.run_until_complete(
-            self.connect(
-                params=params,
-                record_uid=record_uid,
-                convo_id=convo_id,
-                gateway_uid=gateway_uid,
-                host=host,
-                port=port,
-                rhost=rhost,
-                rport=rport,
-                listener_name=listener_name,
-                encrypt_tunnel=encrypt_tunnel,
-                log_queue=output_queue)
+    def pre_connect(self, params, record_uid, convo_id, gateway_uid, host, port, rhost, rport, listener_name,
+                    encrypt_tunnel):
+        loop = None
+        try:
+            loop = asyncio.new_event_loop()
+            params.tunnel_threads[convo_id].update({"loop": loop})
+            asyncio.set_event_loop(loop)
+            output_queue = queue.Queue(maxsize=500)
+            params.tunnel_threads_queue[convo_id] = output_queue
+            loop.run_until_complete(
+                self.connect(
+                    params=params,
+                    record_uid=record_uid,
+                    convo_id=convo_id,
+                    gateway_uid=gateway_uid,
+                    host=host,
+                    port=port,
+                    rhost=rhost,
+                    rport=rport,
+                    listener_name=listener_name,
+                    encrypt_tunnel=encrypt_tunnel,
+                    log_queue=output_queue)
             )
-
-
+        except asyncio.CancelledError:
+            print(f"Tasks for convo_id {convo_id} were cancelled.")
+        except Exception as e:
+            print(f"An exception occurred in pre_connect for convo_id {convo_id}: {e}")
+        finally:
+            if loop:
+                loop.close()  # Close the event loop
 
     def execute(self, params, **kwargs):
         record_uid = kwargs.get('record_uid')
         convo_id = GatewayAction.generate_conversation_id()
+        params.tunnel_threads[convo_id] = {}
         gateway_uid = kwargs.get('gateway')
         host = kwargs.get('host')
         port = kwargs.get('port')
@@ -1608,15 +1616,4 @@ class PAMTunnelStartCommand(Command):
 
         t = threading.Thread(target=self.pre_connect, args=(params, record_uid, convo_id, gateway_uid, host, port, rhost, rport, listener_name, encrypt_tunnel))
         t.start()
-        params.tunnel_threads[convo_id] = t
-
-
-class QueueHandler(logging.Handler):
-    #  custom logging handler that will put messages into a queue of the tunnel threads
-    def __init__(self, log_queue):
-        super().__init__()
-        self.log_queue = log_queue
-
-    def emit(self, record):
-        log_entry = self.format(record)
-        self.log_queue.put(log_entry)
+        params.tunnel_threads[convo_id].update({"convo_id": convo_id, "thread": t, "host": host, "port": port, "rhost": rhost, "rport": rport, "name": listener_name, "started": datetime.now(), "record_uid": record_uid})

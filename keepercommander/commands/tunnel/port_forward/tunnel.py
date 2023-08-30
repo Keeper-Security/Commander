@@ -8,7 +8,7 @@ class ITunnel(abc.ABC):
         pass
 
     @abc.abstractmethod
-    async def disconnect(self) -> None:
+    def disconnect(self) -> None:
         pass
 
     @property
@@ -38,7 +38,7 @@ class LocalTunnel(ITunnel):
     async def connect(self) -> None:
         self._connected = True
 
-    async def disconnect(self) -> None:
+    def disconnect(self) -> None:
         self._connected = False
 
     async def write(self, data: bytes) -> None:

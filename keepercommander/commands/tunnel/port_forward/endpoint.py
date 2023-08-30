@@ -22,9 +22,8 @@ class ControlMessage(enum.IntEnum):
 
 
 class TunnelProtocol(abc.ABC):
-    logger = logging.getLogger('keeper.port_forward')
-
-    def __init__(self, tunnel: ITunnel, endpoint_name: str):
+    def __init__(self, tunnel: ITunnel, endpoint_name: str, logger: logging.Logger):
+        self.logger = logger
         self.tunnel = tunnel
         self.endpoint_name = endpoint_name
         self.is_reading = False
@@ -80,7 +79,7 @@ class TunnelProtocol(abc.ABC):
         if q:
             await q.put((0, b''))
 
-        await self.tunnel.disconnect()
+        self.tunnel.disconnect()
 
         self.private_key = None
         self.public_key = None
@@ -117,7 +116,7 @@ class TunnelProtocol(abc.ABC):
             except asyncio.TimeoutError as e:
                 if self._ping_attempt > 3:
                     if self.tunnel.is_connected:
-                        await self.tunnel.disconnect()
+                        self.tunnel.disconnect()
                     raise e
                 self.logger.debug('Endpoint %s: Tunnel reader timed out', self.endpoint_name)
                 if self.pair_public_key:
@@ -302,8 +301,8 @@ class TunnelProtocol(abc.ABC):
 
 
 class TunnelEntrance(TunnelProtocol):
-    def __init__(self, tunnel: ITunnel, name: Optional[str] = None):
-        super().__init__(tunnel, name or 'Entrance')
+    def __init__(self, tunnel: ITunnel, name: Optional[str] = None, logger: logging.Logger = None):
+        super().__init__(tunnel, name or 'Entrance', logger=logger)
         self.server: Optional[asyncio.Server] = None
         self.connection_no = 1
 
@@ -345,25 +344,3 @@ class TunnelEntrance(TunnelProtocol):
 
     def stop_extra_services(self) -> Iterable[Awaitable]:
         yield self.stop_server()
-
-
-class TunnelExit(TunnelProtocol):
-    def __init__(self, tunnel: ITunnel, host: str, port: int, name: Optional[str] = None):
-        super().__init__(tunnel, name or 'Exit')
-        self.host = host
-        self.port = port
-
-    async def _open_connection(self, connection_no: int):
-        if connection_no in self.connections:
-            return
-
-        self.logger.debug('Endpoint %s: Connection "%d" open request', self.endpoint_name, connection_no)
-
-        self.connections[connection_no] = await asyncio.open_connection(host=self.host, port=self.port)
-        asyncio.create_task(self.read_connection(connection_no))
-
-    async def on_control_message_received(self, message_no: ControlMessage, data: bytes) -> None:
-        if message_no == ControlMessage.OpenConnection:
-            if data and len(data) >= 4:
-                connection_no = int.from_bytes(data[:4], byteorder='big')
-                await self._open_connection(connection_no)
