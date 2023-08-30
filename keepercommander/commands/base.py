@@ -301,7 +301,7 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
             _, ext = os.path.splitext(filename)
             if not ext:
                 filename += '.csv'
-
+            logging.info('Report path: %s', os.path.abspath(filename))
         with open(filename, 'a' if append else 'w', newline='', encoding='utf-8') if filename else io.StringIO() as fd:
             csv_writer = csv.writer(fd)
             if title:
@@ -340,6 +340,7 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
             _, ext = os.path.splitext(filename)
             if not ext:
                 filename += '.json'
+            logging.info('Report path: %s', os.path.abspath(filename))
             with open(filename, 'a' if append else 'w') as fd:
                 json.dump(data_list, fd, indent=2, default=json_serialized)
         else:
