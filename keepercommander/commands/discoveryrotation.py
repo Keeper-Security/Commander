@@ -219,11 +219,6 @@ class PAMCreateRecordRotationCommand(Command):
 
         record_rotation_revision = params.record_rotation_cache.get(record_uid)
 
-        if not record_rotation_revision:
-            print(f"{bcolors.WARNING}Record rotation revision is not available. Please run 'pam rotation list' "
-                  f"to make sure that record rotation is enabled for this record.{bcolors.ENDC}")
-            return
-
         # 4. Construct Request object
         rq = router_pb2.RouterRecordRotationRequest()
         rq.recordUid = url_safe_str_to_bytes(record_uid)

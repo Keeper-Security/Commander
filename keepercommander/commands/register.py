@@ -1591,15 +1591,12 @@ class RecordPermissionCommand(Command):
                 requests = []
                 for shared_folder_uid in shared_folder_update:
                     updates = list(shared_folder_update[shared_folder_uid].values())
-                    while len(updates) > 0:
-                        batch = updates[:480]
-                        updates = updates[480:]
-                        rq = folder_pb2.SharedFolderUpdateV3Request()
-                        rq.sharedFolderUid = utils.base64_url_decode(shared_folder_uid)
-                        rq.forceUpdate = True
-                        rq.sharedFolderUpdateRecord.extend(batch)
-                        rq.fromTeamUid = batch[0].teamUid
-                        requests.append(rq)
+                    rq = folder_pb2.SharedFolderUpdateV3Request()
+                    rq.sharedFolderUid = utils.base64_url_decode(shared_folder_uid)
+                    rq.forceUpdate = True
+                    rq.sharedFolderUpdateRecord.extend(updates)
+                    rq.fromTeamUid = updates[0].teamUid
+                    requests.append(rq)
                 while len(requests) > 0:
                     chunk = requests[:999]
                     requests = requests[999:]
