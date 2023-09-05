@@ -20,7 +20,7 @@ from urllib.parse import urlparse, urlunparse
 
 from .base import dump_report_data, user_choice, field_to_title, report_output_parser
 from .enterprise import EnterpriseCommand
-from .. import api, crypto, utils, loginv3, error, constants
+from .. import api, crypto, utils, loginv3, constants
 from ..params import KeeperParams
 from ..display import bcolors
 from ..error import CommandError
@@ -66,6 +66,7 @@ msp_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_tr
 
 msp_update_parser = argparse.ArgumentParser(prog='msp-update', usage='msp-update',
                                             description='Modify Managed Company license.')
+msp_update_parser.add_argument('--node', dest='node', action='store', help='node name or node ID')
 msp_update_parser.add_argument('-p', '--plan', dest='plan', action='store',
                                choices=['business', 'businessPlus', 'enterprise', 'enterprisePlus'],
                                help=f'License plan: {", ".join((x[1] for x in constants.MSP_PLANS))}')
@@ -347,7 +348,7 @@ class MSPUpdateCommand(EnterpriseCommand):
         mc_input = kwargs.get('mc')
         current_mc = get_mc_by_name_or_id(managed_companies, mc_input)
         if not current_mc:
-            raise error.CommandError('msp-remove', f'Managed Company \"{mc_input}\" not found')
+            raise CommandError('msp-remove', f'Managed Company \"{mc_input}\" not found')
 
         rq = {
             'command': 'enterprise_update_by_msp',
@@ -357,6 +358,15 @@ class MSPUpdateCommand(EnterpriseCommand):
             'seats': current_mc['number_of_seats'],
         }
 
+        node_name = kwargs.get('node')
+        if node_name:
+            nodes = list(self.resolve_nodes(params, node_name))
+            if len(nodes) == 0:
+                raise CommandError('msp-update', f'Node \"{node_name}\" is not found')
+            if len(nodes) > 1:
+                raise CommandError('msp-update', f'More than one nodes \"{node_name}\" are found')
+            rq['node_id'] = nodes[0]['node_id']
+
         permits = next((x['msp_permits'] for x in params.enterprise.get('licenses', []) if 'msp_permits' in x), None)
 
         plan_name = kwargs.get('plan')
@@ -364,21 +374,18 @@ class MSPUpdateCommand(EnterpriseCommand):
             plan_name = plan_name.lower()
             product_plan = next((x for x in constants.MSP_PLANS if x[1].lower() == plan_name), None)
             if not product_plan:
-                logging.warning('Managed Company plan \"%s\" is not found', plan_name)
-                return
+                raise CommandError('msp-update', f'Managed Company plan \"{plan_name}\" is not found')
             if permits:
                 has_plan = any((True for x in permits['allowed_mc_products'] if x.lower() == plan_name))
                 if not has_plan:
-                    logging.warning('Managed Company plan \"%s\" is not allowed', plan_name)
-                    return
+                    raise CommandError('msp-update', f'Managed Company plan \"{plan_name}\" is not allowed')
             rq['product_id'] = product_plan[1]
 
         seats = kwargs.get('seats')
         if isinstance(seats, int):
             if seats < 0 and permits:
                 if permits['allow_unlimited_licenses'] is False:
-                    logging.warning('Managed Company unlimited licences are not allowed')
-                    return
+                    raise CommandError('msp-update', 'Managed Company unlimited licences are not allowed')
             rq['seats'] = seats if seats >= 0 else 2147483647
 
         plan_name = kwargs.get('file_plan')
@@ -386,15 +393,14 @@ class MSPUpdateCommand(EnterpriseCommand):
             plan_name = plan_name.lower()
             file_plan = next((x for x in constants.MSP_FILE_PLANS if plan_name in (y.lower() for y in x if isinstance(y, str))), None)
             if not file_plan:
-                logging.warning('File plan \"%s\" is not found', plan_name)
-                return
+                raise CommandError('msp-update', f'File plan \"{plan_name}\" is not found')
             if permits:
                 allowed_file_plan_name = permits['max_file_plan_type'].lower()
                 if allowed_file_plan_name:
                     allowed_plan = next((x for x in constants.MSP_FILE_PLANS if allowed_file_plan_name == x[1].lower()), None)
                     if allowed_plan and allowed_plan[0] < file_plan[0]:
-                        logging.warning('Managed Company file storage \"%s\" is not allowed', file_plan[2])
-                        return
+                        raise CommandError('msp-update',
+                                           f'Managed Company file storage \"{file_plan[2]}\" is not allowed')
             product_id = rq['product_id'].lower()
             product_plan = next((x for x in constants.MSP_PLANS if product_id == x[1].lower()), None)
             if product_plan and product_plan[3] < file_plan[0]:
@@ -423,20 +429,19 @@ class MSPUpdateCommand(EnterpriseCommand):
                     addon_name = addon_name.lower()
                     addon = next((x for x in constants.MSP_ADDONS if addon_name == x[0]), None)
                     if addon is None:
-                        logging.warning('Addon \"%s\" is not found', addon_name)
-                        return
+                        raise CommandError('msp-update',f'Addon \"{addon_name}\" is not found')
                     addon_seats = 0
                     if sep == ':' and addon[2] and action == 'add_addon':
                         try:
                             addon_seats = int(seats)
                         except:
-                            logging.warning('Addon \"%s\". Number of seats \"%s\" is not integer', addon_name, seats)
-                            return
+                            raise CommandError('msp-update',
+                                               f'Addon \"{addon_name}\". Number of seats \"{seats}\" is not integer')
                     if action == 'add_addon':
                         if permits:
                             if addon_name not in (x.lower() for x in permits['allowed_add_ons']):
-                                logging.warning('Managed Company add-on \"%s\" is not allowed', addon_name)
-                                return
+                                raise CommandError('msp-update',
+                                                   f'Managed Company add-on \"{addon_name}\" is not allowed')
                         add_addon = {
                             'add_on': addon_name
                         }
@@ -450,7 +455,7 @@ class MSPUpdateCommand(EnterpriseCommand):
         rs = api.communicate(params, rq)
         if rs['result'] == 'success':
             mc_from_rs = find(lambda mc: mc['mc_enterprise_id'] == rs["enterprise_id"], managed_companies)
-            print("Successfully updated '%s' id=%d" % (mc_from_rs['mc_enterprise_name'], mc_from_rs['mc_enterprise_id']))
+            logging.info("Successfully updated '%s' id=%d", mc_from_rs['mc_enterprise_name'], mc_from_rs['mc_enterprise_id'])
             api.query_enterprise(params)
 
 
@@ -841,11 +846,11 @@ class MSPRemoveCommand(EnterpriseCommand):
     def execute(self, params, **kwargs):
         mc_input = kwargs.get('mc', '')
         if not mc_input:
-            raise error.CommandError('msp-remove', 'Managed Company name or id is required')
+            raise CommandError('msp-remove', 'Managed Company name or id is required')
         managed_companies = params.enterprise.get('managed_companies', [])
         current_mc = get_mc_by_name_or_id(managed_companies, mc_input)
         if not current_mc:
-            raise error.CommandError('msp-remove', f'Managed Company \"{mc_input}\" not found')
+            raise CommandError('msp-remove', f'Managed Company \"{mc_input}\" not found')
         if kwargs.get('force') is True:
             answer = 'y'
         else:
@@ -1192,7 +1197,7 @@ class MSPCopyRoleCommand(EnterpriseCommand):
         src_roles = {}
         roles = kwargs.get('role')
         if not roles:
-            raise error.CommandError('msp-copy-role', f'Source role parameter is required')
+            raise CommandError('msp-copy-role', f'Source role parameter is required')
 
         if not isinstance(roles, list):
             roles = [roles]
@@ -1214,7 +1219,7 @@ class MSPCopyRoleCommand(EnterpriseCommand):
         for mc_name in kwargs.get('mc') or []:
             mc = get_mc_by_name_or_id(managed_companies, mc_name)
             if not mc:
-                raise error.CommandError('msp-copy-role', f'Managed Company \"{mc_name}\" not found')
+                raise CommandError('msp-copy-role', f'Managed Company \"{mc_name}\" not found')
             mcs[mc['mc_enterprise_id']] = mc
 
         for mc in mcs.values():
