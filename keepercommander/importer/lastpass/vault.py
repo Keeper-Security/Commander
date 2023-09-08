@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 from tempfile import mkdtemp
 from typing import Optional
 
@@ -150,7 +151,7 @@ class Vault(object):
                     try:
                         with attachment_stream as r:
                             with open(attachment.tmpfile, 'wb') as f:
-                                print(f'{i + 1}. Downloading {attachment.name} ... ', end='', flush=True)
+                                print(f'{i + 1}. Downloading {attachment.name} ... ', file=sys.stderr, end='', flush=True)
                                 shutil.copyfileobj(r.raw, f)
                                 print('Done')
                     except Exception as e:

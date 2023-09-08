@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import re
+import sys
 import math
 import requests
 import time
@@ -1289,7 +1290,7 @@ def upload_v3_attachments(params, records_with_attachments):  # type: (KeeperPar
                 with EncryptionReader.get_buffered_reader(src, file_key) as encrypted_src:
                     form_files = {'file': (atta.name, encrypted_src, 'application/octet-stream')}
                     form_params = json.loads(f.parameters)
-                    print(f'{atta.name} ... ', end='', flush=True)
+                    print(f'{atta.name} ... ', file=sys.stderr, end='', flush=True)
                     response = requests.post(f.url, data=form_params, files=form_files)
 
             if str(response.status_code) == form_params.get('success_action_status'):
@@ -1411,7 +1412,7 @@ def upload_attachment(params, attachments):
                     files = {
                         upload['file_parameter']: (atta.name, encypted, 'application/octet-stream')
                     }
-                    print('{0} ... '.format(atta.name), end='', flush=True)
+                    print('{0} ... '.format(atta.name), file=sys.stderr, end='', flush=True)
                     response = requests.post(upload['url'], files=files, data=upload['parameters'])
                     if response.status_code == upload['success_status_code']:
                         if record_id not in uploaded:

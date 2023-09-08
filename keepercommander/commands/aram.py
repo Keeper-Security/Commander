@@ -21,6 +21,7 @@ import gzip
 import logging
 import platform
 import re
+import sys
 from functools import partial
 
 from typing import Optional, List, Union, Dict
@@ -318,7 +319,7 @@ class AuditLogSplunkExport(AuditLogBaseExport):
                         return
                     for test_url in ['https://{0}/services/collector'.format(address), 'http://{0}/services/collector'.format(address)]:
                         try:
-                            print('Testing \'{0}\' ...'.format(test_url), end='', flush=True)
+                            print('Testing \'{0}\' ...'.format(test_url), file=sys.stderr, end='', flush=True)
                             rs = requests.post(test_url, json='', verify=False)
                             if rs.status_code == 401:
                                 js = rs.json()
@@ -846,7 +847,7 @@ class AuditLogCommand(EnterpriseCommand):
                     finished = True
                     break
                 count += len(to_store)
-                print('+', end='', flush=True)
+                print('+', file=sys.stderr, end='', flush=True)
 
         if last_event_time > 0:
             logging.info('')
