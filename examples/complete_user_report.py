@@ -14,7 +14,8 @@ import os
 from typing import Optional
 
 from keepercommander import api
-from keepercommander.commands.enterprise import UserReportCommand, SecurityAuditReportCommand
+from keepercommander.commands.enterprise import UserReportCommand
+from keepercommander.commands.security_audit import SecurityAuditReportCommand
 from keepercommander.params import KeeperParams
 
 

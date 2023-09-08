@@ -5,6 +5,7 @@ from unittest import TestCase, mock
 
 import pytest
 
+import keepercommander.commands.security_audit
 from data_config import read_config_file
 from keepercommander.params import KeeperParams
 from keepercommander import cli, api
@@ -174,7 +175,7 @@ class TestEnterpriseCommands(TestCase):
         report = json.loads(report_json)
         self.assertTrue(isinstance(report, list))
 
-        security_audit_report = enterprise.SecurityAuditReportCommand()
+        security_audit_report = keepercommander.commands.security_audit.SecurityAuditReportCommand()
         report_json = security_audit_report.execute(params, format='json')
         report = json.loads(report_json)
         self.assertTrue(isinstance(report, list))
