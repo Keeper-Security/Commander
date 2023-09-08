@@ -353,7 +353,7 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
         if title:
             print('\n{0}\n'.format(title))
         elif append:
-            print('\n')
+            print('')
         row_number = kwargs.get('row_number')
         if not isinstance(row_number, bool):
             row_number = False
@@ -401,6 +401,7 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
                             value = value[:column_width-2] + '...'
                     rowi.append(value)
                 expanded_data.append(rowi)
+
         tablefmt = 'simple'
         right_align = kwargs.get('right_align')
         if isinstance(right_align, int):

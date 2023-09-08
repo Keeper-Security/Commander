@@ -174,21 +174,6 @@ def formatted_teams(teams, **kwargs):
             team.display()
 
 
-def formatted_folders(folders):
-    def folder_flags(f):
-        flags = ''
-        if f.type == 'shared_folder':
-            flags = flags + 'S'
-        return flags
-
-    if len(folders) > 0:
-        folders.sort(key=lambda x: (x.name or ' ').lower(), reverse=False)
-
-        table = [[i + 1, f.uid, f.name, folder_flags(f)] for i, f in enumerate(folders)]
-        print(tabulate(table, headers=["#", 'Folder UID', 'Name', 'Flags']))
-        print('')
-
-
 def formatted_tree(params, folder, verbose=False, show_records=False, shares=False, hide_shares_key=False, title=None):
     def print_share_permissions_key():
         perms_key = 'Share Permissions Key:\n' \
