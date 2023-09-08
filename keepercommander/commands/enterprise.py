@@ -29,9 +29,8 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
-from . import aram, audit_alerts
+from . import aram, audit_alerts, security_audit
 from . import compliance
 from .aram import ActionReportCommand, API_EVENT_SUMMARY_ROW_LIMIT
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title, \
@@ -63,13 +62,13 @@ def register_commands(commands):
     commands['audit-log'] = aram.AuditLogCommand()
     commands['audit-report'] = aram.AuditReportCommand()
     commands['aging-report'] = aram.AgingReportCommand()
-    commands['security-audit-report'] = SecurityAuditReportCommand()
     commands['user-report'] = UserReportCommand()
     commands['action-report'] = ActionReportCommand()
     commands['external-shares-report'] = ExternalSharesReportCommand()
     commands['audit-alert'] = audit_alerts.AuditAlerts()
 
     compliance.register_commands(commands)
+    security_audit.register_commands(commands)
 
 
 def register_command_info(aliases, command_info):
@@ -82,7 +81,6 @@ def register_command_info(aliases, command_info):
     aliases['eu'] = 'enterprise-user'
     aliases['er'] = 'enterprise-role'
     aliases['et'] = 'enterprise-team'
-    aliases['sar'] = 'security-audit-report'
     aliases['esr'] = 'external-shares-report'
     aliases['tu'] = 'transfer-user'
 
@@ -94,6 +92,7 @@ def register_command_info(aliases, command_info):
         command_info[p.prog] = p.description
 
     compliance.register_command_info(aliases, command_info)
+    security_audit.register_command_info(aliases, command_info)
 
 
 SUPPORTED_NODE_COLUMNS = ['parent_node', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles',
@@ -2987,324 +2986,6 @@ class EnterpriseTeamCommand(EnterpriseCommand):
             user_ids.sort(key=lambda x: user_names.get(x))
             for i in range(len(user_ids)):
                 print('{0:>16s}: {1:<24s} {2}'.format('Queued User(s)' if i == 0 else '', user_names[user_ids[i]], user_ids[i] if is_verbose else ''))
-
-
-security_audit_report_description = '''
-Security Audit Report Command Syntax Description:
-
-Column Name       Description
-  username          user name
-  email             e-mail address
-  weak              number of records whose password strength is in the weak category
-  medium            number of records whose password strength is in the medium category
-  strong            number of records whose password strength is in the strong category
-  reused            number of reused passwords
-  unique            number of unique passwords
-  securityScore     security score
-  twoFactorChannel  2FA - ON/OFF
-
---report-type:
-            csv     CSV format
-            json    JSON format
-            table   Table format (default)
-'''
-
-
-class SecurityAuditReportCommand(EnterpriseCommand):
-    def __init__(self):
-        super(SecurityAuditReportCommand, self).__init__()
-        self.user_lookup = None
-        self.enterprise_private_rsa_key = None
-        self.score_data_keys = (
-            'weak_record_passwords',
-            'strong_record_passwords',
-            'total_record_passwords',
-            'passed_records',
-            'at_risk_records',
-            'ignored_records'
-        )
-
-    def get_enterprise_private_rsa_key(self, params, enterprise_priv_key):
-        if not self.enterprise_private_rsa_key:
-            tree_key = params.enterprise['unencrypted_tree_key']
-            key = crypto.decrypt_aes_v2(enterprise_priv_key, tree_key)
-            key = crypto.load_rsa_private_key(key)
-            self.enterprise_private_rsa_key = key
-        return self.enterprise_private_rsa_key
-
-    def get_parser(self):
-        return security_audit_report_parser
-
-    def get_strong_by_total(self, total, strong):
-        return 0 if (total == 0) else (strong / total)
-
-    def get_security_score(self, total, strong, unique, twoFactorOn, masterPassword):
-        strongByTotal = self.get_strong_by_total(total, strong)
-        uniqueByTotal = 0 if (total == 0) else (unique / total)
-        twoFactorOnVal = 1 if (twoFactorOn is True) else 0
-        score = (strongByTotal + uniqueByTotal + masterPassword + twoFactorOnVal) / 4
-        return score
-
-    def resolve_user_info(self, params, enterprise_user_id):
-        if self.user_lookup is None:
-            self.user_lookup = {}
-            if params.enterprise:
-                if 'users' in params.enterprise:
-                    for user in params.enterprise['users']:
-                        if 'enterprise_user_id' in user and 'username' in user:
-                            email = user['username']
-                            username = user['data']['displayname'] if 'data' in user and 'displayname' in user['data'] else None
-                            if (username is None or not username.strip()) and 'encrypted_data' in user and 'key_type' in user:
-                                username = user['encrypted_data'] if user['key_type'] == 'no_key' else None
-                            username = email if username is None or not username.strip() else username
-                            node_id = user.get('node_id', 0)
-                            self.user_lookup[user['enterprise_user_id']] = \
-                                {
-                                    'username': username,
-                                    'email': email,
-                                    'node_id': node_id
-                                }
-
-        info = {
-            'username': enterprise_user_id,
-            'email': enterprise_user_id
-        }
-
-        if enterprise_user_id in self.user_lookup:
-            info = self.user_lookup[enterprise_user_id]
-
-        return info
-
-    def execute(self, params, **kwargs):
-        if kwargs.get('syntax_help'):
-            logging.info(security_audit_report_description)
-            return
-
-        def get_node_id(name_or_id):
-            nodes = params.enterprise.get('nodes') or []
-            matches = [n for n in nodes if name_or_id in (str(n.get('node_id')), n.get('data', {}).get('displayname'))]
-            node = next(iter(matches)) if matches else {}
-            return node.get('node_id')
-
-        nodes = kwargs.get('node') or []
-        node_ids = [get_node_id(n) for n in nodes]
-        node_ids = [n for n in node_ids if n]
-        score_type = kwargs.get('score_type', 'default')
-        save_report = kwargs.get('save')
-        show_updated = save_report or kwargs.get('show_updated')
-        updated_security_reports = []
-        tree_key = params.enterprise.get('unencrypted_tree_key')
-        from_page = 0
-        complete = False
-        rows = []
-        while not complete:
-            rq = APIRequest_pb2.SecurityReportRequest()
-            rq.fromPage = from_page
-            security_report_data_rs = api.communicate_rest(
-                params, rq, 'enterprise/get_security_report_data', rs_type=APIRequest_pb2.SecurityReportResponse)
-            to_page = security_report_data_rs.toPage
-            complete = security_report_data_rs.complete
-            from_page = to_page + 1
-            rsa_key = self.get_enterprise_private_rsa_key(params, security_report_data_rs.enterprisePrivateKey)
-            for sr in security_report_data_rs.securityReport:
-                user_info = self.resolve_user_info(params, sr.enterpriseUserId)
-                node_id = user_info.get('node_id', 0)
-                if node_ids and node_id not in node_ids:
-                    continue
-                user = user_info['username'] if 'username' in user_info else str(sr.enterpriseUserId)
-                email = user_info['email'] if 'email' in user_info else str(sr.enterpriseUserId)
-                node_path = self.get_node_path(params, node_id) if node_id > 0 else ''
-                twofa_on = False if sr.twoFactor == 'two_factor_disabled' else True
-                row = {
-                    'name': user,
-                    'email': email,
-                    'node': node_path,
-                    'total': 0,
-                    'weak': 0,
-                    'medium': 0,
-                    'strong': 0,
-                    'reused': sr.numberOfReusedPassword,
-                    'unique': 0,
-                    'passed': 0,
-                    'at_risk': 0,
-                    'ignored': 0,
-                    'securityScore': 25,
-                    'twoFactorChannel': 'Off' if sr.twoFactor == 'two_factor_disabled' else 'On'
-                }
-                master_pw_strength = 1
-
-                if sr.encryptedReportData:
-                    sri = crypto.decrypt_aes_v2(sr.encryptedReportData, tree_key)
-                    data = json.loads(sri)
-                else:
-                    data = {dk: 0 for dk in self.score_data_keys}
-
-                if show_updated:
-                    data = self.get_updated_security_report_row(sr, rsa_key, data)
-
-                if save_report:
-                    updated_sr = APIRequest_pb2.SecurityReport()
-                    updated_sr.revision = security_report_data_rs.asOfRevision
-                    updated_sr.enterpriseUserId = sr.enterpriseUserId
-                    report = json.dumps(data).encode('utf-8')
-                    updated_sr.encryptedReportData = crypto.encrypt_aes_v2(report, tree_key)
-                    updated_security_reports.append(updated_sr)
-
-                if 'weak_record_passwords' in data:
-                    row['weak'] = data.get('weak_record_passwords') or 0
-                if 'strong_record_passwords' in data:
-                    row['strong'] = data.get('strong_record_passwords') or 0
-                if 'total_record_passwords' in data:
-                    row['total'] = data.get('total_record_passwords') or 0
-                if 'passed_records' in data:
-                    row['passed'] = data.get('passed_records') or 0
-                if 'at_risk_records' in data:
-                    row['at_risk'] = data.get('at_risk_records') or 0
-                if 'ignored_records' in data:
-                    row['ignored'] = data.get('ignored_records') or 0
-
-                row['medium'] = row['total'] - row['weak'] - row['strong']
-                row['unique'] = row['total'] - row['reused']
-
-                strong = row.get('strong')
-                total = row.get('total')
-                unique = row.get('unique')
-                score = self.get_strong_by_total(total, strong) if score_type == 'strong_passwords' \
-                    else self.get_security_score(total, strong, unique, twofa_on, master_pw_strength)
-
-                # Match vault's score format (truncated, not rounded, to nearest whole %) if score_type specified
-                score = int(100 * score) if score_type == 'strong_passwords' \
-                    else int(100 * round(score, 2))
-                row['securityScore'] = score
-
-                rows.append(row)
-
-        if save_report:
-            self.save_updated_security_reports(params, updated_security_reports)
-
-        fields = ('email', 'name', 'at_risk', 'passed', 'ignored') if kwargs.get('breachwatch') else \
-            ('email', 'name', 'weak', 'medium', 'strong', 'reused', 'unique', 'securityScore', 'twoFactorChannel', 'node')
-        field_descriptions = fields
-
-        fmt = kwargs.get('format', 'table')
-        if fmt == 'table':
-            field_descriptions = (field_to_title(x) for x in fields)
-
-        table = []
-        for raw in rows:
-            row = []
-            for f in fields:
-                row.append(raw[f])
-            table.append(row)
-        return dump_report_data(table, field_descriptions, fmt=fmt, filename=kwargs.get('output'))
-
-    def get_updated_security_report_row(self, sr, rsa_key, last_saved_data):
-        # type: (APIRequest_pb2.SecurityReport, RSAPrivateKey, Dict[str, int]) -> Dict[str, int]
-        def apply_incremental_data(old_report_data, incremental_dataset, key):
-            # type: (Dict[str, int], List[APIRequest_pb2.SecurityReportIncrementalData], RSAPrivateKey) -> Dict[str, int]
-            def decrypt_security_data(sec_data, k): # type: (bytes, RSAPrivateKey) -> Dict[str, int] or None
-                if sec_data:
-                    decrypted = None
-                    try:
-                        decrypted = crypto.decrypt_rsa(sec_data, k)
-                    finally:
-                        return json.loads(decrypted.decode()) if decrypted else None
-                else:
-                    return None
-
-            def decrypt_incremental_data(inc_data):
-                # type: (APIRequest_pb2.SecurityReportIncrementalData) -> Dict[str, Dict[str, int] or None]
-                decrypted = {
-                    'old': decrypt_security_data(inc_data.oldSecurityData, key),
-                    'curr': decrypt_security_data(inc_data.currentSecurityData, key)
-                }
-                return decrypted
-
-            def decrypt_incremental_dataset(inc_dataset):
-                # type: (List[APIRequest_pb2.SecurityReportIncrementalData]) -> List[Dict[str, Dict[str, int] or None]]
-                return [decrypt_incremental_data(x) for x in inc_dataset]
-
-            def is_reset_needed(inc_datas):
-                inc_datas = [x for x in inc_datas if x and isinstance(x, dict)]
-                curr_inc_datas = [x.get('curr', dict()) for x in inc_datas]
-                has_reset_inc_data = any([x for x in curr_inc_datas if x and x.get('reset')])
-                return has_reset_inc_data
-
-            def clear_scores(sec_data):
-                new_scores = {k: 0 for k in self.score_data_keys}
-                return {**sec_data, **new_scores}
-
-            def get_security_score_deltas(rec_sec_data, delta):
-                bw_result = rec_sec_data.get('bw_result')
-                pw_strength = rec_sec_data.get('strength')
-                deltas = dict()
-                deltas['at_risk_records'] = delta if utils.is_rec_at_risk(bw_result) else 0
-                deltas['weak_record_passwords'] = delta if utils.is_pw_weak(pw_strength) else 0
-                deltas['strong_record_passwords'] = delta if utils.is_pw_strong(pw_strength) else 0
-                deltas['passed_records'] = delta if utils.passed_bw_check(bw_result) else 0
-                deltas['ignored_records'] = delta if bw_result == 4 else 0
-                deltas['total_record_passwords'] = delta
-                return deltas
-
-            def apply_score_deltas(sec_data, deltas):
-                new_scores = {k: v + sec_data.get(k, 0) for k, v in deltas.items()}
-                sec_data = {**sec_data, **new_scores}
-                return sec_data
-
-            def update_scores(user_sec_data, inc_dataset):
-                reset = is_reset_needed(inc_dataset)
-                if reset:
-                    user_sec_data = clear_scores(user_sec_data)
-
-                def update(u_sec_data, old_sec_d, diff):
-                    if not old_sec_d:
-                        return u_sec_data
-                    deltas = get_security_score_deltas(old_sec_d, diff)
-                    return apply_score_deltas(u_sec_data, deltas)
-
-                for inc_data in inc_dataset:
-                    curr_sec_data = inc_data.get('curr')
-                    existing_data_keys = [k for k, d in inc_data.items() if d]
-                    if reset:
-                        if curr_sec_data:
-                            user_sec_data = update(user_sec_data, curr_sec_data, 1)
-                    else:
-                        for k in existing_data_keys:
-                            user_sec_data = update(user_sec_data, inc_data.get(k), -1 if k == 'old' else 1)
-
-                return user_sec_data
-
-            report_data = {**old_report_data}
-            if incremental_dataset:
-                incremental_dataset = decrypt_incremental_dataset(incremental_dataset)
-                report_data = update_scores(report_data, incremental_dataset)
-            return report_data
-
-        result = apply_incremental_data(last_saved_data, sr.securityReportIncrementalData, rsa_key)
-        return result
-
-    def save_updated_security_reports(self, params, reports):
-        save_rq = APIRequest_pb2.SecurityReportSaveRequest()
-        for r in reports:
-            save_rq.securityReport.append(r)
-        api.communicate_rest(params, save_rq, 'enterprise/save_summary_security_report')
-
-    @staticmethod
-    def get_title_for_field(field):  # type: (str) -> str
-        if field == 'username':
-            return 'User'
-        elif field == 'email':
-            return 'E-Mail'
-        elif field == 'node_path':
-            return 'Node'
-        elif field == 'securityScore':
-            return 'Security Score'
-        elif field == 'twoFactorChannel':
-            return '2FA'
-        elif field == 'at_risk':
-            return 'At Risk'
-
-        return field.capitalize()
 
 
 class UserReportCommand(EnterpriseCommand):
