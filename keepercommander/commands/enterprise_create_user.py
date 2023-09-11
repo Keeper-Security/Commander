@@ -102,7 +102,13 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
         user_rq.nodeId = node_id
         user_rq.encryptedData = utils.base64_url_encode(crypto.encrypt_aes_v1(user_data, tree_key))
         user_rq.keyType = enterprise_pb2.ENCRYPTED_BY_DATA_KEY
-        user_rq.enterpriseUsersDataKey = crypto.encrypt_ec(user_data_key, params.enterprise_ec_key)
+        enterprise_ec_key = params.enterprise_ec_key
+        if 'keys' in params.enterprise:
+            keys = params.enterprise['keys']
+            if 'ecc_public_key' in keys:
+                pub_key = utils.base64_url_decode(keys['ecc_public_key'])
+                enterprise_ec_key = crypto.load_ec_public_key(pub_key)
+        user_rq.enterpriseUsersDataKey = crypto.encrypt_ec(user_data_key, enterprise_ec_key)
         user_rq.authVerifier = utils.create_auth_verifier(
             user_password, crypto.get_random_bytes(16), constants.PBKDF2_ITERATIONS)
         user_rq.encryptionParams = utils.create_encryption_params(
