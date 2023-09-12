@@ -1988,7 +1988,7 @@ class OneTimeShareRemoveCommand(Command):
         rq.appRecordUid = utils.base64_url_decode(record_uid)
         rq.clients.append(client_id)
 
-        api.communicate_rest(params, rq, 'vault/app_client_remove')
+        api.communicate_rest(params, rq, 'vault/external_share_remove')
         logging.info('One-time share \"%s\" is removed from record \"%s\"', share_name, record_name)
 
 
