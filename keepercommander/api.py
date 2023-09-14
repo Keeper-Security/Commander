@@ -1298,6 +1298,7 @@ def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
     mc_params = KeeperParams(server=params.server)
 
     mc_params.config = params.config
+    mc_params.debug = params.debug
     mc_params.auth_verifier = params.auth_verifier
     mc_params.salt = params.salt
     mc_params.iterations = params.iterations
@@ -1315,7 +1316,7 @@ def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
     mc_params.msp_tree_key = params.enterprise['unencrypted_tree_key']
 
     sync_down(mc_params)
-    query_enterprise(mc_params)
+    query_enterprise(mc_params, True)
 
     return mc_params
 
