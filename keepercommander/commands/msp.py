@@ -37,6 +37,7 @@ def register_commands(commands):
     commands['msp-billing-report'] = MSPBillingReportCommand()
     commands['msp-convert-node'] = MSPConvertNodeCommand()
     commands['msp-copy-role'] = MSPCopyRoleCommand()
+    commands['switch-to-mc'] = SwitchToMcCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -49,7 +50,7 @@ def register_command_info(aliases, command_info):
     aliases['mbr'] = 'msp-billing-report'
 
     for p in [msp_down_parser, msp_info_parser, msp_add_parser, msp_remove_parser, msp_update_parser,
-              msp_copy_role_parser, msp_legacy_report_parser, msp_billing_report_parser]:
+              msp_copy_role_parser, msp_legacy_report_parser, msp_billing_report_parser, switch_to_mc_parser]:
         command_info[p.prog] = p.description
 
 
@@ -139,6 +140,18 @@ msp_copy_role_parser.add_argument('-r', '--role', dest='role', action='append',
                                   help='Role Name or ID. Can be repeated.')
 msp_copy_role_parser.add_argument(
     'mc', action='store', nargs='+', help='Managed Company identifier (name or id)."')
+
+switch_to_mc_parser = argparse.ArgumentParser(prog='switch-to-mc',
+                                              description='Switch user\'s context to Managed Company.')
+switch_to_mc_parser.add_argument('mc', action='store',
+                                 help='Managed Company identifier (name or id). Ex. 3862 OR "Keeper Security, Inc."')
+switch_to_msp_parser = argparse.ArgumentParser(prog='switch-to-msp',
+                                               description='Switch user\'s context back to MSP Company.')
+
+
+msp_params = None
+mc_params_dict = {}
+current_mc_id = None
 
 
 def bi_url(params, endpoint):
@@ -243,6 +256,50 @@ class MSPMixin:
                     }
 
         return params.enterprise['msp_pricing']
+
+
+class SwitchToMspCommand(EnterpriseCommand):
+    def get_parser(self):
+        return switch_to_msp_parser
+
+    def execute(self, params, **kwargs):
+        global current_mc_id
+        if current_mc_id is None:
+            raise CommandError('switch-to-msp', "Already MSP")
+
+        current_mc_id = None
+        if msp_params is not None:
+            api.query_enterprise(msp_params)
+        logging.info("Switched back to MSP")
+
+
+class SwitchToMcCommand(EnterpriseCommand, MSPMixin):
+    def get_parser(self):
+        return switch_to_mc_parser
+
+    def execute(self, params, **kwargs):
+        global current_mc_id, msp_params
+        if current_mc_id is not None:
+            raise CommandError('switch-to-mc',
+                               f"Already switched to Managed Company id={current_mc_id}")
+
+        managed_companies = params.enterprise['managed_companies']
+        mc_input = kwargs.get('mc')
+        current_mc = get_mc_by_name_or_id(managed_companies, mc_input)
+        if not current_mc:
+            raise CommandError('switch-to-mc', f'Managed Company \"{mc_input}\" not found')
+
+        current_mc_id = current_mc['mc_enterprise_id']
+
+        if current_mc_id not in mc_params_dict:
+            mc_params = api.login_and_get_mc_params_login_v3(params, current_mc_id)
+            mc_params_dict[current_mc_id] = mc_params
+        else:
+            mc_params = mc_params_dict[current_mc_id]
+            api.query_enterprise(mc_params)
+
+        msp_params = params
+        logging.info("Switched to MC '%s'", current_mc['mc_enterprise_name'])
 
 
 class MSPInfoCommand(EnterpriseCommand, MSPMixin):
