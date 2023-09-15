@@ -22,7 +22,7 @@ def register_command_info(aliases, command_info):
     aliases['sar'] = ('security-audit', 'report')
     aliases['security-audit-report'] = ('security-audit', 'report')
     aliases['sas'] = ('security-audit', 'sync')
-    command_info['security-audit'] = 'Enterprise Security Audit'
+    command_info['security-audit'] = 'Security Audit.'
 
 
 report_parser = argparse.ArgumentParser(prog='security-audit-report', description='Run a security audit report.')
@@ -36,7 +36,6 @@ report_parser.add_argument('-s', '--save', action='store_true', help=save_help)
 report_parser.add_argument('-su', '--show-updated', action='store_true', help='show updated data')
 report_parser.add_argument('-st', '--score-type', action='store', choices=['strong_passwords', 'default'],
                            default='default', help='define how score is calculated')
-report_parser.add_argument('-c', '--clear', action='store', help='username of account whose scores should be cleared')
 report_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'], default='table',
                            help='output format.')
 report_parser.add_argument('--output', dest='output', action='store',
@@ -44,8 +43,8 @@ report_parser.add_argument('--output', dest='output', action='store',
 report_parser.error = raise_parse_exception
 report_parser.exit = suppress_exit
 
-sync_help = 'Sync security audit data for specified vault(s)'
-sync_parser = argparse.ArgumentParser(prog='security-audit-sync', description=sync_help)
+sync_desc = 'Sync security audit data for enterprise vault(s).'
+sync_parser = argparse.ArgumentParser(prog='security-audit-sync', description=sync_desc)
 type_group = sync_parser.add_mutually_exclusive_group()
 soft_sync_help = 'do "soft" sync of security data. Does not require corresponding vault login. This is the ' \
                  'default sync-type.'
@@ -168,7 +167,6 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             node = next(iter(matches)) if matches else {}
             return node.get('node_id')
 
-        to_clear = kwargs.get('clear')
         nodes = kwargs.get('node') or []
         node_ids = [get_node_id(n) for n in nodes]
         node_ids = [n for n in node_ids if n]
@@ -223,7 +221,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                     data = {dk: 0 for dk in self.score_data_keys}
 
                 if show_updated:
-                    data = self.get_updated_security_report_row(sr, rsa_key, data, to_clear == email)
+                    data = self.get_updated_security_report_row(sr, rsa_key, data)
 
                 if save_report:
                     updated_sr = APIRequest_pb2.SecurityReport()
@@ -283,8 +281,8 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             table.append(row)
         return dump_report_data(table, field_descriptions, fmt=fmt, filename=kwargs.get('output'), title=report_title)
 
-    def get_updated_security_report_row(self, sr, rsa_key, last_saved_data, clear=False):
-        # type: (APIRequest_pb2.SecurityReport, RSAPrivateKey, Dict[str, int], Optional[bool]) -> Dict[str, int]
+    def get_updated_security_report_row(self, sr, rsa_key, last_saved_data):
+        # type: (APIRequest_pb2.SecurityReport, RSAPrivateKey, Dict[str, int]) -> Dict[str, int]
         def apply_incremental_data(old_report_data, incremental_dataset, key):
             # type: (Dict[str, int], List[APIRequest_pb2.SecurityReportIncrementalData], RSAPrivateKey) -> Dict[str, int]
             def decrypt_security_data(sec_data, k):  # type: (bytes, RSAPrivateKey) -> Dict[str, int] or None
@@ -363,8 +361,6 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             if incremental_dataset:
                 incremental_dataset = decrypt_incremental_dataset(incremental_dataset)
                 report_data = update_scores(report_data, incremental_dataset)
-            if clear:
-                report_data = clear_scores(report_data)
             return report_data
 
         result = apply_incremental_data(last_saved_data, sr.securityReportIncrementalData, rsa_key)

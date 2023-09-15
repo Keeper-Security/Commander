@@ -88,7 +88,7 @@ def register_command_info(aliases, command_info):
               enterprise_role_parser, enterprise_team_parser, transfer_user_parser,
               enterprise_push_parser, team_approve_parser, device_approve_parser,
               aram.audit_log_parser, aram.audit_report_parser, aram.aging_report_parser, aram.action_report_parser,
-              security_audit_report_parser, user_report_parser, external_share_report_parser]:
+              user_report_parser, external_share_report_parser]:
         command_info[p.prog] = p.description
 
     compliance.register_command_info(aliases, command_info)
@@ -267,22 +267,6 @@ scim_parser.add_argument('--unique-groups', dest='unique_groups', action='store_
                          help='Unique Groups. Command: create, edit')
 scim_parser.error = raise_parse_exception
 scim_parser.exit = suppress_exit
-
-
-security_audit_report_parser = argparse.ArgumentParser(prog='security-audit-report', description='Run a security audit report.')
-security_audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
-node_filter_help = 'name(s) or UID(s) of node(s) to filter results of the report by'
-security_audit_report_parser.add_argument('-n', '--node', action='append', help=node_filter_help)
-security_audit_report_parser.add_argument('-b', '--breachwatch', dest='breachwatch', action='store_true', help='display BreachWatch report')
-save_help = 'save updated security audit reports'
-security_audit_report_parser.add_argument('-s', '--save', action='store_true', help=save_help)
-security_audit_report_parser.add_argument('-su', '--show-updated', action='store_true', help='show updated data')
-security_audit_report_parser.add_argument('-st', '--score-type', action='store', choices=['strong_passwords', 'default'], default='default', help='define how score is calculated')
-security_audit_report_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'], default='table', help='output format.')
-security_audit_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
-security_audit_report_parser.error = raise_parse_exception
-security_audit_report_parser.exit = suppress_exit
-
 
 user_report_parser = argparse.ArgumentParser(prog='user-report', description='Run a user report.')
 user_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json', 'csv'], default='table', help='output format.')
