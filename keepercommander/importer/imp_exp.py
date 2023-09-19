@@ -401,15 +401,13 @@ def export(params, file_format, filename, **kwargs):
 
     rec_count = len(to_export) - sf_count
 
-    if len(to_export) > 0:
-        file_password = kwargs.get('file_password')
-        zip_archive = kwargs.get('zip_archive')
-        exporter.execute(filename, to_export, file_password=file_password, zip_archive=zip_archive)
-        params.queue_audit_event('exported_records', file_format=file_format)
-        logging.info('%d records exported', rec_count)
-    else:
-        logging.info('Search results contain 0 records to be exported.'
-                     '\nDid you, perhaps, filter by (an) empty folder(s)?')
+    file_password = kwargs.get('file_password')
+    zip_archive = kwargs.get('zip_archive')
+    exporter.execute(filename, to_export, file_password=file_password, zip_archive=zip_archive)
+    params.queue_audit_event('exported_records', file_format=file_format)
+    msg = f'{rec_count} records exported' if to_export \
+        else 'Search results contain 0 records to be exported.\nDid you, perhaps, filter by (an) empty folder(s)?'
+    logging.info(msg)
 
 
 def import_teams(params, teams, full_sync=False):   # type: (KeeperParams, List[ImportTeam], bool) -> None
