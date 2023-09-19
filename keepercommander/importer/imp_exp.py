@@ -313,7 +313,7 @@ def export(params, file_format, filename, **kwargs):
     #     ext_id += 1
     #     external_ids[record_uid] = ext_id
     for record_uid in params.record_cache:
-        if record_filter:
+        if record_filter or folder_path:
             if record_uid not in record_filter:
                 continue
 
@@ -407,6 +407,9 @@ def export(params, file_format, filename, **kwargs):
         exporter.execute(filename, to_export, file_password=file_password, zip_archive=zip_archive)
         params.queue_audit_event('exported_records', file_format=file_format)
         logging.info('%d records exported', rec_count)
+    else:
+        logging.info('Search results contain 0 records to be exported.'
+                     '\nDid you, perhaps, filter by (an) empty folder(s)?')
 
 
 def import_teams(params, teams, full_sync=False):   # type: (KeeperParams, List[ImportTeam], bool) -> None
