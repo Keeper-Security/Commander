@@ -27,6 +27,7 @@ import math
 import requests
 import time
 
+from urllib.parse import urlparse, parse_qs
 
 from .encryption_reader import EncryptionReader
 from .importer import (importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter,
@@ -1795,7 +1796,7 @@ def _construct_record_v2(rec_to_import, orig_extra=None):  # type: (ImportRecord
 
 def _create_field_v3(schema, value):  # type: (RecordSchemaField, any) -> dict
     if value is None:
-        value = ''
+        value = []
     field = {
         'type': schema.ref or 'text',
         'value': value if type(value) is list else [value]
@@ -1809,6 +1810,18 @@ def _create_field_v3(schema, value):  # type: (RecordSchemaField, any) -> dict
 
 def _construct_record_v3_data(rec_to_import, orig_record=None, map_data_custom_to_rec_fields=None):
     # type: (ImportRecord, Optional[vault.TypedRecord], Optional[dict]) -> dict
+    # verify typed fields values
+    for field in rec_to_import.fields:
+        if field.type in ('otp', 'oneTimeCode'):
+            if isinstance(field.value, str) and field.value:
+                comps = urlparse(field.value)
+                if comps.scheme == 'otpauth':
+                    q = parse_qs(comps.query, keep_blank_values=True)
+                    if 'secret' in q and len(q['secret']) > 0:
+                        secret = next((x for x in q['secret'] if len(x) > 0), None)
+                        if secret:
+                            continue
+                    field.value = None
     data = {}
     if isinstance(orig_record, vault.TypedRecord):
         data.update(vault_extensions.extract_typed_record_data(orig_record))
