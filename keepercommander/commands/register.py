@@ -815,11 +815,6 @@ class ShareRecordCommand(Command):
             dump_report_data(table, headers, row_number=True, group_by=0)
             return
 
-        if transfer_ruids and params.enterprise_ec_key:
-            from .utils import SyncSecurityDataCommand
-            ssd_cmd = SyncSecurityDataCommand()
-            ssd_cmd.execute(params, record=transfer_ruids, quiet=True)
-
         while len(rq.addSharedRecord) > 0 or len(rq.updateSharedRecord) > 0 or len(rq.removeSharedRecord) > 0:
             rq1 = record_pb2.RecordShareUpdateRequest()
             left = 990
