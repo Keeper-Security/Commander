@@ -307,16 +307,6 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 # type: (List[APIRequest_pb2.SecurityReportIncrementalData]) -> List[Dict[str, Dict[str, int] or None]]
                 return [decrypt_incremental_data(x) for x in inc_dataset]
 
-            def is_reset_needed(inc_datas):
-                inc_datas = [x for x in inc_datas if x and isinstance(x, dict)]
-                curr_inc_datas = [x.get('curr', dict()) for x in inc_datas]
-                has_reset_inc_data = any([x for x in curr_inc_datas if x and x.get('reset')])
-                return has_reset_inc_data
-
-            def clear_scores(sec_data):
-                new_scores = {k: 0 for k in self.score_data_keys}
-                return {**sec_data, **new_scores}
-
             def get_security_score_deltas(rec_sec_data, delta):
                 bw_result = rec_sec_data.get('bw_result')
                 pw_strength = rec_sec_data.get('strength')
