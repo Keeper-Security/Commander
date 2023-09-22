@@ -173,8 +173,10 @@ class SoxData:
             links = store.get_user_record_links().get_all_links()
             for link in links:
                 user = user_lookup.get(link.user_uid)
+                rec = self._records.get(link.record_uid)
                 if user:
-                    user.records.append(link.record_uid)
+                    user.trash_records.add(rec.record_uid) if rec.in_trash else user.active_records.add(rec.record_uid)
+                    user.records.add(link.record_uid)
                 else:
                     logging.info(f'user (uid = {link.user_uid} not found')
             return user_lookup
