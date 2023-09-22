@@ -755,7 +755,7 @@ class SshAgentCommand(GroupCommand):
         self.default_verb = 'info'
 
     def is_authorised(self):
-        return False
+        return True
 
 
 class SshAgentInfoCommand(Command):
