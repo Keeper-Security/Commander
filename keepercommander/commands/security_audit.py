@@ -335,10 +335,6 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 return sec_data
 
             def update_scores(user_sec_data, inc_dataset):
-                reset = is_reset_needed(inc_dataset)
-                if reset:
-                    user_sec_data = clear_scores(user_sec_data)
-
                 def update(u_sec_data, old_sec_d, diff):
                     if not old_sec_d:
                         return u_sec_data
@@ -346,14 +342,9 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                     return apply_score_deltas(u_sec_data, deltas)
 
                 for inc_data in inc_dataset:
-                    curr_sec_data = inc_data.get('curr')
                     existing_data_keys = [k for k, d in inc_data.items() if d]
-                    if reset:
-                        if curr_sec_data:
-                            user_sec_data = update(user_sec_data, curr_sec_data, 1)
-                    else:
-                        for k in existing_data_keys:
-                            user_sec_data = update(user_sec_data, inc_data.get(k), -1 if k == 'old' else 1)
+                    for k in existing_data_keys:
+                        user_sec_data = update(user_sec_data, inc_data.get(k), -1 if k == 'old' else 1)
 
                 return user_sec_data
 
