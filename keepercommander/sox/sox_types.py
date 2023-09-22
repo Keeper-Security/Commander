@@ -18,7 +18,9 @@ class EnterpriseUser:
         self.status = not enterprise_pb2.OK
         self.job_title = ''
         self.node_id = 0
-        self.records = []
+        self.records = set()
+        self.active_records = set()
+        self.trash_records = set()
         self.roles = []
 
     @staticmethod

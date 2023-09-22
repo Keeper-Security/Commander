@@ -416,16 +416,24 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
 
 class ComplianceSummaryReportCommand(BaseComplianceReportCommand):
     def __init__(self):
-        headers = ['email', 'records']
-        super(ComplianceSummaryReportCommand, self).__init__(headers, allow_no_opts=True, prelim_only=True)
+        headers = ['email', 'records', 'active', 'deleted']
+        super(ComplianceSummaryReportCommand, self).__init__(headers, allow_no_opts=True, prelim_only=False)
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return summary_report_parser
 
     def generate_report_data(self, params, kwargs, sox_data, report_fmt, node, root_node):
-        report_data = [(user.email, len(user.records)) for user in sox_data.get_users().values()]
-        report_data.append(('TOTAL', sum([num_recs for email, num_recs in report_data])))
+        def get_row(u):
+            num_deleted = len(u.trash_records)
+            num_active = len(u.active_records)
+            total = len(u.records)
+            return u.email, total, num_active, num_deleted
 
+        report_data = [get_row(u) for u in sox_data.get_users().values()]
+        total_active = sum([num_active for _, _, num_active, _ in report_data])
+        total_deleted = sum([num_deleted for _, _, _, num_deleted in report_data])
+        total_all = sum([total for _, total, _, _ in report_data])
+        report_data.append(('TOTAL', total_all, total_active, total_deleted))
         return report_data
 
 
