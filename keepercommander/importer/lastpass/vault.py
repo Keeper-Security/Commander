@@ -51,6 +51,18 @@ class Vault(object):
         self.proxies = kwargs.get('proxies')
         self.certificate_check = kwargs.get('certificate_check')
 
+        if 'filter_folder' in kwargs and kwargs['filter_folder']:
+            folder_name = kwargs['filter_folder'].lower()
+            shared_folder = next((x for x in self.shared_folders if x.name.lower() == folder_name), None)
+            if isinstance(shared_folder, LastpassSharedFolder):
+                self.shared_folders = [shared_folder]
+                self.accounts = [x for x in self.accounts if x.shared_folder is shared_folder]
+            else:
+                self.shared_folders = []
+                self.accounts = [x for x in self.accounts if not x.shared_folder and x.group and x.group.lower() == folder_name]
+            account_ids = {x.id for x in self.accounts}
+            self.attachments = [x for x in self.attachments if x.parent.id in account_ids]
+
         if get_attachments:
             self.process_attachments(session, tmpdir, proxies=self.proxies, certificate_check=self.certificate_check)
 
@@ -123,6 +135,9 @@ class Vault(object):
     def process_attachments(self, session, tmpdir=None, **kwargs):
         skip_bad_attachments = []
         attach_cnt = len(self.attachments)
+        if attach_cnt == 0:
+            return
+
         if tmpdir is None:
             self.tmpdir = mkdtemp(prefix=TMPDIR_PREFIX)
         else:

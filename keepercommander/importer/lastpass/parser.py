@@ -65,7 +65,10 @@ def parse_ACCT(chunk, encryption_key, shared_folder):
     io = BytesIO(chunk.payload)
     id = read_item(io).decode('utf-8')
     name = decode_aes256_plain_auto(read_item(io), encryption_key)
-    group = decode_aes256_plain_auto(read_item(io), encryption_key)
+    try:
+        group = decode_aes256_plain_auto(read_item(io), encryption_key).decode('utf-8', 'ignore')
+    except:
+        pass
     url = decode_hex(read_item(io))
     notes = decode_aes256_plain_auto(read_item(io), encryption_key)
     # fav, ?
