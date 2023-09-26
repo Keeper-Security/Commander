@@ -1456,7 +1456,7 @@ class PAMTunnelStartCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='dr-port-forward-command')
     pam_cmd_parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
                                 help='Used to list all tunnels for the given Gateway UID')
-    pam_cmd_parser.add_argument('--uid', '-u', required=False, dest='record_uid', action='store',
+    pam_cmd_parser.add_argument('--uid', '-u', required=True, dest='record_uid', action='store',
                                 help='Filter list with UID of the PAM record that was used to create the tunnel')
     pam_cmd_parser.add_argument('--host', '-o', required=False, dest='host', action='store', default=None,
                                 help='The address on which the server will be accepting connections. It could be an '
@@ -1477,8 +1477,6 @@ class PAMTunnelStartCommand(Command):
                                 help='The remote port number to which the traffic will be forwarded.')
     pam_cmd_parser.add_argument('--listener-name', '-l', required=False, dest='listener_name',
                                 action='store', default="Keeper PAM Tunnel", help='The name of the listener.')
-    pam_cmd_parser.add_argument('--encrypted', '-ne', required=False, dest='encrypted',
-                                action='store_true', help='Encrypt tunnel traffic', default=False)
 
     def get_parser(self):
         return PAMTunnelStartCommand.pam_cmd_parser
@@ -1507,7 +1505,7 @@ class PAMTunnelStartCommand(Command):
         logger.info("Logging setup complete.")
         return logger
 
-    async def connect(self, params, record_uid, convo_id, gateway_uid, host, port, rhost, rport, listener_name, encrypt_tunnel, log_queue):
+    async def connect(self, params, record_uid, convo_id, gateway_uid, host, port, rhost, rport, listener_name, log_queue):
 
         # Setup custom logging to put logs into log_queue
         logger = self.setup_logging(convo_id, log_queue)
@@ -1535,12 +1533,11 @@ class PAMTunnelStartCommand(Command):
         entrance_ws = await websockets.connect(connection_url, ping_interval=10)
 
         print("--> 2. SEND START MESSAGE OVER REST TO GATEWAY")
-        ##
+
         payload_dict = {
             'kind': 'start',
-            'encryptTunnel': encrypt_tunnel,
             'conversationType': 'tunnel',
-            'value': {'rhost': rhost, 'rport': rport, 'host': host, 'port': port, 'listenerName': listener_name, "recordUid": record_uid }
+            'value': {'rhost': rhost, 'rport': rport, 'listenerName': listener_name, "recordUid": record_uid }
         }
 
         payload_json = json.dumps(payload_dict, default=lambda o: o.__dict__, sort_keys=True, indent=4)
@@ -1561,7 +1558,7 @@ class PAMTunnelStartCommand(Command):
             gateway_uid)
 
         tunnel = tunnel_connected.ConnectedTunnel(entrance_ws)
-        entrance = endpoint.TunnelEntrance(tunnel, listener_name, logger=logger)
+        entrance = endpoint.TunnelProtocol(tunnel, endpoint_name=listener_name, logger=logger, gateway_uid=gateway_uid)
 
         t1 = asyncio.create_task(tunnel.ws_reader())
         t2 = asyncio.create_task(tunnel.ws_writer())
@@ -1571,8 +1568,7 @@ class PAMTunnelStartCommand(Command):
         print("--> 3. START LISTENING FOR MESSAGES FROM GATEWAY --------")
         await asyncio.gather(t1, t2, t3)
 
-    def pre_connect(self, params, record_uid, convo_id, gateway_uid, host, port, rhost, rport, listener_name,
-                    encrypt_tunnel):
+    def pre_connect(self, params, record_uid, convo_id, gateway_uid, host, port, rhost, rport, listener_name):
         loop = None
         try:
             loop = asyncio.new_event_loop()
@@ -1591,8 +1587,8 @@ class PAMTunnelStartCommand(Command):
                     rhost=rhost,
                     rport=rport,
                     listener_name=listener_name,
-                    encrypt_tunnel=encrypt_tunnel,
-                    log_queue=output_queue)
+                    log_queue=output_queue
+                )
             )
         except asyncio.CancelledError:
             print(f"Tasks for convo_id {convo_id} were cancelled.")
@@ -1612,8 +1608,18 @@ class PAMTunnelStartCommand(Command):
         rhost = kwargs.get('rhost')
         rport = kwargs.get('rport')
         listener_name = kwargs.get('listener_name')
-        encrypt_tunnel = kwargs.get('encrypted')
 
-        t = threading.Thread(target=self.pre_connect, args=(params, record_uid, convo_id, gateway_uid, host, port, rhost, rport, listener_name, encrypt_tunnel))
+        record = params.record_cache.get(record_uid)
+        if not record:
+            print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
+            return
+
+        # TODO: Check if the record allows the connection to rhost and rport
+        # if True:
+        #     # print(f"{bcolors.FAIL}Access denied to {rhost} and {rport}.{bcolors.ENDC}")
+        #     pass
+
+        t = threading.Thread(target=self.pre_connect, args=(params, record_uid, convo_id, gateway_uid, host, port,
+                                                            rhost, rport, listener_name))
         t.start()
         params.tunnel_threads[convo_id].update({"convo_id": convo_id, "thread": t, "host": host, "port": port, "rhost": rhost, "rport": rport, "name": listener_name, "started": datetime.now(), "record_uid": record_uid})
