@@ -13,7 +13,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.utils import int_to_bytes
-from keeper_secrets_manager_core.utils import bytes_to_string, bytes_to_base64
+from keeper_secrets_manager_core.utils import bytes_to_string
 
 from keepercommander.display import bcolors
 from .tunnel import ITunnel
@@ -29,6 +29,9 @@ class ControlMessage(enum.IntEnum):
 
 
 def verify_tls_certificate(cert_data, public_key):
+    """
+    Verify the TLS certificate against the public key found in Keeper's public key file
+    """
     try:
         cert = x509.load_pem_x509_certificate(cert_data.encode(), default_backend())
 
@@ -69,17 +72,17 @@ def verify_tls_certificate(cert_data, public_key):
     return False
 
 
-def find_open_port(start_port=2001, end_port=49151, preferred_port=None):
+def find_open_port(tried_ports: [], start_port=49152, end_port=65535, preferred_port=None):
     """
     Find an open port in the range [start_port, end_port].
-    The default range is from 1024 to 49151, which are the registered ports.
+    The default range is from 49152 to 65535, which are the "ephemeral ports" or "dynamic ports.".
 
     :param start_port: The starting port number.
     :param end_port: The ending port number.
     :param preferred_port: A preferred port to check first.
     :return: An open port number or None if no port is found.
     """
-    if preferred_port is not None:
+    if preferred_port is not None and preferred_port not in tried_ports:
         # Check if the preferred port is open
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
@@ -94,7 +97,10 @@ def find_open_port(start_port=2001, end_port=49151, preferred_port=None):
                 return None
 
     # Iterate over the range of port numbers
-    for port in range(start_port, end_port + 1):
+    available_ports = [port for port in range(start_port, end_port) if port not in tried_ports]
+    if len(available_ports) == 0:
+        return None
+    for port in available_ports:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
                 # Set the SO_REUSEADDR option
@@ -112,6 +118,62 @@ def find_open_port(start_port=2001, end_port=49151, preferred_port=None):
 
 
 class TunnelProtocol(abc.ABC):
+    """
+    This class is used to set up the public tunnel entrance. Everything from the PlainTextForwarder to krouter
+
+    The public tunnel is not encrypted and is used to send control messages to the gateway: Ping, Pong, CloseConnection
+    and SharePublicKey.
+      There isn't a need for open connection because we send a start command in the discoveryrotation.py file.
+      The public tunnel also sends data to the tunnel.
+      There are two connections or channels. 0 is for control messages and 1 is for data
+
+
+    The private tunnel does a TLS connect to the port forwarder is on but the connection gets pushed through the tunnel
+    How this works is this forwarder server listens to the same port that the TLS server is on the gateway
+    The traffic locally connects to "localhost" and the port that this server is listening on but this forwards the data
+    to the TLS server on the gateway where the TLS connection is made.
+
+    The flow is as follows:
+                                The public tunnel Part I
+       0. User enters a command to start a tunnel
+       1. Commander sends a start command to the gateway through krouter
+       2. Commander starts the public tunnel entrance and listens for messages from krouter
+        2.5. The Gateway: starts the public tunnel exit, listens for messages from krouter
+       3. There are ping and pong messages to keep the connection alive, and CloseConnection will close everything.
+
+                                Setting up the TLS server ( public tunnel Part II)
+        3.5. The Gateway: sets up the TLS server on the port and sends the port and public cert to Commander in the
+             SharePublicKey message. This also sets up the private tunnel exit other side of the TLS server as krouter
+       4. Commander sends the port back to the gateway to approve (if the port isn't open it proposes a new port)
+        4.5. The Gateway: if the port sent back is the same as the port it sent then continue, otherwise stop the TLS
+             server and go back to step 3.5 trying out the port that was sent back if it is open otherwise propose a
+             new port.
+       5. Commander sets up the TLS forwarder on that same port. This forwarder reads data from localhost:port and sends
+          it to the public tunnel. That gets routed to the gateway and then to the TLS server on
+          the gateway's localhost:port
+
+                                Setting up the private tunnel
+       6. Commander verifies that the public key matches what it gets back from keeper app
+       7. Commander sets up the private tunnel entrance to use the given cert and connects to localhost:port (the
+          forwarder -> TLS server on the Gateway). This also sets up a local server that listens for connections to a
+          local port that the user has provided or a random port if none is provided.
+       8. Commander sends a private ping message through the private tunnel entrance to the private tunnel exit
+       9. The Gateway: receives the private ping message and sends a private pong message back establishing the
+          connection
+       10. Commander waits for a client to connect to the local server.
+
+                                User connects to the target host and port
+       11. Client connects to the private tunnel's local server.
+       12. Private Tunnel Entrance (In Commander) sends an open connection message to the TLS connection and listens to
+           the client forwarding on any data
+       13. Private Tunnel Exit (On The Gateway): receives the open connection message and connects to the target
+           host and port sending any data back to the TLS connection
+       14. The session goes on until the CloseConnection message is sent, or the outer tunnel is closed.
+       15. The User can repeat steps 10-14 as many times as they want
+
+                              User closes the public tunnel
+      16. The User closes the public tunnel and everything is cleaned up, and we can start back at step 1
+    """
     def __init__(self, tunnel: ITunnel, endpoint_name: Optional[str] = None, logger: logging.Logger = None,
                  gateway_uid: str = None):
         self.tunnel = tunnel
@@ -128,6 +190,7 @@ class TunnelProtocol(abc.ABC):
         self.forwarder = None
         self.forwarder_incoming_queue = asyncio.Queue()
         self.forwarder_out_going_queue = asyncio.Queue()
+        self.ports_tried = []
 
     async def connect(self, host="localhost", port=0):
         if not self.tunnel.is_connected:
@@ -163,6 +226,7 @@ class TunnelProtocol(abc.ABC):
         while self.tunnel.is_connected:
             try:
                 buffer = await self.tunnel.read(300 if self._paired else 100)
+                self.logger.debug(f"Endpoint {self.endpoint_name}: Received data from tunnel: \n{buffer}\n")
             except asyncio.TimeoutError as e:
                 if self._ping_attempt > 3:
                     if self.tunnel.is_connected:
@@ -195,6 +259,7 @@ class TunnelProtocol(abc.ABC):
                         data = buffer[:length]
                         buffer = buffer[length:]
                         if connection_no == 0:
+                            # This is a control message
                             if len(data) >= 2:
                                 message_no = int.from_bytes(data[:2], byteorder='big')
                                 data = data[2:]
@@ -203,6 +268,7 @@ class TunnelProtocol(abc.ABC):
                             else:
                                 is_packet_valid = False
                         else:
+                            # This is data
                             self.forwarder_incoming_queue.put_nowait(data)
                     else:
                         is_packet_valid = False
@@ -217,7 +283,7 @@ class TunnelProtocol(abc.ABC):
         buffer = int.to_bytes(connection_no, 4, byteorder='big')
         buffer += int.to_bytes(len(data), 4, byteorder='big')
         buffer += data
-        print(f"Sending data to tunnel: {buffer}")
+        self.logger.debug(f"Sending data to tunnel: \n{buffer}\n")
 
         await self.tunnel.write(buffer)
 
@@ -273,8 +339,13 @@ class TunnelProtocol(abc.ABC):
                 #  It will need to contain the public_tunnel_port
                 self.public_tunnel_port = int.from_bytes(data[:2], byteorder='big')
                 # Check if port is open
-                tmp_port = find_open_port(preferred_port=self.public_tunnel_port)
+                tmp_port = find_open_port(tried_ports=self.ports_tried, preferred_port=self.public_tunnel_port)
+                if tmp_port is None:
+                    self.logger.info('Endpoint %s: Connecting to pair: No open port found', self.endpoint_name)
+                    await self.disconnect()
+                    return
                 if tmp_port != self.public_tunnel_port:
+                    self.ports_tried.append(self.public_tunnel_port)
                     # The port wasn't open, so send a new port to the gateway
                     if self.forwarder:
                         await self.forwarder.stop()
@@ -283,7 +354,7 @@ class TunnelProtocol(abc.ABC):
                     if self.private_tunnel:
                         await self.private_tunnel.stop_server()
                         self.private_tunnel = None
-                    open_port = find_open_port()
+                    open_port = find_open_port(tried_ports=self.ports_tried)
                     await self.send_control_message(ControlMessage.SharePublicKey, int_to_bytes(open_port))
                 else:
                     self._paired = True
@@ -348,12 +419,12 @@ class TunnelProtocol(abc.ABC):
 
 class PlainTextForwarder:
     """
-    This class is used to forward data between a local port and the tunnel
-    The public tunnel reads from the two ques and forwards the data to krouter
-    The private tunnel does a TLS connects to this server but really connects to the tunnel
+    This class is used to forward data between a server on local port and the tunnel
+    The public tunnel reads/writes the two ques and forwards the data to krouter
+    Any connection that is made to the local port is forwarded to the tunnel.
     How this works is this server listens to the same port that the TLS port is on the gateway
-    The traffic locally connects to "localhost" and the port that this server is listening on but this forwards the data
-    to the TLS server on the gateway
+    The private tunnel locally connects to "localhost:port" that this server is listening on but this forwards the data
+    to the TLS server on the gateway allowing the TLS connection to be made.
     """
     def __init__(self, forwarder_event: asyncio.Event,public_tunnel_port: int, logger: logging.Logger, out_going_queue: asyncio.Queue,
                  incoming_queue: asyncio.Queue):
@@ -368,7 +439,9 @@ class PlainTextForwarder:
     async def forwarder_handle_client(self, forwarder_reader: asyncio.StreamReader, forwarder_writer: asyncio.StreamWriter):
         try:
             async def out_going_forward(f_reader):
-                # reads data from the private tunnel and sends it out to the tunnel
+                """
+                reads data from the connection (private tunnel) and sends it out to the tunnel
+                """
                 try:
                     while True:
                         data = await f_reader.read(16 * 1024)
@@ -381,7 +454,9 @@ class PlainTextForwarder:
                     pass
 
             async def incoming_forward(f_writer):
-                # writes data to the private tunnel from the tunnel
+                """
+                writes data from the tunnel to the connection (Private tunnel is the connection)
+                """
                 try:
                     while True:
                         data = await self.incoming_queue.get()
@@ -428,7 +503,15 @@ class PlainTextForwarder:
 
 class PrivateTunnelEntrance:
     """
-    This is the server that the private tunnel connects to
+    This class is used to forward data between a server that clients connect to on a local port and a TLS connection.
+    The private tunnel does a TLS connect to the public tunnel's forwarder and the traffic gets pushed through the
+        public tunnel to the TLS server on the Gateway
+    The TLS connection is made using the public cert of the TLS server on the gateway.
+    The Private Tunnel treats the public tunnel like a public DNS provider.
+    Connection 0 is reserved for control messages. All other connections are for when a client connects
+    This private tunnel uses four control messages: Ping, Pong, OpenConnection and CloseConnection
+    Data is broken into three parts: connection number, [message number], and data
+    message number is only used in control messages. (if the connection number is 0 then there is a message number)
     """
     def __init__(self, private_tunnel_event: asyncio.Event, host: str, port: int, public_tunnel_port: int, endpoint_name, cert: str,
                  logger: logging.Logger = None):
@@ -475,7 +558,10 @@ class PrivateTunnelEntrance:
             self.logger.warning('Unknown private tunnel control message: %d', message_no)
 
     async def start_tls_reader(self):
-        # From TLS server to local connections
+        """
+        Connect to the TLS server on the gateway.
+        Transfer data from TLS connection to local connections.
+        """
         async def forward_data_to_local():
             try:
                 self.private_tunnel_event.set()
@@ -499,7 +585,7 @@ class PrivateTunnelEntrance:
                                 try:
                                     data = data[4:]
                                     self.logger.debug(f"Endpoint {self.endpoint_name}: Forwarding private data to "
-                                                      f"local for connection {con_no} ({len(data)} bytes {data})")
+                                                      f"local for connection {con_no} ({len(data)})")
                                     con_writer.write(data)
                                     await con_writer.drain()
                                 except Exception as ex:
@@ -541,7 +627,10 @@ class PrivateTunnelEntrance:
             self.logger.error(f"Endpoint {self.endpoint_name}: Error while establishing TLS connection: {e}")
             return
 
-    async def forward_data_to_tunnel(self, r, con_no):
+    async def forward_data_to_tunnel(self, con_no):
+        """
+        Forward data from the given connection to the TLS connection
+        """
         try:
             while True:
                 c = self.connections.get(con_no)
@@ -550,14 +639,13 @@ class PrivateTunnelEntrance:
                 reader, _ = c
                 try:
                     data = await reader.read(16 * 1024)
-                    self.logger.error(f"Endpoint {self.endpoint_name}: Forwarding private {len(data)}\n{data}\n"
+                    self.logger.error(f"Endpoint {self.endpoint_name}: Forwarding private {len(data)}"
                                       f"bytes to tunnel for connection {con_no}")
                     if isinstance(data, bytes):
-                        if len(data) == 0 and r.at_eof():
+                        if len(data) == 0 and reader.at_eof():
                             break
                         else:
                             data = int.to_bytes(con_no, 4, byteorder='big') + data
-                            self.logger.debug(f"Endpoint {self.endpoint_name}: Received private from term plus con_no {len(data)}\n{data}\n")
                             self.tls_writer.write(data)
                             await self.tls_writer.drain()
                 except asyncio.TimeoutError as e:
@@ -585,18 +673,21 @@ class PrivateTunnelEntrance:
         await self.send_control_message(ControlMessage.CloseConnection, int.to_bytes(con_no, 4, byteorder='big'))
 
     async def handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        """
+        This is called when a client connects to the local port starting a new session.
+        """
         connection_no = self.connection_no
         self.connection_no += 1
         self.connections[connection_no] = (reader, writer)
 
         self.logger.debug(f"Endpoint {self.endpoint_name}: Created private local connection {connection_no}")
 
-        # Send open connection message with con_no
+        # Send open connection message with con_no. this is required to be sent to start the connection
         await self.send_control_message(ControlMessage.OpenConnection,
                                         int.to_bytes(connection_no, 4, byteorder='big'))
 
         self.logger.debug(f"Endpoint {self.endpoint_name}: Starting private reader for connection {connection_no}")
-        asyncio.create_task(self.forward_data_to_tunnel(reader, connection_no))  # From current connection to TLS server
+        asyncio.create_task(self.forward_data_to_tunnel(connection_no))  # From current connection to TLS server
         self.logger.debug(f"Endpoint {self.endpoint_name}: Started private reader for connection {connection_no}")
 
     @property
@@ -610,6 +701,9 @@ class PrivateTunnelEntrance:
         return 0
 
     async def start_server(self, forwarder_event: asyncio.Event, private_tunnel_event: asyncio.Event):
+        """
+        This server is used to listen for client connections to the local port.
+        """
         self.server = await asyncio.start_server(self.handle_connection, family=socket.AF_INET, host=self.host,
                                                  port=self.port)
         async with self.server:
@@ -618,6 +712,9 @@ class PrivateTunnelEntrance:
 
     async def print_ready(self, host: str, port: int, forwarder_event: asyncio.Event,
                           private_tunnel_event: asyncio.Event):
+        """
+        pretty prints the endpoint name and host:port after the tunnels are set up
+        """
         await forwarder_event.wait()
         await private_tunnel_event.wait()
         # Just sleep a little bit to print out last
