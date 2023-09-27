@@ -75,7 +75,11 @@ class EnterpriseCommand(Command):
                     if team['team_uid'] == team_uid:
                         if 'encrypted_team_key' in team:
                             enc_team_key = team['encrypted_team_key']  # type: str
-                            team_key = crypto.decrypt_aes_v2(utils.base64_url_decode(enc_team_key), params.enterprise['unencrypted_tree_key'])
+                            if enc_team_key:
+                                try:
+                                    team_key = crypto.decrypt_aes_v2(utils.base64_url_decode(enc_team_key), params.enterprise['unencrypted_tree_key'])
+                                except Exception as e:
+                                    logging.warning('Cannot decrypt team \"%s\" key: %s', team_uid, e)
                         break
 
         if team_key is None:
