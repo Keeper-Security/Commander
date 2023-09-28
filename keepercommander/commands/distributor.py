@@ -78,6 +78,20 @@ class DistributorCommand(GroupCommand):
 
 class DistributorMixin:
     @staticmethod
+    def convert_add_ons(add_on):  # type: (enterprise_pb2.LicenseAddOn) -> dict
+        return {
+            'name': add_on.name,
+            'enabled': add_on.enabled,
+            'is_trial': add_on.isTrial,
+            'expiration': add_on.expiration,
+            'created': add_on.created,
+            'seats': add_on.seats,
+            'activation_time': add_on.activationTime,
+            'included_in_product': add_on.includedInProduct,
+            'api_call_count': add_on.apiCallCount
+        }
+
+    @staticmethod
     def get_distributor_list(params, reload=False):
         # type: (KeeperParams, Optional[bool]) -> Optional[list]
         if not params.enterprise:
@@ -103,6 +117,7 @@ class DistributorMixin:
                         'max_file_plan_type': p_msp.maxFilePlanType,
                         'managed_companies': [],
                         'allow_unlimited_licenses': p_msp.allowUnlimitedLicenses,
+                        'add_ons': [DistributorMixin.convert_add_ons(x) for x in p_msp.addOns]
                     }
                     for p_mc in p_msp.managedCompanies:
                         mc = {
@@ -114,20 +129,8 @@ class DistributorMixin:
                             'product_id': p_mc.productId,
                             'is_expired': p_mc.isExpired,
                             'file_plan_type': p_mc.filePlanType,
-                            'add_ons': []
+                            'add_ons': [DistributorMixin.convert_add_ons(x) for x in p_mc.addOns]
                         }
-                        for l in p_mc.addOns:
-                            addon = {
-                                'name': l.name,
-                                'enabled': l.enabled,
-                                'is_trial': l.isTrial,
-                                'expiration': l.expiration,
-                                'created': l.created,
-                                'seats': l.seats,
-                                'activation_time': l.activationTime,
-                                'included_in_product': l.includedInProduct,
-                            }
-                            mc['add_ons'].append(addon)
                         msp['managed_companies'].append(mc)
                     msps.append(msp)
             params.enterprise['distributors'] = msps
@@ -159,8 +162,10 @@ class DistributorInfoCommand(EnterpriseCommand, DistributorMixin):
             right_align = (2, 4, 5) if show_mc_details else (2, 3, 4)
             header = ['ID', 'MSP Name', '# MC\'s']
             if show_mc_details:
-                header.extend(('MC Name', 'Plan', 'Storage'))
-            header.extend(['Unlimited allowed', 'Licenses used', 'Addons'])
+                header.extend(('MC Name', 'Plan', 'Storage', 'Total Licenses'))
+            else:
+                header.extend(('Unlimited allowed', 'Allowed Addons'))
+            header.extend(['Licenses used', 'KSM', 'KCM', 'Addons'])
             addon_lookup = {x[0]: x[3] for x in constants.MSP_ADDONS}
 
             table = []
@@ -168,13 +173,35 @@ class DistributorInfoCommand(EnterpriseCommand, DistributorMixin):
                 msp_name = msp.get('enterprise_name')
                 if len(msp_name) > 40 and not verbose:
                     msp_name = msp_name[:37] + '...'
-                unlimited_allowed = msp.get('allow_unlimited_licenses')
-                used = msp.get('allocated_licenses')
                 row = [msp.get('enterprise_id'), msp_name, len(msp.get('managed_companies', []))]
                 if show_mc_details:
-                    row.extend((None, None, None))
-                row.extend(('Allowed' if unlimited_allowed else 'Not Allowed', used,
-                            [addon_lookup.get(x.lower(), x) for x in msp.get('allowed_add_ons', [])]))
+                    row.extend((None, None, None, None))
+                else:
+                    unlimited_allowed = msp.get('allow_unlimited_licenses')
+                    row.extend(('Allowed' if unlimited_allowed else 'Not Allowed',
+                                [addon_lookup.get(x.lower(), x) for x in msp.get('allowed_add_ons', [])]))
+                add_ons = msp.get('add_ons', [])
+                kcm = next((x for x in add_ons if x and x['name'].lower() == 'connection_manager'), None)
+                kcm_text = 'enabled' if kcm else 'disabled'
+                if kcm:
+                    seats = kcm.get("seats")
+                    if isinstance(seats, int) and seats > 0:
+                        kcm_text = f'{seats} seats'
+
+                ksm = next((x for x in add_ons if x and x['name'].lower() == 'secrets_manager'), None)
+                ksm_text = 'enabled' if ksm else 'disabled'
+                if ksm:
+                    apis = ksm.get("api_call_count")
+                    if isinstance(apis, int) and apis > 0:
+                        ksm_text = f'{apis} Calls/Month'
+
+                add_ons = [x['name'] for x in add_ons
+                           if x['name'].lower() not in {'connection_manager', 'secrets_manager'} and
+                           not x['included_in_product']]
+
+                row.extend((msp.get('allocated_licenses'),
+                            ksm_text, kcm_text,
+                            [addon_lookup.get(x.lower(), x) for x in add_ons]))
                 table.append(row)
 
                 if show_mc_details:
@@ -189,26 +216,36 @@ class DistributorInfoCommand(EnterpriseCommand, DistributorMixin):
                         is_expired = mc.get('is_expired', False)
                         if len(mc_name) > 40 and not verbose:
                             mc_name = mc_name[:37] + '...'
-                        allowed = mc.get('number_of_seats')
-                        if allowed > 2000000000:
-                            allowed = 'Unlimited'
+                        total_licences = mc.get('number_of_seats')
+                        if total_licences > 2000000000:
+                            total_licences = 'Unlimited'
                         used = '-' if is_expired else mc.get('number_of_users')
-                        add_ons = list(mc.get('add_ons'))
-                        ao = []
-                        for x in add_ons:
-                            addon_name = addon_lookup.get(x['name'], x['name'])
-                            seats = x.get('seats', 0)
-                            if seats > 0:
-                                addon_name += f' ({seats})'
-                            ao.append(addon_name)
-                        ao.sort()
-                        addons = '\n'.join(ao)
 
-                        row = [mc.get('mc_enterprise_id'), msp_name, None, mc_name, product, file_plan,
-                               allowed, used, ao]
+                        add_ons = list(mc.get('add_ons'))
+                        kcm = next((x for x in add_ons if x and x['name'].lower() == 'connection_manager'), None)
+                        kcm_text = 'enabled' if kcm else 'disabled'
+                        if kcm:
+                            seats = kcm.get("seats")
+                            if isinstance(seats, int) and seats > 0:
+                                kcm_text = f'{seats} seats'
+                        ksm = next((x for x in add_ons if x and x['name'].lower() == 'secrets_manager'), None)
+                        ksm_text = 'enabled' if ksm else 'disabled'
+                        if ksm:
+                            apis = ksm.get("api_call_count")
+                            if isinstance(apis, int) and apis > 0:
+                                ksm_text = f'{apis} Calls/Month'
+                        add_ons = [x['name'] for x in add_ons
+                                   if x['name'].lower() not in {'connection_manager', 'secrets_manager'} and
+                                   not x['included_in_product']]
+
+                        row = [mc.get('mc_enterprise_id'), msp_name, None,
+                               mc_name, product, file_plan, total_licences,
+                               used, ksm_text, kcm_text,
+                               [addon_lookup.get(x.lower(), x) for x in add_ons]]
                         table.append(row)
 
-            return dump_report_data(table, header, fmt=output_format, filename=kwargs.get('output'), row_number=True, right_align=right_align)
+            return dump_report_data(table, header, fmt=output_format, filename=kwargs.get('output'), row_number=True,
+                                    right_align=right_align)
 
 
 class DistributorMspInfoCommand(EnterpriseCommand, DistributorMixin):
