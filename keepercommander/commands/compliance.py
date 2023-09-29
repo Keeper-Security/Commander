@@ -14,7 +14,10 @@ from ..sox import sox_types, get_node_id
 from ..sox.sox_data import SoxData
 
 compliance_parser = argparse.ArgumentParser(add_help=False)
-compliance_parser.add_argument('--rebuild', '-r', action='store_true', help='rebuild local data from source')
+rebuild_group = compliance_parser.add_mutually_exclusive_group()
+rebuild_group.add_argument('--rebuild', '-r', action='store_true', help='rebuild local data from source')
+nr_help = 'prevent remote data fetching if local cache present (invalid with --rebuild flag)'
+rebuild_group.add_argument('--no-rebuild', '-nr', action='store_true', help=nr_help)
 compliance_parser.add_argument('--no-cache', '-nc', action='store_true',
                                help='remove any local non-memory storage of data after report is generated')
 compliance_parser.add_argument('--node', action='store', help='ID or name of node (defaults to root node)')
@@ -115,7 +118,7 @@ class BaseComplianceReportCommand(EnterpriseCommand):
         nodes = params.enterprise['nodes']
         root_node_id = nodes[0].get('node_id', 0)
         max_data_age = datetime.timedelta(days=1)
-        min_data_ts = (datetime.datetime.now() - max_data_age).timestamp()
+        min_data_ts = 0 if kwargs.get('no_rebuild') else (datetime.datetime.now() - max_data_age).timestamp()
 
         default_opts = {'command', 'action', 'format'}
         opts_set = [val for opt, val in kwargs.items() if val and opt not in default_opts]
