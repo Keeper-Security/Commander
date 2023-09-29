@@ -1735,6 +1735,9 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 self.display_user(params, user, is_verbose)
                 print('\n')
 
+        if request_batch and kwargs.get('return_results'):
+            return results
+
     def display_user(self, params, user, is_verbose=False):
         enterprise_user_id = user['enterprise_user_id']
         username = user['username'] if 'username' in user else '[empty]'

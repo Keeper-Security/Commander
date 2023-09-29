@@ -1898,8 +1898,8 @@ class ActionReportCommand(EnterpriseCommand):
             emails = [u.get('username') for u in users]
             action_handlers = {
                 'none': partial(run_cmd, users, None, None, dryrun),
-                'lock': partial(run_cmd, users, lambda: exec_fn(params, email=emails, lock=True, force=True), 'lock', dry_run),
-                'delete': partial(run_cmd, users, lambda: exec_fn(params, email=emails, delete=True, force=True), 'delete', dry_run),
+                'lock': partial(run_cmd, users, lambda: exec_fn(params, email=emails, lock=True, force=True, return_results=True), 'lock', dry_run),
+                'delete': partial(run_cmd, users, lambda: exec_fn(params, email=emails, delete=True, force=True, return_results=True), 'delete', dry_run),
                 'transfer': partial(transfer_accounts, users, kwargs.get('target_user'), dryrun)
             }
 
