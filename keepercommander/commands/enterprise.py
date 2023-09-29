@@ -1254,7 +1254,6 @@ class EnterpriseUserCommand(EnterpriseCommand):
 
     def execute(self, params, **kwargs):
          # type: (KeeperParams, Optional[Any]) ->  List[Optional[Dict[str, Any]]] or None
-        results = []
         if kwargs.get('delete') and kwargs.get('add'):
             raise CommandError('enterprise-user', "'add' and 'delete' parameters are mutually exclusive.")
 
@@ -1736,7 +1735,8 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 self.display_user(params, user, is_verbose)
                 print('\n')
 
-        return results
+        if request_batch and kwargs.get('return_results'):
+            return results
 
     def display_user(self, params, user, is_verbose=False):
         enterprise_user_id = user['enterprise_user_id']

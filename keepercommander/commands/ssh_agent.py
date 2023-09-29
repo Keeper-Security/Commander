@@ -308,7 +308,7 @@ def add_ssh_key(private_key_pem, passphrase, key_name):   # type: (str, str, str
         remove_payload += ssh_agent_encode_long(public_numbers.n)
         remove_payload = SSH_AGENTC_REMOVE_IDENTITY.to_bytes(1, byteorder='big') + ssh_agent_encode_bytes(remove_payload)
     elif isinstance(private_key, ec.EllipticCurvePrivateKey):
-        curve_name = 'nistp381' if private_key.curve.name == 'secp384r1' else \
+        curve_name = 'nistp384' if private_key.curve.name == 'secp384r1' else \
             'nistp521' if private_key.curve.name == 'secp521r1' else \
                 'nistp256' if private_key.curve.name == 'secp256r1' else ''
         if not curve_name:
