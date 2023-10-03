@@ -712,7 +712,7 @@ def execute_batch(params, requests):
             if 'results' in rs:
                 results = rs['results']  # type: list
                 if len(results) > 0:
-                    throttled = [r for r in results if r['result'] != 'successs' and r['result_code'] == 'throttled']
+                    throttled = [r for r in results if r['result'] != 'success' and r['result_code'] == 'throttled']
                     if throttled:
                         throttled_rs = next(iter(throttled))
                         throttled_idx = results.index(throttled_rs)

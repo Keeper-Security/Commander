@@ -313,10 +313,10 @@ def runcommands(params, commands=None, command_delay=0, quiet=False):
 def force_quit():
     try:
         if os.name == 'posix':
-            os.system('reset')
+            subprocess.run('reset')
         elif os.name == 'nt':
-            os.system('cls')
-        os.system('echo Auto-logout timer activated.')
+            subprocess.run('cls')
+        print('Auto-logout timer activated.')
     except:
         pass
     os._exit(0)

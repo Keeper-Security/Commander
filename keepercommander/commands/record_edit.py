@@ -151,7 +151,7 @@ paymentCard       Payment Card           object         {"cardNumber": "", "card
                                                         4111111111111111 04/2026 123
 bankAccount       Bank Account           object         {"accountType": "", "routingNumber": "", "accountNumber": ""}
                                                         Checking: 123456789 987654321
-privateKey        Key Pair               object         {"publicKey": "", "privateKey": ""}
+keyPair           Key Pair               object         {"publicKey": "", "privateKey": ""}
 
 oneTimeCode       TOTP URL               string         otpauth://totp/Example?secret=JBSWY3DPEHPK3PXP&issuer=Keeper
 note              Masked multiline text  string         
@@ -171,7 +171,7 @@ $GEN:[alg],[n]          password           Generates a random password      $GEN
                                            Default algorith is rand         alg: [rand | dice | crypto]
                                            Optional: password length        
 $GEN                    oneTimeCode        Generates TOTP URL               
-$GEN:[alg,][enc]        privateKey         Generates a key pair and         $GEN:ec,enc
+$GEN:[alg,][enc]        keyPair            Generates a key pair and         $GEN:ec,enc
                                            optional passcode                alg: [rsa | ec | ed25519], enc 
 $JSON:<JSON TEXT>       any object         Sets a field value as JSON       
                                            phone.Cell=$JSON:'{"number": "(555) 555-1234", "type": "Mobile"}' 
@@ -513,9 +513,9 @@ class RecordEditMixin:
                 if self.is_generate_value(parsed_field.value, action_params):
                     if record_field.type == 'password':
                         value = self.generate_password(action_params)
-                    elif record_field.type == 'oneTimeCode':
+                    elif record_field.type in ('oneTimeCode', 'otp'):
                         value = self.generate_totp_url()
-                    elif record_field.type == 'keyPair':
+                    elif record_field.type in ('keyPair', 'privateKey'):
                         should_encrypt = 'enc' in action_params
                         passphrase = self.generate_password() if should_encrypt else None
                         key_type = next((x for x in action_params if x in ('rsa', 'ec', 'ed25519')), 'rsa')

@@ -441,6 +441,12 @@ class ThisDeviceCommand(Command):
             print("{:>32}: {}".format('IP Auto Approve', (bcolors.OKGREEN + 'ON' + bcolors.ENDC)))
             # ip_disable_auto_approve = 0 / disabled (default) <==> IP Auto Approve :ON
 
+        persistentLogin = acct_summary_dict['settings'].get('persistentLogin', False)
+        print("{:>32}: {}".format('Persistent Login',
+                                  (bcolors.OKGREEN + 'ON' + bcolors.ENDC)
+                                  if persistentLogin and not ThisDeviceCommand.is_persistent_login_disabled(params) else
+                                  (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
+
         no_user_verify = acct_summary_dict['settings'].get('securityKeysNoUserVerify', False)
         print("{:>32}: {}".format(
             'Security Key No PIN', (bcolors.OKGREEN + 'ON' + bcolors.ENDC)
