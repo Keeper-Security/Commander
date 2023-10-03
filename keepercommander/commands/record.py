@@ -1122,7 +1122,7 @@ class TrashUnshareCommand(Command, TrashMixin):
                 if 'remove_statuses' in rs:
                     for rm_status in rs['remove_statuses']:
                         if rm_status.get('status') != 'success':
-                            logging.info('Remove share \"%s\" from record UID \"\%s" error: %s',
+                            logging.info('Remove share \"%s\" from record UID \"%s\" error: %s',
                                          rm_status['username'], rm_status['record_uid'], rm_status['message'])
 
             TrashMixin.last_revision = 0
