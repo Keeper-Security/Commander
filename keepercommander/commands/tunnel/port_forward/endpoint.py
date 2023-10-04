@@ -635,8 +635,6 @@ class PrivateTunnelEntrance:
             # Establish a regular TCP connection to the server
             self.tls_reader, writer = await asyncio.open_connection('localhost', self.public_tunnel_port)
 
-            sock = writer.get_extra_info('socket')
-
             # Encrypt the message with the symmetric key using AES
             cipher = AESGCM(self.tunnel_symmetric_key)
             ciphertext = cipher.encrypt(self.nonce, b'Hello World', associated_data=None)
