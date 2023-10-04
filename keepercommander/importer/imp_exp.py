@@ -161,14 +161,17 @@ def convert_keeper_record(record, has_attachments=False):
                 rf.value = custom.get('value') or ''
                 rec.fields.append(rf)
         if 'extra_unencrypted' in record:
-            extra = json.loads(record['extra_unencrypted'])
-            if 'fields' in extra:
-                for field in extra['fields']:
-                    if field['field_type'] == 'totp':
-                        rf = ImportRecordField()
-                        rf.type = FIELD_TYPE_ONE_TIME_CODE
-                        rf.value = field['data']
-                        rec.fields.append(rf)
+            try:
+                extra = json.loads(record['extra_unencrypted'])
+                if 'fields' in extra:
+                    for field in extra['fields']:
+                        if field['field_type'] == 'totp':
+                            rf = ImportRecordField()
+                            rf.type = FIELD_TYPE_ONE_TIME_CODE
+                            rf.value = field['data']
+                            rec.fields.append(rf)
+            except:
+                logging.debug('Error parsing extra for record \"%s\"', record_uid)
 
     elif version == 3 and 'type' in data:
         rec.type = data['type']
@@ -321,8 +324,12 @@ def export(params, file_format, filename, **kwargs):
         record = params.record_cache[record_uid]
         record_version = record.get('version') or 0
         if record_version == 2 or record_version == 3:
-            rec = convert_keeper_record(record, exporter.has_attachments())
-            if not rec:
+            try:
+                rec = convert_keeper_record(record, exporter.has_attachments())
+                if not rec:
+                    continue
+            except:
+                logging.debug('Failed to export record \"%s\"', record_uid)
                 continue
 
             if exporter.has_attachments():
