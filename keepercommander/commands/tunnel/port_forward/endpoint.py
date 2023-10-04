@@ -454,7 +454,11 @@ class PlainTextForwarder:
         data = await forwarder_reader.read(BUFFER_TRUNCATION_THRESHOLD)  # Receive data from the client
 
         cipher = AESGCM(self.tunnel_symmetric_key)
-        decrypted_message = cipher.decrypt(self.nonce, data, associated_data=None)
+        try:
+            decrypted_message = cipher.decrypt(self.nonce, data, associated_data=None)
+        except Exception as e:
+            self.logger.error(f"Error decrypting message: {e}")
+            return
 
         if decrypted_message != b"Hello World":
             self.logger.error(f"Invalid connection disconnecting")
@@ -640,7 +644,11 @@ class PrivateTunnelEntrance:
             writer.write(ciphertext)
             await writer.drain()
             response = await self.tls_reader.read(BUFFER_TRUNCATION_THRESHOLD)
-            decrypted_message = cipher.decrypt(self.nonce, response, associated_data=None)
+            try:
+                decrypted_message = cipher.decrypt(self.nonce, response, associated_data=None)
+            except Exception as e:
+                self.logger.error(f"Error decrypting message: {e}")
+                return
             if decrypted_message != b'Hello Back':
                 self.logger.error(f"Endpoint {self.endpoint_name}: Failed to connect to forwarder")
                 return
