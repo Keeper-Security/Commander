@@ -36,8 +36,6 @@ breachwatch_list_parser.add_argument('--numbered', '-n', action='store_true',
 breachwatch_password_parser = argparse.ArgumentParser(prog='breachwatch-password')
 breachwatch_password_parser.add_argument('passwords', type=str, nargs='*', help='Password')
 
-breachwatch_reset_parser = argparse.ArgumentParser(prog='breachwatch-reset')
-
 breachwatch_scan_parser = argparse.ArgumentParser(prog='breachwatch-scan')
 
 
@@ -62,7 +60,6 @@ class BreachWatchCommand(GroupCommand):
         self.register_command('password', BreachWatchPasswordCommand(),
                               'Check a password against our database of breached accounts.')
         self.register_command('scan', BreachWatchScanCommand(), 'Scan vault passwords.')
-        self.register_command('reset', BreachWatchResetCommand(), 'Reset security audit data for all vault passwords.')
 
         self.default_verb = 'list'
 
@@ -128,34 +125,6 @@ class BreachWatchPasswordCommand(Command):
             print(f'{pwd:>16s}: {"WEAK" if result[1].breachDetected else "GOOD" }')
         if euids:
             params.breach_watch.delete_euids(params, euids)
-
-
-class BreachWatchResetCommand(Command):
-    def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
-        return breachwatch_reset_parser
-
-    def execute(self, params, **kwargs):  # type: (KeeperParams, Any) -> Any
-        def rescan_and_reset_security_data(ruid):
-            record = api.get_record(params, ruid)
-            result = api.update_record(params, record, **kwargs) if record.version in (2, 3) else None
-            if result:
-                api.sync_down(params)
-                params.breach_watch.scan_and_store_record_status(
-                    params,
-                    ruid,
-                    force_update=True,
-                    is_reset=True,
-                    set_reused_pws=False
-                )
-                api.sync_down(params)
-
-        owned = [uid for uid, own in params.record_owner_cache.items()
-                 if own.owner is True and uid in params.record_cache]
-        for rec_uid in owned:
-            rescan_and_reset_security_data(rec_uid)
-
-        BreachWatch.save_reused_pw_count(params)
-        params.sync_data = True
 
 
 class BreachWatchScanCommand(Command):
