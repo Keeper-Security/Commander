@@ -3,6 +3,7 @@ import asyncio
 import base64
 import enum
 import logging
+import os
 import socket
 import ssl
 from typing import Optional, Dict, Tuple
@@ -10,13 +11,17 @@ from typing import Optional, Dict, Tuple
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import ec, padding
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.utils import int_to_bytes
 from keeper_secrets_manager_core.utils import bytes_to_string
 
+from keepercommander import utils
 from keepercommander.display import bcolors
 from .tunnel import ITunnel
+
+BUFFER_TRUNCATION_THRESHOLD = 16 * 1024
 
 
 class ControlMessage(enum.IntEnum):
@@ -225,7 +230,7 @@ class TunnelProtocol(abc.ABC):
         self._ping_attempt = 0
         while self.tunnel.is_connected:
             try:
-                buffer = await self.tunnel.read(300 if self._paired else 100)
+                buffer = await self.tunnel.read(BUFFER_TRUNCATION_THRESHOLD if self._paired else 100)
                 self.logger.debug(f"Endpoint {self.endpoint_name}: Received data from tunnel: \n{buffer}\n")
             except asyncio.TimeoutError as e:
                 if self._ping_attempt > 3:
@@ -378,21 +383,28 @@ class TunnelProtocol(abc.ABC):
                     forwarder_event = asyncio.Event()
                     private_tunnel_event = asyncio.Event()
 
+                    # Generate a random symmetric key for AES encryption
+                    tunnel_symmetric_key = utils.generate_aes_key()
+                    nonce = os.urandom(12)
+
                     self.forwarder = PlainTextForwarder(forwarder_event=forwarder_event,
                                                         public_tunnel_port=self.public_tunnel_port,
                                                         logger=self.logger,
                                                         out_going_queue=self.forwarder_out_going_queue,
-                                                        incoming_queue=self.forwarder_incoming_queue)
+                                                        incoming_queue=self.forwarder_incoming_queue,
+                                                        tunnel_symmetric_key=tunnel_symmetric_key, nonce=nonce)
 
                     asyncio.create_task(self.forwarder.start())
                     logging.debug(f"started forwarder on port {self.public_tunnel_port}")
 
                     logging.debug("starting private tunnel")
+
                     self.private_tunnel = PrivateTunnelEntrance(private_tunnel_event=private_tunnel_event,
                                                                 host=self.target_host, port=self.target_port,
                                                                 public_tunnel_port=self.public_tunnel_port,
                                                                 endpoint_name=self.endpoint_name, cert=received_cert,
-                                                                logger=self.logger)
+                                                                logger=self.logger,
+                                                                tunnel_symmetric_key=tunnel_symmetric_key, nonce=nonce)
 
                     # Making the TLS Connection through the tunnel
                     asyncio.create_task(self.private_tunnel.start_server(forwarder_event, private_tunnel_event))
@@ -427,7 +439,7 @@ class PlainTextForwarder:
     to the TLS server on the gateway allowing the TLS connection to be made.
     """
     def __init__(self, forwarder_event: asyncio.Event,public_tunnel_port: int, logger: logging.Logger, out_going_queue: asyncio.Queue,
-                 incoming_queue: asyncio.Queue):
+                 incoming_queue: asyncio.Queue, tunnel_symmetric_key: bytes = None, nonce: bytes = None):
         self.forwarder_event = forwarder_event
         self.client_tasks = []
         self.forwarder_server = None
@@ -435,8 +447,23 @@ class PlainTextForwarder:
         self.incoming_queue = incoming_queue
         self.public_tunnel_port = public_tunnel_port
         self.logger = logger
+        self.tunnel_symmetric_key = tunnel_symmetric_key
+        self.nonce = nonce
 
     async def forwarder_handle_client(self, forwarder_reader: asyncio.StreamReader, forwarder_writer: asyncio.StreamWriter):
+        data = await forwarder_reader.read(BUFFER_TRUNCATION_THRESHOLD)  # Receive data from the client
+
+        cipher = AESGCM(self.tunnel_symmetric_key)
+        decrypted_message = cipher.decrypt(self.nonce, data, associated_data=None)
+
+        if decrypted_message != b"Hello World":
+            self.logger.error(f"Invalid connection disconnecting")
+            return
+        else:
+            self.logger.debug(f"Password accepted connection")
+            ciphertext = cipher.encrypt(self.nonce, b'Hello Back', associated_data=None)
+            forwarder_writer.write(ciphertext)
+            await forwarder_writer.drain()
         try:
             async def out_going_forward(f_reader):
                 """
@@ -444,7 +471,7 @@ class PlainTextForwarder:
                 """
                 try:
                     while True:
-                        data = await f_reader.read(16 * 1024)
+                        data = await f_reader.read(BUFFER_TRUNCATION_THRESHOLD)
                         if not data:
                             break
                         self.out_going_queue.put_nowait(data)
@@ -514,7 +541,7 @@ class PrivateTunnelEntrance:
     message number is only used in control messages. (if the connection number is 0 then there is a message number)
     """
     def __init__(self, private_tunnel_event: asyncio.Event, host: str, port: int, public_tunnel_port: int, endpoint_name, cert: str,
-                 logger: logging.Logger = None):
+                 logger: logging.Logger = None, tunnel_symmetric_key: bytes = None, nonce: bytes = None):
         self.private_tunnel_event = private_tunnel_event
         self._ping_attempt = 0
         self.host = host
@@ -529,6 +556,8 @@ class PrivateTunnelEntrance:
         self._port = port
         self.logger = logger
         self.is_connected = False
+        self.tunnel_symmetric_key = tunnel_symmetric_key
+        self.nonce = nonce
         asyncio.create_task(self.start_tls_reader())
 
     async def send_control_message(self, message_no: ControlMessage, data: Optional[bytes] = None) -> None:
@@ -567,7 +596,7 @@ class PrivateTunnelEntrance:
                 self.private_tunnel_event.set()
                 self.logger.debug(f"Endpoint {self.endpoint_name}: Forwarding private data to local...")
                 while True:
-                    data = await self.tls_reader.read(16 * 1024)  # Adjust buffer size as needed
+                    data = await self.tls_reader.read(BUFFER_TRUNCATION_THRESHOLD)  # Adjust buffer size as needed
                     self.logger.debug(f"Endpoint {self.endpoint_name}: Got private data from tls server "
                                       f"{len(data)} bytes)")
                     if not data:
@@ -599,6 +628,25 @@ class PrivateTunnelEntrance:
                 self.logger.error(f"Endpoint {self.endpoint_name}: Error while forwarding private data: {ex}")
 
         try:
+            # Establish a regular TCP connection to the server
+            self.tls_reader, writer = await asyncio.open_connection('localhost', self.public_tunnel_port)
+
+            sock = writer.get_extra_info('socket')
+
+            # Encrypt the message with the symmetric key using AES
+            cipher = AESGCM(self.tunnel_symmetric_key)
+            ciphertext = cipher.encrypt(self.nonce, b'Hello World', associated_data=None)
+
+            writer.write(ciphertext)
+            await writer.drain()
+            response = await self.tls_reader.read(BUFFER_TRUNCATION_THRESHOLD)
+            decrypted_message = cipher.decrypt(self.nonce, response, associated_data=None)
+            if decrypted_message != b'Hello Back':
+                self.logger.error(f"Endpoint {self.endpoint_name}: Failed to connect to forwarder")
+                return
+            else:
+                self.logger.debug(f"Endpoint {self.endpoint_name}: Connection to forwarder accepted")
+
             # https://github.com/python/cpython/issues/96972
             ssl_context = ssl.create_default_context()
             ssl_context.check_hostname = True
@@ -608,9 +656,9 @@ class PrivateTunnelEntrance:
             logging.debug(f"Endpoint {self.endpoint_name}: SSL context made")
             # Establish a connection to the TLS server on the gateway
             self.logger.debug(f"Endpoint {self.endpoint_name}: Attempting to establish TLS connection...")
-            self.tls_reader, self.tls_writer = await asyncio.open_connection('localhost', self.public_tunnel_port,
-                                                                             ssl=ssl_context)
+            await writer.start_tls(ssl_context, server_hostname='localhost')
             self.logger.debug(f"Endpoint {self.endpoint_name}: TLS connection established successfully.")
+            self.tls_writer = writer
             asyncio.create_task(forward_data_to_local())  # From TLS server to local connections
 
             # Send hello world open connection message
@@ -638,7 +686,7 @@ class PrivateTunnelEntrance:
                     break
                 reader, _ = c
                 try:
-                    data = await reader.read(16 * 1024)
+                    data = await reader.read(BUFFER_TRUNCATION_THRESHOLD)
                     self.logger.error(f"Endpoint {self.endpoint_name}: Forwarding private {len(data)}"
                                       f"bytes to tunnel for connection {con_no}")
                     if isinstance(data, bytes):
