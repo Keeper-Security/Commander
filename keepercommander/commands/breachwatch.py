@@ -13,9 +13,9 @@ import argparse
 import base64
 import getpass
 import logging
-from typing import Optional
+from typing import Optional, Any, Dict
 
-from .. import api, crypto, utils
+from .. import api, crypto, utils, vault, vault_extensions
 from .base import GroupCommand, Command, dump_report_data
 from ..breachwatch import BreachWatch
 from ..params import KeeperParams
@@ -78,9 +78,8 @@ class BreachWatchListCommand(Command):
 
     def execute(self, params, **kwargs):   # type: (KeeperParams, ...) -> None
         table = []
-
-        for record, _ in params.breach_watch.get_records_by_status(params, ['WEAK', 'BREACHED'], kwargs.get('owned')):
-            row = [record.record_uid, record.title, record.login]
+        for record, _ in BreachWatch.get_records_by_status(params, ['WEAK', 'BREACHED'], kwargs.get('owned')):
+            row = [record.record_uid, record.title, vault_extensions.get_record_description(record)]
             table.append(row)
 
         if table:
@@ -135,13 +134,12 @@ class BreachWatchResetCommand(Command):
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return breachwatch_reset_parser
 
-    def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
+    def execute(self, params, **kwargs):  # type: (KeeperParams, Any) -> Any
         def rescan_and_reset_security_data(ruid):
             record = api.get_record(params, ruid)
             result = api.update_record(params, record, **kwargs) if record.version in (2, 3) else None
             if result:
                 api.sync_down(params)
-                params.sync_data = True
                 params.breach_watch.scan_and_store_record_status(
                     params,
                     ruid,
@@ -151,55 +149,63 @@ class BreachWatchResetCommand(Command):
                 )
                 api.sync_down(params)
 
-        api.sync_down(params)
-        params.sync_data = True
-
         owned = [uid for uid, own in params.record_owner_cache.items()
                  if own.owner is True and uid in params.record_cache]
         for rec_uid in owned:
             rescan_and_reset_security_data(rec_uid)
 
-        api.sync_down(params)
-        params.sync_data = True
         BreachWatch.save_reused_pw_count(params)
+        params.sync_data = True
 
 
 class BreachWatchScanCommand(Command):
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return breachwatch_scan_parser
 
-    def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
+    def execute(self, params, **kwargs):  # type: (KeeperParams, Any) -> Any
         records = [x[0] for x in params.breach_watch.get_records_to_scan(params)]
-        passwords = set((x.password for x in records if x.password))
-        if len(passwords):
+        record_passwords = dict()    # type: Dict[str, str]
+        for record in records:
+            if isinstance(record, vault.PasswordRecord):
+                if record.password:
+                    record_passwords[record.record_uid] = record.password
+            elif isinstance(record, vault.TypedRecord):
+                password_field = record.get_typed_field('password')
+                if password_field:
+                    password = password_field.get_default_value(str)
+                    if password:
+                        record_passwords[record.record_uid] = password
+
+        if len(record_passwords):
             euid_to_delete = []
             bw_requests = []
-            scans = {x[0]: x[1] for x in params.breach_watch.scan_passwords(params, passwords)}
-            for record in records:
+            all_passwords = set(record_passwords.values())
+            scans = {x[0]: x[1] for x in params.breach_watch.scan_passwords(params, all_passwords)}
+            for record_uid, record_password in record_passwords.items():
                 if params.breach_watch_records:
-                    if record.record_uid in params.breach_watch_records:
-                        bwr = params.breach_watch_records[record.record_uid]
+                    if record_uid in params.breach_watch_records:
+                        bwr = params.breach_watch_records[record_uid]
                         if 'data_unencrypted' in bwr:
                             passwords = bwr['data_unencrypted'].get('passwords', [])
                             for password in passwords:
                                 euid = password.get('euid')
                                 if euid:
                                     euid_to_delete.append(base64.b64decode(euid))
-                if record.password in scans:
+                if record_password in scans:
                     bwrq = breachwatch_proto.BreachWatchRecordRequest()
-                    bwrq.recordUid = utils.base64_url_decode(record.record_uid)
+                    bwrq.recordUid = utils.base64_url_decode(record_uid)
                     bwrq.breachWatchInfoType = breachwatch_proto.RECORD
                     bwrq.updateUserWhoScanned = True
-                    hash_status = scans[record.password]
+                    hash_status = scans[record_password]
                     bw_password = client_proto.BWPassword()
-                    bw_password.value = record.password
+                    bw_password.value = record_password
                     bw_password.status = client_proto.WEAK if hash_status.breachDetected else client_proto.GOOD
                     bw_password.euid = hash_status.euid
                     bw_data = client_proto.BreachWatchData()
                     bw_data.passwords.append(bw_password)
                     data = bw_data.SerializeToString()
                     try:
-                        record_key = params.record_cache[record.record_uid]['record_key_unencrypted']
+                        record_key = params.record_cache[record_uid]['record_key_unencrypted']
                         bwrq.encryptedData = crypto.encrypt_aes_v2(data, record_key)
                     except:
                         continue
@@ -209,12 +215,12 @@ class BreachWatchScanCommand(Command):
                 bw_requests = bw_requests[999:]
                 rq = breachwatch_proto.BreachWatchUpdateRequest()
                 rq.breachWatchRecordRequest.extend(chunk)
-                rs = api.communicate_rest(params, rq, 'breachwatch/update_record_data',
-                                          rs_type=breachwatch_proto.BreachWatchUpdateResponse)
+                api.communicate_rest(params, rq, 'breachwatch/update_record_data',
+                                     rs_type=breachwatch_proto.BreachWatchUpdateResponse)
                 params.sync_data = True
             if euid_to_delete:
                 params.breach_watch.delete_euids(params, euid_to_delete)
-        logging.info(f'Scanned {len(passwords)} passwords.')
+        logging.info(f'Scanned {len(record_passwords)} passwords.')
 
 
 class BreachWatchIgnoreCommand(Command):
