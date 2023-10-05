@@ -40,8 +40,7 @@ def generate_random_bytes(pass_length: int = 32) -> bytes:
     random_bytes = secrets.token_bytes(pass_length)
 
     # Filter out non-printable bytes using a list comprehension
-    # 10 is the ASCII code for newline (\n) used as the delimiter for hmac messages
-    printable_bytes = [byte for byte in random_bytes if byte in string.printable.encode('utf-8') and byte != 10]
+    printable_bytes = [byte for byte in random_bytes if byte in string.printable.encode('utf-8')]
 
     # Convert the list of bytes back to bytes
     filtered_bytes = bytes(printable_bytes)
@@ -621,7 +620,6 @@ class PrivateTunnelEntrance:
         except Exception as e:
             self.logger.error(f"Endpoint {self.endpoint_name}: Error while sending private control message: {e}")
 
-
     async def process_control_message(self, message_no: ControlMessage, data: bytes):
         if message_no == ControlMessage.CloseConnection:
             if data and len(data) > 0:
@@ -737,8 +735,8 @@ class PrivateTunnelEntrance:
             self.logger.error(f"Endpoint {self.endpoint_name}: TLS Error connecting: {es}")
         except Exception as e:
             self.logger.error(f"Endpoint {self.endpoint_name}: Error while establishing TLS connection: {e}")
-            for con_no in self.connections:
-                await self.close_connection(con_no)
+            for connection_no in self.connections:
+                await self.close_connection(connection_no)
             await self.stop_server()
             self.is_connected = False
             return
