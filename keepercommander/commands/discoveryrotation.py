@@ -1342,8 +1342,9 @@ class PAMTunnelListCommand(Command):
             text_line += f", Remote Port: {thread.get('rport')}" if thread.get('rport') else ''
             text_line += f", Record UID: {thread.get('record_uid')}" if thread.get('record_uid') else ''
             text_line += f", Up time:"
-            text_line += f" days {run_time.days}" if run_time.days > 0 else ''
-            text_line += f" hours {hours}" if hours > 0 or run_time.days > 0 else ''
+            if run_time:
+                text_line += f" days {run_time.days}" if run_time.days > 0 else ''
+                text_line += f" hours {hours}" if hours > 0 or run_time.days > 0 else ''
             text_line += f" minutes {minutes}"
             text_line += f" seconds {seconds}"
             text_line += f"{bcolors.ENDC}"
