@@ -17,7 +17,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.utils import int_to_bytes
-from keeper_secrets_manager_core.utils import bytes_to_string
+from keeper_secrets_manager_core.utils import bytes_to_string, bytes_to_base64, base64_to_bytes
 
 from keepercommander import utils
 from keepercommander.display import bcolors
@@ -487,8 +487,8 @@ class PlainTextForwarder:
         received_parts = received_data.split(b'\n')
         if len(received_parts) == 2:
             received_message, received_hmac = received_parts
-            # Now you have both the message and the HMAC
 
+            received_hmac = base64_to_bytes(received_hmac)
             # Calculate HMAC for received_message
             calculated_hmac = hmac.new(self.tunnel_symmetric_key, received_message, hashlib.sha256).digest()
 
@@ -500,9 +500,20 @@ class PlainTextForwarder:
                 response_hmac = hmac.new(self.tunnel_symmetric_key, response_message, hashlib.sha256).digest()
 
                 # Combine response_message and response_hmac with a delimiter
-                response_to_send = response_message + b'\n' + response_hmac
+                response_to_send = response_message + b'\n' + bytes_to_base64(response_hmac).encode()
                 forwarder_writer.write(response_to_send)
                 await forwarder_writer.drain()
+            else:
+                self.logger.error(f"Error handling client: Not authenticated")
+                # Message integrity and authenticity compromised
+                forwarder_writer.close()
+                await forwarder_writer.wait_closed()
+                return
+        else:
+            self.logger.error(f"Error handling client: Invalid message")
+            forwarder_writer.close()
+            await forwarder_writer.wait_closed()
+            return
 
         try:
             async def out_going_forward(f_reader):
@@ -595,7 +606,7 @@ class PrivateTunnelEntrance:
         self.tls_writer: Optional[asyncio.StreamWriter] = None
         self._port = port
         self.logger = logger
-        self.is_connected = False
+        self.is_connected = True
         self.tunnel_symmetric_key = tunnel_symmetric_key
         asyncio.create_task(self.start_tls_reader())
 
@@ -609,6 +620,7 @@ class PrivateTunnelEntrance:
             await self.tls_writer.drain()
         except Exception as e:
             self.logger.error(f"Endpoint {self.endpoint_name}: Error while sending private control message: {e}")
+
 
     async def process_control_message(self, message_no: ControlMessage, data: bytes):
         if message_no == ControlMessage.CloseConnection:
@@ -638,7 +650,7 @@ class PrivateTunnelEntrance:
                     data = await self.tls_reader.read(BUFFER_TRUNCATION_THRESHOLD)  # Adjust buffer size as needed
                     self.logger.debug(f"Endpoint {self.endpoint_name}: Got private data from tls server "
                                       f"{len(data)} bytes)")
-                    if not data:
+                    if not data or not self.is_connected:
                         break
                     if len(data) >= 4:
                         con_no = int.from_bytes(data[:4], byteorder='big')
@@ -674,14 +686,16 @@ class PrivateTunnelEntrance:
             # Calculate HMAC
             hmac_value = hmac.new(self.tunnel_symmetric_key, message, hashlib.sha256).digest()
             # Combine message and HMAC with a delimiter
-            message_to_send = message + b'\n' + hmac_value
+            message_to_send = message + b'\n' + bytes_to_base64(hmac_value).encode()
             writer.write(message_to_send)
             await writer.drain()
             received_data = await self.tls_reader.read(BUFFER_TRUNCATION_THRESHOLD)
-
+            # Split the received_data into message and HMAC using the delimiter
             received_parts = received_data.split(b'\n')
             if len(received_parts) == 2:
                 received_message, received_hmac = received_parts
+
+                received_hmac = base64_to_bytes(received_hmac)
                 # Now you have both the message and the HMAC
 
                 # Calculate HMAC for received_message
@@ -723,6 +737,10 @@ class PrivateTunnelEntrance:
             self.logger.error(f"Endpoint {self.endpoint_name}: TLS Error connecting: {es}")
         except Exception as e:
             self.logger.error(f"Endpoint {self.endpoint_name}: Error while establishing TLS connection: {e}")
+            for con_no in self.connections:
+                await self.close_connection(con_no)
+            await self.stop_server()
+            self.is_connected = False
             return
 
     async def forward_data_to_tunnel(self, con_no):
@@ -732,7 +750,7 @@ class PrivateTunnelEntrance:
         try:
             while True:
                 c = self.connections.get(con_no)
-                if c is None:
+                if c is None or not self.is_connected:
                     break
                 reader, _ = c
                 try:
@@ -748,6 +766,7 @@ class PrivateTunnelEntrance:
                             await self.tls_writer.drain()
                 except asyncio.TimeoutError as e:
                     if self._ping_attempt > 3:
+                        self.is_connected = False
                         if self.server.is_serving():
                             for con in self.connections:
                                 await self.close_connection(con)
@@ -825,6 +844,7 @@ class PrivateTunnelEntrance:
             await asyncio.wait_for(forwarder_event.wait(), timeout=5)
         except asyncio.TimeoutError:
             self.logger.debug(f"Endpoint {self.endpoint_name}: Timed out waiting for forwarder to start")
+            return
         try:
             await asyncio.wait_for(private_tunnel_event.wait(), timeout=60)
         except asyncio.TimeoutError:
