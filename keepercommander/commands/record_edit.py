@@ -1021,20 +1021,6 @@ class RecordDownloadAttachmentCommand(Command):
         preserve_dir = kwargs.get('preserve_dir') is True
         record_title = kwargs.get('record_title') is True
         for record_uid in record_uids:
-            subfolder_path = ''
-            if preserve_dir:
-                folder_uid = next((x for x in find_folders(params, record_uid)), None)
-                if folder_uid:
-                    subfolder_path = get_folder_path(params, folder_uid, os.sep)
-                    subfolder_path = ''.join(x for x in subfolder_path if x.isalnum() or x == os.sep)
-                    subfolder_path = subfolder_path.replace(2*os.sep, os.sep)
-            if subfolder_path:
-                subfolder_path = os.path.join(output_dir, subfolder_path)
-                if not os.path.isdir(subfolder_path):
-                    os.makedirs(subfolder_path)
-            else:
-                subfolder_path = output_dir
-
             attachments = list(attachment.prepare_attachment_download(params, record_uid))
             if len(attachments) == 0:
                 continue
