@@ -5,9 +5,10 @@ import enum
 import hashlib
 import hmac
 import logging
-import os
+import secrets
 import socket
 import ssl
+import string
 from typing import Optional, Dict, Tuple
 
 from cryptography import x509
@@ -32,6 +33,20 @@ class ControlMessage(enum.IntEnum):
     ApplicationMessage = 100    # 100 and more encrypted final implementation
     OpenConnection = 101
     CloseConnection = 102
+
+
+def generate_random_bytes(pass_length: int = 32) -> bytes:
+    # Generate random bytes without worrying about character decoding
+    random_bytes = secrets.token_bytes(pass_length)
+
+    # Filter out non-printable bytes using a list comprehension
+    # 10 is the ASCII code for newline (\n) used as the delimiter for hmac messages
+    printable_bytes = [byte for byte in random_bytes if byte in string.printable.encode('utf-8') and byte != 10]
+
+    # Convert the list of bytes back to bytes
+    filtered_bytes = bytes(printable_bytes)
+
+    return filtered_bytes
 
 
 def verify_tls_certificate(cert_data, public_key):
@@ -61,6 +76,7 @@ def verify_tls_certificate(cert_data, public_key):
                 encoding=serialization.Encoding.X962,
                 format=serialization.PublicFormat.UncompressedPoint
             )
+            print(f"TLS public key: {tls_raw_public_key}")
         else:
             raise ValueError("Not an elliptic curve public key")
         # Check if they match
@@ -82,7 +98,7 @@ def find_open_port(tried_ports: [], start_port=49152, end_port=65535, preferred_
     """
     Find an open port in the range [start_port, end_port].
     The default range is from 49152 to 65535, which are the "ephemeral ports" or "dynamic ports.".
-
+    :param tried_ports: A list of ports that have already been tried.
     :param start_port: The starting port number.
     :param end_port: The ending port number.
     :param preferred_port: A preferred port to check first.
@@ -207,7 +223,7 @@ class TunnelProtocol(abc.ABC):
         self.target_host = host
         t1 = asyncio.create_task(self.start_tunnel_reader())
         tasks = [t1]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
 
         await self.disconnect()
 
@@ -360,8 +376,7 @@ class TunnelProtocol(abc.ABC):
                     if self.private_tunnel:
                         await self.private_tunnel.stop_server()
                         self.private_tunnel = None
-                    open_port = find_open_port(tried_ports=self.ports_tried)
-                    await self.send_control_message(ControlMessage.SharePublicKey, int_to_bytes(open_port))
+                    await self.send_control_message(ControlMessage.SharePublicKey, int_to_bytes(tmp_port))
                 else:
                     self._paired = True
 
@@ -384,10 +399,8 @@ class TunnelProtocol(abc.ABC):
                     forwarder_event = asyncio.Event()
                     private_tunnel_event = asyncio.Event()
 
-
                     # Generate a random symmetric key for AES encryption
                     tunnel_symmetric_key = utils.generate_aes_key()
-                    nonce = os.urandom(12)
 
                     self.forwarder = PlainTextForwarder(forwarder_event=forwarder_event,
                                                         public_tunnel_port=self.public_tunnel_port,
@@ -410,7 +423,8 @@ class TunnelProtocol(abc.ABC):
 
                     # Making the TLS Connection through the tunnel
                     private_tunnel_started = asyncio.Event()
-                    asyncio.create_task(self.private_tunnel.start_server(forwarder_event, private_tunnel_event, private_tunnel_started))
+                    asyncio.create_task(self.private_tunnel.start_server(forwarder_event, private_tunnel_event,
+                                                                         private_tunnel_started))
                     await private_tunnel_started.wait()
 
                     serving = self.private_tunnel.server.is_serving() if self.private_tunnel.server else False
@@ -445,8 +459,8 @@ class PlainTextForwarder:
     The private tunnel locally connects to "localhost:port" that this server is listening on but this forwards the data
     to the TLS server on the gateway allowing the TLS connection to be made.
     """
-    def __init__(self, forwarder_event: asyncio.Event,public_tunnel_port: int, logger: logging.Logger, out_going_queue: asyncio.Queue,
-                 incoming_queue: asyncio.Queue, tunnel_symmetric_key: bytes = None):
+    def __init__(self, forwarder_event: asyncio.Event, public_tunnel_port: int, logger: logging.Logger,
+                 out_going_queue: asyncio.Queue, incoming_queue: asyncio.Queue, tunnel_symmetric_key: bytes = None):
         self.forwarder_event = forwarder_event
         self.client_tasks = []
         self.forwarder_server = None
@@ -456,10 +470,11 @@ class PlainTextForwarder:
         self.logger = logger
         self.tunnel_symmetric_key = tunnel_symmetric_key
 
-    async def forwarder_handle_client(self, forwarder_reader: asyncio.StreamReader, forwarder_writer: asyncio.StreamWriter):
+    async def forwarder_handle_client(self, forwarder_reader: asyncio.StreamReader,
+                                      forwarder_writer: asyncio.StreamWriter):
         received_data = await forwarder_reader.read(BUFFER_TRUNCATION_THRESHOLD)
 
-        # Split the received_data into message and HMAC using the delimiter (e.g., newline)
+        # Split the received_data into message and HMAC using the delimiter
         received_parts = received_data.split(b'\n')
         if len(received_parts) == 2:
             received_message, received_hmac = received_parts
@@ -471,8 +486,7 @@ class PlainTextForwarder:
             # Compare the calculated HMAC with the received HMAC
             if calculated_hmac == received_hmac:
                 # Message integrity and authenticity verified
-                # Process the received_message
-                response_message = b'Hello Back'
+                response_message = b'S>C,Hello Back!' + generate_random_bytes()
                 # Calculate HMAC for the response message
                 response_hmac = hmac.new(self.tunnel_symmetric_key, response_message, hashlib.sha256).digest()
 
@@ -557,8 +571,8 @@ class PrivateTunnelEntrance:
     Data is broken into three parts: connection number, [message number], and data
     message number is only used in control messages. (if the connection number is 0 then there is a message number)
     """
-    def __init__(self, private_tunnel_event: asyncio.Event, host: str, port: int, public_tunnel_port: int, endpoint_name, cert: str,
-                 logger: logging.Logger = None, tunnel_symmetric_key: bytes = None):
+    def __init__(self, private_tunnel_event: asyncio.Event, host: str, port: int, public_tunnel_port: int,
+                 endpoint_name, cert: str, logger: logging.Logger = None, tunnel_symmetric_key: bytes = None):
         self.private_tunnel_event = private_tunnel_event
         self._ping_attempt = 0
         self.host = host
@@ -647,10 +661,10 @@ class PrivateTunnelEntrance:
             # Establish a regular TCP connection to the server
             self.tls_reader, writer = await asyncio.open_connection('localhost', self.public_tunnel_port)
 
-            message = b'Hello, World!'
+            message = b'C>S,Hello, World!' + generate_random_bytes()
             # Calculate HMAC
             hmac_value = hmac.new(self.tunnel_symmetric_key, message, hashlib.sha256).digest()
-            # Combine message and HMAC with a delimiter (e.g., a newline)
+            # Combine message and HMAC with a delimiter
             message_to_send = message + b'\n' + hmac_value
             writer.write(message_to_send)
             await writer.drain()
@@ -774,7 +788,8 @@ class PrivateTunnelEntrance:
             return self._port
         return 0
 
-    async def start_server(self, forwarder_event: asyncio.Event, private_tunnel_event: asyncio.Event, private_tunnel_started: asyncio.Event):
+    async def start_server(self, forwarder_event: asyncio.Event, private_tunnel_event: asyncio.Event,
+                           private_tunnel_started: asyncio.Event):
         """
         This server is used to listen for client connections to the local port.
         """
