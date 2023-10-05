@@ -228,14 +228,17 @@ class TunnelProtocol(abc.ABC):
         await self.disconnect()
 
     async def disconnect(self):
+        await self.send_control_message(ControlMessage.CloseConnection)
         self._is_running = False
         tasks = []
 
         self.tunnel.disconnect()
         self._paired = False
         self.public_tunnel_port = None
-
-        tasks.append(self.forwarder.stop())
+        if self.private_tunnel:
+            tasks.append(self.private_tunnel.stop_server())
+        if self.forwarder:
+            tasks.append(self.forwarder.stop())
         if len(tasks) > 0:
             await asyncio.gather(*tasks)
 
@@ -472,6 +475,12 @@ class PlainTextForwarder:
 
     async def forwarder_handle_client(self, forwarder_reader: asyncio.StreamReader,
                                       forwarder_writer: asyncio.StreamWriter):
+        peer_name = forwarder_writer.get_extra_info('peername')
+        self.logger.debug(f'Forwarder connection from {peer_name}')
+        if peer_name[0] not in ['127.0.0.1', '::1']:
+            forwarder_writer.close()
+            await forwarder_writer.wait_closed()
+            return
         received_data = await forwarder_reader.read(BUFFER_TRUNCATION_THRESHOLD)
 
         # Split the received_data into message and HMAC using the delimiter
@@ -680,10 +689,11 @@ class PrivateTunnelEntrance:
 
                 # Compare the calculated HMAC with the received HMAC
                 if calculated_hmac != received_hmac:
-                    self.logger.error(f"Endpoint {self.endpoint_name}: Failed to connect to forwarder")
+                    self.logger.error(f"Endpoint {self.endpoint_name}: Failed to connect to forwarder got "
+                                      f"{calculated_hmac} should have been {received_hmac}")
                     return
             else:
-                self.logger.error(f"Endpoint {self.endpoint_name}: Failed to connect to forwarder")
+                self.logger.error(f"Endpoint {self.endpoint_name}: Failed to connect to forwarder got {received_parts}")
                 return
 
             self.logger.debug(f"Endpoint {self.endpoint_name}: Connection to forwarder accepted")

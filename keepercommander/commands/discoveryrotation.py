@@ -1410,13 +1410,9 @@ class PAMTunnelStopCommand(Command):
 
         # Stop the asyncio event loop
         loop = tunnel_data.get("loop", None)
-        if not loop:
-            return
 
-        # Retrieve the entrance object
         entrance = tunnel_data.get("entrance", None)
-
-        if entrance:
+        if loop and entrance:
             # Run the disconnect method in the event loop
             loop.create_task(entrance.disconnect())
             print(f"Disconnected entrance for {convo_id}")
@@ -1614,11 +1610,6 @@ class PAMTunnelStartCommand(Command):
         if not record:
             print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
             return
-
-        # TODO: Check if the record allows the connection to rhost and rport
-        # if True:
-        #     # print(f"{bcolors.FAIL}Access denied to {rhost} and {rport}.{bcolors.ENDC}")
-        #     pass
 
         t = threading.Thread(target=self.pre_connect, args=(params, record_uid, convo_id, gateway_uid, host, port,
                                                             rhost, rport, listener_name))
