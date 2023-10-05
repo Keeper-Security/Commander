@@ -1375,14 +1375,20 @@ class RecordPermissionCommand(Command):
                 if type(folder) == SharedFolderFolderNode:
                     shared_folder_uid = folder.shared_folder_uid
 
+                account_uid = utils.base64_url_encode(params.account_uid_bytes)
                 if shared_folder_uid in params.shared_folder_cache:
                     is_share_admin = shared_folder_uid in share_admin_in_folders
                     shared_folder = params.shared_folder_cache[shared_folder_uid]
                     team_uid = None
                     has_manage_records_permission = is_share_admin
                     if not has_manage_records_permission:
-                        if 'shared_folder_key' in shared_folder:
-                            has_manage_records_permission = shared_folder.get('manage_records') or False
+                        if 'owner_account_uid' in shared_folder:
+                            has_manage_records_permission = shared_folder['owner_account_uid'] == account_uid
+                    if not has_manage_records_permission:
+                        if 'users' in shared_folder:
+                            user = next((x for x in shared_folder['users'] if x.get('username') == params.user), None)
+                            if user and 'manage_records' in user:
+                                has_manage_records_permission = user['manage_records'] is True
                     if not has_manage_records_permission:
                         if 'teams' in shared_folder:
                             for sft in shared_folder['teams']:
@@ -1395,31 +1401,10 @@ class RecordPermissionCommand(Command):
                     if 'records' in shared_folder:
                         for rp in shared_folder['records']:
                             record_uid = rp['record_uid']
-                            if is_share_admin:
-                                has_record_share_permissions = True
-                                has_record_edit_permissions = True
-                            else:
-                                has_record_share_permissions = False
-                                has_record_edit_permissions = False
-                                if record_uid in params.meta_data_cache:
-                                    md = params.meta_data_cache[record_uid]
-                                    has_record_share_permissions = md.get('can_share', False)
-                                    has_record_edit_permissions = md.get('can_edit', False)
-                                if has_manage_records_permission:
-                                    if not has_record_share_permissions or not has_record_edit_permissions:
-                                        if not has_record_edit_permissions:
-                                            has_record_edit_permissions = rp.get('can_edit', False)
-                                        if not has_record_share_permissions:
-                                            has_record_share_permissions = rp.get('can_share', False)
-
-                            if not has_manage_records_permission:
-                                container = shared_folder_skip
-                            elif change_edit and not has_record_edit_permissions:
-                                container = shared_folder_skip
-                            elif change_share and not has_record_share_permissions:
-                                container = shared_folder_skip
-                            else:
+                            if is_share_admin or has_manage_records_permission:
                                 container = shared_folder_update
+                            else:
+                                container = shared_folder_skip
 
                             if shared_folder_uid not in container:
                                 container[shared_folder_uid] = {}
@@ -1586,17 +1571,37 @@ class RecordPermissionCommand(Command):
                 requests = []
                 for shared_folder_uid in shared_folder_update:
                     updates = list(shared_folder_update[shared_folder_uid].values())
-                    rq = folder_pb2.SharedFolderUpdateV3Request()
-                    rq.sharedFolderUid = utils.base64_url_decode(shared_folder_uid)
-                    rq.forceUpdate = True
-                    rq.sharedFolderUpdateRecord.extend(updates)
-                    rq.fromTeamUid = updates[0].teamUid
-                    requests.append(rq)
-                while len(requests) > 0:
-                    chunk = requests[:999]
-                    requests = requests[999:]
+                    while len(updates) > 0:
+                        batch = updates[:490]
+                        updates = updates[490:]
+                        rq = folder_pb2.SharedFolderUpdateV3Request()
+                        rq.sharedFolderUid = utils.base64_url_decode(shared_folder_uid)
+                        rq.forceUpdate = True
+                        rq.sharedFolderUpdateRecord.extend(batch)
+                        rq.fromTeamUid = batch[0].teamUid
+                        requests.append(rq)
+
+                chunks = []         # type: List[Dict[bytes, folder_pb2.SharedFolderUpdateV3Request]]
+                current_rq = {}     # type: Dict[bytes, folder_pb2.SharedFolderUpdateV3Request]
+                total_elements = 0
+                for rq in requests:
+                    if rq.sharedFolderUid in current_rq:
+                        chunks.append(current_rq)
+                        current_rq = {}
+                        total_elements = 0
+                    if total_elements + len(rq.sharedFolderUpdateRecord) > 500:
+                        chunks.append(current_rq)
+                        current_rq = {}
+                        total_elements = 0
+
+                    current_rq[rq.sharedFolderUid] = rq
+                    total_elements += len(rq.sharedFolderUpdateRecord)
+                if len(current_rq) > 0:
+                    chunks.append(current_rq)
+
+                for chunk in chunks:
                     rqs = folder_pb2.SharedFolderUpdateV3RequestV2()
-                    rqs.sharedFoldersUpdateV3.extend(chunk)
+                    rqs.sharedFoldersUpdateV3.extend(chunk.values())
                     rss = api.communicate_rest(params, rqs, 'vault/shared_folder_update_v3', payload_version=1,
                                                rs_type=folder_pb2.SharedFolderUpdateV3ResponseV2)
                     for rs in rss.sharedFoldersUpdateV3Response:
