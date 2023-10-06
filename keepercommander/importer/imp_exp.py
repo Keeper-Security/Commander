@@ -715,6 +715,7 @@ def _import(params, file_format, filename, **kwargs):
                 x.validate()
             except CommandError as ce:
                 logging.info(ce.message)
+            x.sanitize_fields()
             records.append(x)
         elif isinstance(x, ImportSharedFolder):
             if shared:
