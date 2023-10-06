@@ -1049,6 +1049,7 @@ class RecordDownloadAttachmentCommand(Command):
                 file_name = atta.title
                 if title:
                     file_name = f'{title}-{atta.title}'
+                file_name = os.path.basename(file_name)
                 name = os.path.join(subfolder_path, file_name)
                 if os.path.isfile(name):
                     base_name, ext = os.path.splitext(file_name)
