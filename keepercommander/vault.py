@@ -27,7 +27,7 @@ def sanitize_str_field_value(value):    # type: (Any) -> str
     return value
 
 
-def sanitize_int_field_value(value, *, default=0):    # type: (Any, *Any, **Any) -> int
+def sanitize_int_field_value(value, *, default=0):    # type: (Any, *Any, Optional[Any]) -> int
     if not isinstance(value, int):
         try:
             value = int(value)
@@ -204,6 +204,7 @@ class CustomField(object):
 
 class AttachmentFileThumb:
     def __init__(self, thumb_field=None):      # type: (Optional[dict]) -> None
+        thumb_field = thumb_field or {}
         self.id = sanitize_str_field_value(thumb_field.get('id'))
         self.type = sanitize_str_field_value(thumb_field.get('type'))
         self.size = sanitize_int_field_value(thumb_field.get('size'))
@@ -211,6 +212,7 @@ class AttachmentFileThumb:
 
 class AttachmentFile(object):
     def __init__(self, file_field=None):  # type: (Optional[dict]) -> None
+        file_field = file_field or {}
         self.id = sanitize_str_field_value(file_field.get('id'))
         self.key = sanitize_str_field_value(file_field.get('key'))
         self.name = sanitize_str_field_value(file_field.get('name'))
