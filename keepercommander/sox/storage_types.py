@@ -1,4 +1,3 @@
-from ..proto import enterprise_pb2
 from ..storage.types import IUidLink, IUid
 
 
@@ -6,7 +5,7 @@ class StorageUser(IUid):
     def __init__(self):
         self.user_uid = 0
         self.email = b''
-        self.status = not enterprise_pb2.OK
+        self.status = 0
         self.job_title = b''
         self.full_name = b''
         self.node_id = 0

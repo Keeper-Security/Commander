@@ -61,7 +61,7 @@ def prepare_attachment_download(params, record_uid, attachment_name=None):
                         adr.url = file_status.url
                         adr.success_status_code = file_status.success_status_code
                         adr.encryption_key = file_record.record_key
-                        adr.title = file_record.title if file_record.title else file_record.name
+                        adr.title = file_record.name
                         adr.is_gcm_encrypted = file_status.fileKeyType == record_pb2.ENCRYPTED_BY_DATA_KEY_GCM
                         yield adr
                 else:
@@ -88,7 +88,7 @@ def prepare_attachment_download(params, record_uid, attachment_name=None):
                     if 'url' in dl:
                         adr = AttachmentDownloadRequest()
                         adr.file_id = attachment.id
-                        adr.title = attachment.title if attachment.title else attachment.name
+                        adr.title = attachment.name
                         adr.url = dl['url']
                         adr.encryption_key = utils.base64_url_decode(attachment.key)
                         adr.is_gcm_encrypted = False

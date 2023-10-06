@@ -9,6 +9,7 @@
 #
 
 import abc
+import collections.abc
 import datetime
 import json
 import logging
@@ -18,6 +19,33 @@ import itertools
 
 from .params import KeeperParams
 from . import record_types, constants
+
+
+def sanitize_str_field_value(value):    # type: (Any) -> str
+    if not isinstance(value, str):
+        value = str(value) if value else ''
+    return value
+
+
+def sanitize_int_field_value(value, *, default=0):    # type: (Any, *Any, Optional[Any]) -> int
+    if not isinstance(value, int):
+        try:
+            value = int(value)
+        except:
+            if default is not None:
+                if not isinstance(default, int):
+                    default = 0
+            value = default
+    return value
+
+
+def sanitize_bool_field_value(value):    # type: (Any) -> bool
+    if not isinstance(value, bool):
+        if isinstance(value, int):
+            value = value != 0
+        else:
+            value = False
+    return value
 
 
 class KeeperRecord(abc.ABC):
@@ -160,36 +188,39 @@ class CustomField(object):
     def __init__(self, custom_field=None):  # type: (Optional[dict]) -> None
         if custom_field is None:
             custom_field = {}
-        self.name = custom_field.get('name', '').strip()
-        self.value = custom_field.get('value', '').strip()
-        self.type = custom_field.get('type', '').strip()
+
+        self.name = sanitize_str_field_value(custom_field.get('name')).strip()
+        self.type = sanitize_str_field_value(custom_field.get('type')).strip().lower()
+        self.value = sanitize_str_field_value(custom_field.get('value')).strip()
 
     @classmethod
     def new_field(cls, name, value):
         cf = CustomField()
         cf.type = 'text'
-        cf.name = name
-        cf.value = value
+        cf.name = sanitize_str_field_value(name)
+        cf.value = sanitize_str_field_value(value)
         return cf
 
 
 class AttachmentFileThumb:
     def __init__(self, thumb_field=None):      # type: (Optional[dict]) -> None
-        self.id = thumb_field.get('id', '') if thumb_field else ''
-        self.type = thumb_field.get('type', '') if thumb_field else ''
-        self.size = thumb_field.get('size', 0) if thumb_field else 0
+        thumb_field = thumb_field or {}
+        self.id = sanitize_str_field_value(thumb_field.get('id'))
+        self.type = sanitize_str_field_value(thumb_field.get('type'))
+        self.size = sanitize_int_field_value(thumb_field.get('size'))
 
 
 class AttachmentFile(object):
     def __init__(self, file_field=None):  # type: (Optional[dict]) -> None
-        self.id = file_field.get('id', '') if file_field else ''
-        self.key = file_field.get('key', '') if file_field else ''
-        self.name = file_field.get('name', '') if file_field else ''
-        self.title = file_field.get('title', '') if file_field else ''
-        self.mime_type = file_field.get('type', '') if file_field else ''
-        self.size = file_field.get('size', 0) if file_field else 0
-        self.last_modified = file_field.get('lastModified', 0) if file_field else 0  # type: int
-        self.thumbnails = []                                                         # type: List[AttachmentFileThumb]
+        file_field = file_field or {}
+        self.id = sanitize_str_field_value(file_field.get('id'))
+        self.key = sanitize_str_field_value(file_field.get('key'))
+        self.name = sanitize_str_field_value(file_field.get('name'))
+        self.title = sanitize_str_field_value(file_field.get('title'))
+        self.mime_type = sanitize_str_field_value(file_field.get('type'))
+        self.size = sanitize_int_field_value(file_field.get('size'))
+        self.last_modified = sanitize_int_field_value(file_field.get('lastModified'), default=None)
+        self.thumbnails = []         # type: List[AttachmentFileThumb]
         if file_field and 'thumbnails' in file_field:
             thumbs = file_field.get('thumbnails')
             if isinstance(thumbs, list):
@@ -201,10 +232,10 @@ class ExtraField(object):
     def __init__(self, extra_field=None):  # type: (Optional[dict]) -> None
         if extra_field is None:
             extra_field = {}
-        self.id = extra_field.get('id', '')
-        self.field_type = extra_field.get('field_type', '')
-        self.field_title = extra_field.get('field_title', '')
-        self.data = extra_field.get('data', '')
+        self.id = sanitize_str_field_value(extra_field.get('id'))
+        self.field_type = sanitize_str_field_value(extra_field.get('field_type'))
+        self.field_title = sanitize_str_field_value(extra_field.get('field_title'))
+        self.data = sanitize_str_field_value(extra_field.get('data'))
 
 
 class PasswordRecord(KeeperRecord):
@@ -225,11 +256,11 @@ class PasswordRecord(KeeperRecord):
         return ''
 
     def load_record_data(self, data, extra=None):
-        self.title = (data.get('title') or '').strip()
-        self.login = (data.get('secret1') or '').strip()
-        self.password = data.get('secret2') or ''
-        self.link = data.get('link') or ''
-        self.notes = data.get('notes') or ''
+        self.title = sanitize_str_field_value(data.get('title')).strip()
+        self.login = sanitize_str_field_value(data.get('secret1')).strip()
+        self.password = sanitize_str_field_value(data.get('secret2'))
+        self.link = sanitize_str_field_value(data.get('link'))
+        self.notes = sanitize_str_field_value(data.get('notes'))
         custom = data.get('custom')
         if isinstance(custom, list):
             self.custom.extend((CustomField(x) for x in custom if isinstance(x, dict) and 'name' in x))
@@ -263,6 +294,7 @@ class PasswordRecord(KeeperRecord):
 
     def set_custom_value(self, name, value):   # type: (str, Optional[str]) -> None
         field = next((x for x in self.custom if x.name == name), None)
+        value = sanitize_str_field_value(value)
         if value:
             if field:
                 field.value = value
@@ -277,15 +309,24 @@ class TypedField(object):
     def __init__(self, typed_field=None):
         if typed_field is None:
             typed_field = {}
-        self.type = (typed_field.get('type') or '').strip()
-        self.label = (typed_field.get('label') or '').strip()
-        self.value = typed_field.get('value', [])
-        self.required = typed_field.get('required', False)
+        self.type = sanitize_str_field_value(typed_field.get('type')).strip()
+        self.label = sanitize_str_field_value(typed_field.get('label')).strip()
+        value = typed_field.get('value')
+        if not isinstance(value, list):
+            if isinstance(value, (str, int, bool)):
+                value = [value]
+            elif isinstance(value, collections.abc.Iterable):
+                value = [x for x in value]
+            else:
+                value = []
+        self.value = value
+        self.required = sanitize_bool_field_value(typed_field.get('required'))
 
     @classmethod
     def new_field(cls, field_type, field_value, field_label=None):
         # type: (str, Any, Optional[str]) -> 'TypedField'
-        f_type = field_type or 'text'
+        f_type = sanitize_str_field_value(field_type) or 'text'
+        # TODO check field value
         if not isinstance(field_value, list):
             if field_value:
                 field_value = [field_value]
@@ -294,7 +335,7 @@ class TypedField(object):
         tf = TypedField()
         tf.type = f_type
         tf.value = field_value
-        tf.label = field_label or ''
+        tf.label = sanitize_str_field_value(field_label)
         return tf
 
     def get_default_value(self, value_type=None):  # type: (Optional[Type]) -> any
@@ -783,9 +824,9 @@ class TypedRecord(KeeperRecord):
                     None)
 
     def load_record_data(self, data, extra=None):
-        self.type_name = data.get('type', '').strip()
-        self.title = data.get('title', '').strip()
-        self.notes = data.get('notes', '')
+        self.type_name = sanitize_str_field_value(data.get('type')).strip()
+        self.title = sanitize_str_field_value(data.get('title')).strip()
+        self.notes = sanitize_str_field_value(data.get('notes'))
         self.fields.extend((TypedField(x) for x in data.get('fields', [])))
         self.custom.extend((TypedField(x) for x in data.get('custom', [])))
 
@@ -816,11 +857,11 @@ class FileRecord(KeeperRecord):
         return 'file'
 
     def load_record_data(self, data, extra=None):
-        self.title = data.get('title', '').strip()
-        self.name = data.get('name', '').strip()
-        self.size = data.get('size')
-        self.mime_type = data.get('type', '')
-        self.last_modified = data.get('lastModified')
+        self.title = sanitize_str_field_value(data.get('title')).strip()
+        self.name = sanitize_str_field_value(data.get('name')).strip()
+        self.size = sanitize_int_field_value(data.get('size'))
+        self.mime_type = sanitize_str_field_value(data.get('type'))
+        self.last_modified = sanitize_int_field_value(data.get('lastModified'), default=None)
 
     def enumerate_fields(self):  # type: () -> Iterable[Tuple[str, Union[None, str, List[str]]]]
         for pair in super(FileRecord, self).enumerate_fields():
@@ -843,7 +884,7 @@ class ApplicationRecord(KeeperRecord):
         return 'app'
 
     def load_record_data(self, data, extra=None):
-        self.title = data.get('title', '')
+        self.title = sanitize_str_field_value(data.get('title')).strip()
 
     def enumerate_fields(self):  # type: () -> Iterable[Tuple[str, Union[None, str, List[str]]]]
         for pair in super(ApplicationRecord, self).enumerate_fields():

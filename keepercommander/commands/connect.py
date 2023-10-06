@@ -16,7 +16,9 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 from typing import Optional, Callable, List, Iterable, Tuple
@@ -139,21 +141,23 @@ class BaseConnectCommand(Command, RecordMixin):
     def support_extra_parameters(self):
         return True
 
-    SHELL_SUBSTITUTION = {
-        '`': r'\`',
-        '$': r'\$',
-        '?': r'\?',
-        '*': r'\*',
-        '^': r'\^',
-        '(': r'\(',
-        ')': r'\)'
-    }
+    # SHELL_SUBSTITUTION = {
+    #     '`': r'\`',
+    #     '$': r'\$',
+    #     '?': r'\?',
+    #     '*': r'\*',
+    #     '^': r'\^',
+    #     '(': r'\(',
+    #     ')': r'\)'
+    # }
 
     def execute_shell(self):
-        logging.debug('Executing "%s" ...', self.command)
+        logging.debug('Executing "%s"', self.command)
         try:
-            command = self.command.translate(str.maketrans(BaseConnectCommand.SHELL_SUBSTITUTION))
-            os.system(command)
+            # command = self.command.translate(str.maketrans(BaseConnectCommand.SHELL_SUBSTITUTION))
+            command = self.command
+            subprocess.run(shlex.split(command))
+            # os.system(command)
         finally:
             self.command = ''
             for cb in self.run_at_the_end:
@@ -472,10 +476,13 @@ class ConnectRdpCommand(BaseConnectCommand):
 
         password = BaseConnectCommand.get_record_field(record, 'password')
         if password:
-            os.system(f'cmdkey /generic:{host_name} /user:{login} /pass:{password} > NUL')
+            command = f'cmdkey /generic:{host_name} /user:{login} /pass:{password}'
+            subprocess.run(shlex.split(command), stdout=subprocess.DEVNULL)
+            # os.system(f'cmdkey /generic:{host_name} /user:{login} /pass:{password} > NUL')
 
             def clear_password():
-                os.system(f'cmdkey /delete:{host_name} > NUL')
+                subprocess.run(shlex.split(f'cmdkey /delete:{host_name}'), stdout=subprocess.DEVNULL)
+                # os.system(f'cmdkey /delete:{host_name} > NUL')
             self.run_at_the_end.append(clear_password)
 
         self.command = f'mstsc /v:{host_name}'
@@ -744,7 +751,9 @@ class ConnectCommand(BaseConnectCommand):
             if command:
                 command = BaseConnectCommand.get_command_string(params, record, command, temp_files, endpoint=endpoint)
                 if command:
-                    os.system(command)
+                    args = shlex.split(command)
+                    subprocess.run(args)
+                    # os.system(command)
 
             command = ConnectCommand.get_custom_field(record, f'connect:{endpoint}')
             if command:
@@ -766,7 +775,9 @@ class ConnectCommand(BaseConnectCommand):
             if command:
                 command = ConnectCommand.get_command_string(params, record, command, temp_files, endpoint=endpoint)
                 if command:
-                    os.system(command)
+                    args = shlex.split(command)
+                    subprocess.run(args)
+                    # os.system(command)
         finally:
             for file in temp_files:
                 os.remove(file)

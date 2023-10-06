@@ -13,7 +13,7 @@ import shutil
 from collections import OrderedDict as OD
 from typing import Tuple, List, Union
 
-from asciitree import LeftAligned
+from asciitree import LeftAligned, BoxStyle, drawing
 from colorama import init, Fore, Back, Style
 from tabulate import tabulate
 
@@ -256,12 +256,12 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
 
     root, branches = tree_node(folder)
     tree = {root: branches}
-    tr = LeftAligned()
+    tr = LeftAligned(draw=BoxStyle(gfx=drawing.BOX_LIGHT))
     if shares and not hide_shares_key:
         print_share_permissions_key()
     if title:
         print(title)
-    tree_txt = str(tr(tree))
+    tree_txt = tr(tree)
     tree_txt = re.sub(r'\s+\(\)', '', tree_txt)
     if not verbose:
         lines = tree_txt.splitlines()
