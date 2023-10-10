@@ -148,7 +148,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
 
     def _do_text_list_rl(self, params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0,
                          indent: int = 0):
-        
+
         print("")
 
         pad = ""

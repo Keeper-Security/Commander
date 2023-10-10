@@ -20,7 +20,6 @@ from typing import Optional, List, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ...params import KeeperParams
-    from ...vault import TypedRecord, KeeperRecord
     from keeper_dag.vertex import DAGVertex
     from discovery_common.record_link import RecordLink
 
