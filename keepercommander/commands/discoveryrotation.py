@@ -22,6 +22,7 @@ import time
 from datetime import datetime
 from typing import Dict, Optional, Any, Set, List
 
+
 import requests
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
@@ -33,12 +34,16 @@ from .folder import FolderMoveCommand
 from .ksm import KSMCommand
 from .pam import gateway_helper, router_helper
 from .pam.config_facades import PamConfigurationRecordFacade
-from .pam.config_helper import pam_configurations_get_all, pam_configuration_remove, pam_configuration_create_record_v6, record_rotation_get, \
+from .pam.config_helper import pam_configurations_get_all, \
+    pam_configuration_remove, pam_configuration_create_record_v6, record_rotation_get, \
     pam_decrypt_configuration_data
-from .pam.pam_dto import GatewayActionGatewayInfo, GatewayActionDiscoverInputs, GatewayActionDiscover, \
-    GatewayActionRotate, \
-    GatewayActionRotateInputs, GatewayAction, GatewayActionJobInfoInputs, \
-    GatewayActionJobInfo, GatewayActionJobCancel
+from .pam.pam_dto import (
+    GatewayActionGatewayInfo,
+    GatewayActionRotate,
+    GatewayActionRotateInputs, GatewayAction, GatewayActionJobInfoInputs,
+    GatewayActionJobInfo,
+    GatewayActionJobCancel)
+
 from .pam.router_helper import router_send_action_to_gateway, print_router_response, \
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, \
     get_router_url
@@ -53,6 +58,20 @@ from ..proto import pam_pb2, router_pb2, record_pb2
 from ..proto.APIRequest_pb2 import GetKsmPublicKeysRequest, GetKsmPublicKeysResponse
 from ..subfolder import find_parent_top_folder, try_resolve_path, BaseFolderNode
 from ..vault import TypedField
+from .discover.job_start import PAMGatewayActionDiscoverJobStartCommand
+from .discover.job_status import PAMGatewayActionDiscoverJobStatusCommand
+from .discover.job_remove import PAMGatewayActionDiscoverJobRemoveCommand
+from .discover.result_process import PAMGatewayActionDiscoverResultProcessCommand
+from .discover.rule_add import PAMGatewayActionDiscoverRuleAddCommand
+from .discover.rule_list import PAMGatewayActionDiscoverRuleListCommand
+from .discover.rule_remove import PAMGatewayActionDiscoverRuleRemoveCommand
+from .discover.rule_update import PAMGatewayActionDiscoverRuleUpdateCommand
+from .pam_debug.acl import PAMDebugACLCommand
+from .pam_debug.alter import PAMDebugAlterCommand
+from .pam_debug.graph import PAMDebugGraphCommand
+from .pam_debug.info import PAMDebugInfoCommand
+from .pam_debug.verify import PAMDebugVerifyCommand
+from .pam_debug.version import PAMDebugVersionCommand
 
 
 def register_commands(commands):
@@ -122,22 +141,59 @@ class PAMRotationCommand(GroupCommand):
         self.default_verb = 'list'
 
 
+class PAMDiscoveryCommand(GroupCommand):
+
+    def __init__(self):
+        super(PAMDiscoveryCommand, self).__init__()
+        self.register_command('start', PAMGatewayActionDiscoverJobStartCommand(), 'Start a discovery process', 's')
+        self.register_command('status', PAMGatewayActionDiscoverJobStatusCommand(), 'Status of discovery jobs', 'st')
+        self.register_command('remove', PAMGatewayActionDiscoverJobRemoveCommand(), 'Cancel or remove of discovery jobs', 'r')
+        self.register_command('process', PAMGatewayActionDiscoverResultProcessCommand(), 'Process discovered items', 'p')
+        self.register_command('rule', PAMDiscoveryRuleCommand(), 'Manage discovery rules')
+
+        self.default_verb = 'status'
+
+
+class PAMDiscoveryRuleCommand(GroupCommand):
+
+    def __init__(self):
+        super(PAMDiscoveryRuleCommand, self).__init__()
+        self.register_command('add', PAMGatewayActionDiscoverRuleAddCommand(), 'Add a rule', 'a')
+        self.register_command('list', PAMGatewayActionDiscoverRuleListCommand(), 'List all rules', 'l')
+        self.register_command('remove', PAMGatewayActionDiscoverRuleRemoveCommand(), 'Remove a rule', 'r')
+        self.register_command('update', PAMGatewayActionDiscoverRuleUpdateCommand(), 'Update a rule', 'u')
+        self.default_verb = 'list'
+
+
 class GatewayActionCommand(GroupCommand):
 
     def __init__(self):
         super(GatewayActionCommand, self).__init__()
         self.register_command('gateway-info', PAMGatewayActionServerInfoCommand(), 'Info command', 'i')
-        self.register_command('unreleased-discover', PAMGatewayActionDiscoverCommand(), 'Discover command')
+        self.register_command('discover', PAMDiscoveryCommand(), 'Discover command', 'd')
         self.register_command('rotate', PAMGatewayActionRotateCommand(), 'Rotate command', 'r')
         self.register_command('job-info', PAMGatewayActionJobCommand(), 'View Job details', 'ji')
         self.register_command('job-cancel', PAMGatewayActionJobCommand(), 'View Job details', 'jc')
+        self.register_command('debug', PAMDebugCommand(), 'PAM debug information')
 
         # self.register_command('job-list', DRCmdListJobs(), 'List Running jobs')
 
 
+class PAMDebugCommand(GroupCommand):
+
+    def __init__(self):
+        super(PAMDebugCommand, self).__init__()
+        self.register_command('info', PAMDebugInfoCommand(), 'Debug a record', 'i')
+        self.register_command('graph', PAMDebugGraphCommand(), 'Render graphs', 'g')
+        self.register_command('verify', PAMDebugVerifyCommand(), 'Verify graphs', 'v')
+        self.register_command('alter', PAMDebugAlterCommand(), 'Alter graph information', 'a')
+        self.register_command('acl', PAMDebugACLCommand(), 'Control ACL of PAM Users', 'c')
+        self.register_command('version', PAMDebugVersionCommand(), 'Version modules versions')
+
+
 class PAMCmdListJobs(Command):
     parser = argparse.ArgumentParser(prog='pam action job-list')
-    parser.add_argument('--jobId', '-j', required=False, dest='job_id', action='store',  help='ID of the Job running')
+    parser.add_argument('--jobId', '-j', required=False, dest='job_id', action='store', help='ID of the Job running')
 
     def get_parser(self):
         return PAMCmdListJobs.parser
@@ -495,19 +551,23 @@ class PAMListRecordRotationCommand(Command):
 
             record_uid = utils.base64_url_encode(s.recordUid)
             controller_uid = s.controllerUid
-            controller_details = next((ctr for ctr in enterprise_all_controllers if ctr.controllerUid == controller_uid), None)
+            controller_details = next(
+                (ctr for ctr in enterprise_all_controllers if ctr.controllerUid == controller_uid), None)
             configuration_uid = s.configurationUid
             configuration_uid_str = utils.base64_url_encode(configuration_uid)
-            pam_configuration = next((pam_config for pam_config in all_pam_config_records if pam_config.get('record_uid') == configuration_uid_str), None)
+            pam_configuration = next((pam_config for pam_config in all_pam_config_records if
+                                      pam_config.get('record_uid') == configuration_uid_str), None)
 
-            is_controller_online = any((poc for poc in enterprise_controllers_connected_uids_bytes if poc == controller_uid))
+            is_controller_online = any(
+                (poc for poc in enterprise_controllers_connected_uids_bytes if poc == controller_uid))
 
             row_color = ''
             if record_uid in params.record_cache:
                 row_color = bcolors.HIGHINTENSITYWHITE
                 rec = params.record_cache[record_uid]
 
-                data_json = rec['data_unencrypted'].decode('utf-8') if isinstance(rec['data_unencrypted'], bytes) else rec['data_unencrypted']
+                data_json = rec['data_unencrypted'].decode('utf-8') if isinstance(rec['data_unencrypted'], bytes) else \
+                    rec['data_unencrypted']
                 data = json.loads(data_json)
 
                 record_title = data.get('title')
@@ -556,7 +616,6 @@ class PAMListRecordRotationCommand(Command):
             else:
                 controller_stat_color = bcolors.WHITE
 
-
             controller_color = bcolors.WHITE
             if is_controller_online:
                 controller_color = bcolors.OKGREEN
@@ -573,7 +632,8 @@ class PAMListRecordRotationCommand(Command):
                 if not is_verbose:
                     row.append(f"{bcolors.FAIL}[No config found]{bcolors.ENDC}")
                 else:
-                    row.append(f"{bcolors.FAIL}[No config found. Looks like configuration {configuration_uid_str} was removed but rotation schedule was not modified{bcolors.ENDC}")
+                    row.append(
+                        f"{bcolors.FAIL}[No config found. Looks like configuration {configuration_uid_str} was removed but rotation schedule was not modified{bcolors.ENDC}")
 
             else:
                 pam_data_decrypted = pam_decrypt_configuration_data(pam_configuration)
@@ -597,8 +657,10 @@ class PAMListRecordRotationCommand(Command):
 
 class PAMGatewayListCommand(Command):
     parser = argparse.ArgumentParser(prog='dr-gateway')
-    parser.add_argument('--force', '-f', required=False, default=False, dest='is_force', action='store_true', help='Force retrieval of gateways')
-    parser.add_argument('--verbose', '-v', required=False, default=False, dest='is_verbose', action='store_true', help='Verbose output')
+    parser.add_argument('--force', '-f', required=False, default=False, dest='is_force', action='store_true',
+                        help='Force retrieval of gateways')
+    parser.add_argument('--verbose', '-v', required=False, default=False, dest='is_verbose', action='store_true',
+                        help='Verbose output')
 
     def get_parser(self):
         return PAMGatewayListCommand.parser
@@ -698,8 +760,8 @@ class PAMGatewayListCommand(Command):
             if is_verbose:
                 row.append(f'{row_color}{c.deviceName}{bcolors.ENDC}')
                 row.append(f'{row_color}{c.deviceToken}{bcolors.ENDC}')
-                row.append(f'{row_color}{datetime.fromtimestamp(c.created/1000)}{bcolors.ENDC}')
-                row.append(f'{row_color}{datetime.fromtimestamp(c.lastModified/1000)}{bcolors.ENDC}')
+                row.append(f'{row_color}{datetime.fromtimestamp(c.created / 1000)}{bcolors.ENDC}')
+                row.append(f'{row_color}{datetime.fromtimestamp(c.lastModified / 1000)}{bcolors.ENDC}')
                 row.append(f'{row_color}{c.nodeId}{bcolors.ENDC}')
 
             table.append(row)
@@ -726,9 +788,9 @@ class PAMConfigurationListCommand(Command):
         pam_configuration_uid = kwargs.get('pam_configuration')
         is_verbose = kwargs.get('verbose')
 
-        if not pam_configuration_uid:    # Print ALL root level configs
+        if not pam_configuration_uid:  # Print ALL root level configs
             PAMConfigurationListCommand.print_root_rotation_setting(params, is_verbose)
-        else:   # Print element configs (config that is not a root)
+        else:  # Print element configs (config that is not a root)
             PAMConfigurationListCommand.print_pam_configuration_details(params, pam_configuration_uid, is_verbose)
 
     @staticmethod
@@ -778,7 +840,7 @@ class PAMConfigurationListCommand(Command):
 
         configurations = list(vault_extensions.find_records(params, record_version=6))
         facade = PamConfigurationRecordFacade()
-        for c in configurations:   # type: vault.TypedRecord
+        for c in configurations:  # type: vault.TypedRecord
             if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamNetworkConfiguration'):
                 facade.record = c
                 shared_folder_parents = find_parent_top_folder(params, c.record_uid)
@@ -799,9 +861,11 @@ class PAMConfigurationListCommand(Command):
 
                     table.append(row)
                 else:
-                    logging.warning(f'Following configuration is not in the shared folder: UID: %s, Title: %s', c.record_uid, c.title)
+                    logging.warning(f'Following configuration is not in the shared folder: UID: %s, Title: %s',
+                                    c.record_uid, c.title)
             else:
-                logging.warning(f'Following configuration has unsupported type: UID: %s, Title: %s', c.record_uid, c.title)
+                logging.warning(f'Following configuration has unsupported type: UID: %s, Title: %s', c.record_uid,
+                                c.title)
 
         table.sort(key=lambda x: (x[1] or ''))
         dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
@@ -869,8 +933,8 @@ class PamConfigurationEditMixin(RecordEditMixin):
             field.value.append(dict())
         value = field.value[0]
 
-        gateway_uid = None   # type: Optional[str]
-        gateway = kwargs.get('gateway')   # type: Optional[str]
+        gateway_uid = None  # type: Optional[str]
+        gateway = kwargs.get('gateway')  # type: Optional[str]
         if gateway:
             gateways = gateway_helper.get_all_gateways(params)
             gateway_uid = next((utils.base64_url_encode(x.controllerUid) for x in gateways
@@ -887,8 +951,8 @@ class PamConfigurationEditMixin(RecordEditMixin):
         # if len(shares) == 0:
         #     raise Exception(f'Gateway %s has no shared folders', gateway.controllerName)
 
-        shared_folder_uid = None   # type: Optional[str]
-        folder_name = kwargs.get('shared_folder')    # type: Optional[str]
+        shared_folder_uid = None  # type: Optional[str]
+        folder_name = kwargs.get('shared_folder')  # type: Optional[str]
         if folder_name:
             if folder_name in params.shared_folder_cache:
                 shared_folder_uid = folder_name
@@ -991,7 +1055,7 @@ class PamConfigurationEditMixin(RecordEditMixin):
         if extra_properties:
             self.assign_typed_fields(record, [RecordEditMixin.parse_field(x) for x in extra_properties])
 
-    def verify_required(self, record):    # type: (vault.TypedRecord) -> None
+    def verify_required(self, record):  # type: (vault.TypedRecord) -> None
         for field in record.fields:
             if field.required:
                 if len(field.value) == 0:
@@ -1165,6 +1229,7 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
 
         for w in self.warnings:
             logging.warning(w)
+
         params.sync_data = True
 
 
@@ -1256,7 +1321,7 @@ class PAMRouterGetRotationInfo(Command):
 class PAMRouterScriptCommand(GroupCommand):
     def __init__(self):
         super().__init__()
-        self.register_command('list',  PAMScriptListCommand(), 'List script fields')
+        self.register_command('list', PAMScriptListCommand(), 'List script fields')
         self.register_command('add', PAMScriptAddCommand(), 'List Record Rotation Schedulers')
         self.register_command('edit', PAMScriptEditCommand(), 'Add, delete, or edit script field')
         self.register_command('delete', PAMScriptDeleteCommand(), 'Delete script field')
@@ -1386,7 +1451,7 @@ class PAMScriptEditCommand(Command):
         if not record_name:
             raise CommandError('rotate script', '"record" argument is required')
 
-        script_name = kwargs.get('script')   # type: Optional[str]
+        script_name = kwargs.get('script')  # type: Optional[str]
         if not script_name:
             raise CommandError('rotate script', '"script" argument is required')
 
@@ -1461,7 +1526,7 @@ class PAMScriptDeleteCommand(Command):
         if not record_name:
             raise CommandError('rotate script', '"record" argument is required')
 
-        script_name = kwargs.get('script')   # type: Optional[str]
+        script_name = kwargs.get('script')  # type: Optional[str]
         if not script_name:
             raise CommandError('rotate script', '"script" argument is required')
 
@@ -1508,7 +1573,6 @@ class PAMGatewayActionJobCancelCommand(Command):
         return PAMGatewayActionJobCancelCommand.parser
 
     def execute(self, params, **kwargs):
-
         job_id = kwargs.get('job_id')
 
         print(f"Job id to cancel [{job_id}]")
@@ -1535,7 +1599,6 @@ class PAMGatewayActionJobCommand(Command):
         return PAMGatewayActionJobCommand.parser
 
     def execute(self, params, **kwargs):
-
         job_id = kwargs.get('job_id')
         gateway_uid = kwargs.get('gateway_uid')
 
@@ -1561,6 +1624,7 @@ class PAMGatewayActionRotateCommand(Command):
     parser = argparse.ArgumentParser(prog='dr-rotate-command')
     parser.add_argument('--record-uid', '-r', required=True, dest='record_uid', action='store',
                         help='Record UID to rotate')
+
     # parser.add_argument('--config', '-c', required=True, dest='configuration_uid', action='store',
     #                                           help='Rotation configuration UID')
 
@@ -1593,7 +1657,8 @@ class PAMGatewayActionRotateCommand(Command):
         #     rule_list_json = crypto.decrypt_aes_v2(utils.base64_url_decode(ri_pwd_complexity_encrypted), record.record_key)
         #     complexity = json.loads(rule_list_json.decode())
 
-        ri_rotation_setting_uid = utils.base64_url_encode(ri.configurationUid)  # Configuration on the UI is "Rotation Setting"
+        ri_rotation_setting_uid = utils.base64_url_encode(
+            ri.configurationUid)  # Configuration on the UI is "Rotation Setting"
         resource_uid = utils.base64_url_encode(ri.resourceUid)
 
         pam_config = vault.KeeperRecord.load(params, ri_rotation_setting_uid)
@@ -1619,7 +1684,6 @@ class PAMGatewayActionRotateCommand(Command):
         else:
             print(f'{bcolors.WARNING}There are no connected gateways.{bcolors.ENDC}')
             return
-
 
         # rrs = RouterRotationStatus.Name(ri.status)
         # if rrs == 'RRS_NO_ROTATION':
@@ -1679,33 +1743,81 @@ class PAMGatewayActionServerInfoCommand(Command):
         print_router_response(router_response, response_type='gateway_info', is_verbose=is_verbose)
 
 
-class PAMGatewayActionDiscoverCommand(Command):
-    parser = argparse.ArgumentParser(prog='dr-discover-command')
-    parser.add_argument('--shared-folder', '-f', required=True, dest='shared_folder_uid', action='store',
-                        help='UID of the Shared Folder where results will be stored')
-    parser.add_argument('--provider-record', '-p', required=True, dest='provider_record_uid', action='store',
-                        help='Provider Record UID that defines network')
-    # parser.add_argument('--destinations', '-d', required=False, dest='destinations', action='store',
-    #                     help='Controller id')
+class PAMGatewayActionDiscoverCommandBase(Command):
 
-    def get_parser(self):
-        return PAMGatewayActionDiscoverCommand.parser
+    """
+    The discover command base.
 
-    def execute(self, params, **kwargs):
+    Contains static methods to get the configuration record, get and update the discovery store. These are method
+    used by multiple discover actions.
+    """
 
-        provider_record_uid = kwargs.get('provider_record_uid')
-        shared_folder_uid = kwargs.get('shared_folder_uid')
+    # If the discovery data field does not exist, or the field contains no values, use the template to init the
+    # field.
+    STORE_VALUE_TEMPLATE = {
+        "ignore_list": [],
+        "jobs": []
+    }
 
-        action_inputs = GatewayActionDiscoverInputs(shared_folder_uid, provider_record_uid)
-        conversation_id = GatewayAction.generate_conversation_id()
+    STORE_LABEL = "discoveryStore"
 
-        router_response = router_send_action_to_gateway(
-            params,
-            GatewayActionDiscover(inputs=action_inputs, conversation_id=conversation_id),
-            message_type=pam_pb2.CMT_GENERAL,
-            is_streaming=False)
+    @staticmethod
+    def get_configuration(params, configuration_uid):
 
-        print_router_response(router_response, conversation_id)
+        configuration_record = vault.KeeperRecord.load(params, configuration_uid)
+        if not isinstance(configuration_record, vault.TypedRecord):
+            print(f'{bcolors.FAIL}PAM Configuration [{configuration_uid}] is not available.{bcolors.ENDC}')
+            return
+
+        configuration_facade = PamConfigurationRecordFacade()
+        configuration_facade.record = configuration_record
+
+        return configuration_record, configuration_facade
+
+    @staticmethod
+    def get_discovery_store(configuration_record):
+
+        # Get the discovery store. It contains information about discovery job for a configuration. It is on the custom
+        # fields.
+        discovery_field = None
+        if configuration_record.custom is not None:
+            discovery_field = next((field
+                                    for field in configuration_record.custom
+                                    if field.label == PAMGatewayActionDiscoverCommandBase.STORE_LABEL),
+                                   None)
+
+        discovery_field_exists = True
+        if discovery_field is None:
+            logging.debug("discovery store field does not exists, creating")
+            discovery_field = TypedField.new_field("_hidden",
+                                                   [PAMGatewayActionDiscoverCommandBase.STORE_VALUE_TEMPLATE],
+                                                   PAMGatewayActionDiscoverCommandBase.STORE_LABEL)
+            discovery_field_exists = False
+        else:
+            logging.debug("discovery store record exists")
+
+        # The value should not be [], if it is, init with the defaults.
+        if len(discovery_field.value) == 0:
+            logging.debug("discovery store does not have a value, set to the default value")
+            discovery_field.value = [PAMGatewayActionDiscoverCommandBase.STORE_VALUE_TEMPLATE]
+
+        # TODO - REMOVE ME, this is just so we have one job
+        # discovery_field.value = [PAMGatewayActionDiscoverCommandBase.STORE_VALUE_TEMPLATE]
+
+        return discovery_field.value[0], discovery_field, discovery_field_exists
+
+    @staticmethod
+    def update_discovery_store(params, configuration_record, discovery_store, discovery_field, discovery_field_exists):
+
+        discovery_field.value = [discovery_store]
+        if discovery_field_exists is False:
+            if configuration_record.custom is None:
+                configuration_record.custom = []
+            configuration_record.custom.append(discovery_field)
+
+        # Update the record here to prevent a race-condition
+        record_management.update_record(params, configuration_record)
+        params.sync_data = True
 
 
 class PAMGatewayRemoveCommand(Command):
@@ -1731,7 +1843,6 @@ class PAMGatewayRemoveCommand(Command):
 
 
 class PAMCreateGatewayCommand(Command):
-
     dr_create_controller_parser = argparse.ArgumentParser(prog='dr-create-gateway')
     dr_create_controller_parser.add_argument('--name', '-n', required=True, dest='gateway_name',
                                              help='Name of the Gateway',
@@ -1746,7 +1857,8 @@ class PAMCreateGatewayCommand(Command):
     dr_create_controller_parser.add_argument('--return_value', '-r', dest='return_value', action='store_true',
                                              help='Return value from the command for automation purposes')
     dr_create_controller_parser.add_argument('--config-init', '-c', type=str, dest='config_init', action='store',
-                                             choices=['json', 'b64'], help='Initialize client config and return configuration string.')  # json, b64, file
+                                             choices=['json', 'b64'],
+                                             help='Initialize client config and return configuration string.')  # json, b64, file
 
     def get_parser(self):
         return PAMCreateGatewayCommand.dr_create_controller_parser
