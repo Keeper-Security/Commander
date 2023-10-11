@@ -3303,7 +3303,7 @@ class TeamApproveCommand(EnterpriseCommand):
         request_batch.clear()
         if approve_users and 'queued_team_users' in params.enterprise and \
                 'teams' in params.enterprise and 'users' in params.enterprise:
-            active_users = {}
+            active_users = {}    # type: Dict[int, str]
             for u in params.enterprise['users']:
                 if u['status'] == 'active' and u['lock'] == 0:
                     active_users[u['enterprise_user_id']] = u['username']
@@ -3312,25 +3312,54 @@ class TeamApproveCommand(EnterpriseCommand):
             for t in params.enterprise['teams']:
                 teams[t['team_uid']] = t
 
+            # load team and user keys
+            team_keys = {}   # type: Dict[str, Optional[bytes]]
+            user_keys = {}   # type: Dict[str, Any]
             for qtu in params.enterprise['queued_team_users']:
                 team_uid = qtu['team_uid']
-                if team_uid in teams:
-                    if 'users' in qtu:
-                        for u_id in qtu['users']:
-                            if u_id not in active_users:
-                                continue
-                            rq = {
-                                'command': 'team_enterprise_user_add',
-                                'team_uid': team_uid,
-                                'enterprise_user_id': u_id,
-                            }
-                            team_key = self.get_team_key(params, team_uid)
-                            public_key = self.get_public_key(params, active_users[u_id])
+                if team_uid not in teams:
+                    continue
+                if 'users' in qtu:
+                    for u_id in qtu['users']:
+                        email = active_users.get(u_id)
+                        if email:
+                            email = email.lower()
+                            if team_uid not in team_keys:
+                                team_keys[team_uid] = None
+                            if email not in user_keys:
+                                user_keys[email] = None
+
+            self.get_team_keys(params, team_keys)
+            self.get_public_keys(params, user_keys)
+
+            if len(team_keys) > 0 and len(user_keys) > 0:
+                for qtu in params.enterprise['queued_team_users']:
+                    team_uid = qtu['team_uid']
+                    team_key = team_keys.get(team_uid)
+                    if not team_key:
+                        continue
+                    for u_id in qtu.get('users') or []:
+                        email = active_users.get(u_id)
+                        if not email:
+                            continue
+                        email = email.lower()
+                        public_key =  user_keys.get(email)
+                        if not public_key:
+                            continue
+                        rq = {
+                            'command': 'team_enterprise_user_add',
+                            'team_uid': team_uid,
+                            'enterprise_user_id': u_id,
+                        }
+                        try:
                             encrypted_team_key = crypto.encrypt_rsa(team_key, public_key)
-                            if team_key and public_key:
-                                rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
-                                rq['user_type'] = 0
-                                request_batch.append(rq)
+                            rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
+                            rq['user_type'] = 0
+                            request_batch.append(rq)
+                        except Exception as e:
+                            logging.warning('Cannot approve user \"%s\" to team \"%s\": %s', email, team_uid, e)
+                            continue
+
             if request_batch:
                 if not kwargs.get('dry_run'):
                     rs = api.execute_batch(params, request_batch)
