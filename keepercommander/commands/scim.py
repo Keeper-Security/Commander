@@ -970,7 +970,7 @@ class ScimPushCommand(EnterpriseCommand):
         group_lookup = {x['id']: x['name'] for x in groups['groups']}
 
         if scim_group:
-            group_id = next((g_id for g_id, g_name in group_lookup.items()), None)
+            group_id = next((g_id for g_id, g_name in group_lookup.items() if g_id == scim_group or g_name == scim_group), None)
             if not group_id:
                 raise CommandError('', f'Google Workspace: group "{scim_group}" not found')
             del group_lookup[group_id]
