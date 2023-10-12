@@ -24,11 +24,13 @@ from collections import OrderedDict as OD
 from typing import Optional, Any
 from typing import Set, Dict, Union, List
 
+import requests
 from asciitree import LeftAligned
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from keepercommander.attachment import FileUploadTask
 
 from . import aram, audit_alerts, security_audit
 from . import compliance
@@ -135,6 +137,8 @@ enterprise_node_parser.add_argument('--delete', dest='delete', action='store_tru
 enterprise_node_parser.add_argument('--toggle-isolated', dest='toggle_isolated', action='store_true', help='Render node invisible')
 enterprise_node_parser.add_argument('--invite-email', dest='invite_email', action='store',
                                     help='Sets invite email template from file. Saves current template if file does not exist. dash (-) use stdout')
+enterprise_node_parser.add_argument('--logo-file', dest='logo_file', action='store',
+                                    help='Sets company logo using local image file (max size: 500 kB, min dimensions: 10x10, max dimensions: 320x320)')
 enterprise_node_parser.add_argument('node', type=str, nargs='+', help='Node Name or ID. Can be repeated.')
 enterprise_node_parser.error = raise_parse_exception
 enterprise_node_parser.exit = suppress_exit
@@ -873,6 +877,54 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                     nodes.append(node['node_id'])
             index += 1
 
+    @staticmethod
+    def set_logo(params, node, logo_fp, logo_type):
+        upload_task = FileUploadTask(logo_fp)
+        upload_task.prepare()
+        # Check file MIME-type and size
+        if upload_task.mime_type not in {'image/jpeg', 'image/png', 'image/gif'}:
+            raise Exception('File must be a JPEG, PNG, or GIF image')
+        if upload_task.size > 500000:
+            raise Exception('Filesize must be less than 500 kB')
+        rq = {
+            'command': f'request_{logo_type}_logo_upload',
+            'node_id': node['node_id']
+        }
+        rs = api.communicate(params, rq)
+        # Construct POST request for upload
+        upload_id = rs.get('upload_id')
+        upload_url = rs.get('url')
+        success_status_code = rs.get('success_status_code')
+        file_param = rs.get('file_parameter')
+        form_data = rs.get('parameters')
+        form_data['Content-Type'] = upload_task.mime_type
+        with upload_task.open() as task_stream:
+            files = {file_param: (None, task_stream, upload_task.mime_type)}
+            upload_rs = requests.post(upload_url, files=files, data=form_data)
+            if upload_rs.status_code == success_status_code:
+                # Verify file upload
+                check_rq = {
+                    'command': f'check_{logo_type}_logo_upload',
+                    'node_id': node['node_id'],
+                    'upload_id': upload_id
+                }
+                while True:
+                    check_rs = api.communicate(params, check_rq)
+                    check_status = check_rs.get('status')
+                    if check_status == 'pending':
+                        time.sleep(2)
+                    else:
+                        if check_status != 'active':
+                            if check_status == 'invalid_dimensions':
+                                raise Exception('Image dimensions must be between 10x10 and 320x320')
+                            else:
+                                raise Exception(f'Upload status = {check_status}')
+                        else:
+                            logging.info(f'File "{logo_fp}" set as {logo_type} logo.')
+                            break
+            else:
+                raise Exception(f'HTTP status code: {upload_rs.status_code}, expected {success_status_code}')
+
     def execute(self, params, **kwargs):
         if kwargs.get('delete') and kwargs.get('add'):
             raise CommandError('enterprise-node', "'add' and 'delete' parameters are mutually exclusive.")
@@ -1087,6 +1139,18 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                     else:
                         for line in lines:
                             print(line)
+
+            logo_file = kwargs.get('logo_file')
+            if isinstance(logo_file, str) and logo_file:
+                if len(matched_nodes) != 1:
+                    raise CommandError('enterprise-node', 'Logo can only be set for one node at a time')
+                node = matched_nodes[0]
+                logo_types = {'email', 'vault'}
+                try:
+                    for logo_type in logo_types:
+                        self.set_logo(params, node, logo_file, logo_type)
+                except Exception as e:
+                    logging.warning(f'Error uploading logo: {e}')
 
             if kwargs.get('delete'):
                 depths = {}
