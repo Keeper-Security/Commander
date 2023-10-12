@@ -9,6 +9,7 @@ import secrets
 import socket
 import ssl
 import string
+from asyncio import StreamWriter
 from typing import Optional, Dict, Tuple
 
 from cryptography import x509
@@ -24,6 +25,17 @@ from keepercommander.display import bcolors
 from .tunnel import ITunnel
 
 BUFFER_TRUNCATION_THRESHOLD = 16 * 1024
+NON_PARED_BUFFER_TRUNCATION_THRESHOLD = 100
+CONTROL_MESSAGE_NO_LENGTH = HMAC_MESSAGE_LENGTH = 2
+CONNECTION_NO_LENGTH = DATA_LENGTH = 4
+
+
+class HMACHandshakeFailedException(Exception):
+    pass
+
+
+class ConnectionNotFoundException(Exception):
+    pass
 
 
 class ControlMessage(enum.IntEnum):
@@ -44,6 +56,10 @@ def generate_random_bytes(pass_length: int = 32) -> bytes:
 
     # Convert the list of bytes back to bytes
     filtered_bytes = bytes(printable_bytes)
+    if len(filtered_bytes) < pass_length:
+        # If the length of the filtered bytes is less than the requested length, call the function recursively
+        # to generate more bytes
+        return filtered_bytes + generate_random_bytes(pass_length - len(filtered_bytes))
 
     return filtered_bytes
 
@@ -117,8 +133,8 @@ def find_open_port(tried_ports: [], start_port=49152, end_port=65535, preferred_
                 print(e)
                 return None
 
-    # Iterate over the range of port numbers
-    available_ports = [port for port in range(start_port, end_port) if port not in tried_ports]
+    # Iterate over the range of port numbers. +1 to include the end_port
+    available_ports = [port for port in range(start_port, end_port+1) if port not in tried_ports]
     if len(available_ports) == 0:
         return None
     for port in available_ports:
@@ -249,7 +265,8 @@ class TunnelProtocol(abc.ABC):
         self._ping_attempt = 0
         while self.tunnel.is_connected:
             try:
-                buffer = await self.tunnel.read(BUFFER_TRUNCATION_THRESHOLD if self._paired else 100)
+                buffer = await self.tunnel.read(BUFFER_TRUNCATION_THRESHOLD if self._paired
+                                                else NON_PARED_BUFFER_TRUNCATION_THRESHOLD)
                 self.logger.debug(f"Endpoint {self.endpoint_name}: Received data from tunnel: \n{buffer}\n")
             except asyncio.TimeoutError as e:
                 if self._ping_attempt > 3:
@@ -264,7 +281,7 @@ class TunnelProtocol(abc.ABC):
                 continue
             except Exception as e:
                 self.logger.warning('Endpoint %s: Failed to read from tunnel: %s', self.endpoint_name, e)
-                raise e
+                break
 
             if not self.tunnel.is_connected:
                 break
@@ -274,19 +291,20 @@ class TunnelProtocol(abc.ABC):
 
             while len(buffer) > 0:
                 is_packet_valid = True
-                if len(buffer) >= 8:
+                if len(buffer) >= CONNECTION_NO_LENGTH + DATA_LENGTH:
                     # At this stage we have two connections. 0 is for control messages and 1 is for data
-                    connection_no = int.from_bytes(buffer[:4], byteorder='big')
-                    length = int.from_bytes(buffer[4:8], byteorder='big')
-                    buffer = buffer[8:]
+                    connection_no = int.from_bytes(buffer[:CONNECTION_NO_LENGTH], byteorder='big')
+                    length = int.from_bytes(buffer[CONNECTION_NO_LENGTH:CONNECTION_NO_LENGTH+DATA_LENGTH],
+                                            byteorder='big')
+                    buffer = buffer[CONNECTION_NO_LENGTH+DATA_LENGTH:]
                     if length <= len(buffer):
                         data = buffer[:length]
                         buffer = buffer[length:]
                         if connection_no == 0:
                             # This is a control message
-                            if len(data) >= 2:
-                                message_no = int.from_bytes(data[:2], byteorder='big')
-                                data = data[2:]
+                            if len(data) >= CONTROL_MESSAGE_NO_LENGTH:
+                                message_no = int.from_bytes(data[:CONTROL_MESSAGE_NO_LENGTH], byteorder='big')
+                                data = data[CONTROL_MESSAGE_NO_LENGTH:]
                                 if is_packet_valid:
                                     await self.process_control_message(ControlMessage(message_no), data)
                             else:
@@ -304,8 +322,8 @@ class TunnelProtocol(abc.ABC):
                     buffer = ''
 
     async def _send_to_tunnel(self, connection_no: int, data: bytes) -> None:
-        buffer = int.to_bytes(connection_no, 4, byteorder='big')
-        buffer += int.to_bytes(len(data), 4, byteorder='big')
+        buffer = int.to_bytes(connection_no, CONNECTION_NO_LENGTH, byteorder='big')
+        buffer += int.to_bytes(len(data), DATA_LENGTH, byteorder='big')
         buffer += data
         self.logger.debug(f"Sending data to tunnel: \n{buffer}\n")
 
@@ -326,7 +344,8 @@ class TunnelProtocol(abc.ABC):
                                     self.endpoint_name, message_no)
                 return
 
-        buffer = int.to_bytes(message_no, 2, byteorder='big') + buffer
+        buffer = int.to_bytes(message_no, CONTROL_MESSAGE_NO_LENGTH, byteorder='big') + buffer
+        # Control messages are sent through connection 0
         await self._send_to_tunnel(0, buffer)
 
     async def read_connection(self):
@@ -361,7 +380,7 @@ class TunnelProtocol(abc.ABC):
         elif message_no == ControlMessage.SharePublicKey:
             try:
                 #  It will need to contain the public_tunnel_port
-                self.public_tunnel_port = int.from_bytes(data[:2], byteorder='big')
+                self.public_tunnel_port = int.from_bytes(data[:CONTROL_MESSAGE_NO_LENGTH], byteorder='big')
                 # Check if port is open
                 tmp_port = find_open_port(tried_ports=self.ports_tried, preferred_port=self.public_tunnel_port)
                 if tmp_port is None:
@@ -386,7 +405,7 @@ class TunnelProtocol(abc.ABC):
                     tls_public_key = \
                         'BMh+qwlw84vD31go1Q+YYui0Wfb+6+YEpZQolY/oJ7u+RFyF7ptZtHtVN8Ijba5bFQEQIIHFho8/WYWCyo/0fQo='
 
-                    received_cert = bytes_to_string(data[2:])
+                    received_cert = bytes_to_string(data[CONTROL_MESSAGE_NO_LENGTH:])
 
                     is_trusted = verify_tls_certificate(received_cert, tls_public_key)
 
@@ -484,7 +503,7 @@ class PlainTextForwarder:
 
         # Split the received_data into message and HMAC using the delimiter
         received_parts = received_data.split(b'\n')
-        if len(received_parts) == 2:
+        if len(received_parts) == HMAC_MESSAGE_LENGTH:
             received_message, received_hmac = received_parts
 
             received_hmac = base64_to_bytes(received_hmac)
@@ -611,8 +630,8 @@ class PrivateTunnelEntrance:
 
     async def send_control_message(self, message_no: ControlMessage, data: Optional[bytes] = None) -> None:
         buffer = data if data is not None else b''
-        data = int.to_bytes(0, 4, byteorder='big')
-        data += int.to_bytes(message_no, 2, byteorder='big')
+        data = int.to_bytes(0, CONNECTION_NO_LENGTH, byteorder='big')
+        data += int.to_bytes(message_no, CONTROL_MESSAGE_NO_LENGTH, byteorder='big')
         data += buffer
         try:
             self.tls_writer.write(data)
@@ -620,7 +639,7 @@ class PrivateTunnelEntrance:
         except Exception as e:
             self.logger.error(f"Endpoint {self.endpoint_name}: Error while sending private control message: {e}")
 
-    async def process_control_message(self, message_no: ControlMessage, data: bytes):
+    async def process_control_message(self, message_no: ControlMessage, data: bytes) -> None:
         if message_no == ControlMessage.CloseConnection:
             if data and len(data) > 0:
                 target_connection_no = int.from_bytes(data, byteorder='big')
@@ -635,93 +654,56 @@ class PrivateTunnelEntrance:
         else:
             self.logger.warning('Unknown private tunnel control message: %d', message_no)
 
-    async def start_tls_reader(self):
+    async def forward_data_to_local(self):
+        try:
+            self.private_tunnel_event.set()
+            self.logger.debug(f"Endpoint {self.endpoint_name}: Forwarding private data to local...")
+            while True:
+                data = await self.tls_reader.read(BUFFER_TRUNCATION_THRESHOLD)  # Adjust buffer size as needed
+                self.logger.debug(f"Endpoint {self.endpoint_name}: Got private data from tls server "
+                                  f"{len(data)} bytes)")
+                if not data or not self.is_connected:
+                    break
+                if len(data) >= CONNECTION_NO_LENGTH:
+                    con_no = int.from_bytes(data[:CONNECTION_NO_LENGTH], byteorder='big')
+                    if con_no == 0:
+                        # This is a control message
+                        control_m = ControlMessage(int.from_bytes(data[CONNECTION_NO_LENGTH:
+                                                                       CONNECTION_NO_LENGTH + CONTROL_MESSAGE_NO_LENGTH],
+                                                                  byteorder='big'))
+                        data = data[CONNECTION_NO_LENGTH + CONTROL_MESSAGE_NO_LENGTH:]
+                        await self.process_control_message(control_m, data)
+                    else:
+                        if con_no in self.connections:
+                            _, con_writer = self.connections[con_no]
+                            try:
+                                data = data[CONNECTION_NO_LENGTH:]
+                                self.logger.debug(f"Endpoint {self.endpoint_name}: Forwarding private data to "
+                                                  f"local for connection {con_no} ({len(data)})")
+                                con_writer.write(data)
+                                await con_writer.drain()
+                            except Exception as ex:
+                                self.logger.error(f"Endpoint {self.endpoint_name}: Error while forwarding "
+                                                  f"private data to local: {ex}")
+            self.logger.debug(f"Endpoint {self.endpoint_name}: Exiting forward private data successfully.")
+        except asyncio.CancelledError:
+            pass
+
+        except Exception as ex:
+            self.logger.error(f"Endpoint {self.endpoint_name}: Error while forwarding private data: {ex}")
+
+    async def start_tls_reader(self) -> None:
         """
         Connect to the TLS server on the gateway.
         Transfer data from TLS connection to local connections.
         """
-        async def forward_data_to_local():
-            try:
-                self.private_tunnel_event.set()
-                self.logger.debug(f"Endpoint {self.endpoint_name}: Forwarding private data to local...")
-                while True:
-                    data = await self.tls_reader.read(BUFFER_TRUNCATION_THRESHOLD)  # Adjust buffer size as needed
-                    self.logger.debug(f"Endpoint {self.endpoint_name}: Got private data from tls server "
-                                      f"{len(data)} bytes)")
-                    if not data or not self.is_connected:
-                        break
-                    if len(data) >= 4:
-                        con_no = int.from_bytes(data[:4], byteorder='big')
-                        if con_no == 0:
-                            # This is a control message
-                            control_m = ControlMessage(int.from_bytes(data[4:6], byteorder='big'))
-                            data = data[6:]
-                            await self.process_control_message(control_m, data)
-                        else:
-                            if con_no in self.connections:
-                                _, con_writer = self.connections[con_no]
-                                try:
-                                    data = data[4:]
-                                    self.logger.debug(f"Endpoint {self.endpoint_name}: Forwarding private data to "
-                                                      f"local for connection {con_no} ({len(data)})")
-                                    con_writer.write(data)
-                                    await con_writer.drain()
-                                except Exception as ex:
-                                    self.logger.error(f"Endpoint {self.endpoint_name}: Error while forwarding "
-                                                      f"private data to local: {ex}")
-                self.logger.debug(f"Endpoint {self.endpoint_name}: Exiting forward private data successfully.")
-            except asyncio.CancelledError:
-                pass
-
-            except Exception as ex:
-                self.logger.error(f"Endpoint {self.endpoint_name}: Error while forwarding private data: {ex}")
-
+        failed = False
         try:
             # Establish a regular TCP connection to the server
             self.tls_reader, writer = await asyncio.open_connection('localhost', self.public_tunnel_port)
-
-            message = b'C>S,Hello, World!' + generate_random_bytes()
-            # Calculate HMAC
-            hmac_value = hmac.new(self.tunnel_symmetric_key, message, hashlib.sha256).digest()
-            # Combine message and HMAC with a delimiter
-            message_to_send = message + b'\n' + bytes_to_base64(hmac_value).encode()
-            writer.write(message_to_send)
-            await writer.drain()
-            received_data = await self.tls_reader.read(BUFFER_TRUNCATION_THRESHOLD)
-            # Split the received_data into message and HMAC using the delimiter
-            received_parts = received_data.split(b'\n')
-            if len(received_parts) == 2:
-                received_message, received_hmac = received_parts
-
-                received_hmac = base64_to_bytes(received_hmac)
-                # Now you have both the message and the HMAC
-
-                # Calculate HMAC for received_message
-                calculated_hmac = hmac.new(self.tunnel_symmetric_key, received_message, hashlib.sha256).digest()
-
-                # Compare the calculated HMAC with the received HMAC
-                if calculated_hmac != received_hmac:
-                    self.logger.error(f"Endpoint {self.endpoint_name}: Failed to connect to forwarder got "
-                                      f"{calculated_hmac} should have been {received_hmac}")
-                    return
-            else:
-                self.logger.error(f"Endpoint {self.endpoint_name}: Failed to connect to forwarder got {received_parts}")
-                return
-
-            self.logger.debug(f"Endpoint {self.endpoint_name}: Connection to forwarder accepted")
-            # https://github.com/python/cpython/issues/96972
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = True
-            ssl_context.verify_mode = ssl.CERT_REQUIRED
-            ssl_context.load_verify_locations(cadata=self.cert)
-            # Establish a connection to localhost:server_port
-            logging.debug(f"Endpoint {self.endpoint_name}: SSL context made")
-            # Establish a connection to the TLS server on the gateway
-            self.logger.debug(f"Endpoint {self.endpoint_name}: Attempting to establish TLS connection...")
-            await writer.start_tls(ssl_context, server_hostname='localhost')
-            self.logger.debug(f"Endpoint {self.endpoint_name}: TLS connection established successfully.")
-            self.tls_writer = writer
-            asyncio.create_task(forward_data_to_local())  # From TLS server to local connections
+            writer = await self.perform_hmac_handshakes(writer)
+            self.tls_writer = await self.perform_ssl_handshakes(writer)
+            asyncio.create_task(self.forward_data_to_local())  # From TLS server to local connections
 
             # Send hello world open connection message
             await self.send_control_message(ControlMessage.Ping)
@@ -729,19 +711,78 @@ class PrivateTunnelEntrance:
 
         except ConnectionRefusedError:
             self.logger.error(f"Endpoint {self.endpoint_name}: TLS Connection refused. Ensure the server is running.")
+            failed = True
         except TimeoutError:
             self.logger.error(f"Endpoint {self.endpoint_name}: TLS Connection timed out. Check the server and network.")
+            failed = True
         except OSError as es:
             self.logger.error(f"Endpoint {self.endpoint_name}: TLS Error connecting: {es}")
+            failed = True
+        except HMACHandshakeFailedException as eh:
+            self.logger.error(f"Endpoint {self.endpoint_name}: HMAC Handshake failed: {eh}")
+            failed = True
         except Exception as e:
             self.logger.error(f"Endpoint {self.endpoint_name}: Error while establishing TLS connection: {e}")
-            for connection_no in self.connections:
-                await self.close_connection(connection_no)
-            await self.stop_server()
-            self.is_connected = False
+            failed = True
+        finally:
+            if failed:
+                for connection_no in self.connections:
+                    await self.close_connection(connection_no)
+                await self.stop_server()
+                self.is_connected = False
             return
 
-    async def forward_data_to_tunnel(self, con_no):
+    async def perform_hmac_handshakes(self, writer: StreamWriter) -> StreamWriter:
+        """
+        Perform the handshake with the TLS server on the gateway as well as the HMAC handshake
+        """
+
+        message = b'C>S,Hello, World!' + generate_random_bytes()
+        # Calculate HMAC
+        hmac_value = hmac.new(self.tunnel_symmetric_key, message, hashlib.sha256).digest()
+        # Combine message and HMAC with a delimiter
+        message_to_send = message + b'\n' + bytes_to_base64(hmac_value).encode()
+        writer.write(message_to_send)
+        await writer.drain()
+        received_data = await self.tls_reader.read(BUFFER_TRUNCATION_THRESHOLD)
+        # Split the received_data into message and HMAC using the delimiter
+        received_parts = received_data.split(b'\n')
+        if len(received_parts) == HMAC_MESSAGE_LENGTH:
+            received_message, received_hmac = received_parts
+
+            received_hmac = base64_to_bytes(received_hmac)
+            # Now you have both the message and the HMAC
+
+            # Calculate HMAC for received_message
+            calculated_hmac = hmac.new(self.tunnel_symmetric_key, received_message, hashlib.sha256).digest()
+
+            # Compare the calculated HMAC with the received HMAC
+            if calculated_hmac != received_hmac:
+                self.logger.error(f"Endpoint {self.endpoint_name}: Failed to connect to forwarder got "
+                                  f"{calculated_hmac} should have been {received_hmac}")
+                raise HMACHandshakeFailedException("HMAC handshake failed")
+        else:
+            self.logger.error(f"Endpoint {self.endpoint_name}: Failed to connect to forwarder got {received_parts}")
+            raise HMACHandshakeFailedException("Handshake failed. Invalid message")
+
+        self.logger.debug(f"Endpoint {self.endpoint_name}: Connection to forwarder accepted")
+        return writer
+
+    async def perform_ssl_handshakes(self, writer: StreamWriter) -> StreamWriter:
+        # https://github.com/python/cpython/issues/96972
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = True
+        ssl_context.verify_mode = ssl.CERT_REQUIRED
+        ssl_context.load_verify_locations(cadata=self.cert)
+        # Establish a connection to localhost:server_port
+        logging.debug(f"Endpoint {self.endpoint_name}: SSL context made")
+        # Establish a connection to the TLS server on the gateway
+        self.logger.debug(f"Endpoint {self.endpoint_name}: Attempting to establish TLS connection...")
+        await writer.start_tls(ssl_context, server_hostname='localhost')
+        self.logger.debug(f"Endpoint {self.endpoint_name}: TLS connection established successfully.")
+        return writer
+
+    async def forward_data_to_tunnel(self, con_no) -> None:
         """
         Forward data from the given connection to the TLS connection
         """
@@ -759,7 +800,7 @@ class PrivateTunnelEntrance:
                         if len(data) == 0 and reader.at_eof():
                             break
                         else:
-                            data = int.to_bytes(con_no, 4, byteorder='big') + data
+                            data = int.to_bytes(con_no, CONNECTION_NO_LENGTH, byteorder='big') + data
                             self.tls_writer.write(data)
                             await self.tls_writer.drain()
                 except asyncio.TimeoutError as e:
@@ -779,15 +820,18 @@ class PrivateTunnelEntrance:
                 except Exception as e:
                     self.logger.debug(f"Endpoint {self.endpoint_name}: Private connection '{con_no}' read failed: {e}")
                     break
-            pass  # Handle task cancellation
         except Exception as e:
             self.logger.error(f"Endpoint {self.endpoint_name}: Error while forwarding private data in connection "
                               f"{con_no}: {e}")
 
-        # Send close connection message with con_no
-        await self.send_control_message(ControlMessage.CloseConnection, int.to_bytes(con_no, 4, byteorder='big'))
+        if con_no not in self.connections:
+            raise ConnectionNotFoundException(f"Connection {con_no} not found")
 
-    async def handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        # Send close connection message with con_no
+        await self.send_control_message(ControlMessage.CloseConnection, int.to_bytes(con_no, CONNECTION_NO_LENGTH,
+                                                                                     byteorder='big'))
+
+    async def handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """
         This is called when a client connects to the local port starting a new session.
         """
@@ -799,11 +843,16 @@ class PrivateTunnelEntrance:
 
         # Send open connection message with con_no. this is required to be sent to start the connection
         await self.send_control_message(ControlMessage.OpenConnection,
-                                        int.to_bytes(connection_no, 4, byteorder='big'))
+                                        int.to_bytes(connection_no, CONNECTION_NO_LENGTH, byteorder='big'))
 
         self.logger.debug(f"Endpoint {self.endpoint_name}: Starting private reader for connection {connection_no}")
-        asyncio.create_task(self.forward_data_to_tunnel(connection_no))  # From current connection to TLS server
-        self.logger.debug(f"Endpoint {self.endpoint_name}: Started private reader for connection {connection_no}")
+        try:
+            asyncio.create_task(self.forward_data_to_tunnel(connection_no))  # From current connection to TLS server
+            self.logger.debug(f"Endpoint {self.endpoint_name}: Started private reader for connection {connection_no}")
+        except ConnectionNotFoundException as e:
+            self.logger.error(f"Endpoint {self.endpoint_name}: Connection {connection_no} not found: {e}")
+        except Exception as e:
+            self.logger.error(f"Endpoint {self.endpoint_name}: Error while forwarding private data: {e}")
 
     @property
     def port(self) -> int:
@@ -816,7 +865,7 @@ class PrivateTunnelEntrance:
         return 0
 
     async def start_server(self, forwarder_event: asyncio.Event, private_tunnel_event: asyncio.Event,
-                           private_tunnel_started: asyncio.Event):
+                           private_tunnel_started: asyncio.Event) -> None:
         """
         This server is used to listen for client connections to the local port.
         """
@@ -827,14 +876,14 @@ class PrivateTunnelEntrance:
             asyncio.create_task(self.print_ready(self.host, self.port, forwarder_event, private_tunnel_event))
             await self.server.serve_forever()
 
-    async def print_not_ready(self):
+    async def print_not_ready(self) -> None:
         print(f'{bcolors.FAIL}+---------------------------------------------------------{bcolors.ENDC}')
         print(f'{bcolors.FAIL}| Endpoint {self.endpoint_name}{bcolors.ENDC} failed to start')
         print(f'{bcolors.FAIL}+---------------------------------------------------------{bcolors.ENDC}')
         await self.send_control_message(ControlMessage.CloseConnection, int_to_bytes(0))
 
     async def print_ready(self, host: str, port: int, forwarder_event: asyncio.Event,
-                          private_tunnel_event: asyncio.Event):
+                          private_tunnel_event: asyncio.Event) -> None:
         """
         pretty prints the endpoint name and host:port after the tunnels are set up
         """
@@ -842,6 +891,7 @@ class PrivateTunnelEntrance:
             await asyncio.wait_for(forwarder_event.wait(), timeout=5)
         except asyncio.TimeoutError:
             self.logger.debug(f"Endpoint {self.endpoint_name}: Timed out waiting for forwarder to start")
+            await self.print_not_ready()
             return
         try:
             await asyncio.wait_for(private_tunnel_event.wait(), timeout=60)
@@ -864,13 +914,13 @@ class PrivateTunnelEntrance:
             f'{bcolors.BOLD}{bcolors.OKBLUE}{host}{port}{bcolors.ENDC}')
         print(f'{bcolors.OKGREEN}+---------------------------------------------------------{bcolors.ENDC}')
 
-    async def stop_server(self):
+    async def stop_server(self) -> None:
         if self.server:
             self.server.close()
             await self.server.wait_closed()
             self.logger.info(f"Endpoint {self.endpoint_name}: Local server stopped")
 
-    async def close_connection(self, connection_no):
+    async def close_connection(self, connection_no) -> None:
         if connection_no in self.connections:
             reader, writer = self.connections[connection_no]
             writer.close()
