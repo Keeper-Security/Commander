@@ -35,7 +35,7 @@ from .importer import (importer_for_format, exporter_for_format, path_components
                        SharedFolder as ImportSharedFolder, Permission as ImportPermission, BytesAttachment,
                        Attachment as ImportAttachment, RecordSchemaField, File as ImportFile, Team as ImportTeam,
                        RecordReferences, FIELD_TYPE_ONE_TIME_CODE)
-from .. import api, sync_down, utils, crypto, vault, vault_extensions
+from .. import api, sync_down, utils, crypto, vault, vault_extensions, record_types
 from ..commands import base
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError
@@ -135,7 +135,7 @@ def convert_keeper_record(record, has_attachments=False):
         return
 
     version = record.get('version') or 2
-    if type(version) != int:
+    if not isinstance(version, int):
         try:
             version = int(version)
         except:
@@ -192,15 +192,15 @@ def convert_keeper_record(record, has_attachments=False):
         custom = data.get('custom') if 'custom' in data else []
         for field in itertools.chain(fields, custom):
             field_value = field.get('value') or ''
-            if type(field_value) is list and len(field_value) == 1:
+            if isinstance(field_value, list) and len(field_value) == 1:
                 field_value = field_value[0]
             field_type = field.get('type') or ''
 
-            if field_type == 'login' and not rec.login and type(field_value) == str:
+            if field_type == 'login' and not rec.login and isinstance(field_value, str):
                 rec.login = field_value
-            elif field_type == 'password' and not rec.password and type(field_value) == str:
+            elif field_type == 'password' and not rec.password and isinstance(field_value, str):
                 rec.password = field_value
-            elif field_type == 'url' and not field.get('label') and not rec.login_url and type(field_value) == str:
+            elif field_type == 'url' and not field.get('label') and not rec.login_url and isinstance(field_value, str):
                 rec.login_url = field_value
             elif field_type.endswith('Ref'):
                 ref_type = field_type[:-3]
@@ -715,7 +715,6 @@ def _import(params, file_format, filename, **kwargs):
                 x.validate()
             except CommandError as ce:
                 logging.info(ce.message)
-            x.sanitize_fields()
             records.append(x)
         elif isinstance(x, ImportSharedFolder):
             if shared:
@@ -1675,11 +1674,11 @@ IGNORABLE_FIELD_TYPES = {'text', 'fileRef', 'cardRef', 'oneTimeCode'}
 def value_to_token(value): # type: (any) -> str
     if not value:
         return ''
-    if type(value) == str:
+    if isinstance(value, str):
         return value
-    if type(value) == list:
+    if isinstance(value, list):
         return ','.join((value_to_token(x) for x in value))
-    if type(value) == dict:
+    if isinstance(value, dict):
         pairs = [x for x in value.items()]
         pairs.sort(key=lambda x: x[0])
         return ';'.join(f'{k}={value_to_token(v)}' for k, v in pairs)
@@ -1750,18 +1749,20 @@ def _construct_record_v2(rec_to_import, orig_extra=None):  # type: (ImportRecord
     custom_fields = []
     for field in rec_to_import.fields:
         value = ''
-        if type(field.value) == str:
+        if isinstance(field.value, str):
             value = field.value
-        elif type(field.value) == list:
-            value = field.value[0]
+        elif isinstance(field.value, list):
+            if len(field.value) > 0:
+                if field.value[0]:
+                    value = str(field.value[0])
         elif field.value:
-            value = str(value)
+            value = str(field.value)
 
         if field.type == FIELD_TYPE_ONE_TIME_CODE:
             if value:
                 totp = value
         else:
-            name = field.label or field.type or ''
+            name = vault.sanitize_str_field_value(field.label or field.type)
             custom_fields.append({
                 'type': 'text',
                 'name': name,
@@ -1769,11 +1770,11 @@ def _construct_record_v2(rec_to_import, orig_extra=None):  # type: (ImportRecord
             })
 
     data = {
-        'title': rec_to_import.title or '',
-        'secret1': rec_to_import.login or '',
-        'secret2': rec_to_import.password or '',
-        'link': rec_to_import.login_url or '',
-        'notes': rec_to_import.notes or '',
+        'title': vault.sanitize_str_field_value(rec_to_import.title),
+        'secret1': vault.sanitize_str_field_value(rec_to_import.login),
+        'secret2': vault.sanitize_str_field_value(rec_to_import.password),
+        'link': vault.sanitize_str_field_value(rec_to_import.login_url),
+        'notes': vault.sanitize_str_field_value(rec_to_import.notes),
         'custom': custom_fields
     }
 
@@ -1784,7 +1785,7 @@ def _construct_record_v2(rec_to_import, orig_extra=None):  # type: (ImportRecord
                 totp = None
 
     extra = None
-    if totp:
+    if isinstance(totp, str):
         extra = orig_extra or {}
         if 'fields' in extra:
             fields = extra['fields']
@@ -1801,13 +1802,44 @@ def _construct_record_v2(rec_to_import, orig_extra=None):  # type: (ImportRecord
 
     return data, extra
 
+def _verify_typed_field_value(expected_value, value):
+    if isinstance(expected_value, str):
+        if not isinstance(value, str):
+            value = str(value)
+    elif isinstance(expected_value, int):
+        if not isinstance(value, int):
+            try:
+                value = int(value)
+            except ValueError:
+                value = 0
+    elif isinstance(expected_value, bool):
+        if isinstance(value, int):
+            value = value != 0
+        elif isinstance(value, str):
+            value = value.lower() in ('t', 'true', 'ok', 'y', 'yes')
+    elif isinstance(expected_value, dict):
+        pass
+    return value
+
 
 def _create_field_v3(schema, value):  # type: (RecordSchemaField, any) -> dict
-    if value is None:
+    if value:
+        if not isinstance(value, list):
+            value = [value]
+    else:
         value = []
+    value = [x for x in value if x is not None]
+
+    field_type = schema.ref or 'text'
+    if field_type in record_types.RecordFields:
+        rf = record_types.RecordFields[field_type]
+        if rf.type in record_types.FieldTypes:
+            ft = record_types.FieldTypes[rf.type]
+            value = [_verify_typed_field_value(ft.value, x) for x in value]
+
     field = {
-        'type': schema.ref or 'text',
-        'value': value if type(value) is list else [value]
+        'type': field_type,
+        'value': value
     }
     if schema.label:
         field['label'] = schema.label
@@ -1833,9 +1865,9 @@ def _construct_record_v3_data(rec_to_import, orig_record=None, map_data_custom_t
     data = {}
     if isinstance(orig_record, vault.TypedRecord):
         data.update(vault_extensions.extract_typed_record_data(orig_record))
-    data['title'] = rec_to_import.title or ''
-    data['type'] = rec_to_import.type or ''
-    data['notes'] = rec_to_import.notes or ''
+    data['title'] = vault.sanitize_str_field_value(rec_to_import.title)
+    data['type'] = vault.sanitize_str_field_value(rec_to_import.type)
+    data['notes'] = vault.sanitize_str_field_value(rec_to_import.notes)
     record_fields = [x for x in rec_to_import.fields]
     record_refs = [x for x in rec_to_import.references or []]
     data['fields'] = []
