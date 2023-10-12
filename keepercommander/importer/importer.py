@@ -21,7 +21,6 @@ from typing import List, Optional, Union, Dict, Iterable, Type
 from .. import vault, record_types
 from ..error import CommandError
 from ..params import KeeperParams
-from ..vault import sanitize_str_field_value, sanitize_int_field_value
 
 PathDelimiter = '\\'
 TWO_FACTOR_CODE = 'TFC:Keeper'
@@ -177,10 +176,6 @@ class RecordField:
         self.label = label   # type: Optional[str]
         self.value = value   # type: any
 
-    def sanitize_fields(self):
-        self.type = sanitize_str_field_value(self.type)
-        self.label = sanitize_str_field_value(self.label)
-
     def name_key(self):
         if self.type and self.label:
             return f'${self.type.lower()}.{self.label.lower()}'
@@ -243,18 +238,6 @@ class Record:
                     if hasattr(f, attr):
                         if not check_if_bool(getattr(f, attr)):
                             raise CommandError('import', f'Record \'{self.title}\': folder property \'{attr}\' should be boolean')
-
-    def sanitize_fields(self):
-        self.uid = sanitize_str_field_value(self.uid)
-        self.type = sanitize_str_field_value(self.type)
-        self.title = sanitize_str_field_value(self.title)
-        self.login = sanitize_str_field_value(self.login)
-        self.password = sanitize_str_field_value(self.password)
-        self.login_url = sanitize_str_field_value(self.login_url)
-        self.notes = sanitize_str_field_value(self.notes)
-        self.last_modified = sanitize_int_field_value(self.last_modified)
-        for f in self.fields:
-            f.sanitize_fields()
 
 
 class RecordSchemaField:
