@@ -23,6 +23,10 @@ class TestPublicTunnel(unittest.IsolatedAsyncioTestCase):
         self.mock_tunnel.is_connected = True
         self.tunnel_protocol = TunnelProtocol(self.mock_tunnel, logger=self.mock_logger)
 
+        self.tunnel_protocol.private_tunnel_server = mock.AsyncMock()
+        self.tunnel_protocol.read_connection_task = mock.AsyncMock()
+        self.tunnel_protocol.forwarder_task = mock.AsyncMock()
+
     async def asyncTearDown(self):
         await self.tunnel_protocol.disconnect()
 
