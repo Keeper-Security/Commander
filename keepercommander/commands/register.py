@@ -923,9 +923,11 @@ class ShareReportCommand(Command):
         return dump_report_data(table, headers, title=title, fmt=fmt, filename=out)
 
     def execute(self, params, **kwargs):
-        verbose = kwargs.get('verbose') or False
+        verbose = kwargs.get('verbose') is True
+        show_team_users = kwargs.get('show_team_users') is True
+        if show_team_users:
+            verbose = True
         output_format = kwargs.get('format', 'table')
-        show_team_users = kwargs.get('show_team_users')
         user_filter = set()
         record_filter = set()
 
@@ -980,7 +982,7 @@ class ShareReportCommand(Command):
         record_uids = record_uids.intersection(contained_records) if contained_records else record_uids
 
         from keepercommander.shared_record import get_shared_records
-        shared_records = get_shared_records(params, record_uids)
+        shared_records = get_shared_records(params, record_uids, not show_team_users)
 
         def get_record_shares():
             # Group shared-record uids by share target
@@ -1084,6 +1086,8 @@ class ShareReportCommand(Command):
                         share_info = len(permissions)
                     else:
                         share_info = []
+                        if show_team_users:
+                            share_info.append(f'{shared_record.owner} => Owner')
                         for p in permissions:
                             is_direct_share = SharePermissions.SharePermissionsType.USER in p.types
                             share_date = self.get_date_for_share(share_events, p.to_name) if is_direct_share \
@@ -1092,7 +1096,7 @@ class ShareReportCommand(Command):
                         share_info = '\n'.join(share_info)
 
                     table.append([shared_record.owner, shared_record.uid, shared_record.name, share_info, folder_paths])
-                if output_format == 'table':
+                if output_format != 'json':
                     headers = [field_to_title(x) for x in headers]
                 return dump_report_data(
                     table, headers, fmt=output_format, filename=kwargs.get('output'),
