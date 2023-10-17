@@ -851,6 +851,10 @@ class ThycoticMembershipDownload(BaseDownloadMembership, ThycoticMixin):
                             sf_groups.add(group_id)
             yield shared_folder
 
+        folders_only = kwargs.get('folders_only') is True
+        if folders_only is True:
+            return
+
         if len(sf_groups) > 0:
             shown = False
 
