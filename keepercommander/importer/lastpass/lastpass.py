@@ -691,7 +691,7 @@ class LastPassAddress(object):
 
 
 class LastpassMembershipDownload(BaseDownloadMembership):
-    def download_membership(self, params):
+    def download_membership(self, params, **kwargs):
         username = input('...' + 'LastPass Username'.rjust(30) + ': ')
         if not username:
             logging.warning('LastPass username is required')

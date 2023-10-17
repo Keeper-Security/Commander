@@ -438,7 +438,7 @@ class KeeperJsonExporter(BaseExporter):
 
 
 class KeeperMembershipDownload(BaseDownloadMembership):
-    def download_membership(self, params):
+    def download_membership(self, params, **kwargs):
         teams = {}
         if params.shared_folder_cache:
             for shared_folder_uid in params.shared_folder_cache:
@@ -468,6 +468,10 @@ class KeeperMembershipDownload(BaseDownloadMembership):
                         perm.manage_records = user.get('manage_records', False)
                         sf.permissions.append(perm)
                 yield sf
+
+        folders_only = kwargs.get('folders_only') is True
+        if folders_only is True:
+            return
 
         enterprise_teams = {}    # type: Dict[int, List[str]]
         if params.enterprise:
