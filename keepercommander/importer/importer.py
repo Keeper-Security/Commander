@@ -498,7 +498,7 @@ class BytesAttachment(Attachment):
 
 class BaseDownloadMembership(abc.ABC):
     @abc.abstractmethod
-    def download_membership(self, params):   # type: (KeeperParams) -> Iterable[Union[SharedFolder, Team]]
+    def download_membership(self, params, **kwargs):    # type: (KeeperParams, ...) -> Iterable[Union[SharedFolder, Team]]
         pass
 
 
