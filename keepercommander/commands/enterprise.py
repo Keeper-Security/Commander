@@ -1896,6 +1896,22 @@ class EnterpriseRoleCommand(EnterpriseCommand):
     def get_parser(self):
         return enterprise_role_parser
 
+    @staticmethod
+    def enforcement_value_from_file(filepath):
+        filepath = os.path.expanduser(filepath)
+        if os.path.isfile(filepath):
+            with open(filepath, 'r') as f:
+                enforcement_value = f.read()
+                if ':' in enforcement_value:
+                    # Validate JSON
+                    try:
+                        json.loads(enforcement_value)
+                        return enforcement_value
+                    except Exception as e:
+                        logging.warning(f'Invalid enforcement value format: {e}')
+        else:
+            logging.warning(f'Could not load value in "{filepath}": No such file exists')
+
     def execute(self, params, **kwargs):
         if kwargs.get('add') and kwargs.get('remove'):
             raise CommandError('enterprise-role', "'add' and 'delete' parameters are mutually exclusive.")
@@ -2005,6 +2021,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
 
             elif kwargs.get('enforcements'):
                 skip_display = True
+                file_prefix = '$FILE='
                 for enforcement in kwargs['enforcements']:
                     tokens = enforcement.split(':')
                     if len(tokens) != 2:
@@ -2016,6 +2033,17 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                         logging.warning('Enforcement \"%s\" does not exist', key)
                         continue
                     enforcement_value = tokens[1].strip()
+                    if enforcement_value.startswith(file_prefix):
+                        # Get value from file
+                        filepath = enforcement_value[len(file_prefix):]
+                        if filepath:
+                            enforcement_value = self.enforcement_value_from_file(filepath)
+                            if enforcement_value is None:
+                                logging.warning(f'Could not load enforcement value from "{filepath}"')
+                                continue
+                        else:
+                            logging.warning(f'Enforcement {key} is skipped. Expected format: KEY:$FILE=<FILEPATH>')
+                            continue
                     if enforcement_value:
                         if enforcement_type == 'long':
                             try:
