@@ -90,6 +90,7 @@ def router_get_rotation_schedules(params, proto_request):
 
 
 def _post_request_to_router(params, path, rq_proto=None, method='post', raw_without_status_check_response=False):
+    path = 'api/user/' + path
     krouter_host = get_router_url(params)
 
     transmission_key = utils.generate_aes_key()
@@ -182,7 +183,7 @@ def get_controller_cookie(params, destination_controller_uid_str):
             logging.debug("Found right host")
             return resp.cookies
         if resp.status_code == 303:
-            logging.debug("Controller connected to the router, but on the another host. Try another call...")
+            logging.debug("Controller connected to the router, but on another host. Try another call...")
         else:
             logging.warning("Looks like there is no such controller connected to the router.")
             return None
@@ -303,7 +304,8 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
         }
 
 
-def router_send_message_to_gateway(params, transmission_key, rq_proto, destination_gateway_uid_str):
+def router_send_message_to_gateway(params, transmission_key, rq_proto, destination_gateway_uid_str,
+                                   destination_gateway_cookies=None):
 
     krouter_host = get_router_url(params)
 
@@ -320,14 +322,15 @@ def router_send_message_to_gateway(params, transmission_key, rq_proto, destinati
         encrypted_payload = crypto.encrypt_aes_v2(rq_proto.SerializeToString(), transmission_key)
     encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
 
-    destination_gateway_cookies = get_controller_cookie(params, destination_gateway_uid_str)
+    if not destination_gateway_cookies:
+        destination_gateway_cookies = get_controller_cookie(params, destination_gateway_uid_str)
 
     if not destination_gateway_cookies:
         raise Exception('Even thought it seems that the Gateway is online, but Commander was not able to get the '
                         'cookies to connect to the Gateway')
 
     rs = requests.post(
-        krouter_host+"/send_controller_message",
+        krouter_host+"/api/user/send_controller_message",
         verify=VERIFY_SSL,
 
         headers={

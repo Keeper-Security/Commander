@@ -14,6 +14,7 @@ import json
 import logging
 import queue
 import ssl
+import sys
 import threading
 from datetime import datetime
 from typing import Dict, Optional, Any
@@ -36,7 +37,7 @@ from .pam.pam_dto import GatewayActionGatewayInfo, GatewayActionDiscoverInputs, 
     GatewayActionJobInfo, GatewayActionJobCancel
 from .pam.router_helper import router_send_action_to_gateway, print_router_response, \
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, \
-    get_router_url, router_send_message_to_gateway, get_router_ws_url, get_controller_cookie
+    get_router_url, router_send_message_to_gateway, get_router_ws_url, get_controller_cookie, request_cookie_jar_to_str
 from .record_edit import RecordEditMixin
 from .tunnel.port_forward import tunnel_connected, endpoint
 from .. import api, utils, vault_extensions, vault, record_management, rest_api, crypto
@@ -1383,7 +1384,7 @@ class PAMTunnelStopCommand(Command):
     pam_cmd_parser.add_argument('--conversation-id', '-c', required=False, dest='convo_id', action='store',
                                 help='The connection ID of the Tunnel to stop')
 
-    def actual_cleanup(self, params, convo_id):
+    def tunnel_cleanup(self, params, convo_id):
         tunnel_data = params.tunnel_threads.get(convo_id, None)
         if not tunnel_data:
             return
@@ -1396,6 +1397,10 @@ class PAMTunnelStopCommand(Command):
 
         del params.tunnel_threads[convo_id]
         print(f"Cleaned up data for {convo_id}")
+
+        if convo_id in params.tunnel_threads_queue:
+            del params.tunnel_threads_queue[convo_id]
+            print(f"{bcolors.OKBLUE}{convo_id} Queue cleaned up{bcolors.ENDC}")
 
     def get_parser(self):
         return PAMTunnelStopCommand.pam_cmd_parser
@@ -1412,12 +1417,15 @@ class PAMTunnelStopCommand(Command):
         loop = tunnel_data.get("loop", None)
 
         entrance = tunnel_data.get("entrance", None)
-        if loop and entrance:
-            # Run the disconnect method in the event loop
-            loop.create_task(entrance.disconnect())
-            print(f"Disconnected entrance for {convo_id}")
+        if loop and entrance and not loop._closed:
+            if loop._closed:
+                print(f"{bcolors.WARNING}Event loop is closed for conversation ID {convo_id}{bcolors.ENDC}")
+            else:
+                # Run the disconnect method in the event loop
+                loop.create_task(entrance.disconnect())
+                print(f"Disconnected entrance for {convo_id}")
 
-        loop.call_soon_threadsafe(self.actual_cleanup, params, convo_id)
+        loop.call_soon_threadsafe(self.tunnel_cleanup, params, convo_id)
 
 
 class PAMTunnelTailCommand(Command):
@@ -1447,6 +1455,10 @@ class PAMTunnelTailCommand(Command):
         else:
             print(f'    {bcolors.FAIL}Invalid conversation ID{bcolors.ENDC}')
             return
+
+
+class SocketNotConnectedException(Exception):
+    pass
 
 
 class PAMTunnelStartCommand(Command):
@@ -1502,6 +1514,24 @@ class PAMTunnelStartCommand(Command):
         logger.info("Logging setup complete.")
         return logger
 
+    def tunnel_cleanup(self, params, convo_id):
+        tunnel_data = params.tunnel_threads.get(convo_id, None)
+        if not tunnel_data:
+            return
+
+        for task_name in ["ws_reader", "ws_writer", "connect"]:
+            task = tunnel_data.get(task_name)
+            if task:
+                task.cancel()
+                print(f"Cancelled {task_name} for {convo_id}")
+
+        del params.tunnel_threads[convo_id]
+        print(f"Cleaned up data for {convo_id}")
+
+        if convo_id in params.tunnel_threads_queue:
+            del params.tunnel_threads_queue[convo_id]
+            print(f"{bcolors.OKBLUE}{convo_id} Queue cleaned up{bcolors.ENDC}")
+
     async def connect(self, params, record_uid, convo_id, gateway_uid, host, port, rhost, rport, listener_name, log_queue):
 
         # Setup custom logging to put logs into log_queue
@@ -1516,18 +1546,24 @@ class PAMTunnelStartCommand(Command):
             encrypted_transmission_key = crypto.encrypt_ec(transmission_key, server_public_key)
         encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
         router_url = get_router_ws_url(params)
-        connection_url = (f'{router_url}/tunnel/{convo_id}'
+        connection_url = (f'{router_url}/api/user/tunnel/{convo_id}'
                           f'?Authorization=KeeperUser%20{CommonHelperMethods.bytes_to_url_safe_str(encrypted_session_token)}'
                           f'&TransmissionKey={CommonHelperMethods.bytes_to_url_safe_str(encrypted_transmission_key)}')
 
         print("--> 1. CONNECT TO WS --------")
         cookies = get_controller_cookie(params, gateway_uid)
+        cookie_str = request_cookie_jar_to_str(cookies)
+
+        extra_headers = {
+            'Cookie': cookie_str,
+        }
+
         ssl_context = ssl.SSLContext()
         ssl_context.verify_mode = ssl.CERT_NONE
 
         logging.basicConfig(level=logging.DEBUG)
 
-        entrance_ws = await websockets.connect(connection_url, ping_interval=10)
+        entrance_ws = await websockets.connect(connection_url, ping_interval=10, extra_headers=extra_headers)
 
         print("--> 2. SEND START MESSAGE OVER REST TO GATEWAY")
 
@@ -1548,11 +1584,16 @@ class PAMTunnelStartCommand(Command):
         rq_proto.payload = payload_bytes
         rq_proto.timeout = 1500000  # Default time out how long the response from the Gateway should be
 
-        router_send_message_to_gateway(
+        rs = router_send_message_to_gateway(
             params,
             transmission_key,
             rq_proto,
-            gateway_uid)
+            gateway_uid,
+            cookies)
+
+        if b'No socket connection exist to start streaming.' in rs.content:
+            raise SocketNotConnectedException(f"Commander didn't connect to right instance of the router to connect to "
+                                              f'the Controller: {rs.content}')
 
         tunnel = tunnel_connected.ConnectedTunnel(entrance_ws)
         entrance = endpoint.TunnelProtocol(tunnel, endpoint_name=listener_name, logger=logger, gateway_uid=gateway_uid)
@@ -1588,14 +1629,27 @@ class PAMTunnelStartCommand(Command):
                 )
             )
         except asyncio.CancelledError:
-            print(f"Tasks for convo_id {convo_id} were cancelled.")
+            print(f"{bcolors.OKBLUE}Tasks for convo_id {convo_id} were cancelled.{bcolors.ENDC}")
+        except SocketNotConnectedException as es:
+            print(f"{bcolors.FAIL}An exception occurred in pre_connect for convo_id {convo_id}: {es}{bcolors.ENDC}")
         except Exception as e:
-            print(f"An exception occurred in pre_connect for convo_id {convo_id}: {e}")
+            print(f"{bcolors.FAIL}An exception occurred in pre_connect for convo_id {convo_id}: {e}{bcolors.ENDC}")
         finally:
             if loop:
-                loop.close()  # Close the event loop
+                loop.call_soon_threadsafe(self.tunnel_cleanup, params, convo_id)
+                print(f"{bcolors.OKBLUE}Cleanup called for convo_id {convo_id}.{bcolors.ENDC}")
 
     def execute(self, params, **kwargs):
+        version = [3, 11, 0]
+        # Check for Python 3.11+
+        major_version = sys.version_info.major
+        minor_version = sys.version_info.minor
+        micro_version = sys.version_info.micro
+
+        if (major_version, minor_version, micro_version) <= (version[0], version[1], version[2]):
+            raise RuntimeError(
+                f'This code requires Python {version[0]}.{version[1]}.{version[2]} or higher. You are using '
+                f'{major_version}.{minor_version}.{micro_version}.')
         record_uid = kwargs.get('record_uid')
         convo_id = GatewayAction.generate_conversation_id()
         params.tunnel_threads[convo_id] = {}
