@@ -259,11 +259,11 @@ class TunnelProtocol(abc.ABC):
         if self.forwarder:
             tasks.append(self.forwarder.stop())
         if self.private_tunnel_server:
-            tasks.append(self.private_tunnel_server.cancel())
+            self.private_tunnel_server.cancel()
         if self.read_connection_task:
-            tasks.append(self.read_connection_task.cancel())
+            self.read_connection_task.cancel()
         if self.forwarder_task:
-            tasks.append(self.forwarder_task.cancel())
+            self.forwarder_task.cancel()
         if len(tasks) > 0:
             await asyncio.gather(*tasks)
 
@@ -662,6 +662,24 @@ class PrivateTunnelEntrance:
         elif message_no == ControlMessage.Ping:
             self.logger.debug('Received private ping request')
             await self.send_control_message(ControlMessage.Pong)
+        elif message_no == ControlMessage.OpenConnection:
+            if len(data) >= CONNECTION_NO_LENGTH:
+                if len(data) > CONNECTION_NO_LENGTH:
+                    self.logger.debug(f"Endpoint {self.endpoint_name}: Received invalid private open connection message"
+                                      f" ({len(data)} bytes)")
+                connection_no = int.from_bytes(data[:CONNECTION_NO_LENGTH], byteorder='big')
+                self.logger.debug(f"Endpoint {self.endpoint_name}: Starting private reader for connection {connection_no}")
+                try:
+                    self.to_tunnel_tasks[connection_no] = asyncio.create_task(
+                        self.forward_data_to_tunnel(connection_no))  # From current connection to TLS server
+                    self.logger.debug(
+                        f"Endpoint {self.endpoint_name}: Started private reader for connection {connection_no}")
+                except ConnectionNotFoundException as e:
+                    self.logger.error(f"Endpoint {self.endpoint_name}: Connection {connection_no} not found: {e}")
+                except Exception as e:
+                    self.logger.error(f"Endpoint {self.endpoint_name}: Error while forwarding private data: {e}")
+            else:
+                self.logger.error(f"Endpoint {self.endpoint_name}: Invalid open connection message")
         else:
             self.logger.warning('Unknown private tunnel control message: %d', message_no)
 
@@ -806,6 +824,9 @@ class PrivateTunnelEntrance:
         ssl_context.check_hostname = True
         ssl_context.verify_mode = ssl.CERT_REQUIRED
         ssl_context.load_verify_locations(cadata=self.cert)
+        # TODO add client cert and key?
+        #  Load the client's certificate and private key
+        #  ssl_context.load_cert_chain(certfile="client_cert.pem", keyfile="client_key.pem")
         # Establish a connection to localhost:server_port
         logging.debug(f"Endpoint {self.endpoint_name}: SSL context made")
         # Establish a connection to the TLS server on the gateway
@@ -825,7 +846,7 @@ class PrivateTunnelEntrance:
                 reader, _ = c
                 try:
                     data = await reader.read(BUFFER_TRUNCATION_THRESHOLD)
-                    self.logger.error(f"Endpoint {self.endpoint_name}: Forwarding private {len(data)}"
+                    self.logger.error(f"Endpoint {self.endpoint_name}: Forwarding private {len(data)} "
                                       f"bytes to tunnel for connection {con_no}")
                     if isinstance(data, bytes):
                         if len(data) == 0 and reader.at_eof():
@@ -875,15 +896,6 @@ class PrivateTunnelEntrance:
         # Send open connection message with con_no. this is required to be sent to start the connection
         await self.send_control_message(ControlMessage.OpenConnection,
                                         int.to_bytes(connection_no, CONNECTION_NO_LENGTH, byteorder='big'))
-
-        self.logger.debug(f"Endpoint {self.endpoint_name}: Starting private reader for connection {connection_no}")
-        try:
-            self.to_tunnel_tasks[connection_no] = asyncio.create_task(self.forward_data_to_tunnel(connection_no))  # From current connection to TLS server
-            self.logger.debug(f"Endpoint {self.endpoint_name}: Started private reader for connection {connection_no}")
-        except ConnectionNotFoundException as e:
-            self.logger.error(f"Endpoint {self.endpoint_name}: Connection {connection_no} not found: {e}")
-        except Exception as e:
-            self.logger.error(f"Endpoint {self.endpoint_name}: Error while forwarding private data: {e}")
 
     @property
     def port(self) -> int:

@@ -39,6 +39,7 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
         self.pte.tls_writer = mock.MagicMock(spec=asyncio.StreamWriter)
         # Mock asyncio.open_connection
         self.pte.tls_reader = mock.MagicMock(spec=asyncio.StreamReader)
+        self.pte.logger = mock.MagicMock()
 
         # Set side effect for read method
         message = generate_random_bytes()
@@ -46,7 +47,7 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
         self.pte.tls_reader.read.side_effect = [message + b'\n' + bytes_to_base64(calculated_hmac).encode(), b'Authenticated\n']
 
         await self.pte.perform_hmac_handshakes(message)
-        # self.assertTrue(new_writer == self.pte.tls_writer)
+        self.pte.logger.debug.assert_called_with('Endpoint TestEndpoint: Connection to forwarder accepted')
 
     async def test_send_control_message(self):
         # Initialize self.pte.tls_writer with a mock object
@@ -374,8 +375,7 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
         mock_send_control_message = mock.AsyncMock()
         mock_forward_data_to_tunnel = mock.AsyncMock()
 
-        with mock.patch.object(self.pte, 'send_control_message', mock_send_control_message), \
-                mock.patch.object(self.pte, 'forward_data_to_tunnel', mock_forward_data_to_tunnel):
+        with mock.patch.object(self.pte, 'send_control_message', mock_send_control_message):
             await self.pte.handle_connection(mock_reader, mock_writer)
 
             # Check if send_control_message was called
@@ -383,9 +383,6 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
                 ControlMessage.OpenConnection,
                 int.to_bytes(1, CONNECTION_NO_LENGTH, byteorder='big')
             )
-
-            # Check if forward_data_to_tunnel was called
-            mock_forward_data_to_tunnel.assert_called()
 
     async def test_handle_connection_exception(self):
         mock_reader = mock.AsyncMock(spec=asyncio.StreamReader)
