@@ -15,4 +15,5 @@ pytest
 requests
 tabulate
 pyqrcode
-keeper-secrets-manager-core>=16.2.0
+keeper-secrets-manager-core>=16.6.0
+fido2
