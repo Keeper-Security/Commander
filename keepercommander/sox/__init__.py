@@ -1,4 +1,3 @@
-import asyncio
 import datetime
 import logging
 import os
@@ -161,68 +160,43 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
 def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_updated=0, no_cache=False, shared_only=False):
     def sync_down(sdata, node_uid, user_node_id_lookup):
         def run_sync_tasks():
-            async def do_tasks(return_exceptions=False):
+            def do_tasks():
                 print('Loading compliance data.', file=sys.stderr, end='', flush=True)
                 users_uids = [int(uid) for uid in sdata.get_users()]
                 record_uids_raw = [rec.record_uid_bytes for rec in sdata.get_records().values()]
-                limit = asyncio.Semaphore(10)
                 max_len = API_SOX_REQUEST_USER_LIMIT
                 total_ruids = len(record_uids_raw)
                 ruid_chunks = [record_uids_raw[x:x + max_len] for x in range(0, total_ruids, max_len)]
-                tasks = [sync_chunk(chunk, users_uids, limit) for chunk in ruid_chunks]
-                await asyncio.gather(*tasks, return_exceptions=return_exceptions)
+                for chunk in ruid_chunks:
+                    sync_chunk(chunk, users_uids)
                 sdata.storage.set_compliance_data_updated()
                 print('', file=sys.stderr, flush=True)
 
-            py_version_3_6 = not hasattr(asyncio, 'run')
-            if not py_version_3_6:
-                try:
-                    asyncio.run(do_tasks(True))
-                finally:
-                    print('', file=sys.stderr, flush=True)
-            else:
-                old_loop = asyncio.get_event_loop()
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(do_tasks())
-                except KeyboardInterrupt:
-                    logging.info('SIGINT received: cancelling pending tasks')
-                finally:
-                    try:
-                        pending = [task for task in asyncio.Task.all_tasks() if not task.done()]
-                        for task in pending:
-                            task.cancel()
-                        loop.run_until_complete(loop.shutdown_asyncgens())
-                    finally:
-                        asyncio.set_event_loop(old_loop)
-                        loop.stop()
-                        loop.close()
+            do_tasks()
 
-        async def sync_chunk(chunk, uuids, limit):
+        def sync_chunk(chunk, uuids):
             print('.', file=sys.stderr, end='', flush=True)
-            rs = await fetch_response(raw_ruids=chunk, user_uids=uuids, limit=limit)
+            rs = fetch_response(raw_ruids=chunk, user_uids=uuids)
             print('.', file=sys.stderr, end='', flush=True)
-            await save_response(rs)
+            save_response(rs)
             print(':', file=sys.stderr, end='', flush=True)
 
-        async def fetch_response(raw_ruids, user_uids, limit=None):
-            async with limit:
-                rq = enterprise_pb2.ComplianceReportRequest()
-                rq.saveReport = False
-                rq.reportName = f'Compliance Report on {datetime.datetime.now()}'
-                report_run = rq.complianceReportRun
-                report_run.users.extend(user_uids)
-                report_run.records.extend(raw_ruids)
-                caf = report_run.reportCriteriaAndFilter
-                caf.nodeId = node_uid
-                caf.criteria.includeNonShared = not shared_only
-                endpoint = 'enterprise/run_compliance_report'
-                return api.communicate_rest(params, rq, endpoint, rs_type=enterprise_pb2.ComplianceReportResponse)
+        def fetch_response(raw_ruids, user_uids):
+            rq = enterprise_pb2.ComplianceReportRequest()
+            rq.saveReport = False
+            rq.reportName = f'Compliance Report on {datetime.datetime.now()}'
+            report_run = rq.complianceReportRun
+            report_run.users.extend(user_uids)
+            report_run.records.extend(raw_ruids)
+            caf = report_run.reportCriteriaAndFilter
+            caf.nodeId = node_uid
+            caf.criteria.includeNonShared = not shared_only
+            endpoint = 'enterprise/run_compliance_report'
+            return api.communicate_rest(params, rq, endpoint, rs_type=enterprise_pb2.ComplianceReportResponse)
 
         anon_id = 0
 
-        async def save_response(rs):
+        def save_response(rs):
             def hash_anon_ids(response):
                 # create new user uid for each anonymous user (uid >> 32 == 0)
                 anon_ids = dict()
@@ -242,10 +216,10 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                         folder.enterpriseUserIds[idx] = anon_ids.get(user_id, user_id)
                 return response
 
-            await save_all_types(hash_anon_ids(rs))
+            save_all_types(hash_anon_ids(rs))
             print('.', file=sys.stderr, end='', flush=True)
 
-        async def save_all_types(rs):
+        def save_all_types(rs):
             save_users(rs.userProfiles)
             save_records(rs.auditRecords)
             save_teams(rs.auditTeams)
