@@ -14,4 +14,5 @@ pysocks
 pytest
 requests
 tabulate
+pyqrcode
 keeper-secrets-manager-core>=16.2.0

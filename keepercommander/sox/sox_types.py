@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any, List, Set
+from typing import Dict, Any, List, Set, Callable
 
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
@@ -13,20 +13,24 @@ from .storage_types import StorageUser, StorageRecord, StorageTeam
 class EnterpriseUser:
     def __init__(self):
         self.user_uid = 0
+        self.full_name = ''
         self.email = ''
         self.status = not enterprise_pb2.OK
         self.job_title = ''
         self.node_id = 0
-        self.records = []
+        self.records = set()
+        self.active_records = set()
+        self.trash_records = set()
         self.roles = []
 
     @staticmethod
-    def load(entity):    # type: (StorageUser) -> EnterpriseUser
+    def load(entity, decrypt_fn):    # type: (StorageUser, Callable) -> EnterpriseUser
         user = EnterpriseUser()
         user.user_uid = entity.user_uid
-        user.email = entity.email
+        user.email = decrypt_fn(entity.email)
+        user.full_name = decrypt_fn(entity.full_name)
         user.status = entity.status
-        user.job_title = entity.job_title
+        user.job_title = decrypt_fn(entity.job_title)
         user.node_id = entity.node_id
         return user
 

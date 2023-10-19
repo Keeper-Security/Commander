@@ -626,7 +626,7 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
     return record_object, audit_data
 
 
-def communicate_rest(params, request, endpoint, rs_type=None):
+def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version=None):
     api_request_payload = APIRequest_pb2.ApiRequestPayload()
     if params.session_token:
         api_request_payload.encryptedSessionToken = utils.base64_url_decode(params.session_token)
@@ -635,6 +635,8 @@ def communicate_rest(params, request, endpoint, rs_type=None):
             js = google.protobuf.json_format.MessageToJson(request)
             logging.debug('>>> [RQ] %s: %s', endpoint, js)
         api_request_payload.payload = request.SerializeToString()
+    if isinstance(payload_version, int):
+        api_request_payload.apiVersion = payload_version
 
     rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)
     if type(rs) == bytes:
@@ -688,8 +690,12 @@ def execute_batch(params, requests):
     if not requests:
         return responses
 
-    chunk_size = 98
+    throttle_delay = 10
+    chunk_size = 999
     queue = requests.copy()
+    unthrottled = 0
+    delay_next_batch = False
+
     while len(queue) > 0:
         chunk = queue[:chunk_size]
         queue = queue[chunk_size:]
@@ -699,24 +705,27 @@ def execute_batch(params, requests):
             'requests': chunk
         }
         try:
+            if delay_next_batch:
+                time.sleep(throttle_delay)
+                unthrottled = 0
             rs = communicate(params, rq)
             if 'results' in rs:
                 results = rs['results']  # type: list
                 if len(results) > 0:
-                    responses.extend(results)
-                    if params.debug:
-                        pos = len(results) - 1
-                        req = chunk[pos]
-                        res = results[pos]
-                        if res['result'] != 'success':
-                            logging.info('execute failed: command %s: %s)', req.get('command'), res.get('message'))
-                    if len(results) < len(chunk):
-                        queue = chunk[len(results):] + queue
-
+                    throttled = [r for r in results if r['result'] != 'success' and r['result_code'] == 'throttled']
+                    if throttled:
+                        throttled_rs = next(iter(throttled))
+                        throttled_idx = results.index(throttled_rs)
+                        queue = chunk[throttled_idx:] + queue
+                        responses.extend(results[:throttled_idx])
+                        unthrottled += throttled_idx
+                        chunk_size = unthrottled
+                        delay_next_batch = True
+                    else:
+                        responses.extend(results)
+                        unthrottled += len(results)
         except Exception as e:
             logging.error(e)
-        if len(chunk) > 50:
-            time.sleep(4)
 
     return responses
 
@@ -884,8 +893,9 @@ def update_records_v3(params, rec_list, **kwargs):   # type: (KeeperParams, List
     record_rq_by_uid = {}
     for rec in rec_list:
         record_rq = get_pb2_record_update(params, rec, **kwargs)
-        record_rq_by_uid[rec.record_uid] = record_rq
-        rq.records.append(record_rq['pb2_record_update'])
+        if record_rq:
+            record_rq_by_uid[rec.record_uid] = record_rq
+            rq.records.append(record_rq['pb2_record_update'])
 
     return get_record_v3_response(params, rq, 'vault/records_update', record_rq_by_uid)
 
@@ -1215,7 +1225,7 @@ def get_record_shares(params, record_uids, is_share_admin=False):
     def need_share_info(uid):
         if uid in params.record_cache:
             r = params.record_cache[uid]
-            return r.get('shared') and 'shares' not in r
+            return 'shares' not in r
         return is_share_admin
 
     result = []
@@ -1278,7 +1288,7 @@ def query_enterprise(params, force=False):
         if share_account_expired:
             params.enterprise = None
         else:
-            logging.warning(e)
+            logging.warning(e, exc_info=True)
 
 
 def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
@@ -1288,6 +1298,7 @@ def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
     mc_params = KeeperParams(server=params.server)
 
     mc_params.config = params.config
+    mc_params.debug = params.debug
     mc_params.auth_verifier = params.auth_verifier
     mc_params.salt = params.salt
     mc_params.iterations = params.iterations
@@ -1305,7 +1316,7 @@ def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
     mc_params.msp_tree_key = params.enterprise['unencrypted_tree_key']
 
     sync_down(mc_params)
-    query_enterprise(mc_params)
+    query_enterprise(mc_params, True)
 
     return mc_params
 

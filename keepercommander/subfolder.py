@@ -90,7 +90,7 @@ def contained_folders(params, folders, component):
     get_folder_by_id = lambda uid: params.folder_cache.get(uid)
     get_folder_ids = lambda: params.folder_cache.keys()
     result = folders if component in ('.', '') \
-        else [(f if f.parent_uid else params.root_folder) for f in folders] if component == '..' \
+        else [(get_folder_by_id(f.parent_uid) if f.parent_uid else params.root_folder) for f in folders] if component == '..' \
         else [get_folder_by_id(component)] if component in get_folder_ids() \
         else [get_folder_by_id(uid) for f in folders for uid in f.subfolders if get_folder_by_id(uid).name == component]
     return result

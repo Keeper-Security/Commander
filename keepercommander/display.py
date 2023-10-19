@@ -13,7 +13,7 @@ import shutil
 from collections import OrderedDict as OD
 from typing import Tuple, List, Union
 
-from asciitree import LeftAligned
+from asciitree import LeftAligned, BoxStyle, drawing
 from colorama import init, Fore, Back, Style
 from tabulate import tabulate
 
@@ -174,21 +174,6 @@ def formatted_teams(teams, **kwargs):
             team.display()
 
 
-def formatted_folders(folders):
-    def folder_flags(f):
-        flags = ''
-        if f.type == 'shared_folder':
-            flags = flags + 'S'
-        return flags
-
-    if len(folders) > 0:
-        folders.sort(key=lambda x: (x.name or ' ').lower(), reverse=False)
-
-        table = [[i + 1, f.uid, f.name, folder_flags(f)] for i, f in enumerate(folders)]
-        print(tabulate(table, headers=["#", 'Folder UID', 'Name', 'Flags']))
-        print('')
-
-
 def formatted_tree(params, folder, verbose=False, show_records=False, shares=False, hide_shares_key=False, title=None):
     def print_share_permissions_key():
         perms_key = 'Share Permissions Key:\n' \
@@ -271,12 +256,12 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
 
     root, branches = tree_node(folder)
     tree = {root: branches}
-    tr = LeftAligned()
+    tr = LeftAligned(draw=BoxStyle(gfx=drawing.BOX_LIGHT))
     if shares and not hide_shares_key:
         print_share_permissions_key()
     if title:
         print(title)
-    tree_txt = str(tr(tree))
+    tree_txt = tr(tree)
     tree_txt = re.sub(r'\s+\(\)', '', tree_txt)
     if not verbose:
         lines = tree_txt.splitlines()

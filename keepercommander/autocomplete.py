@@ -16,12 +16,12 @@ import shlex
 
 from prompt_toolkit.completion import Completion, Completer
 
+from . import vault
 from .params import KeeperParams
 from .commands.folder import mv_parser
 from .commands.base import GroupCommand, Command
 from .commands.connect import ConnectCommand
 from .commands import commands, enterprise_commands, msp_commands
-from . import api
 from .subfolder import try_resolve_path as sf_try_resolve_path
 
 
@@ -168,7 +168,7 @@ class CommandCompleter(Completer):
                         elif isinstance(command, GroupCommand):
                             c, sep, rest = raw_input.partition(' ')
                             if sep == ' ':
-                                cmd = f'{cmd}-{c.lower()}'
+                                cmd = f'{cmd} {c.lower()}'
                                 raw_input = rest.strip()
                                 if c in command.subcommands:
                                     sub_command = command.subcommands[c]
@@ -273,7 +273,7 @@ class CommandCompleter(Completer):
                                         if r.get('version', 0) not in {2, 3}:
                                             continue
                                         if 'display_name' not in r:
-                                            rec = api.get_record(self.params, uid)
+                                            rec = vault.KeeperRecord.load(self.params, uid)
                                             r['display_name'] = rec.title or rec.record_uid
                                         n = r.get('display_name') or ''
                                         if len(n) > 0:

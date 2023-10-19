@@ -13,6 +13,7 @@ import argparse
 import itertools
 import logging
 import os
+import sys
 import threading
 from typing import List, Optional
 
@@ -139,8 +140,8 @@ class TotpCommand(Command):
         progress = ''.rjust(remains, '=')
         progress = progress.ljust(total, ' ')
         if os.isatty(0):
-            print('\r', end='', flush=True)
-            print('\t{0}\t\t[{1}]'.format(code, progress), end='', flush=True)
+            print('\r', file=sys.stderr, end='', flush=True)
+            print('\t{0}\t\t[{1}]'.format(code, progress), file=sys.stderr, end='', flush=True)
         else:
             if TotpCommand.LastDisplayedCode != code:
                 print('\t{0}\t\tvalid for {1} seconds.'.format(code, remains))

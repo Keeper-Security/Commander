@@ -25,7 +25,8 @@ from urllib.parse import urlunparse
 from tabulate import tabulate
 
 from . import base
-from .base import dump_report_data, field_to_title, raise_parse_exception, suppress_exit, Command, GroupCommand, FolderMixin
+from .base import dump_report_data, field_to_title, fields_to_titles, raise_parse_exception, suppress_exit, Command, \
+    GroupCommand, FolderMixin
 from .helpers.record import get_record_uids
 from .helpers.timeout import parse_timeout
 from .record import RecordRemoveCommand
@@ -35,6 +36,7 @@ from ..error import KeeperApiError, CommandError, Error
 from ..params import KeeperParams
 from ..proto import APIRequest_pb2, folder_pb2, record_pb2, enterprise_pb2
 from ..shared_record import SharePermissions, get_shared_records, SharedRecord
+from ..sox.sox_types import Record
 from ..subfolder import BaseFolderNode, SharedFolderNode, SharedFolderFolderNode, try_resolve_path, get_folder_path, \
     get_folder_uids, get_contained_record_uids
 from ..loginv3 import LoginV3API
@@ -165,7 +167,14 @@ dry_run_help = 'Simulate removing duplicates (with this flog, no records are eve
 find_duplicate_parser.add_argument('-n', '--dry-run', action='store_true', help=dry_run_help)
 find_duplicate_parser.add_argument('-q', '--quiet', action='store_true',
                                    help='Suppress screen output, valid only w/ --force flag')
-
+scope_help = 'The scope of the search (limited to current vault if not specified)'
+find_duplicate_parser.add_argument('-s', '--scope', action='store', choices=['vault', 'enterprise'], default='vault',
+                                   help=scope_help)
+refresh_help = 'Populate local cache with latest compliance data . Valid only w/ --scope=enterprise option.'
+find_duplicate_parser.add_argument('-r', '--refresh-data', action='store_true', help=refresh_help)
+find_duplicate_parser.add_argument('--format', action='store', choices=['table', 'csv', 'json'], default='table',
+                                   help='output format.')
+find_duplicate_parser.add_argument('--output', action='store', help='output file name. (ignored for table format)')
 find_duplicate_parser.error = raise_parse_exception
 find_duplicate_parser.exit = suppress_exit
 
@@ -298,6 +307,7 @@ class ShareFolderCommand(Command):
             logging.info('Nothing to do')
             return
 
+        requests = []
         for sf_uid in shared_folder_uids:
             sf_users = set(as_users)
             sf_teams = set(as_teams)
@@ -323,10 +333,79 @@ class ShareFolderCommand(Command):
                     'records': [{'record_uid': x, 'can_share': action != 'grant', 'can_edit': action != 'grant'}
                                 for x in record_uids]
                 }
-            self.send_command(params, kwargs, sh_fol, sf_users, sf_teams, sf_records, default_record, default_account)
+
+            rq = self.prepare_request(params, kwargs, sh_fol, sf_users, sf_teams, sf_records,
+                                      default_record, default_account)
+            if rq:
+                requests.append(rq)
+
+        while len(requests) > 0:
+            params.sync_data = True
+            chunk = requests[:999]
+            requests = requests[999:]
+            rqs = folder_pb2.SharedFolderUpdateV3RequestV2()
+            rqs.sharedFoldersUpdateV3.extend(chunk)
+            try:
+                rss = api.communicate_rest(params, rqs, 'vault/shared_folder_update_v3', payload_version=1,
+                                           rs_type=folder_pb2.SharedFolderUpdateV3ResponseV2)
+                for rs in rss.sharedFoldersUpdateV3Response:
+                    team_cache = params.available_team_cache or []
+                    for attr in ('sharedFolderAddTeamStatus', 'sharedFolderUpdateTeamStatus', 'sharedFolderRemoveTeamStatus'):
+                        if hasattr(rs, attr):
+                            statuses = getattr(rs, attr)
+                            for t in statuses:
+                                team_uid = utils.base64_url_encode(t.teamUid)
+                                team = next((x for x in team_cache if x.get('team_uid') == team_uid), None)
+                                if team:
+                                    status = t.status
+                                    if status == 'success':
+                                        logging.info('Team share \'%s\' %s', team['team_name'],
+                                                     'added' if attr == 'sharedFolderAddTeamStatus' else
+                                                     'updated' if attr == 'sharedFolderUpdateTeamStatus' else
+                                                     'removed')
+                                    else:
+                                        logging.warning('Team share \'%s\' failed', team['team_name'])
+
+                    for attr in ('sharedFolderAddUserStatus', 'sharedFolderUpdateUserStatus', 'sharedFolderRemoveUserStatus'):
+                        if hasattr(rs, attr):
+                            statuses = getattr(rs, attr)
+                            for s in statuses:
+                                username = s.username
+                                status = s.status
+                                if status == 'success':
+                                    logging.info('User share \'%s\' %s', username,
+                                                 'added' if attr == 'sharedFolderAddUserStatus' else
+                                                 'updated' if attr == 'sharedFolderUpdateUserStatus' else
+                                                 'removed')
+                                elif status == 'invited':
+                                    logging.info('User \'%s\' invited', username)
+                                else:
+                                    logging.warning('User share \'%s\' failed', username)
+
+                    for attr in ('sharedFolderAddRecordStatus', 'sharedFolderUpdateRecordStatus', 'sharedFolderRemoveRecordStatus'):
+                        if hasattr(rs, attr):
+                            statuses = getattr(rs, attr)
+                            for r in statuses:
+                                record_uid = utils.base64_url_encode(r.recordUid)
+                                status = r.status
+                                if record_uid in params.record_cache:
+                                    rec = api.get_record(params, record_uid)
+                                    title = rec.title
+                                else:
+                                    title = record_uid
+                                if status == 'success':
+                                    logging.info('Record share \'%s\' %s', title,
+                                                 'added' if attr == 'sharedFolderAddRecordStatus' else
+                                                 'updated' if attr == 'sharedFolderUpdateRecordStatus' else
+                                                 'removed')
+                                else:
+                                    logging.warning('Record share \'%s\' failed', title)
+            except KeeperApiError as kae:
+                if kae.result_code != 'bad_inputs_nothing_to_do':
+                    raise kae
 
     @staticmethod
-    def send_command(params, kwargs, curr_sf, users, teams, rec_uids, default_record=False, default_account=False):
+    def prepare_request(params, kwargs, curr_sf, users, teams, rec_uids, default_record=False, default_account=False):
         rq = folder_pb2.SharedFolderUpdateV3Request()
         rq.sharedFolderUid = utils.base64_url_decode(curr_sf['shared_folder_uid'])
         if 'revision' in curr_sf:
@@ -466,65 +545,7 @@ class ShareFolderCommand(Command):
                             else:
                                 ro.encryptedRecordKey = crypto.encrypt_aes_v2(rec_key, sf_key)
                         rq.sharedFolderAddRecord.append(ro)
-        try:
-            rs = api.communicate_rest(params, rq, 'vault/shared_folder_update_v3',
-                                      rs_type=folder_pb2.SharedFolderUpdateV3Response)
-            params.sync_data = True
-            team_cache = params.available_team_cache or []
-            for attr in ('sharedFolderAddTeamStatus', 'sharedFolderUpdateTeamStatus', 'sharedFolderRemoveTeamStatus'):
-                if hasattr(rs, attr):
-                    statuses = getattr(rs, attr)
-                    for t in statuses:
-                        team_uid = utils.base64_url_encode(t.teamUid)
-                        team = next((x for x in team_cache if x.get('team_uid') == team_uid), None)
-                        if team:
-                            status = t.status
-                            if status == 'success':
-                                logging.info('Team share \'%s\' %s', team['team_name'],
-                                             'added' if attr == 'sharedFolderAddTeamStatus' else
-                                             'updated' if attr == 'sharedFolderUpdateTeamStatus' else
-                                             'removed')
-                            else:
-                                logging.warning('Team share \'%s\' failed', team['team_name'])
-
-            for attr in ('sharedFolderAddUserStatus', 'sharedFolderUpdateUserStatus', 'sharedFolderRemoveUserStatus'):
-                if hasattr(rs, attr):
-                    statuses = getattr(rs, attr)
-                    for s in statuses:
-                        username = s.username
-                        status = s.status
-                        if status == 'success':
-                            logging.info('User share \'%s\' %s', username,
-                                         'added' if attr == 'sharedFolderAddUserStatus' else
-                                         'updated' if attr == 'sharedFolderUpdateUserStatus' else
-                                         'removed')
-                        elif status == 'invited':
-                            logging.info('User \'%s\' invited', username)
-                        else:
-                            logging.warning('User share \'%s\' failed', username)
-
-            for attr in ('sharedFolderAddRecordStatus', 'sharedFolderUpdateRecordStatus', 'sharedFolderRemoveRecordStatus'):
-                if hasattr(rs, attr):
-                    statuses = getattr(rs, attr)
-                    for r in statuses:
-                        record_uid = utils.base64_url_encode(r.recordUid)
-                        status = r.status
-                        if record_uid in params.record_cache:
-                            rec = api.get_record(params, record_uid)
-                            title = rec.title
-                        else:
-                            title = record_uid
-                        if status == 'success':
-                            logging.info('Record share \'%s\' %s', title,
-                                         'added' if attr == 'sharedFolderAddRecordStatus' else
-                                         'updated' if attr == 'sharedFolderUpdateRecordStatus' else
-                                         'removed')
-                        else:
-                            logging.warning('Record share \'%s\' failed', title)
-
-        except KeeperApiError as kae:
-            if kae.result_code != 'bad_inputs_nothing_to_do':
-                raise kae
+        return rq
 
 
 class ShareRecordCommand(Command):
@@ -592,7 +613,7 @@ class ShareRecordCommand(Command):
                         shared_folder_uid = shared_folder['shared_folder_uid']
                         break
 
-            if shared_folder_uid is not None and record_uid is not None:
+            if shared_folder_uid is None and record_uid is None:
                 rs = try_resolve_path(params, name)
                 if rs is not None:
                     folder, name = rs
@@ -793,11 +814,6 @@ class ShareRecordCommand(Command):
                         table.append(row)
             dump_report_data(table, headers, row_number=True, group_by=0)
             return
-
-        if transfer_ruids and params.enterprise_ec_key:
-            from .utils import SyncSecurityDataCommand
-            ssd_cmd = SyncSecurityDataCommand()
-            ssd_cmd.execute(params, record=transfer_ruids, quiet=True)
 
         while len(rq.addSharedRecord) > 0 or len(rq.updateSharedRecord) > 0 or len(rq.removeSharedRecord) > 0:
             rq1 = record_pb2.RecordShareUpdateRequest()
@@ -1241,9 +1257,9 @@ class RecordPermissionCommand(Command):
             fols.add(folder.uid)
             pos = 0
             while pos < len(flat_subfolders):
-                folder = flat_subfolders[pos]
-                if folder.subfolders:
-                    for f_uid in folder.subfolders:
+                subfolder = flat_subfolders[pos]
+                if subfolder.subfolders:
+                    for f_uid in subfolder.subfolders:
                         if f_uid not in fols:
                             f = params.folder_cache[f_uid]
                             if f:
@@ -1359,14 +1375,20 @@ class RecordPermissionCommand(Command):
                 if type(folder) == SharedFolderFolderNode:
                     shared_folder_uid = folder.shared_folder_uid
 
+                account_uid = utils.base64_url_encode(params.account_uid_bytes)
                 if shared_folder_uid in params.shared_folder_cache:
                     is_share_admin = shared_folder_uid in share_admin_in_folders
                     shared_folder = params.shared_folder_cache[shared_folder_uid]
                     team_uid = None
                     has_manage_records_permission = is_share_admin
                     if not has_manage_records_permission:
-                        if 'shared_folder_key' in shared_folder:
-                            has_manage_records_permission = shared_folder.get('manage_records') or False
+                        if 'owner_account_uid' in shared_folder:
+                            has_manage_records_permission = shared_folder['owner_account_uid'] == account_uid
+                    if not has_manage_records_permission:
+                        if 'users' in shared_folder:
+                            user = next((x for x in shared_folder['users'] if x.get('username') == params.user), None)
+                            if user and 'manage_records' in user:
+                                has_manage_records_permission = user['manage_records'] is True
                     if not has_manage_records_permission:
                         if 'teams' in shared_folder:
                             for sft in shared_folder['teams']:
@@ -1379,31 +1401,10 @@ class RecordPermissionCommand(Command):
                     if 'records' in shared_folder:
                         for rp in shared_folder['records']:
                             record_uid = rp['record_uid']
-                            if is_share_admin:
-                                has_record_share_permissions = True
-                                has_record_edit_permissions = True
-                            else:
-                                has_record_share_permissions = False
-                                has_record_edit_permissions = False
-                                if record_uid in params.meta_data_cache:
-                                    md = params.meta_data_cache[record_uid]
-                                    has_record_share_permissions = md.get('can_share', False)
-                                    has_record_edit_permissions = md.get('can_edit', False)
-                                if has_manage_records_permission:
-                                    if not has_record_share_permissions or not has_record_edit_permissions:
-                                        if not has_record_edit_permissions:
-                                            has_record_edit_permissions = rp.get('can_edit', False)
-                                        if not has_record_share_permissions:
-                                            has_record_share_permissions = rp.get('can_share', False)
-
-                            if not has_manage_records_permission:
-                                container = shared_folder_skip
-                            elif change_edit and not has_record_edit_permissions:
-                                container = shared_folder_skip
-                            elif change_share and not has_record_share_permissions:
-                                container = shared_folder_skip
-                            else:
+                            if is_share_admin or has_manage_records_permission:
                                 container = shared_folder_update
+                            else:
+                                container = shared_folder_skip
 
                             if shared_folder_uid not in container:
                                 container[shared_folder_uid] = {}
@@ -1567,17 +1568,44 @@ class RecordPermissionCommand(Command):
                     logging.info('')
 
                 table = []
+                requests = []
                 for shared_folder_uid in shared_folder_update:
                     updates = list(shared_folder_update[shared_folder_uid].values())
                     while len(updates) > 0:
-                        batch = updates[:480]
-                        updates = updates[480:]
+                        batch = updates[:490]
+                        updates = updates[490:]
                         rq = folder_pb2.SharedFolderUpdateV3Request()
                         rq.sharedFolderUid = utils.base64_url_decode(shared_folder_uid)
                         rq.forceUpdate = True
                         rq.sharedFolderUpdateRecord.extend(batch)
                         rq.fromTeamUid = batch[0].teamUid
-                        rs = api.communicate_rest(params, rq, 'vault/shared_folder_update_v3', rs_type=folder_pb2.SharedFolderUpdateV3Response)
+                        requests.append(rq)
+
+                chunks = []         # type: List[Dict[bytes, folder_pb2.SharedFolderUpdateV3Request]]
+                current_rq = {}     # type: Dict[bytes, folder_pb2.SharedFolderUpdateV3Request]
+                total_elements = 0
+                for rq in requests:
+                    if rq.sharedFolderUid in current_rq:
+                        chunks.append(current_rq)
+                        current_rq = {}
+                        total_elements = 0
+                    if total_elements + len(rq.sharedFolderUpdateRecord) > 500:
+                        chunks.append(current_rq)
+                        current_rq = {}
+                        total_elements = 0
+
+                    current_rq[rq.sharedFolderUid] = rq
+                    total_elements += len(rq.sharedFolderUpdateRecord)
+                if len(current_rq) > 0:
+                    chunks.append(current_rq)
+
+                for chunk in chunks:
+                    rqs = folder_pb2.SharedFolderUpdateV3RequestV2()
+                    rqs.sharedFoldersUpdateV3.extend(chunk.values())
+                    rss = api.communicate_rest(params, rqs, 'vault/shared_folder_update_v3', payload_version=1,
+                                               rs_type=folder_pb2.SharedFolderUpdateV3ResponseV2)
+                    for rs in rss.sharedFoldersUpdateV3Response:
+                        shared_folder_uid = utils.base64_url_encode(rs.sharedFolderUid)
                         for status in rs.sharedFolderUpdateRecordStatus:
                             record_uid = utils.base64_url_encode(status.recordUid)
                             code = status.status
@@ -1587,8 +1615,8 @@ class RecordPermissionCommand(Command):
                 if len(table) > 0:
                     headers = ['Shared Folder UID', 'Record UID', 'Error Code']
                     title = (
-                                bcolors.WARNING + 'Failed to {0}' + bcolors.ENDC + ' Shared Folder Record Share permission(s)') \
-                        .format('GRANT' if should_have else 'REVOKE')
+                                bcolors.WARNING + 'Failed to {0}' + bcolors.ENDC +
+                                ' Shared Folder Record Share permission(s)').format('GRANT' if should_have else 'REVOKE')
                     dump_report_data(table, headers, title=title)
                     logging.info('')
                     logging.info('')
@@ -1601,6 +1629,68 @@ class FindDuplicateCommand(Command):
         return find_duplicate_parser
 
     def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
+        out_fmt = kwargs.get('format', 'table')
+        out_dst = kwargs.get('output')
+
+        def scan_enterprise_vaults():
+            cmd = self.get_parser().prog
+            if not params.enterprise:
+                raise CommandError(cmd, 'This feature is available only to enterprise account administrators')
+            from keepercommander import sox
+            sox.validate_data_access(params, cmd)
+
+            field_keys = ['title', 'url', 'record_type']
+            refresh_data = kwargs.get('refresh_data')
+            node_id = sox.get_node_id(params, None)
+            enterprise_id = node_id >> 32
+            now = datetime.datetime.now()
+            update_floor_dt = now - datetime.timedelta(days=1)
+            update_floor_ts = int(update_floor_dt.timestamp())
+
+            sox_data = sox.get_compliance_data(params, node_id, enterprise_id, rebuild=refresh_data,
+                                               min_updated=update_floor_ts)
+            records = sox_data.get_records().values()
+            recs_by_hash = {}
+
+            for sd_rec in records:
+                h_gen = hashlib.sha256()
+                field_vals = [sd_rec.data.get(k) for k in field_keys]
+                if not field_vals or not all(field_vals):
+                    continue
+
+                token_tuples = zip(field_keys, field_vals)
+                for k, v in token_tuples:
+                    h_gen.update(f'{k}={v};'.encode())
+
+                hv = h_gen.hexdigest()
+                grouped_records = recs_by_hash.get(hv, [])
+                grouped_records.append(sd_rec)
+                recs_by_hash[hv] = grouped_records
+
+            dupe_groups = [recs for recs in recs_by_hash.values() if len(recs) > 1]  # type: List[List[Record]]
+            if not dupe_groups:
+                logging.info('No duplicates found.')
+                return
+            else:
+                report_headers = ['group', 'record_uid', 'title', 'url', 'record_type', 'owner', 'shared',
+                                  'shared_folder_uid']
+                report_headers = fields_to_titles(report_headers) if out_fmt != 'json' else report_headers
+                report_data = []
+                for i, group in enumerate(dupe_groups):
+                    for j, sd_rec in enumerate(group):
+                        record_owner = sox_data.get_record_owner(sd_rec.record_uid).email
+                        field_vals = [sd_rec.data.get(k) for k in field_keys]
+                        sf_uids = sox_data.get_record_sfs(sd_rec.record_uid)
+                        sf_uids = '\n'.join(sf_uids)
+                        report_row = [i + 1, sd_rec.record_uid, *field_vals, record_owner, sd_rec.shared, sf_uids]
+                        report_data.append(report_row)
+                report_title = 'Duplicate Search Results (Enterprise Scope):'
+                return dump_report_data(report_data, report_headers, fmt=out_fmt, filename=out_dst, title=report_title, group_by=0)
+
+        scope = kwargs.get('scope', 'vault')
+        if scope == 'enterprise':
+            return scan_enterprise_vaults()
+
         quiet = kwargs.get('quiet', False)
         dry_run = kwargs.get('dry_run', False)
         quiet = quiet and not dry_run
@@ -1633,13 +1723,15 @@ class FindDuplicateCommand(Command):
 
         def remove_duplicates(dupe_info, col_headers, dupe_uids):
             # type: (List[List[str]], List[str], Set[str]) -> None
-            prompt_title = f'\nThe following duplicate {"records have" if len(dupe_uids) > 1 else "record has"}' \
-                    f' been marked for removal:\n'
-            indices = (idx + 1 for idx in range(len(dupe_info)))
-            prompt_report = prompt_title + '\n' + tabulate(dupe_info, col_headers, showindex=indices)
-            prompt_msg = prompt_report + '\n\nDo you wish to proceed?'
+            def confirm_removal(cols):
+                prompt_title = f'\nThe following duplicate {"records have" if len(dupe_uids) > 1 else "record has"}' \
+                        f' been marked for removal:\n'
+                indices = (idx + 1 for idx in range(len(dupe_info)))
+                prompt_report = prompt_title + '\n' + tabulate(dupe_info, col_headers, showindex=indices)
+                prompt_msg = prompt_report + '\n\nDo you wish to proceed?'
+                return confirm(prompt_msg)
 
-            if kwargs.get('force') or confirm(prompt_msg):
+            if kwargs.get('force') or confirm_removal(col_headers):
                 logging_fn(f'Deleting {len(dupe_uids)} records...')
                 if not dry_run:
                     rm_cmd = RecordRemoveCommand()
@@ -1755,10 +1847,11 @@ class FindDuplicateCommand(Command):
         if by_shares:
             partitions = partition_by_shares(partitions, shared_records_lookup)
         if partitions:
-            headers = ['#', 'Title', 'Login']
+            headers = ['group', 'title', 'login']
             if by_url:
-                headers.append('Website Address')
-            headers.extend(['UID', 'Record Owner', 'Shared To'])
+                headers.append('url')
+            headers.extend(['uid', 'record_owner', 'shared_to'])
+            headers = fields_to_titles(headers) if out_fmt != 'json' else headers
             table_raw = []
             table = []
             to_remove = set()
@@ -1766,9 +1859,8 @@ class FindDuplicateCommand(Command):
                 for j, record_uid in enumerate(partition):
                     shared_record = shared_records_lookup.get(record_uid)
                     record = api.get_record(params, record_uid)
-                    row_no = not j and i + 1 or None
-                    title = (not j or not by_title) and record.title or ''
-                    login = (not j or not by_login) and record.login or ''
+                    title = record.title or ''
+                    login = record.login or ''
                     url = record.login_url or ''
                     url = urllib.parse.urlparse(url.encode()).hostname
                     url = url.decode()[:30] if url else ''
@@ -1783,20 +1875,22 @@ class FindDuplicateCommand(Command):
                     perms = [perms.get(k) for k in keys]
                     perms = [p for p in perms if team_user_type not in p.types or len(p.types) > 1]
                     shares = '\n'.join([p.to_name for p in perms if owner != p.to_name])
-                    row = [row_no, title, login] + url + [record_uid, owner, shares]
+                    row = [i + 1, title, login] + url + [record_uid, owner, shares]
+                    table.append(row)
 
                     if j != 0:
-                        raw_row = [record.title, record.login] + url + [record_uid, owner, shares]
                         to_remove.add(record_uid)
-                        table_raw.append(raw_row)
-                    table.append(row)
+                        table_raw.append(row)
             if consolidate:
-                uid_txt = 'UID'
-                record_uid_index = headers.index(uid_txt) - 1 if uid_txt in headers else 0
+                uid_header = field_to_title('uid')
+                record_uid_index = headers.index(uid_header) if uid_header in headers else None
+                if not record_uid_index:
+                    raise CommandError(self.get_parser().prog, 'Cannot find record UID for duplicate record')
                 dup_info = [r for r in table_raw for rec_uid in to_remove if r[record_uid_index] == rec_uid]
-                remove_duplicates(dup_info, headers, to_remove)
+                return remove_duplicates(dup_info, headers, to_remove)
             else:
-                return dump_report_data(table, headers=headers, title='Duplicates Found:')
+                title = 'Duplicates Found:'
+                return dump_report_data(table, headers, title=title, fmt=out_fmt, filename=out_dst, group_by=0)
         else:
             logging_fn('No duplicates found')
 
@@ -1894,7 +1988,7 @@ class OneTimeShareRemoveCommand(Command):
         rq.appRecordUid = utils.base64_url_decode(record_uid)
         rq.clients.append(client_id)
 
-        api.communicate_rest(params, rq, 'vault/app_client_remove')
+        api.communicate_rest(params, rq, 'vault/external_share_remove')
         logging.info('One-time share \"%s\" is removed from record \"%s\"', share_name, record_name)
 
 

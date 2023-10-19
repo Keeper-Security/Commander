@@ -51,7 +51,7 @@ import_parser.add_argument('--display-json', '-dj', dest='display_json', action=
                            help='display Keeper JSON import instructions')
 import_parser.add_argument(
     '--format', choices=['json', 'csv', 'keepass', 'lastpass', 'myki', 'nordpass', 'manageengine', '1password',
-                         'bitwarden', 'thycotic'],
+                         'bitwarden', 'thycotic', 'proton'],
     required=True, help='file format')
 import_parser.add_argument('--folder', dest='import_into', action='store',
                            help='import into a separate folder.')
@@ -77,6 +77,8 @@ import_parser.add_argument('--new-domain', '-nd', dest='new_domain', action='sto
                            help='new domain for changing user emails in permissions')
 import_parser.add_argument('--file-cache', dest='tmpdir', action='store',
                            help='temp directory used to cache encrypted attachment imports')
+import_parser.add_argument('--show-skipped', dest='show_skipped', action='store_true',
+                           help='Display skipped records')
 import_parser.add_argument(
     'name', type=str, help='file name (json, csv, keepass, 1password), account name (lastpass), or URL (ManageEngine, Thycotic)'
 )

@@ -5,13 +5,18 @@ from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 
 from . import sox_types, sqlite_storage, storage_types
 from .sox_types import RecordPermissions, SharedFolder
+from .. import crypto, utils
+from ..error import Error
+from ..params import KeeperParams
 
 
 class RebuildTask:
-    def __init__(self, is_full_sync, load_compliance_data=False):      # type: (bool, bool) -> None
+    def __init__(self, is_full_sync, load_compliance_data=False, load_aging_data=False):
+        # type: (bool, bool, bool) -> None
         self.is_full_sync = is_full_sync                    # type: bool
         self.load_compliance_data = load_compliance_data    # type: bool
         self.records = set()                                # type: Set[str]
+        self.load_aging_data = load_aging_data              # type: bool
 
     def update_records(self, record_ids):    # type: (Iterable[str]) -> None
         if self.is_full_sync:
@@ -19,15 +24,30 @@ class RebuildTask:
         self.records.update(record_ids)
 
 
+def get_ec_private_key(params):  # type: (KeeperParams) -> EllipticCurvePrivateKey
+    tree_key = params.enterprise['unencrypted_tree_key']
+    ecc_key = utils.base64_url_decode(params.enterprise['keys']['ecc_encrypted_private_key'])
+    ecc_key = crypto.decrypt_aes_v2(ecc_key, tree_key)
+    return crypto.load_ec_private_key(ecc_key)
+
+
+def clear_lookup(lookup, uids=None):  # type: (dict, Optional[Iterable]) -> None
+    if uids:
+        [lookup.pop(k) for k in uids]
+    else:
+        lookup.clear()
+
+
 class SoxData:
-    def __init__(self, ec_private_key, storage, no_cache=False):
-        # type: (EllipticCurvePrivateKey, sqlite_storage.SqliteSoxStorage, Optional[bool]) -> None
-        self.ec_private_key = ec_private_key    # type: EllipticCurvePrivateKey
+    def __init__(self, params, storage, no_cache=False):
+        # type: (KeeperParams, sqlite_storage.SqliteSoxStorage, Optional[bool]) -> None
         self.storage = storage                  # type: sqlite_storage.SqliteSoxStorage
         self._records = {}                      # type: Dict[str, sox_types.Record]
         self._users = {}                        # type: Dict[int, sox_types.EnterpriseUser]
         self._teams = {}                        # type: Dict[str, sox_types.Team]
         self._shared_folders = {}               # type: Dict[str, sox_types.SharedFolder]
+        self.ec_private_key = get_ec_private_key(params)
+        self.tree_key = params.enterprise.get('unencrypted_tree_key', b'')
         task = RebuildTask(True)
         self.rebuild_data(task, no_cache)
 
@@ -47,7 +67,15 @@ class SoxData:
         return self._teams if team_uids is None else {uid: self.get_team(uid) for uid in team_uids}
 
     def get_user_records(self, user_uids=None):
-        users = self._users.values() if user_uids is None else {self.get_user(uid) for uid in user_uids}
+        if user_uids:
+            users = set()
+            for uid in user_uids:
+                user = self.get_user(uid)
+                if user:
+                    users.add(user)
+        else:
+            users = self._users.values()
+
         recs = set()
         for user in users:
             for r_uid in user.records:
@@ -56,6 +84,10 @@ class SoxData:
 
     def get_shared_folders(self, sf_uids=None):
         return self._shared_folders if sf_uids is None else {uid: self._shared_folders.get(uid) for uid in sf_uids}
+
+    def get_record_sfs(self, record_uid):
+        get_ruids = lambda sf: [rp.record_uid for rp in sf.record_permissions]
+        return [sf.folder_uid for sf in self._shared_folders.values() if record_uid in get_ruids(sf)]
 
     def get_record_owner(self, rec_uid):
         owner = None
@@ -66,11 +98,38 @@ class SoxData:
                     break
         return owner
 
+    def clear_records(self, uids=None):
+        clear_lookup(self._records, uids)
+
+    def clear_users(self, uids=None):
+        clear_lookup(self._users, uids)
+
+    def clear_teams(self, uids=None):
+        clear_lookup(self._teams, uids)
+
+    def clear_shared_folders(self, uids=None):
+        clear_lookup(self._shared_folders, uids)
+
+    def clear_all(self):
+        self.clear_records()
+        self.clear_users()
+        self.clear_teams()
+        self.clear_shared_folders()
+
     @property
     def record_count(self):   # type: () -> int
         return len(self._records)
 
     def rebuild_data(self, changes, no_cache=False):   # type: (RebuildTask, Optional[bool]) -> None
+        def decrypt(data):  # type: (bytes) -> str
+            decrypted = ''
+            try:
+                decrypted_bytes = crypto.decrypt_aes_v1(data, self.tree_key) if data else b''
+                decrypted = decrypted_bytes.decode()
+            except Error as e:
+                logging.info(f'Error decrypting data: type = {type(data)}, value = {data}, message = {e.message}')
+            return decrypted
+
         def link_record_permissions(store, record_lookup):
             links = store.get_record_permissions().get_all_links()
             for link in links:
@@ -114,14 +173,16 @@ class SoxData:
             links = store.get_user_record_links().get_all_links()
             for link in links:
                 user = user_lookup.get(link.user_uid)
+                rec = self._records.get(link.record_uid)
                 if user:
-                    user.records.append(link.record_uid)
+                    user.trash_records.add(rec.record_uid) if rec.in_trash else user.active_records.add(rec.record_uid)
+                    user.records.add(link.record_uid)
                 else:
                     logging.info(f'user (uid = {link.user_uid} not found')
             return user_lookup
 
         def load_users(store):  # type: (sqlite_storage.SqliteSoxStorage) -> Dict[int, sox_types.EnterpriseUser]
-            users = [sox_types.EnterpriseUser.load(eu) for eu in store.users.get_all()]
+            users = [sox_types.EnterpriseUser.load(eu, decrypt_fn=decrypt) for eu in store.users.get_all()]
             u_lookup = {user.user_uid: user for user in users}
             return link_user_records(store, u_lookup)
 
@@ -174,6 +235,10 @@ class SoxData:
 
             return folder_lookup
 
+        if changes.is_full_sync:
+            self.clear_all()
+        if changes.load_aging_data:
+            self.clear_records(changes.records)
         if changes.load_compliance_data:
             self._teams.update(load_teams(self.storage))
             self._shared_folders.update(load_shared_folders(self.storage))

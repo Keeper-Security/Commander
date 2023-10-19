@@ -22,10 +22,12 @@ import json
 import logging
 import os
 import re
+import sys
 import math
 import requests
 import time
 
+from urllib.parse import urlparse, parse_qs
 
 from .encryption_reader import EncryptionReader
 from .importer import (importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter,
@@ -33,7 +35,7 @@ from .importer import (importer_for_format, exporter_for_format, path_components
                        SharedFolder as ImportSharedFolder, Permission as ImportPermission, BytesAttachment,
                        Attachment as ImportAttachment, RecordSchemaField, File as ImportFile, Team as ImportTeam,
                        RecordReferences, FIELD_TYPE_ONE_TIME_CODE)
-from .. import api, sync_down, utils, crypto, vault, vault_extensions
+from .. import api, sync_down, utils, crypto, vault, vault_extensions, record_types
 from ..commands import base
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError
@@ -133,7 +135,7 @@ def convert_keeper_record(record, has_attachments=False):
         return
 
     version = record.get('version') or 2
-    if type(version) != int:
+    if not isinstance(version, int):
         try:
             version = int(version)
         except:
@@ -159,14 +161,17 @@ def convert_keeper_record(record, has_attachments=False):
                 rf.value = custom.get('value') or ''
                 rec.fields.append(rf)
         if 'extra_unencrypted' in record:
-            extra = json.loads(record['extra_unencrypted'])
-            if 'fields' in extra:
-                for field in extra['fields']:
-                    if field['field_type'] == 'totp':
-                        rf = ImportRecordField()
-                        rf.type = FIELD_TYPE_ONE_TIME_CODE
-                        rf.value = field['data']
-                        rec.fields.append(rf)
+            try:
+                extra = json.loads(record['extra_unencrypted'])
+                if 'fields' in extra:
+                    for field in extra['fields']:
+                        if field['field_type'] == 'totp':
+                            rf = ImportRecordField()
+                            rf.type = FIELD_TYPE_ONE_TIME_CODE
+                            rf.value = field['data']
+                            rec.fields.append(rf)
+            except:
+                logging.debug('Error parsing extra for record \"%s\"', record_uid)
 
     elif version == 3 and 'type' in data:
         rec.type = data['type']
@@ -187,19 +192,19 @@ def convert_keeper_record(record, has_attachments=False):
         custom = data.get('custom') if 'custom' in data else []
         for field in itertools.chain(fields, custom):
             field_value = field.get('value') or ''
-            if type(field_value) is list and len(field_value) == 1:
+            if isinstance(field_value, list) and len(field_value) == 1:
                 field_value = field_value[0]
             field_type = field.get('type') or ''
 
-            if field_type == 'login' and not rec.login and type(field_value) == str:
+            if field_type == 'login' and not rec.login and isinstance(field_value, str):
                 rec.login = field_value
-            elif field_type == 'password' and not rec.password and type(field_value) == str:
+            elif field_type == 'password' and not rec.password and isinstance(field_value, str):
                 rec.password = field_value
-            elif field_type == 'url' and not field.get('label') and not rec.login_url and type(field_value) == str:
+            elif field_type == 'url' and not field.get('label') and not rec.login_url and isinstance(field_value, str):
                 rec.login_url = field_value
             elif field_type.endswith('Ref'):
                 ref_type = field_type[:-3]
-                if ref_type == 'file' and not has_attachments:
+                if ref_type == 'file':
                     continue
                 uids = field_value if isinstance(field_value, list) else [str(field_value)]
                 uids = [x for x in uids if x]
@@ -312,15 +317,19 @@ def export(params, file_format, filename, **kwargs):
     #     ext_id += 1
     #     external_ids[record_uid] = ext_id
     for record_uid in params.record_cache:
-        if record_filter:
+        if record_filter or folder_path:
             if record_uid not in record_filter:
                 continue
 
         record = params.record_cache[record_uid]
         record_version = record.get('version') or 0
         if record_version == 2 or record_version == 3:
-            rec = convert_keeper_record(record, exporter.has_attachments())
-            if not rec:
+            try:
+                rec = convert_keeper_record(record, exporter.has_attachments())
+                if not rec:
+                    continue
+            except:
+                logging.debug('Failed to export record \"%s\"', record_uid)
                 continue
 
             if exporter.has_attachments():
@@ -400,12 +409,13 @@ def export(params, file_format, filename, **kwargs):
 
     rec_count = len(to_export) - sf_count
 
-    if len(to_export) > 0:
-        file_password = kwargs.get('file_password')
-        zip_archive = kwargs.get('zip_archive')
-        exporter.execute(filename, to_export, file_password=file_password, zip_archive=zip_archive)
-        params.queue_audit_event('exported_records', file_format=file_format)
-        logging.info('%d records exported', rec_count)
+    file_password = kwargs.get('file_password')
+    zip_archive = kwargs.get('zip_archive')
+    exporter.execute(filename, to_export, file_password=file_password, zip_archive=zip_archive)
+    params.queue_audit_event('exported_records', file_format=file_format)
+    msg = f'{rec_count} records exported' if to_export \
+        else 'Search results contain 0 records to be exported.\nDid you, perhaps, filter by (an) empty folder(s)?'
+    logging.info(msg)
 
 
 def import_teams(params, teams, full_sync=False):   # type: (KeeperParams, List[ImportTeam], bool) -> None
@@ -581,28 +591,35 @@ def import_user_permissions(params,
             users_updated = 0
             teams_removed = 0
             users_removed = 0
-            for sfu in permissions:
-                if isinstance(sfu, folder_pb2.SharedFolderUpdateV3Request):
-                    try:
-                        rs = api.communicate_rest(params, sfu, 'vault/shared_folder_update_v3',
-                                                  rs_type=folder_pb2.SharedFolderUpdateV3Response)
-                        if len(rs.sharedFolderAddUserStatus) > 0:
-                            users_added += len([x for x in rs.sharedFolderAddUserStatus if x.status == 'success'])
-                        if len(rs.sharedFolderAddTeamStatus) > 0:
-                            teams_added += len([x for x in rs.sharedFolderAddTeamStatus if x.status == 'success'])
-                        if len(rs.sharedFolderUpdateUserStatus) > 0:
-                            users_updated += len([x for x in rs.sharedFolderUpdateUserStatus if x.status == 'success'])
-                        if len(rs.sharedFolderUpdateTeamStatus) > 0:
-                            teams_updated += len([x for x in rs.sharedFolderUpdateTeamStatus if x.status == 'success'])
-                        if len(rs.sharedFolderRemoveUserStatus) > 0:
-                            users_removed += len([x for x in rs.sharedFolderRemoveUserStatus if x.status == 'success'])
-                        if len(rs.sharedFolderRemoveTeamStatus) > 0:
-                            teams_removed += len([x for x in rs.sharedFolderRemoveTeamStatus if x.status == 'success'])
-                    except Exception as e:
-                        shared_folder_uid = utils.base64_url_encode(sfu.sharedFolderUid)
-                        logging.warning('Shared Folder "%s" update error: %s', shared_folder_uid, e)
-                else:
-                    logging.warning('Incorrect shared folder update request')
+            while len(permissions) > 0:
+                chunk = permissions[:999]
+                permissions = permissions[999:]
+                rqs = folder_pb2.SharedFolderUpdateV3RequestV2()
+                for rq in chunk:
+                    if isinstance(rq, folder_pb2.SharedFolderUpdateV3Request):
+                        rqs.sharedFoldersUpdateV3.append(rq)
+                try:
+                    rss = api.communicate_rest(params, rqs, 'vault/shared_folder_update_v3', payload_version=1,
+                                               rs_type=folder_pb2.SharedFolderUpdateV3ResponseV2)
+                    for rs in rss.sharedFoldersUpdateV3Response:
+                        if rs.status == 'success':
+                            if len(rs.sharedFolderAddUserStatus) > 0:
+                                users_added += len([x for x in rs.sharedFolderAddUserStatus if x.status == 'success'])
+                            if len(rs.sharedFolderAddTeamStatus) > 0:
+                                teams_added += len([x for x in rs.sharedFolderAddTeamStatus if x.status == 'success'])
+                            if len(rs.sharedFolderUpdateUserStatus) > 0:
+                                users_updated += len([x for x in rs.sharedFolderUpdateUserStatus if x.status == 'success'])
+                            if len(rs.sharedFolderUpdateTeamStatus) > 0:
+                                teams_updated += len([x for x in rs.sharedFolderUpdateTeamStatus if x.status == 'success'])
+                            if len(rs.sharedFolderRemoveUserStatus) > 0:
+                                users_removed += len([x for x in rs.sharedFolderRemoveUserStatus if x.status == 'success'])
+                            if len(rs.sharedFolderRemoveTeamStatus) > 0:
+                                teams_removed += len([x for x in rs.sharedFolderRemoveTeamStatus if x.status == 'success'])
+                        else:
+                            shared_folder_uid = utils.base64_url_encode(rs.sharedFolderUid)
+                            logging.warning('Shared Folder "%s" update error: %s', shared_folder_uid, rs.status)
+                except Exception as e:
+                    logging.warning('Shared Folders update error: %s', e)
             sync_down.sync_down(params)
 
             if teams_added > 0:
@@ -629,6 +646,7 @@ def _import(params, file_format, filename, **kwargs):
     record_type = kwargs.get('record_type')
     filter_folder = kwargs.get('filter_folder')
     dry_run = kwargs.get('dry_run') is True
+    show_skipped = kwargs.get('show_skipped') is True
 
     import_into = kwargs.get('import_into') or ''
     if import_into:
@@ -759,7 +777,23 @@ def _import(params, file_format, filename, **kwargs):
         records_v3_to_update = []   # type: List[record_pb2.RecordUpdate]
         import_uids = {}
 
-        records_to_import, external_lookup = prepare_record_add_or_update(update_flag, params, records)
+        records_to_import, record_exists, external_lookup = prepare_record_add_or_update(update_flag, params, records)
+        if show_skipped and record_exists:
+            for existing_record in record_exists:
+                folder_name = ''
+                if existing_record.folders:
+                    f = existing_record.folders[0]
+                    if f.domain:
+                        folder_name = f.domain + '\\'
+                    if f.path:
+                        folder_name += f.path
+
+                if folder_name:
+                    logging.info('Record "%s" appearing in Folder "%s" was skipped due to a duplicate record [%s] found.',
+                                 existing_record.title, folder_name, existing_record.uid)
+                else:
+                    logging.info('Record "%s" was skipped due to a duplicate record [%s] found.',
+                                 existing_record.title, existing_record.uid)
         reference_uids = set()
 
         table = []
@@ -1265,7 +1299,7 @@ def upload_v3_attachments(params, records_with_attachments):  # type: (KeeperPar
                 with EncryptionReader.get_buffered_reader(src, file_key) as encrypted_src:
                     form_files = {'file': (atta.name, encrypted_src, 'application/octet-stream')}
                     form_params = json.loads(f.parameters)
-                    print(f'{atta.name} ... ', end='', flush=True)
+                    print(f'{atta.name} ... ', file=sys.stderr, end='', flush=True)
                     response = requests.post(f.url, data=form_params, files=form_files)
 
             if str(response.status_code) == form_params.get('success_action_status'):
@@ -1387,7 +1421,7 @@ def upload_attachment(params, attachments):
                     files = {
                         upload['file_parameter']: (atta.name, encypted, 'application/octet-stream')
                     }
-                    print('{0} ... '.format(atta.name), end='', flush=True)
+                    print('{0} ... '.format(atta.name), file=sys.stderr, end='', flush=True)
                     response = requests.post(upload['url'], files=files, data=upload['parameters'])
                     if response.status_code == upload['success_status_code']:
                         if record_id not in uploaded:
@@ -1640,11 +1674,11 @@ IGNORABLE_FIELD_TYPES = {'text', 'fileRef', 'cardRef', 'oneTimeCode'}
 def value_to_token(value): # type: (any) -> str
     if not value:
         return ''
-    if type(value) == str:
+    if isinstance(value, str):
         return value
-    if type(value) == list:
+    if isinstance(value, list):
         return ','.join((value_to_token(x) for x in value))
-    if type(value) == dict:
+    if isinstance(value, dict):
         pairs = [x for x in value.items()]
         pairs.sort(key=lambda x: x[0])
         return ';'.join(f'{k}={value_to_token(v)}' for k, v in pairs)
@@ -1715,18 +1749,20 @@ def _construct_record_v2(rec_to_import, orig_extra=None):  # type: (ImportRecord
     custom_fields = []
     for field in rec_to_import.fields:
         value = ''
-        if type(field.value) == str:
+        if isinstance(field.value, str):
             value = field.value
-        elif type(field.value) == list:
-            value = field.value[0]
+        elif isinstance(field.value, list):
+            if len(field.value) > 0:
+                if field.value[0]:
+                    value = str(field.value[0])
         elif field.value:
-            value = str(value)
+            value = str(field.value)
 
         if field.type == FIELD_TYPE_ONE_TIME_CODE:
             if value:
                 totp = value
         else:
-            name = field.label or field.type or ''
+            name = vault.sanitize_str_field_value(field.label or field.type)
             custom_fields.append({
                 'type': 'text',
                 'name': name,
@@ -1734,11 +1770,11 @@ def _construct_record_v2(rec_to_import, orig_extra=None):  # type: (ImportRecord
             })
 
     data = {
-        'title': rec_to_import.title or '',
-        'secret1': rec_to_import.login or '',
-        'secret2': rec_to_import.password or '',
-        'link': rec_to_import.login_url or '',
-        'notes': rec_to_import.notes or '',
+        'title': vault.sanitize_str_field_value(rec_to_import.title),
+        'secret1': vault.sanitize_str_field_value(rec_to_import.login),
+        'secret2': vault.sanitize_str_field_value(rec_to_import.password),
+        'link': vault.sanitize_str_field_value(rec_to_import.login_url),
+        'notes': vault.sanitize_str_field_value(rec_to_import.notes),
         'custom': custom_fields
     }
 
@@ -1749,7 +1785,7 @@ def _construct_record_v2(rec_to_import, orig_extra=None):  # type: (ImportRecord
                 totp = None
 
     extra = None
-    if totp:
+    if isinstance(totp, str):
         extra = orig_extra or {}
         if 'fields' in extra:
             fields = extra['fields']
@@ -1766,13 +1802,44 @@ def _construct_record_v2(rec_to_import, orig_extra=None):  # type: (ImportRecord
 
     return data, extra
 
+def _verify_typed_field_value(expected_value, value):
+    if isinstance(expected_value, str):
+        if not isinstance(value, str):
+            value = str(value)
+    elif isinstance(expected_value, int):
+        if not isinstance(value, int):
+            try:
+                value = int(value)
+            except ValueError:
+                value = 0
+    elif isinstance(expected_value, bool):
+        if isinstance(value, int):
+            value = value != 0
+        elif isinstance(value, str):
+            value = value.lower() in ('t', 'true', 'ok', 'y', 'yes')
+    elif isinstance(expected_value, dict):
+        pass
+    return value
+
 
 def _create_field_v3(schema, value):  # type: (RecordSchemaField, any) -> dict
-    if value is None:
-        value = ''
+    if value:
+        if not isinstance(value, list):
+            value = [value]
+    else:
+        value = []
+    value = [x for x in value if x is not None]
+
+    field_type = schema.ref or 'text'
+    if field_type in record_types.RecordFields:
+        rf = record_types.RecordFields[field_type]
+        if rf.type in record_types.FieldTypes:
+            ft = record_types.FieldTypes[rf.type]
+            value = [_verify_typed_field_value(ft.value, x) for x in value]
+
     field = {
-        'type': schema.ref or 'text',
-        'value': value if type(value) is list else [value]
+        'type': field_type,
+        'value': value
     }
     if schema.label:
         field['label'] = schema.label
@@ -1783,12 +1850,24 @@ def _create_field_v3(schema, value):  # type: (RecordSchemaField, any) -> dict
 
 def _construct_record_v3_data(rec_to_import, orig_record=None, map_data_custom_to_rec_fields=None):
     # type: (ImportRecord, Optional[vault.TypedRecord], Optional[dict]) -> dict
+    # verify typed fields values
+    for field in rec_to_import.fields:
+        if field.type in ('otp', 'oneTimeCode'):
+            if isinstance(field.value, str) and field.value:
+                comps = urlparse(field.value)
+                if comps.scheme == 'otpauth':
+                    q = parse_qs(comps.query, keep_blank_values=True)
+                    if 'secret' in q and len(q['secret']) > 0:
+                        secret = next((x for x in q['secret'] if len(x) > 0), None)
+                        if secret:
+                            continue
+                    field.value = None
     data = {}
     if isinstance(orig_record, vault.TypedRecord):
         data.update(vault_extensions.extract_typed_record_data(orig_record))
-    data['title'] = rec_to_import.title or ''
-    data['type'] = rec_to_import.type or ''
-    data['notes'] = rec_to_import.notes or ''
+    data['title'] = vault.sanitize_str_field_value(rec_to_import.title)
+    data['type'] = vault.sanitize_str_field_value(rec_to_import.type)
+    data['notes'] = vault.sanitize_str_field_value(rec_to_import.notes)
     record_fields = [x for x in rec_to_import.fields]
     record_refs = [x for x in rec_to_import.references or []]
     data['fields'] = []
@@ -1865,7 +1944,7 @@ def build_record_hash(tokens):    # type: (Iterator[str]) -> str
 
 
 def prepare_record_add_or_update(update_flag, params, records):
-    # type: (bool, KeeperParams, Iterable[ImportRecord]) -> Tuple[List[ImportRecord], dict]
+    # type: (bool, KeeperParams, Iterable[ImportRecord]) -> Tuple[List[ImportRecord], List[ImportRecord], dict]
     """
     Find what records to import or update.
 
@@ -1889,6 +1968,7 @@ def prepare_record_add_or_update(update_flag, params, records):
             pass
 
     record_to_import = []   # type: List[ImportRecord]
+    record_exists = []   # type: List[ImportRecord]
     record_uid_to_update = set()
     external_lookup = {}
 
@@ -1916,9 +1996,11 @@ def prepare_record_add_or_update(update_flag, params, records):
 
         record_hash = build_record_hash(tokenize_full_import_record(import_record))
         if record_hash in preexisting_entire_record_hash:
+            record_uid = preexisting_entire_record_hash[record_hash]
             if import_record.uid:
-                record_uid = preexisting_entire_record_hash[record_hash]
                 external_lookup[import_record.uid] = record_uid
+            import_record.uid = record_uid
+            record_exists.append(import_record)
             continue
 
         if import_record.uid and import_record.uid in params.record_cache:
@@ -1984,7 +2066,7 @@ def prepare_record_add_or_update(update_flag, params, records):
                     if 'recordRef' in script:
                         script['recordRef'] = [external_lookup.get(x) or x for x in script['recordRef']]
 
-    return record_to_import, external_lookup
+    return record_to_import, record_exists, external_lookup
 
 
 def prepare_record_link(params, records):
@@ -2061,9 +2143,8 @@ def prepare_record_link(params, records):
     return record_links
 
 
-def prepare_folder_permission(params,
-                              folders,
-                              full_sync):    # type: (KeeperParams, List[ImportSharedFolder], bool) -> list
+def prepare_folder_permission(params, folders, full_sync):
+    # type: (KeeperParams, List[ImportSharedFolder], bool) -> list
     """Prepare a list of API interactions for changes to folder permissions."""
     shared_folder_lookup = {}
     api.load_available_teams(params)
@@ -2299,7 +2380,10 @@ def prepare_folder_permission(params,
             if len(remove_teams) > 0:
                 request_v3.sharedFolderRemoveTeam.extend((utils.base64_url_decode(x) for x in remove_teams))
 
-            folder_permissions.append(request_v3)
+            if (request_v3.sharedFolderAddUser or request_v3.sharedFolderAddTeam or
+                    request_v3.sharedFolderUpdateUser or request_v3.sharedFolderUpdateTeam or
+                    request_v3.sharedFolderRemoveUser or request_v3.sharedFolderRemoveTeam or update_defaults):
+                folder_permissions.append(request_v3)
 
     return folder_permissions
 

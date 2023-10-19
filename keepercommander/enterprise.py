@@ -133,11 +133,15 @@ class _EnterpriseLoader(object):
             keys = {}    # type: Dict[str, str]
             if rs.enterpriseKeys:
                 if rs.enterpriseKeys.rsaEncryptedPrivateKey:
-                    self._enterprise._rsa_key = \
-                        crypto.decrypt_aes_v2(rs.enterpriseKeys.rsaEncryptedPrivateKey, self._enterprise.tree_key)
-                    keys['rsa_public_key'] = utils.base64_url_encode(rs.enterpriseKeys.rsaPublicKey)
-                    keys['rsa_encrypted_private_key'] = \
-                        utils.base64_url_encode(rs.enterpriseKeys.rsaEncryptedPrivateKey)
+                    try:
+                        self._enterprise._rsa_key = \
+                            crypto.decrypt_aes_v2(rs.enterpriseKeys.rsaEncryptedPrivateKey, self._enterprise.tree_key)
+                        keys['rsa_public_key'] = utils.base64_url_encode(rs.enterpriseKeys.rsaPublicKey)
+                        keys['rsa_encrypted_private_key'] = \
+                            utils.base64_url_encode(rs.enterpriseKeys.rsaEncryptedPrivateKey)
+                    except:
+                        logging.warning('Error decrypting enterprise RSA key')
+                        keys['rsa_encrypted_private_key'] = ''
                 if rs.enterpriseKeys.eccEncryptedPrivateKey:
                     keys['ecc_public_key'] = utils.base64_url_encode(rs.enterpriseKeys.eccPublicKey)
                     keys['ecc_encrypted_private_key'] = \
@@ -457,6 +461,7 @@ class _EnterpriseUserEntity(_EnterpriseEntity):
                        proto_entity.accountShareExpiration if proto_entity.accountShareExpiration > 0 else None)
         _set_or_remove(keeper_entity, 'full_name', proto_entity.fullName if proto_entity.fullName else None)
         _set_or_remove(keeper_entity, 'job_title', proto_entity.jobTitle if proto_entity.jobTitle else None)
+        _set_or_remove(keeper_entity, 'tfa_enabled', proto_entity.tfaEnabled)
         data = {}
         encrypted_data = keeper_entity.get('encrypted_data')
         if encrypted_data:

@@ -118,7 +118,7 @@ list_team_parser.add_argument('--output', dest='output', action='store',
                               help='output file name. (ignored for table format)')
 
 
-record_history_parser = argparse.ArgumentParser(prog='history', parents=[base.report_output_parser],
+record_history_parser = argparse.ArgumentParser(prog='record-history', parents=[base.report_output_parser],
                                                 description='Show the history of a record modifications.')
 record_history_parser.add_argument(
     '-a', '--action', dest='action', choices=['list', 'diff', 'view', 'restore'], action='store',
@@ -155,6 +155,8 @@ clipboard_copy_parser.add_argument(
     '-l', '--login', dest='login', action='store_true', help='output login name')
 clipboard_copy_parser.add_argument(
     '-t', '--totp', dest='totp', action='store_true', help='output totp code')
+clipboard_copy_parser.add_argument(
+    '--field', dest='field', action='store', help='output custom field')
 clipboard_copy_parser.add_argument(
     '-r', '--revision', dest='revision', type=int, action='store',
     help='use a specific record revision')
@@ -1120,7 +1122,7 @@ class TrashUnshareCommand(Command, TrashMixin):
                 if 'remove_statuses' in rs:
                     for rm_status in rs['remove_statuses']:
                         if rm_status.get('status') != 'success':
-                            logging.info('Remove share \"%s\" from record UID \"\%s" error: %s',
+                            logging.info('Remove share \"%s\" from record UID \"%s\" error: %s',
                                          rm_status['username'], rm_status['record_uid'], rm_status['message'])
 
             TrashMixin.last_revision = 0
@@ -1486,6 +1488,37 @@ class ClipboardCommand(Command, RecordMixin):
                     res = get_totp_code(totp_url)
                     if res:
                         txt, _, _ = res
+            elif kwargs.get('field'):
+                field_name = kwargs['field']
+                if field_name == 'notes':
+                    copy_item = f'Notes'
+                    if isinstance(rec, vault.PasswordRecord):
+                        txt = rec.notes
+                    elif isinstance(rec, vault.TypedRecord):
+                        txt = rec.notes
+                else:
+                    copy_item = f'Custom Field "{field_name}"'
+                    if isinstance(rec, vault.PasswordRecord):
+                        txt = rec.get_custom_value(field_name)
+                    elif isinstance(rec, vault.TypedRecord):
+                        field = rec.get_typed_field(field_name)
+                        if field:
+                            copy_item = f'Field "{field_name}"'
+                        else:
+                            ft, sep, fl = field_name.partition('.')
+                            if not sep:
+                                fl = ft
+                                ft = 'text'
+                            field = rec.get_typed_field(ft, label=fl)
+                        if field:
+                            field_value = field.get_default_value(str)
+                            if field_value:
+                                if isinstance(field_value, str):
+                                    txt = field_value
+                                elif isinstance(field_value, int):
+                                    txt = str(field_value)
+                                elif isinstance(field_value, dict):
+                                    txt = json.dumps(field_value)
             else:
                 copy_item = 'Password'
                 if isinstance(rec, vault.PasswordRecord):

@@ -1722,7 +1722,10 @@ class RecordV3:
                 frec = params.record_cache.get(fuid) or {}
                 fdat = frec.get('data_unencrypted') or '{}'
                 fdic = RecordV3.record_type_to_dict(fdat)
-                name = fdic.get('name') or ''
+                title = str(fdic.get('title') or '')
+                name = str(fdic.get('name') or '')
+                if title:
+                    name = title + f' ({name})'
                 size = fdic.get('size') or ''
                 if isinstance(size, str) and size.isdigit():
                     size = int(size)

@@ -138,6 +138,8 @@ class LastPassImporter(BaseImporter):
         if isinstance(params, KeeperParams):
             request_settings['proxies'] = params.rest_context.proxies
             request_settings['certificate_check'] = params.rest_context.certificate_check
+        if 'filter_folder' in kwargs and kwargs['filter_folder']:
+            request_settings['filter_folder'] = kwargs['filter_folder']
 
         self.tmpdir = tmpdir
         username = name
@@ -339,7 +341,9 @@ class LastPassImporter(BaseImporter):
                 if account.shared_folder:
                     fol.domain = account.shared_folder.name
                 if account.group:
-                    fol.path = account.group.decode('utf-8', 'ignore')
+                    fol.path = account.group
+                    if isinstance(fol.path, bytes):
+                        fol.path = fol.path.decode('utf-8', 'ignore')
                 record.folders = [fol]
 
             yield record

@@ -24,10 +24,12 @@ from ..constants import EMAIL_PATTERN
 from ..loginv3 import LoginV3API
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
+from ..error import CommandError
 
 
 def register_commands(commands):
     commands['create-user'] = CreateEnterpriseUserCommand()
+    commands['store-user-keys'] = StoreUserKeysCommand()
 
 
 def register_command_info(_, command_info):
@@ -42,6 +44,9 @@ register_parser.add_argument('-v', '--verbose', dest='verbose', action='store_tr
 register_parser.add_argument('email', help='email')
 register_parser.error = raise_parse_exception
 register_parser.exit = suppress_exit
+
+
+store_user_keys_parser = argparse.ArgumentParser(prog='store-user-keys', description='Stores user keys')
 
 
 class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
@@ -97,7 +102,13 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
         user_rq.nodeId = node_id
         user_rq.encryptedData = utils.base64_url_encode(crypto.encrypt_aes_v1(user_data, tree_key))
         user_rq.keyType = enterprise_pb2.ENCRYPTED_BY_DATA_KEY
-        user_rq.enterpriseUsersDataKey = crypto.encrypt_ec(user_data_key, params.enterprise_ec_key)
+        enterprise_ec_key = params.enterprise_ec_key
+        if 'keys' in params.enterprise:
+            keys = params.enterprise['keys']
+            if 'ecc_public_key' in keys:
+                pub_key = utils.base64_url_decode(keys['ecc_public_key'])
+                enterprise_ec_key = crypto.load_ec_public_key(pub_key)
+        user_rq.enterpriseUsersDataKey = crypto.encrypt_ec(user_data_key, enterprise_ec_key)
         user_rq.authVerifier = utils.create_auth_verifier(
             user_password, crypto.get_random_bytes(16), constants.PBKDF2_ITERATIONS)
         user_rq.encryptionParams = utils.create_encryption_params(
@@ -116,11 +127,11 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
         for user_rs in rs.results:
             if user_rs.code and user_rs.code not in ['success', 'ok']:
                 email_provisioning_doc = 'https://docs.keeper.io/enterprise-guide/user-and-team-provisioning/email-auto-provisioning'
-                logging.warning('Failed to auto-create account "%s".\n'
-                                'Creating user accounts without email verification is only permitted on reserved domains.\n' +
-                                'To reserve a domain please contact Keeper support. Learn more about domain reservation here:\n%s',
-                                email, email_provisioning_doc)
-                return
+                raise CommandError(
+                    '', f'Failed to auto-create account "{email}".\nCreating user accounts without email '
+                        'verification is only permitted on reserved domains.\n'
+                        'To reserve a domain please contact Keeper support. '
+                        f'Learn more about domain reservation here:\n{email_provisioning_doc}')
 
         login_facade = vault_extensions.LoginFacade()
         ots_command = OneTimeShareCreateCommand()
@@ -179,3 +190,42 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
                 if folder and not record_name:
                     if folder.uid:
                         return folder.uid
+
+
+class StoreUserKeysCommand(EnterpriseCommand):
+    def get_parser(self):
+        return store_user_keys_parser
+
+    def execute(self, params, **kwargs):
+
+        user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise['users']}
+        tree_key = params.enterprise['unencrypted_tree_key']
+        rs = api.communicate_rest(params, None, 'enterprise/get_transfer_keys',
+                                  rs_type=enterprise_pb2.EnterpriseUserDataKeys)
+        rqs = []
+        for key in rs.keys:
+            if not key.roleKey:
+                continue
+
+            user_id = key.enterpriseUserId
+            username = user_lookup.get(user_id) or str(user_id)
+            try:
+                decrypted_role_key = crypto.decrypt_aes_v2(key.roleKey, tree_key)
+                decrypted_private_key = crypto.decrypt_aes_v1(key.privateKey, decrypted_role_key)
+                private_key = crypto.load_rsa_private_key(decrypted_private_key)
+                user_data_key = crypto.decrypt_rsa(key.userEncryptedDataKey, private_key)
+
+                user_key = enterprise_pb2.EnterpriseUserDataKey()
+                user_key.enterpriseUserId = user_id
+                user_key.userEncryptedDataKey = crypto.encrypt_ec(user_data_key, params.enterprise_ec_key)
+                rqs.append(user_key)
+                logging.info('Converting key for user "%s"', username)
+            except Exception as e:
+                logging.warning('Error converting key for user %s: %s', username, e)
+
+        while len(rqs) > 0:
+            chunk = rqs[:900]
+            rqs = rqs[900:]
+            set_rq = enterprise_pb2.EnterpriseUserDataKeys()
+            set_rq.keys.extend(chunk)
+            api.communicate_rest(params, set_rq, 'enterprise/set_enterprise_users_data_keys')

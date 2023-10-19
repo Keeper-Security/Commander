@@ -322,7 +322,7 @@ for secret in handler.secrets:
         bank_card['cardNumber'] = pop_field_value(items, 'card-number')
         _ = pop_field_value(items, 'card-type')
         exp = pop_field_value(items, 'expiration-date')
-        if len(exp) >= 4:
+        if exp and len(exp) >= 4:
             month, sep, year = exp.partition('/')
             if not sep:
                 month = exp[:2]

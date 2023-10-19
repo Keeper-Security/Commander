@@ -223,12 +223,11 @@ class VerifySharedFoldersCommand(Command):
 
 class VerifyRecordsCommand(Command):
     def execute(self, params, **kwargs):
-        records_to_fix = {}
+        records_v3_to_fix = {}
+        records_v2_to_fix = {}
         records_to_delete = set()
         for record_uid in params.record_cache:
             record = params.record_cache[record_uid]
-            if record.get('version', 0) != 3:
-                continue
             if 'data_unencrypted' not in record:
                 continue
 
@@ -237,117 +236,173 @@ class VerifyRecordsCommand(Command):
             except:
                 records_to_delete.add(record_uid)
                 continue
-            is_broken = False
-            # both fields and custom
-            for field in itertools.chain(data.get('fields', []), data.get('custom', [])):
-                value = field.get('value')
-                # value is not list
-                if not isinstance(value, list):
-                    is_broken = True
-                    if value:
-                        value = [value]
-                    else:
-                        value = []
-                    field['value'] = value
-                # fix credit card expiration on paymentCard
-                if field.get('type', '') == 'paymentCard':
-                    for card in field['value']:
-                        if isinstance(card, dict):
-                            if 'cardExpirationDate' in card:
-                                exp = card['cardExpirationDate']
-                                if isinstance(exp, str):
-                                    if exp:
-                                        month, sep, year = exp.partition('/')
-                                        if not month.isnumeric() or not year.isnumeric():
-                                            is_broken = True
-                                            card['cardExpirationDate'] = ""
-                                else:
-                                    is_broken = True
-                                    card['cardExpirationDate'] = ""
+            version = record.get('version', 0)
 
-                        else:
-                            field['value'] = []
-                            break
-                # date field type should contain int value
-                if field.get('type', '') == 'date':
-                    orig_dates = field['value']
-                    tested_dates = [x for x in orig_dates if isinstance(x, int)]
-                    if len(tested_dates) < len(orig_dates):
-                        field['value'] = tested_dates
-                        is_broken = True
-
-            # custom only
-            for field in data.get('custom', []):
-                # OTP URL scheme should have oneTimeCode
-                if field.get('type', '') != 'oneTimeCode' and field.get('value'):
+            if version == 3:
+                is_broken = False
+                # both fields and custom
+                for field in itertools.chain(data.get('fields', []), data.get('custom', [])):
                     value = field.get('value')
-                    if isinstance(value, list) and len(value) == 1:
-                        value = value[0]
-                        if isinstance(value, str) and value.startswith('otpauth'):
-                            try:
-                                code, _, _ = get_totp_code(value)
-                                if code:
-                                    field['type'] = 'oneTimeCode'
-                                    is_broken = True
-                            except:
-                                pass
-
-            has_unknown_type = any((x for x in data.get('custom', []) if x.get('type') == 'unknownType'))
-            if has_unknown_type:
-                data['custom'] = [x for x in data['custom'] if x.get('type') != 'unknownType']
-                is_broken = True
-
-            # login record type should have oneTimeCode on fields rather than custom
-            if data.get('type') in {'login'} and 'fields' in data and 'custom' in data:
-                fields_otp = next((x for x in data.get('fields') if x.get('type') == 'oneTimeCode'), None)
-                if not fields_otp or not fields_otp.get('value'):
-                    custom_otp = next((x for x in data.get('custom', []) if x.get('type') == 'oneTimeCode'), None)
-                    if custom_otp and custom_otp.get('value'):
-                        if fields_otp:
-                            fields_otp['value'] = custom_otp['value']
-                        else:
-                            data['fields'].append(custom_otp)
-                        try:
-                            data['custom'].remove(custom_otp)
-                        except:
-                            custom_otp['value'] = []
+                    # value is not list
+                    if not isinstance(value, list):
                         is_broken = True
+                        if value:
+                            value = [value]
+                        else:
+                            value = []
+                        field['value'] = value
+                    # fix credit card expiration on paymentCard
+                    if field.get('type', '') == 'paymentCard':
+                        for card in field['value']:
+                            if isinstance(card, dict):
+                                if 'cardExpirationDate' in card:
+                                    exp = card['cardExpirationDate']
+                                    if isinstance(exp, str):
+                                        if exp:
+                                            month, sep, year = exp.partition('/')
+                                            if not month.isnumeric() or not year.isnumeric():
+                                                is_broken = True
+                                                card['cardExpirationDate'] = ""
+                                    else:
+                                        is_broken = True
+                                        card['cardExpirationDate'] = ""
 
-            if is_broken:
-                records_to_fix[record_uid] = data
+                            else:
+                                field['value'] = []
+                                break
+                    # date field type should contain int value
+                    if field.get('type', '') == 'date':
+                        orig_dates = field['value']
+                        tested_dates = [x for x in orig_dates if isinstance(x, int)]
+                        if len(tested_dates) < len(orig_dates):
+                            field['value'] = tested_dates
+                            is_broken = True
 
-        if len(records_to_fix) > 0:
-            print(f'There are {len(records_to_fix)} record(s) to be corrected')
+                # custom only
+                for field in data.get('custom', []):
+                    # OTP URL scheme should have oneTimeCode
+                    if field.get('type', '') != 'oneTimeCode' and field.get('value'):
+                        value = field.get('value')
+                        if isinstance(value, list) and len(value) == 1:
+                            value = value[0]
+                            if isinstance(value, str) and value.startswith('otpauth'):
+                                try:
+                                    code, _, _ = get_totp_code(value)
+                                    if code:
+                                        field['type'] = 'oneTimeCode'
+                                        is_broken = True
+                                except:
+                                    pass
+
+                has_unknown_type = any((x for x in data.get('custom', []) if x.get('type') == 'unknownType'))
+                if has_unknown_type:
+                    data['custom'] = [x for x in data['custom'] if x.get('type') != 'unknownType']
+                    is_broken = True
+
+                # login record type should have oneTimeCode on fields rather than custom
+                if data.get('type') in {'login'} and 'fields' in data and 'custom' in data:
+                    fields_otp = next((x for x in data.get('fields') if x.get('type') == 'oneTimeCode'), None)
+                    if not fields_otp or not fields_otp.get('value'):
+                        custom_otp = next((x for x in data.get('custom', []) if x.get('type') == 'oneTimeCode'), None)
+                        if custom_otp and custom_otp.get('value'):
+                            if fields_otp:
+                                fields_otp['value'] = custom_otp['value']
+                            else:
+                                data['fields'].append(custom_otp)
+                            try:
+                                data['custom'].remove(custom_otp)
+                            except:
+                                custom_otp['value'] = []
+                            is_broken = True
+
+                if is_broken:
+                    records_v3_to_fix[record_uid] = data
+            elif version == 2:
+                is_broken = False
+                for field in ('title', 'secret1', 'secret2', 'link', 'notes'):
+                    if field in data:
+                        value = data[field]
+                        if not isinstance(value, str):
+                            if value is None:
+                                data[field] = ''
+                            else:
+                                data[field] = str(value)
+                            is_broken = True
+                    else:
+                        data[field] = ''
+                        is_broken = True
+                if is_broken:
+                    records_v2_to_fix[record_uid] = data
+
+        if len(records_v2_to_fix) > 0 or len(records_v3_to_fix) > 0:
+            total_records = len(records_v2_to_fix) + len(records_v3_to_fix)
+            print(f'There are {total_records} record(s) to be corrected')
             answer = user_choice('Do you want to proceed?', 'yn', 'n')
             if answer.lower() == 'y':
-                rq = record_pb2.RecordsUpdateRequest()
-                rq.client_time = utils.current_milli_time()
-                for record_uid in records_to_fix:
-                    record = params.record_cache[record_uid]
-                    record_key = record['record_key_unencrypted']
-                    upd_rq = record_pb2.RecordUpdate()
-                    upd_rq.record_uid = utils.base64_url_decode(record_uid)
-                    upd_rq.client_modified_time = utils.current_milli_time()
-                    upd_rq.revision = record.get('revision') or 0
-                    data = records_to_fix[record_uid]
-                    upd_rq.data = crypto.encrypt_aes_v2(api.get_record_data_json_bytes(data), record_key)
-                    rq.records.append(upd_rq)
-                    if len(rq.records) >= 999:
-                        break
-                rs = api.communicate_rest(params, rq, 'vault/records_update', rs_type=record_pb2.RecordsModifyResponse)
                 success = 0
                 failed = []
-                for status in rs.records:
-                    if status.status == record_pb2.RS_SUCCESS:
-                        success += 1
-                    else:
-                        record_uid = utils.base64_url_encode(status.record_uid)
-                        failed.append(f'{record_uid}: {status.message}')
+
+                if len(records_v2_to_fix) > 0:
+                    record_uids = list(records_v2_to_fix.keys())
+                    while len(record_uids) > 0:
+                        chunk = record_uids[:99]
+                        record_uids = record_uids[99:]
+                        rq = {
+                            'command': 'record_update',
+                            'client_time': utils.current_milli_time(),
+                            'pt': 'Commander',
+                            'update_records': []
+                        }
+                        for record_uid in chunk:
+                            record = params.record_cache[record_uid]
+                            record_key = record['record_key_unencrypted']
+                            revision = record.get('revision') or 0
+                            data = records_v2_to_fix[record_uid]
+                            encrypted_data = crypto.encrypt_aes_v1(json.dumps(data).encode(), record_key)
+                            rq['update_records'].append({
+                                'record_uid': record_uid,
+                                'version': 2,
+                                'data': utils.base64_url_encode(encrypted_data),
+                                'client_modified_time': utils.current_milli_time(),
+                                'revision': revision,
+                            })
+                            rs = api.communicate(params, rq)
+                            for rs_status in rs.get('update_records') or []:
+                                record_uid = rs_status['record_uid']
+                                status = rs_status.get('status')
+                                if status == 'success':
+                                    success += 1
+                                else:
+                                    failed.append(f'{record_uid}: {rs_status.get("message", status)}')
+
+                if len(records_v3_to_fix) > 0:
+                        rq = record_pb2.RecordsUpdateRequest()
+                        rq.client_time = utils.current_milli_time()
+                        for record_uid in records_v3_to_fix:
+                            record = params.record_cache[record_uid]
+                            record_key = record['record_key_unencrypted']
+                            upd_rq = record_pb2.RecordUpdate()
+                            upd_rq.record_uid = utils.base64_url_decode(record_uid)
+                            upd_rq.client_modified_time = utils.current_milli_time()
+                            upd_rq.revision = record.get('revision') or 0
+                            data = records_v3_to_fix[record_uid]
+                            upd_rq.data = crypto.encrypt_aes_v2(api.get_record_data_json_bytes(data), record_key)
+                            rq.records.append(upd_rq)
+                            if len(rq.records) >= 999:
+                                break
+                        rs = api.communicate_rest(params, rq, 'vault/records_update', rs_type=record_pb2.RecordsModifyResponse)
+                        for status in rs.records:
+                            if status.status == record_pb2.RS_SUCCESS:
+                                success += 1
+                            else:
+                                record_uid = utils.base64_url_encode(status.record_uid)
+                                failed.append(f'{record_uid}: {status.message}')
+
                 if success > 0:
                     logging.info('Successfully corrected %d record(s)', success)
                 if len(failed) > 0:
                     logging.warning('Failed to correct %d record(s)', len(failed))
                     logging.info('\n'.join(failed))
 
-                params.sync_data = True
+                    params.sync_data = True
 

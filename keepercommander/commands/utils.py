@@ -95,7 +95,7 @@ whoami_parser.error = raise_parse_exception
 whoami_parser.exit = suppress_exit
 
 
-this_device_available_command_verbs = ['rename', 'register', 'persistent-login', 'ip-auto-approve', 'timeout']
+this_device_available_command_verbs = ['rename', 'register', 'persistent-login', 'ip-auto-approve', 'no-yubikey-pin', 'timeout']
 this_device_parser = argparse.ArgumentParser(prog='this-device', description='Display and modify settings of the current device.')
 this_device_parser.add_argument('ops', nargs='*', help="operation str: " + ", ".join(this_device_available_command_verbs))
 this_device_parser.error = raise_parse_exception
@@ -354,6 +354,13 @@ class ThisDeviceCommand(Command):
             loginv3.LoginV3API.set_user_setting(params, 'ip_disable_auto_approve', value_extracted)
             print("Successfully " + msg + " 'ip_auto_approve'")
 
+        elif action == 'no-yubikey-pin':
+            value = ops[1]
+            value_extracted = ThisDeviceCommand.get_setting_str_to_value('no-yubikey-pin', value)
+            msg = (bcolors.OKGREEN + "ENABLED" + bcolors.ENDC) if value_extracted == '0' else (bcolors.FAIL + "DISABLED" + bcolors.ENDC)
+            loginv3.LoginV3API.set_user_setting(params, 'security_keys_no_user_verify', value_extracted)
+            print("Successfully " + msg + " Security Key PIN verification")
+
         elif action == 'timeout' or action == 'to':
 
             value = ops[1]
@@ -378,7 +385,7 @@ class ThisDeviceCommand(Command):
         name = name.lower()
         value = value.lower()
 
-        if name == 'persistent_login' or name == 'ip_disable_auto_approve':
+        if name == 'persistent_login' or name == 'ip_disable_auto_approve' or name == 'no-yubikey-pin':
             final_val = '1' if as_boolean(value) else '0'
         elif name == 'logout_timer':
             final_val = parse_timeout(value)
@@ -439,6 +446,15 @@ class ThisDeviceCommand(Command):
                                   (bcolors.OKGREEN + 'ON' + bcolors.ENDC)
                                   if persistentLogin and not ThisDeviceCommand.is_persistent_login_disabled(params) else
                                   (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
+
+        no_user_verify = acct_summary_dict['settings'].get('securityKeysNoUserVerify', False)
+        print("{:>32}: {}".format(
+            'Security Key No PIN', (bcolors.OKGREEN + 'ON' + bcolors.ENDC)
+            if no_user_verify else (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
+
+        if 'securityKeysNoUserVerify' in acct_summary_dict['settings']:
+            device_timeout = get_delta_from_timeout_setting(acct_summary_dict['settings']['logoutTimer'])
+            print("{:>32}: {}".format('Device Logout Timeout', format_timeout(device_timeout)))
 
         if 'logoutTimer' in acct_summary_dict['settings']:
             device_timeout = get_delta_from_timeout_setting(acct_summary_dict['settings']['logoutTimer'])

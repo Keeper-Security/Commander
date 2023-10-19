@@ -151,7 +151,8 @@ paymentCard       Payment Card           object         {"cardNumber": "", "card
                                                         4111111111111111 04/2026 123
 bankAccount       Bank Account           object         {"accountType": "", "routingNumber": "", "accountNumber": ""}
                                                         Checking: 123456789 987654321
-privateKey        Key Pair               object         {"publicKey": "", "privateKey": ""}
+keyPair           Key Pair               object         {"publicKey": "", "privateKey": ""}
+
 oneTimeCode       TOTP URL               string         otpauth://totp/Example?secret=JBSWY3DPEHPK3PXP&issuer=Keeper
 note              Masked multiline text  string         
 multiline         Multiline text         string         
@@ -170,10 +171,10 @@ $GEN:[alg],[n]          password           Generates a random password      $GEN
                                            Default algorith is rand         alg: [rand | dice | crypto]
                                            Optional: password length        
 $GEN                    oneTimeCode        Generates TOTP URL               
-$GEN:[alg,][enc]        privateKey         Generates a key pair and         $GEN:ec,enc
+$GEN:[alg,][enc]        keyPair            Generates a key pair and         $GEN:ec,enc
                                            optional passcode                alg: [rsa | ec | ed25519], enc 
 $JSON:<JSON TEXT>       any object         Sets a field value as JSON       
-                                           phone.Cell=$JSON:{"number": "(555) 555-1234", "type": "Mobile"} 
+                                           phone.Cell=$JSON:'{"number": "(555) 555-1234", "type": "Mobile"}' 
 '''
 
 
@@ -357,7 +358,7 @@ class RecordEditMixin:
         record_field = record_types.RecordFields.get(field_type)
         if not record_field:
             return field_value
-        value_type = record_types.FieldTypes[record_field.name]
+        value_type = record_types.FieldTypes[record_field.type]
         if isinstance(value_type.value, dict):
             f_fields = set(value_type.value.keys())
             if isinstance(field_value, (list, dict)):
@@ -512,9 +513,9 @@ class RecordEditMixin:
                 if self.is_generate_value(parsed_field.value, action_params):
                     if record_field.type == 'password':
                         value = self.generate_password(action_params)
-                    elif record_field.type == 'oneTimeCode':
+                    elif record_field.type in ('oneTimeCode', 'otp'):
                         value = self.generate_totp_url()
-                    elif record_field.type == 'keyPair':
+                    elif record_field.type in ('keyPair', 'privateKey'):
                         should_encrypt = 'enc' in action_params
                         passphrase = self.generate_password() if should_encrypt else None
                         key_type = next((x for x in action_params if x in ('rsa', 'ec', 'ed25519')), 'rsa')
@@ -1020,20 +1021,6 @@ class RecordDownloadAttachmentCommand(Command):
         preserve_dir = kwargs.get('preserve_dir') is True
         record_title = kwargs.get('record_title') is True
         for record_uid in record_uids:
-            subfolder_path = ''
-            if preserve_dir:
-                folder_uid = next((x for x in find_folders(params, record_uid)), None)
-                if folder_uid:
-                    subfolder_path = get_folder_path(params, folder_uid, os.sep)
-                    subfolder_path = ''.join(x for x in subfolder_path if x.isalnum() or x == os.sep)
-                    subfolder_path = subfolder_path.replace(2*os.sep, os.sep)
-            if subfolder_path:
-                subfolder_path = os.path.join(output_dir, subfolder_path)
-                if not os.path.isdir(subfolder_path):
-                    os.makedirs(subfolder_path)
-            else:
-                subfolder_path = output_dir
-
             attachments = list(attachment.prepare_attachment_download(params, record_uid))
             if len(attachments) == 0:
                 continue
@@ -1062,6 +1049,7 @@ class RecordDownloadAttachmentCommand(Command):
                 file_name = atta.title
                 if title:
                     file_name = f'{title}-{atta.title}'
+                file_name = os.path.basename(file_name)
                 name = os.path.join(subfolder_path, file_name)
                 if os.path.isfile(name):
                     base_name, ext = os.path.splitext(file_name)

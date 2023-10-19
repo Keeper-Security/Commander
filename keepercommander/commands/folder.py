@@ -56,7 +56,7 @@ def register_command_info(aliases, command_info):
     command_info['shortcut'] = 'Manage record shortcuts'
 
 
-ls_parser = argparse.ArgumentParser(prog='ls', description='List folder contents.')
+ls_parser = argparse.ArgumentParser(prog='ls', description='List folder contents.', parents=[base.report_output_parser])
 ls_parser.add_argument('-l', '--list', dest='detail', action='store_true', help='show detailed list')
 ls_parser.add_argument('-f', '--folders', dest='folders', action='store_true', help='display folders')
 ls_parser.add_argument('-r', '--records', dest='records', action='store_true', help='display records')
@@ -185,6 +185,11 @@ class FolderListCommand(Command, RecordMixin):
         if not show_folders and not show_records:
             show_folders = True
             show_records = True
+        fmt = kwargs.get('format') or ''
+        if fmt in ('json', 'csv'):
+            show_detail = True
+            if show_folders and show_records:
+                fmt = 'table'
 
         folder = params.folder_cache[params.current_folder] if params.current_folder in params.folder_cache else params.root_folder
         pattern = kwargs['pattern'] if 'pattern' in kwargs else None
@@ -231,15 +236,37 @@ class FolderListCommand(Command, RecordMixin):
         else:
             if show_detail:
                 if len(folders) > 0:
-                    display.formatted_folders(folders)
+                    table = []
+                    headers = ['folder_uid', 'name', 'flags']
+
+                    def folder_flags(f):
+                        flags = ''
+                        if f.type == 'shared_folder':
+                            flags = flags + 'S'
+                        return flags
+                    for f in folders:
+                        row = [f.uid, f.name, folder_flags(f)]
+                        table.append(row)
+                    table.sort(key=lambda x: (x[1] or '').lower())
+                    if fmt != 'json':
+                        headers = base.fields_to_titles(headers)
+                    if fmt in ('json', 'csv'):
+                        return dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'))
+                    else:
+                        dump_report_data(table, headers, row_number=True)
                 if len(records) > 0:
                     table = []
-                    headers = ['Record UID', 'Type', 'Title', 'Description']
+                    headers = ['record_uid', 'type', 'title', 'description']
                     for record in records:
                         row = [record.record_uid, record.record_type, record.title, vault_extensions.get_record_description(record)]
                         table.append(row)
                     table.sort(key=lambda x: (x[2] or '').lower())
-                    dump_report_data(table, headers, row_number=True)
+                    if fmt != 'json':
+                        headers = base.fields_to_titles(headers)
+                    if fmt in ('json', 'csv'):
+                        return dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'))
+                    else:
+                        dump_report_data(table, headers, row_number=True, append=True)
             else:
                 names = []
                 for f in folders:
@@ -501,6 +528,7 @@ class FolderMakeCommand(Command):
         params.environment_variables[LAST_FOLDER_UID] = folder_uid
         if request['folder_type'] == 'shared_folder':
             params.environment_variables[LAST_SHARED_FOLDER_UID] = folder_uid
+        return folder_uid
 
 
 def get_folder_path(params, uid):
@@ -1516,10 +1544,16 @@ class FolderTransformCommand(Command):
                     new_sfs = [get_sf_fn(cc) for cc in children_copies]
                     rqs = [get_sf_update_request(shared_folders.values(), sf) for sf in new_sfs]
 
-                for rq in rqs:
-                    rs = api.communicate_rest(params, rq, 'vault/shared_folder_update_v3',
-                                              rs_type=folder_pb2.SharedFolderUpdateV3Response)
-                    params.sync_data = True
+                while len(rqs) > 0:
+                    chunk = rqs[:999]
+                    rqs = rqs[999:]
+                    rq = folder_pb2.SharedFolderUpdateV3RequestV2()
+                    for x in chunk:
+                        if isinstance(x, folder_pb2.SharedFolderUpdateV3Request):
+                            rq.sharedFoldersUpdateV3.append(x)
+                    rss = api.communicate_rest(params, rq, 'vault/shared_folder_update_v3', payload_version=1,
+                                               rs_type=folder_pb2.SharedFolderUpdateV3ResponseV2)
+                params.sync_data = True
 
             apply_transform_shares()
             move_contained_records(root)

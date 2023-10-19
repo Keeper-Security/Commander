@@ -114,6 +114,12 @@ def welcome_print_version(params):
               (" Your version of the Commander CLI is %s, the current version is %s.\n Use the ‘version’ "
                "command for more details.\n") % (this_app_version, ver_info.get('current_github_version')) + display.bcolors.ENDC
               )
+        if is_binary_app():
+            print(display.bcolors.WARNING +
+                  " Please visit https://github.com/Keeper-Security/Commander/releases to download the latest version.\n" + display.bcolors.ENDC)
+        else:
+            print(display.bcolors.WARNING +
+                  " Please run ‘pip3 install --upgrade keepercommander‘ to upgrade to the latest version.\n" + display.bcolors.ENDC)
     else:
         pass
         # print("Your version of the Commander CLI is %s." % this_app_version)

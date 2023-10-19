@@ -36,10 +36,6 @@ from .proto import breachwatch_pb2 as breachwatch_proto
 from .proto import ssocloud_pb2 as ssocloud
 from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse, DomainPasswordRulesRequest
 
-install_fido_package_warning = 'You can use Security Key with Commander:\n' + \
-                               'Install fido2 package ' + bcolors.OKGREEN + \
-                               '\'pip install fido2\'\n' + bcolors.ENDC
-
 permissions_error_msg = "Grant Commander SDK permissions to access Keeper by navigating to Admin Console -> Admin -> " \
                         "Roles -> [Select User's Role] -> Enforcement Policies -> Platform Restrictions -> Click on " \
                         "'Enable' check box next to Commander SDK.\nAlso note that if user has more than two roles " \
@@ -47,8 +43,6 @@ permissions_error_msg = "Grant Commander SDK permissions to access Keeper by nav
 
 
 class LoginV3Flow:
-    warned_on_fido_package = False
-
     @staticmethod
     def login(params, new_device=False, new_login=False):   # type: (KeeperParams, bool, bool) -> None
 
@@ -544,6 +538,7 @@ class LoginV3Flow:
         sp_url_query = parse_qsl(sp_url_builder.query, keep_blank_values=True)
         if is_cloud:
             sso_rq = ssocloud.SsoCloudRequest()
+            sso_rq.messageSessionUid = crypto.get_random_bytes(16)
             sso_rq.clientVersion = rest_api.CLIENT_VERSION
             sso_rq.dest = 'commander'
             sso_rq.username = params.user.lower()
@@ -668,7 +663,7 @@ class LoginV3Flow:
 
     @staticmethod
     def two_factor_channel_to_desc(channel):
-        if channel == proto.TWO_FA_CODE_TOTP:
+        if channel == proto.TWO_FA_CT_TOTP:
             return 'TOTP (Google and Microsoft Authenticator)'
         if channel == proto.TWO_FA_CT_SMS:
             return 'Send SMS Code'
@@ -682,17 +677,22 @@ class LoginV3Flow:
             return 'WebAuthN (FIDO2 Security Key)'
         if channel == proto.TWO_FA_CT_DNA:
             return 'Keeper DNA (Watch)'
+        if channel == proto.TWO_FA_CT_BACKUP:
+            return 'Backup Codes'
 
     @staticmethod
     def handleTwoFactor(params: KeeperParams, encryptedLoginToken, login_resp):
         print("This account requires 2FA Authentication")
 
         supported_channels = {proto.TWO_FA_CODE_TOTP, proto.TWO_FA_CT_SMS, proto.TWO_FA_CT_DUO, proto.TWO_FA_CT_RSA,
-                              proto.TWO_FA_CT_U2F, proto.TWO_FA_CT_WEBAUTHN, proto.TWO_FA_CT_DNA}
+                              proto.TWO_FA_CT_U2F, proto.TWO_FA_CT_WEBAUTHN, proto.TWO_FA_CT_DNA,
+                              proto.TWO_FA_CT_BACKUP}
         channels = [x for x in login_resp.channels if x.channelType in supported_channels]
 
-        if LoginV3Flow.warned_on_fido_package:
-            channels = [x for x in channels if x.channelType not in {proto.TWO_FA_CT_U2F, proto.TWO_FA_CT_WEBAUTHN}]
+        if len(channels) == 0:
+            backup_code_channel = proto.TwoFactorChannelInfo()
+            backup_code_channel.channelType = proto.TWO_FA_CT_BACKUP
+            channels.append(backup_code_channel)
 
         for i in range(len(channels)):
             channel = channels[i]
@@ -737,7 +737,7 @@ class LoginV3Flow:
 
         elif channel.channelType in {proto.TWO_FA_CT_U2F, proto.TWO_FA_CT_WEBAUTHN}:
             try:
-                from .yubikey import yubikey_authenticate
+                from .yubikey.yubikey import yubikey_authenticate
                 challenge = json.loads(channel.challenge)
                 response = yubikey_authenticate(challenge)
 
@@ -746,16 +746,17 @@ class LoginV3Flow:
                         signature = response
                         key_value_type = proto.TWO_FA_RESP_U2F
                     else:
+                        credential_id = response.credential_id
                         signature = {
-                            "id": utils.base64_url_encode(response['credentialId']),
-                            "rawId": utils.base64_url_encode(response['credentialId']),
+                            "id": utils.base64_url_encode(credential_id),
+                            "rawId": utils.base64_url_encode(credential_id),
                             "response": {
-                                "authenticatorData": utils.base64_url_encode(response['authenticatorData']),
-                                "clientDataJSON": response['clientData'].b64,
-                                "signature": utils.base64_url_encode(response['signature']),
+                                "authenticatorData": utils.base64_url_encode(response.authenticator_data),
+                                "clientDataJSON": response.client_data.b64,
+                                "signature": utils.base64_url_encode(response.signature),
                             },
                             "type": "public-key",
-                            "clientExtensionResults": response['extensionResults'] or {}
+                            "clientExtensionResults": response.extension_results or {}
                         }
                         key_value_type = proto.TWO_FA_RESP_WEBAUTHN
 
@@ -775,18 +776,17 @@ class LoginV3Flow:
                         print(bcolors.FAIL + "Unable to verify code generated by security key" + bcolors.ENDC)
 
             except ImportError as e:
-
+                from .yubikey import display_fido2_warning
+                display_fido2_warning()
                 logging.warning(e)
-                if not LoginV3Flow.warned_on_fido_package:
-                    logging.warning(install_fido_package_warning)
-                    LoginV3Flow.warned_on_fido_package = True
             except Exception as e:
                 logging.error(e)
 
-        elif channel.channelType in {proto.TWO_FA_CT_TOTP, proto.TWO_FA_CT_DUO, proto.TWO_FA_CT_RSA, proto.TWO_FA_CT_DNA}:
+        elif channel.channelType in {proto.TWO_FA_CT_TOTP, proto.TWO_FA_CT_DUO, proto.TWO_FA_CT_RSA,
+                                     proto.TWO_FA_CT_DNA, proto.TWO_FA_CT_BACKUP}:
             mfa_prompt = True
         else:
-            raise NotImplementedError("Unhandled channel type %s" % channel.channelType)
+            raise NotImplementedError(f"Unhandled channel type {channel.channelType}")
 
         if mfa_prompt:
             config_expiration = params.config.get('mfa_duration') or 'login'
@@ -797,18 +797,32 @@ class LoginV3Flow:
                             proto.TWO_FA_EXP_24_HOURS if config_expiration == '24_hours' else \
                                 proto.TWO_FA_EXP_30_DAYS
 
+            if mfa_expiration > channel.maxExpiration:
+                mfa_expiration = channel.maxExpiration
+
+            allowed_expirations = ['login']     # type: List[str]
+            if channel.maxExpiration >= proto.TWO_FA_EXP_12_HOURS:
+                allowed_expirations.append('12_hours')
+            if channel.maxExpiration >= proto.TWO_FA_EXP_24_HOURS:
+                allowed_expirations.append('24_hours')
+            if channel.maxExpiration >= proto.TWO_FA_EXP_30_DAYS:
+                allowed_expirations.append('30_days')
+            if channel.maxExpiration >= proto.TWO_FA_EXP_NEVER:
+                allowed_expirations.append('forever')
+
             otp_code = ''
             show_duration = True
             mfa_pattern = re.compile(r'2fa_duration\s*=\s*(.+)', re.IGNORECASE)
             while not otp_code:
                 if show_duration:
                     show_duration = False
-                    prompt_exp = '\n2FA Code Duration: {0}.\nTo change duration: 2fa_duration=login|12_hours|24_hours|30_days|forever' \
-                        .format('Require Every Login' if mfa_expiration == proto.TWO_FA_EXP_IMMEDIATELY else
-                                'Save on this Device Forever' if mfa_expiration == proto.TWO_FA_EXP_NEVER else
-                                'Ask Every 12 hours' if mfa_expiration == proto.TWO_FA_EXP_12_HOURS else
-                                'Ask Every 24 hours' if mfa_expiration == proto.TWO_FA_EXP_24_HOURS else
-                                'Ask Every 30 days')
+                    prompt_exp = '\n2FA Code Duration: {0}.\nTo change duration: 2fa_duration={1}'.format(
+                        'Require Every Login' if mfa_expiration == proto.TWO_FA_EXP_IMMEDIATELY else
+                        'Save on this Device Forever' if mfa_expiration == proto.TWO_FA_EXP_NEVER else
+                        'Ask Every 12 hours' if mfa_expiration == proto.TWO_FA_EXP_12_HOURS else
+                        'Ask Every 24 hours' if mfa_expiration == proto.TWO_FA_EXP_24_HOURS else
+                        'Ask Every 30 days',
+                        "|".join(allowed_expirations))
                     print(prompt_exp)
 
                 try:
@@ -819,7 +833,7 @@ class LoginV3Flow:
                 m_duration = re.match(mfa_pattern, answer)
                 if m_duration:
                     answer = m_duration.group(1).strip().lower()
-                    if answer not in ['login', '12_hours', '24_hours', '30_days', 'forever']:
+                    if answer not in allowed_expirations:
                         print(f'Invalid 2FA Duration: {answer}')
                         answer = ''
 
@@ -1068,6 +1082,7 @@ class LoginV3API:
             auth_hash = crypto.derive_keyhash_v1(recovery_phrase, rs.salt, rs.iterations)
         elif backup_type == proto.BKT_PASSPHRASE_HASH:
             p = PassphrasePrompt()
+            print('Please enter your Recovery Phrase ')
             if os.isatty(0):
                 phrase = prompt('Recovery Phrase: ', lexer=p, completer=p, key_bindings=p.kb, validator=p,
                                 validate_while_typing=False, editing_mode=EditingMode.VI, wrap_lines=True,
@@ -1081,7 +1096,7 @@ class LoginV3API:
             if len(words) != 24:
                 raise Exception('Recovery phrase should contain 24 words')
             recovery_phrase = ' '.join(words)
-            auth_hash = crypto.generate_hkdf_key('recovery_auth_token', phrase)
+            auth_hash = crypto.generate_hkdf_key('recovery_auth_token', recovery_phrase)
         else:
             logging.info('Unsupported account recovery type')
             return
@@ -1225,8 +1240,9 @@ class LoginV3API:
         api_request_payload.payload = rq.SerializeToString()
         rs = rest_api.execute_rest(params.rest_context, 'authentication/register_device_in_region', api_request_payload)
         if isinstance(rs, dict):
-            if 'error' in rs and rs['error'] == 'exists':
-                return
+            # KA has a bug where it returns 'exists' for non-existing device token
+            # if 'error' in rs and rs['error'] == 'exists':
+            #     return
             raise InvalidDeviceToken()
 
     @staticmethod

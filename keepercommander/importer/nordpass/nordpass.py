@@ -23,7 +23,7 @@ name,url,username,password,note,cardholdername,cardnumber,cvc,expirydate,zipcode
 
 class NordpassCsvImporter(importer.BaseFileImporter):
     def do_import(self, filename, **kwargs):
-        # type: (importer.BaseImporter, str, dict) -> Iterable[Union[importer.Record, importer.SharedFolder, importer.File]]
+        # type: (str, dict) -> Iterable[Union[importer.Record, importer.SharedFolder, importer.File]]
         with open(filename, 'r', encoding='utf-8') as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:

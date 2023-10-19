@@ -12,12 +12,13 @@
 import base64
 import collections
 import logging
+from typing import Any, Dict, Set, List, Optional
 
 from .base import Command, user_choice
 from .. import api, utils, crypto
 from ..error import CommandError
 from ..params import KeeperParams
-from ..proto.enterprise_pb2 import RoleTeam, RoleTeams
+from ..proto import enterprise_pb2
 
 
 class EnterpriseCommand(Command):
@@ -33,26 +34,33 @@ class EnterpriseCommand(Command):
         else:
             raise CommandError('', 'This command  is only available for Administrators of Keeper.')
 
-    def get_public_keys(self, params, emails):
-        # type: (EnterpriseCommand, KeeperParams, dict) -> None
+    def get_public_keys(self, params, emails):   # type: (KeeperParams, Dict[str, Any]) -> None
+        missing_keys = []    # type: List[str]
+        for email in list(emails.keys()):
+            email = email.lower()
+            user_key = self.public_keys.get(email)
+            if user_key:
+                emails[email] = user_key
+            else:
+                missing_keys.append(email)
 
-        for email in emails:
-            emails[email] = self.public_keys.get(email.lower())
-
-        email_list = [x[0] for x in emails.items() if x[1] is None]
-        if len(email_list) == 0:
-            return
-
-        rq = {
-            'command': 'public_keys',
-            'key_owners': email_list
-        }
-        rs = api.communicate(params, rq)
-        for pko in rs['public_keys']:
-            if 'public_key' in pko:
-                public_key = crypto.load_rsa_public_key(utils.base64_url_decode(pko['public_key']))
-                self.public_keys[pko['key_owner'].lower()] = public_key
-                emails[pko['key_owner']] = public_key
+        while len(missing_keys) > 0:
+            chunk = missing_keys[:99]
+            missing_keys = missing_keys[99:]
+            rq = {
+                'command': 'public_keys',
+                'key_owners': chunk
+            }
+            rs = api.communicate(params, rq)
+            for pko in rs['public_keys']:
+                if 'public_key' in pko:
+                    email = pko['key_owner'].lower()
+                    try:
+                        public_key = crypto.load_rsa_public_key(utils.base64_url_decode(pko['public_key']))
+                        self.public_keys[email] = public_key
+                        emails[email] = public_key
+                    except Exception as e:
+                        logging.warning('Cannot load user \"%s\" public key: %s', email, e)
 
     def get_public_key(self, params, email):
         # type: (EnterpriseCommand, KeeperParams, str) -> any
@@ -67,38 +75,64 @@ class EnterpriseCommand(Command):
 
         return public_key
 
-    def get_team_key(self, params, team_uid):
-        team_key = self.team_keys.get(team_uid)
-        if team_key is None:
-            if 'teams' in params.enterprise:
-                for team in params.enterprise['teams']:
-                    if team['team_uid'] == team_uid:
-                        if 'encrypted_team_key' in team:
-                            enc_team_key = team['encrypted_team_key']  # type: str
-                            team_key = crypto.decrypt_aes_v2(utils.base64_url_decode(enc_team_key), params.enterprise['unencrypted_tree_key'])
-                        break
+    def get_team_keys(self, params, teams):   # type: (KeeperParams, Dict[str, Optional[bytes]]) -> None
+        missing_uids = list()    # type: List[str]
+        tree_key = params.enterprise['unencrypted_tree_key']
+        for team_uid in list(teams.keys()):
+            team_key = self.team_keys.get(team_uid)
+            if team_key:
+                teams[team_uid] = team_key
+            else:
+                if 'teams' in params.enterprise:
+                    for team in params.enterprise['teams']:
+                        if team['team_uid'] == team_uid:
+                            if 'encrypted_team_key' in team:
+                                enc_team_key = team['encrypted_team_key']  # type: str
+                                if enc_team_key:
+                                    try:
+                                        team_key = crypto.decrypt_aes_v2(utils.base64_url_decode(enc_team_key), tree_key)
+                                    except Exception as e:
+                                        logging.warning('Cannot decrypt team \"%s\" key: %s', team_uid, e)
+                if team_key:
+                    self.team_keys[team_uid] = team_key
+                    teams[team_uid] = team_key
+                else:
+                    missing_uids.append(team_uid)
 
-        if team_key is None:
+        while len(missing_uids) > 0:
+            chunk = missing_uids[:99]
+            missing_uids = missing_uids[99:]
             rq = {
                 'command': 'team_get_keys',
-                'teams': [team_uid]
+                'teams': chunk
             }
             rs = api.communicate(params, rq)
             if rs['result'] == 'success':
-                ko = rs['keys'][0]
-                if 'key' in ko:
-                    encrypted_key = utils.base64_url_decode(ko['key'])
-                    key_type = ko['type']
-                    if key_type == 1:
-                        team_key = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
-                    elif key_type == 2:
-                        team_key = crypto.decrypt_rsa(encrypted_key, params.rsa_key)
-                    elif key_type == 3:
-                        team_key = crypto.decrypt_aes_v2(encrypted_key, params.data_key)
+                for ko in rs['keys']:
+                    team_key = None
+                    if 'key' in ko:
+                        team_uid = ko['team_uid']
+                        try:
+                            encrypted_key = utils.base64_url_decode(ko['key'])
+                            key_type = ko['type']
+                            if key_type == 1:
+                                team_key = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
+                            elif key_type == 2:
+                                team_key = crypto.decrypt_rsa(encrypted_key, params.rsa_key)
+                            elif key_type == 3:
+                                team_key = crypto.decrypt_aes_v2(encrypted_key, params.data_key)
+                        except Exception as e:
+                            logging.warning('Cannot decrypt team \"%s\" key: %s', team_uid, e)
+                        if team_key:
+                            self.team_keys[team_uid] = team_key
+                            teams[team_uid] = team_key
 
-        if team_key is not None:
-            self.team_keys[team_uid] = team_key
-        return team_key
+    def get_team_key(self, params, team_uid):    # type: (KeeperParams, str) -> Optional[bytes]
+        teams = {
+            team_uid: None
+        }
+        self.get_team_keys(params, teams)
+        return teams.get(team_uid)
 
     def get_role_users_change_batch(self, params, roles, add_user, remove_user, force=False):
         """Get batch of requests for changing enterprise role users"""
@@ -192,9 +226,9 @@ class EnterpriseCommand(Command):
             team_list = add_team if is_add else remove_team
             if team_list:
                 if is_add:
-                    add_teams = RoleTeams()
+                    add_teams = enterprise_pb2.RoleTeams()
                 else:
-                    remove_teams = RoleTeams()
+                    remove_teams = enterprise_pb2.RoleTeams()
                 for team in team_list:
                     team_node = next((
                         t for t in params.enterprise.get('teams', []) if team in (t['team_uid'], t['name'])
@@ -218,7 +252,7 @@ class EnterpriseCommand(Command):
                 if is_managed_role:
                     logging.warning('Teams cannot be assigned to roles with administrative permissions.')
                 else:
-                    role_team = RoleTeam()
+                    role_team = enterprise_pb2.RoleTeam()
                     role_team.role_id = role_id
                     role_team.teamUid = utils.base64_url_decode(team_id)
                     role_name = role['data']['displayname']
@@ -244,9 +278,9 @@ class EnterpriseCommand(Command):
             role_list = add_roles if is_add else remove_roles
             if role_list:
                 if is_add:
-                    add_role_teams = RoleTeams()
+                    add_role_teams = enterprise_pb2.RoleTeams()
                 else:
-                    remove_role_teams = RoleTeams()
+                    remove_role_teams = enterprise_pb2.RoleTeams()
                 for role in role_list:
                     role_node = next((
                         r for r in params.enterprise['roles']
@@ -281,7 +315,7 @@ class EnterpriseCommand(Command):
                                 'Team %s is not in "%s" role: Remove from role is skipped', team['name'], role_name
                             )
                         else:
-                            role_team = RoleTeam()
+                            role_team = enterprise_pb2.RoleTeam()
                             role_team.role_id = role_id
                             role_team.teamUid = utils.base64_url_decode(team['team_uid'])
                             team_name = team['name']
@@ -306,6 +340,36 @@ class EnterpriseCommand(Command):
         rs = api.communicate(params, rq)
         if rs['result'] == 'success':
             return rs['base_id']
+
+    @staticmethod
+    def get_enterprise_ids(params, num_ids=1):
+        enterprise_ids = []
+        if num_ids < 1:
+            return enterprise_ids
+        rqs = []
+        rq_max_ids = 100
+        num_requested = num_ids
+        while num_requested:
+            batch_num_ids = min(num_ids, rq_max_ids)
+            num_requested -= batch_num_ids
+            rq = {
+                'command': 'enterprise_allocate_ids',
+                'number_requested': batch_num_ids
+            }
+            rqs.append(rq)
+        if rqs:
+            rss = api.execute_batch(params, rqs) if num_ids > rq_max_ids else [api.communicate(params, rqs[0])]
+            for i, rs in enumerate(rss):
+                if rs.get('result') == 'success':
+                    base_id = rs.get('base_id')
+                    number_allocated = rs.get('number_allocated')
+                    batch_ids = [base_id + i for i in range(number_allocated)]
+                    enterprise_ids.extend(batch_ids)
+                else:
+                    # Batch of new enterprise ids could not be allocated (
+                    rq = rqs[i]
+                    enterprise_ids.extend([None for _ in range(rq.get('number_requested', 0))])
+        return enterprise_ids
 
     def get_node_path(self, params, node_id, omit_root=False):
         if self._node_map is None:

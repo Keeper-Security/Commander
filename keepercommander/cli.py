@@ -12,7 +12,6 @@
 import datetime
 import logging
 import os
-import re
 import shlex
 import subprocess
 import sys
@@ -24,15 +23,15 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.shortcuts import CompleteStyle
 
-from . import api, display, loginv3, ttk
+from . import api, display, ttk
 from . import versioning
 from .autocomplete import CommandCompleter
 from .commands import (
     register_commands, register_enterprise_commands, register_msp_commands,
     aliases, commands, command_info, enterprise_commands, msp_commands
 )
-from .commands.base import expand_cmd_args, dump_report_data
-from .commands.msp import get_mc_by_name_or_id
+from .commands.base import dump_report_data
+from .commands import msp
 from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS
 from .error import CommandError, Error
 from .params import KeeperParams
@@ -90,62 +89,20 @@ def display_command_help(show_enterprise=False, show_shell=False):
     print('Type \'help <command>\' to display help on command')
 
 
-msp_params = None
-mc_params_dict = {}
-current_mc_id = None
-
-
 def is_executing_as_msp_admin():
-    return msp_params is not None
+    return msp.msp_params is not None
 
 
 def check_if_running_as_mc(params, args):
-    has_mc_id_regex = r"--mc[\s=](\d+)"
-
-    global msp_params
-
-    m = re.search(has_mc_id_regex, args)
-    if m is not None:                                   # Impersonating as Managed Company (MC)
-        try:
-            mc_id = int(m.group(1))  # get id of the MC from args
-        except AttributeError:
-            logging.error("No Managed company provided")  # apply your error handling
-            raise
-
-        cur_msp_params = params if msp_params is None else params
-
-        managed_companies = cur_msp_params.enterprise['managed_companies']
-        found_mc = get_mc_by_name_or_id(managed_companies, mc_id)
-
-        if found_mc is None:
-            can_manage_mcs = ', '.join(str(mc['mc_enterprise_id']) for mc in managed_companies)
-
-            raise CommandError('', "You do not have permission to manage company %s. MCs able to manage: %s" % (mc_id, can_manage_mcs))
-
-        if mc_id not in mc_params_dict:
-            mc_params = api.login_and_get_mc_params(params, mc_id)
-            mc_params_dict[mc_id] = mc_params
-
-        if msp_params is None:
-            msp_params = params
-
-        params = mc_params_dict[mc_id]
-
-        args = re.sub(has_mc_id_regex, '', args)         # to remove impersonation args
-
-    elif current_mc_id is not None:
-        # Running commands as Managed Company admin via MSP
-
-        if current_mc_id not in mc_params_dict:
-            mc_params = api.login_and_get_mc_params_login_v3(params, current_mc_id)
-            mc_params_dict[current_mc_id] = mc_params
-
-        params = mc_params_dict[current_mc_id]
-
+    if msp.current_mc_id is not None:
+        if msp.current_mc_id in msp.mc_params_dict:
+            params = msp.mc_params_dict[msp.current_mc_id]
+        else:
+            msp.current_mc_id = None
     else:                                                       # Not impersonating
-        if msp_params is not None:
-            params = msp_params
-            msp_params = None
+        if msp.msp_params is not None:
+            params = msp.msp_params
+            msp.msp_params = None
 
     return params, args
 
@@ -163,8 +120,6 @@ def command_and_args_from_cmd(command_line):
 
 
 def do_command(params, command_line):
-    global current_mc_id
-
     def is_msp(params_local):
         if params_local.enterprise:
             if 'licenses' in params_local.enterprise:
@@ -220,12 +175,6 @@ def do_command(params, command_line):
             print("\noptional arguments:")
             print("  -h, --help            show this help message and exit")
             return
-        elif command_line.lower().startswith('d ') or command_line.lower().startswith('sync-down '):
-            print("usage: sync-down|d [-h]")
-            print("\nDownload your vault from the Keeper Cloud.")
-            print("\noptional arguments:")
-            print("  -h, --help            show this help message and exit")
-            return
         elif command_line.lower().startswith('c ') or command_line.lower().startswith('cls ') or command_line.lower().startswith('clear '):
             print("usage: clear|cls|c [-h]")
             print("\nClear the screen.")
@@ -235,20 +184,6 @@ def do_command(params, command_line):
         elif command_line.lower().startswith('debug '):
             print("usage: debug [-h]")
             print("\nToggle debug mode")
-            print("\noptional arguments:")
-            print("  -h, --help            show this help message and exit")
-            return
-        elif command_line.lower().startswith('switch-to-mc '):
-            print("usage: switch-to-mc [-h] mcId")
-            print("\nSwitch user's context to Managed Company.")
-            print("\npositional arguments:")
-            print("  mcId               ID of the Managed Company")
-            print("\noptional arguments:")
-            print("  -h, --help            show this help message and exit")
-            return
-        elif command_line.lower().startswith('switch-to-msp '):
-            print("usage: switch-to-msp [-h]")
-            print("\nSwitch user's context back to MSP Company.")
             print("\noptional arguments:")
             print("  -h, --help            show this help message and exit")
             return
@@ -271,57 +206,8 @@ def do_command(params, command_line):
         logging.getLogger().setLevel((logging.WARNING if params.batch_mode else logging.INFO) if is_debug else logging.DEBUG)
         logging.info('Debug %s', 'OFF' if is_debug else 'ON')
 
-    elif 'switch-to-mc' in command_line:
-
-        if current_mc_id is not None:
-            raise CommandError('switch-to-mc', "Already switched to Managed Company id=%s" % current_mc_id)
-
-        cmd, args = command_and_args_from_cmd(command_line)
-        args = expand_cmd_args(args, params.environment_variables)
-
-        if not args or not loginv3.CommonHelperMethods.check_int(args):
-            raise CommandError('switch-to-mc', "Please provide Managed Company ID as integer. Your input was '%s'" % args)
-
-        if not params.enterprise:
-            logging.error('This command is restricted to Keeper Enterprise administrators.')
-            return
-
-        if not is_msp(params):
-            logging.error(not_msp_admin_error_msg)
-            return
-
-        managed_companies = params.enterprise['managed_companies']
-        found_mc = get_mc_by_name_or_id(managed_companies, int(args))
-
-        if found_mc is None:
-            can_manage_mcs = ', '.join(str(mc['mc_enterprise_id']) for mc in managed_companies)
-            raise CommandError('', "You do not have permission to manage company %s. MCs able to manage: %s" % (int(args), can_manage_mcs))
-
-        current_mc_id = int(args)
-
-        print("Switched to MC '%s'" % found_mc['mc_enterprise_name'])
-
-    elif command_line == 'switch-to-msp':
-
-        if not params.enterprise:
-            logging.error('This command is restricted to Keeper Enterprise administrators.')
-            return
-
-        if not is_msp(params):
-            logging.error(not_msp_admin_error_msg)
-            return
-
-        if current_mc_id is None:
-            raise CommandError('switch-to-mc', "Already MSP")
-
-        print("Switching back to MSP")
-        current_mc_id = None
-
-        api.query_enterprise(params)
-
     else:
         cmd, args = command_and_args_from_cmd(command_line)
-
         params, args = check_if_running_as_mc(params, args)
 
         if cmd:
@@ -402,7 +288,9 @@ def runcommands(params, commands=None, command_delay=0, quiet=False):
             if not quiet:
                 logging.info('Executing [%s]...', command)
             try:
-                do_command(params, command)
+                result = do_command(params, command)
+                if result is not None:
+                    print(result)
             except CommandError as e:
                 msg = f'{e.command}: {e.message}' if e.command else f'{e.message}'
                 logging.error(msg)
@@ -425,10 +313,10 @@ def runcommands(params, commands=None, command_delay=0, quiet=False):
 def force_quit():
     try:
         if os.name == 'posix':
-            os.system('reset')
+            subprocess.run('reset')
         elif os.name == 'nt':
-            os.system('cls')
-        os.system('echo Auto-logout timer activated.')
+            subprocess.run('cls')
+        print('Auto-logout timer activated.')
     except:
         pass
     os._exit(0)

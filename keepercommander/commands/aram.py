@@ -21,9 +21,10 @@ import gzip
 import logging
 import platform
 import re
+import sys
 from functools import partial
 
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Dict
 
 import requests
 import socket
@@ -110,7 +111,7 @@ aging_report_parser = argparse.ArgumentParser(prog='aging-report', description='
 aging_report_parser.add_argument('-r', '--rebuild', dest='rebuild', action='store_true',
                                  help='Rebuild record database')
 aging_report_parser.add_argument('--delete', dest='delete', action='store_true',
-                                 help='Delete local record database')
+                                 help='Delete local database cache containing encrypted compliance record data')
 aging_report_parser.add_argument('--no-cache', '-nc', dest="no_cache", action='store_true',
                                  help='remove any local non-memory storage of data upon command completion')
 aging_report_parser.add_argument('-s', '--sort', dest='sort_by', action='store', default='last_changed',
@@ -146,7 +147,7 @@ action_report_parser.add_argument('--target-user', action='store', help=target_u
 action_report_parser.add_argument('--dry-run', '-n', dest='dry_run', default=False, action='store_true',
                                   help='flag to enable dry-run mode')
 force_action_help = 'skip confirmation prompt when applying irreversible admin actions (e.g., delete, transfer)'
-action_report_parser.add_argument('--force', action='store_true', help=force_action_help)
+action_report_parser.add_argument('--force', '-f', action='store_true', help=force_action_help)
 
 syslog_templates = None  # type: Optional[List[str]]
 
@@ -318,7 +319,7 @@ class AuditLogSplunkExport(AuditLogBaseExport):
                         return
                     for test_url in ['https://{0}/services/collector'.format(address), 'http://{0}/services/collector'.format(address)]:
                         try:
-                            print('Testing \'{0}\' ...'.format(test_url), end='', flush=True)
+                            print('Testing \'{0}\' ...'.format(test_url), file=sys.stderr, end='', flush=True)
                             rs = requests.post(test_url, json='', verify=False)
                             if rs.status_code == 401:
                                 js = rs.json()
@@ -846,7 +847,7 @@ class AuditLogCommand(EnterpriseCommand):
                     finished = True
                     break
                 count += len(to_store)
-                print('+', end='', flush=True)
+                print('+', file=sys.stderr, end='', flush=True)
 
         if last_event_time > 0:
             logging.info('')
@@ -1600,6 +1601,12 @@ class AgingReportCommand(Command):
 
         users = {uid: user for uid, user in sd.get_users().items() if user.status == enterprise_pb2.OK}
         uid_lookup = {user.email: uid for uid, user in users.items()}
+        if 'user_aliases' in params.enterprise:
+            for alias in params.enterprise['user_aliases']:
+                username = alias['username'].lower()
+                if username not in uid_lookup:
+                    user_id = alias['enterprise_user_id']
+                    uid_lookup[username] = user_id
         username = kwargs.get('username')
         if username and username not in uid_lookup:
             logging.info(f'User {username} is not a valid enterprise user')
@@ -1647,73 +1654,87 @@ class AgingReportCommand(Command):
         # type: (KeeperParams, sox_data.SoxData, int, Optional[bool]) -> None
         if rebuild:
             sox.storage.clear_aging_data()
-        from_date = min(sox.storage.records_dated, sox.storage.last_pw_audit)
-        if from_date > period_start_ts:
-            return
-        if from_date == 0:
-            min_dt = datetime.datetime.now() - datetime.timedelta(days=365) * 5
-            from_date = int(min_dt.timestamp())
-
-        filter_period = {'min': from_date}
-        audit_filter = {
-            'audit_event_type': ['record_add', 'record_password_change', 'folder_add_record'],
-            'created': filter_period
-        }
-        limit = API_EVENT_RAW_ROW_LIMIT
-        rq = {
-            'command':      'get_audit_event_reports',
-            'scope':        'enterprise',
-            'report_type':  'span',
-            'columns':      ['record_uid', 'audit_event_type'],
-            'aggregate':    ['last_created'],
-            'filter':       audit_filter,
-            'limit':        limit
-        }
+            sox.rebuild_data(RebuildTask(False, load_compliance_data=False, load_aging_data=True))
+        else:
+            # Update aging-data cache only if older than 1 day
+            now = datetime.datetime.now()
+            min_last_update = (now - datetime.timedelta(days=1)).timestamp()
+            if sox.storage.last_pw_audit > min_last_update:
+                return
 
         rec_lookup = sox.get_records()
-        logging.info('Loading record password change information...')
-        folder_add_lookup = {}
-        created_lookup = {}
-        pw_change_lookup = {}
-        done = False
-        while not done:
-            rs = api.communicate(params, rq)
-            events = rs['audit_event_overview_report_rows']
-            done = len(events) < limit
-            if not done and events:
-                filter_period['max'] = int(events[-1].get('last_created')) + 1
+        last_aging_update = sox.storage.records_dated or sox.storage.last_pw_audit
+        search_min_ts = int((datetime.datetime.now() - datetime.timedelta(days=365) * 5).timestamp())
+        search_min_ts = last_aging_update or search_min_ts
 
-            for event in events:
-                record_uid = event['record_uid']
-                record = rec_lookup.get(record_uid)
-                if not record:
-                    logging.debug(f'record-aging: record {record_uid} does not exist')
-                    continue
-                event_type = event.get('audit_event_type')
-                event_ts = int(event.get('last_created'))
-                aging_obj = {record_uid: event_ts}
-                if event_type in ('record_add', 'folder_add_record'):
-                    lookup = created_lookup if event_type == 'record_add' else folder_add_lookup
-                    if record_uid not in created_lookup:
-                        lookup.update(aging_obj)
-                elif event_type == 'record_password_change' and event_ts > record.last_pw_change and record_uid not in pw_change_lookup:
-                    pw_change_lookup.update(aging_obj)
-        created_lookup.update({r_uid: ts for r_uid, ts in folder_add_lookup.items() if r_uid not in created_lookup})
-        records_to_update = {
-            'created': created_lookup,
-            'last_pw_change': pw_change_lookup
-        }
+        def get_event_lookups():
+            filter_period = {'min': search_min_ts}
+            audit_filter = {
+                'audit_event_type': ['record_add', 'record_password_change', 'folder_add_record'],
+                'created': filter_period
+            }
+            limit = API_EVENT_SUMMARY_ROW_LIMIT
+            rq = {
+                'command':      'get_audit_event_reports',
+                'scope':        'enterprise',
+                'report_type':  'span',
+                'columns':      ['record_uid', 'audit_event_type'],
+                'aggregate':    ['last_created'],
+                'filter':       audit_filter,
+                'limit':        limit
+            }
 
+            logging.info('Loading record password change information...')
+            folder_add_lookup = {}
+            created_lookup = {}
+            pw_change_lookup = {}
+            done = False
+            loops = 0
+            while not done:
+                loops += 1
+                rs = api.communicate(params, rq)
+                events = rs['audit_event_overview_report_rows']
+                done = len(events) < limit
+                if not done and events:
+                    filter_period['max'] = int(events[-1].get('last_created')) + 1
+
+                for event in events:
+                    record_uid = event['record_uid']
+                    record = rec_lookup.get(record_uid)
+                    if not record:
+                        logging.debug(f'record-aging: record {record_uid} does not exist')
+                        continue
+                    event_type = event.get('audit_event_type')
+                    event_ts = int(event.get('last_created'))
+                    if event_type in ('record_add', 'folder_add_record'):
+                        if record.created and record.created < event_ts:
+                            continue
+                        if event_type == 'record_add':
+                            created_lookup.setdefault(record_uid, event_ts)
+                        else:
+                            folder_add_lookup.update({record_uid: event_ts})
+                    elif event_type == 'record_password_change':
+                        if record.last_pw_change < event_ts:
+                            pw_change_lookup.setdefault(record_uid, event_ts)
+            for k, v in folder_add_lookup.items():
+                created_lookup.setdefault(k, v)
+            lookups = {
+                'created': created_lookup,
+                'last_pw_change': pw_change_lookup
+            }
+            return lookups
+
+        event_lookups = get_event_lookups()
         sox.storage.set_last_pw_audit()
         sox.storage.set_records_dated()
-
-        aging_entities = {}
-        for attr in records_to_update:
-            aging_objs = records_to_update.get(attr)
-            for uid, event_ts in aging_objs.items():
-                ra = aging_entities.get(uid) or sox.storage.record_aging.get_entity(uid) or StorageRecordAging(uid)
-                setattr(ra, attr, event_ts)
-                aging_entities[uid] = ra
+        aging_entities = dict()  # type: Dict[str, StorageRecordAging]
+        for e_type in event_lookups:
+            event_ts_lookup = event_lookups.get(e_type)
+            for uid, event_ts in event_ts_lookup.items():
+                entity = aging_entities.get(uid) or sox.storage.record_aging.get_entity(uid) or StorageRecordAging(uid)
+                if getattr(entity, e_type, 0) < event_ts:
+                    setattr(entity, e_type, event_ts)
+                    aging_entities[uid] = entity
 
         # Save updated record-aging entities and re-load local SOX data
         if aging_entities:
@@ -1801,19 +1822,17 @@ class ActionReportCommand(EnterpriseCommand):
         def get_action_results_text(cmd, cmd_status, server_msg, affected):
             return f'\tCOMMAND: {cmd}\n\tSTATUS: {cmd_status}\n\tSERVER MESSAGE: {server_msg}\n\tAFFECTED: {affected}'
 
-        def batch_apply_cmd(users, api_cmd_rq=None, dryrun=False, userid_field='enterprise_user_id'):
-            user_ids = [user.get(userid_field) for user in users]
-            cmd_status = 'aborted' if api_cmd_rq else 'n/a'
+        def run_cmd(users, cmd_exec_fn=None, cmd_name='None', dryrun=False):
+            cmd_status = 'aborted' if cmd_exec_fn else 'n/a'
             affected = 0
             server_msg = 'n/a'
-            cmd = 'NONE (No action specified)' if api_cmd_rq is None else api_cmd_rq.get('command')
-            if api_cmd_rq is not None and len(users):
-                cmd_rqs = [{**api_cmd_rq, userid_field: user_id} for user_id in user_ids]
+            cmd = 'NONE (No action specified)' if cmd_exec_fn is None else cmd_name
+            if cmd_exec_fn is not None and len(users):
                 if dryrun:
                     cmd_status = 'dry run'
                 else:
-                    responses = api.execute_batch(params, cmd_rqs)
-                    fails = [rs for rs in responses if rs.get('result') != 'success']
+                    responses = cmd_exec_fn()
+                    fails = [rs for rs in responses if rs.get('result') != 'success'] if responses else []
                     affected = len(users) - len(fails)
                     cmd_status = 'fail' if not responses \
                         else 'incomplete' if any(fails) \
@@ -1874,10 +1893,13 @@ class ActionReportCommand(EnterpriseCommand):
                                  f'value must be one of {actions_allowed})'
             is_valid_action = action in actions_allowed
 
+            from keepercommander.commands.enterprise import EnterpriseUserCommand
+            exec_fn = EnterpriseUserCommand().execute
+            emails = [u.get('username') for u in users]
             action_handlers = {
-                'none': partial(batch_apply_cmd, users, None, dryrun),
-                'lock': partial(batch_apply_cmd, users, cmd_rq('enterprise_user_lock', lock='locked'), dryrun),
-                'delete': partial(batch_apply_cmd, users, cmd_rq('enterprise_user_delete'), dryrun),
+                'none': partial(run_cmd, users, None, None, dryrun),
+                'lock': partial(run_cmd, users, lambda: exec_fn(params, email=emails, lock=True, force=True, return_results=True), 'lock', dry_run),
+                'delete': partial(run_cmd, users, lambda: exec_fn(params, email=emails, delete=True, force=True, return_results=True), 'delete', dry_run),
                 'transfer': partial(transfer_accounts, users, kwargs.get('target_user'), dryrun)
             }
 

@@ -10,10 +10,14 @@ from keepercommander.sox.sox_types import RecordPermissions
 from .. import sox, api
 from ..error import Error
 from ..params import KeeperParams
-from ..sox import sox_types
+from ..sox import sox_types, get_node_id
+from ..sox.sox_data import SoxData
 
 compliance_parser = argparse.ArgumentParser(add_help=False)
-compliance_parser.add_argument('--rebuild', '-r', action='store_true', help='rebuild local data from source')
+rebuild_group = compliance_parser.add_mutually_exclusive_group()
+rebuild_group.add_argument('--rebuild', '-r', action='store_true', help='rebuild local data from source')
+nr_help = 'prevent remote data fetching if local cache present (invalid with --rebuild flag)'
+rebuild_group.add_argument('--no-rebuild', '-nr', action='store_true', help=nr_help)
 compliance_parser.add_argument('--no-cache', '-nc', action='store_true',
                                help='remove any local non-memory storage of data after report is generated')
 compliance_parser.add_argument('--node', action='store', help='ID or name of node (defaults to root node)')
@@ -68,13 +72,12 @@ def register_command_info(aliases, command_info):
     command_info['compliance'] = 'SOX Compliance Reporting'
 
 
-def get_email(params, user_uid):    # type: (KeeperParams, int) -> str
-    user_uid_key = 'enterprise_user_id'
-    return next(u.get('username') for u in params.enterprise.get('users') if u.get(user_uid_key) == user_uid)
+def get_email(sdata, user_uid):    # type: (SoxData, int) -> str
+    return sdata.get_users().get(user_uid).email
 
 
-def get_team_usernames(params, team):  # type: (KeeperParams, sox_types.Team) -> List[str]
-    return [get_email(params, userid) for userid in team.users]
+def get_team_usernames(sdata, team):  # type: (SoxData, sox_types.Team) -> List[str]
+    return [get_email(sdata, userid) for userid in team.users]
 
 
 class ComplianceCommand(GroupCommand):
@@ -110,17 +113,12 @@ class BaseComplianceReportCommand(EnterpriseCommand):
 
     def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
         node_name_or_id = kwargs.get('node')
-        node_name_or_id = int(node_name_or_id) if node_name_or_id and node_name_or_id.isdecimal() else node_name_or_id
+        node_id = get_node_id(params, node_name_or_id)
+        enterprise_id = node_id >> 32
         nodes = params.enterprise['nodes']
         root_node_id = nodes[0].get('node_id', 0)
-        node_ids = (n.get('node_id') for n in nodes)
-        node_id_lookup = {n.get('data').get('displayname'): n.get('node_id') for n in nodes}
-        node_id = node_id_lookup.get(node_name_or_id) if node_name_or_id in node_id_lookup \
-            else node_name_or_id if node_name_or_id in node_ids \
-            else root_node_id
-        enterprise_id = node_id >> 32
         max_data_age = datetime.timedelta(days=1)
-        min_data_ts = (datetime.datetime.now() - max_data_age).timestamp()
+        min_data_ts = 0 if kwargs.get('no_rebuild') else (datetime.datetime.now() - max_data_age).timestamp()
 
         default_opts = {'command', 'action', 'format'}
         opts_set = [val for opt, val in kwargs.items() if val and opt not in default_opts]
@@ -312,7 +310,7 @@ class ComplianceTeamReportCommand(BaseComplianceReportCommand):
                 perms = ', '.join(perms) if perms else 'Read Only'
                 row = [team.team_name, team_uid, get_sf_name(sf_uid), sf_uid, perms, num_recs]
                 if show_team_users:
-                    row.append(get_team_usernames(params, team))
+                    row.append(get_team_usernames(sox_data, team))
                 report_data.append(row)
 
         return report_data
@@ -421,16 +419,24 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
 
 class ComplianceSummaryReportCommand(BaseComplianceReportCommand):
     def __init__(self):
-        headers = ['email', 'records']
-        super(ComplianceSummaryReportCommand, self).__init__(headers, allow_no_opts=True, prelim_only=True)
+        headers = ['email', 'records', 'active', 'deleted']
+        super(ComplianceSummaryReportCommand, self).__init__(headers, allow_no_opts=True, prelim_only=False)
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return summary_report_parser
 
     def generate_report_data(self, params, kwargs, sox_data, report_fmt, node, root_node):
-        report_data = [(user.email, len(user.records)) for user in sox_data.get_users().values()]
-        report_data.append(('TOTAL', sum([num_recs for email, num_recs in report_data])))
+        def get_row(u):
+            num_deleted = len(u.trash_records)
+            num_active = len(u.active_records)
+            total = len(u.records)
+            return u.email, total, num_active, num_deleted
 
+        report_data = [get_row(u) for u in sox_data.get_users().values()]
+        total_active = sum([num_active for _, _, num_active, _ in report_data])
+        total_deleted = sum([num_deleted for _, _, _, num_deleted in report_data])
+        total_all = sum([total for _, total, _, _ in report_data])
+        report_data.append(('TOTAL', total_all, total_active, total_deleted))
         return report_data
 
 
@@ -453,8 +459,8 @@ class ComplianceSharedFolderReportCommand(BaseComplianceReportCommand):
             sf_team_uids = list(sf.teams)
             sf_team_names = [teams.get(t).team_name for t in sf.teams]
             records = [rp.record_uid for rp in sf.record_permissions]
-            users = [get_email(params, u) for u in sf.users]
-            team_users = [tu for tuid in sf_team_uids for tu in get_team_usernames(params, teams.get(tuid))] if show_team_users else []
+            users = [get_email(sox_data, u) for u in sf.users]
+            team_users = [tu for tuid in sf_team_uids for tu in get_team_usernames(sox_data, teams.get(tuid))] if show_team_users else []
             team_users = [f'(TU){email}' for email in team_users]
             row = [sfuid, sf_team_uids, sf_team_names, records, team_users + users]
             report_data.append(row)

@@ -28,7 +28,7 @@ from smtplib import SMTP
 
 from keepercommander import api, vault_extensions, vault
 from keepercommander.__main__ import get_params_from_config
-from keepercommander.commands.enterprise import SecurityAuditReportCommand
+from keepercommander.commands.security_audit import SecurityAuditReportCommand
 
 email_message = '''
 From: {0}

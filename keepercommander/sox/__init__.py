@@ -3,10 +3,11 @@ import datetime
 import logging
 import os
 import sqlite3
+import sys
 from typing import Dict
 
 from .. import api, crypto, utils
-from ..error import CommandError
+from ..error import CommandError, Error
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
 from . import sqlite_storage, sox_data
@@ -54,6 +55,16 @@ def is_compliance_reporting_enabled(params):
         return True
 
 
+def encrypt_data(params, data): # type: (KeeperParams, str) -> bytes
+    data_bytes = utils.string_to_bytes(data) if data else b''
+    encrypted = ''
+    try:
+        encrypted = crypto.encrypt_aes_v1(data_bytes, params.enterprise.get('unencrypted_tree_key'))
+    except Error as e:
+        logging.info(f'Error encrypting data, type = {type(data)}, value = {data}, message = {e.message}')
+    return encrypted
+
+
 def get_sox_database_name(params, enterprise_id):  # type: (KeeperParams, int) -> str
     path = os.path.dirname(os.path.abspath(params.config_filename or '1'))
     return os.path.join(path, f'sox_{enterprise_id}.db')
@@ -76,8 +87,10 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
             def to_user_entity(user, email_lookup):
                 entity = store.get_users().get_entity(user.enterpriseUserId) or StorageUser()
                 entity.status = user.status
-                entity.user_uid = user.enterpriseUserId
-                entity.email = email_lookup.get(entity.user_uid)
+                user_id = user.enterpriseUserId
+                entity.user_uid = user_id
+                email = email_lookup.get(user_id)
+                entity.email = encrypt_data(params, email) if email else b''
                 return entity
 
             def to_user_record_link(uuid, ruid):
@@ -93,11 +106,11 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
             return user_ent, record_ents, user_rec_links
 
         def sync_all():
-            print('Loading record information.', end='', flush=True)
+            print('Loading record information.', file=sys.stderr, end='', flush=True)
             user_ids = list(user_lookup.keys())
             users, records, links = [], [], []
             while user_ids:
-                print('.', end='', flush=True)
+                print('.', file=sys.stderr, end='', flush=True)
                 token = b''
                 chunk = user_ids[:API_SOX_REQUEST_USER_LIMIT]
                 user_ids = user_ids[API_SOX_REQUEST_USER_LIMIT:]
@@ -110,7 +123,7 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
                     endpoint = 'enterprise/get_preliminary_compliance_data'
                     rs_type = enterprise_pb2.PreliminaryComplianceDataResponse
                     rs = api.communicate_rest(params, rq, endpoint, rs_type=rs_type)
-                    print('.', end='', flush=True)
+                    print('.', file=sys.stderr, end='', flush=True)
                     has_more = rs.hasMore
                     token = rs.continuationToken
                     for user_data in rs.auditUserData:
@@ -122,7 +135,7 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
             store.rebuild_prelim_data(users, records, links)
 
         sync_all()
-        print('.')
+        print('.', file=sys.stderr, flush=True)
 
     validate_data_access(params)
     enterprise_id = enterprise_id or next(((x['node_id'] >> 32) for x in params.enterprise['nodes']), 0)
@@ -142,14 +155,14 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
         storage.clear_non_aging_data()
         sync_down(user_lookup, storage)
         storage.set_shared_records_only(shared_only)
-    return sox_data.SoxData(ec_private_key=key, storage=storage, no_cache=no_cache)
+    return sox_data.SoxData(params, storage=storage, no_cache=no_cache)
 
 
 def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_updated=0, no_cache=False, shared_only=False):
     def sync_down(sdata, node_uid, user_node_id_lookup):
         def run_sync_tasks():
             async def do_tasks(return_exceptions=False):
-                print('Loading compliance data.', end='', flush=True)
+                print('Loading compliance data.', file=sys.stderr, end='', flush=True)
                 users_uids = [int(uid) for uid in sdata.get_users()]
                 record_uids_raw = [rec.record_uid_bytes for rec in sdata.get_records().values()]
                 limit = asyncio.Semaphore(10)
@@ -159,14 +172,14 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                 tasks = [sync_chunk(chunk, users_uids, limit) for chunk in ruid_chunks]
                 await asyncio.gather(*tasks, return_exceptions=return_exceptions)
                 sdata.storage.set_compliance_data_updated()
-                print('')
+                print('', file=sys.stderr, flush=True)
 
             py_version_3_6 = not hasattr(asyncio, 'run')
             if not py_version_3_6:
                 try:
                     asyncio.run(do_tasks(True))
                 finally:
-                    print('')
+                    print('', file=sys.stderr, flush=True)
             else:
                 old_loop = asyncio.get_event_loop()
                 loop = asyncio.new_event_loop()
@@ -187,11 +200,11 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                         loop.close()
 
         async def sync_chunk(chunk, uuids, limit):
-            print('.', end='', flush=True)
+            print('.', file=sys.stderr, end='', flush=True)
             rs = await fetch_response(raw_ruids=chunk, user_uids=uuids, limit=limit)
-            print('.', end='', flush=True)
+            print('.', file=sys.stderr, end='', flush=True)
             await save_response(rs)
-            print(':', end='', flush=True)
+            print(':', file=sys.stderr, end='', flush=True)
 
         async def fetch_response(raw_ruids, user_uids, limit=None):
             async with limit:
@@ -230,7 +243,7 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                 return response
 
             await save_all_types(hash_anon_ids(rs))
-            print('.', end='', flush=True)
+            print('.', file=sys.stderr, end='', flush=True)
 
         async def save_all_types(rs):
             save_users(rs.userProfiles)
@@ -247,9 +260,9 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
             for up in user_profiles:
                 entity = sdata.storage.users.get_entity(up.enterpriseUserId) or StorageUser()
                 entity.user_uid = entity.user_uid or up.enterpriseUserId
-                entity.email = entity.email or up.email
-                entity.job_title = entity.job_title or up.jobTitle
-                entity.full_name = entity.full_name or up.fullName
+                entity.email = entity.email or encrypt_data(params, up.email)
+                entity.job_title = entity.job_title or encrypt_data(params, up.jobTitle)
+                entity.full_name = entity.full_name or encrypt_data(params, up.fullName)
                 user_node = user_node_id_lookup.get(up.enterpriseUserId)
                 entity.node_id = user_node
                 entities.append(entity)

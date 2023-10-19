@@ -48,8 +48,11 @@ def matches_record(record, pattern):    # type: (vault.KeeperRecord, Union[str, 
     return False
 
 
-def find_records(params, search_str=None, record_type=None, record_version=None):
-    # type: (KeeperParams, Optional[str], Union[str, Iterable[str], None], Union[int, Iterable[int], None]) -> Iterator[vault.KeeperRecord]
+def find_records(params,                  # type: KeeperParams
+                 search_str=None,         # type: Optional[str]
+                 record_type=None,        # type: Union[str, Iterable[str], None]
+                 record_version=None      # type: Union[int, Iterable[int], None]
+                 ):                       # type: (...) -> Iterator[vault.KeeperRecord]
     pattern = re.compile(search_str, re.IGNORECASE).search if search_str else None
 
     type_filter = None       # type: Optional[Set[str]]
@@ -58,14 +61,14 @@ def find_records(params, search_str=None, record_type=None, record_version=None)
         type_filter = set()
         if isinstance(record_type, str):
             type_filter.add(record_type)
-        if hasattr(record_type, '__iter__'):
+        if isinstance(record_type, Iterable):
             type_filter.update(record_type)
 
     if record_version:
         version_filter = set()
         if isinstance(record_version, int):
             version_filter.add(record_version)
-        if hasattr(record_version, '__iter__'):
+        if isinstance(record_version, Iterable):
             version_filter.update((x for x in record_version if isinstance(x, int)))
 
     for record_uid in params.record_cache:

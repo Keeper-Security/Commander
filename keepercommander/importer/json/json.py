@@ -468,15 +468,33 @@ class KeeperMembershipDownload(BaseDownloadMembership):
                         perm.manage_records = user.get('manage_records', False)
                         sf.permissions.append(perm)
                 yield sf
+
+        enterprise_teams = {}    # type: Dict[int, List[str]]
+        if params.enterprise:
+            users = {x['enterprise_user_id']: x['username'] for x in params.enterprise.get('users', [])
+                     if x.get('status') == 'active'}
+            if 'team_users' in params.enterprise:
+                for tu in params.enterprise['team_users']:
+                    team_uid = tu.get('team_uid')
+                    user_id = tu.get('enterprise_user_id')
+                    if team_uid and user_id:
+                        if user_id in users:
+                            if team_uid not in enterprise_teams:
+                                enterprise_teams[team_uid] = []
+                            enterprise_teams[team_uid].append(users[user_id])
+
         if teams and params.enterprise_ec_key:
             for team_uid in teams:
                 t = Team()
                 t.uid = team_uid
                 t.name = teams[team_uid]
-                rq = enterprise_pb2.GetTeamMemberRequest()
-                rq.teamUid = utils.base64_url_decode(team_uid)
-                rs = api.communicate_rest(params, rq, 'vault/get_team_members', rs_type=enterprise_pb2.GetTeamMemberResponse)
-                t.members = [x.email for x in rs.enterpriseUser]
+                if team_uid in enterprise_teams:
+                    t.members = list(enterprise_teams[team_uid])
+                else:
+                    rq = enterprise_pb2.GetTeamMemberRequest()
+                    rq.teamUid = utils.base64_url_decode(team_uid)
+                    rs = api.communicate_rest(params, rq, 'vault/get_team_members', rs_type=enterprise_pb2.GetTeamMemberResponse)
+                    t.members = [x.email for x in rs.enterpriseUser]
                 yield t
 
 

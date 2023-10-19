@@ -38,7 +38,7 @@ automator_edit_parser = argparse.ArgumentParser(prog='automator-edit')
 automator_edit_parser.add_argument('target', help='Automator ID or Name.')
 automator_edit_parser.add_argument('--name', dest='name', action='store', help='Automator name.')
 automator_edit_parser.add_argument('--url', dest='url', action='store', help='Automator Webhook URL.')
-automator_edit_parser.add_argument('--skill', dest='skill', action='append', choices=['device', 'team'],
+automator_edit_parser.add_argument('--skill', dest='skill', action='append', choices=['device', 'team', 'team_for_user'],
                                    help='Automator Skills.')
 automator_edit_parser.add_argument('--set', dest='setting', metavar="KEY=VALUE", action='append',
                                    help='Automator Settings. Use value: '
@@ -91,6 +91,8 @@ class AutomatorMixin(object):
             return 'Device Approval'
         elif skill == automator_proto.TEAM_APPROVAL:
             return 'Team Approval'
+        elif skill == automator_proto.TEAM_FOR_USER_APPROVAL:
+            return 'Team For User Approval'
         else:
             return str(skill)
 
@@ -263,8 +265,10 @@ class AutomatorEditCommand(EnterpriseCommand, AutomatorMixin):
         name = kwargs['name']
         if name:
             rq.name = name
-        url = kwargs['url']
+        url = kwargs['url']   # type: str
         if url:
+            if not url.startswith('https://'):
+                url = 'https://' + url
             rq.url = url
         skills = kwargs.get('skill')
         if skills:
@@ -273,6 +277,8 @@ class AutomatorEditCommand(EnterpriseCommand, AutomatorMixin):
                     rq.skillTypes.append(automator_proto.DEVICE_APPROVAL)
                 elif skill == 'team':
                     rq.skillTypes.append(automator_proto.TEAM_APPROVAL)
+                elif skill == 'team_for_user':
+                    rq.skillTypes.append(automator_proto.TEAM_FOR_USER_APPROVAL)
                 else:
                     logging.warning('Unsupported skill: \"%s\"', skill)
                     return
@@ -358,6 +364,7 @@ class AutomatorSetupCommand(EnterpriseCommand, AutomatorMixin):
         if not rs.success:
             logging.warning('Automator \"%s\" setup step #1 error: %s', automator.name, rs.message)
             return
+
         rq = automator_proto.AdminSetupAutomatorRequest()
         rq.automatorId = automator.automatorId
         rq.automatorState = automator_proto.NEEDS_CRYPTO_STEP_2
@@ -375,6 +382,7 @@ class AutomatorSetupCommand(EnterpriseCommand, AutomatorMixin):
             encrypted_rsa_private_key = crypto.encrypt_ec(rsa_private_key, automator_public_key)
             rq.encryptedRsaEnterprisePrivateKey = encrypted_rsa_private_key
 
+        rq.encryptedTreeKey = crypto.encrypt_ec(params.enterprise['unencrypted_tree_key'], automator_public_key)
         rs = api.communicate_rest(params, rq, 'automator/automator_setup',
                                   rs_type=automator_proto.AdminSetupAutomatorResponse)
         if rs.success:

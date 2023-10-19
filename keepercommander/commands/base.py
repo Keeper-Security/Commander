@@ -101,6 +101,22 @@ def register_commands(commands, aliases, command_info):
     rsync.register_commands(commands)
     rsync.register_command_info(aliases, command_info)
 
+    from .keeper_fill import KeeperFillCommand
+    commands['keeper-fill'] = KeeperFillCommand()
+    command_info['keeper-fill'] = 'KeeperFill management'
+
+    from .password_report import PasswordReportCommand
+    commands['password-report'] = PasswordReportCommand()
+    command_info['password-report'] = 'Display record password report'
+
+    from .two_fa import TwoFaCommand
+    commands['2fa'] = TwoFaCommand()
+    command_info['2fa'] = '2FA management'
+
+    from . import discoveryrotation
+    discoveryrotation.register_commands(commands)
+    discoveryrotation.register_command_info(aliases, command_info)
+
 
 def register_enterprise_commands(commands, aliases, command_info):
     from . import enterprise
@@ -114,12 +130,12 @@ def register_enterprise_commands(commands, aliases, command_info):
     enterprise_create_user.register_command_info(aliases, command_info)
     from .. import importer
     importer.register_enterprise_commands(commands)
-    from . import discoveryrotation
-    discoveryrotation.register_commands(commands)
-    discoveryrotation.register_command_info(aliases, command_info)
     from . import scim
     scim.register_commands(commands)
     scim.register_command_info(aliases, command_info)
+    from .msp import switch_to_msp_parser, SwitchToMspCommand
+    commands[switch_to_msp_parser.prog] = SwitchToMspCommand()
+    command_info[switch_to_msp_parser.prog] = switch_to_msp_parser.description
 
 
 def register_msp_commands(commands, aliases, command_info):
@@ -181,7 +197,12 @@ def is_json_value_field(obj):
     return True
 
 
-WORDS_TO_CAPITALIZE = {'Id', 'Uid', 'Ip', 'Url', 'Scim'}
+WORDS_TO_CAPITALIZE = {'Id', 'Uid', 'Ip', 'Url', 'Scim', '2fa'}
+
+
+def fields_to_titles(fields): # type: (List[str]) -> Optional[List[str]]
+    titles = [field_to_title(f) for f in fields]
+    return titles
 
 
 def field_to_title(field):   # type: (str) -> str
@@ -283,7 +304,7 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
             _, ext = os.path.splitext(filename)
             if not ext:
                 filename += '.csv'
-
+            logging.info('Report path: %s', os.path.abspath(filename))
         with open(filename, 'a' if append else 'w', newline='', encoding='utf-8') if filename else io.StringIO() as fd:
             csv_writer = csv.writer(fd)
             if title:
@@ -322,6 +343,7 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
             _, ext = os.path.splitext(filename)
             if not ext:
                 filename += '.json'
+            logging.info('Report path: %s', os.path.abspath(filename))
             with open(filename, 'a' if append else 'w') as fd:
                 json.dump(data_list, fd, indent=2, default=json_serialized)
         else:
@@ -334,7 +356,7 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
         if title:
             print('\n{0}\n'.format(title))
         elif append:
-            print('\n')
+            print('')
         row_number = kwargs.get('row_number')
         if not isinstance(row_number, bool):
             row_number = False
@@ -382,6 +404,7 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
                             value = value[:column_width-2] + '...'
                     rowi.append(value)
                 expanded_data.append(rowi)
+
         tablefmt = 'simple'
         right_align = kwargs.get('right_align')
         if isinstance(right_align, int):
@@ -721,8 +744,9 @@ class FolderMixin:
         records = set()
 
         def add_records(f):   # type: (BaseFolderNode) -> None
-            if f.uid in params.subfolder_record_cache:
-                records.update(params.subfolder_record_cache[f.uid])
+            folder_uid = f.uid or ''
+            if folder_uid in params.subfolder_record_cache:
+                records.update(params.subfolder_record_cache[folder_uid])
 
         FolderMixin.traverse_folder_tree(params, folder_uid, add_records)
         return records
