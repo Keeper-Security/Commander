@@ -10,7 +10,7 @@ from keepercommander import utils
 from keepercommander.commands.tunnel.port_forward.tunnel import ITunnel
 from keepercommander.commands.tunnel.port_forward.endpoint import (ControlMessage, CONTROL_MESSAGE_NO_LENGTH,
                                                                    DATA_LENGTH, CONNECTION_NO_LENGTH, TunnelProtocol,
-                                                                   PlainTextForwarder)
+                                                                   PlainTextForwarder, generate_random_bytes)
 
 
 class TestPublicTunnel(unittest.IsolatedAsyncioTestCase):
@@ -211,12 +211,6 @@ class TestPlainTextForwarder(unittest.IsolatedAsyncioTestCase):
             self.out_going_queue, self.incoming_queue, tunnel_symmetric_key=utils.generate_aes_key()
         )
 
-    async def read_side_effect(self, *args, **kwargs):
-        message = b"hello world"
-        calculated_hmac = hmac.new(self.plain_text_forwarder.tunnel_symmetric_key, message, hashlib.sha256).digest()
-
-        return message + b'\n' + bytes_to_base64(calculated_hmac).encode()
-
     async def test_non_localhost_connection(self):
         # Setup
         mock_reader = mock.AsyncMock(spec=asyncio.StreamReader)
@@ -236,11 +230,16 @@ class TestPlainTextForwarder(unittest.IsolatedAsyncioTestCase):
         mock_writer = mock.AsyncMock(spec=asyncio.StreamWriter)
         mock_writer.get_extra_info.return_value = ('127.0.0.1', 12345)  # Mocking a localhost connection
 
+        message = generate_random_bytes()
+        calculated_hmac = hmac.new(self.plain_text_forwarder.tunnel_symmetric_key, message, hashlib.sha256).digest()
+
         # Define a side effect for mock_reader.read
-        mock_reader.read.side_effect = self.read_side_effect
+        hmac_code = bytes_to_base64(calculated_hmac).encode()
+
+        mock_reader.read.side_effect = [message, hmac_code]
 
         # Execution
-        await self.plain_text_forwarder.forwarder_handle_client(mock_reader, mock_writer)
+        await self.plain_text_forwarder.forwarder_handle_client(mock_reader, mock_writer, message)
 
         # Verification
         self.assertTrue(len(self.plain_text_forwarder.client_tasks) == 2)  # Assert that the client task was removed

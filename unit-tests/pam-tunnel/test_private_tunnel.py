@@ -14,7 +14,7 @@ from keepercommander import utils
 from keepercommander.commands.tunnel.port_forward.endpoint import (PrivateTunnelEntrance, ControlMessage,
                                                                    CONTROL_MESSAGE_NO_LENGTH, CONNECTION_NO_LENGTH,
                                                                    HMACHandshakeFailedException,
-                                                                   ConnectionNotFoundException)
+                                                                   ConnectionNotFoundException, generate_random_bytes)
 
 
 class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
@@ -35,20 +35,17 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.pte.stop_server()  # ensure the server is stopped after test
 
-    async def hmac_read_side_effect(self, *args, **kwargs):
-        message = b"hello world"
-        calculated_hmac = hmac.new(self.tunnel_symmetric_key, message, hashlib.sha256).digest()
-        return message + b'\n' + bytes_to_base64(calculated_hmac).encode()
-
     async def test_perform_hmac_handshake(self):
         writer = mock.MagicMock(spec=asyncio.StreamWriter)
         # Mock asyncio.open_connection
         self.pte.tls_reader = mock.MagicMock(spec=asyncio.StreamReader)
 
         # Set side effect for read method
-        self.pte.tls_reader.read.side_effect = self.hmac_read_side_effect
+        message = generate_random_bytes()
+        calculated_hmac = hmac.new(self.tunnel_symmetric_key, message, hashlib.sha256).digest()
+        self.pte.tls_reader.read.side_effect = [message + b'\n' + bytes_to_base64(calculated_hmac).encode()]
 
-        new_writer = await self.pte.perform_hmac_handshakes(writer)
+        new_writer = await self.pte.perform_hmac_handshakes(writer, message)
         self.assertTrue(new_writer == writer)
 
     async def test_send_control_message(self):

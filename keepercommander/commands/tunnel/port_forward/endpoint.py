@@ -502,7 +502,7 @@ class PlainTextForwarder:
         self.tunnel_symmetric_key = tunnel_symmetric_key
 
     async def forwarder_handle_client(self, forwarder_reader: asyncio.StreamReader,
-                                      forwarder_writer: asyncio.StreamWriter):
+                                      forwarder_writer: asyncio.StreamWriter, message = None):
         peer_name = forwarder_writer.get_extra_info('peername')
         self.logger.debug(f'Forwarder connection from {peer_name}')
         if peer_name[0] not in ['127.0.0.1', '::1']:
@@ -510,38 +510,37 @@ class PlainTextForwarder:
             await forwarder_writer.wait_closed()
             return
         received_data = await forwarder_reader.read(BUFFER_TRUNCATION_THRESHOLD)
+        self.logger.debug(f"Received data from hmac auth: \n{received_data}\n")
 
-        # Split the received_data into message and HMAC using the delimiter
-        received_parts = received_data.split(b'\n')
-        if len(received_parts) == HMAC_MESSAGE_LENGTH:
-            received_message, received_hmac = received_parts
+        if message is None:
+            message = generate_random_bytes()
 
-            received_hmac = base64_to_bytes(received_hmac)
-            # Calculate HMAC for received_message
-            calculated_hmac = hmac.new(self.tunnel_symmetric_key, received_message, hashlib.sha256).digest()
+        # Calculate HMAC for received_message
+        calculated_hmac = hmac.new(self.tunnel_symmetric_key, received_data, hashlib.sha256).digest()
 
-            # Compare the calculated HMAC with the received HMAC
-            if calculated_hmac == received_hmac:
-                # Message integrity and authenticity verified
-                response_message = b'S>C,Hello Back!' + generate_random_bytes()
-                # Calculate HMAC for the response message
-                response_hmac = hmac.new(self.tunnel_symmetric_key, response_message, hashlib.sha256).digest()
+        response_to_send = message + b'\n' + bytes_to_base64(calculated_hmac).encode()
+        self.logger.debug(f"Sending data to for hmac auth: \n{response_to_send}\n")
 
-                # Combine response_message and response_hmac with a delimiter
-                response_to_send = response_message + b'\n' + bytes_to_base64(response_hmac).encode()
-                forwarder_writer.write(response_to_send)
-                await forwarder_writer.drain()
-            else:
-                self.logger.error(f"Error handling client: Not authenticated")
-                # Message integrity and authenticity compromised
-                forwarder_writer.close()
-                await forwarder_writer.wait_closed()
-                return
-        else:
-            self.logger.error(f"Error handling client: Invalid message")
+        forwarder_writer.write(response_to_send)
+        await forwarder_writer.drain()
+
+        received_message = await forwarder_reader.read(BUFFER_TRUNCATION_THRESHOLD)
+        self.logger.debug(f"Received data from hmac auth: \n{received_message}\n")
+
+        received_hmac = base64_to_bytes(received_message)
+
+        expected_calculated_hmac = hmac.new(self.tunnel_symmetric_key, message, hashlib.sha256).digest()
+
+        # Compare the calculated HMAC with the received HMAC
+        if expected_calculated_hmac != received_hmac:
+            self.logger.error(f"Error handling client: Not authenticated")
+            # Message integrity and authenticity compromised
             forwarder_writer.close()
             await forwarder_writer.wait_closed()
             return
+
+        forwarder_writer.write(b'Authenticated\n')
+        await forwarder_writer.drain()
 
         try:
             async def out_going_forward(f_reader):
@@ -712,9 +711,11 @@ class PrivateTunnelEntrance:
         failed = False
         try:
             # Establish a regular TCP connection to the server
-            self.tls_reader, writer = await asyncio.open_connection('localhost', self.public_tunnel_port)
-            writer = await self.perform_hmac_handshakes(writer)
-            self.tls_writer = await self.perform_ssl_handshakes(writer)
+            self.tls_reader, self.tls_writer = await asyncio.open_connection('localhost', self.public_tunnel_port)
+            await self.perform_hmac_handshakes()
+            self.logger.debug(f"Endpoint {self.endpoint_name}: HMAC Handshake done")
+            await self.perform_ssl_handshakes()
+            self.logger.debug(f"Endpoint {self.endpoint_name}: SSL Handshake done")
             # From TLS server to local connections
             self.to_local_task = asyncio.create_task(self.forward_data_to_local())
 
@@ -745,43 +746,61 @@ class PrivateTunnelEntrance:
                 self.is_connected = False
             return
 
-    async def perform_hmac_handshakes(self, writer: StreamWriter) -> StreamWriter:
+    async def perform_hmac_handshakes(self, message=None):
         """
         Perform the handshake with the TLS server on the gateway as well as the HMAC handshake
         """
+        if message is None:
+            message = generate_random_bytes()
 
-        message = b'C>S,Hello, World!' + generate_random_bytes()
-        # Calculate HMAC
-        hmac_value = hmac.new(self.tunnel_symmetric_key, message, hashlib.sha256).digest()
-        # Combine message and HMAC with a delimiter
-        message_to_send = message + b'\n' + bytes_to_base64(hmac_value).encode()
-        writer.write(message_to_send)
-        await writer.drain()
+        # Send challenge message
+        self.logger.debug(f"Endpoint {self.endpoint_name}: Sending challenge hmac message to forwarder server {message}")
+        self.tls_writer.write(message)
+        self.logger.debug(f'start drain')
+        await self.tls_writer.drain()
+        self.logger.debug(f'end drain')
         received_data = await self.tls_reader.read(BUFFER_TRUNCATION_THRESHOLD)
+        self.logger.debug(f"Endpoint {self.endpoint_name}: Received data from forwarder: \n{received_data}\n")
         # Split the received_data into message and HMAC using the delimiter
         received_parts = received_data.split(b'\n')
         if len(received_parts) == HMAC_MESSAGE_LENGTH:
+            # Now you have both the new challenge message and the HMAC
             received_message, received_hmac = received_parts
-
             received_hmac = base64_to_bytes(received_hmac)
-            # Now you have both the message and the HMAC
+
+            # Calculate HMAC
+            expected_hmac_value = hmac.new(self.tunnel_symmetric_key, message, hashlib.sha256).digest()
+
+            if expected_hmac_value != received_hmac:
+                self.logger.error(f"Endpoint {self.endpoint_name}: Failed to connect to forwarder. HMAC mismatch")
+                raise HMACHandshakeFailedException("HMAC handshake failed")
 
             # Calculate HMAC for received_message
             calculated_hmac = hmac.new(self.tunnel_symmetric_key, received_message, hashlib.sha256).digest()
 
-            # Compare the calculated HMAC with the received HMAC
-            if calculated_hmac != received_hmac:
-                self.logger.error(f"Endpoint {self.endpoint_name}: Failed to connect to forwarder got "
-                                  f"{calculated_hmac} should have been {received_hmac}")
-                raise HMACHandshakeFailedException("HMAC handshake failed")
+            calculated_hmac_base64 = bytes_to_base64(calculated_hmac).encode()
+
+            self.logger.debug(f"Endpoint {self.endpoint_name}: Sending calculated hmac to forwarder server "
+                              f"{calculated_hmac_base64}")
+
+            self.tls_writer.write(calculated_hmac_base64)
+            await self.tls_writer.drain()
+
+            received_data = await self.tls_reader.read(BUFFER_TRUNCATION_THRESHOLD)
+            self.logger.debug(f"Endpoint {self.endpoint_name}: Received data from forwarder: \n{received_data}\n")
+            if received_data == b'Authenticated\n':
+                self.logger.debug(f"Endpoint {self.endpoint_name}: HMAC Handshake done")
+            else:
+                self.logger.error(f"Endpoint {self.endpoint_name}: Failed to connect to forwarder got {received_data}")
+                raise HMACHandshakeFailedException("Handshake failed. Invalid message")
+
         else:
             self.logger.error(f"Endpoint {self.endpoint_name}: Failed to connect to forwarder got {received_parts}")
             raise HMACHandshakeFailedException("Handshake failed. Invalid message")
 
         self.logger.debug(f"Endpoint {self.endpoint_name}: Connection to forwarder accepted")
-        return writer
 
-    async def perform_ssl_handshakes(self, writer: StreamWriter) -> StreamWriter:
+    async def perform_ssl_handshakes(self):
         # https://github.com/python/cpython/issues/96972
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = True
@@ -791,9 +810,8 @@ class PrivateTunnelEntrance:
         logging.debug(f"Endpoint {self.endpoint_name}: SSL context made")
         # Establish a connection to the TLS server on the gateway
         self.logger.debug(f"Endpoint {self.endpoint_name}: Attempting to establish TLS connection...")
-        await writer.start_tls(ssl_context, server_hostname='localhost')
+        await self.tls_writer.start_tls(ssl_context, server_hostname='localhost')
         self.logger.debug(f"Endpoint {self.endpoint_name}: TLS connection established successfully.")
-        return writer
 
     async def forward_data_to_tunnel(self, con_no) -> None:
         """
