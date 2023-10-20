@@ -89,8 +89,10 @@ audit_report_parser.add_argument('--record-uid', dest='record_uid', action='appe
                                  help='Filter: Record UID')
 audit_report_parser.add_argument('--shared-folder-uid', dest='shared_folder_uid', action='append',
                                  help='Filter: Shared Folder UID')
-min_opt_help = 'limit report to event-specific and local data (skips retrieval of compliance data if not in cache)'
-audit_report_parser.add_argument('--minimal', action='store_true', help=min_opt_help)
+help_text = 'allow retrieval of additional record-detail data if not in cache'
+audit_report_parser.add_argument('--max-record-details', dest='max_record_details', action='store_true', help=help_text)
+# Ignored / superfluous flag (kept for backward-compatibility)
+audit_report_parser.add_argument('--minimal', action='store_true', help=argparse.SUPPRESS)
 audit_report_parser.error = raise_parse_exception
 audit_report_parser.exit = suppress_exit
 
@@ -938,12 +940,12 @@ class AuditReportCommand(Command):
     def __init__(self):
         super(AuditReportCommand, self).__init__()
         self.sox_data = None    # type: Union[None, sox_data.SoxData]
-        self.restrict_sox_data_refresh = False
+        self.allow_sox_data_fetch = False
         self.lookup = {}
 
     def get_sox_data(self, params):
         if not self.sox_data and is_compliance_reporting_enabled(params):
-            self.sox_data = get_prelim_data(params, 0, False, min_updated=0, cache_only=self.restrict_sox_data_refresh)
+            self.sox_data = get_prelim_data(params, 0, False, min_updated=0, cache_only=not self.allow_sox_data_fetch)
         return self.sox_data
 
     def get_value(self, params, field, event):
@@ -1397,7 +1399,10 @@ class AuditReportCommand(Command):
         fields = []
         table = []
 
-        self.restrict_sox_data_refresh = kwargs.get('minimal', False)
+        self.allow_sox_data_fetch = kwargs.get('max_record_details', False)
+        if self.allow_sox_data_fetch:
+            self.sox_data = None
+            self.lookup = {}
         details = kwargs.get('details') or False
         if report_type == 'raw':
             fields.extend(audit_report.RAW_FIELDS)
