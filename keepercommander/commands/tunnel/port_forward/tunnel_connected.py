@@ -43,6 +43,7 @@ class ConnectedTunnel(ITunnel):
                 if isinstance(frame, bytes):
                     frame = utils.base64_url_encode(frame)
                 await self.ws.send(frame)
+        await self.ws.close()
 
     async def read(self, timeout: int = -1) -> bytes:
         if timeout > 0:

@@ -80,6 +80,7 @@ class PAMGatewayCommand(GroupCommand):
         # self.register_command('disconnect', PAMDisconnect(), 'Disconnect')
         self.default_verb = 'list'
 
+
 class PAMTunnelCommand(GroupCommand):
 
     def __init__(self):
@@ -89,6 +90,7 @@ class PAMTunnelCommand(GroupCommand):
         self.register_command('stop', PAMTunnelStopCommand(), 'Stop Tunnel to the server', 'x')
         self.register_command('tail', PAMTunnelTailCommand(), 'View Tunnel Log', 't')
         # self.default_verb = 'list'
+
 
 class PAMConfigurationsCommand(GroupCommand):
 
@@ -1469,38 +1471,6 @@ class PAMGatewayActionDiscoverCommand(Command):
         print_router_response(router_response, conversation_id)
 
 
-class PAMTunnelCommand(Command):
-    parser = argparse.ArgumentParser(prog='dr-tunnel-command')
-    parser.add_argument('--uid', '-u', required=True, dest='record_uid', action='store',
-                        help='UID of the record that has server credentials')
-    parser.add_argument('--destinations', '-d', required=False, dest='destinations', action='store',
-                        help='Controller ID')
-
-    def get_parser(self):
-        return PAMTunnelCommand.parser
-
-    def execute(self, params, **kwargs):
-        record_uid = kwargs.get('record_uid')
-
-        print(f'record_uid = [{record_uid}]')
-
-        if getattr(params, 'ws', None) is None:
-            logging.warning(f'Connection doesn\'t exist. Please connect to the router before executing '
-                            f'actions using following command {bcolors.OKGREEN}dr connect{bcolors.ENDC}')
-            return
-
-        destinations = kwargs.get('destinations', [])
-
-        action = kwargs.get('action', [])
-
-        command_payload = {
-            'action': action,
-            # 'args': command_arr[1:] if len(command_arr) > 1 else []
-            # 'kwargs': kwargs
-        }
-
-        params.ws.send(command_payload, destinations)
-
 class PAMGatewayRemoveCommand(Command):
     dr_remove_controller_parser = argparse.ArgumentParser(prog='dr-remove-gateway')
     dr_remove_controller_parser.add_argument('--gateway', '-g', required=True, dest='gateway',
@@ -1588,7 +1558,6 @@ class PAMCreateGatewayCommand(Command):
 
 
 ############################################## TUNNELING ###############################################################
-
 class PAMTunnelListCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-list-command')
     pam_cmd_parser.add_argument('--uid', '-u', required=False, dest='record_uid', action='store',
@@ -1808,7 +1777,8 @@ class PAMTunnelStartCommand(Command):
             del params.tunnel_threads_queue[convo_id]
             print(f"{bcolors.OKBLUE}{convo_id} Queue cleaned up{bcolors.ENDC}")
 
-    async def connect(self, params, record_uid, convo_id, gateway_uid, host, port, rhost, rport, listener_name, log_queue):
+    async def connect(self, params, record_uid, convo_id, gateway_uid, host, port, rhost, rport, listener_name,
+                      log_queue):
 
         # Setup custom logging to put logs into log_queue
         logger = self.setup_logging(convo_id, log_queue)
@@ -1823,7 +1793,8 @@ class PAMTunnelStartCommand(Command):
         encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
         router_url = get_router_ws_url(params)
         connection_url = (f'{router_url}/api/user/tunnel/{convo_id}'
-                          f'?Authorization=KeeperUser%20{CommonHelperMethods.bytes_to_url_safe_str(encrypted_session_token)}'
+                          f'?Authorization=KeeperUser%20'
+                          f'{CommonHelperMethods.bytes_to_url_safe_str(encrypted_session_token)}'
                           f'&TransmissionKey={CommonHelperMethods.bytes_to_url_safe_str(encrypted_transmission_key)}')
 
         print("--> 1. CONNECT TO WS --------")
@@ -1846,7 +1817,7 @@ class PAMTunnelStartCommand(Command):
         payload_dict = {
             'kind': 'start',
             'conversationType': 'tunnel',
-            'value': {'rhost': rhost, 'rport': rport, 'listenerName': listener_name, "recordUid": record_uid }
+            'value': {'rhost': rhost, 'rport': rport, 'listenerName': listener_name, "recordUid": record_uid}
         }
 
         payload_json = json.dumps(payload_dict, default=lambda o: o.__dict__, sort_keys=True, indent=4)
@@ -1944,4 +1915,6 @@ class PAMTunnelStartCommand(Command):
         t = threading.Thread(target=self.pre_connect, args=(params, record_uid, convo_id, gateway_uid, host, port,
                                                             rhost, rport, listener_name))
         t.start()
-        params.tunnel_threads[convo_id].update({"convo_id": convo_id, "thread": t, "host": host, "port": port, "rhost": rhost, "rport": rport, "name": listener_name, "started": datetime.now(), "record_uid": record_uid})
+        params.tunnel_threads[convo_id].update({"convo_id": convo_id, "thread": t, "host": host, "port": port,
+                                                "rhost": rhost, "rport": rport, "name": listener_name,
+                                                "started": datetime.now(), "record_uid": record_uid})

@@ -2,7 +2,7 @@ wheel
 asciitree
 bcrypt
 colorama
-cryptography>=39.0.1
+cryptography
 paramiko
 paramiko_expect
 prompt_toolkit
@@ -16,3 +16,4 @@ requests
 tabulate
 pyqrcode
 keeper-secrets-manager-core>=16.2.0
+websockets
