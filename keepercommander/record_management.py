@@ -14,6 +14,8 @@ import json
 import logging
 from typing import Optional, Union
 
+from keepercommander.breachwatch import BreachWatch
+
 from . import api, subfolder, utils, crypto, vault, vault_extensions
 from .error import KeeperApiError
 from .params import KeeperParams
@@ -328,6 +330,7 @@ def update_record(params, record, skip_extra=False):
 
     if bool(record_change_status & RecordChangeStatus.Password):
         params.queue_audit_event('record_password_change', record_uid=record.record_uid)
+        BreachWatch.scan_and_update_security_data(params, record.record_uid, params.breach_watch)
 
 
 def add_record_audit_data(params, record):   # type: (KeeperParams, vault.KeeperRecord) -> None
