@@ -132,35 +132,35 @@ class BreachWatch(object):
                 if self.send_audit_events:
                     params.queue_audit_event('bw_record_high_risk')
 
-                bwrq = breachwatch_pb2.BreachWatchRecordRequest()
-                bwrq.recordUid = utils.base64_url_decode(record_uid)
-                bwrq.breachWatchInfoType = breachwatch_pb2.RECORD
-                bwrq.updateUserWhoScanned = True
-                bw_password = client_pb2.BWPassword()
-                bw_password.value = record_password
-                bw_password.status = client_pb2.WEAK if hash_status.breachDetected else client_pb2.GOOD
-                bw_password.euid = hash_status.euid
-                bw_data = client_pb2.BreachWatchData()
-                bw_data.passwords.append(bw_password)
-                data = bw_data.SerializeToString()
-                try:
-                    record_key = params.record_cache[record_uid]['record_key_unencrypted']
-                    bwrq.encryptedData = crypto.encrypt_aes_v2(data, record_key)
-                    rq = breachwatch_pb2.BreachWatchUpdateRequest()
-                    rq.breachWatchRecordRequest.append(bwrq)
-                    rs = api.communicate_rest(params, rq, 'breachwatch/update_record_data',
-                                              rs_type=breachwatch_pb2.BreachWatchUpdateResponse)
-                    status = rs.breachWatchRecordStatus[0]
-                    if status.reason:
-                        raise Exception(status.reason)
-                except Exception as e:
-                    logging.warning('BreachWatch: %s', str(e))
-                api.sync_down(params)
+            bwrq = breachwatch_pb2.BreachWatchRecordRequest()
+            bwrq.recordUid = utils.base64_url_decode(record_uid)
+            bwrq.breachWatchInfoType = breachwatch_pb2.RECORD
+            bwrq.updateUserWhoScanned = True
+            bw_password = client_pb2.BWPassword()
+            bw_password.value = record_password
+            bw_password.status = client_pb2.WEAK if hash_status.breachDetected else client_pb2.GOOD
+            bw_password.euid = hash_status.euid
+            bw_data = client_pb2.BreachWatchData()
+            bw_data.passwords.append(bw_password)
+            data = bw_data.SerializeToString()
+            try:
+                record_key = params.record_cache[record_uid]['record_key_unencrypted']
+                bwrq.encryptedData = crypto.encrypt_aes_v2(data, record_key)
+                rq = breachwatch_pb2.BreachWatchUpdateRequest()
+                rq.breachWatchRecordRequest.append(bwrq)
+                rs = api.communicate_rest(params, rq, 'breachwatch/update_record_data',
+                                          rs_type=breachwatch_pb2.BreachWatchUpdateResponse)
+                status = rs.breachWatchRecordStatus[0]
+                if status.reason:
+                    raise Exception(status.reason)
+            except Exception as e:
+                logging.warning('BreachWatch: %s', str(e))
+            api.sync_down(params)
 
-                bw_res = bw_data.passwords[0].status if bw_data else None
-                BreachWatch.update_security_data(params, record_uid, record, bw_res)
-                if set_reused_pws:
-                    BreachWatch.save_reused_pw_count(params)
+            bw_res = bw_data.passwords[0].status if bw_data else None
+            BreachWatch.update_security_data(params, record_uid, record, bw_res)
+            if set_reused_pws:
+                BreachWatch.save_reused_pw_count(params)
 
     @staticmethod
     def update_security_data(params, rec_uid, record=None, bw_result=None, force_update=False):
