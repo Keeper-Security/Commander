@@ -238,6 +238,7 @@ sync_security_data_parser = argparse.ArgumentParser(prog='sync-security-data', d
 record_name_help = 'Path or UID of record whose security data is to be updated. Multiple values allowed. ' \
                    'Set to "@all" to update security data for all records.'
 sync_security_data_parser.add_argument('record', type=str, action='store', nargs="+", help=record_name_help)
+sync_security_data_parser.add_argument('--force', '-f', action='store_true', help='force update of security data (ignore existing security data timestamp)')
 sync_security_data_parser.add_argument('--quiet', '-q', action='store_true', help='run command w/ minimal output')
 sync_security_data_parser.error = raise_parse_exception
 sync_security_data_parser.exit = suppress_exit
@@ -1256,9 +1257,17 @@ class SyncSecurityDataCommand(Command):
             msg = 'Command not allowed -- This command is limited to enterprise users only.'
             raise CommandError('sync-security-data', msg)
 
+        force_update = kwargs.get('force', False)
         update_limit = 1000
         api.sync_down(params)
         pw_recs = list(BreachWatch.get_records(params, lambda r, s: r.record_uid in get_record_uids(), owned=True))
+
+        # Limit security-data updates to records modified AFTER its most recent security-data update
+        if not force_update:
+            rec_objs = params.breach_watch_records or params.record_cache
+            sd_objs = params.breach_watch_security_data
+            pw_recs = [(r, s) for r, s in pw_recs if sd_objs.get(r.record_uid, {}).get('revision', 0) < rec_objs.get(r.record_uid, {}).get('revision', 0)]
+
         sds = [get_security_data(r, s) for r, s in pw_recs] if pw_recs else []
         while sds:
             update_security_data(sds[:update_limit])
@@ -1270,4 +1279,4 @@ class SyncSecurityDataCommand(Command):
             if pw_recs:
                 logging.info(f'Updated security data for [{len(pw_recs)}] record(s)')
             elif not kwargs.get('suppress_no_op'):
-                    logging.info('No password records found')
+                logging.info('No records requiring security-data updates found')
