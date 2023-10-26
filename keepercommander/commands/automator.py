@@ -267,7 +267,7 @@ class AutomatorEditCommand(EnterpriseCommand, AutomatorMixin):
             rq.name = name
         url = kwargs['url']   # type: str
         if url:
-            if not url.startswith('https://'):
+            if not url.startswith('http'):
                 url = 'https://' + url
             rq.url = url
         skills = kwargs.get('skill')
