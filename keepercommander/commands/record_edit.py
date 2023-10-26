@@ -21,6 +21,7 @@ from typing import List, Optional, Any, Dict, Union, Sequence
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
+from keepercommander.breachwatch import BreachWatch
 
 from .base import Command, RecordMixin, FolderMixin
 from .. import api, vault, record_types, generator, crypto, attachment, record_facades, record_management
@@ -764,11 +765,8 @@ class RecordAddCommand(Command, RecordEditMixin):
         record_management.add_record_to_folder(params, record, folder_uid)
 
         params.environment_variables[LAST_RECORD_UID] = record.record_uid
-        if params.breach_watch:
-            api.sync_down(params)
-            params.breach_watch.scan_and_store_record_status(params, record.record_uid)
-        else:
-            params.sync_data = True
+        BreachWatch.scan_and_update_security_data(params, record.record_uid, params.breach_watch)
+        params.sync_data = True
 
         return record.record_uid
 
