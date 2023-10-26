@@ -12,7 +12,7 @@ import base64
 import json
 import logging
 from urllib.parse import urlparse, urlunparse
-from typing import Iterator, Tuple, Optional, List, Callable, Dict, Iterable
+from typing import Iterator, Tuple, Optional, List, Callable, Dict, Iterable, Union
 
 from .constants import KEEPER_PUBLIC_HOSTS
 from . import api, crypto, utils, rest_api, vault
@@ -106,34 +106,8 @@ class BreachWatch(object):
         for password in results:
             yield password, results[password]
 
-    def scan_and_store_record_status(self, params, record_uid, force_update=False, is_reset=False, set_reused_pws=None):
-        # type: (KeeperParams, str, bool, bool, Optional[bool]) -> None
-        def calculate_security_data(rec_uid, rec, bw_result=None, reset=False):
-            # type: (str, vault.KeeperRecord, Optional[int], bool) -> APIRequest_pb2.SecurityData
-            sec_data = APIRequest_pb2.SecurityData()
-            rec_sd = {}
-            if rec:
-                passwd = BreachWatch.extract_password(rec)
-                strength = utils.password_score(passwd)
-                rec_sd = {'strength': strength, 'bw_result': bw_result}
-                url = BreachWatch.extract_url(rec)
-                domain = urlparse(url).hostname
-                if domain:
-                    # truncate domain string if needed to avoid reaching RSA encryption data size limitation
-                    rec_sd['domain'] = domain[:200]
-                if reset:
-                    rec_sd['reset'] = reset
-            sec_data.uid = utils.base64_url_decode(rec_uid)
-            sec_data.data = crypto.encrypt_rsa(json.dumps(rec_sd).encode('utf-8'), params.enterprise_rsa_key)
-            return sec_data
-
-        def save_security_data(rec_uid, rec, bw_result=None, reset=False):
-            # type: (str, vault.KeeperRecord, Optional[int], bool) -> None
-            update_rq = APIRequest_pb2.SecurityDataRequest()
-            rec_sec_data = calculate_security_data(rec_uid, rec, bw_result, reset)
-            update_rq.recordSecurityData.append(rec_sec_data)
-            api.communicate_rest(params, update_rq, 'enterprise/update_security_data')
-
+    def scan_and_store_record_status(self, params, record_uid, force_update=False, set_reused_pws=True):
+        # type: (KeeperParams, str, Optional[bool], Optional[bool]) -> None
         record = vault.KeeperRecord.load(params, record_uid)
         if not record:
             return
@@ -158,36 +132,88 @@ class BreachWatch(object):
                 if self.send_audit_events:
                     params.queue_audit_event('bw_record_high_risk')
 
-            bwrq = breachwatch_pb2.BreachWatchRecordRequest()
-            bwrq.recordUid = utils.base64_url_decode(record_uid)
-            bwrq.breachWatchInfoType = breachwatch_pb2.RECORD
-            bwrq.updateUserWhoScanned = True
-            bw_password = client_pb2.BWPassword()
-            bw_password.value = record_password
-            bw_password.status = client_pb2.WEAK if hash_status.breachDetected else client_pb2.GOOD
-            bw_password.euid = hash_status.euid
-            bw_data = client_pb2.BreachWatchData()
-            bw_data.passwords.append(bw_password)
-            data = bw_data.SerializeToString()
-            try:
-                record_key = params.record_cache[record_uid]['record_key_unencrypted']
-                bwrq.encryptedData = crypto.encrypt_aes_v2(data, record_key)
-                rq = breachwatch_pb2.BreachWatchUpdateRequest()
-                rq.breachWatchRecordRequest.append(bwrq)
-                rs = api.communicate_rest(params, rq, 'breachwatch/update_record_data',
-                                          rs_type=breachwatch_pb2.BreachWatchUpdateResponse)
-                status = rs.breachWatchRecordStatus[0]
-                if status.reason:
-                    raise Exception(status.reason)
-            except Exception as e:
-                logging.warning('BreachWatch: %s', str(e))
-            api.sync_down(params)
-            if params.enterprise_rsa_key and record.version in (2, 3):
-                bw_res = bw_data.passwords[0].status
-                save_security_data(record_uid, record, bw_res, is_reset)
+                bwrq = breachwatch_pb2.BreachWatchRecordRequest()
+                bwrq.recordUid = utils.base64_url_decode(record_uid)
+                bwrq.breachWatchInfoType = breachwatch_pb2.RECORD
+                bwrq.updateUserWhoScanned = True
+                bw_password = client_pb2.BWPassword()
+                bw_password.value = record_password
+                bw_password.status = client_pb2.WEAK if hash_status.breachDetected else client_pb2.GOOD
+                bw_password.euid = hash_status.euid
+                bw_data = client_pb2.BreachWatchData()
+                bw_data.passwords.append(bw_password)
+                data = bw_data.SerializeToString()
+                try:
+                    record_key = params.record_cache[record_uid]['record_key_unencrypted']
+                    bwrq.encryptedData = crypto.encrypt_aes_v2(data, record_key)
+                    rq = breachwatch_pb2.BreachWatchUpdateRequest()
+                    rq.breachWatchRecordRequest.append(bwrq)
+                    rs = api.communicate_rest(params, rq, 'breachwatch/update_record_data',
+                                              rs_type=breachwatch_pb2.BreachWatchUpdateResponse)
+                    status = rs.breachWatchRecordStatus[0]
+                    if status.reason:
+                        raise Exception(status.reason)
+                except Exception as e:
+                    logging.warning('BreachWatch: %s', str(e))
+                api.sync_down(params)
 
-            if set_reused_pws is None:
-                BreachWatch.save_reused_pw_count(params)
+                bw_res = bw_data.passwords[0].status if bw_data else None
+                BreachWatch.update_security_data(params, record_uid, record, bw_res)
+                if set_reused_pws:
+                    BreachWatch.save_reused_pw_count(params)
+
+    @staticmethod
+    def update_security_data(params, rec_uid, record=None, bw_result=None, force_update=False):
+        # type: (KeeperParams, str, Optional[vault.KeeperRecord], Optional[int], Optional[bool]) -> None
+        def calculate_security_data():  # type: () -> APIRequest_pb2.SecurityData
+            sec_data = APIRequest_pb2.SecurityData()
+            passwd = BreachWatch.extract_password(password_record)
+            strength = utils.password_score(passwd)
+            rec_sd = {'strength': strength}
+            if isinstance(bw_result, int):
+                rec_sd['bw_result'] = bw_result
+            else:
+                logging.info('No BreachWatch data to update or incorrect status (must be int)')
+            url = BreachWatch.extract_url(password_record)
+            parse_results = urlparse(url)
+            domain = parse_results.hostname or parse_results.path
+            if domain:
+                # truncate domain string if needed to avoid reaching RSA encryption data size limitation
+                rec_sd['domain'] = domain[:200]
+            sec_data.uid = utils.base64_url_decode(rec_uid)
+            sec_data.data = crypto.encrypt_rsa(json.dumps(rec_sd).encode('utf-8'), params.enterprise_rsa_key)
+            return sec_data
+
+        # Action not allowed for non-enterprise users
+        if not params.enterprise_ec_key:
+            return
+
+        record = record or vault.KeeperRecord.load(params, rec_uid)
+        if not record:
+            # Record not found in vault, abort update
+            return
+
+        # Check if record should have security data (must contain a password and be owned by current user)
+        password_record_obj = next(BreachWatch.get_records(params, lambda r, d: r.record_uid == rec_uid, owned=True),
+                                   None)
+        password_record = password_record_obj[0] if password_record_obj else None
+        if not password_record:
+            return
+
+        # Check if update is needed (unless forcing an update, existing sec. data must be older than last record change)
+        old_security_data = params.breach_watch_security_data.get(rec_uid)
+        if not force_update and old_security_data:
+            record_obj = params.breach_watch_records.get(rec_uid) or params.record_cache.get(rec_uid) or {}
+            if old_security_data.get('revision', 0) >= record_obj.get('revision', 0):
+                return
+
+        if bw_result is None:
+            status = BreachWatch.get_record_status(params, rec_uid)
+            bw_result = client_pb2.BWStatus.Value(status) if status else client_pb2.BWStatus.GOOD
+        update_rq = APIRequest_pb2.SecurityDataRequest()
+        rec_sec_data = calculate_security_data()
+        update_rq.recordSecurityData.append(rec_sec_data)
+        api.communicate_rest(params, update_rq, 'enterprise/update_security_data')
 
     @staticmethod
     def save_reused_pw_count(params):
@@ -344,3 +370,15 @@ class BreachWatch(object):
             statuses.update((x.casefold() for x in client_pb2.BWStatus.keys()))
 
         yield from params.breach_watch.get_records(params, lambda r, b: BreachWatch.check_status(b, statuses), owned)
+
+
+    @staticmethod
+    def scan_and_update_security_data(params, record_uid, bw_obj=None, force_update=False, set_reused_pws=True):
+        # type: (KeeperParams, Union[str, List[str]], Optional[BreachWatch], Optional[bool], Optional[bool]) -> None
+        api.sync_down(params)
+        if bw_obj:
+            bw_obj.scan_and_store_record_status(params, record_uid, force_update=force_update,
+                                                set_reused_pws=set_reused_pws)
+        else:
+            BreachWatch.update_security_data(params, record_uid)
+        api.sync_down(params)
