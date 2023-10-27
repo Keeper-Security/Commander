@@ -1570,8 +1570,8 @@ class PAMTunnelListCommand(Command):
 
     def execute(self, params, **kwargs):
         def print_thread(thread):
-            # {"thread": t, "host": host, "port": port, "rhost": rhost, "rport": rport, "name": listener_name,
-            # "started": datetime.now(), "record_uid": record_uid}
+            # {"thread": t, "host": host, "port": port, "name": listener_name, "started": datetime.now(),
+            # "record_uid": record_uid}
             run_time = None
             hours = 0
             minutes = 0
@@ -1584,8 +1584,6 @@ class PAMTunnelListCommand(Command):
             text_line = f"{bcolors.OKGREEN}Tunnel {thread.get('name', '')} '{thread.get('convo_id', '')}'"
             text_line += f", Host: {thread.get('host')}" if thread.get('host') else ''
             text_line += f", Port: {thread.get('port')}" if thread.get('port') else ''
-            text_line += f", Remote Host: {thread.get('rhost')}" if thread.get('rhost') else ''
-            text_line += f", Remote Port: {thread.get('rport')}" if thread.get('rport') else ''
             text_line += f", Record UID: {thread.get('record_uid')}" if thread.get('record_uid') else ''
             text_line += f", Up time:"
             if run_time:
@@ -1722,10 +1720,6 @@ class PAMTunnelStartCommand(Command):
                                 type=int, default=0,
                                 help='The port number on which the server will be listening for incoming connections. '
                                      'If not set, random open port on the machine will be used.')
-
-    pam_cmd_parser.add_argument('--remote-host', '-ro', required=False, dest='rhost', action='store', default=None,
-                                help='The address of the Remote Host to which the traffic will be forwarded. '
-                                     'IP address or a hostname. ')
     pam_cmd_parser.add_argument('--remote-port', '-rp', required=False, dest='rport', action='store',
                                 type=int, default=0,
                                 help='The remote port number to which the traffic will be forwarded.')
@@ -1777,7 +1771,7 @@ class PAMTunnelStartCommand(Command):
             del params.tunnel_threads_queue[convo_id]
             print(f"{bcolors.OKBLUE}{convo_id} Queue cleaned up{bcolors.ENDC}")
 
-    async def connect(self, params, record_uid, convo_id, gateway_uid, host, port, rhost, rport, listener_name,
+    async def connect(self, params, record_uid, convo_id, gateway_uid, host, port, listener_name,
                       log_queue):
 
         # Setup custom logging to put logs into log_queue
@@ -1817,7 +1811,7 @@ class PAMTunnelStartCommand(Command):
         payload_dict = {
             'kind': 'start',
             'conversationType': 'tunnel',
-            'value': {'rhost': rhost, 'rport': rport, 'listenerName': listener_name, "recordUid": record_uid}
+            'value': {'listenerName': listener_name, "recordUid": record_uid}
         }
 
         payload_json = json.dumps(payload_dict, default=lambda o: o.__dict__, sort_keys=True, indent=4)
@@ -1855,7 +1849,7 @@ class PAMTunnelStartCommand(Command):
 
         self.tunnel_cleanup(params, convo_id)
 
-    def pre_connect(self, params, record_uid, convo_id, gateway_uid, host, port, rhost, rport, listener_name):
+    def pre_connect(self, params, record_uid, convo_id, gateway_uid, host, port, listener_name):
         loop = None
         try:
             loop = asyncio.new_event_loop()
@@ -1871,8 +1865,6 @@ class PAMTunnelStartCommand(Command):
                     gateway_uid=gateway_uid,
                     host=host,
                     port=port,
-                    rhost=rhost,
-                    rport=rport,
                     listener_name=listener_name,
                     log_queue=output_queue
                 )
@@ -1905,8 +1897,6 @@ class PAMTunnelStartCommand(Command):
         gateway_uid = kwargs.get('gateway')
         host = kwargs.get('host')
         port = kwargs.get('port')
-        rhost = kwargs.get('rhost')
-        rport = kwargs.get('rport')
         listener_name = kwargs.get('listener_name')
 
         record = params.record_cache.get(record_uid)
@@ -1915,8 +1905,8 @@ class PAMTunnelStartCommand(Command):
             return
 
         t = threading.Thread(target=self.pre_connect, args=(params, record_uid, convo_id, gateway_uid, host, port,
-                                                            rhost, rport, listener_name))
+                                                            listener_name))
         t.start()
         params.tunnel_threads[convo_id].update({"convo_id": convo_id, "thread": t, "host": host, "port": port,
-                                                "rhost": rhost, "rport": rport, "name": listener_name,
-                                                "started": datetime.now(), "record_uid": record_uid})
+                                                "name": listener_name, "started": datetime.now(),
+                                                "record_uid": record_uid})
