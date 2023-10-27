@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import unittest
 import hashlib
 import hmac
@@ -14,7 +15,8 @@ from keepercommander import utils
 from keepercommander.commands.tunnel.port_forward.endpoint import (PrivateTunnelEntrance, ControlMessage,
                                                                    CONTROL_MESSAGE_NO_LENGTH, CONNECTION_NO_LENGTH,
                                                                    HMACHandshakeFailedException,
-                                                                   ConnectionNotFoundException, generate_random_bytes)
+                                                                   ConnectionNotFoundException, generate_random_bytes,
+                                                                   TERMINATOR, DATA_LENGTH)
 
 
 class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
@@ -25,11 +27,12 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
         self.public_tunnel_port = 8081
         self.endpoint_name = 'TestEndpoint'
         self.cert = 'your_cert_here'
-        self.logger = mock.MagicMock()  # Assuming a logger is setup elsewhere
+        self.logger = mock.MagicMock(spec=logging)
+        self.kill_server_event = asyncio.Event()
         self.tunnel_symmetric_key = utils.generate_aes_key()
         self.pte = PrivateTunnelEntrance(
             self.event, self.host, self.port, self.public_tunnel_port,
-            self.endpoint_name, self.cert, self.logger, self.tunnel_symmetric_key
+            self.endpoint_name, self.cert, self.kill_server_event, self.logger, self.tunnel_symmetric_key
         )
 
     async def asyncTearDown(self):
@@ -66,8 +69,10 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
 
             # Prepare the expected data that should be passed to write method
             expected_data = int.to_bytes(0, CONNECTION_NO_LENGTH, byteorder='big')
+            length = CONTROL_MESSAGE_NO_LENGTH + len(optional_data)
+            expected_data += int.to_bytes(length , DATA_LENGTH, byteorder='big')
             expected_data += int.to_bytes(control_message, CONTROL_MESSAGE_NO_LENGTH, byteorder='big')
-            expected_data += optional_data
+            expected_data += optional_data + TERMINATOR
 
             # Assertions
             mock_write.assert_called_once_with(expected_data)
@@ -97,30 +102,35 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
 
     async def test_forward_data_to_local_normal(self):
         self.pte.tls_reader = mock.MagicMock(spec=asyncio.StreamReader)
-        self.pte.tls_writer = mock.MagicMock(spec=asyncio.StreamWriter)
-        self.pte.tls_reader.read.side_effect = [b'\x00\x00\x00\x01some_data', None]
-        self.pte.connections = {1: (None, self.pte.tls_writer)}
+        data = b'some_data'
+        self.pte.tls_reader.read.side_effect = [b'\x00\x00\x00\x01' +
+                                                int.to_bytes(len(data), DATA_LENGTH, byteorder='big') +
+                                                data + TERMINATOR, None]
+        self.pte.connections = {1: (None, mock.MagicMock(spec=asyncio.StreamWriter))}
         self.pte.logger = mock.MagicMock()
 
         await self.pte.forward_data_to_local()
 
-        self.pte.tls_writer.write.assert_called_with(b'some_data')
-        self.pte.tls_writer.drain.assert_called_once()
-        self.pte.logger.debug.assert_called_with('Endpoint TestEndpoint: '
-                                                 'Forwarding private data to local for connection 1 (9)')
+        self.pte.connections[1][1].write.assert_called_with(b'some_data')
+        self.pte.connections[1][1].drain.assert_called_once()
+        self.assertTrue(self.pte.logger.method_calls[3] == (call.debug('Endpoint TestEndpoint: Forwarding private data '
+                                                            'to local for connection 1 (9)')))
 
     async def test_forward_data_to_local_error(self):
         self.pte.tls_reader = mock.MagicMock(spec=asyncio.StreamReader)
         self.pte.tls_writer = mock.MagicMock(spec=asyncio.StreamWriter)
-        self.pte.tls_reader.read.side_effect = [b'\x00\x00\x00\x01some_data', None]
+        data = b'some_data'
+        self.pte.tls_reader.read.side_effect = [b'\x00\x00\x00\x01' +
+                                                int.to_bytes(len(data), DATA_LENGTH, byteorder='big') +
+                                                data + TERMINATOR, None]
         self.pte.connections = {1: (None, self.pte.tls_writer)}
         self.pte.logger = mock.MagicMock()
         self.pte.tls_writer.write.side_effect = Exception("Some error")
 
         await self.pte.forward_data_to_local()
 
-        self.pte.logger.error.assert_called_with("Endpoint TestEndpoint: Error while forwarding private data: object of"
-                                                 " type 'NoneType' has no len()")
+        self.pte.logger.error.assert_called_with("Endpoint TestEndpoint: Error while sending private control message: "
+                                                 "Some error")
 
     async def test_process_close_connection_message(self):
         with mock.patch.object(self.pte, 'close_connection', new_callable=mock.AsyncMock) as mock_close:
@@ -131,7 +141,7 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
     async def test_process_pong_message(self):
         self.pte.logger = mock.MagicMock()
         await self.pte.process_control_message(ControlMessage.Pong, b'')
-        self.pte.logger.debug.assert_called_with('Received private pong request')
+        self.pte.logger.debug.assert_called_with('Endpoint TestEndpoint: Received private pong request')
         self.assertEqual(self.pte._ping_attempt, 0)
         self.assertTrue(self.pte.is_connected)
 
@@ -139,7 +149,7 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(self.pte, 'send_control_message', new_callable=mock.AsyncMock) as mock_send:
             self.pte.logger = mock.MagicMock()
             await self.pte.process_control_message(ControlMessage.Ping, b'')
-            self.pte.logger.debug.assert_called_with('Received private ping request')
+            self.pte.logger.debug.assert_called_with('Endpoint TestEndpoint: Received private ping request')
             mock_send.assert_called_with(ControlMessage.Pong)
 
     async def test_start_tls_reader(self):
@@ -473,4 +483,4 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
         await self.pte.close_connection(9999)  # 9999 is not in self.connections
 
         # Check if logger.info was called
-        self.pte.logger.info.assert_called_with("Endpoint TestEndpoint: Connection 9999 not found")
+        self.pte.logger.info.assert_called_with("Endpoint TestEndpoint: tasks for 9999 not found")

@@ -1853,6 +1853,8 @@ class PAMTunnelStartCommand(Command):
         print("--> 3. START LISTENING FOR MESSAGES FROM GATEWAY --------")
         await asyncio.gather(t1, t2, t3)
 
+        self.tunnel_cleanup(params, convo_id)
+
     def pre_connect(self, params, record_uid, convo_id, gateway_uid, host, port, rhost, rport, listener_name):
         loop = None
         try:

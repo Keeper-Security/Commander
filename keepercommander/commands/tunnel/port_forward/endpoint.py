@@ -24,13 +24,15 @@ from keepercommander import utils
 from keepercommander.display import bcolors
 from .tunnel import ITunnel
 
-PRIVATE_BUFFER_TRUNCATION_THRESHOLD = 1500
-READ_TIMEOUT = 300
-NON_PARED_READ_TIMEOUT = 100
+PRIVATE_BUFFER_TRUNCATION_THRESHOLD = 1400
+READ_TIMEOUT = 10
+NON_PARED_READ_TIMEOUT = 5
 CONTROL_MESSAGE_NO_LENGTH = HMAC_MESSAGE_LENGTH = 2
 CONNECTION_NO_LENGTH = DATA_LENGTH = 4
 LATENCY_COUNT = 5
-FORWARDER_BUFFER_TRUNCATION_THRESHOLD = CONNECTION_NO_LENGTH + DATA_LENGTH + PRIVATE_BUFFER_TRUNCATION_THRESHOLD
+TERMINATOR = b';'
+FORWARDER_BUFFER_TRUNCATION_THRESHOLD = (CONNECTION_NO_LENGTH + DATA_LENGTH + PRIVATE_BUFFER_TRUNCATION_THRESHOLD
+                                         + len(TERMINATOR))
 
 
 class HMACHandshakeFailedException(Exception):
@@ -253,6 +255,7 @@ class TunnelProtocol(abc.ABC):
         self.private_tunnel_server = None
         self.read_connection_task = None
         self.forwarder_task = None
+        self.kill_server_event = asyncio.Event()
 
     async def connect(self, host="localhost", port=0):
         if not self.tunnel.is_connected:
@@ -268,25 +271,27 @@ class TunnelProtocol(abc.ABC):
         await self.disconnect()
 
     async def disconnect(self):
-        await self.send_control_message(ControlMessage.CloseConnection)
-        self._is_running = False
-        tasks = []
+        try:
+            await self.send_control_message(ControlMessage.CloseConnection)
+        finally:
+            self._is_running = False
+            tasks = []
 
-        self.tunnel.disconnect()
-        self._paired = False
-        self.public_tunnel_port = None
-        if self.private_tunnel:
-            tasks.append(self.private_tunnel.stop_server())
-        if self.forwarder:
-            tasks.append(self.forwarder.stop())
-        if self.private_tunnel_server:
-            self.private_tunnel_server.cancel()
-        if self.read_connection_task:
-            self.read_connection_task.cancel()
-        if self.forwarder_task:
-            self.forwarder_task.cancel()
-        if len(tasks) > 0:
-            await asyncio.gather(*tasks)
+            self.tunnel.disconnect()
+            self._paired = False
+            self.public_tunnel_port = None
+            if self.private_tunnel:
+                tasks.append(self.private_tunnel.stop_server())
+            if self.forwarder:
+                tasks.append(self.forwarder.stop())
+            if self.private_tunnel_server:
+                self.private_tunnel_server.cancel()
+            if self.read_connection_task:
+                self.read_connection_task.cancel()
+            if self.forwarder_task:
+                self.forwarder_task.cancel()
+            if len(tasks) > 0:
+                await asyncio.gather(*tasks)
 
     async def start_tunnel_reader(self) -> None:
         if not self.tunnel.is_connected:
@@ -295,16 +300,21 @@ class TunnelProtocol(abc.ABC):
 
         self._ping_attempt = 0
         buff = b''
-        while self.tunnel.is_connected:
+        while self.tunnel.is_connected and not self.kill_server_event.is_set():
             if len(buff) >= CONNECTION_NO_LENGTH + DATA_LENGTH:
                 # At this stage we have two connections. 0 is for control messages and 1 is for data
                 connection_no = int.from_bytes(buff[:CONNECTION_NO_LENGTH], byteorder='big')
                 length = int.from_bytes(buff[CONNECTION_NO_LENGTH:CONNECTION_NO_LENGTH + DATA_LENGTH],
                                         byteorder='big')
                 # Wait for the rest of the data if it hasn't arrived yet
-                if len(buff) >= CONNECTION_NO_LENGTH + DATA_LENGTH + length:
+                if len(buff) >= CONNECTION_NO_LENGTH + DATA_LENGTH + length + len(TERMINATOR):
+                    if buff[CONNECTION_NO_LENGTH + DATA_LENGTH + length:
+                            CONNECTION_NO_LENGTH + DATA_LENGTH + length + len(TERMINATOR)] != TERMINATOR:
+                        self.logger.warning(f'Endpoint {self.endpoint_name}: Invalid terminator')
+                        # if we don't have a valid terminator then we don't know where the message ends or begins
+                        break
                     s_data = buff[CONNECTION_NO_LENGTH + DATA_LENGTH: CONNECTION_NO_LENGTH + DATA_LENGTH + length]
-                    buff = buff[CONNECTION_NO_LENGTH + DATA_LENGTH + length:]
+                    buff = buff[CONNECTION_NO_LENGTH + DATA_LENGTH + length + len(TERMINATOR):]
                     if connection_no == 0:
                         # This is a control message
                         if len(s_data) >= CONTROL_MESSAGE_NO_LENGTH:
@@ -314,12 +324,14 @@ class TunnelProtocol(abc.ABC):
                     elif connection_no == 1:
                         # This is data
                         self.forwarder_incoming_queue.put_nowait(s_data)
-                        await asyncio.sleep(.001)
+                        # Yield control back to the event loop for other tasks to execute
+                        await asyncio.sleep(0)
                     else:
                         self.logger.error(f"Endpoint {self.endpoint_name}: Invalid Public channel {connection_no}")
+                        break
                 else:
                     self.logger.debug(f"Endpoint {self.endpoint_name}: Buffer is too short {len(buff)} need  "
-                                      f"{CONNECTION_NO_LENGTH + DATA_LENGTH + length}")
+                                      f"{CONNECTION_NO_LENGTH + DATA_LENGTH + length + len(TERMINATOR)}")
             try:
                 buffer = await self.tunnel.read(READ_TIMEOUT if self._paired else NON_PARED_READ_TIMEOUT)
                 self.logger.debug(f"Endpoint {self.endpoint_name}: Received data from tunnel: {len(buffer)}")
@@ -347,14 +359,17 @@ class TunnelProtocol(abc.ABC):
             if not isinstance(buffer, bytes):
                 continue
 
+        await self.disconnect()
+
     async def _send_to_tunnel(self, connection_no: int, data: bytes) -> None:
         buffer = int.to_bytes(connection_no, CONNECTION_NO_LENGTH, byteorder='big')
         buffer += int.to_bytes(len(data), DATA_LENGTH, byteorder='big')
-        buffer += data
+        buffer += data + TERMINATOR
         self.logger.debug(f"Sending data to tunnel: {len(buffer)}")
 
         await self.tunnel.write(buffer)
-        await asyncio.sleep(.001)
+        # Yield control back to the event loop for other tasks to execute
+        await asyncio.sleep(0)
 
     async def send_data_message(self, data: bytes) -> None:
         if not self._paired:
@@ -375,7 +390,7 @@ class TunnelProtocol(abc.ABC):
         await self._send_to_tunnel(0, buffer)
 
     async def read_connection(self):
-        while self._is_running:
+        while self._is_running and not self.kill_server_event.is_set():
             try:
                 data = await self.forwarder_out_going_queue.get()
                 self.forwarder_out_going_queue.task_done()
@@ -431,7 +446,10 @@ class TunnelProtocol(abc.ABC):
                 else:
                     self._paired = True
 
+
+
                     # TODO: get this from KSM ✓💰self.gateway_uid
+
                     tls_public_key = \
                         'BMh+qwlw84vD31go1Q+YYui0Wfb+6+YEpZQolY/oJ7u+RFyF7ptZtHtVN8Ijba5bFQEQIIHFho8/WYWCyo/0fQo='
 
@@ -458,6 +476,7 @@ class TunnelProtocol(abc.ABC):
                                                         logger=self.logger,
                                                         out_going_queue=self.forwarder_out_going_queue,
                                                         incoming_queue=self.forwarder_incoming_queue,
+                                                        kill_sever_event=self.kill_server_event,
                                                         tunnel_symmetric_key=tunnel_symmetric_key)
 
                     self.forwarder_task = asyncio.create_task(self.forwarder.start())
@@ -469,6 +488,7 @@ class TunnelProtocol(abc.ABC):
                                                                 host=self.target_host, port=self.target_port,
                                                                 public_tunnel_port=self.public_tunnel_port,
                                                                 endpoint_name=self.endpoint_name, cert=received_cert,
+                                                                kill_server_event=self.kill_server_event,
                                                                 logger=self.logger,
                                                                 tunnel_symmetric_key=tunnel_symmetric_key)
 
@@ -510,7 +530,8 @@ class PlainTextForwarder:
     to the TLS server on the gateway allowing the TLS connection to be made.
     """
     def __init__(self, forwarder_event: asyncio.Event, public_tunnel_port: int, logger: logging.Logger,
-                 out_going_queue: asyncio.Queue, incoming_queue: asyncio.Queue, tunnel_symmetric_key: bytes = None):
+                 out_going_queue: asyncio.Queue, incoming_queue: asyncio.Queue, kill_sever_event: asyncio.Event,
+                 tunnel_symmetric_key: bytes = None):
         self.forwarder_event = forwarder_event
         self.client_tasks = []
         self.forwarder_server = None
@@ -519,6 +540,7 @@ class PlainTextForwarder:
         self.public_tunnel_port = public_tunnel_port
         self.logger = logger
         self.tunnel_symmetric_key = tunnel_symmetric_key
+        self.kill_server_event = kill_sever_event
 
     async def forwarder_handle_client(self, forwarder_reader: asyncio.StreamReader,
                                       forwarder_writer: asyncio.StreamWriter, message=None):
@@ -567,36 +589,45 @@ class PlainTextForwarder:
                 reads data from the connection (private tunnel) and sends it out to the tunnel
                 """
                 try:
-                    while True:
+                    while not self.kill_server_event.is_set():
                         data = await f_reader.read(FORWARDER_BUFFER_TRUNCATION_THRESHOLD)
                         if not data:
                             break
                         self.out_going_queue.put_nowait(data)
-                        await asyncio.sleep(.001)
+                        # Yield control back to the event loop for other tasks to execute
+                        await asyncio.sleep(0)
                         self.logger.debug(f"Forwarded {len(data)} bytes")
                 except asyncio.CancelledError:
                     self.logger.debug("Cancelled forwarder out going")
                     pass
+                finally:
+                    self.logger.debug("Closing forwarder out going")
+                    if not self.forwarder_server or self.client_tasks:
+                        await self.stop()
 
             async def incoming_forward(f_writer):
                 """
                 writes data from the tunnel to the connection (Private tunnel is the connection)
                 """
                 try:
-                    while True:
+                    while not self.kill_server_event.is_set():
                         data = await self.incoming_queue.get()
                         self.incoming_queue.task_done()
                         if not data:
                             break
                         f_writer.write(data)
                         await f_writer.drain()
-                        await asyncio.sleep(.001)
+                        # Yield control back to the event loop for other tasks to execute
+                        await asyncio.sleep(0)
                         self.logger.debug(f"Forwarded {len(data)} bytes")
                 except asyncio.CancelledError:
                     self.logger.debug("Cancelled forwarder incoming")
                     pass
                 finally:
+                    self.logger.debug("Closing forwarder incoming")
                     f_writer.close()
+                    if not self.forwarder_server or self.client_tasks:
+                        await self.stop()
 
             client_to_remote = asyncio.create_task(out_going_forward(forwarder_reader))
             remote_to_client = asyncio.create_task(incoming_forward(forwarder_writer))
@@ -604,21 +635,25 @@ class PlainTextForwarder:
             self.client_tasks.extend([client_to_remote, remote_to_client])
             self.forwarder_event.set()
         except Exception as e:
-            self.logger.error(f"Error handling client: {e}")
+            self.logger.error(f"Forwarder Error handling client: {e}")
+            if not self.forwarder_server or self.client_tasks:
+                await self.stop()
 
     async def start(self):
         self.forwarder_server = await asyncio.start_server(self.forwarder_handle_client, '0.0.0.0',
                                                            self.public_tunnel_port)
 
         async with self.forwarder_server:
-            self.logger.info(f"Listening on 0.0.0.0:{self.public_tunnel_port}...")
+            self.logger.info(f"Forwarder listening on 0.0.0.0:{self.public_tunnel_port}...")
             await self.forwarder_server.serve_forever()
 
     async def stop(self):
+        self.kill_server_event.set()
         if self.forwarder_server:
             self.forwarder_server.close()
             await self.forwarder_server.wait_closed()
-            self.logger.info("Server stopped")
+            self.forwarder_server = None
+            self.logger.info("Forwarder Server stopped")
 
         # Cancel and gather the client tasks to clean up any running tasks
         if self.client_tasks:
@@ -641,7 +676,8 @@ class PrivateTunnelEntrance:
     message number is only used in control messages. (if the connection number is 0 then there is a message number)
     """
     def __init__(self, private_tunnel_event: asyncio.Event, host: str, port: int, public_tunnel_port: int,
-                 endpoint_name, cert: str, logger: logging.Logger = None, tunnel_symmetric_key: bytes = None):
+                 endpoint_name, cert: str, kill_server_event: asyncio.Event,  logger: logging.Logger = None,
+                 tunnel_symmetric_key: bytes = None):
         self._round_trip_latency = []
         self.ping_time = None
         self.to_local_task = None
@@ -662,6 +698,7 @@ class PrivateTunnelEntrance:
         self.tunnel_symmetric_key = tunnel_symmetric_key
         self.tls_reader_task = asyncio.create_task(self.start_tls_reader())
         self.to_tunnel_tasks = {}
+        self.kill_server_event = kill_server_event
 
     async def send_control_message(self, message_no: ControlMessage, data: Optional[bytes] = None) -> None:
         """
@@ -673,7 +710,7 @@ class PrivateTunnelEntrance:
         length = CONTROL_MESSAGE_NO_LENGTH + len(data)
         buffer += int.to_bytes(length, DATA_LENGTH, byteorder='big')
         buffer += int.to_bytes(message_no, CONTROL_MESSAGE_NO_LENGTH, byteorder='big')
-        buffer += data
+        buffer += data + TERMINATOR
         try:
             self.logger.debug(f'Endpoint {self.endpoint_name}: Sending Control command {message_no} len: {len(buffer)}'
                               f' to tunnel.')
@@ -687,8 +724,12 @@ class PrivateTunnelEntrance:
             self.logger.debug(f'Endpoint {self.endpoint_name}: Received private close connection request')
             if data and len(data) > 0:
                 target_connection_no = int.from_bytes(data, byteorder='big')
-                self.logger.debug(f'Endpoint {self.endpoint_name}: Closing private connection {target_connection_no}')
-                await self.close_connection(target_connection_no)
+                if target_connection_no == 0:
+                    for c in self.connections:
+                        await self.close_connection(c)
+                else:
+                    self.logger.debug(f'Endpoint {self.endpoint_name}: Closing private connection {target_connection_no}')
+                    await self.close_connection(target_connection_no)
         elif message_no == ControlMessage.Pong:
             self.logger.debug(f'Endpoint {self.endpoint_name}: Received private pong request')
             self._ping_attempt = 0
@@ -699,7 +740,7 @@ class PrivateTunnelEntrance:
                                   f'{self._round_trip_latency[-1]} ms')
                 self.ping_time = None
         elif message_no == ControlMessage.Ping:
-            self.logger.debug('Received private ping request')
+            self.logger.debug(f'Endpoint {self.endpoint_name}: Received private ping request')
             await self.send_control_message(ControlMessage.Pong)
         elif message_no == ControlMessage.OpenConnection:
             if len(data) >= CONNECTION_NO_LENGTH:
@@ -734,16 +775,20 @@ class PrivateTunnelEntrance:
             self.private_tunnel_event.set()
             self.logger.debug(f"Endpoint {self.endpoint_name}: Forwarding private data to local...")
             buff = b''
-            while True:
+            while not self.kill_server_event.is_set():
                 if len(buff) >= CONNECTION_NO_LENGTH + DATA_LENGTH:
                     con_no = int.from_bytes(buff[:CONNECTION_NO_LENGTH], byteorder='big')
                     length = int.from_bytes(buff[CONNECTION_NO_LENGTH:CONNECTION_NO_LENGTH+DATA_LENGTH],
                                             byteorder='big')
-                    if len(buff) >= CONNECTION_NO_LENGTH + DATA_LENGTH + length:
-                        # TODO do we need a terminator to check for after length?
+                    if len(buff) >= CONNECTION_NO_LENGTH + DATA_LENGTH + length + len(TERMINATOR):
+                        if buff[CONNECTION_NO_LENGTH + DATA_LENGTH + length:
+                                CONNECTION_NO_LENGTH + DATA_LENGTH + length + len(TERMINATOR)] != TERMINATOR:
+                            self.logger.warning(f'Endpoint {self.endpoint_name}: Private Invalid terminator')
+                            # if we don't have a valid terminator then we don't know where the message ends or begins
+                            break
                         self.logger.debug(f'Endpoint {self.endpoint_name}: Private buffer data received data')
                         send_data = buff[CONNECTION_NO_LENGTH + DATA_LENGTH:CONNECTION_NO_LENGTH + DATA_LENGTH + length]
-                        buff = buff[CONNECTION_NO_LENGTH + DATA_LENGTH + length:]
+                        buff = buff[CONNECTION_NO_LENGTH + DATA_LENGTH + length + len(TERMINATOR):]
                         if con_no == 0:
                             # This is a control message
                             control_m = ControlMessage(int.from_bytes(send_data[:CONTROL_MESSAGE_NO_LENGTH],
@@ -764,25 +809,35 @@ class PrivateTunnelEntrance:
                                                   f"local for connection {con_no} ({len(send_data)})")
                                 con_writer.write(send_data)
                                 await con_writer.drain()
-                                await asyncio.sleep(.001)
+                                # Yield control back to the event loop for other tasks to execute
+                                await asyncio.sleep(0)
                             except Exception as ex:
                                 self.logger.error(f"Endpoint {self.endpoint_name}: Error while forwarding "
                                                   f"private data to local: {ex}")
+
+                                # Yield control back to the event loop for other tasks to execute
+                                await asyncio.sleep(0)
                     else:
                         self.logger.debug(
                             f"Endpoint {self.endpoint_name}: Private buffer is too short {len(buff)} need "
-                            f"{CONNECTION_NO_LENGTH + DATA_LENGTH + length}")
+                            f"{CONNECTION_NO_LENGTH + DATA_LENGTH + length + len(TERMINATOR)}")
+                        # Yield control back to the event loop for other tasks to execute
+                        await asyncio.sleep(0)
+                else:
+                    # Yield control back to the event loop for other tasks to execute
+                    await asyncio.sleep(0)
 
                 data = await self.tls_reader.read(FORWARDER_BUFFER_TRUNCATION_THRESHOLD)  # Adjust buffer size as needed
-                self.logger.debug(f"Endpoint {self.endpoint_name}: Got private data from tls server "
-                                  f"{len(data)} bytes)")
                 if not data or not self.is_connected:
                     self.logger.info(f"Endpoint {self.endpoint_name}: Exiting forward private data to local")
                     break
-                elif self.tls_reader.at_eof():
-                    await asyncio.sleep(0.001)
+                elif self.tls_reader.at_eof() and len(data) == 0:
+                    # Yield control back to the event loop for other tasks to execute
+                    await asyncio.sleep(0)
                     continue
                 else:
+                    self.logger.debug(f"Endpoint {self.endpoint_name}: Got private data from tls server "
+                                      f"{len(data)} bytes)")
                     buff += data
 
             self.logger.debug(f"Endpoint {self.endpoint_name}: Exiting forward private data successfully.")
@@ -794,6 +849,7 @@ class PrivateTunnelEntrance:
 
         finally:
             self.logger.debug(f"Endpoint {self.endpoint_name}: Closing private tunnel")
+            await self.stop_server()
 
     async def start_tls_reader(self) -> None:
         """
@@ -915,7 +971,7 @@ class PrivateTunnelEntrance:
         Forward data from the given connection to the TLS connection
         """
         try:
-            while True:
+            while not self.kill_server_event.is_set():
                 c = self.connections.get(con_no)
                 if c is None or not self.is_connected:
                     break
@@ -928,16 +984,17 @@ class PrivateTunnelEntrance:
                         self.logger.debug(f"Endpoint {self.endpoint_name}: Connection {con_no} no data")
                         break
                     if isinstance(data, bytes):
-                        if reader.at_eof():
-                            self.logger.debug(f"Endpoint {self.endpoint_name}: Connection {con_no} reached end of file")
-                            await asyncio.sleep(.001)
+                        if reader.at_eof() and len(data) == 0:
+                            # Yield control back to the event loop for other tasks to execute
+                            await asyncio.sleep(0)
                             continue
                         else:
                             buffer = int.to_bytes(con_no, CONNECTION_NO_LENGTH, byteorder='big')
-                            buffer += int.to_bytes(len(data), DATA_LENGTH, byteorder='big') + data
+                            buffer += int.to_bytes(len(data), DATA_LENGTH, byteorder='big') + data + TERMINATOR
                             self.tls_writer.write(buffer)
                             await self.tls_writer.drain()
-                            await asyncio.sleep(.001)
+                            # Yield control back to the event loop for other tasks to execute
+                            await asyncio.sleep(0)
                 except asyncio.TimeoutError as e:
                     if self._ping_attempt > 3:
                         self.is_connected = False
@@ -966,6 +1023,7 @@ class PrivateTunnelEntrance:
         # Send close connection message with con_no
         await self.send_control_message(ControlMessage.CloseConnection, int.to_bytes(con_no, CONNECTION_NO_LENGTH,
                                                                                      byteorder='big'))
+        await self.close_connection(con_no)
 
     async def handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """
@@ -1008,6 +1066,9 @@ class PrivateTunnelEntrance:
         print(f'{bcolors.FAIL}| Endpoint {self.endpoint_name}{bcolors.ENDC} failed to start')
         print(f'{bcolors.FAIL}+---------------------------------------------------------{bcolors.ENDC}')
         await self.send_control_message(ControlMessage.CloseConnection, int_to_bytes(0))
+        for c in self.connections:
+            await self.close_connection(c)
+        await self.stop_server()
 
     async def print_ready(self, host: str, port: int, forwarder_event: asyncio.Event,
                           private_tunnel_event: asyncio.Event) -> None:
@@ -1042,26 +1103,37 @@ class PrivateTunnelEntrance:
         print(f'{bcolors.OKGREEN}+---------------------------------------------------------{bcolors.ENDC}')
 
     async def stop_server(self) -> None:
-        if self.server:
-            self.server.close()
-            await self.server.wait_closed()
-            self.logger.info(f"Endpoint {self.endpoint_name}: Local server stopped")
-        if self.tls_reader_task:
-            self.tls_reader_task.cancel()
-        for t in self.to_tunnel_tasks:
-            self.to_tunnel_tasks[t].cancel()
-        if self.to_local_task:
-            self.to_local_task.cancel()
+        try:
+            await self.send_control_message(ControlMessage.CloseConnection, int_to_bytes(0))
+            if self.server:
+                self.server.close()
+                await self.server.wait_closed()
+                self.logger.info(f"Endpoint {self.endpoint_name}: Local server stopped")
+            if self.tls_reader_task:
+                self.tls_reader_task.cancel()
+            for t in self.to_tunnel_tasks:
+                self.to_tunnel_tasks[t].cancel()
+            if self.to_local_task:
+                self.to_local_task.cancel()
+        finally:
+            self.kill_server_event.set()
 
     async def close_connection(self, connection_no) -> None:
-        if connection_no in self.connections:
-            reader, writer = self.connections[connection_no]
-            writer.close()
-            await writer.wait_closed()
-            del self.connections[connection_no]
+        try:
+            await self.send_control_message(ControlMessage.CloseConnection,
+                                            int.to_bytes(connection_no, CONNECTION_NO_LENGTH, byteorder='big'))
+        finally:
+            if connection_no in self.connections:
+                reader, writer = self.connections[connection_no]
+                writer.close()
+                await writer.wait_closed()
+                del self.connections[connection_no]
+                self.logger.info(f"Endpoint {self.endpoint_name}: Closed connection {connection_no}")
+            else:
+                self.logger.info(f"Endpoint {self.endpoint_name}: Connection {connection_no} not found")
             if connection_no in self.to_tunnel_tasks:
                 self.to_tunnel_tasks[connection_no].cancel()
                 del self.to_tunnel_tasks[connection_no]
-            self.logger.info(f"Endpoint {self.endpoint_name}: Closed connection {connection_no}")
-        else:
-            self.logger.info(f"Endpoint {self.endpoint_name}: Connection {connection_no} not found")
+                self.logger.info(f"Endpoint {self.endpoint_name}: Tasks closed for connection {connection_no}")
+            else:
+                self.logger.info(f"Endpoint {self.endpoint_name}: tasks for {connection_no} not found")

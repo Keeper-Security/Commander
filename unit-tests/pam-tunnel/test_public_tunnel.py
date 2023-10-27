@@ -10,7 +10,8 @@ from keepercommander import utils
 from keepercommander.commands.tunnel.port_forward.tunnel import ITunnel
 from keepercommander.commands.tunnel.port_forward.endpoint import (ControlMessage, CONTROL_MESSAGE_NO_LENGTH,
                                                                    DATA_LENGTH, CONNECTION_NO_LENGTH, TunnelProtocol,
-                                                                   PlainTextForwarder, generate_random_bytes)
+                                                                   PlainTextForwarder, generate_random_bytes,
+                                                                   TERMINATOR)
 
 
 class TestPublicTunnel(unittest.IsolatedAsyncioTestCase):
@@ -53,7 +54,7 @@ class TestPublicTunnel(unittest.IsolatedAsyncioTestCase):
         data1 = int.to_bytes(ControlMessage.Ping, CONTROL_MESSAGE_NO_LENGTH, byteorder='big') + data
         buffer = int.to_bytes(0, CONNECTION_NO_LENGTH, byteorder='big')
         buffer += int.to_bytes(len(data1), DATA_LENGTH, byteorder='big')
-        buffer += data1
+        buffer += data1 + TERMINATOR
 
         self.tunnel_protocol.tunnel.read = mock.AsyncMock()
         self.tunnel_protocol.tunnel.read.side_effect = [buffer, None]
@@ -64,7 +65,7 @@ class TestPublicTunnel(unittest.IsolatedAsyncioTestCase):
 
     async def test_start_tunnel_reader_data(self):
         self.tunnel_protocol.tunnel.read = mock.AsyncMock()
-        self.tunnel_protocol.tunnel.read.side_effect = [b'\x00\x00\x00\x01\x00\x00\x00\x04data', None]
+        self.tunnel_protocol.tunnel.read.side_effect = [b'\x00\x00\x00\x01\x00\x00\x00\x04data;', None]
         await self.tunnel_protocol.start_tunnel_reader()
         self.mock_tunnel.read.assert_called()
         self.assertTrue(self.tunnel_protocol.forwarder_incoming_queue.qsize() == 1)
@@ -73,7 +74,7 @@ class TestPublicTunnel(unittest.IsolatedAsyncioTestCase):
 
     async def test_send_to_tunnel(self):
         await self.tunnel_protocol._send_to_tunnel(1, b'data')
-        self.mock_tunnel.write.assert_called_once_with(b'\x00\x00\x00\x01\x00\x00\x00\x04data')
+        self.mock_tunnel.write.assert_called_once_with(b'\x00\x00\x00\x01\x00\x00\x00\x04data;')
 
     async def test_send_data_message(self):
         self.tunnel_protocol._paired = True
@@ -136,7 +137,7 @@ class TestPublicTunnel(unittest.IsolatedAsyncioTestCase):
             mock_send_control.assert_called_once_with(ControlMessage.CloseConnection)
 
             # Check if the logger was called due to the exception
-            self.mock_logger.debug.assert_called_with('Endpoint %s: closed', None)
+            self.mock_logger.debug.assert_called_with('Endpoint None: closed')
 
     async def test_read_connection_with_invalid_data(self):
         self.tunnel_protocol._is_running = True
@@ -208,7 +209,8 @@ class TestPlainTextForwarder(unittest.IsolatedAsyncioTestCase):
         self.logger = mock.MagicMock()
         self.plain_text_forwarder = PlainTextForwarder(
             self.forwarder_event, 8080, self.logger,
-            self.out_going_queue, self.incoming_queue, tunnel_symmetric_key=utils.generate_aes_key()
+            self.out_going_queue, self.incoming_queue, kill_sever_event=mock.MagicMock(),
+            tunnel_symmetric_key=utils.generate_aes_key()
         )
 
     async def test_non_localhost_connection(self):
