@@ -38,7 +38,7 @@ from .transfer_account import EnterpriseTransferUserCommand
 from ..display import bcolors
 from .helpers import audit_report
 from .enterprise_common import EnterpriseCommand
-from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command
+from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title
 from .. import api, vault, record_management
 from ..error import CommandError
 from ..params import KeeperParams
@@ -128,7 +128,7 @@ aging_report_parser.add_argument('--username', dest='username', action='store',
                                  help='Report expired passwords for user')
 aging_report_parser.add_argument('--exclude-deleted', action='store_true', help='Exclude deleted records from report')
 in_sf_help = 'Limit report to records in shared folders'
-aging_report_parser.add_argument('--in-shared-folders', action='store_true', help=in_sf_help)
+aging_report_parser.add_argument('--in-shared-folder', action='store_true', help=in_sf_help)
 
 aging_report_parser.error = raise_parse_exception
 aging_report_parser.exit = suppress_exit
@@ -1593,11 +1593,11 @@ class AgingReportCommand(Command):
 
         rebuild = kwargs.get('rebuild')
         exclude_deleted = kwargs.get('exclude_deleted')
-        in_shared_folders = kwargs.get('in_shared_folders')
+        in_shared_folder = kwargs.get('in_shared_folder')
         node_id = get_node_id(params, enterprise_id)
 
-        get_sox_data_fn = get_compliance_data if exclude_deleted or in_shared_folders else get_prelim_data
-        sd_args = [params, node_id, enterprise_id, rebuild] if exclude_deleted or in_shared_folders \
+        get_sox_data_fn = get_compliance_data if exclude_deleted or in_shared_folder else get_prelim_data
+        sd_args = [params, node_id, enterprise_id, rebuild] if exclude_deleted or in_shared_folder \
             else [params, enterprise_id, rebuild]
         sd_kwargs = {'min_updated': period_min_ts}
         sd = get_sox_data_fn(*sd_args, **sd_kwargs)
@@ -1624,8 +1624,11 @@ class AgingReportCommand(Command):
             user_uids = [uid_lookup.get(username)] if username is not None else None
         output_format = kwargs.get('format', 'table')
         date_ts = int(dt.timestamp())
-        columns = ['owner', 'title', 'password_changed', 'shared', 'record_url'] if output_format == 'json' else \
-            ['Owner', 'Record Title', 'Last Password Change', 'Shared', 'Record URL']
+        columns = ['owner', 'title', 'password_changed', 'shared', 'record_url']
+        if in_shared_folder:
+            columns.append('shared_folder_uid')
+        if output_format != 'json':
+            columns = [field_to_title(x) for x in columns]
         table = []
         user_records = sd.get_user_records(user_uids)
         for ur in user_records:
@@ -1636,7 +1639,7 @@ class AgingReportCommand(Command):
             if (
                     created_after_date or pw_changed_after_date
                     or exclude_deleted and ur.record.in_trash
-                    or in_shared_folders and not sd.get_record_sfs(ur.record.record_uid)
+                    or in_shared_folder and not sd.get_record_sfs(ur.record.record_uid)
             ):
                 continue
             else:
@@ -1645,6 +1648,9 @@ class AgingReportCommand(Command):
                 change_dt = datetime.datetime.fromtimestamp(ts) if ts else None
                 record_url = f'https://{params.server}/value/#detail/{ur.record.record_uid}'
                 row = [email, ur.record.data.get('title'), change_dt, ur.record.shared, record_url]
+                if in_shared_folder:
+                    sfs = sd.get_record_sfs(ur.record.record_uid)
+                    row.append(sfs)
                 table.append(row)
         clean_up()
 
