@@ -127,6 +127,8 @@ aging_report_parser.add_argument('--period', dest='period', action='store',
 aging_report_parser.add_argument('--username', dest='username', action='store',
                                  help='Report expired passwords for user')
 aging_report_parser.add_argument('--exclude-deleted', action='store_true', help='Exclude deleted records from report')
+in_sf_help = 'Limit report to records in shared folders'
+aging_report_parser.add_argument('--in-shared-folders', action='store_true', help=in_sf_help)
 
 aging_report_parser.error = raise_parse_exception
 aging_report_parser.exit = suppress_exit
@@ -1591,10 +1593,11 @@ class AgingReportCommand(Command):
 
         rebuild = kwargs.get('rebuild')
         exclude_deleted = kwargs.get('exclude_deleted')
+        in_shared_folders = kwargs.get('in_shared_folders')
         node_id = get_node_id(params, enterprise_id)
 
-        get_sox_data_fn = get_compliance_data if exclude_deleted else get_prelim_data
-        sd_args = [params, node_id, enterprise_id, rebuild] if exclude_deleted \
+        get_sox_data_fn = get_compliance_data if exclude_deleted or in_shared_folders else get_prelim_data
+        sd_args = [params, node_id, enterprise_id, rebuild] if exclude_deleted or in_shared_folders \
             else [params, enterprise_id, rebuild]
         sd_kwargs = {'min_updated': period_min_ts}
         sd = get_sox_data_fn(*sd_args, **sd_kwargs)
@@ -1630,7 +1633,11 @@ class AgingReportCommand(Command):
             change_ts = ur.record.last_pw_change
             created_after_date = created_ts and (created_ts >= date_ts)
             pw_changed_after_date = change_ts and (change_ts >= date_ts)
-            if created_after_date or pw_changed_after_date or exclude_deleted and ur.record.in_trash:
+            if (
+                    created_after_date or pw_changed_after_date
+                    or exclude_deleted and ur.record.in_trash
+                    or in_shared_folders and not sd.get_record_sfs(ur.record.record_uid)
+            ):
                 continue
             else:
                 email = sd.get_user(ur.user_uid).email
