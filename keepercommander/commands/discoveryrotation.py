@@ -1745,12 +1745,13 @@ class PAMTunnelStartCommand(Command):
                 # Then add the new log entry
                 self.log_queue.put_nowait(log_entry)
 
-    def setup_logging(self, convo_id, log_queue):
+    def setup_logging(self, convo_id, log_queue, logging_level):
         logger = logging.getLogger(convo_id)
-        logger.setLevel(logging.DEBUG)
+        logger.setLevel(logging_level)
+        logger.propagate = False
         queue_handler = self.QueueHandler(log_queue)
         logger.addHandler(queue_handler)
-        logger.info("Logging setup complete.")
+        logger.debug("Logging setup complete.")
         return logger
 
     def tunnel_cleanup(self, params, convo_id):
@@ -1775,7 +1776,7 @@ class PAMTunnelStartCommand(Command):
                       log_queue):
 
         # Setup custom logging to put logs into log_queue
-        logger = self.setup_logging(convo_id, log_queue)
+        logger = self.setup_logging(convo_id, log_queue, logging.getLogger().getEffectiveLevel())
 
         transmission_key = utils.generate_aes_key()
         server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
@@ -1878,7 +1879,7 @@ class PAMTunnelStartCommand(Command):
         finally:
             if loop:
                 loop.call_soon_threadsafe(self.tunnel_cleanup, params, convo_id)
-                print(f"{bcolors.OKBLUE}Cleanup called for convo_id {convo_id}.{bcolors.ENDC}")
+                print(f"{bcolors.OKBLUE}Cleanup called for connection {convo_id}.{bcolors.ENDC}")
 
     def execute(self, params, **kwargs):
         version = [3, 11, 0]

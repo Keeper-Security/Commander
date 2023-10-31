@@ -102,8 +102,6 @@ def verify_tls_certificate(cert_data, public_key):
         pem_public_key = serialization.load_pem_public_key(cert_public_key_pem.encode(), backend=default_backend())
         tls_public_key = pem_public_key.public_bytes(encoding=serialization.Encoding.DER,
                                                      format=serialization.PublicFormat.SubjectPublicKeyInfo)
-        decoded_public_key = base64.b64decode(public_key)
-
         # Extract the public key from the certificate
         public_key_object = cert.public_key()
 
@@ -116,6 +114,10 @@ def verify_tls_certificate(cert_data, public_key):
             print(f"TLS public key: {tls_raw_public_key}")
         else:
             raise ValueError("Not an elliptic curve public key")
+
+        # Now use the out-of-band public key to check
+        decoded_public_key = base64.b64decode(public_key)
+
         # Check if they match
         if tls_public_key == decoded_public_key:
             return True
@@ -275,23 +277,43 @@ class TunnelProtocol(abc.ABC):
             await self.send_control_message(ControlMessage.CloseConnection)
         finally:
             self._is_running = False
-            tasks = []
-
-            self.tunnel.disconnect()
             self._paired = False
             self.public_tunnel_port = None
+            tasks = []
+        try:
+            self.tunnel.disconnect()
+        except Exception as ex:
+            self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception closing tunnel {ex}')
+        try:
             if self.private_tunnel:
                 tasks.append(self.private_tunnel.stop_server())
+        except Exception as ex:
+            self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception closing private tunnel {ex}')
+        try:
             if self.forwarder:
                 tasks.append(self.forwarder.stop())
+        except Exception as ex:
+            self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception closing forwarder tunnel {ex}')
+        try:
             if self.private_tunnel_server:
                 self.private_tunnel_server.cancel()
+        except Exception as ex:
+            self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception closing private tunnel server{ex}')
+        try:
             if self.read_connection_task:
                 self.read_connection_task.cancel()
+        except Exception as ex:
+            self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception closing private tunnel {ex}')
+        try:
             if self.forwarder_task:
                 self.forwarder_task.cancel()
+        except Exception as ex:
+            self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception closing private tunnel {ex}')
+        try:
             if len(tasks) > 0:
                 await asyncio.gather(*tasks)
+        except Exception as ex:
+            self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception gathering tasks {ex}')
 
     async def start_tunnel_reader(self) -> None:
         if not self.tunnel.is_connected:
@@ -656,7 +678,7 @@ class PlainTextForwarder:
                                                            self.public_tunnel_port)
 
         async with self.forwarder_server:
-            self.logger.info(f"Forwarder listening on 0.0.0.0:{self.public_tunnel_port}...")
+            self.logger.debug(f"Forwarder listening on 0.0.0.0:{self.public_tunnel_port}...")
             await self.forwarder_server.serve_forever()
 
     async def stop(self):
@@ -665,13 +687,20 @@ class PlainTextForwarder:
             self.forwarder_server.close()
             await self.forwarder_server.wait_closed()
             self.forwarder_server = None
-            self.logger.info("Forwarder Server stopped")
+            self.logger.debug("Forwarder Server stopped")
 
         # Cancel and gather the client tasks to clean up any running tasks
         if self.client_tasks:
-            for task in list(self.client_tasks):
-                task.cancel()
-            await asyncio.gather(*self.client_tasks, return_exceptions=True)
+            for i in range(0, len(self.client_tasks)):
+                try:
+                    task = self.client_tasks.pop()
+                    task.cancel()
+                except Exception as ex:
+                    self.logger.warning(f'Forwarder hit exception closing task {ex}')
+            try:
+                await asyncio.gather(*self.client_tasks, return_exceptions=True)
+            except Exception as ex:
+                self.logger.warning(f'Forwarder hit exception gathering tasks {ex}')
             self.client_tasks = []
 
 
@@ -993,7 +1022,7 @@ class PrivateTunnelEntrance:
                 reader, _ = c
                 try:
                     data = await reader.read(PRIVATE_BUFFER_TRUNCATION_THRESHOLD)
-                    self.logger.error(f"Endpoint {self.endpoint_name}: Forwarding private {len(data)} "
+                    self.logger.debug(f"Endpoint {self.endpoint_name}: Forwarding private {len(data)} "
                                       f"bytes to tunnel for connection {con_no}")
                     if not data:
                         self.logger.debug(f"Endpoint {self.endpoint_name}: Connection {con_no} no data")
@@ -1126,7 +1155,8 @@ class PrivateTunnelEntrance:
             if self.server:
                 self.server.close()
                 await self.server.wait_closed()
-                self.logger.info(f"Endpoint {self.endpoint_name}: Local server stopped")
+                self.logger.debug(f"Endpoint {self.endpoint_name}: Local server stopped")
+                self.server = None
             if self.tls_reader_task:
                 self.tls_reader_task.cancel()
             for t in list(self.to_tunnel_tasks):
@@ -1140,18 +1170,29 @@ class PrivateTunnelEntrance:
         try:
             await self.send_control_message(ControlMessage.CloseConnection,
                                             int.to_bytes(connection_no, CONNECTION_NO_LENGTH, byteorder='big'))
-        finally:
-            if connection_no in self.connections:
-                reader, writer = self.connections[connection_no]
-                writer.close()
-                await writer.wait_closed()
-                del self.connections[connection_no]
-                self.logger.info(f"Endpoint {self.endpoint_name}: Closed Private connection {connection_no}")
-            else:
-                self.logger.info(f"Endpoint {self.endpoint_name}: Private Connection {connection_no} not found")
-            if connection_no in self.to_tunnel_tasks:
+        except Exception as ex:
+            self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception sending Close connection {ex}')
+
+        if connection_no in self.connections:
+            reader, writer = self.connections[connection_no]
+            writer.close()
+            # Wait for it to actually close.
+            try:
+                await asyncio.wait_for(writer.wait_closed(), timeout=5.0)
+            except asyncio.TimeoutError:
+                self.logger.warning(
+                    f"Endpoint {self.endpoint_name}: Timed out while trying to close Private connection {connection_no}")
+
+            del self.connections[connection_no]
+            self.logger.info(f"Endpoint {self.endpoint_name}: Closed Private connection {connection_no}")
+        else:
+            self.logger.info(f"Endpoint {self.endpoint_name}: Private Connection {connection_no} not found")
+        if connection_no in self.to_tunnel_tasks:
+            try:
                 self.to_tunnel_tasks[connection_no].cancel()
-                del self.to_tunnel_tasks[connection_no]
-                self.logger.info(f"Endpoint {self.endpoint_name}: Tasks closed for Private connection {connection_no}")
-            else:
-                self.logger.info(f"Endpoint {self.endpoint_name}: Private tasks for {connection_no} not found")
+            except Exception as ex:
+                self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception canceling private tasks {ex}')
+            del self.to_tunnel_tasks[connection_no]
+            self.logger.info(f"Endpoint {self.endpoint_name}: Tasks closed for Private connection {connection_no}")
+        else:
+            self.logger.info(f"Endpoint {self.endpoint_name}: Private tasks for {connection_no} not found")
