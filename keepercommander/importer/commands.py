@@ -107,6 +107,7 @@ download_membership_parser.add_argument('--source', dest='source', choices=['kee
 download_membership_parser.add_argument('--folder', dest='folder', action='store', help='import into a separate folder.')
 download_membership_parser.add_argument('-p', '--permissions', dest='permissions', action='store', help='force shared folder permissions: manage (U)sers, manage (R)ecords')
 download_membership_parser.add_argument('-r', '--restrictions', dest='restrictions', action='store', help='force shared folder restrictions: manage (U)sers, manage (R)ecords')
+download_membership_parser.add_argument('-fo', '--folders-only', dest='folders_only', action='store_true', help='Unload shared folders only. Skip teams')
 download_membership_parser.add_argument('--old-domain', '-od', dest='old_domain', action='store',  help='old domain for changing user emails in permissions')
 download_membership_parser.add_argument('--new-domain', '-nd', dest='new_domain', action='store',  help='new domain for changing user emails in permissions')
 download_membership_parser.add_argument('name', type=str, nargs='?', help='Output file name. "shared_folder_membership.json" if omitted.')
@@ -320,6 +321,7 @@ class DownloadMembershipCommand(Command):
     def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
         source = kwargs.get('source') or 'keeper'
         file_name = kwargs.get('name') or 'shared_folder_membership.json'
+        folders_only = kwargs.get('folders_only') is True
         old_domain = kwargs.get('old_domain')
         new_domain = kwargs.get('new_domain')
         import_into = kwargs.get('folder')
@@ -360,7 +362,7 @@ class DownloadMembershipCommand(Command):
             logging.warning('Error loading membership plugin: %s', source)
             return
 
-        for obj in plugin.download_membership(params):
+        for obj in plugin.download_membership(params, folders_only=folders_only):
             if isinstance(obj, SharedFolder):
                 obj.path = obj.path.strip()
                 if import_into:

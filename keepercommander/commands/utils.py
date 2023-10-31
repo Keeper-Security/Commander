@@ -43,8 +43,8 @@ from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED
 from ..proto import ssocloud_pb2 as ssocloud, enterprise_pb2, APIRequest_pb2, client_pb2
 from ..proto.APIRequest_pb2 import ApiRequest, ApiRequestPayload, Salt, MasterPasswordReentryRequest, UNMASK, \
     UserAuthRequest, ALTERNATE, UidRequest, SecurityData, SecurityDataRequest
-from ..record import Record
 from ..utils import password_score
+from ..vault import KeeperRecord
 from ..versioning import is_binary_app, is_up_to_date_version
 
 BREACHWATCH_MAX = 5
@@ -235,11 +235,10 @@ reset_password_parser.add_argument('--current', '-c', dest='current_password', a
 reset_password_parser.add_argument('--new', '-n', dest='new_password', action='store', help='new password')
 
 sync_security_data_parser = argparse.ArgumentParser(prog='sync-security-data', description='Sync security data.')
-record_name_help = 'Optional (w/ multiple values allowed). Path or UID of record to sync. Omit to sync all security' \
-                   ' data. Ignored if "--hard" option specified (hard-sync requires all vault records be updated)'
-sync_security_data_parser.add_argument('record', type=str, action='store', nargs="*", help=record_name_help)
-hard_sync_help = 'perform a hard-sync of security data (forces a reset and recalculation of summary security scores)'
-sync_security_data_parser.add_argument('--hard', '-hs', action='store_true', help=hard_sync_help)
+record_name_help = 'Path or UID of record whose security data is to be updated. Multiple values allowed. ' \
+                   'Set to "@all" to update security data for all records.'
+sync_security_data_parser.add_argument('record', type=str, action='store', nargs="+", help=record_name_help)
+sync_security_data_parser.add_argument('--force', '-f', action='store_true', help='force update of security data (ignore existing security data timestamp)')
 sync_security_data_parser.add_argument('--quiet', '-q', action='store_true', help='run command w/ minimal output')
 sync_security_data_parser.error = raise_parse_exception
 sync_security_data_parser.exit = suppress_exit
@@ -1213,16 +1212,17 @@ class SyncSecurityDataCommand(Command):
         return sync_security_data_parser
 
     def execute(self, params, **kwargs):
-        def get_security_data(record, pw_obj, reset=False):     # type: (Record, Dict or None, bool) -> SecurityData
+        def get_security_data(record, pw_obj):     # type: (KeeperRecord, Dict or None) -> SecurityData
             sd = SecurityData()
             status = pw_obj and pw_obj.get('status')
-            strength = utils.password_score(record.password)
+            password = BreachWatch.extract_password(record)
+            strength = utils.password_score(password)
             sd_data = {'strength': strength}
-            domain = urllib.parse.urlparse(record.login_url).hostname
+            login_url = BreachWatch.extract_url(record)
+            parse_results = urllib.parse.urlparse(login_url)
+            domain = parse_results.hostname or parse_results.path
             if pw_obj:
                 sd_data['bw_result'] = client_pb2.BWStatus.Value(status) if status else client_pb2.BWStatus.GOOD
-            if reset:
-                sd_data['reset'] = True
             if domain:
                 # truncate domain string if needed to avoid reaching RSA encryption data size limitation
                 sd_data['domain'] = domain[:200]
@@ -1243,6 +1243,8 @@ class SyncSecurityDataCommand(Command):
             if isinstance(names, str):
                 names = [names]
             if names:
+                if '@all' in names:
+                    return set(params.record_cache.keys())
                 for name in names:
                     record_uids = get_ruids(params, name)
                     if not record_uids:
@@ -1255,21 +1257,26 @@ class SyncSecurityDataCommand(Command):
             msg = 'Command not allowed -- This command is limited to enterprise users only.'
             raise CommandError('sync-security-data', msg)
 
+        force_update = kwargs.get('force', False)
         update_limit = 1000
         api.sync_down(params)
-        hard_sync = bool(kwargs.get('hard'))
-        record_uids = get_record_uids() if not hard_sync else None
-        pw_recs = list(BreachWatch.get_records(params, lambda r, s: True, owned=True))
-        if record_uids:
-            pw_recs = [(r, s) for r, s in pw_recs if r.record_uid in record_uids]
-        sds = [get_security_data(r, s, hard_sync) for r, s in pw_recs] if pw_recs else []
+        pw_recs = list(BreachWatch.get_records(params, lambda r, s: r.record_uid in get_record_uids(), owned=True))
+
+        # Limit security-data updates to records modified AFTER its most recent security-data update
+        if not force_update:
+            rec_objs = params.breach_watch_records or params.record_cache
+            sd_objs = params.breach_watch_security_data
+            pw_recs = [(r, s) for r, s in pw_recs if sd_objs.get(r.record_uid, {}).get('revision', 0) < rec_objs.get(r.record_uid, {}).get('revision', 0)]
+
+        sds = [get_security_data(r, s) for r, s in pw_recs] if pw_recs else []
         while sds:
             update_security_data(sds[:update_limit])
             sds = sds[update_limit:]
-        BreachWatch.save_reused_pw_count(params)
+        if pw_recs:
+            BreachWatch.save_reused_pw_count(params)
+            api.sync_down(params)
         if not kwargs.get('quiet'):
-            msg = f'Finished ({"hard" if hard_sync else "soft"}) sync of security data for {len(pw_recs)} records'
-            hard_sync_msg = f'\nNote: All password-containing records (and not just those specified) ' \
-                            f'are synced while in "hard" sync mode'
-            msg += hard_sync_msg if hard_sync and kwargs.get('record') else ''
-            logging.info(msg)
+            if pw_recs:
+                logging.info(f'Updated security data for [{len(pw_recs)}] record(s)')
+            elif not kwargs.get('suppress_no_op'):
+                logging.info('No records requiring security-data updates found')

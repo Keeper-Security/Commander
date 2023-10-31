@@ -113,7 +113,7 @@ class SharePermissions:
             SharePermissions.SharePermissionsType.SF_USER: ''
         }
         prefix = ''.join(prefix_lookup.get(t) for t in self.types)
-        return f'{prefix} {self.to_name}'
+        return f'{prefix} {self.to_name}'.strip()
 
     @property
     def permissions_text(self):

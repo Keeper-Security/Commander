@@ -19,8 +19,10 @@ from . import api, utils, crypto
 from .display import bcolors
 from .params import KeeperParams, RecordOwner
 from .proto import SyncDown_pb2, record_pb2, client_pb2, breachwatch_pb2
-from .proto.SyncDown_pb2 import BreachWatchRecord
+from .proto.SyncDown_pb2 import BreachWatchRecord, BreachWatchSecurityData
 from .subfolder import RootFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode
+from .commands.breachwatch import BreachWatchScanCommand
+from .commands.utils import SyncSecurityDataCommand
 
 
 def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> None
@@ -64,6 +66,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
     params.available_team_cache = None
 
     resp_bw_recs = []       # type: List[BreachWatchRecord]
+    resp_sec_data_recs = []     # type: List[BreachWatchSecurityData]
     request = SyncDown_pb2.SyncDownRequest()
     revision = params.revision
     full_sync = False
@@ -86,11 +89,19 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             params.subfolder_record_cache.clear()
             params.record_history.clear()
             params.record_owner_cache.clear()
+            params.breach_watch_security_data.clear()
+            params.breach_watch_records.clear()
 
         if len(response.removedRecords) > 0:
             logging.debug('Processing removed records')
             for record_uid_bytes in response.removedRecords:
                 record_uid = utils.base64_url_encode(record_uid_bytes)
+                # remove BW record data
+                if record_uid in params.breach_watch_records:
+                    del params.breach_watch_records[record_uid]
+                # remove associated security data
+                if record_uid in params.breach_watch_security_data:
+                    del params.breach_watch_security_data[record_uid]
                 # remove record metadata
                 if record_uid in params.meta_data_cache:
                     del params.meta_data_cache[record_uid]
@@ -526,6 +537,9 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
         if len(response.breachWatchRecords) > 0:
             resp_bw_recs.extend(response.breachWatchRecords)
 
+        if len(response.breachWatchSecurityData) > 0:
+            resp_sec_data_recs.extend(response.breachWatchSecurityData)
+
         if len(response.removedUsers) > 0:
             for a_uid in response.removedUsers:
                 account_uid = utils.base64_url_encode(a_uid)
@@ -879,8 +893,12 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
 
     prepare_folder_tree(params)
 
-    # Populate BreachWatch records data
-    params.breach_watch_records = params.breach_watch_records or {}
+    # Populate/update cache record security data
+    for sec_data in resp_sec_data_recs:
+        record_uid = utils.base64_url_encode(sec_data.recordUid)
+        params.breach_watch_security_data[record_uid] = {'revision': sec_data.revision}
+
+    # Populate/update cache BreachWatch records data
     for p_bwr in resp_bw_recs:
         record_uid = utils.base64_url_encode(p_bwr.recordUid)
         if not record_uid:
@@ -919,6 +937,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
 
     if full_sync:
         if params.breach_watch:
+            BreachWatchScanCommand().execute(params, suppress_no_op=True)
             weak_count = 0
             for _ in params.breach_watch.get_records_by_status(params, ['WEAK', 'BREACHED']):
                 weak_count += 1
@@ -927,6 +946,9 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                              f'The number of records that are affected by breaches or contain high-risk passwords: {weak_count}' +
                              '\nUse \"breachwatch list\" command to get more details' +
                              bcolors.ENDC)
+
+        if params.enterprise_ec_key:
+            SyncSecurityDataCommand().execute(params, record='@all', suppress_no_op=True)
 
         record_count = 0
         valid_versions = {2, 3}

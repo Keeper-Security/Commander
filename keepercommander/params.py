@@ -155,7 +155,8 @@ class KeeperParams:
         self.session_token_bytes = None
         self.record_type_cache = {}  # RT definitions only
         self.breach_watch = None
-        self.breach_watch_records = None
+        self.breach_watch_records = {}
+        self.breach_watch_security_data = {}
         self.sso_login_info = None
         self.__proxy = None
         self.ssh_agent = None
@@ -216,7 +217,8 @@ class KeeperParams:
         self.session_token_bytes = None
         self.record_type_cache = {}
         self.breach_watch = None
-        self.breach_watch_records = None
+        self.breach_watch_records = {}
+        self.breach_watch_security_data = {}
         self.sso_login_info = None
         self.ws = None
         if self.ssh_agent:

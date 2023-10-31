@@ -92,6 +92,7 @@ Column Name       Description
 class SecurityAuditReportCommand(EnterpriseCommand):
     def __init__(self):
         super(SecurityAuditReportCommand, self).__init__()
+        self.tree_key = None
         self.user_lookup = None
         self.enterprise_private_rsa_key = None
         self.score_data_keys = (
@@ -118,26 +119,23 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         return 0 if (total == 0) else (strong / total)
 
     def resolve_user_info(self, params, enterprise_user_id):
-        if self.user_lookup is None:
+        if self.user_lookup is None or params.enterprise.get('unencrypted_tree_key') != self.tree_key:
+            self.tree_key = params.enterprise.get('unencrypted_tree_key')
             self.user_lookup = {}
-            if params.enterprise:
-                if 'users' in params.enterprise:
-                    for user in params.enterprise['users']:
-                        if 'enterprise_user_id' in user and 'username' in user:
-                            email = user['username']
-                            username = user['data']['displayname'] if 'data' in user and 'displayname' in user[
-                                'data'] else None
-                            if (
-                                    username is None or not username.strip()) and 'encrypted_data' in user and 'key_type' in user:
-                                username = user['encrypted_data'] if user['key_type'] == 'no_key' else None
-                            username = email if username is None or not username.strip() else username
-                            node_id = user.get('node_id', 0)
-                            self.user_lookup[user['enterprise_user_id']] = \
-                                {
-                                    'username': username,
-                                    'email': email,
-                                    'node_id': node_id
-                                }
+            for user in params.enterprise.get('users'):
+                if 'enterprise_user_id' in user and 'username' in user:
+                    email = user['username']
+                    username = user['data']['displayname'] if 'data' in user and 'displayname' in user['data'] \
+                        else None
+                    if (username is None or not username.strip()) and 'encrypted_data' in user and 'key_type' in user:
+                        username = user['encrypted_data'] if user['key_type'] == 'no_key' else None
+                    username = email if username is None or not username.strip() else username
+                    node_id = user.get('node_id', 0)
+                    self.user_lookup[user['enterprise_user_id']] = {
+                        'username': username,
+                        'email': email,
+                        'node_id': node_id
+                    }
 
         info = {
             'username': enterprise_user_id,

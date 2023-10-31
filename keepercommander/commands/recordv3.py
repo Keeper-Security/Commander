@@ -19,6 +19,7 @@ from pathlib import Path
 
 import requests
 from Cryptodome.Cipher import AES
+from keepercommander.breachwatch import BreachWatch
 
 from . import recordv2 as recordv2
 from .base import suppress_exit, raise_parse_exception, dump_report_data, Command
@@ -441,9 +442,7 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
         res = api.add_record_v3(params, record, **{'record_links': record_links, 'rq': rq})
         if res:
             params.environment_variables[LAST_RECORD_UID] = record_uid
-            if params.breach_watch:
-                api.sync_down(params)
-                params.breach_watch.scan_and_store_record_status(params, record_uid)
+            BreachWatch.scan_and_update_security_data(params, record_uid, params.breach_watch)
             params.sync_data = True
 
             return record_uid
@@ -658,9 +657,7 @@ class RecordEditCommand(Command, recordv2.RecordUtils):
             if 'return_result' in kwargs:
                 kwargs['return_result']['update_record_v3'] = result
 
-            if params.breach_watch:
-                api.sync_down(params)
-                params.breach_watch.scan_and_store_record_status(params, record_uid)
+            BreachWatch.scan_and_update_security_data(params, record_uid, params.breach_watch)
 
             newpass = recordv3.RecordV3.get_record_password(data) or ''
             oldpass = recordv3.RecordV3.get_record_password(record_data) or ''

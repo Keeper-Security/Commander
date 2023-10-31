@@ -16,7 +16,7 @@ import json
 import logging
 import os.path
 from contextlib import contextmanager
-from typing import List, Optional, Union, Dict, Iterable, Type
+from typing import List, Optional, Union, Dict, Iterable, Type, Any
 
 from .. import vault, record_types
 from ..error import CommandError
@@ -209,13 +209,13 @@ class RecordField:
 class RecordReferences:
     def __init__(self, type='', label=None):
         self.type = type
-        self.label = label
-        self.uids = []   # type: List[any]
+        self.label = label  # type: Optional[str]
+        self.uids = []      # type: List[Any]
 
 
 class Record:
     def __init__(self):
-        self.uid = None
+        self.uid = None          # type: Optional[Any]
         self.type = None         # type: Optional[str]
         self.title = None
         self.login = None
@@ -498,7 +498,7 @@ class BytesAttachment(Attachment):
 
 class BaseDownloadMembership(abc.ABC):
     @abc.abstractmethod
-    def download_membership(self, params):   # type: (KeeperParams) -> Iterable[Union[SharedFolder, Team]]
+    def download_membership(self, params, **kwargs):    # type: (KeeperParams, ...) -> Iterable[Union[SharedFolder, Team]]
         pass
 
 

@@ -1047,10 +1047,8 @@ class TrashRestoreCommand(Command, TrashMixin):
         api.sync_down(params)
         TrashMixin.last_revision = 0
         for record_uid in to_restore:
-            if params.breach_watch:
-                params.breach_watch.scan_and_store_record_status(params, record_uid, True, False, False)
-                api.sync_down(params)
-
+            BreachWatch.scan_and_update_security_data(params, record_uid, params.breach_watch,
+                                                      force_update=False, set_reused_pws=False)
             params.queue_audit_event('record_restored', record_uid=record_uid)
 
         params.sync_data = True

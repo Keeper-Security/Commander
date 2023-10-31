@@ -15,6 +15,8 @@ import logging
 import os
 import re
 
+from keepercommander.breachwatch import BreachWatch
+
 from .base import suppress_exit, raise_parse_exception, Command
 from .. import api, generator, utils, crypto
 from ..error import CommandError
@@ -208,8 +210,7 @@ class RecordAddCommand(Command, RecordUtils):
         api.sync_down(params)
         if params.enterprise_ec_key:
             api.add_record_audit_data(params, [record_uid])
-        if params.breach_watch:
-            params.breach_watch.scan_and_store_record_status(params, record_uid)
+        BreachWatch.scan_and_update_security_data(params, record_uid, params.breach_watch)
 
         params.sync_data = True
         params.environment_variables[LAST_RECORD_UID] = record_uid
@@ -325,7 +326,5 @@ class RecordEditCommand(Command, RecordUtils):
 
         if changed:
             api.update_record(params, record)
-            if params.breach_watch:
-                api.sync_down(params)
-                params.breach_watch.scan_and_store_record_status(params, record_uid)
+            BreachWatch.scan_and_update_security_data(params, record_uid, params.breach_watch)
             params.sync_data = True
