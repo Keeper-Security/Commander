@@ -483,4 +483,4 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
         await self.pte.close_connection(9999)  # 9999 is not in self.connections
 
         # Check if logger.info was called
-        self.pte.logger.info.assert_called_with("Endpoint TestEndpoint: tasks for 9999 not found")
+        self.pte.logger.info.assert_called_with("Endpoint TestEndpoint: Private tasks for 9999 not found")

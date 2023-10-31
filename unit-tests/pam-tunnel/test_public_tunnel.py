@@ -270,4 +270,5 @@ class TestPlainTextForwarder(unittest.IsolatedAsyncioTestCase):
             # Verification
             self.assertTrue(self.plain_text_forwarder.forwarder_server.is_serving())
             await self.plain_text_forwarder.stop()
-            self.plain_text_forwarder.forwarder_server.close.assert_called_once()
+            self.assertTrue(self.plain_text_forwarder.forwarder_server is None)
+            self.assertTrue(self.plain_text_forwarder.client_tasks == [])
