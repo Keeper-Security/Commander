@@ -47,6 +47,7 @@ from ..error import CommandError
 from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..proto import pam_pb2, router_pb2, record_pb2
+from ..proto.APIRequest_pb2 import GetKsmPublicKeysRequest, GetKsmPublicKeysResponse
 from ..subfolder import find_parent_top_folder
 
 
@@ -1889,9 +1890,10 @@ class PAMTunnelStartCommand(Command):
         micro_version = sys.version_info.micro
 
         if (major_version, minor_version, micro_version) <= (version[0], version[1], version[2]):
-            raise RuntimeError(
-                f'This code requires Python {version[0]}.{version[1]}.{version[2]} or higher. You are using '
-                f'{major_version}.{minor_version}.{micro_version}.')
+            print(f"{bcolors.FAIL}This code requires Python {version[0]}.{version[1]}.{version[2]} or higher. "
+                  f"You are using {major_version}.{minor_version}.{micro_version}.{bcolors.ENDC}")
+            return
+
         record_uid = kwargs.get('record_uid')
         convo_id = GatewayAction.generate_conversation_id()
         params.tunnel_threads[convo_id] = {}
@@ -1899,6 +1901,29 @@ class PAMTunnelStartCommand(Command):
         host = kwargs.get('host')
         port = kwargs.get('port')
         listener_name = kwargs.get('listener_name')
+
+
+
+        gateway_uid_bytes = utils.base64_url_decode(gateway_uid)
+        get_ksm_pubkeys_rq = GetKsmPublicKeysRequest()
+        get_ksm_pubkeys_rq.controllerUids.append(gateway_uid_bytes)
+        get_ksm_pubkeys_rs = api.communicate_rest(params, get_ksm_pubkeys_rq, 'vault/get_ksm_public_keys', rs_type=GetKsmPublicKeysResponse)
+
+        if len(get_ksm_pubkeys_rs.keyResponses) == 0:
+            # No keys found
+            print(f"{bcolors.FAIL}No keys found for gateway {gateway_uid}{bcolors.ENDC}")
+            return
+
+        gateway_public_key_bytes = get_ksm_pubkeys_rs.keyResponses[0].publicKey
+
+        if not gateway_public_key_bytes:
+            # No public key found
+            print(f"{bcolors.FAIL}No public key found for gateway {gateway_uid}{bcolors.ENDC}")
+            return
+
+        print("PUBLIC KEY FOUND: ", gateway_public_key_bytes) # TODO: Remove this and move code above into the function called `retrieve_gateway_public_key(gateway_uid, params, api, utils)` or something like that
+
+
 
         record = params.record_cache.get(record_uid)
         if not record:
