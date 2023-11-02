@@ -1566,11 +1566,14 @@ class PAMTunnelListCommand(Command):
     pam_cmd_parser.add_argument('--conversation-id', '-c', required=False, dest='convo_id', action='store',
                                 help='The connection ID of the Tunnel to list')
 
+    pam_cmd_parser.add_argument('--verbose', '-v', required=False, dest='verbose', action='store',
+                                help='Print out more details about the tunnel', default=False, type=bool)
+
     def get_parser(self):
         return PAMTunnelListCommand.pam_cmd_parser
 
     def execute(self, params, **kwargs):
-        def print_thread(thread):
+        def print_thread(thread, verbose):
             # {"thread": t, "host": host, "port": port, "name": listener_name, "started": datetime.now(),
             # "record_uid": record_uid}
             run_time = None
@@ -1592,11 +1595,13 @@ class PAMTunnelListCommand(Command):
                 text_line += f" hours {hours}" if hours > 0 or run_time.days > 0 else ''
             text_line += f" minutes {minutes}"
             text_line += f" seconds {seconds}"
+            if verbose:
+                text_line += f", Public Key: {thread.get('entrance').gateway_public_key_bytes}"
             text_line += f"{bcolors.ENDC}"
             print(text_line)
 
         convo_id = kwargs.get('convo_id', None)
-
+        verbose = kwargs.get('verbose', None)
         record_uid = kwargs.get('record_uid', None)
 
         if not params.tunnel_threads:
@@ -1605,7 +1610,7 @@ class PAMTunnelListCommand(Command):
 
         if convo_id:
             if convo_id in params.tunnel_threads:
-                print_thread(params.tunnel_threads[convo_id])
+                print_thread(params.tunnel_threads[convo_id], verbose)
             else:
                 print(f"{bcolors.FAIL}Tunnel {convo_id} not found{bcolors.ENDC}")
             return
@@ -1614,13 +1619,13 @@ class PAMTunnelListCommand(Command):
             # Print out all tunnels for record uid
             for convo_id in params.tunnel_threads:
                 if params.tunnel_threads[convo_id].get("record_uid", "") == record_uid:
-                    print_thread(params.tunnel_threads[convo_id])
+                    print_thread(params.tunnel_threads[convo_id], verbose)
                     return
             print(f"{bcolors.FAIL}Tunnel for record {record_uid} not found{bcolors.ENDC}")
             return
 
         for i, convo_id in enumerate(params.tunnel_threads):
-            print_thread(params.tunnel_threads[convo_id])
+            print_thread(params.tunnel_threads[convo_id], verbose)
 
 
 class PAMTunnelStopCommand(Command):
@@ -1705,6 +1710,27 @@ class SocketNotConnectedException(Exception):
     pass
 
 
+def retrieve_gateway_public_key(gateway_uid, params, api, utils) -> bytes:
+    gateway_uid_bytes = utils.base64_url_decode(gateway_uid)
+    get_ksm_pubkeys_rq = GetKsmPublicKeysRequest()
+    get_ksm_pubkeys_rq.controllerUids.append(gateway_uid_bytes)
+    get_ksm_pubkeys_rs = api.communicate_rest(params, get_ksm_pubkeys_rq, 'vault/get_ksm_public_keys',
+                                              rs_type=GetKsmPublicKeysResponse)
+
+    if len(get_ksm_pubkeys_rs.keyResponses) == 0:
+        # No keys found
+        print(f"{bcolors.FAIL}No keys found for gateway {gateway_uid}{bcolors.ENDC}")
+        return b''
+    try:
+        gateway_public_key_bytes = get_ksm_pubkeys_rs.keyResponses[0].publicKey
+    except Exception as e:
+        # No public key found
+        print(f"{bcolors.FAIL}Error getting public key for gateway {gateway_uid}: {e}{bcolors.ENDC}")
+        gateway_public_key_bytes = b''
+
+    return gateway_public_key_bytes
+
+
 class PAMTunnelStartCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='dr-port-forward-command')
     pam_cmd_parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
@@ -1774,7 +1800,7 @@ class PAMTunnelStartCommand(Command):
             print(f"{bcolors.OKBLUE}{convo_id} Queue cleaned up{bcolors.ENDC}")
 
     async def connect(self, params, record_uid, convo_id, gateway_uid, host, port, listener_name,
-                      log_queue):
+                      log_queue, gateway_public_key_bytes, client_private_key):
 
         # Setup custom logging to put logs into log_queue
         logger = self.setup_logging(convo_id, log_queue, logging.getLogger().getEffectiveLevel())
@@ -1839,7 +1865,9 @@ class PAMTunnelStartCommand(Command):
                                               f'the Controller: {rs.content}')
 
         tunnel = tunnel_connected.ConnectedTunnel(entrance_ws)
-        entrance = endpoint.TunnelProtocol(tunnel, endpoint_name=listener_name, logger=logger, gateway_uid=gateway_uid)
+        entrance = endpoint.TunnelProtocol(tunnel, endpoint_name=listener_name, logger=logger, gateway_uid=gateway_uid,
+                                           gateway_public_key_bytes=gateway_public_key_bytes,
+                                           client_private_key=client_private_key)
 
         t1 = asyncio.create_task(tunnel.ws_reader())
         t2 = asyncio.create_task(tunnel.ws_writer())
@@ -1851,7 +1879,8 @@ class PAMTunnelStartCommand(Command):
 
         self.tunnel_cleanup(params, convo_id)
 
-    def pre_connect(self, params, record_uid, convo_id, gateway_uid, host, port, listener_name):
+    def pre_connect(self, params, record_uid, convo_id, gateway_uid, host, port, listener_name,
+                    gateway_public_key_bytes, client_private_key):
         loop = None
         try:
             loop = asyncio.new_event_loop()
@@ -1868,7 +1897,9 @@ class PAMTunnelStartCommand(Command):
                     host=host,
                     port=port,
                     listener_name=listener_name,
-                    log_queue=output_queue
+                    log_queue=output_queue,
+                    gateway_public_key_bytes=gateway_public_key_bytes,
+                    client_private_key=client_private_key
                 )
             )
         except asyncio.CancelledError:
@@ -1902,36 +1933,39 @@ class PAMTunnelStartCommand(Command):
         port = kwargs.get('port')
         listener_name = kwargs.get('listener_name')
 
+        gateway_public_key_bytes = retrieve_gateway_public_key(gateway_uid, params, api, utils)
 
-
-        gateway_uid_bytes = utils.base64_url_decode(gateway_uid)
-        get_ksm_pubkeys_rq = GetKsmPublicKeysRequest()
-        get_ksm_pubkeys_rq.controllerUids.append(gateway_uid_bytes)
-        get_ksm_pubkeys_rs = api.communicate_rest(params, get_ksm_pubkeys_rq, 'vault/get_ksm_public_keys', rs_type=GetKsmPublicKeysResponse)
-
-        if len(get_ksm_pubkeys_rs.keyResponses) == 0:
-            # No keys found
-            print(f"{bcolors.FAIL}No keys found for gateway {gateway_uid}{bcolors.ENDC}")
-            return
-
-        gateway_public_key_bytes = get_ksm_pubkeys_rs.keyResponses[0].publicKey
-
-        if not gateway_public_key_bytes:
-            # No public key found
-            print(f"{bcolors.FAIL}No public key found for gateway {gateway_uid}{bcolors.ENDC}")
-            return
-
-        print("PUBLIC KEY FOUND: ", gateway_public_key_bytes) # TODO: Remove this and move code above into the function called `retrieve_gateway_public_key(gateway_uid, params, api, utils)` or something like that
-
-
+        # TODO remove debug code
+        print("PUBLIC KEY FOUND: ", gateway_public_key_bytes)
 
         record = params.record_cache.get(record_uid)
         if not record:
             print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
             return
 
+        record_dict = json.loads(record.get('data_unencrypted').decode('utf-8'))
+        if not record_dict:
+            print(f"{bcolors.FAIL}Record {record_uid} has no data.{bcolors.ENDC}")
+            return
+        elif record_dict.get('type') not in 'pamMachine pamDatabase'.split():
+            print(f"{bcolors.FAIL}Wrong type of record.{bcolors.ENDC}")
+            return
+
+        # TODO: for now use custom params from the record to get client private key
+        client_private_key = ""
+        custom_params = record_dict.get('custom', [])
+        if custom_params:
+            for p in custom_params:
+                label = p.get('label')
+                if label is not None:
+                    lower_label = str.lower(label)
+                    if 'client' in lower_label and 'private' in lower_label and 'key' in lower_label:
+                        client_private_key = p.get('value')[0]
+                        break
+
         t = threading.Thread(target=self.pre_connect, args=(params, record_uid, convo_id, gateway_uid, host, port,
-                                                            listener_name))
+                                                            listener_name, gateway_public_key_bytes, client_private_key)
+                             )
         t.start()
         params.tunnel_threads[convo_id].update({"convo_id": convo_id, "thread": t, "host": host, "port": port,
                                                 "name": listener_name, "started": datetime.now(),

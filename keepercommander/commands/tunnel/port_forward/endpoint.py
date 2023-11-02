@@ -1,21 +1,24 @@
 import abc
 import asyncio
-import base64
+import datetime
 import enum
 import hashlib
 import hmac
 import logging
+import os
 import secrets
 import socket
 import ssl
 import string
+import tempfile
 import time
 from typing import Optional, Dict, Tuple
 
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat._oid import NameOID
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.utils import int_to_bytes
 from keeper_secrets_manager_core.utils import bytes_to_string, bytes_to_base64, base64_to_bytes
@@ -86,22 +89,144 @@ def generate_random_bytes(pass_length: int = 32) -> bytes:
     return filtered_bytes
 
 
+def generate_secure_self_signed_cert(private_key_str: str) -> (bytes, bytes):
+    """
+    Generate a secure self-signed certificate, possibly using an existing private key.
+    :param private_key_str: PEM-formatted private key as a string.
+    :return: Tuple containing the PEM-formatted certificate and private key
+    """
+    '''
+    # Generate an EC private key
+    private_key = ec.generate_private_key(
+        ec.SECP256R1(),  # Using P-256 curve
+        backend=default_backend()
+    )
+    # Serialize to PEM format
+    private_key_str = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption()
+    ).decode('utf-8')
+    '''
+    if not private_key_str:
+        return b'', b''
+
+    # Deserialize the provided private key from string
+    private_key = serialization.load_pem_private_key(
+        private_key_str.encode(),
+        password=None,
+        backend=default_backend()
+    )
+    #
+    # subject = issuer = x509.Name([
+    #     x509.NameAttribute(NameOID.COMMON_NAME, u"localhost"),
+    # ])
+    # cert = (
+    #     x509.CertificateBuilder()
+    #     .subject_name(subject)
+    #     .issuer_name(issuer)
+    #     .public_key(private_key.public_key())
+    #     .serial_number(x509.random_serial_number())
+    #     .not_valid_before(datetime.datetime.utcnow())
+    #     .not_valid_after(
+    #         # Our certificate will be valid for 10 days
+    #         datetime.datetime.utcnow() + datetime.timedelta(days=10)
+    #     )
+    #     .sign(private_key, hashes.SHA256(), default_backend())
+    # )
+    # cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode('utf-8')
+
+    # Define subject and issuer
+    subject = issuer = x509.Name([
+        x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u"secureEntity"),
+    ])
+
+    # Initialize certificate builder
+    builder = x509.CertificateBuilder() \
+        .subject_name(subject) \
+        .issuer_name(issuer) \
+        .public_key(private_key.public_key()) \
+        .serial_number(x509.random_serial_number()) \
+        .not_valid_before(datetime.datetime.utcnow()) \
+        .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=10))
+
+    builder = builder.add_extension(x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.CLIENT_AUTH]), critical=True)
+
+    # Generate the self-signed certificate
+    certificate = builder.sign(
+        private_key=private_key,
+        algorithm=hashes.SHA256(),
+        backend=default_backend()
+    )
+
+    # Serialize certificate and private key to PEM format
+    cert_pem = certificate.public_bytes(encoding=serialization.Encoding.PEM)
+    private_key_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption()
+    )
+
+    return cert_pem, private_key_pem
+
+
+def create_client_ssl_context(server_public_cert_pem: str, client_cert_pem: Optional[bytes] = None,
+                              client_private_key_pem: Optional[bytes] = None):
+    """
+    Create a client-side SSL context.
+
+    :param server_public_cert_pem: PEM-formatted server public certificate for server verification
+    :param client_cert_pem: Optional PEM-formatted client certificate for mutual TLS
+    :param client_private_key_pem: Optional PEM-formatted client private key for mutual TLS
+    :return: Configured SSL context
+    """
+
+    # https://github.com/python/cpython/issues/96972
+    # Create and configure the SSL context
+    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ssl_context.check_hostname = True
+    ssl_context.verify_mode = ssl.CERT_REQUIRED
+    ssl_context.load_verify_locations(cadata=server_public_cert_pem)
+
+    # If client's cert and private key are provided, configure mutual TLS
+    # TODO: this is a workaround for the case when a custom parameter for the client's private key isn't given
+    if client_cert_pem and client_private_key_pem:
+        cert_file = tempfile.NamedTemporaryFile(delete=False)
+        key_file = tempfile.NamedTemporaryFile(delete=False)
+
+        try:
+            # Write the client certificate and private key to temporary files
+            with open(cert_file.name, 'wb') as f:
+                f.write(client_cert_pem)
+            with open(key_file.name, 'wb') as f:
+                f.write(client_private_key_pem)
+
+            # Load the client certificate and private key
+            ssl_context.load_cert_chain(certfile=cert_file.name, keyfile=key_file.name)
+
+        finally:
+            # Remove the temporary files
+            os.remove(cert_file.name)
+            os.remove(key_file.name)
+
+    return ssl_context
+
+
 def verify_tls_certificate(cert_data, public_key):
     """
     Verify the TLS certificate against the public key found in Keeper's public key file
     """
+    if public_key is None:
+        # FIXME: this is a temporary workaround for the case when the public key API is not available in production
+        #  not good!!!!
+        #  don't do it!!!!
+        #  Fix it when the public key API is available in production   <-------
+        return True
+        # return False
+
     try:
         cert = x509.load_pem_x509_certificate(cert_data.encode(), default_backend())
 
-        # Extract the public key from the certificate
-        cert_public_key_pem = cert.public_key().public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
-        ).decode()
-
-        pem_public_key = serialization.load_pem_public_key(cert_public_key_pem.encode(), backend=default_backend())
-        tls_public_key = pem_public_key.public_bytes(encoding=serialization.Encoding.DER,
-                                                     format=serialization.PublicFormat.SubjectPublicKeyInfo)
         # Extract the public key from the certificate
         public_key_object = cert.public_key()
 
@@ -111,16 +236,14 @@ def verify_tls_certificate(cert_data, public_key):
                 encoding=serialization.Encoding.X962,
                 format=serialization.PublicFormat.UncompressedPoint
             )
-            print(f"TLS public key: {tls_raw_public_key}")
         else:
             raise ValueError("Not an elliptic curve public key")
 
-        # Now use the out-of-band public key to check
-        decoded_public_key = base64.b64decode(public_key)
-
         # Check if they match
-        if tls_public_key == decoded_public_key:
+        if tls_raw_public_key == public_key:
             return True
+        else:
+            print(f"Mis Match TLS public key: \n{tls_raw_public_key}\nKeeper public key: \n{public_key}")
 
     except InvalidSignature as e:
         # Handle invalid signature exception
@@ -236,7 +359,8 @@ class TunnelProtocol(abc.ABC):
       16. The User closes the public tunnel and everything is cleaned up, and we can start back at step 1
     """
     def __init__(self, tunnel: ITunnel, endpoint_name: Optional[str] = None, logger: logging.Logger = None,
-                 gateway_uid: str = None):
+                 gateway_uid: str = None, gateway_public_key_bytes: bytes = None, client_private_key: str = ""):
+        self.server_cert = None
         self._round_trip_latency = []
         self.ping_time = None
         self.tunnel = tunnel
@@ -258,6 +382,9 @@ class TunnelProtocol(abc.ABC):
         self.read_connection_task = None
         self.forwarder_task = None
         self.kill_server_event = asyncio.Event()
+        self.gateway_public_key_bytes = gateway_public_key_bytes
+        self.client_public_cert, self.client_private_key_pem = generate_secure_self_signed_cert(client_private_key)
+        self.server_public_cert = None
 
     async def connect(self, host="localhost", port=0):
         if not self.tunnel.is_connected:
@@ -466,7 +593,9 @@ class TunnelProtocol(abc.ABC):
                     self.logger.info(f'Endpoint {self.endpoint_name}: Connecting to pair: No open port found')
                     await self.disconnect()
                     return
-                if tmp_port != self.public_tunnel_port:
+                elif tmp_port != self.public_tunnel_port:
+                    if len(data[CONTROL_MESSAGE_NO_LENGTH:]) > 0:
+                        self.server_public_cert = bytes_to_string(data[CONTROL_MESSAGE_NO_LENGTH:])
                     self.ports_tried.append(self.public_tunnel_port)
                     # The port wasn't open, so send a new port to the gateway
                     if self.forwarder:
@@ -476,74 +605,74 @@ class TunnelProtocol(abc.ABC):
                     if self.private_tunnel:
                         await self.private_tunnel.stop_server()
                         self.private_tunnel = None
-                    await self.send_control_message(ControlMessage.SharePublicKey, int_to_bytes(tmp_port))
+
+                    buffer = tmp_port.to_bytes(CONTROL_MESSAGE_NO_LENGTH, byteorder='big')
+                    buffer += self.client_public_cert
+                    self.logger.debug(f"Endpoint {self.endpoint_name}: Sending new port {tmp_port} and cert")
+                    await self.send_control_message(ControlMessage.SharePublicKey, buffer)
+
                 else:
-                    self._paired = True
+                    if len(data[CONTROL_MESSAGE_NO_LENGTH:]) > 0:
+                        self.server_public_cert = bytes_to_string(data[CONTROL_MESSAGE_NO_LENGTH:])
 
+                        is_trusted = verify_tls_certificate(self.server_public_cert, self.gateway_public_key_bytes)
 
+                        if not is_trusted:
+                            await self.disconnect()
+                            return
 
-                    # TODO: get this from KSM ✓💰self.gateway_uid
+                        buffer = tmp_port.to_bytes(CONTROL_MESSAGE_NO_LENGTH, byteorder='big')
+                        buffer += self.client_public_cert
+                        self.logger.debug(f"Endpoint {self.endpoint_name}: Sending port {tmp_port} and cert")
+                        await self.send_control_message(ControlMessage.SharePublicKey, buffer)
 
-                    tls_public_key = \
-                        'BMh+qwlw84vD31go1Q+YYui0Wfb+6+YEpZQolY/oJ7u+RFyF7ptZtHtVN8Ijba5bFQEQIIHFho8/WYWCyo/0fQo='
+                    else:
+                        self._paired = True
 
-                    received_cert = bytes_to_string(data[CONTROL_MESSAGE_NO_LENGTH:])
+                        self.read_connection_task = asyncio.create_task(self.read_connection())
 
-                    is_trusted = verify_tls_certificate(received_cert, tls_public_key)
+                        forwarder_event = asyncio.Event()
+                        private_tunnel_event = asyncio.Event()
 
-                    if not is_trusted:
-                        # TODO: why is the cert I am getting using a different public key then what I am finding?
-                        pass
-                        # await self.disconnect()
-                        # return
+                        # Generate a random symmetric key for AES encryption
+                        tunnel_symmetric_key = utils.generate_aes_key()
 
-                    self.read_connection_task = asyncio.create_task(self.read_connection())
+                        self.forwarder = PlainTextForwarder(forwarder_event=forwarder_event,
+                                                            public_tunnel_port=self.public_tunnel_port,
+                                                            logger=self.logger,
+                                                            out_going_queue=self.forwarder_out_going_queue,
+                                                            incoming_queue=self.forwarder_incoming_queue,
+                                                            kill_sever_event=self.kill_server_event,
+                                                            tunnel_symmetric_key=tunnel_symmetric_key)
 
-                    forwarder_event = asyncio.Event()
-                    private_tunnel_event = asyncio.Event()
+                        self.forwarder_task = asyncio.create_task(self.forwarder.start())
+                        logging.debug(f"started forwarder on port {self.public_tunnel_port}")
 
-                    # Generate a random symmetric key for AES encryption
-                    tunnel_symmetric_key = utils.generate_aes_key()
+                        logging.debug("starting private tunnel")
 
-                    self.forwarder = PlainTextForwarder(forwarder_event=forwarder_event,
-                                                        public_tunnel_port=self.public_tunnel_port,
-                                                        logger=self.logger,
-                                                        out_going_queue=self.forwarder_out_going_queue,
-                                                        incoming_queue=self.forwarder_incoming_queue,
-                                                        kill_sever_event=self.kill_server_event,
-                                                        tunnel_symmetric_key=tunnel_symmetric_key)
+                        self.private_tunnel = PrivateTunnelEntrance(private_tunnel_event=private_tunnel_event,
+                                                                    host=self.target_host, port=self.target_port,
+                                                                    public_tunnel_port=self.public_tunnel_port,
+                                                                    endpoint_name=self.endpoint_name,
+                                                                    server_public_cert=self.server_public_cert,
+                                                                    kill_server_event=self.kill_server_event,
+                                                                    logger=self.logger,
+                                                                    tunnel_symmetric_key=tunnel_symmetric_key,
+                                                                    client_private_key_pem=self.client_private_key_pem,
+                                                                    client_public_cert=self.client_public_cert)
 
-                    self.forwarder_task = asyncio.create_task(self.forwarder.start())
-                    logging.debug(f"started forwarder on port {self.public_tunnel_port}")
+                        # Making the TLS Connection through the tunnel
+                        private_tunnel_started = asyncio.Event()
+                        self.private_tunnel_server = asyncio.create_task(self.private_tunnel.start_server(
+                            forwarder_event, private_tunnel_event, private_tunnel_started))
+                        await private_tunnel_started.wait()
 
-                    logging.debug("starting private tunnel")
+                        serving = self.private_tunnel.server.is_serving() if self.private_tunnel.server else False
 
-                    self.private_tunnel = PrivateTunnelEntrance(private_tunnel_event=private_tunnel_event,
-                                                                host=self.target_host, port=self.target_port,
-                                                                public_tunnel_port=self.public_tunnel_port,
-                                                                endpoint_name=self.endpoint_name, cert=received_cert,
-                                                                kill_server_event=self.kill_server_event,
-                                                                logger=self.logger,
-                                                                tunnel_symmetric_key=tunnel_symmetric_key)
-
-                    # Making the TLS Connection through the tunnel
-                    private_tunnel_started = asyncio.Event()
-                    self.private_tunnel_server = asyncio.create_task(self.private_tunnel.start_server(
-                        forwarder_event, private_tunnel_event, private_tunnel_started))
-                    await private_tunnel_started.wait()
-
-                    serving = self.private_tunnel.server.is_serving() if self.private_tunnel.server else False
-
-                    if not serving:
-                        logging.debug(f'Endpoint {self.endpoint_name}: Private tunnel failed to start')
-                        await self.disconnect()
-                        raise Exception('Private tunnel failed to start')
-
-                    logging.debug(f"sending control message with public tunnel port {self.public_tunnel_port}")
-                    await self.send_control_message(ControlMessage.SharePublicKey,
-                                                    int_to_bytes(self.public_tunnel_port))
-
-                    logging.debug(f'Endpoint {self.endpoint_name}: Tunnel Setup')
+                        if not serving:
+                            logging.debug(f'Endpoint {self.endpoint_name}: Private tunnel failed to start')
+                            await self.disconnect()
+                            raise Exception('Private tunnel failed to start')
 
             except Exception as e:
                 self.public_tunnel_port = None
@@ -717,8 +846,9 @@ class PrivateTunnelEntrance:
     message number is only used in control messages. (if the connection number is 0 then there is a message number)
     """
     def __init__(self, private_tunnel_event: asyncio.Event, host: str, port: int, public_tunnel_port: int,
-                 endpoint_name, cert: str, kill_server_event: asyncio.Event,  logger: logging.Logger = None,
-                 tunnel_symmetric_key: bytes = None):
+                 endpoint_name, server_public_cert: str, kill_server_event: asyncio.Event,
+                 logger: logging.Logger = None, tunnel_symmetric_key: bytes = None,
+                 client_private_key_pem: bytes = b'', client_public_cert: bytes = b''):
         self._round_trip_latency = []
         self.ping_time = None
         self.to_local_task = None
@@ -730,7 +860,7 @@ class PrivateTunnelEntrance:
         self.endpoint_name = endpoint_name
         self.connections: Dict[int, Tuple[asyncio.StreamReader, asyncio.StreamWriter]] = {}
         self.public_tunnel_port = public_tunnel_port
-        self.cert = cert
+        self.server_public_cert = server_public_cert
         self.tls_reader: Optional[asyncio.StreamReader] = None
         self.tls_writer: Optional[asyncio.StreamWriter] = None
         self._port = port
@@ -740,6 +870,8 @@ class PrivateTunnelEntrance:
         self.tls_reader_task = asyncio.create_task(self.start_tls_reader())
         self.to_tunnel_tasks = {}
         self.kill_server_event = kill_server_event
+        self.client_private_key_pem = client_private_key_pem
+        self.client_public_cert = client_public_cert
 
     async def send_control_message(self, message_no: ControlMessage, data: Optional[bytes] = None) -> None:
         """
@@ -769,7 +901,8 @@ class PrivateTunnelEntrance:
                     for c in list(self.connections):
                         await self.close_connection(c)
                 else:
-                    self.logger.debug(f'Endpoint {self.endpoint_name}: Closing private connection {target_connection_no}')
+                    self.logger.debug(f'Endpoint {self.endpoint_name}: Closing private connection '
+                                      f'{target_connection_no}')
                     await self.close_connection(target_connection_no)
         elif message_no == ControlMessage.Pong:
             self.logger.debug(f'Endpoint {self.endpoint_name}: Received private pong request')
@@ -995,14 +1128,8 @@ class PrivateTunnelEntrance:
         self.logger.debug(f"Endpoint {self.endpoint_name}: Connection to forwarder accepted")
 
     async def perform_ssl_handshakes(self):
-        # https://github.com/python/cpython/issues/96972
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = True
-        ssl_context.verify_mode = ssl.CERT_REQUIRED
-        ssl_context.load_verify_locations(cadata=self.cert)
-        # TODO add client cert and key?
-        #  Load the client's certificate and private key
-        #  ssl_context.load_cert_chain(certfile="client_cert.pem", keyfile="client_key.pem")
+        ssl_context = create_client_ssl_context(self.server_public_cert, self.client_public_cert,
+                                                self.client_private_key_pem)
         # Establish a connection to localhost:server_port
         logging.debug(f"Endpoint {self.endpoint_name}: SSL context made")
         # Establish a connection to the TLS server on the gateway
@@ -1181,7 +1308,8 @@ class PrivateTunnelEntrance:
                 await asyncio.wait_for(writer.wait_closed(), timeout=5.0)
             except asyncio.TimeoutError:
                 self.logger.warning(
-                    f"Endpoint {self.endpoint_name}: Timed out while trying to close Private connection {connection_no}")
+                    f"Endpoint {self.endpoint_name}: Timed out while trying to close Private connection "
+                    f"{connection_no}")
 
             del self.connections[connection_no]
             self.logger.info(f"Endpoint {self.endpoint_name}: Closed Private connection {connection_no}")
