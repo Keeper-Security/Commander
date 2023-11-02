@@ -110,6 +110,8 @@ download_membership_parser.add_argument('-r', '--restrictions', dest='restrictio
 download_membership_parser.add_argument('-fo', '--folders-only', dest='folders_only', action='store_true', help='Unload shared folders only. Skip teams')
 download_membership_parser.add_argument('--old-domain', '-od', dest='old_domain', action='store',  help='old domain for changing user emails in permissions')
 download_membership_parser.add_argument('--new-domain', '-nd', dest='new_domain', action='store',  help='new domain for changing user emails in permissions')
+download_membership_parser.add_argument('--sub-folder', '-sf', dest='sub_folder', action='store', choices=['ignore', 'flatten'],
+                                        help='shared sub-folder handling')
 download_membership_parser.add_argument('name', type=str, nargs='?', help='Output file name. "shared_folder_membership.json" if omitted.')
 download_membership_parser.error = raise_parse_exception
 download_membership_parser.exit = suppress_exit
@@ -329,8 +331,8 @@ class DownloadMembershipCommand(Command):
             import_into = import_into.strip()
             import_into = import_into.replace(PathDelimiter, 2 * PathDelimiter)
 
-        override_users = None    # Optional[bool]
-        override_records = None  # Optional[bool]
+        override_users = None    # type: Optional[bool]
+        override_records = None  # type: Optional[bool]
         permissions = kwargs.get('permissions')
         if permissions:
             permissions = permissions.lower()
@@ -348,7 +350,7 @@ class DownloadMembershipCommand(Command):
                 override_records = False
 
         added_folders = []  # type: List[SharedFolder]
-        added_teams = []  # type: List[Team]
+        added_teams = []    # type: List[Team]
 
         try:
             full_name = f'keepercommander.importer.{"json" if source == "keeper" else source}'
@@ -380,6 +382,35 @@ class DownloadMembershipCommand(Command):
                 if old_domain and new_domain and obj.members:
                     obj.members = [replace_email_domain(x, old_domain, new_domain) for x in obj.members]
                 added_teams.append(obj)
+
+        # process shared sub folders
+        for f in added_folders:
+            if f.path[0] == PathDelimiter or f.path[-1] == PathDelimiter:
+                path = f.path.replace(2 * PathDelimiter, '\0')
+                path = path.strip(PathDelimiter)
+                f.path = path.replace('\0', PathDelimiter)
+        sub_folder_action = kwargs.get('sub_folder') or 'ignore'
+        sf = {x.path.lower(): x for x in added_folders if x.path}
+        paths = list(sf.keys())
+        paths.sort()
+        pos = 0
+        while pos < len(paths):
+            next_pos = 1
+            p1 = paths[pos]
+            while pos + next_pos < len(paths):
+                p2 = paths[pos + next_pos]
+                if p2.startswith(p1 + PathDelimiter):
+                    if sub_folder_action == 'flatten':
+                        folder = sf[p2]
+                        folder.path = folder.path[:len(p1)] + folder.path[len(p1):].replace(PathDelimiter, ' - ', )
+                    else:
+                        del sf[p2]
+                    next_pos += 1
+                else:
+                    break
+            pos += next_pos
+
+        added_folders = list(sf.values())
 
         shared_folders = {}  # type: Dict[str, SharedFolder]
         teams = {}           # type: Dict[str, Team]
