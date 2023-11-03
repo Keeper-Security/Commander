@@ -19,6 +19,7 @@ import threading
 import time
 from collections import OrderedDict
 
+from keepercommander.commands.utils import LoginCommand
 from prompt_toolkit import PromptSession
 from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.shortcuts import CompleteStyle
@@ -232,8 +233,7 @@ def do_command(params, command_line):
                 if command.is_authorised():
                     if not params.session_token:
                         try:
-                            api.login(params)
-                            api.sync_down(params)
+                            LoginCommand().execute(params, new_login=False)
                         except KeyboardInterrupt as e:
                             logging.info('Canceled')
                             return
@@ -350,9 +350,7 @@ def loop(params):  # type: (KeeperParams) -> int
     if not params.batch_mode:
         if params.user:
             try:
-                api.login(params)
-                if params.session_token:
-                    do_command(params, 'sync-down')
+                LoginCommand().execute(params, new_login=False)
             except KeyboardInterrupt:
                 print('')
             except EOFError:
