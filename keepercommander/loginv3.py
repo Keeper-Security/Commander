@@ -62,6 +62,9 @@ class LoginV3Flow:
 
         resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes, loginType=login_type)
 
+        if resp.encryptedLoginToken:
+            resp = LoginV3API.resume_login(params, resp.encryptedLoginToken, encryptedDeviceToken, clone_code_bytes)
+
         is_alternate_login = False
 
         while True:
