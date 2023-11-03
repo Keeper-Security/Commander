@@ -21,8 +21,6 @@ from .params import KeeperParams, RecordOwner
 from .proto import SyncDown_pb2, record_pb2, client_pb2, breachwatch_pb2
 from .proto.SyncDown_pb2 import BreachWatchRecord, BreachWatchSecurityData
 from .subfolder import RootFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode
-from .commands.breachwatch import BreachWatchScanCommand
-from .commands.utils import SyncSecurityDataCommand
 
 
 def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> None
@@ -937,7 +935,6 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
 
     if full_sync:
         if params.breach_watch:
-            BreachWatchScanCommand().execute(params, suppress_no_op=True)
             weak_count = 0
             for _ in params.breach_watch.get_records_by_status(params, ['WEAK', 'BREACHED']):
                 weak_count += 1
@@ -946,9 +943,6 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                              f'The number of records that are affected by breaches or contain high-risk passwords: {weak_count}' +
                              '\nUse \"breachwatch list\" command to get more details' +
                              bcolors.ENDC)
-
-        if params.enterprise_ec_key:
-            SyncSecurityDataCommand().execute(params, record='@all', suppress_no_op=True)
 
         record_count = 0
         valid_versions = {2, 3}
