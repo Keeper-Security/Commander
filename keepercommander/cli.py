@@ -233,8 +233,8 @@ def do_command(params, command_line):
                 if command.is_authorised():
                     if not params.session_token:
                         try:
-                            LoginCommand().execute(params, new_login=False)
-                        except KeyboardInterrupt as e:
+                            LoginCommand().execute(params, email=params.user, password=params.password, new_login=False)
+                        except KeyboardInterrupt:
                             logging.info('Canceled')
                             return
 
@@ -350,7 +350,7 @@ def loop(params):  # type: (KeeperParams) -> int
     if not params.batch_mode:
         if params.user:
             try:
-                LoginCommand().execute(params, new_login=False)
+                LoginCommand().execute(params, email=params.user, password=params.password, new_login=False)
             except KeyboardInterrupt:
                 print('')
             except EOFError:

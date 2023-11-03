@@ -663,8 +663,8 @@ class LoginCommand(Command):
         if new_login:
             params.clear_session()
 
-        user = kwargs.get('email') or params.user or ''
-        password = kwargs.get('password') or params.password or ''
+        user = kwargs.get('email') or ''
+        password = kwargs.get('password') or ''
 
         try:
             if not user:
