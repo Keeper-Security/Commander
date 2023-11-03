@@ -16,3 +16,4 @@ requests
 tabulate
 pyqrcode
 keeper-secrets-manager-core>=16.6.0
+websockets

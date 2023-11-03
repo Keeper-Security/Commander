@@ -9,13 +9,19 @@
 # Contact: sm@keepersecurity.com
 #
 import argparse
+import asyncio
 import json
 import logging
+import queue
+import ssl
+import sys
+import threading
 import os.path
 from datetime import datetime
 from typing import Dict, Optional, Any
 
 import requests
+import websockets
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
 from .base import Command, GroupCommand, dump_report_data, report_output_parser, field_to_title
@@ -31,13 +37,17 @@ from .pam.pam_dto import GatewayActionGatewayInfo, GatewayActionDiscoverInputs, 
     GatewayActionRotateInputs, GatewayAction, GatewayActionJobInfoInputs, \
     GatewayActionJobInfo, GatewayActionJobCancel
 from .pam.router_helper import router_send_action_to_gateway, print_router_response, \
-    router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, get_router_url
+    router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, \
+    get_router_url, router_send_message_to_gateway, get_router_ws_url, get_controller_cookie, request_cookie_jar_to_str
 from .record_edit import RecordEditMixin
-from .. import api, utils, vault_extensions, vault, record_management, attachment, record_facades
+from .tunnel.port_forward import tunnel_connected, endpoint
+from .. import api, utils, vault_extensions, vault, record_management, attachment, record_facades, rest_api, crypto
 from ..display import bcolors
 from ..error import CommandError
+from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..proto import pam_pb2, router_pb2, record_pb2
+from ..proto.APIRequest_pb2 import GetKsmPublicKeysRequest, GetKsmPublicKeysResponse
 from ..subfolder import find_parent_top_folder
 
 
@@ -57,6 +67,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('config', PAMConfigurationsCommand(), 'Manage PAM Configurations', 'c')
         self.register_command('rotation', PAMRotationCommand(), 'Manage Rotations', 'r')
         self.register_command('action', GatewayActionCommand(), 'Execute action on the Gateway', 'a')
+        self.register_command('tunnel', PAMTunnelCommand(), 'Manage Tunnels', 't')
 
 
 class PAMGatewayCommand(GroupCommand):
@@ -69,6 +80,17 @@ class PAMGatewayCommand(GroupCommand):
         # self.register_command('connect', PAMConnect(), 'Connect')
         # self.register_command('disconnect', PAMDisconnect(), 'Disconnect')
         self.default_verb = 'list'
+
+
+class PAMTunnelCommand(GroupCommand):
+
+    def __init__(self):
+        super(PAMTunnelCommand, self).__init__()
+        self.register_command('start', PAMTunnelStartCommand(), 'Start Tunnel', 's')
+        self.register_command('list', PAMTunnelListCommand(), 'List all Tunnels', 'l')
+        self.register_command('stop', PAMTunnelStopCommand(), 'Stop Tunnel to the server', 'x')
+        self.register_command('tail', PAMTunnelTailCommand(), 'View Tunnel Log', 't')
+        # self.default_verb = 'list'
 
 
 class PAMConfigurationsCommand(GroupCommand):
@@ -105,7 +127,6 @@ class GatewayActionCommand(GroupCommand):
         self.register_command('job-cancel', PAMGatewayActionJobCommand(), 'View Job details', 'jc')
 
         # self.register_command('job-list', DRCmdListJobs(), 'List Running jobs')
-        # self.register_command('tunnel', DRTunnelCommand(), 'Tunnel to the server')
 
 
 class PAMCmdListJobs(Command):
@@ -139,7 +160,7 @@ class PAMCreateRecordRotationCommand(Command):
     parser = argparse.ArgumentParser(prog='pam rotation new')
     parser.add_argument('--record',       '-r',  required=True, dest='record_uid', action='store', help='Record UID that will be rotated manually or via schedule')
     parser.add_argument('--config',       '-c',  required=True, dest='config_uid', action='store', help='UID of the PAM Configuration.')
-    parser.add_argument('--resource',     '-rs',  required=False, dest='resource_uid', action='store', help='UID of the resource record.')
+    parser.add_argument('--resource',     '-rs',  required=False, dest='resource_uid', action='store', help='UID of the resource recourd.')
     parser.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data', action='append', help='Json of the scheduler. Example: -sj \'{"type": "WEEKLY", "utcTime": "15:44", "weekday": "SUNDAY", "intervalCount": 1}\'')
     parser.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data', action='append', help='Cron tab string of the scheduler. Example: to run job daily at 5:56PM UTC enter following cron -sc "0 56 17 * * ?"')
     parser.add_argument('--complexity',   '-x',  required=False, dest='pwd_complexity', action='store', help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,5,5')
@@ -1451,38 +1472,6 @@ class PAMGatewayActionDiscoverCommand(Command):
         print_router_response(router_response, conversation_id)
 
 
-class PAMTunnelCommand(Command):
-    parser = argparse.ArgumentParser(prog='dr-tunnel-command')
-    parser.add_argument('--uid', '-u', required=True, dest='record_uid', action='store',
-                        help='UID of the record that has server credentials')
-    parser.add_argument('--destinations', '-d', required=False, dest='destinations', action='store',
-                        help='Controller ID')
-
-    def get_parser(self):
-        return PAMTunnelCommand.parser
-
-    def execute(self, params, **kwargs):
-        record_uid = kwargs.get('record_uid')
-
-        print(f'record_uid = [{record_uid}]')
-
-        if getattr(params, 'ws', None) is None:
-            logging.warning(f'Connection doesn\'t exist. Please connect to the router before executing '
-                            f'actions using following command {bcolors.OKGREEN}dr connect{bcolors.ENDC}')
-            return
-
-        destinations = kwargs.get('destinations', [])
-
-        action = kwargs.get('action', [])
-
-        command_payload = {
-            'action': action,
-            # 'args': command_arr[1:] if len(command_arr) > 1 else []
-            # 'kwargs': kwargs
-        }
-
-        params.ws.send(command_payload, destinations)
-
 class PAMGatewayRemoveCommand(Command):
     dr_remove_controller_parser = argparse.ArgumentParser(prog='dr-remove-gateway')
     dr_remove_controller_parser.add_argument('--gateway', '-g', required=True, dest='gateway',
@@ -1560,166 +1549,424 @@ class PAMCreateGatewayCommand(Command):
             print('-----------------------------------------------')
 
 
-"""
-WS_INIT = {'kind': 'init'}
-WS_LOG_FOLDER = 'dr-logs'
-WS_HEADERS = {
-    'ClientVersion': 'ms16.2.4'
-}
-WS_SERVER_PING_INTERVAL_SEC = 5
 
 
-pam_cmd_parser = argparse.ArgumentParser(prog='dr-cmd')
-pam_cmd_parser.add_argument('--dest', '-d', nargs='*', type=str, action='store', dest='destinations',
-                            help='Destination, usually Controller Client ID')
-pam_cmd_parser.add_argument('command', nargs='*', type=str, action='store', help='Controller command')
 
 
-class PAMConnection:
-    def __init__(self):
-        if not os.path.isdir(WS_LOG_FOLDER):
-            os.makedirs(WS_LOG_FOLDER)
-        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
-        # one log file per opened connection
-        self.ws_log_file = os.path.join(WS_LOG_FOLDER, f'{timestamp}.log')
-        self.ws_app = None
-        self.thread = None
 
-    def connect(self, session_token):
-        try:
-            import websocket
-        except ImportError:
-            logging.warning(f'websocket-client module is missing. '
-                            f'Use following command to install it '
-                            f'`{bcolors.OKGREEN}pip3 install -U websocket-client{bcolors.ENDC}`')
+
+
+
+############################################## TUNNELING ###############################################################
+class PAMTunnelListCommand(Command):
+    pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-list-command')
+    pam_cmd_parser.add_argument('--uid', '-u', required=False, dest='record_uid', action='store',
+                                help='Filter list with UID of the PAM record that was used to create the tunnel')
+    pam_cmd_parser.add_argument('--conversation-id', '-c', required=False, dest='convo_id', action='store',
+                                help='The connection ID of the Tunnel to list')
+
+    pam_cmd_parser.add_argument('--verbose', '-v', required=False, dest='verbose', action='store',
+                                help='Print out more details about the tunnel', default=False, type=bool)
+
+    def get_parser(self):
+        return PAMTunnelListCommand.pam_cmd_parser
+
+    def execute(self, params, **kwargs):
+        def print_thread(thread, verbose):
+            # {"thread": t, "host": host, "port": port, "name": listener_name, "started": datetime.now(),
+            # "record_uid": record_uid}
+            run_time = None
+            hours = 0
+            minutes = 0
+            seconds = 0
+            if thread.get('started'):
+                run_time = datetime.now() - thread.get('started')
+                hours, remainder = divmod(run_time.seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+
+            text_line = f"{bcolors.OKGREEN}Tunnel {thread.get('name', '')} '{thread.get('convo_id', '')}'"
+            text_line += f", Host: {thread.get('host')}" if thread.get('host') else ''
+            text_line += f", Port: {thread.get('port')}" if thread.get('port') else ''
+            text_line += f", Record UID: {thread.get('record_uid')}" if thread.get('record_uid') else ''
+            text_line += f", Up time:"
+            if run_time:
+                text_line += f" days {run_time.days}" if run_time.days > 0 else ''
+                text_line += f" hours {hours}" if hours > 0 or run_time.days > 0 else ''
+            text_line += f" minutes {minutes}"
+            text_line += f" seconds {seconds}"
+            if verbose:
+                text_line += f", Public Key: {thread.get('entrance').gateway_public_key_bytes}"
+            text_line += f"{bcolors.ENDC}"
+            print(text_line)
+
+        convo_id = kwargs.get('convo_id', None)
+        verbose = kwargs.get('verbose', None)
+        record_uid = kwargs.get('record_uid', None)
+
+        if not params.tunnel_threads:
+            logging.warning(f"{bcolors.OKBLUE}No Tunnels running{bcolors.ENDC}")
             return
 
-        headers = WS_HEADERS
-        headers['Authorization'] = f'User {session_token}'
-        self.ws_app = websocket.WebSocketApp(
-            f'{WS_URL}?Auth={session_token}&AuthType=User',
-            header=headers,
-            on_open=self.on_open,
-            on_message=self.on_message,
-            on_error=self.on_error,
-            on_close=self.on_close
-        )
-        self.thread = Thread(target=self.ws_app.run_forever, kwargs={
-            'ping_interval': WS_SERVER_PING_INTERVAL_SEC,
-            # frequency how ofter ping is send to the server to keep the connection alive
-            'ping_payload': 'client-hello'
-        },
-                             daemon=True)
-        self.thread.start()
-
-    def disconnect(self):
-        if self.thread and self.thread.is_alive():
-            self.ws_app.close()
-            self.thread.join()
-
-    def init(self):
-        # self.ws_app.send(json.dumps(WS_INIT))
-        self.log('Connection initialized')
-
-    def log(self, msg, time=True):
-        with open(self.ws_log_file, 'a') as ws_log:
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f ') if time else ''
-            ws_log.write(f'{timestamp}{msg}\n')
-
-    def send(self, command_payload, destination_client_ids=None):
-        data_dict = {}
-
-        data_dict['kind'] = 'command'
-        data_dict['payload'] = command_payload
-
-        if destination_client_ids:
-            # Send only to specified clients, else will send to all clients
-            data_dict['clientIds'] = [destination_client_ids]
-
-        data_json = json.dumps(data_dict)
-
-        self.ws_app.send(data_json)
-        self.log(f'Data sent {data_json}')
-
-    def process_event(self, event):
-        self.log(f'New Event to process [{event}]')
-
-        event_kind = event.get('kind', None)
-
-        if event_kind:
-            if event_kind == 'ctl_state':
-                new_controllers = event['controllers']
-                # dropped = self.controllers - new_controllers
-                self.log(f'Controller state: {new_controllers}')
-            elif event_kind == 'ctl_response':
-                payload = event.get('payload')
-
-                if utils.is_json(payload):
-                    is_success = payload.get('success')
-                    status_message = payload.get('statusMessage')
-                    data = payload['data']
-                    self.log(f'is_success: [{is_success}], status_message: [{status_message}], data: [{data}]')
-
-                else:
-                    data = payload
-                    self.log(f'Guacd response data: [{data}]')
-
+        if convo_id:
+            if convo_id in params.tunnel_threads:
+                print_thread(params.tunnel_threads[convo_id], verbose)
             else:
-                self.log(f'Event: {event}')
+                print(f"{bcolors.FAIL}Tunnel {convo_id} not found{bcolors.ENDC}")
+            return
+
+        if record_uid:
+            # Print out all tunnels for record uid
+            for convo_id in params.tunnel_threads:
+                if params.tunnel_threads[convo_id].get("record_uid", "") == record_uid:
+                    print_thread(params.tunnel_threads[convo_id], verbose)
+                    return
+            print(f"{bcolors.FAIL}Tunnel for record {record_uid} not found{bcolors.ENDC}")
+            return
+
+        for i, convo_id in enumerate(params.tunnel_threads):
+            print_thread(params.tunnel_threads[convo_id], verbose)
+
+
+class PAMTunnelStopCommand(Command):
+    pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-stop-command')
+    pam_cmd_parser.add_argument('--conversation-id', '-c', required=False, dest='convo_id', action='store',
+                                help='The connection ID of the Tunnel to stop')
+
+    def tunnel_cleanup(self, params, convo_id):
+        tunnel_data = params.tunnel_threads.get(convo_id, None)
+        if not tunnel_data:
+            return
+
+        for task_name in ["ws_reader", "ws_writer", "connect"]:
+            task = tunnel_data.get(task_name)
+            if task:
+                task.cancel()
+                print(f"Cancelled {task_name} for {convo_id}")
+
+        del params.tunnel_threads[convo_id]
+        print(f"Cleaned up data for {convo_id}")
+
+        if convo_id in params.tunnel_threads_queue:
+            del params.tunnel_threads_queue[convo_id]
+            print(f"{bcolors.OKBLUE}{convo_id} Queue cleaned up{bcolors.ENDC}")
+
+    def get_parser(self):
+        return PAMTunnelStopCommand.pam_cmd_parser
+
+    def execute(self, params, **kwargs):
+        convo_id = kwargs.get('convo_id')
+        tunnel_data = params.tunnel_threads.get(convo_id, None)
+
+        if tunnel_data is None:
+            print(f"{bcolors.WARNING}No data found for conversation ID {convo_id}{bcolors.ENDC}")
+            return
+
+        # Stop the asyncio event loop
+        loop = tunnel_data.get("loop", None)
+
+        entrance = tunnel_data.get("entrance", None)
+        if loop and entrance and not loop._closed:
+            if loop._closed:
+                print(f"{bcolors.WARNING}Event loop is closed for conversation ID {convo_id}{bcolors.ENDC}")
+            else:
+                # Run the disconnect method in the event loop
+                loop.create_task(entrance.disconnect())
+                print(f"Disconnected entrance for {convo_id}")
+
+        loop.call_soon_threadsafe(self.tunnel_cleanup, params, convo_id)
+
+
+class PAMTunnelTailCommand(Command):
+    pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-tail-command')
+    pam_cmd_parser.add_argument('--conversation-id', '-c', required=False, dest='convo_id', action='store',
+                                help='The connection ID of the Tunnel to tail logs')
+
+    def get_parser(self):
+        return PAMTunnelTailCommand.pam_cmd_parser
+
+    def execute(self, params, **kwargs):
+        convo_id = kwargs.get('convo_id')
+
+        log_queue = params.tunnel_threads_queue.get(convo_id)
+        if log_queue:
+            try:
+                while True:
+                    while not log_queue.empty():
+                        print(f'    {bcolors.OKBLUE}{log_queue.get()}{bcolors.ENDC}')
+            except KeyboardInterrupt:
+                print(f'    {bcolors.WARNING}Exiting tail command{bcolors.ENDC}')
+                return
+
+            except Exception as e:
+                print(f'    {bcolors.WARNING}Exiting due to exception: {e}{bcolors.ENDC}')
+                return
         else:
-            self.log(f'No event kind was sent')
+            print(f'    {bcolors.FAIL}Invalid conversation ID{bcolors.ENDC}')
+            return
 
-            if 'message' in event:
-                logging.warning(event.get('message'))
-            else:
-                logging.warning(str(event))
 
-    def on_open(self, ws):
-        self.log('Connection open')
-        self.init()
+class SocketNotConnectedException(Exception):
+    pass
 
-    def on_message(self, ws, event_json):
-        self.log(f'ws.listener.on_message:{event_json}')
 
+def retrieve_gateway_public_key(gateway_uid, params, api, utils) -> bytes:
+    gateway_uid_bytes = utils.base64_url_decode(gateway_uid)
+    get_ksm_pubkeys_rq = GetKsmPublicKeysRequest()
+    get_ksm_pubkeys_rq.controllerUids.append(gateway_uid_bytes)
+    get_ksm_pubkeys_rs = api.communicate_rest(params, get_ksm_pubkeys_rq, 'vault/get_ksm_public_keys',
+                                              rs_type=GetKsmPublicKeysResponse)
+
+    if len(get_ksm_pubkeys_rs.keyResponses) == 0:
+        # No keys found
+        print(f"{bcolors.FAIL}No keys found for gateway {gateway_uid}{bcolors.ENDC}")
+        return b''
+    try:
+        gateway_public_key_bytes = get_ksm_pubkeys_rs.keyResponses[0].publicKey
+    except Exception as e:
+        # No public key found
+        print(f"{bcolors.FAIL}Error getting public key for gateway {gateway_uid}: {e}{bcolors.ENDC}")
+        gateway_public_key_bytes = b''
+
+    return gateway_public_key_bytes
+
+
+class PAMTunnelStartCommand(Command):
+    pam_cmd_parser = argparse.ArgumentParser(prog='dr-port-forward-command')
+    pam_cmd_parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
+                                help='Used to list all tunnels for the given Gateway UID')
+    pam_cmd_parser.add_argument('--uid', '-u', required=True, dest='record_uid', action='store',
+                                help='Filter list with UID of the PAM record that was used to create the tunnel')
+    pam_cmd_parser.add_argument('--host', '-o', required=False, dest='host', action='store', default=None,
+                                help='The address on which the server will be accepting connections. It could be an '
+                                     'IP address or a hostname. '
+                                     'Ex. if set to 127.0.0.1 then only connections from the same machine will be '
+                                     'accepted. By default, if nothing is set, which means that the server will accept '
+                                     'connections from any IP address.')
+    pam_cmd_parser.add_argument('--port', '-p', required=False, dest='port', action='store',
+                                type=int, default=0,
+                                help='The port number on which the server will be listening for incoming connections. '
+                                     'If not set, random open port on the machine will be used.')
+    pam_cmd_parser.add_argument('--remote-port', '-rp', required=False, dest='rport', action='store',
+                                type=int, default=0,
+                                help='The remote port number to which the traffic will be forwarded.')
+    pam_cmd_parser.add_argument('--listener-name', '-l', required=False, dest='listener_name',
+                                action='store', default="Keeper PAM Tunnel", help='The name of the listener.')
+
+    def get_parser(self):
+        return PAMTunnelStartCommand.pam_cmd_parser
+
+    class QueueHandler(logging.Handler):
+        # Custom logging handler that will put messages into a queue of the tunnel threads
+        def __init__(self, log_queue):
+            super().__init__()
+            self.log_queue = log_queue
+
+        def emit(self, record):
+            log_entry = self.format(record)
+            try:
+                self.log_queue.put_nowait(log_entry)
+            except queue.Full:
+                # If the queue is full, remove the oldest (first) item
+                self.log_queue.get_nowait()
+                # Then add the new log entry
+                self.log_queue.put_nowait(log_entry)
+
+    def setup_logging(self, convo_id, log_queue, logging_level):
+        logger = logging.getLogger(convo_id)
+        logger.setLevel(logging_level)
+        logger.propagate = False
+        queue_handler = self.QueueHandler(log_queue)
+        logger.addHandler(queue_handler)
+        logger.debug("Logging setup complete.")
+        return logger
+
+    def tunnel_cleanup(self, params, convo_id):
+        tunnel_data = params.tunnel_threads.get(convo_id, None)
+        if not tunnel_data:
+            return
+
+        for task_name in ["ws_reader", "ws_writer", "connect"]:
+            task = tunnel_data.get(task_name)
+            if task:
+                task.cancel()
+                print(f"Cancelled {task_name} for {convo_id}")
+
+        del params.tunnel_threads[convo_id]
+        print(f"Cleaned up data for {convo_id}")
+
+        if convo_id in params.tunnel_threads_queue:
+            del params.tunnel_threads_queue[convo_id]
+            print(f"{bcolors.OKBLUE}{convo_id} Queue cleaned up{bcolors.ENDC}")
+
+    async def connect(self, params, record_uid, convo_id, gateway_uid, host, port, listener_name,
+                      log_queue, gateway_public_key_bytes, client_private_key):
+
+        # Setup custom logging to put logs into log_queue
+        logger = self.setup_logging(convo_id, log_queue, logging.getLogger().getEffectiveLevel())
+
+        transmission_key = utils.generate_aes_key()
+        server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
+
+        if params.rest_context.server_key_id < 7:
+            encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
+        else:
+            encrypted_transmission_key = crypto.encrypt_ec(transmission_key, server_public_key)
+        encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
+        router_url = get_router_ws_url(params)
+        connection_url = (f'{router_url}/api/user/tunnel/{convo_id}'
+                          f'?Authorization=KeeperUser%20'
+                          f'{CommonHelperMethods.bytes_to_url_safe_str(encrypted_session_token)}'
+                          f'&TransmissionKey={CommonHelperMethods.bytes_to_url_safe_str(encrypted_transmission_key)}')
+
+        print("--> 1. CONNECT TO WS --------")
+        cookies = get_controller_cookie(params, gateway_uid)
+        cookie_str = request_cookie_jar_to_str(cookies)
+
+        extra_headers = {
+            'Cookie': cookie_str,
+        }
+
+        ssl_context = ssl.SSLContext()
+        ssl_context.verify_mode = ssl.CERT_NONE
+
+        logging.basicConfig(level=logging.DEBUG)
+
+        entrance_ws = await websockets.connect(connection_url, ping_interval=10, extra_headers=extra_headers)
+
+        print("--> 2. SEND START MESSAGE OVER REST TO GATEWAY")
+
+        payload_dict = {
+            'kind': 'start',
+            'conversationType': 'tunnel',
+            'value': {'listenerName': listener_name, "recordUid": record_uid}
+        }
+
+        payload_json = json.dumps(payload_dict, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+        payload_bytes = payload_json.encode('utf-8')
+
+        rq_proto = router_pb2.RouterControllerMessage()
+        rq_proto.messageUid = url_safe_str_to_bytes(convo_id)
+        rq_proto.controllerUid = url_safe_str_to_bytes(gateway_uid)
+        rq_proto.messageType = pam_pb2.CMT_STREAM
+        rq_proto.streamResponse = False
+        rq_proto.payload = payload_bytes
+        rq_proto.timeout = 1500000  # Default time out how long the response from the Gateway should be
+
+        rs = router_send_message_to_gateway(
+            params,
+            transmission_key,
+            rq_proto,
+            gateway_uid,
+            cookies)
+
+        if b'No socket connection exist to start streaming.' in rs.content:
+            raise SocketNotConnectedException(f"Commander didn't connect to right instance of the router to connect to "
+                                              f'the Controller: {rs.content}')
+
+        tunnel = tunnel_connected.ConnectedTunnel(entrance_ws)
+        entrance = endpoint.TunnelProtocol(tunnel, endpoint_name=listener_name, logger=logger, gateway_uid=gateway_uid,
+                                           gateway_public_key_bytes=gateway_public_key_bytes,
+                                           client_private_key=client_private_key)
+
+        t1 = asyncio.create_task(tunnel.ws_reader())
+        t2 = asyncio.create_task(tunnel.ws_writer())
+        t3 = asyncio.create_task(entrance.connect(host=host, port=port))
+        params.tunnel_threads[convo_id].update({"ws_reader": t1, "ws_writer": t2, "connect": t3, "entrance": entrance})
+
+        print("--> 3. START LISTENING FOR MESSAGES FROM GATEWAY --------")
+        await asyncio.gather(t1, t2, t3)
+
+        self.tunnel_cleanup(params, convo_id)
+
+    def pre_connect(self, params, record_uid, convo_id, gateway_uid, host, port, listener_name,
+                    gateway_public_key_bytes, client_private_key):
+        loop = None
         try:
-            event = json.loads(event_json)
-        except json.decoder.JSONDecodeError:
-            self.log(f'Raw event: {event_json}')
-        else:
-            self.process_event(event)
-
-    def on_error(self, ws, error_event):
-        self.log(f'ws.listener.on_error:{error_event}')
-
-    def on_close(self, ws, close_status_code, close_msg):
-        self.log(f'ws.listener.on_close: close_status_code=[{close_status_code}], close_msg=[{close_msg}]')
-
-
-class PAMConnect(Command):
-    parser = argparse.ArgumentParser(prog='pam gateway connect')
-    def get_parser(self):
-        return PAMConnect.parser
-
-    def execute(self, params, **kwargs):
-        if getattr(params, 'ws', None) is None:
-            params.ws = PAMConnection()
-            params.ws.connect(params.session_token)
-            logging.info(f'Connected {params.config["device_token"]}')
-        else:
-            logging.warning('Connection exists')
-
-
-class PAMDisconnect(Command):
-    parser = argparse.ArgumentParser(prog='dr-disconnect')
-
-    def get_parser(self):
-        return PAMDisconnect.parser
+            loop = asyncio.new_event_loop()
+            params.tunnel_threads[convo_id].update({"loop": loop})
+            asyncio.set_event_loop(loop)
+            output_queue = queue.Queue(maxsize=500)
+            params.tunnel_threads_queue[convo_id] = output_queue
+            loop.run_until_complete(
+                self.connect(
+                    params=params,
+                    record_uid=record_uid,
+                    convo_id=convo_id,
+                    gateway_uid=gateway_uid,
+                    host=host,
+                    port=port,
+                    listener_name=listener_name,
+                    log_queue=output_queue,
+                    gateway_public_key_bytes=gateway_public_key_bytes,
+                    client_private_key=client_private_key
+                )
+            )
+        except asyncio.CancelledError:
+            print(f"{bcolors.OKBLUE}Tasks for convo_id {convo_id} were cancelled.{bcolors.ENDC}")
+        except SocketNotConnectedException as es:
+            print(f"{bcolors.FAIL}An exception occurred in pre_connect for convo_id {convo_id}: {es}{bcolors.ENDC}")
+        except Exception as e:
+            print(f"{bcolors.FAIL}An exception occurred in pre_connect for convo_id {convo_id}: {e}{bcolors.ENDC}")
+        finally:
+            if loop:
+                loop.call_soon_threadsafe(self.tunnel_cleanup, params, convo_id)
+                print(f"{bcolors.OKBLUE}Cleanup called for connection {convo_id}.{bcolors.ENDC}")
 
     def execute(self, params, **kwargs):
-        if getattr(params, 'ws', None) is None:
-            logging.warning("Connection doesn't exist")
-        else:
-            params.ws.disconnect()
-            params.ws = None
-"""
+        version = [3, 11, 0]
+        # Check for Python 3.11+
+        major_version = sys.version_info.major
+        minor_version = sys.version_info.minor
+        micro_version = sys.version_info.micro
+
+        if (major_version, minor_version, micro_version) <= (version[0], version[1], version[2]):
+            print(f"{bcolors.FAIL}This code requires Python {version[0]}.{version[1]}.{version[2]} or higher. "
+                  f"You are using {major_version}.{minor_version}.{micro_version}.{bcolors.ENDC}")
+            return
+
+        record_uid = kwargs.get('record_uid')
+        convo_id = GatewayAction.generate_conversation_id()
+        params.tunnel_threads[convo_id] = {}
+        gateway_uid = kwargs.get('gateway')
+        host = kwargs.get('host')
+        port = kwargs.get('port')
+        listener_name = kwargs.get('listener_name')
+
+        gateway_public_key_bytes = retrieve_gateway_public_key(gateway_uid, params, api, utils)
+
+        # TODO remove debug code
+        print("PUBLIC KEY FOUND: ", gateway_public_key_bytes)
+
+        record = params.record_cache.get(record_uid)
+        if not record:
+            print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
+            return
+
+        record_dict = json.loads(record.get('data_unencrypted').decode('utf-8'))
+        if not record_dict:
+            print(f"{bcolors.FAIL}Record {record_uid} has no data.{bcolors.ENDC}")
+            return
+        elif record_dict.get('type') not in 'pamMachine pamDatabase'.split():
+            print(f"{bcolors.FAIL}Wrong type of record.{bcolors.ENDC}")
+            return
+
+        # TODO: for now use custom params from the record to get client private key
+        client_private_key = ""
+        custom_params = record_dict.get('custom', [])
+        if custom_params:
+            for p in custom_params:
+                label = p.get('label')
+                if label is not None:
+                    lower_label = str.lower(label)
+                    if 'client' in lower_label and 'private' in lower_label and 'key' in lower_label:
+                        client_private_key = p.get('value')[0]
+                        break
+
+        t = threading.Thread(target=self.pre_connect, args=(params, record_uid, convo_id, gateway_uid, host, port,
+                                                            listener_name, gateway_public_key_bytes, client_private_key)
+                             )
+        t.start()
+        params.tunnel_threads[convo_id].update({"convo_id": convo_id, "thread": t, "host": host, "port": port,
+                                                "name": listener_name, "started": datetime.now(),
+                                                "record_uid": record_uid})
