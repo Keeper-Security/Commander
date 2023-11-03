@@ -4,10 +4,7 @@ import unittest
 import hashlib
 import hmac
 import ssl
-from asyncio import StreamWriter, IncompleteReadError
 from unittest import mock
-from unittest.mock import call
-
 from cryptography.utils import int_to_bytes
 from keeper_secrets_manager_core.utils import bytes_to_base64
 
@@ -113,8 +110,8 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
 
         self.pte.connections[1][1].write.assert_called_with(b'some_data')
         self.pte.connections[1][1].drain.assert_called_once()
-        self.assertTrue(self.pte.logger.method_calls[3] == (call.debug('Endpoint TestEndpoint: Forwarding private data '
-                                                            'to local for connection 1 (9)')))
+        self.assertTrue(self.pte.logger.method_calls[3] == (mock.call.debug('Endpoint TestEndpoint: Forwarding private '
+                                                                            'data to local for connection 1 (9)')))
 
     async def test_forward_data_to_local_error(self):
         self.pte.tls_reader = mock.MagicMock(spec=asyncio.StreamReader)
@@ -245,7 +242,7 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(self.pte.is_connected)
 
     async def test_perform_ssl_handshakes_success(self):
-        self.pte.tls_writer = mock.MagicMock(spec=StreamWriter)
+        self.pte.tls_writer = mock.MagicMock(spec=asyncio.StreamWriter)
         self.pte.logger = mock.MagicMock()
         with mock.patch('ssl.create_default_context') as mock_ssl_context:
             mock_context = mock.MagicMock()
@@ -258,13 +255,14 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
             self.pte.logger.debug.assert_called_with('Endpoint TestEndpoint: TLS connection established successfully.')
 
     async def test_perform_ssl_handshakes_start_tls_exception(self):
-        self.pte.tls_writer = mock.MagicMock(spec=StreamWriter)
-        self.pte.tls_writer.start_tls.side_effect = IncompleteReadError(b'', 1)  # Pass bytes as the first argument
+        self.pte.tls_writer = mock.MagicMock(spec=asyncio.StreamWriter)
+        # Pass bytes as the first argument
+        self.pte.tls_writer.start_tls.side_effect = asyncio.IncompleteReadError(b'', 1)
         with mock.patch('ssl.create_default_context') as mock_ssl_context:
             mock_context = mock.MagicMock()
             mock_ssl_context.return_value = mock_context
 
-            with self.assertRaises(IncompleteReadError):
+            with self.assertRaises(asyncio.IncompleteReadError):
                 await self.pte.perform_ssl_handshakes()
 
     async def test_perform_ssl_handshakes_load_verify_locations_exception(self):
@@ -293,7 +291,7 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
 
     # Test Server Hostname Mismatch
     async def test_perform_ssl_handshakes_hostname_mismatch(self):
-        self.pte.tls_writer = mock.MagicMock(spec=StreamWriter)
+        self.pte.tls_writer = mock.MagicMock(spec=asyncio.StreamWriter)
         self.pte.tls_writer.start_tls.side_effect = ssl.SSLCertVerificationError("Hostname mismatch")
         with mock.patch('ssl.create_default_context') as mock_ssl_context:
             mock_context = mock.MagicMock()
@@ -353,10 +351,10 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
             # Assert that send_control_message was called with ControlMessage.Ping three times
             # and then with ControlMessage.CloseConnection
             expected_calls = [
-                call(ControlMessage.Ping),
-                call(ControlMessage.Ping),
-                call(ControlMessage.Ping),
-                call(ControlMessage.CloseConnection, int.to_bytes(1, CONNECTION_NO_LENGTH, byteorder='big'))
+                mock.call(ControlMessage.Ping),
+                mock.call(ControlMessage.Ping),
+                mock.call(ControlMessage.Ping),
+                mock.call(ControlMessage.CloseConnection, int.to_bytes(1, CONNECTION_NO_LENGTH, byteorder='big'))
             ]
             mock_send_control_message.assert_has_calls(expected_calls)
 

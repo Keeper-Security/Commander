@@ -8,7 +8,7 @@ from keepercommander.commands.tunnel.port_forward.endpoint import (generate_rand
 class TestVerifyTLSCertificate(unittest.TestCase):
     # TODO: Test that the TLS certificate is verified correctly when we figure it out
     def test_verify_tls_certificate(self):
-        pass
+        self.assertTrue(False)
 
 
 class TestFindOpenPort(unittest.TestCase):

@@ -16,7 +16,6 @@ from typing import Optional, Dict, Tuple
 
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat._oid import NameOID
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -117,24 +116,6 @@ def generate_secure_self_signed_cert(private_key_str: str) -> (bytes, bytes):
         password=None,
         backend=default_backend()
     )
-    #
-    # subject = issuer = x509.Name([
-    #     x509.NameAttribute(NameOID.COMMON_NAME, u"localhost"),
-    # ])
-    # cert = (
-    #     x509.CertificateBuilder()
-    #     .subject_name(subject)
-    #     .issuer_name(issuer)
-    #     .public_key(private_key.public_key())
-    #     .serial_number(x509.random_serial_number())
-    #     .not_valid_before(datetime.datetime.utcnow())
-    #     .not_valid_after(
-    #         # Our certificate will be valid for 10 days
-    #         datetime.datetime.utcnow() + datetime.timedelta(days=10)
-    #     )
-    #     .sign(private_key, hashes.SHA256(), default_backend())
-    # )
-    # cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode('utf-8')
 
     # Define subject and issuer
     subject = issuer = x509.Name([
