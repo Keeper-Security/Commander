@@ -1,14 +1,54 @@
+import datetime
 import socket
 import string
 import unittest
 from unittest import mock
+
+from cryptography import x509
+from cryptography.hazmat._oid import NameOID
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import ec
+
 from keepercommander.commands.tunnel.port_forward.endpoint import (generate_random_bytes, find_open_port)
 
 
-class TestVerifyTLSCertificate(unittest.TestCase):
-    # TODO: Test that the TLS certificate is verified correctly when we figure it out
-    def test_verify_tls_certificate(self):
-        pass
+def generate_self_signed_cert(private_key):
+    # Generate a self-signed certificate
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, u"localhost"),
+    ])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime.utcnow())
+        .not_valid_after(
+            # Our certificate will be valid for 10 days
+            datetime.datetime.utcnow() + datetime.timedelta(days=10)
+        )
+        .sign(private_key, hashes.SHA256(), default_backend())
+    )
+    cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode('utf-8')
+
+    return cert_pem
+
+
+def new_private_key():
+    # Generate an EC private key
+    private_key = ec.generate_private_key(
+        ec.SECP256R1(),  # Using P-256 curve
+        backend=default_backend()
+    )
+    # Serialize to PEM format
+    private_key_str = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption()
+    ).decode('utf-8')
+    return private_key, private_key_str
 
 
 class TestFindOpenPort(unittest.TestCase):
@@ -58,7 +98,7 @@ class TestFindOpenPort(unittest.TestCase):
     def test_socket_exception(self):
         # Test that the function handles exceptions other than OSError gracefully
         with mock.patch('socket.socket.bind', side_effect=Exception("Test exception")):
-            open_port = find_open_port([])
+            open_port = find_open_port([], start_port=49152, end_port=49153, host='localhost')
             self.assertIsNone(open_port)
 
     def test_tried_ports(self):

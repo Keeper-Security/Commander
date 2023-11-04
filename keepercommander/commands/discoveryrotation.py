@@ -22,6 +22,9 @@ from typing import Dict, Optional, Any
 
 import requests
 import websockets
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
 from .base import Command, GroupCommand, dump_report_data, report_output_parser, field_to_title
@@ -1566,8 +1569,8 @@ class PAMTunnelListCommand(Command):
     pam_cmd_parser.add_argument('--conversation-id', '-c', required=False, dest='convo_id', action='store',
                                 help='The connection ID of the Tunnel to list')
 
-    pam_cmd_parser.add_argument('--verbose', '-v', required=False, dest='verbose', action='store',
-                                help='Print out more details about the tunnel', default=False, type=bool)
+    pam_cmd_parser.add_argument('--verbose', '-v', required=False, dest='verbose', action='store_true',
+                                help='Print out more details about the tunnel')
 
     def get_parser(self):
         return PAMTunnelListCommand.pam_cmd_parser
@@ -1601,7 +1604,10 @@ class PAMTunnelListCommand(Command):
             print(text_line)
 
         convo_id = kwargs.get('convo_id', None)
-        verbose = kwargs.get('verbose', None)
+        if kwargs.get('verbose'):
+            verbose = True
+        else:
+            verbose = False
         record_uid = kwargs.get('record_uid', None)
 
         if not params.tunnel_threads:
@@ -1642,14 +1648,14 @@ class PAMTunnelStopCommand(Command):
             task = tunnel_data.get(task_name)
             if task:
                 task.cancel()
-                print(f"Cancelled {task_name} for {convo_id}")
+                logging.debug(f"Cancelled {task_name} for {convo_id}")
 
         del params.tunnel_threads[convo_id]
-        print(f"Cleaned up data for {convo_id}")
+        logging.debug(f"Cleaned up data for {convo_id}")
 
         if convo_id in params.tunnel_threads_queue:
             del params.tunnel_threads_queue[convo_id]
-            print(f"{bcolors.OKBLUE}{convo_id} Queue cleaned up{bcolors.ENDC}")
+            logging.debug(f"{bcolors.OKBLUE}{convo_id} Queue cleaned up{bcolors.ENDC}")
 
     def get_parser(self):
         return PAMTunnelStopCommand.pam_cmd_parser
@@ -1747,9 +1753,6 @@ class PAMTunnelStartCommand(Command):
                                 type=int, default=0,
                                 help='The port number on which the server will be listening for incoming connections. '
                                      'If not set, random open port on the machine will be used.')
-    pam_cmd_parser.add_argument('--remote-port', '-rp', required=False, dest='rport', action='store',
-                                type=int, default=0,
-                                help='The remote port number to which the traffic will be forwarded.')
     pam_cmd_parser.add_argument('--listener-name', '-l', required=False, dest='listener_name',
                                 action='store', default="Keeper PAM Tunnel", help='The name of the listener.')
 
@@ -1830,8 +1833,6 @@ class PAMTunnelStartCommand(Command):
         ssl_context = ssl.SSLContext()
         ssl_context.verify_mode = ssl.CERT_NONE
 
-        logging.basicConfig(level=logging.DEBUG)
-
         entrance_ws = await websockets.connect(connection_url, ping_interval=10, extra_headers=extra_headers)
 
         print("--> 2. SEND START MESSAGE OVER REST TO GATEWAY")
@@ -1865,13 +1866,13 @@ class PAMTunnelStartCommand(Command):
                                               f'the Controller: {rs.content}')
 
         tunnel = tunnel_connected.ConnectedTunnel(entrance_ws)
-        entrance = endpoint.TunnelProtocol(tunnel, endpoint_name=listener_name, logger=logger, gateway_uid=gateway_uid,
+        entrance = endpoint.TunnelProtocol(tunnel, endpoint_name=listener_name, logger=logger,
                                            gateway_public_key_bytes=gateway_public_key_bytes,
-                                           client_private_key=client_private_key)
+                                           client_private_key=client_private_key, host=host, port=port)
 
         t1 = asyncio.create_task(tunnel.ws_reader())
         t2 = asyncio.create_task(tunnel.ws_writer())
-        t3 = asyncio.create_task(entrance.connect(host=host, port=port))
+        t3 = asyncio.create_task(entrance.connect())
         params.tunnel_threads[convo_id].update({"ws_reader": t1, "ws_writer": t2, "connect": t3, "entrance": entrance})
 
         print("--> 3. START LISTENING FOR MESSAGES FROM GATEWAY --------")
@@ -1903,11 +1904,11 @@ class PAMTunnelStartCommand(Command):
                 )
             )
         except asyncio.CancelledError:
-            print(f"{bcolors.OKBLUE}Tasks for convo_id {convo_id} were cancelled.{bcolors.ENDC}")
+            print(f"{bcolors.WARNING}Tasks for connection {convo_id} were cancelled.{bcolors.ENDC}")
         except SocketNotConnectedException as es:
-            print(f"{bcolors.FAIL}An exception occurred in pre_connect for convo_id {convo_id}: {es}{bcolors.ENDC}")
+            print(f"{bcolors.FAIL}An exception occurred in pre_connect for connection {convo_id}: {es}{bcolors.ENDC}")
         except Exception as e:
-            print(f"{bcolors.FAIL}An exception occurred in pre_connect for convo_id {convo_id}: {e}{bcolors.ENDC}")
+            print(f"{bcolors.FAIL}An exception occurred in pre_connect for connection {convo_id}: {e}{bcolors.ENDC}")
         finally:
             if loop:
                 loop.call_soon_threadsafe(self.tunnel_cleanup, params, convo_id)
@@ -1929,42 +1930,46 @@ class PAMTunnelStartCommand(Command):
         convo_id = GatewayAction.generate_conversation_id()
         params.tunnel_threads[convo_id] = {}
         gateway_uid = kwargs.get('gateway')
-        host = kwargs.get('host')
-        port = kwargs.get('port')
+        host = kwargs.get('host', "127.0.0.1")
+        port = kwargs.get('port', 0)
         listener_name = kwargs.get('listener_name')
 
         gateway_public_key_bytes = retrieve_gateway_public_key(gateway_uid, params, api, utils)
 
-        # TODO remove debug code
-        print("PUBLIC KEY FOUND: ", gateway_public_key_bytes)
-
-        record = params.record_cache.get(record_uid)
-        if not record:
+        api.sync_down(params)
+        record = vault.KeeperRecord.load(params, record_uid)
+        if not isinstance(record, vault.TypedRecord):
             print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
             return
 
-        record_dict = json.loads(record.get('data_unencrypted').decode('utf-8'))
-        if not record_dict:
-            print(f"{bcolors.FAIL}Record {record_uid} has no data.{bcolors.ENDC}")
-            return
-        elif record_dict.get('type') not in 'pamMachine pamDatabase'.split():
-            print(f"{bcolors.FAIL}Wrong type of record.{bcolors.ENDC}")
-            return
-
         # TODO: for now use custom params from the record to get client private key
-        client_private_key = ""
-        custom_params = record_dict.get('custom', [])
-        if custom_params:
-            for p in custom_params:
-                label = p.get('label')
-                if label is not None:
-                    lower_label = str.lower(label)
-                    if 'client' in lower_label and 'private' in lower_label and 'key' in lower_label:
-                        client_private_key = p.get('value')[0]
-                        break
+        client_private_key = record.get_typed_field('secret', "Client Private Key")
+        if not client_private_key:
+            # Generate an EC private key
+            # TODO: maybe try to use keeper method to generate key
+            # private_key, _ = crypto.generate_ec_key()
+            # client_private_key_value = crypto.unload_ec_private_key(private_key).decode('utf-8')
+            private_key = ec.generate_private_key(
+                ec.SECP256R1(),  # Using P-256 curve
+                backend=default_backend()
+            )
+            # Serialize to PEM format
+            client_private_key_value = private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption()
+            ).decode('utf-8')
+            client_private_key = vault.TypedField.new_field('secret',
+                                                            client_private_key_value,"Client Private Key")
+            record.custom.append(client_private_key)
+            record_management.update_record(params, record)
+            api.sync_down(params)
+        else:
+            client_private_key_value = client_private_key.get_default_value(str)
 
         t = threading.Thread(target=self.pre_connect, args=(params, record_uid, convo_id, gateway_uid, host, port,
-                                                            listener_name, gateway_public_key_bytes, client_private_key)
+                                                            listener_name, gateway_public_key_bytes,
+                                                            client_private_key_value)
                              )
         t.start()
         params.tunnel_threads[convo_id].update({"convo_id": convo_id, "thread": t, "host": host, "port": port,
