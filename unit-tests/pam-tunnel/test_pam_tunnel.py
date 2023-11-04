@@ -1,14 +1,79 @@
+import datetime
 import socket
 import string
 import unittest
 from unittest import mock
-from keepercommander.commands.tunnel.port_forward.endpoint import (generate_random_bytes, find_open_port)
+
+from cryptography import x509
+from cryptography.hazmat._oid import NameOID
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import ec
+
+from keepercommander.commands.tunnel.port_forward.endpoint import (generate_random_bytes, find_open_port,
+                                                                   verify_tls_certificate)
+
+
+def generate_self_signed_cert(private_key):
+    # Generate a self-signed certificate
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, u"localhost"),
+    ])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime.utcnow())
+        .not_valid_after(
+            # Our certificate will be valid for 10 days
+            datetime.datetime.utcnow() + datetime.timedelta(days=10)
+        )
+        .sign(private_key, hashes.SHA256(), default_backend())
+    )
+    cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode('utf-8')
+
+    return cert_pem
+
+
+def new_private_key():
+    # Generate an EC private key
+    private_key = ec.generate_private_key(
+        ec.SECP256R1(),  # Using P-256 curve
+        backend=default_backend()
+    )
+    # Serialize to PEM format
+    private_key_str = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption()
+    ).decode('utf-8')
+    return private_key, private_key_str
 
 
 class TestVerifyTLSCertificate(unittest.TestCase):
     # TODO: Test that the TLS certificate is verified correctly when we figure it out
+    def setUp(self):
+        self.private_key, self.private_key_str = new_private_key()
+        self.public_cert = generate_self_signed_cert(self.private_key)
+
     def test_verify_tls_certificate(self):
-        pass
+        # Test that the TLS certificate is verified correctly
+        public_key = self.private_key.public_key()
+        trusted = verify_tls_certificate(self.public_cert,
+                                         public_key.public_bytes(encoding=serialization.Encoding.X962,
+                                                                 format=serialization.PublicFormat.UncompressedPoint))
+        self.assertTrue(trusted)
+
+    def test_failed_verify_tls_certificates(self):
+        # Test that the TLS certificate is verified correctly
+        new_private, private_key_str = new_private_key()
+        public_key = new_private.public_key()
+        trusted = verify_tls_certificate(self.public_cert,
+                                         public_key.public_bytes(encoding=serialization.Encoding.X962,
+                                                                 format=serialization.PublicFormat.UncompressedPoint))
+        self.assertFalse(trusted)
 
 
 class TestFindOpenPort(unittest.TestCase):

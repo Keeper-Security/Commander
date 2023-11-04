@@ -1935,9 +1935,6 @@ class PAMTunnelStartCommand(Command):
 
         gateway_public_key_bytes = retrieve_gateway_public_key(gateway_uid, params, api, utils)
 
-        # TODO remove debug code
-        print("PUBLIC KEY FOUND: ", gateway_public_key_bytes)
-
         record = params.record_cache.get(record_uid)
         if not record:
             print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
