@@ -1,20 +1,17 @@
 import asyncio
-import hashlib
-import hmac
 import logging
-import ssl
+import socket
 import sys
 import unittest
 
+from aiortc import RTCDataChannel
 from cryptography.utils import int_to_bytes
-from keeper_secrets_manager_core.utils import bytes_to_base64
 from keepercommander import utils
 from keepercommander.commands.tunnel.port_forward.endpoint import (PrivateTunnelEntrance, ControlMessage,
                                                                    CONTROL_MESSAGE_NO_LENGTH, CONNECTION_NO_LENGTH,
-                                                                   HMACHandshakeFailedException,
-                                                                   ConnectionNotFoundException, generate_random_bytes,
+                                                                   ConnectionNotFoundException,
                                                                    TERMINATOR, DATA_LENGTH)
-from test_pam_tunnel import generate_self_signed_cert, new_private_key
+from test_pam_tunnel import new_private_key
 from unittest import mock
 
 
@@ -25,43 +22,41 @@ if sys.version_info >= (3, 11):
             self.event = asyncio.Event()
             self.host = 'localhost'
             self.port = 8080
-            self.public_tunnel_port = 8081
             self.endpoint_name = 'TestEndpoint'
 
             self.private_key, self.private_key_str = new_private_key()
-            self.cert = generate_self_signed_cert(self.private_key)
             self.logger = mock.MagicMock(spec=logging)
             self.kill_server_event = asyncio.Event()
             self.tunnel_symmetric_key = utils.generate_aes_key()
+            self.data_channel = mock.MagicMock(sepc=RTCDataChannel)
+            self.data_channel.readyState = 'open'
+            self.incoming_queue = mock.MagicMock(sepc=asyncio.Queue())
             self.pte = PrivateTunnelEntrance(
-                self.event, self.host, self.port, self.public_tunnel_port,
-                self.endpoint_name, self.cert, self.kill_server_event, self.logger, self.tunnel_symmetric_key
+                self.event, self.host, self.port, self.endpoint_name, self.kill_server_event, self.data_channel,
+                self.incoming_queue, self.logger
             )
+
+        async def set_queue_side_effect(self):
+            data = b'some_data'
+
+            async def mock_incoming_queue_get():
+                # First yield
+                yield b'\x00\x00\x00\x01' + int.to_bytes(len(data), DATA_LENGTH, byteorder='big') + data + TERMINATOR
+                # Second yield
+                yield None
+
+            # Now use an iterator of this coroutine function as the side effect
+            self.pte.incoming_queue.get.side_effect = mock_incoming_queue_get().__anext__
 
         async def asyncTearDown(self):
             await self.pte.stop_server()  # ensure the server is stopped after test
-
-        async def test_perform_hmac_handshake(self):
-            self.pte.tls_writer = mock.MagicMock(spec=asyncio.StreamWriter)
-            # Mock asyncio.open_connection
-            self.pte.tls_reader = mock.MagicMock(spec=asyncio.StreamReader)
-            self.pte.logger = mock.MagicMock()
-
-            # Set side effect for read method
-            message = generate_random_bytes()
-            calculated_hmac = hmac.new(self.tunnel_symmetric_key, message, hashlib.sha256).digest()
-            self.pte.tls_reader.read.side_effect = [message + b'\n' + bytes_to_base64(calculated_hmac).encode(), b'Authenticated\n']
-
-            await self.pte.perform_hmac_handshakes(message)
-            self.pte.logger.debug.assert_called_with('Endpoint TestEndpoint: Connection to forwarder accepted')
 
         async def test_send_control_message(self):
             # Initialize self.pte.tls_writer with a mock object
             self.pte.tls_writer = mock.MagicMock(spec=asyncio.StreamWriter)
 
             # Mock write and drain methods
-            with mock.patch.object(self.pte.tls_writer, 'write', new_callable=mock.AsyncMock) as mock_write, \
-                 mock.patch.object(self.pte.tls_writer, 'drain', new_callable=mock.AsyncMock) as mock_drain:
+            with mock.patch.object(self.pte.data_channel, 'send', new_callable=mock.AsyncMock) as mock_send:
 
                 # Define the control message and optional data
                 control_message = ControlMessage.Ping
@@ -78,8 +73,7 @@ if sys.version_info >= (3, 11):
                 expected_data += optional_data + TERMINATOR
 
                 # Assertions
-                mock_write.assert_called_once_with(expected_data)
-                mock_drain.assert_called_once()
+                mock_send.assert_called_once_with(expected_data)
 
         async def test_send_control_message_with_error(self):
             # Initialize self.pte.tls_writer with a mock object
@@ -87,7 +81,7 @@ if sys.version_info >= (3, 11):
             self.pte.logger = mock.MagicMock()
 
             # Set side effect to raise an exception
-            self.pte.tls_writer.drain.side_effect = Exception("Mocked Exception")
+            self.pte.data_channel.send.side_effect = Exception("Mocked Exception")
 
             # Define the control message and optional data
             control_message = ControlMessage.Ping
@@ -104,13 +98,12 @@ if sys.version_info >= (3, 11):
             self.pte.logger.error.assert_called_once_with(expected_error_message)
 
         async def test_forward_data_to_local_normal(self):
-            self.pte.tls_reader = mock.MagicMock(spec=asyncio.StreamReader)
-            data = b'some_data'
-            self.pte.tls_reader.read.side_effect = [b'\x00\x00\x00\x01' +
-                                                    int.to_bytes(len(data), DATA_LENGTH, byteorder='big') +
-                                                    data + TERMINATOR, None]
+            await self.set_queue_side_effect()
+
             self.pte.connections = {1: (None, mock.MagicMock(spec=asyncio.StreamWriter))}
             self.pte.logger = mock.MagicMock()
+            self.pte.kill_server_event = mock.MagicMock(spec=asyncio.Event)
+            self.pte.kill_server_event.is_set.side_effect = [False, False, True]
 
             await self.pte.forward_data_to_local()
 
@@ -120,20 +113,17 @@ if sys.version_info >= (3, 11):
                                                                                 'data to local for connection 1 (9)')))
 
         async def test_forward_data_to_local_error(self):
-            self.pte.tls_reader = mock.MagicMock(spec=asyncio.StreamReader)
-            self.pte.tls_writer = mock.MagicMock(spec=asyncio.StreamWriter)
-            data = b'some_data'
-            self.pte.tls_reader.read.side_effect = [b'\x00\x00\x00\x01' +
-                                                    int.to_bytes(len(data), DATA_LENGTH, byteorder='big') +
-                                                    data + TERMINATOR, None]
-            self.pte.connections = {1: (None, self.pte.tls_writer)}
+            await self.set_queue_side_effect()
+            self.pte.connections = {1: (None, mock.MagicMock(spec=asyncio.StreamWriter))}
             self.pte.logger = mock.MagicMock()
-            self.pte.tls_writer.write.side_effect = Exception("Some error")
+            self.pte.kill_server_event = mock.MagicMock(spec=asyncio.Event)
+            self.pte.kill_server_event.is_set.side_effect = [False, False, True]
+            self.pte.connections[1][1].write.side_effect = Exception("Some error")
 
             await self.pte.forward_data_to_local()
 
-            self.pte.logger.error.assert_called_with("Endpoint TestEndpoint: Error while sending private control message: "
-                                                     "Some error")
+            self.pte.logger.error.assert_called_with("Endpoint TestEndpoint: Error while forwarding private data to "
+                                                     "local: Some error")
 
         async def test_process_close_connection_message(self):
             with mock.patch.object(self.pte, 'close_connection', new_callable=mock.AsyncMock) as mock_close:
@@ -144,7 +134,10 @@ if sys.version_info >= (3, 11):
         async def test_process_pong_message(self):
             self.pte.logger = mock.MagicMock()
             await self.pte.process_control_message(ControlMessage.Pong, b'')
-            self.pte.logger.debug.assert_called_with('Endpoint TestEndpoint: Received private pong request')
+            expected_calls = [
+                mock.call('Endpoint TestEndpoint: Received private pong request')
+            ]
+            self.pte.logger.debug.assert_has_calls(expected_calls)
             self.assertEqual(self.pte._ping_attempt, 0)
             self.assertTrue(self.pte.is_connected)
 
@@ -155,188 +148,107 @@ if sys.version_info >= (3, 11):
                 self.pte.logger.debug.assert_called_with('Endpoint TestEndpoint: Received private ping request')
                 mock_send.assert_called_with(ControlMessage.Pong)
 
-        async def test_start_tls_reader(self):
-            with mock.patch('asyncio.open_connection', new_callable=mock.AsyncMock) as mock_open_connection, \
-                 mock.patch.object(self.pte, 'start_server', new_callable=mock.AsyncMock) as mock_start_server:
-                await self.pte.start_tls_reader()
-                mock_open_connection.assert_called_with('localhost', self.public_tunnel_port)
+        async def test_start_server(self):
+            with mock.patch('asyncio.start_server', new_callable=mock.AsyncMock) as mock_open_connection, \
+                 mock.patch.object(self.pte, 'handle_connection', new_callable=mock.AsyncMock) as mock_handle_connection:
+                await self.pte.start_server(mock.AsyncMock(spec=asyncio.Event), mock.AsyncMock(spec=asyncio.Event),
+                                            mock.AsyncMock(spec=asyncio.Event))
+                mock_open_connection.assert_called_with(mock_handle_connection, family=socket.AF_INET,
+                                                        host='localhost', port=self.port)
 
-        async def test_start_tls_reader_normal(self):
-            with mock.patch('asyncio.open_connection', new_callable=mock.AsyncMock) as mock_open_connection, \
-                    mock.patch.object(self.pte, 'perform_hmac_handshakes', new_callable=mock.AsyncMock) as mock_hmac, \
-                    mock.patch.object(self.pte, 'perform_ssl_handshakes', new_callable=mock.AsyncMock) as mock_ssl, \
-                    mock.patch.object(self.pte, 'send_control_message', new_callable=mock.AsyncMock) as mock_send, \
-                    mock.patch.object(self.pte, 'forward_data_to_local', new_callable=mock.AsyncMock) as mock_forward:
-                mock_open_connection.return_value = (mock.MagicMock(), mock.MagicMock())
-                mock_hmac.return_value = mock.MagicMock()
-                mock_ssl.return_value = mock.MagicMock()
+        async def test_start_server_normal(self):
+            with mock.patch('asyncio.start_server', new_callable=mock.AsyncMock) as mock_open_connection, \
+                    mock.patch.object(self.pte, 'print_ready', new_callable=mock.AsyncMock) as print_ready:
+                mock_open_connection.return_value = mock.MagicMock(spec=asyncio.Server)
 
                 self.pte.logger = mock.MagicMock()
 
-                await self.pte.start_tls_reader()
+                await self.pte.start_server(mock.AsyncMock(spec=asyncio.Event), mock.AsyncMock(spec=asyncio.Event),
+                                            mock.AsyncMock(spec=asyncio.Event))
 
-                mock_send.assert_called_with(ControlMessage.Ping)
-                self.pte.logger.debug.assert_called_with('Endpoint TestEndpoint: Sent private ping message to TLS server')
-                mock_forward.assert_called_once()
+                print_ready.assert_called_once()
 
-        async def test_start_tls_reader_connection_refused_error(self):
-            with mock.patch('asyncio.open_connection', new_callable=mock.AsyncMock) as mock_open_connection, \
+        async def test_start_server_connection_refused_error(self):
+            with mock.patch('asyncio.start_server', new_callable=mock.AsyncMock) as mock_start_server, \
                     mock.patch.object(self.pte, 'stop_server', new_callable=mock.AsyncMock) as mock_stop:
-                mock_open_connection.side_effect = ConnectionRefusedError
+                mock_start_server.side_effect = ConnectionRefusedError
                 self.pte.logger = mock.MagicMock()
 
-                await self.pte.start_tls_reader()
+                await self.pte.start_server(mock.AsyncMock(), mock.AsyncMock(), mock.AsyncMock())
 
-                self.pte.logger.error.assert_called_with('Endpoint TestEndpoint: TLS Connection refused. '
-                                                         'Ensure the server is running.')
+                self.pte.logger.error.assert_called_with('Endpoint TestEndpoint: Connection Refused while starting '
+                                                         'server: ')
                 mock_stop.assert_called()
-                self.assertFalse(self.pte.is_connected)
+                self.assertTrue(self.pte.server is None)
 
-        async def test_start_tls_reader_timeout_error(self):
-            with mock.patch('asyncio.open_connection', new_callable=mock.AsyncMock) as mock_open_connection, \
+        async def test_start_server_timeout_error(self):
+            with mock.patch('asyncio.start_server', new_callable=mock.AsyncMock) as mock_start_server, \
                     mock.patch.object(self.pte, 'stop_server', new_callable=mock.AsyncMock) as mock_stop:
-                mock_open_connection.side_effect = TimeoutError
+                mock_start_server.side_effect = TimeoutError
                 self.pte.logger = mock.MagicMock()
 
-                await self.pte.start_tls_reader()
+                await self.pte.start_server(mock.AsyncMock(), mock.AsyncMock(), mock.AsyncMock())
 
-                self.pte.logger.error.assert_called_with('Endpoint TestEndpoint: TLS Connection timed out. '
-                                                         'Check the server and network.')
+                self.pte.logger.error.assert_called_with('Endpoint TestEndpoint: OS Error while starting server: ')
                 mock_stop.assert_called()
-                self.assertFalse(self.pte.is_connected)
+                self.assertTrue(self.pte.server is None)
 
-        async def test_start_tls_reader_os_error(self):
-            with mock.patch('asyncio.open_connection', new_callable=mock.AsyncMock) as mock_open_connection, \
+        async def test_start_server_os_error(self):
+            with mock.patch('asyncio.start_server', new_callable=mock.AsyncMock) as mock_start_server, \
                     mock.patch.object(self.pte, 'stop_server', new_callable=mock.AsyncMock) as mock_stop:
-                mock_open_connection.side_effect = OSError("Some OS Error")
+                mock_start_server.side_effect = OSError("Some OS Error")
                 self.pte.logger = mock.MagicMock()
 
-                await self.pte.start_tls_reader()
+                await self.pte.start_server(mock.AsyncMock(), mock.AsyncMock(), mock.AsyncMock())
 
-                self.pte.logger.error.assert_called_with('Endpoint TestEndpoint: TLS Error connecting: Some OS Error')
+                self.pte.logger.error.assert_called_with('Endpoint TestEndpoint: OS Error while starting server: '
+                                                         'Some OS Error')
                 mock_stop.assert_called()
-                self.assertFalse(self.pte.is_connected)
+                self.assertTrue(self.pte.server is None)
 
-        async def test_start_tls_reader_hmac_handshake_failed(self):
-            with mock.patch('asyncio.open_connection', new_callable=mock.AsyncMock) as mock_open_connection, \
-                    mock.patch.object(self.pte, 'stop_server', new_callable=mock.AsyncMock) as mock_stop, \
-                    mock.patch.object(self.pte, 'perform_hmac_handshakes', new_callable=mock.AsyncMock) as mock_hmac:
-                mock_open_connection.return_value = (mock.MagicMock(), mock.MagicMock())
-                mock_hmac.side_effect = HMACHandshakeFailedException("HMAC Failed")
-                self.pte.logger = mock.MagicMock()
-
-                await self.pte.start_tls_reader()
-
-                self.pte.logger.error.assert_called_with('Endpoint TestEndpoint: HMAC Handshake failed: HMAC Failed')
-                mock_stop.assert_called()
-                self.assertFalse(self.pte.is_connected)
-
-        async def test_start_tls_reader_generic_exception(self):
-            with mock.patch('asyncio.open_connection', new_callable=mock.AsyncMock) as mock_open_connection, \
-                    mock.patch.object(self.pte, 'perform_hmac_handshakes', new_callable=mock.AsyncMock) as mock_hmac, \
-                    mock.patch.object(self.pte, 'close_connection', new_callable=mock.AsyncMock) as mock_close, \
+        async def test_start_server_generic_exception(self):
+            with mock.patch('asyncio.start_server', new_callable=mock.AsyncMock) as mock_start_server, \
                     mock.patch.object(self.pte, 'stop_server', new_callable=mock.AsyncMock) as mock_stop:
-                mock_open_connection.return_value = (mock.MagicMock(), mock.MagicMock())
-                mock_hmac.side_effect = Exception("Some generic exception")
+                mock_start_server.side_effect = Exception("Some generic exception")
                 self.pte.logger = mock.MagicMock()
 
-                await self.pte.start_tls_reader()
+                await self.pte.start_server(mock.AsyncMock(), mock.AsyncMock(), mock.AsyncMock())
 
-                self.pte.logger.error.assert_called_with('Endpoint TestEndpoint: Error while establishing TLS connection: '
+                self.pte.logger.error.assert_called_with('Endpoint TestEndpoint: Error while starting server: '
                                                          'Some generic exception')
                 mock_stop.assert_called()
-                self.assertFalse(self.pte.is_connected)
-
-        async def test_perform_ssl_handshakes_success(self):
-            self.pte.tls_writer = mock.MagicMock(spec=asyncio.StreamWriter)
-            self.pte.logger = mock.MagicMock()
-            with mock.patch('ssl.SSLContext') as mock_ssl_context:
-                mock_context = mock.MagicMock()
-                mock_ssl_context.return_value = mock_context
-
-                await self.pte.perform_ssl_handshakes()
-
-                mock_context.load_verify_locations.assert_called_with(cadata=self.pte.server_public_cert)
-                self.pte.tls_writer.start_tls.assert_called_with(mock_context, server_hostname='localhost')
-                self.pte.logger.debug.assert_called_with('Endpoint TestEndpoint: TLS connection established successfully.')
-
-        async def test_perform_ssl_handshakes_start_tls_exception(self):
-            self.pte.tls_writer = mock.MagicMock(spec=asyncio.StreamWriter)
-            # Pass bytes as the first argument
-            self.pte.tls_writer.start_tls.side_effect = asyncio.IncompleteReadError(b'', 1)
-            with mock.patch('ssl.create_default_context') as mock_ssl_context:
-                mock_context = mock.MagicMock()
-                mock_ssl_context.return_value = mock_context
-
-                with self.assertRaises(asyncio.IncompleteReadError):
-                    await self.pte.perform_ssl_handshakes()
-
-        async def test_perform_ssl_handshakes_load_verify_locations_exception(self):
-            with mock.patch('ssl.SSLContext', new_callable=mock.MagicMock) as MockSSLContext:
-                # No need to specify spec here, as MockSSLContext is already a mock of ssl.SSLContext
-                mock_context = MockSSLContext.return_value
-
-                # Set the side effect for the load_verify_locations method
-                mock_context.load_verify_locations.side_effect = FileNotFoundError
-
-                self.pte.tls_writer = mock.MagicMock(spec=asyncio.StreamWriter)
-                # Mock asyncio.open_connection
-                self.pte.tls_reader = mock.MagicMock(spec=asyncio.StreamReader)
-
-                with self.assertRaises(FileNotFoundError):
-                    await self.pte.perform_ssl_handshakes()
-
-        # Test SSL Context Creation Failure
-        async def test_perform_ssl_handshakes_context_failure(self):
-            with mock.patch('ssl.create_default_context', side_effect=Exception("Context Error")):
-                with self.assertRaises(Exception):
-                    await self.pte.perform_ssl_handshakes()
-
-        # Test Certificate Loading Failure
-        async def test_perform_ssl_handshakes_cert_failure(self):
-            with mock.patch('ssl.create_default_context') as mock_ssl_context:
-                mock_context = mock.MagicMock()
-                mock_context.load_verify_locations.side_effect = Exception("Cert Error")
-                mock_ssl_context.return_value = mock_context
-                with self.assertRaises(Exception):
-                    await self.pte.perform_ssl_handshakes()
-
-        # Test Server Hostname Mismatch
-        async def test_perform_ssl_handshakes_hostname_mismatch(self):
-            self.pte.tls_writer = mock.MagicMock(spec=asyncio.StreamWriter)
-            self.pte.tls_writer.start_tls.side_effect = ssl.SSLCertVerificationError("Hostname mismatch")
-            with mock.patch('ssl.create_default_context') as mock_ssl_context:
-                mock_context = mock.MagicMock()
-                mock_ssl_context.return_value = mock_context
-                with self.assertRaises(ssl.SSLCertVerificationError):
-                    await self.pte.perform_ssl_handshakes()
+                self.assertTrue(self.pte.server is None)
 
         # Test Successful Data Forwarding
         async def test_forward_data_to_tunnel_success(self):
-            async def read_side_effect_gen(*args, **kwargs):
-                yield b'hello world'
-                while True:
+
+            async def read_side_effect_gen():
+                yield b'hello world'  # First yield the required data
+                while True:  # Then keep the coroutine alive without yielding further
                     await asyncio.sleep(1)
 
             # Create an instance of the generator
             read_gen = read_side_effect_gen()
 
-            # Define the side effect function to use the generator
+            # Define an async function to handle the generator
             async def read_side_effect(*args, **kwargs):
-                return await read_gen.__anext__()
+                return await read_gen.asend(None)  # Use 'asend' to forward any args/kwargs if necessary
 
+            # Mock StreamReader and set the side effect to the new async function
             mock_reader = mock.AsyncMock(spec=asyncio.StreamReader)
             mock_reader.read.side_effect = read_side_effect
-            self.pte.tls_writer = mock.AsyncMock(spec=asyncio.StreamWriter)
-            self.pte.connections[1] = (mock_reader, self.pte.tls_writer)
+
+            self.pte.connections[1] = (mock_reader, mock.AsyncMock(spec=asyncio.StreamWriter))
+
+            self.pte.kill_server_event = mock.MagicMock(spec=asyncio.Event)
+            self.pte.kill_server_event.is_set.side_effect = [False, False, True]
 
             # Run the task and wait for it to complete
             task = asyncio.create_task(self.pte.forward_data_to_tunnel(1))
-            await asyncio.sleep(0.1)  # Give some time for the task to run
+            await asyncio.sleep(.01)  # Give some time for the task to run
             task.cancel()  # Cancel the task to stop it from running indefinitely
 
-            self.pte.tls_writer.write.assert_called()
-            self.pte.tls_writer.drain.assert_called()
+            self.pte.data_channel.send.assert_called_with(b'\x00\x00\x00\x01\x00\x00\x00\x0bhello world;')
 
         # Test Connection Not Found
         async def test_forward_data_to_tunnel_no_connection(self):
@@ -347,6 +259,8 @@ if sys.version_info >= (3, 11):
 
         # Test Timeout Error
         async def test_forward_data_to_tunnel_timeout_error(self):
+
+            await self.set_queue_side_effect()
             async def read_side_effect(*args, **kwargs):
                 raise asyncio.TimeoutError()
 
@@ -363,9 +277,6 @@ if sys.version_info >= (3, 11):
                 # Assert that send_control_message was called with ControlMessage.Ping three times
                 # and then with ControlMessage.CloseConnection
                 expected_calls = [
-                    mock.call(ControlMessage.Ping),
-                    mock.call(ControlMessage.Ping),
-                    mock.call(ControlMessage.Ping),
                     mock.call(ControlMessage.CloseConnection, int.to_bytes(1, CONNECTION_NO_LENGTH, byteorder='big'))
                 ]
                 mock_send_control_message.assert_has_calls(expected_calls)
@@ -413,18 +324,6 @@ if sys.version_info >= (3, 11):
                 with self.assertRaises(Exception):
                     await self.pte.handle_connection(mock_reader, mock_writer)
 
-        # Test start_server
-        async def test_start_server(self):
-            with mock.patch('asyncio.start_server', new_callable=mock.AsyncMock) as mock_start_server:
-                await self.pte.start_server(mock.AsyncMock(), mock.AsyncMock(), mock.AsyncMock())
-                mock_start_server.assert_called()
-
-        # Test start_server with Exception
-        async def test_start_server_exception(self):
-            with mock.patch('asyncio.start_server', side_effect=Exception("Test Exception")):
-                with self.assertRaises(Exception):
-                    await self.pte.start_server(mock.AsyncMock(), mock.AsyncMock(), mock.AsyncMock())
-
         # Test print_not_ready
         async def test_print_not_ready(self):
             with mock.patch.object(self.pte, 'send_control_message',
@@ -449,7 +348,7 @@ if sys.version_info >= (3, 11):
                 await self.pte.print_ready('localhost', 8080, forwarder_event, private_tunnel_event)
 
             # Check if logger.debug was called
-            self.pte.logger.debug.assert_called_with("Endpoint TestEndpoint: Timed out waiting for forwarder to start")
+            self.pte.logger.debug.assert_called_with("Endpoint TestEndpoint: Timed out waiting for private tunnel to start")
             # Check if print was called (optional)
             mock_print_not_ready.assert_called()
 

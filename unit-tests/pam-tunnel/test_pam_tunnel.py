@@ -10,8 +10,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from keepercommander.commands.tunnel.port_forward.endpoint import (generate_random_bytes, find_open_port,
-                                                                   verify_tls_certificate)
+from keepercommander.commands.tunnel.port_forward.endpoint import (generate_random_bytes, find_open_port)
 
 
 def generate_self_signed_cert(private_key):
@@ -50,30 +49,6 @@ def new_private_key():
         encryption_algorithm=serialization.NoEncryption()
     ).decode('utf-8')
     return private_key, private_key_str
-
-
-class TestVerifyTLSCertificate(unittest.TestCase):
-    # TODO: Test that the TLS certificate is verified correctly when we figure it out
-    def setUp(self):
-        self.private_key, self.private_key_str = new_private_key()
-        self.public_cert = generate_self_signed_cert(self.private_key)
-
-    def test_verify_tls_certificate(self):
-        # Test that the TLS certificate is verified correctly
-        public_key = self.private_key.public_key()
-        trusted = verify_tls_certificate(self.public_cert,
-                                         public_key.public_bytes(encoding=serialization.Encoding.X962,
-                                                                 format=serialization.PublicFormat.UncompressedPoint))
-        self.assertTrue(trusted)
-
-    def test_failed_verify_tls_certificates(self):
-        # Test that the TLS certificate is verified correctly
-        new_private, private_key_str = new_private_key()
-        public_key = new_private.public_key()
-        trusted = verify_tls_certificate(self.public_cert,
-                                         public_key.public_bytes(encoding=serialization.Encoding.X962,
-                                                                 format=serialization.PublicFormat.UncompressedPoint))
-        self.assertFalse(trusted)
 
 
 class TestFindOpenPort(unittest.TestCase):
@@ -123,10 +98,9 @@ class TestFindOpenPort(unittest.TestCase):
     def test_socket_exception(self):
         # Test that the function handles exceptions other than OSError gracefully
         with mock.patch('socket.socket.bind', side_effect=Exception("Test exception")):
-            with self.assertRaises(Exception):
-                _ = find_open_port([])
+            open_port = find_open_port([], start_port=49152, end_port=49153, host='localhost')
+            self.assertIsNone(open_port)
 
-    @unittest.skip("broken")
     def test_tried_ports(self):
         # Setup
         self.in_use_ports = {50000, 50001}  # These ports are in use
