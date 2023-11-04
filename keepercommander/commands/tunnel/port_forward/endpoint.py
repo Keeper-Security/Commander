@@ -12,11 +12,10 @@ import ssl
 import string
 import tempfile
 import time
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Any, List, Union, Sequence
 
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat._oid import NameOID
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -55,7 +54,7 @@ class ControlMessage(enum.IntEnum):
     CloseConnection = 102
 
 
-def track_round_trip_latency(round_trip_latency: list, ping_time: float) -> list[float]:
+def track_round_trip_latency(round_trip_latency, ping_time):  # type: (List[Any], float) -> List[float]
     time_now = time.perf_counter()
     if len(round_trip_latency) >= LATENCY_COUNT:
         round_trip_latency.pop(0)
@@ -66,12 +65,12 @@ def track_round_trip_latency(round_trip_latency: list, ping_time: float) -> list
     return round_trip_latency
 
 
-def calc_round_trip_latency_average(round_trip_latency) -> float:
+def calc_round_trip_latency_average(round_trip_latency):  # type: (Sequence[Union[float, int]]) -> float
     return sum(round_trip_latency) / len(round_trip_latency)
     # self.logger.debug(f'Endpoint {self.endpoint_name}: Private round trip latency average: {average_latency}')
 
 
-def generate_random_bytes(pass_length: int = 32) -> bytes:
+def generate_random_bytes(pass_length=32):  # type: (int) -> bytes
     # Generate random bytes without worrying about character decoding
     random_bytes = secrets.token_bytes(pass_length)
 
@@ -89,7 +88,7 @@ def generate_random_bytes(pass_length: int = 32) -> bytes:
     return filtered_bytes
 
 
-def generate_secure_self_signed_cert(private_key_str: str) -> (bytes, bytes):
+def generate_secure_self_signed_cert(private_key_str):   # type: (str) -> Tuple[bytes, bytes]
     """
     Generate a secure self-signed certificate, possibly using an existing private key.
     :param private_key_str: PEM-formatted private key as a string.
@@ -170,8 +169,9 @@ def generate_secure_self_signed_cert(private_key_str: str) -> (bytes, bytes):
     return cert_pem, private_key_pem
 
 
-def create_client_ssl_context(server_public_cert_pem: str, client_cert_pem: Optional[bytes] = None,
-                              client_private_key_pem: Optional[bytes] = None):
+def create_client_ssl_context(server_public_cert_pem,
+                              client_cert_pem=None,
+                              client_private_key_pem=None):  # type(str, Optional[bytes], Optional[bytes]) -> None
     """
     Create a client-side SSL context.
 
@@ -358,8 +358,13 @@ class TunnelProtocol(abc.ABC):
                               User closes the public tunnel
       16. The User closes the public tunnel and everything is cleaned up, and we can start back at step 1
     """
-    def __init__(self, tunnel: ITunnel, endpoint_name: Optional[str] = None, logger: logging.Logger = None,
-                 gateway_uid: str = None, gateway_public_key_bytes: bytes = None, client_private_key: str = ""):
+    def __init__(self, tunnel,                    # type: ITunnel
+                 endpoint_name = None,            # type: Optional[str]
+                 logger = None,                   # type: logging.Logger
+                 gateway_uid = None,              # type: str
+                 gateway_public_key_bytes = None, # type: bytes
+                 client_private_key = ""          # type: str
+                 ):                               # type: (...) -> None
         self.server_cert = None
         self._round_trip_latency = []
         self.ping_time = None
@@ -519,7 +524,7 @@ class TunnelProtocol(abc.ABC):
 
         await self.disconnect()
 
-    async def _send_to_tunnel(self, connection_no: int, data: bytes) -> None:
+    async def _send_to_tunnel(self, connection_no, data):  # type: (int, bytes) -> None
         buffer = int.to_bytes(connection_no, CONNECTION_NO_LENGTH, byteorder='big')
         buffer += int.to_bytes(len(data), DATA_LENGTH, byteorder='big')
         buffer += data + TERMINATOR
@@ -569,7 +574,7 @@ class TunnelProtocol(abc.ABC):
         await self.send_control_message(ControlMessage.CloseConnection)
         self.logger.debug(f'Endpoint {self.endpoint_name}: closed')
 
-    async def process_control_message(self, message_no: ControlMessage, data: bytes):
+    async def process_control_message(self, message_no, data):  # type: (ControlMessage, bytes) -> None
         if message_no == ControlMessage.Ping:
             logging.debug(f'Endpoint {self.endpoint_name}: Received ping request')
             logging.debug(f'Endpoint {self.endpoint_name}: Send pong request')
@@ -692,9 +697,14 @@ class PlainTextForwarder:
     The private tunnel locally connects to "localhost:port" that this server is listening on but this forwards the data
     to the TLS server on the gateway allowing the TLS connection to be made.
     """
-    def __init__(self, forwarder_event: asyncio.Event, public_tunnel_port: int, logger: logging.Logger,
-                 out_going_queue: asyncio.Queue, incoming_queue: asyncio.Queue, kill_sever_event: asyncio.Event,
-                 tunnel_symmetric_key: bytes = None):
+    def __init__(self, forwarder_event,       # type: asyncio.Event
+                 public_tunnel_port,          # type: int
+                 logger,                      # type: logging.Logger
+                 out_going_queue,             # type: asyncio.Queue
+                 incoming_queue,              # type: asyncio.Queue
+                 kill_sever_event,            # type: asyncio.Event
+                 tunnel_symmetric_key = None  # type: bytes
+                 ):                           # type: (...) -> None
         self.forwarder_event = forwarder_event
         self.client_tasks = []
         self.forwarder_server = None
@@ -845,10 +855,18 @@ class PrivateTunnelEntrance:
     Data is broken into three parts: connection number, [message number], and data
     message number is only used in control messages. (if the connection number is 0 then there is a message number)
     """
-    def __init__(self, private_tunnel_event: asyncio.Event, host: str, port: int, public_tunnel_port: int,
-                 endpoint_name, server_public_cert: str, kill_server_event: asyncio.Event,
-                 logger: logging.Logger = None, tunnel_symmetric_key: bytes = None,
-                 client_private_key_pem: bytes = b'', client_public_cert: bytes = b''):
+    def __init__(self,
+                 private_tunnel_event,          # type: asyncio.Event
+                 host,                          # type: str
+                 port,                          # type: int
+                 public_tunnel_port,            # type: int
+                 endpoint_name, server_public_cert,  # type: str
+                 kill_server_event,             # type: asyncio.Event
+                 logger = None,                 # type: logging.Logger
+                 tunnel_symmetric_key = None,   # type: bytes
+                 client_private_key_pem = b'',  # type: bytes
+                 client_public_cert = b''       # type: bytes
+                 ):                             # type: (...) -> None
         self._round_trip_latency = []
         self.ping_time = None
         self.to_local_task = None
@@ -873,7 +891,7 @@ class PrivateTunnelEntrance:
         self.client_private_key_pem = client_private_key_pem
         self.client_public_cert = client_public_cert
 
-    async def send_control_message(self, message_no: ControlMessage, data: Optional[bytes] = None) -> None:
+    async def send_control_message(self, message_no, data = None):  # type: (ControlMessage, Optional[bytes]) -> None
         """
         Packet structure
          Control Message Packets [CONNECTION_NO_LENGTH + DATA_LENGTH + CONTROL_MESSAGE_NO_LENGTH + DATA]
@@ -892,7 +910,7 @@ class PrivateTunnelEntrance:
         except Exception as e:
             self.logger.error(f"Endpoint {self.endpoint_name}: Error while sending private control message: {e}")
 
-    async def process_control_message(self, message_no: ControlMessage, data: bytes) -> None:
+    async def process_control_message(self, message_no, data):  # type: (ControlMessage, Optional[bytes]) -> None
         if message_no == ControlMessage.CloseConnection:
             self.logger.debug(f'Endpoint {self.endpoint_name}: Received private close connection request')
             if data and len(data) > 0:
@@ -1028,7 +1046,7 @@ class PrivateTunnelEntrance:
             self.logger.debug(f"Endpoint {self.endpoint_name}: Closing private tunnel")
             await self.stop_server()
 
-    async def start_tls_reader(self) -> None:
+    async def start_tls_reader(self):   # type: () -> None
         """
         Connect to the TLS server on the gateway.
         Transfer data from TLS connection to local connections.
@@ -1137,7 +1155,7 @@ class PrivateTunnelEntrance:
         await self.tls_writer.start_tls(ssl_context, server_hostname='localhost')
         self.logger.debug(f"Endpoint {self.endpoint_name}: TLS connection established successfully.")
 
-    async def forward_data_to_tunnel(self, con_no) -> None:
+    async def forward_data_to_tunnel(self, con_no):
         """
         Forward data from the given connection to the TLS connection
         """
@@ -1199,7 +1217,7 @@ class PrivateTunnelEntrance:
                                                                                      byteorder='big'))
         await self.close_connection(con_no)
 
-    async def handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def handle_connection(self, reader, writer):  # type: (asyncio.StreamReader, asyncio.StreamWriter) -> None
         """
         This is called when a client connects to the local port starting a new session.
         """
@@ -1214,7 +1232,7 @@ class PrivateTunnelEntrance:
                                         int.to_bytes(connection_no, CONNECTION_NO_LENGTH, byteorder='big'))
 
     @property
-    def port(self) -> int:
+    def port(self):       # type: () -> int
         if self.server and self.server.is_serving():
             ep = next((x for x in self.server.sockets if x.family == socket.AF_INET), None)
             if ep:
@@ -1223,8 +1241,10 @@ class PrivateTunnelEntrance:
             return self._port
         return 0
 
-    async def start_server(self, forwarder_event: asyncio.Event, private_tunnel_event: asyncio.Event,
-                           private_tunnel_started: asyncio.Event) -> None:
+    async def start_server(self, forwarder_event,   # type: asyncio.Event
+                           private_tunnel_event,    # type: asyncio.Event
+                           private_tunnel_started   # type: asyncio.Event
+                           ):                       # type: (...) -> None
         """
         This server is used to listen for client connections to the local port.
         """
@@ -1235,7 +1255,7 @@ class PrivateTunnelEntrance:
             asyncio.create_task(self.print_ready(self.host, self.port, forwarder_event, private_tunnel_event))
             await self.server.serve_forever()
 
-    async def print_not_ready(self) -> None:
+    async def print_not_ready(self):
         print(f'{bcolors.FAIL}+---------------------------------------------------------{bcolors.ENDC}')
         print(f'{bcolors.FAIL}| Endpoint {self.endpoint_name}{bcolors.ENDC} failed to start')
         print(f'{bcolors.FAIL}+---------------------------------------------------------{bcolors.ENDC}')
@@ -1244,8 +1264,11 @@ class PrivateTunnelEntrance:
             await self.close_connection(c)
         await self.stop_server()
 
-    async def print_ready(self, host: str, port: int, forwarder_event: asyncio.Event,
-                          private_tunnel_event: asyncio.Event) -> None:
+    async def print_ready(self, host,           # type: str
+                          port,                 # type: int
+                          forwarder_event,      # type: asyncio.Event
+                          private_tunnel_event  # type: asyncio.Event
+                          ):                    # type: (...) -> None
         """
         pretty prints the endpoint name and host:port after the tunnels are set up
         """
@@ -1276,7 +1299,7 @@ class PrivateTunnelEntrance:
             f'{bcolors.BOLD}{bcolors.OKBLUE}{host}{port}{bcolors.ENDC}')
         print(f'{bcolors.OKGREEN}+---------------------------------------------------------{bcolors.ENDC}')
 
-    async def stop_server(self) -> None:
+    async def stop_server(self):
         try:
             await self.send_control_message(ControlMessage.CloseConnection, int_to_bytes(0))
             if self.server:
@@ -1293,7 +1316,7 @@ class PrivateTunnelEntrance:
         finally:
             self.kill_server_event.set()
 
-    async def close_connection(self, connection_no) -> None:
+    async def close_connection(self, connection_no):
         try:
             await self.send_control_message(ControlMessage.CloseConnection,
                                             int.to_bytes(connection_no, CONNECTION_NO_LENGTH, byteorder='big'))
