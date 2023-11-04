@@ -326,7 +326,7 @@ def router_send_message_to_gateway(params, transmission_key, rq_proto, destinati
         destination_gateway_cookies = get_controller_cookie(params, destination_gateway_uid_str)
 
     if not destination_gateway_cookies:
-        raise Exception('Even thought it seems that the Gateway is online, but Commander was not able to get the '
+        raise Exception('Even though it seems that the Gateway is online, Commander was unable to get the '
                         'cookies to connect to the Gateway')
 
     rs = requests.post(
