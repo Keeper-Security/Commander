@@ -94,6 +94,7 @@ def generate_secure_self_signed_cert(private_key_str):   # type: (str) -> Tuple[
     :param private_key_str: PEM-formatted private key as a string.
     :return: Tuple containing the PEM-formatted certificate and private key
     """
+    # This is the code that generates a new private key
     '''
     # Generate an EC private key
     private_key = ec.generate_private_key(
@@ -116,24 +117,6 @@ def generate_secure_self_signed_cert(private_key_str):   # type: (str) -> Tuple[
         password=None,
         backend=default_backend()
     )
-    #
-    # subject = issuer = x509.Name([
-    #     x509.NameAttribute(NameOID.COMMON_NAME, u"localhost"),
-    # ])
-    # cert = (
-    #     x509.CertificateBuilder()
-    #     .subject_name(subject)
-    #     .issuer_name(issuer)
-    #     .public_key(private_key.public_key())
-    #     .serial_number(x509.random_serial_number())
-    #     .not_valid_before(datetime.datetime.utcnow())
-    #     .not_valid_after(
-    #         # Our certificate will be valid for 10 days
-    #         datetime.datetime.utcnow() + datetime.timedelta(days=10)
-    #     )
-    #     .sign(private_key, hashes.SHA256(), default_backend())
-    # )
-    # cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode('utf-8')
 
     # Define subject and issuer
     subject = issuer = x509.Name([
@@ -804,7 +787,6 @@ class PlainTextForwarder:
 
             client_to_remote = asyncio.create_task(out_going_forward(forwarder_reader))
             remote_to_client = asyncio.create_task(incoming_forward(forwarder_writer))
-            
             self.client_tasks.extend([client_to_remote, remote_to_client])
             self.forwarder_event.set()
         except Exception as e:
