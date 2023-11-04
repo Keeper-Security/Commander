@@ -94,6 +94,7 @@ def generate_secure_self_signed_cert(private_key_str):   # type: (str) -> Tuple[
     :param private_key_str: PEM-formatted private key as a string.
     :return: Tuple containing the PEM-formatted certificate and private key
     """
+    # This is the code that generates a new private key
     '''
     # Generate an EC private key
     private_key = ec.generate_private_key(
@@ -116,24 +117,6 @@ def generate_secure_self_signed_cert(private_key_str):   # type: (str) -> Tuple[
         password=None,
         backend=default_backend()
     )
-    #
-    # subject = issuer = x509.Name([
-    #     x509.NameAttribute(NameOID.COMMON_NAME, u"localhost"),
-    # ])
-    # cert = (
-    #     x509.CertificateBuilder()
-    #     .subject_name(subject)
-    #     .issuer_name(issuer)
-    #     .public_key(private_key.public_key())
-    #     .serial_number(x509.random_serial_number())
-    #     .not_valid_before(datetime.datetime.utcnow())
-    #     .not_valid_after(
-    #         # Our certificate will be valid for 10 days
-    #         datetime.datetime.utcnow() + datetime.timedelta(days=10)
-    #     )
-    #     .sign(private_key, hashes.SHA256(), default_backend())
-    # )
-    # cert_pem = cert.public_bytes(serialization.Encoding.PEM).decode('utf-8')
 
     # Define subject and issuer
     subject = issuer = x509.Name([
@@ -146,8 +129,8 @@ def generate_secure_self_signed_cert(private_key_str):   # type: (str) -> Tuple[
         .issuer_name(issuer) \
         .public_key(private_key.public_key()) \
         .serial_number(x509.random_serial_number()) \
-        .not_valid_before(datetime.datetime.utcnow()) \
-        .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=10))
+        .not_valid_before(datetime.datetime.utcnow() - datetime.timedelta(days=1)) \
+        .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=11))
 
     builder = builder.add_extension(x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.CLIENT_AUTH]), critical=True)
 
@@ -191,23 +174,26 @@ def create_client_ssl_context(server_public_cert_pem,
     # If client's cert and private key are provided, configure mutual TLS
     # TODO: this is a workaround for the case when a custom parameter for the client's private key isn't given
     if client_cert_pem and client_private_key_pem:
-        cert_file = tempfile.NamedTemporaryFile(delete=False)
-        key_file = tempfile.NamedTemporaryFile(delete=False)
+        cert_fd, cert_file_path = tempfile.mkstemp()
+        key_fd, key_file_path = tempfile.mkstemp()
 
         try:
-            # Write the client certificate and private key to temporary files
-            with open(cert_file.name, 'wb') as f:
-                f.write(client_cert_pem)
-            with open(key_file.name, 'wb') as f:
-                f.write(client_private_key_pem)
+            # Write cert and key to the temporary files and close them
+            with os.fdopen(cert_fd, 'w') as cert_file:
+                cert_file.write(bytes_to_string(client_cert_pem))
+            with os.fdopen(key_fd, 'w') as key_file:
+                key_file.write(bytes_to_string(client_private_key_pem))
 
             # Load the client certificate and private key
-            ssl_context.load_cert_chain(certfile=cert_file.name, keyfile=key_file.name)
+            ssl_context.load_cert_chain(certfile=cert_file_path, keyfile=key_file_path)
 
+        except Exception as e:
+            print(f"Error during certificate verification: {e}")
         finally:
-            # Remove the temporary files
-            os.remove(cert_file.name)
-            os.remove(key_file.name)
+            if cert_file_path:
+                os.remove(cert_file_path)
+            if key_file_path:
+                os.remove(key_file_path)
 
     return ssl_context
 
@@ -266,39 +252,26 @@ def find_open_port(tried_ports: [], start_port=49152, end_port=65535, preferred_
     :param preferred_port: A preferred port to check first.
     :return: An open port number or None if no port is found.
     """
-    if preferred_port is not None and preferred_port not in tried_ports:
-        # Check if the preferred port is open
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                # Set the SO_REUSEADDR option
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                s.bind(("0.0.0.0", preferred_port))
-                return preferred_port
-            except OSError:
-                pass  # Port is in use, continue to search
-            except Exception as e:
-                print(e)
-                return None
+    if preferred_port and preferred_port not in tried_ports:
+        if is_port_open(preferred_port):
+            time.sleep(0.1)  # Short delay to ensure port release
+            return preferred_port
 
-    # Iterate over the range of port numbers. +1 to include the end_port
-    available_ports = [port for port in range(start_port, end_port+1) if port not in tried_ports]
-    if len(available_ports) == 0:
-        return None
-    for port in available_ports:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                # Set the SO_REUSEADDR option
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                # Try to bind to the port
-                s.bind(("0.0.0.0", port))
-                # If binding succeeds, return the port number
-                return port
-            except OSError:
-                # If there's an error (port is in use), continue to the next port
-                continue
-            except Exception as e:
-                print(e)
+    for port in range(start_port, end_port):
+        if port not in tried_ports and is_port_open(port):
+            time.sleep(0.1)  # Short delay to ensure port release
+            return port
+
     return None
+
+
+def is_port_open(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
 
 
 class TunnelProtocol(abc.ABC):
@@ -506,7 +479,7 @@ class TunnelProtocol(abc.ABC):
                     raise e
                 self.logger.debug(f'Endpoint {self.endpoint_name}: Tunnel reader timed out')
                 if self._paired:
-                    logging.debug(f'Endpoint {self.endpoint_name}: Send ping request')
+                    self.logger.debug(f'Endpoint {self.endpoint_name}: Send ping request')
                     self.ping_time = time.perf_counter()
                     await self.send_control_message(ControlMessage.Ping)
                 self._ping_attempt += 1
@@ -576,12 +549,12 @@ class TunnelProtocol(abc.ABC):
 
     async def process_control_message(self, message_no, data):  # type: (ControlMessage, bytes) -> None
         if message_no == ControlMessage.Ping:
-            logging.debug(f'Endpoint {self.endpoint_name}: Received ping request')
-            logging.debug(f'Endpoint {self.endpoint_name}: Send pong request')
+            self.logger.debug(f'Endpoint {self.endpoint_name}: Received ping request')
+            self.logger.debug(f'Endpoint {self.endpoint_name}: Send pong request')
             await self.send_control_message(ControlMessage.Pong)
             self._ping_attempt = 0
         elif message_no == ControlMessage.Pong:
-            logging.debug(f'Endpoint {self.endpoint_name}: Received pong request')
+            self.logger.debug(f'Endpoint {self.endpoint_name}: Received pong request')
             self._ping_attempt = 0
             if self.ping_time is not None:
                 self._round_trip_latency = track_round_trip_latency(self._round_trip_latency, self.ping_time)
@@ -651,9 +624,9 @@ class TunnelProtocol(abc.ABC):
                                                             tunnel_symmetric_key=tunnel_symmetric_key)
 
                         self.forwarder_task = asyncio.create_task(self.forwarder.start())
-                        logging.debug(f"started forwarder on port {self.public_tunnel_port}")
+                        self.logger.debug(f"started forwarder on port {self.public_tunnel_port}")
 
-                        logging.debug("starting private tunnel")
+                        self.logger.debug("starting private tunnel")
 
                         self.private_tunnel = PrivateTunnelEntrance(private_tunnel_event=private_tunnel_event,
                                                                     host=self.target_host, port=self.target_port,
@@ -675,7 +648,7 @@ class TunnelProtocol(abc.ABC):
                         serving = self.private_tunnel.server.is_serving() if self.private_tunnel.server else False
 
                         if not serving:
-                            logging.debug(f'Endpoint {self.endpoint_name}: Private tunnel failed to start')
+                            self.logger.debug(f'Endpoint {self.endpoint_name}: Private tunnel failed to start')
                             await self.disconnect()
                             raise Exception('Private tunnel failed to start')
 
@@ -804,7 +777,6 @@ class PlainTextForwarder:
 
             client_to_remote = asyncio.create_task(out_going_forward(forwarder_reader))
             remote_to_client = asyncio.create_task(incoming_forward(forwarder_writer))
-            
             self.client_tasks.extend([client_to_remote, remote_to_client])
             self.forwarder_event.set()
         except Exception as e:
@@ -1146,10 +1118,15 @@ class PrivateTunnelEntrance:
         self.logger.debug(f"Endpoint {self.endpoint_name}: Connection to forwarder accepted")
 
     async def perform_ssl_handshakes(self):
-        ssl_context = create_client_ssl_context(self.server_public_cert, self.client_public_cert,
-                                                self.client_private_key_pem)
+        try:
+            ssl_context = create_client_ssl_context(self.server_public_cert, self.client_public_cert,
+                                                    self.client_private_key_pem)
+        except Exception as e:
+            self.logger.error(f"Endpoint {self.endpoint_name}: Error while loading public cert: {e}")
+            await self.stop_server()
+            raise e
         # Establish a connection to localhost:server_port
-        logging.debug(f"Endpoint {self.endpoint_name}: SSL context made")
+        self.logger.debug(f"Endpoint {self.endpoint_name}: SSL context made")
         # Establish a connection to the TLS server on the gateway
         self.logger.debug(f"Endpoint {self.endpoint_name}: Attempting to establish TLS connection...")
         await self.tls_writer.start_tls(ssl_context, server_hostname='localhost')
@@ -1197,7 +1174,7 @@ class PrivateTunnelEntrance:
                         raise e
                     self.logger.debug(f"Endpoint {self.endpoint_name}: private reader timed out")
                     if self.is_connected:
-                        logging.debug(f"Endpoint {self.endpoint_name}: Send private ping request")
+                        self.logger.debug(f"Endpoint {self.endpoint_name}: Send private ping request")
                         self.ping_time = time.perf_counter()
                         await self.send_control_message(ControlMessage.Ping)
                     self._ping_attempt += 1
