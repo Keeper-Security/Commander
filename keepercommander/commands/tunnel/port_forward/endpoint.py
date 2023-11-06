@@ -94,6 +94,7 @@ def generate_secure_self_signed_cert(private_key_str: str) -> (bytes, bytes):
     :param private_key_str: PEM-formatted private key as a string.
     :return: Tuple containing the PEM-formatted certificate and private key
     """
+    # This is the code that generates a new private key
     '''
     # Generate an EC private key
     private_key = ec.generate_private_key(
@@ -775,7 +776,7 @@ class PlainTextForwarder:
 
             client_to_remote = asyncio.create_task(out_going_forward(forwarder_reader))
             remote_to_client = asyncio.create_task(incoming_forward(forwarder_writer))
-            
+
             self.client_tasks.extend([client_to_remote, remote_to_client])
             self.forwarder_event.set()
         except Exception as e:

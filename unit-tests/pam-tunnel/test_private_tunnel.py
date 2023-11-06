@@ -1,19 +1,20 @@
 import asyncio
-import logging
-import unittest
 import hashlib
 import hmac
+import logging
 import ssl
-from unittest import mock
+import unittest
+
 from cryptography.utils import int_to_bytes
 from keeper_secrets_manager_core.utils import bytes_to_base64
-
 from keepercommander import utils
 from keepercommander.commands.tunnel.port_forward.endpoint import (PrivateTunnelEntrance, ControlMessage,
                                                                    CONTROL_MESSAGE_NO_LENGTH, CONNECTION_NO_LENGTH,
                                                                    HMACHandshakeFailedException,
                                                                    ConnectionNotFoundException, generate_random_bytes,
                                                                    TERMINATOR, DATA_LENGTH)
+from test_pam_tunnel import generate_self_signed_cert, new_private_key
+from unittest import mock
 
 
 class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
@@ -23,7 +24,9 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
         self.port = 8080
         self.public_tunnel_port = 8081
         self.endpoint_name = 'TestEndpoint'
-        self.cert = 'your_cert_here'
+
+        self.private_key, self.private_key_str = new_private_key()
+        self.cert = generate_self_signed_cert(self.private_key)
         self.logger = mock.MagicMock(spec=logging)
         self.kill_server_event = asyncio.Event()
         self.tunnel_symmetric_key = utils.generate_aes_key()
@@ -250,7 +253,7 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
 
             await self.pte.perform_ssl_handshakes()
 
-            mock_context.load_verify_locations.assert_called_with(cadata=self.pte.cert)
+            mock_context.load_verify_locations.assert_called_with(cadata=self.pte.server_public_cert)
             self.pte.tls_writer.start_tls.assert_called_with(mock_context, server_hostname='localhost')
             self.pte.logger.debug.assert_called_with('Endpoint TestEndpoint: TLS connection established successfully.')
 
@@ -267,9 +270,12 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
 
     async def test_perform_ssl_handshakes_load_verify_locations_exception(self):
         with mock.patch('ssl.create_default_context') as mock_ssl_context:
-            mock_context = mock.MagicMock()
-            mock_context.load_verify_locations.side_effect = FileNotFoundError
-            mock_ssl_context.return_value = mock_context
+            mock_context = mock.MagicMock(spec=ssl.SSLContext)
+            mock_ssl_context.return_value.load_verify_locations.side_effect = FileNotFoundError
+
+            self.pte.tls_writer = mock.MagicMock(spec=asyncio.StreamWriter)
+            # Mock asyncio.open_connection
+            self.pte.tls_reader = mock.MagicMock(spec=asyncio.StreamReader)
 
             with self.assertRaises(FileNotFoundError):
                 await self.pte.perform_ssl_handshakes()
