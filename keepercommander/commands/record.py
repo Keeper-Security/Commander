@@ -666,9 +666,9 @@ class RecordListCommand(Command):
                 elif rt == 'file':
                     record_version.update((3, 4))
                     record_type.add('file')
-                elif rt == 'general':
+                elif rt in ('general', 'legacy'):
                     record_version.update((1, 2))
-                if rt == 'pam':
+                elif rt == 'pam':
                     record_version.add(6)
                 else:
                     record_version.update((3, 6))
