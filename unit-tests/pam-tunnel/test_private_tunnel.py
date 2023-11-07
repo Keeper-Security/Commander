@@ -247,7 +247,7 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
     async def test_perform_ssl_handshakes_success(self):
         self.pte.tls_writer = mock.MagicMock(spec=asyncio.StreamWriter)
         self.pte.logger = mock.MagicMock()
-        with mock.patch('ssl.create_default_context') as mock_ssl_context:
+        with mock.patch('ssl.SSLContext') as mock_ssl_context:
             mock_context = mock.MagicMock()
             mock_ssl_context.return_value = mock_context
 
@@ -269,9 +269,12 @@ class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
                 await self.pte.perform_ssl_handshakes()
 
     async def test_perform_ssl_handshakes_load_verify_locations_exception(self):
-        with mock.patch('ssl.create_default_context') as mock_ssl_context:
-            mock_context = mock.MagicMock(spec=ssl.SSLContext)
-            mock_ssl_context.return_value.load_verify_locations.side_effect = FileNotFoundError
+        with mock.patch('ssl.SSLContext', new_callable=mock.MagicMock) as MockSSLContext:
+            # No need to specify spec here, as MockSSLContext is already a mock of ssl.SSLContext
+            mock_context = MockSSLContext.return_value
+
+            # Set the side effect for the load_verify_locations method
+            mock_context.load_verify_locations.side_effect = FileNotFoundError
 
             self.pte.tls_writer = mock.MagicMock(spec=asyncio.StreamWriter)
             # Mock asyncio.open_connection
