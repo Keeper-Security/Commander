@@ -67,7 +67,6 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('config', PAMConfigurationsCommand(), 'Manage PAM Configurations', 'c')
         self.register_command('rotation', PAMRotationCommand(), 'Manage Rotations', 'r')
         self.register_command('action', GatewayActionCommand(), 'Execute action on the Gateway', 'a')
-        self.register_command('tunnel', PAMTunnelCommand(), 'Manage Tunnels', 't')
 
 
 class PAMGatewayCommand(GroupCommand):
@@ -127,6 +126,7 @@ class GatewayActionCommand(GroupCommand):
         self.register_command('job-cancel', PAMGatewayActionJobCommand(), 'View Job details', 'jc')
 
         # self.register_command('job-list', DRCmdListJobs(), 'List Running jobs')
+        # self.register_command('tunnel', DRTunnelCommand(), 'Tunnel to the server')
 
 
 class PAMCmdListJobs(Command):

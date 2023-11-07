@@ -6,9 +6,7 @@ from keeper_secrets_manager_core.utils import bytes_to_base64
 from keepercommander import utils
 from keepercommander.commands.tunnel.port_forward.tunnel import ITunnel
 from keepercommander.commands.tunnel.port_forward.endpoint import (ControlMessage, CONTROL_MESSAGE_NO_LENGTH,
-                                                                   DATA_LENGTH, CONNECTION_NO_LENGTH, TunnelProtocol,
-                                                                   PlainTextForwarder, generate_random_bytes,
-                                                                   TERMINATOR)
+                                                                   DATA_LENGTH, CONNECTION_NO_LENGTH, TunnelProtocol,                                                 TERMINATOR)
 from unittest import mock
 
 

@@ -24,6 +24,7 @@ from typing import Optional, Dict, List
 
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from google.protobuf.json_format import MessageToDict
+from keepercommander.commands.breachwatch import BreachWatchScanCommand
 
 from . import aliases, commands, enterprise_commands, msp_commands
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, GroupCommand, as_boolean
@@ -658,7 +659,9 @@ class LoginCommand(Command):
         return False
 
     def execute(self, params, **kwargs):
-        params.clear_session()
+        new_login = kwargs.get('new_login', True)
+        if new_login:
+            params.clear_session()
 
         user = kwargs.get('email') or ''
         password = kwargs.get('password') or ''
@@ -681,9 +684,16 @@ class LoginCommand(Command):
         params.password = password
 
         try:
-            api.login(params, new_login=True)
+            api.login(params, new_login=new_login)
         except Exception as exc:
             logging.warning(str(exc))
+
+        if params.session_token:
+            SyncDownCommand().execute(params, force=True)
+            if params.breach_watch:
+                BreachWatchScanCommand().execute(params, suppress_no_op=True)
+            if params.enterprise_ec_key:
+                SyncSecurityDataCommand().execute(params, record='@all', suppress_no_op=True)
 
 
 class CheckEnforcementsCommand(Command):

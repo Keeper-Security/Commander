@@ -8,6 +8,7 @@
 # Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
+import bisect
 from typing import Iterator, List, Optional, Union, Dict, Tuple, Set, Iterable
 
 """Import and export functionality."""
@@ -758,14 +759,51 @@ def _import(params, file_format, filename, **kwargs):
             sf.can_share = can_share
             folders.append(sf)
 
+    # shared folder mapping
+    sf_map = {}     # type: Dict[str, str]
+    for shared_folder_uid in params.shared_folder_cache:
+        folder = params.folder_cache.get(shared_folder_uid)
+        if not folder:
+            continue
+        if folder.parent_uid:
+            sf_path = get_folder_path(params, folder.parent_uid)
+            sf_path.strip(PathDelimiter)
+        else:
+            sf_path = ''
+        sf_name = folder.name.strip()
+        if ' - ' in sf_name:
+            sf_from_name = sf_name.replace(' - ', PathDelimiter)
+            sf_to_name = folder.name
+            if sf_path:
+                sf_from_name = sf_path + PathDelimiter + sf_from_name
+                sf_to_name = sf_path + PathDelimiter + sf_to_name
+            sf_map[sf_from_name.lower()] = sf_to_name
+    if len(sf_map) > 0:
+        sf_keys = list(sf_map.keys())
+        sf_keys.sort()
+        for record in records:
+            if isinstance(record.folders, list) and len(record.folders) > 0:
+                for fol in record.folders:
+                    path = fol.domain or ''
+                    if fol.path:
+                        if path:
+                            path += PathDelimiter
+                        path += fol.path
+                    path_l = path.lower()
+                    idx = bisect.bisect_right(sf_keys, path_l)
+                    if 0 <= idx < len(sf_map) and path_l == sf_keys[idx]:
+                        fol.domain = sf_map[path_l]
+                        fol.path = ''
+                    elif 0 < idx <= len(sf_map) and path_l.startswith(sf_keys[idx - 1]):
+                        sf_name = sf_keys[idx - 1]
+                        fol.domain = sf_map[sf_name]
+                        fol.path = (path[len(sf_name):]).strip(PathDelimiter)
+
     folder_add = prepare_folder_add(params, folders, records, manage_users, manage_records, can_edit, can_share)
     if folder_add:
         fol_rs, _ = execute_import_folder_record(params, folder_add, None)
         _ = fol_rs
         sync_down.sync_down(params)
-
-    if files:
-        pass
 
     record_keys = {}
     audit_uids = []
