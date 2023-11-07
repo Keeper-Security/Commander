@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import logging
 import ssl
+import sys
 import unittest
 
 from cryptography.utils import int_to_bytes
@@ -14,9 +15,10 @@ from keepercommander.commands.tunnel.port_forward.endpoint import (PrivateTunnel
                                                                    ConnectionNotFoundException, generate_random_bytes,
                                                                    TERMINATOR, DATA_LENGTH)
 from test_pam_tunnel import generate_self_signed_cert, new_private_key
-from unittest import mock
+from unittest import mock, skipIf
 
 
+@skipIf(sys.version_info <= (3, 11), "requires Python 3.11 or higher")
 class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.event = asyncio.Event()

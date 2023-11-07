@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import hmac
+import sys
 import unittest
 from keeper_secrets_manager_core.utils import bytes_to_base64
 from keepercommander import utils
@@ -9,9 +10,10 @@ from keepercommander.commands.tunnel.port_forward.endpoint import (ControlMessag
                                                                    DATA_LENGTH, CONNECTION_NO_LENGTH, TunnelProtocol,
                                                                    TERMINATOR, PlainTextForwarder,
                                                                    generate_random_bytes)
-from unittest import mock
+from unittest import mock, skipIf
 
 
+@skipIf(sys.version_info <= (3, 11), "requires Python 3.11 or higher")
 class TestPublicTunnel(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
@@ -197,6 +199,7 @@ class TestPublicTunnel(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(mock_send_data.call_count, 2)
 
 
+@skipIf(sys.version_info <= (3, 11), "requires Python 3.11 or higher")
 class TestPlainTextForwarder(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
