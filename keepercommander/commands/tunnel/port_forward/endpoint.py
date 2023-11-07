@@ -1029,11 +1029,7 @@ class PrivateTunnelEntrance:
             self.logger.debug(f"Endpoint {self.endpoint_name}: Closing private tunnel")
             await self.stop_server()
 
-<<<<<<< HEAD
-    async def start_tls_reader(self) -> None:
-=======
     async def start_tls_reader(self):   # type: () -> None
->>>>>>> origin/master
         """
         Connect to the TLS server on the gateway.
         Transfer data from TLS connection to local connections.
