@@ -18,7 +18,7 @@ from test_pam_tunnel import generate_self_signed_cert, new_private_key
 from unittest import mock, skipIf
 
 
-@skipIf(sys.version_info <= (3, 11), "requires Python 3.11 or higher")
+@skipIf(sys.version_info < (3, 11), "requires Python 3.11 or higher")
 class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.event = asyncio.Event()
