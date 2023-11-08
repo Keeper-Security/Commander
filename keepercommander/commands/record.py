@@ -283,7 +283,8 @@ class RecordGetUidCommand(Command):
                     'name': f.name
                 }
                 if isinstance(f, (subfolder.SharedFolderFolderNode, subfolder.SharedFolderNode)):
-                    fo['shared_folder_uid'] = f.shared_folder_uid
+                    fo['shared_folder_uid'] = f.shared_folder_uid if isinstance(f, subfolder.SharedFolderFolderNode) \
+                        else f.uid
                 if f.parent_uid:
                     fo['parent_folder_uid'] = f.parent_uid
                 print(json.dumps(fo, indent=2))
