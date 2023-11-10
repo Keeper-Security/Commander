@@ -23,6 +23,7 @@ from argparse import RawTextHelpFormatter
 from collections import OrderedDict as OD
 from typing import Optional, Any
 from typing import Set, Dict, Union, List
+from datetime import datetime as dt_module
 
 import requests
 from asciitree import LeftAligned
@@ -116,6 +117,7 @@ enterprise_info_parser.add_argument('-u', '--users', dest='users', action='store
 enterprise_info_parser.add_argument('-t', '--teams', dest='teams', action='store_true', help='print team list')
 enterprise_info_parser.add_argument('-r', '--roles', dest='roles', action='store_true', help='print role list')
 enterprise_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
+enterprise_info_parser.add_argument('-q', '--quiet', dest='quiet', action='store_true', help='minimize screen output')
 enterprise_info_parser.add_argument('--node', dest='node', action='store', help='limit results to node (name or ID)')
 enterprise_info_parser.add_argument('--columns', dest='columns', action='store',
                                     help='comma-separated list of available columns per argument:' +
@@ -336,7 +338,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
         return enterprise_info_parser
 
     def execute(self, params, **kwargs):
-        logging.info('Enterprise name: {0}'.format(params.enterprise['enterprise_name']))
+        quiet = kwargs.get('quiet')
+        not quiet and logging.info('Enterprise name: {0}'.format(params.enterprise['enterprise_name']))
 
         user_managed_nodes = set(self.get_user_managed_nodes(params))
         node_scope = set()
@@ -3098,19 +3101,24 @@ class UserReportCommand(EnterpriseCommand):
                 self.teams[team['team_uid']] = team['name']
 
         self.users.clear()
-        if 'users' in params.enterprise:
-            for user in params.enterprise['users']:
-                u = {
-                    'enterprise_user_id': user['enterprise_user_id'],
-                    'node_id': user['node_id'],
-                    'username': user['username'],
-                    'name': user['data'].get('displayname') or '',
-                    'status': user['status'],
-                    'lock': user['lock']
-                }
-                if 'account_share_expiration' in user:
-                    u['account_share_expiration'] = user['account_share_expiration']
-                self.users[user['enterprise_user_id']] = u
+        kw_euid = 'enterprise_user_id'
+        enterprise_users = json.loads(EnterpriseInfoCommand().execute(params, users=True, format='json', quiet=True))
+
+        def get_user_info(user):
+            u = {
+                'enterprise_user_id': user.get('enterprise_user_id'),
+                'node_id': user.get('node_id'),
+                'username': user.get('username'),
+                'name': user.get('data', {}).get('displayname') or '',
+                'status': user.get('status'),
+                'lock': user.get('lock')
+            }
+            if 'account_share_expiration' in user:
+                u['account_share_expiration'] = user['account_share_expiration']
+            return u
+        euids = {u.get('user_id') for u in enterprise_users}
+        users_cache_filtered = {u.get(kw_euid): u for u in params.enterprise.get('users', []) if u.get(kw_euid) in euids}
+        self.users = {k: get_user_info(u) for k, u in users_cache_filtered.items()}
 
         self.user_roles.clear()
         if 'role_users' in params.enterprise:
@@ -3157,10 +3165,14 @@ class UserReportCommand(EnterpriseCommand):
             report_rows = rs['audit_event_overview_report_rows']
             last_login.update({row.get('username', '').lower(): row.get('last_created') for row in report_rows})
 
+        get_fmt_dt = lambda x: dt_module.utcfromtimestamp(x).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
         for user in self.users.values():
             key = user['username'].lower()
-            if key in last_login:
-                user['last_login'] = datetime.datetime.utcfromtimestamp(int(last_login[key])).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
+            last_login_ts = int(last_login.get(key, 0))
+            last_login_dt = get_fmt_dt(last_login_ts) if last_login_ts \
+                else f'> {look_back_days} DAYS AGO' if user.get('status', '').lower() != 'invited' \
+                else 'N/A'
+            user['last_login'] = last_login_dt
 
         user_list = list(self.users.values())
         user_list.sort(key=lambda x: x['username'].lower())
