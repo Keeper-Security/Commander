@@ -148,7 +148,8 @@ set_parser.exit = suppress_exit
 
 
 help_parser = argparse.ArgumentParser(prog='help', description='Displays help on a specific command.')
-help_parser.add_argument('command', action='store', type=str, nargs='+',  help='Commander\'s command')
+help_help = 'Commander\'s command (Optional -- if not specified, list of available commands is displayed)'
+help_parser.add_argument('command', action='store', type=str, nargs='*',  help=help_help)
 help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
 
@@ -855,6 +856,11 @@ class HelpCommand(Command):
 
     def execute(self, params, **kwargs):
         help_commands = kwargs.get('command')
+        if not help_commands:
+            from keepercommander.cli import display_command_help
+            display_command_help(params.enterprise_ec_key)
+            return
+
         if isinstance(help_commands, list) and len(help_commands) > 0:
             cmd = help_commands[0]
             help_commands = help_commands[1:]
