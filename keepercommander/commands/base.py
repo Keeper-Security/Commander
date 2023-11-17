@@ -484,6 +484,9 @@ class CliCommand(abc.ABC):
     def execute_args(self, params, args, **kwargs):   # type: (Command, KeeperParams, str, ...) -> Any
         pass
 
+    def clean_up(self):
+        print('', end='\r', file=sys.stderr, flush=True)
+
     def is_authorised(self):
         return True
 

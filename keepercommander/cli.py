@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict
+from typing import Union
 
 from keepercommander.commands.utils import LoginCommand
 from prompt_toolkit import PromptSession
@@ -31,13 +32,14 @@ from .commands import (
     register_commands, register_enterprise_commands, register_msp_commands,
     aliases, commands, command_info, enterprise_commands, msp_commands
 )
-from .commands.base import dump_report_data
+from .commands.base import dump_report_data, CliCommand
 from .commands import msp
 from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS
 from .error import CommandError, Error
 from .params import KeeperParams
 from .subfolder import BaseFolderNode
 
+current_command = None  # type: Union[None, CliCommand]
 stack = []
 register_commands(commands, aliases, command_info)
 enterprise_command_info = OrderedDict()
@@ -222,13 +224,9 @@ def do_command(params, command_line):
                     cmd = ali
 
             if cmd in commands or cmd in enterprise_commands or cmd in msp_commands:
-                if cmd in commands:
-                    command = commands[cmd]
-                else:
-                    if cmd in enterprise_commands:
-                        command = enterprise_commands[cmd]
-                    elif cmd in msp_commands:
-                        command = msp_commands[cmd]
+                command = commands.get(cmd) or enterprise_commands.get(cmd) or msp_commands.get(cmd)
+                global current_command
+                current_command = command
 
                 if command.is_authorised():
                     if not params.session_token:
@@ -426,6 +424,13 @@ def loop(params):  # type: (KeeperParams) -> int
         except Exception as e:
             logging.debug(e, exc_info=True)
             logging.error('An unexpected error occurred: %s. Type "debug" to toggle verbose error output', e)
+        finally:
+            global current_command
+            try:
+                if current_command:
+                    current_command.clean_up()
+            finally:
+                current_command = None
 
         if params.batch_mode and error_no != 0 and not suppress_errno:
             break
