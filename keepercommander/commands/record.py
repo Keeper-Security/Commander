@@ -18,6 +18,7 @@ import json
 import logging
 import re
 from typing import Dict, Any, List, Optional, Iterable, Tuple
+from colorama import init, Fore, Back, Style
 
 from .base import Command, GroupCommand, RecordMixin, FolderMixin
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3, record_types
@@ -64,6 +65,7 @@ def register_command_info(aliases, command_info):
     aliases['ru'] = 'record-update'
     aliases['cc'] = 'clipboard-copy'
     aliases['find-password'] = ('clipboard-copy', '--output=stdout')
+    aliases['sh'] = ('clipboard-copy', '--output=stdouthidden')
     aliases['an'] = 'append-notes'
     aliases['da'] = 'download-attachment'
     aliases['ua'] = 'upload-attachment'
@@ -149,7 +151,7 @@ clipboard_copy_parser = argparse.ArgumentParser(
     prog='clipboard-copy', description='Retrieve the password for a specific record.')
 clipboard_copy_parser.add_argument('--username', dest='username', action='store', help='match login name (optional)')
 clipboard_copy_parser.add_argument(
-    '--output', dest='output', choices=['clipboard', 'stdout'], default='clipboard', action='store',
+    '--output', dest='output', choices=['clipboard', 'stdout', 'stdouthidden'], default='clipboard', action='store',
     help='password output destination')
 clipboard_copy_parser.add_argument(
     '-cu', '--copy-uid', dest='copy_uid', action='store_true', help='output uid instead of password')
@@ -1536,6 +1538,8 @@ class ClipboardCommand(Command, RecordMixin):
                 import pyperclip
                 pyperclip.copy(txt)
                 logging.info(f'{copy_item} copied to clipboard')
+            elif kwargs['output'] == 'stdouthidden':
+                print(f'{Fore.RED}{Back.RED}{txt}{Style.RESET_ALL}')
             else:
                 print(txt)
 
