@@ -107,7 +107,7 @@ download_membership_parser.add_argument('--source', dest='source', choices=['kee
 download_membership_parser.add_argument('--folder', dest='folder', action='store', help='import into a separate folder.')
 download_membership_parser.add_argument('-p', '--permissions', dest='permissions', action='store', help='force shared folder permissions: manage (U)sers, manage (R)ecords')
 download_membership_parser.add_argument('-r', '--restrictions', dest='restrictions', action='store', help='force shared folder restrictions: manage (U)sers, manage (R)ecords')
-download_membership_parser.add_argument('-fo', '--folders-only', dest='folders_only', action='store_true', help='Unload shared folders only. Skip teams')
+download_membership_parser.add_argument('--folders-only', dest='folders_only', action='store_true', help='Unload shared folders only. Skip teams')
 download_membership_parser.add_argument('--old-domain', '-od', dest='old_domain', action='store',  help='old domain for changing user emails in permissions')
 download_membership_parser.add_argument('--new-domain', '-nd', dest='new_domain', action='store',  help='new domain for changing user emails in permissions')
 download_membership_parser.add_argument('--sub-folder', '-sf', dest='sub_folder', action='store', choices=['ignore', 'flatten'],
