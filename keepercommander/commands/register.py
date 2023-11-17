@@ -1963,8 +1963,8 @@ class FindDuplicateCommand(Command):
                     title = record.title or ''
                     login = record.login or ''
                     url = record.login_url or ''
-                    url = urllib.parse.urlparse(url.encode()).hostname
-                    url = url.decode()[:30] if url else ''
+                    url = urllib.parse.urlparse(url).hostname
+                    url = url[:30] if url else ''
                     url = [url] if by_url else []
                     owner = shared_record.owner
                     if not owner:
