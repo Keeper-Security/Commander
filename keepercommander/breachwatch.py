@@ -106,8 +106,8 @@ class BreachWatch(object):
         for password in results:
             yield password, results[password]
 
-    def scan_and_store_record_status(self, params, record_uid, force_update=False, set_reused_pws=True):
-        # type: (KeeperParams, str, Optional[bool], Optional[bool]) -> None
+    def scan_and_store_record_status(self, params, record_uid, force_update=False):
+        # type: (BreachWatch, KeeperParams, str, Optional[bool]) -> None
         record = vault.KeeperRecord.load(params, record_uid)
         if not record:
             return
@@ -159,8 +159,6 @@ class BreachWatch(object):
 
             bw_res = bw_data.passwords[0].status if bw_data else None
             BreachWatch.update_security_data(params, record_uid, record, bw_res)
-            if set_reused_pws:
-                BreachWatch.save_reused_pw_count(params)
 
     @staticmethod
     def update_security_data(params, rec_uid, record=None, bw_result=None, force_update=False):
@@ -377,8 +375,9 @@ class BreachWatch(object):
         # type: (KeeperParams, Union[str, List[str]], Optional[BreachWatch], Optional[bool], Optional[bool]) -> None
         api.sync_down(params)
         if bw_obj:
-            bw_obj.scan_and_store_record_status(params, record_uid, force_update=force_update,
-                                                set_reused_pws=set_reused_pws)
+            bw_obj.scan_and_store_record_status(params, record_uid, force_update=force_update)
         else:
             BreachWatch.update_security_data(params, record_uid)
+        if set_reused_pws:
+            BreachWatch.save_reused_pw_count(params)
         api.sync_down(params)
