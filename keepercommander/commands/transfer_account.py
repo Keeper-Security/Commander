@@ -262,6 +262,8 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                             record_key = crypto.decrypt_aes_v2(record_key, transfer_key)
                         elif record_key_type == 4:
                             record_key = crypto.decrypt_ec(record_key, user_ecc_private_key)
+                        elif record_key_type == 0:
+                            record_key = transfer_key
                         else:
                             raise Exception(f'Unsupported record key type')
 
