@@ -78,6 +78,8 @@ def register_command_info(aliases, command_info):
 
 get_info_parser = argparse.ArgumentParser(prog='get', description='Get the details of a record/folder/team by UID.')
 get_info_parser.add_argument('--unmask', dest='unmask', action='store_true', help='display hidden field content')
+get_info_parser.add_argument('--legacy', dest='legacy', action='store_true',
+                             help='json output: display typed records as legacy')
 get_info_parser.add_argument(
     '--format', dest='format', action='store', choices=['detail', 'json', 'password', 'fields'],
     default='detail', help='output format')
@@ -347,10 +349,11 @@ class RecordGetUidCommand(Command):
             if r:
                 params.queue_audit_event('open_record', record_uid=uid)
                 if fmt == 'json':
+
                     ro = {
                         'record_uid': uid,
                     }
-                    if version < 3:
+                    if version < 3 or kwargs.get('legacy') is True:
                         ro['title'] = r.title
                         if r.login:
                             ro['login'] = r.login

@@ -597,6 +597,9 @@ class _EnterpriseLicenseEntity(_EnterpriseEntity):
                 'is_trial': x.isTrial,
                 'created': x.created,
                 'expiration': x.expiration,
+                'included_in_product': x.includedInProduct,
+                'seats': x.seats,
+                'api_call_count': x.apiCallCount,
             } for x in proto_entity.addOns])
 
         if proto_entity.mspPermits.restricted:
