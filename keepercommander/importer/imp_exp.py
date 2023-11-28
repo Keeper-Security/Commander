@@ -35,7 +35,7 @@ from .importer import (importer_for_format, exporter_for_format, path_components
                        BaseImporter, Record as ImportRecord, RecordField as ImportRecordField, Folder as ImportFolder,
                        SharedFolder as ImportSharedFolder, Permission as ImportPermission, BytesAttachment,
                        Attachment as ImportAttachment, RecordSchemaField, File as ImportFile, Team as ImportTeam,
-                       RecordReferences, FIELD_TYPE_ONE_TIME_CODE)
+                       RecordReferences, FIELD_TYPE_ONE_TIME_CODE, TWO_FACTOR_CODE)
 from .. import api, sync_down, utils, crypto, vault, vault_extensions, record_types
 from ..commands import base
 from ..display import bcolors
@@ -1799,6 +1799,9 @@ def _construct_record_v2(rec_to_import, orig_extra=None):  # type: (ImportRecord
         if field.type == FIELD_TYPE_ONE_TIME_CODE:
             if value:
                 totp = value
+        elif field.label == TWO_FACTOR_CODE:
+            if value:
+                totp = value
         else:
             name = vault.sanitize_str_field_value(field.label or field.type)
             custom_fields.append({
@@ -1890,6 +1893,9 @@ def _construct_record_v3_data(rec_to_import, orig_record=None, map_data_custom_t
     # type: (ImportRecord, Optional[vault.TypedRecord], Optional[dict]) -> dict
     # verify typed fields values
     for field in rec_to_import.fields:
+        if field.label == TWO_FACTOR_CODE:
+            field.type = 'oneTimeCode'
+            field.label = ''
         if field.type in ('otp', 'oneTimeCode'):
             if isinstance(field.value, str) and field.value:
                 comps = urlparse(field.value)

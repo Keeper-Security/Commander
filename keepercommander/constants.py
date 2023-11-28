@@ -4,6 +4,19 @@ from typing import List, Tuple, Optional
 from datetime import timedelta
 from urllib.parse import urlparse
 
+ENTERPRISE_FILE_PLANS = [
+    (-1, 'NO_STORAGE', 'NO STORAGE'),
+    (0, 'STORAGE_TRIAL', 'TRIAL'),
+    (1, 'STORAGE_1GB', '1GB'),
+    (2, 'STORAGE_10GB', '10GB'),
+    (3, 'STORAGE_50GB', '50GB'),
+    (4, 'STORAGE_100GB', '100GB'),
+    (5, 'STORAGE_250GB', '250GB'),
+    (6, 'STORAGE_500GB', '500GB'),
+    (7, 'STORAGE_1000GB', '1TB'),
+    (8, 'STORAGE_10000GB', '10TB'),
+]
+
 MSP_FILE_PLANS = [
     (4, 'STORAGE_100GB', '100GB'),
     (7, 'STORAGE_1000GB', '1TB'),
@@ -74,7 +87,6 @@ _ENFORCEMENT_GROUPS = [
     "KEEPER_FILL",
     "ACCOUNT_SETTINGS",
     "ALLOW_IP_LIST",
-    "ACCOUNT_SETTINGS",
 ]
 
 _ENFORCEMENTS = [

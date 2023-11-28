@@ -11,6 +11,7 @@
 #
 
 import argparse
+import datetime
 import getpass
 import json
 import logging
@@ -552,6 +553,53 @@ class WhoamiCommand(Command):
                 if team_count > 0:
                     print('{0:>20s}: {1}'.format('Teams', team_count))
 
+            if params.enterprise:
+                print('')
+                print('{0:>20s}:'.format('Enterprise License'))
+                for x in params.enterprise.get('licenses', []):
+                    product_type_id = x.get('product_type_id', 0)
+                    tier = x.get('tier', 0)
+                    if product_type_id in (3, 5):
+                        plan = 'Enterprise' if tier == 1 else 'Business'
+                    elif product_type_id in (9, 10):
+                        distributor = x.get('distributor', False)
+                        plan = 'Distributor' if distributor else 'Managed MSP'
+                    elif product_type_id in (11, 12):
+                        plan = 'Keeper MSP'
+                    elif product_type_id == 8:
+                        plan = 'MC ' + 'Enterprise' if tier == 1 else 'Business'
+                    else:
+                        plan = 'Unknown'
+                    if product_type_id in (5, 10, 12):
+                        plan += ' Trial'
+                    print('{0:>20s}: {1}'.format('Base Plan', plan))
+                    paid = x.get('paid') is True
+                    if paid:
+                        exp = x.get('expiration')
+                        if exp > 0:
+                            dt = datetime.datetime.fromtimestamp(exp // 1000) + datetime.timedelta(days=1)
+                            dt.strftime()
+                            n = datetime.datetime.now()
+                            td = (dt - n).days
+                            expires = str(dt.date())
+                            if td > 0:
+                                expires += f' (in {td} days)'
+                            else:
+                                expires += ' (expired)'
+                            print('{0:>20s}: {1}'.format('Expires', expires))
+                    print('{0:>20s}: {1}'.format('User Licenses', f'Plan: {x.get("number_of_seats", "")}    Active: {x.get("seats_allocated", "")}    Invited: {x.get("seats_pending", "")}'))
+                    file_plan = x.get('file_plan')
+                    file_plan_lookup = {x[0]: x[2] for x in constants.ENTERPRISE_FILE_PLANS}
+                    print('{0:>20s}: {1}'.format('Secure File Storage', file_plan_lookup.get(file_plan, '')))
+                    addons = []
+                    addon_lookup = {a[0]: a[1] for a in constants.MSP_ADDONS}
+                    for ao in x.get('add_ons'):
+                        if isinstance(ao, dict):
+                            enabled = ao.get('enabled') is True
+                            name = ao.get('name')
+                            addons.append(addon_lookup.get(name) or name)
+                    for i, addon in enumerate(addons):
+                        print('{0:>20s}: {1}'.format('Secure Add Ons' if i == 0 else '', addon))
         else:
             print('{0:>20s}:'.format('Not logged in'))
 
