@@ -578,7 +578,6 @@ class WhoamiCommand(Command):
                         exp = x.get('expiration')
                         if exp > 0:
                             dt = datetime.datetime.fromtimestamp(exp // 1000) + datetime.timedelta(days=1)
-                            dt.strftime()
                             n = datetime.datetime.now()
                             td = (dt - n).days
                             expires = str(dt.date())
@@ -596,8 +595,18 @@ class WhoamiCommand(Command):
                     for ao in x.get('add_ons'):
                         if isinstance(ao, dict):
                             enabled = ao.get('enabled') is True
-                            name = ao.get('name')
-                            addons.append(addon_lookup.get(name) or name)
+                            if enabled:
+                                name = ao.get('name')
+                                addon_name = addon_lookup.get(name) or name
+                                if name == 'secrets_manager':
+                                    api_count = ao.get('api_call_count')
+                                    if isinstance(api_count, int) and api_count > 0:
+                                        addon_name += f' ({api_count:,} API calls)'
+                                elif name == 'connection_manager':
+                                    seats = ao.get('seats')
+                                    if isinstance(seats, int) and seats > 0:
+                                        addon_name += f' ({seats} licenses)'
+                                addons.append(addon_name)
                     for i, addon in enumerate(addons):
                         print('{0:>20s}: {1}'.format('Secure Add Ons' if i == 0 else '', addon))
         else:

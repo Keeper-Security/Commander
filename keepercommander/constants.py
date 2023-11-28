@@ -32,6 +32,7 @@ MSP_PLANS = [
 
 MSP_ADDONS = [
     ('enterprise_breach_watch', 'BreachWatch', False, 'BreachWatch'),
+    ('consumer_breach_watch', 'Consumer BreachWatch', False, 'BreachWatch'),
     ('compliance_report', 'Compliance Reporting', False, 'Compliance'),
     ('enterprise_audit_and_reporting', 'Advanced Reporting & Alerts Module', False, 'ARAM'),
     ('onboarding_and_certificate', 'Dedicated Service & Support', False, 'Support'),
@@ -39,6 +40,9 @@ MSP_ADDONS = [
     ('secrets_manager', 'Keeper Secrets Manager (KSM)', False, 'Secrets Manager'),
     ('connection_manager', 'Keeper Connection Manager (KCM)', True, 'Connection Manager'),
     ('chat', 'KeeperChat', False, 'Chat'),
+    ('password_rotation', 'Password Rotation', False, 'Rotation'),
+    ('platinum_professional_services_add_on', 'Professional Services - Platinum Plan', False, 'Platinum Support'),
+    ('gold_professional_services_add_on', 'Professional Services - Gold Plan', False, 'Gold Support'),
 ]
 
 
