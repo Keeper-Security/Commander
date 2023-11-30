@@ -2030,7 +2030,7 @@ class ActionReportCommand(EnterpriseCommand):
         def get_report_data_and_headers(users, output_fmt):
             from keepercommander.commands.enterprise import EnterpriseInfoCommand
             ei_cmd = EnterpriseInfoCommand()
-            cmd_output = ei_cmd.execute(params, users=True, quiet=True, format='json',columns=kwargs.get('columns'))
+            cmd_output = ei_cmd.execute(params, users=True, quiet=True, format='json', columns=kwargs.get('columns'))
             data = json.loads(cmd_output)
             data = [u for u in data if u.get('email') in users]
             fields = next(iter(data)).keys() if data else []
