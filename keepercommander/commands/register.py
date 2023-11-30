@@ -50,7 +50,7 @@ def register_commands(commands):
     commands['share-report'] = ShareReportCommand()
     commands['record-permission'] = RecordPermissionCommand()
     commands['find-duplicate'] = FindDuplicateCommand()
-    commands['share'] = OneTimeShareCommand()
+    commands['one-time-share'] = OneTimeShareCommand()
     commands['create-account'] = CreateRegularUserCommand()
     commands['find-ownerless'] = FindOwnerlessCommand()
     # commands['file-report'] = FileReportCommand()
@@ -59,7 +59,8 @@ def register_commands(commands):
 def register_command_info(aliases, command_info):
     aliases['sr'] = 'share-record'
     aliases['sf'] = 'share-folder'
-    aliases['ots'] = 'share'
+    aliases['ots'] = 'one-time-share'
+    aliases['share'] = 'one-time-share'
 
     for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser,
               find_duplicate_parser]:
