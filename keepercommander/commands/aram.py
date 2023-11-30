@@ -146,13 +146,19 @@ action_report_parser.add_argument('--target', '-t', dest='target_user_status', a
                                   help='user status to report on')
 action_report_parser.add_argument('--days-since', '-d', dest='days_since', action='store', type=int,
                                   help='number of days since event of interest (e.g., login, record add/update, lock)')
+action_report_columns = {'name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count', 'roles',
+                         'alias', '2fa_enabled'}
+columns_help = f'comma-separated list of columns to show on report. Supported columns: {action_report_columns}'
+columns_help = re.sub('\'', '', columns_help)
+action_report_parser.add_argument('--columns',  dest='columns', action='store', type=str,
+                                  help=columns_help)
 action_report_parser.add_argument('--output', dest='output', action='store', help='path to resulting output file')
 action_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
                                   default='table', help='format of output')
 action_report_parser.add_argument('--apply-action', '-a', dest='apply_action', action='store',
                                   choices=['lock', 'delete', 'transfer', 'none'], default='none',
                                   help='admin action to apply to each user in the report')
-target_user_help = 'email to transfer users to when --apply-action=transfer is specified'
+target_user_help = 'username/email of account to transfer users to when --apply-action=transfer is specified'
 action_report_parser.add_argument('--target-user', action='store', help=target_user_help)
 action_report_parser.add_argument('--dry-run', '-n', dest='dry_run', default=False, action='store_true',
                                   help='flag to enable dry-run mode')
@@ -2021,6 +2027,17 @@ class ActionReportCommand(EnterpriseCommand):
 
             return action_handlers.get(action, lambda: invalid_action_msg)() if is_valid_action else invalid_action_msg
 
+        def get_report_data_and_headers(users, output_fmt):
+            from keepercommander.commands.enterprise import EnterpriseInfoCommand
+            ei_cmd = EnterpriseInfoCommand()
+            cmd_output = ei_cmd.execute(params, users=True, quiet=True, format='json',columns=kwargs.get('columns'))
+            data = json.loads(cmd_output)
+            data = [u for u in data if u.get('email') in users]
+            fields = next(iter(data)).keys() if data else []
+            headers = [field_to_title(f) for f in fields] if output_fmt != 'json' else list(fields)
+            data = [[user.get(f) for f in fields] for user in data]
+            return data, headers
+
         candidates = params.enterprise['users']
         from keepercommander.commands.enterprise import get_user_status_dict
         get_status_fn = lambda u: get_user_status_dict(u).get('acct_status')
@@ -2055,6 +2072,8 @@ class ActionReportCommand(EnterpriseCommand):
 
         admin_action = kwargs.get('apply_action', 'none')
         dry_run = kwargs.get('dry_run')
+        fmt = kwargs.get('format', 'table')
+        report_data, report_headers = get_report_data_and_headers(usernames, fmt)
         action_msg = apply_admin_action(target_users, target_status, admin_action, dry_run)
 
         # Sync local enterprise data if changes were made
@@ -2064,9 +2083,7 @@ class ActionReportCommand(EnterpriseCommand):
             get_enterprise_data_cmd.execute(params)
 
         title = f'Admin Action Taken:\n{action_msg}\n'
+        title += '\nNote: the following reflects data prior to any administrative action being applied'
         title += f'\n{len(usernames)} User(s) With "{target_status}" Status Older Than {days} Day(s): '
         filepath = kwargs.get('output')
-        fmt = kwargs.get('format', 'table')
-        formatted = [[name] for name in usernames]
-
-        return dump_report_data(data=formatted, headers=['username'], title=title, fmt=fmt, filename=filepath)
+        return dump_report_data(report_data, headers=report_headers, title=title, fmt=fmt, filename=filepath)
