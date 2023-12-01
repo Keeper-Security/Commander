@@ -105,6 +105,12 @@ audit_log_parser.add_argument('--target', dest='target', action='store', require
                               help='export target')
 audit_log_parser.add_argument('--record', dest='record', action='store',
                               help='keeper record name or UID')
+sf_uid_help = 'Filter: Shared Folder UID(s). Overrides existing setting in config record and sets new field value.'
+audit_log_parser.add_argument('--shared-folder-uid', dest='shared_folder_uid', action='append', help=sf_uid_help)
+node_id_help = 'Filter: Node ID(s). Overrides existing setting in config record and sets new field value.'
+audit_log_parser.add_argument('--node-id', dest='node_id', action='append', type=int, help=node_id_help)
+days_help = 'Filter: max event age in days. Overrides existing "last_event_time" value in config record'
+audit_log_parser.add_argument('--days', dest='days', type=int, action='store', help=days_help)
 audit_log_parser.error = raise_parse_exception
 audit_log_parser.exit = suppress_exit
 
@@ -140,13 +146,19 @@ action_report_parser.add_argument('--target', '-t', dest='target_user_status', a
                                   help='user status to report on')
 action_report_parser.add_argument('--days-since', '-d', dest='days_since', action='store', type=int,
                                   help='number of days since event of interest (e.g., login, record add/update, lock)')
+action_report_columns = {'name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count', 'roles',
+                         'alias', '2fa_enabled'}
+columns_help = f'comma-separated list of columns to show on report. Supported columns: {action_report_columns}'
+columns_help = re.sub('\'', '', columns_help)
+action_report_parser.add_argument('--columns',  dest='columns', action='store', type=str,
+                                  help=columns_help)
 action_report_parser.add_argument('--output', dest='output', action='store', help='path to resulting output file')
 action_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
                                   default='table', help='format of output')
 action_report_parser.add_argument('--apply-action', '-a', dest='apply_action', action='store',
                                   choices=['lock', 'delete', 'transfer', 'none'], default='none',
                                   help='admin action to apply to each user in the report')
-target_user_help = 'email to transfer users to when --apply-action=transfer is specified'
+target_user_help = 'username/email of account to transfer users to when --apply-action=transfer is specified'
 action_report_parser.add_argument('--target-user', action='store', help=target_user_help)
 action_report_parser.add_argument('--dry-run', '-n', dest='dry_run', default=False, action='store_true',
                                   help='flag to enable dry-run mode')
@@ -182,6 +194,12 @@ class AuditLogBaseExport(abc.ABC):
 
     def chunk_size(self):
         return 1000
+
+    def finalize_export(self, props):  # type: (dict)  -> None
+        pass
+
+    def clean_up(self):
+        pass
 
     @abc.abstractmethod
     def default_record_title(self):
@@ -592,6 +610,7 @@ class AuditLogSumologicExport(AuditLogBaseExport):
 class AuditLogJsonExport(AuditLogBaseExport):
     def __init__(self):
         super(AuditLogJsonExport, self).__init__()
+        self.temp_fp = None
 
     def default_record_title(self):
         return 'Audit Log: JSON'
@@ -605,9 +624,12 @@ class AuditLogJsonExport(AuditLogBaseExport):
             AuditLogBaseExport.set_record_login(record, filename)
             self.store_record = True
         props['filename'] = filename
+        ndjson_fp = f'{filename}.ndjson'
+        props['ndjson_fp'] = ndjson_fp
+        self.temp_fp = ndjson_fp
 
-        with open(filename, mode='w') as logf:
-            json.dump([], logf)
+        with open(ndjson_fp, mode='w') as ndjsonf:
+            ndjsonf.write('')
 
     def convert_event(self, props, event):
         dt = datetime.datetime.fromtimestamp(event['created'], tz=datetime.timezone.utc)
@@ -617,19 +639,34 @@ class AuditLogJsonExport(AuditLogBaseExport):
         evt['timestamp'] = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
         return evt
 
+    @staticmethod
+    def extend_ndjson_file(events, ndjsonfp):
+        with open(ndjsonfp, 'a') as ndjsonf:
+            for event in events:
+                ndjsonf.write(json.dumps(event) + '\n')
+
+    @staticmethod
+    def ndjson_to_json_file(src, dst):
+        with open(dst, 'w') as dstf:
+            dstf.write('')
+
+        with open(src, 'r') as ndjsonf, open(dst, 'a') as jsonf:
+            jsonf.write('[')
+            jsonf.write(','.join(re.sub(r'\n$', '', event) for event in ndjsonf))
+            jsonf.write(']')
+
     def export_events(self, props, events):
+        ndjson_fp = props['ndjson_fp']
+        AuditLogJsonExport.extend_ndjson_file(events, ndjson_fp)
+
+    def finalize_export(self, props):  # type: (dict)  -> None
         filename = props['filename']
+        ndjson_fp = props['ndjson_fp']
+        AuditLogJsonExport.ndjson_to_json_file(ndjson_fp, filename)
 
-        with open(filename, mode='r') as logf:
-            try:
-                data = json.load(logf)
-                for record in events:
-                    data.append(record)
-            except ValueError:
-                data = events
-
-        with open(filename, mode='w') as logf:
-            json.dump(data, logf)
+    def clean_up(self):
+        if self.temp_fp and os.path.exists(self.temp_fp):
+            os.remove(self.temp_fp)
 
 
 class AuditLogAzureLogAnalyticsExport(AuditLogBaseExport):
@@ -704,6 +741,15 @@ class AuditLogAzureLogAnalyticsExport(AuditLogBaseExport):
 
 
 class AuditLogCommand(EnterpriseCommand):
+    def __init__(self):
+        super(EnterpriseCommand, self).__init__()
+        self.log_export = None
+
+    def clean_up(self):
+        super().clean_up()
+        if self.log_export:
+            self.log_export.clean_up()
+
     def get_parser(self):
         return audit_log_parser
 
@@ -737,6 +783,7 @@ class AuditLogCommand(EnterpriseCommand):
         else:
             raise CommandError('audit-log', 'Audit log export: unsupported target')
 
+        self.log_export = log_export
         record = None   # type: Union[vault.PasswordRecord, vault.TypedRecord, None]
         record_name = kwargs.get('record') or log_export.default_record_title()
 
@@ -758,6 +805,9 @@ class AuditLogCommand(EnterpriseCommand):
         if record is None:
             raise CommandError('audit-log', 'Record not found')
 
+        shared_folder_uids = kwargs.get('shared_folder_uid')
+        node_ids = kwargs.get('node_id')
+        days = kwargs.get('days')
         props = {
             'enterprise_name': params.enterprise['enterprise_name']
         }
@@ -772,16 +822,43 @@ class AuditLogCommand(EnterpriseCommand):
 
         # query data
         last_event_time = 0
-        val = AuditLogBaseExport.get_record_custom(record, 'last_event_time')
-        if val:
+        now_dt = datetime.datetime.now()
+        now_ts = int(now_dt.timestamp())
+        if days:
             try:
-                last_event_time = int(val)
+                last_event_dt = now_dt - datetime.timedelta(days=int(days))
+                last_event_time = int(last_event_dt.timestamp())
             except:
                 pass
+        else:
+            val = AuditLogBaseExport.get_record_custom(record, 'last_event_time')
+            if val:
+                try:
+                    last_event_time = int(val)
+                except:
+                    pass
+
+        if not shared_folder_uids:
+            val = AuditLogBaseExport.get_record_custom(record, 'shared_folder_uids')
+            if val:
+                try:
+                    shared_folder_uids = val.split(',')
+                    shared_folder_uids = [sfuid.strip() for sfuid in shared_folder_uids]
+                except:
+                    pass
+        if not node_ids:
+            val = AuditLogBaseExport.get_record_custom(record, 'node_ids')
+            if val:
+                try:
+                    node_ids = val.split(',')
+                    node_ids = [node_id.strip() for node_id in node_ids]
+                    node_ids = [int(node_id) for node_id in node_ids]
+                except:
+                    pass
 
         events = []
         finished = False
-        count = 0
+        num_exported = 0
         logged_ids = set()
         chunk_length = log_export.chunk_size()
 
@@ -790,20 +867,42 @@ class AuditLogCommand(EnterpriseCommand):
         if anonymize and params.enterprise and 'users' in params.enterprise:
             ent_user_ids = {x.get('username'): x.get('enterprise_user_id') for x in params.enterprise['users']}
 
+        created_filter = {'max': now_ts}
+        rq_filter = {'created': created_filter}
+        if shared_folder_uids:
+            rq_filter['shared_folder_uid'] = shared_folder_uids
+            AuditLogBaseExport.set_record_custom(record, 'shared_folder_uids', ', '.join(shared_folder_uids))
+        if node_ids:
+            rq_filter['node_id'] = node_ids
+            node_ids_str = [str(n) for n in node_ids]
+            AuditLogBaseExport.set_record_custom(record, 'node_ids', ', '.join(node_ids_str))
+        rq = {
+            'command': 'get_audit_event_reports',
+            'report_type': 'raw',
+            'scope': 'enterprise',
+            'limit': 1000,
+            'order': 'ascending',
+            'filter': rq_filter
+        }
+
+        # Get total expected number of events
+        created_filter_copy = {**created_filter, 'min': last_event_time}
+        filter_copy = {**rq_filter, 'created': created_filter_copy}
+        total_events_rq = {**rq, 'filter': filter_copy, 'report_type': 'span'}
+        total_events = 0
+        try:
+            total_events_rs = api.communicate(params, total_events_rq)
+            rows = total_events_rs['audit_event_overview_report_rows']
+            total_events = rows[0].get('occurrences', 0) if rows else 0
+        except:
+            logging.info('No events to export')
+            return
+
         while not finished:
             finished = True
-            rq = {
-                'command': 'get_audit_event_reports',
-                'report_type': 'raw',
-                'scope': 'enterprise',
-                'limit': 1000,
-                'order': 'ascending'
-            }
 
             if last_event_time > 0:
-                rq['filter'] = {
-                    'created': {'min': last_event_time}
-                }
+                created_filter['min'] = last_event_time
 
             rs = api.communicate(params, rq)
             if rs['result'] == 'success':
@@ -811,37 +910,29 @@ class AuditLogCommand(EnterpriseCommand):
                 if 'audit_event_overview_report_rows' in rs:
                     audit_events = rs['audit_event_overview_report_rows']
                     event_count = len(audit_events)
-                    if event_count > 1:
-                        # remove events from the tail for the last second
-                        last_event_time = int(audit_events[-1]['created'])
-                        while len(audit_events) > 0:
-                            event = audit_events[-1]
-                            if int(event['created']) < last_event_time:
-                                break
-                            audit_events = audit_events[:-1]
+                    last_event_time = int(audit_events[-1]['created']) if event_count else now_ts
 
-                        for event in audit_events:
-                            event_id = event['id']
-                            if event_id not in logged_ids:
-                                logged_ids.add(event_id)
-                                if anonymize:
-                                    uname = event.get('email') or event.get('username') or ''
-                                    ent_uid = self.resolve_uid(ent_user_ids, uname)
-                                    event['username'] = ent_uid
-                                    event['email'] = ent_uid
-                                    to_uname = event.get('to_username') or ''
-                                    if to_uname:
-                                        event['to_username'] = self.resolve_uid(ent_user_ids, to_uname)
-                                    from_uname = event.get('from_username') or ''
-                                    if from_uname:
-                                        event['from_username'] = self.resolve_uid(ent_user_ids, from_uname)
-                                events.append(log_export.convert_event(props, event))
+                    # Ensure that no event is exported more than once with this command call
+                    new_events = [e for e in audit_events if e['id'] not in logged_ids]
+                    for event in new_events:
+                        logged_ids.add(event['id'])
+                        if anonymize:
+                            uname = event.get('email') or event.get('username') or ''
+                            ent_uid = self.resolve_uid(ent_user_ids, uname)
+                            event['username'] = ent_uid
+                            event['email'] = ent_uid
+                            to_uname = event.get('to_username') or ''
+                            if to_uname:
+                                event['to_username'] = self.resolve_uid(ent_user_ids, to_uname)
+                            from_uname = event.get('from_username') or ''
+                            if from_uname:
+                                event['from_username'] = self.resolve_uid(ent_user_ids, from_uname)
+                        events.append(log_export.convert_event(props, event))
+                    finished = created_filter['max'] <= last_event_time
 
-                        finished = len(events) == 0
-                        if finished:
-                            if event_count > 900:
-                                finished = False
-                                last_event_time += 1
+                    # Narrow event-age filter if the last filter/request gave no new events AND we have more to fetch
+                    if not new_events and not finished:
+                        last_event_time += 1
 
             while len(events) > 0:
                 to_store = events[:chunk_length]
@@ -850,13 +941,16 @@ class AuditLogCommand(EnterpriseCommand):
                 if log_export.should_cancel:
                     finished = True
                     break
-                count += len(to_store)
-                print('+', file=sys.stderr, end='', flush=True)
+                num_exported += len(to_store)
+                percent_done = num_exported / total_events * 100
+                percent_done = '%.1f' % percent_done
+                print(f'Exporting events.... {percent_done}% DONE', file=sys.stderr, end='\r', flush=True)
 
         if last_event_time > 0:
             logging.info('')
-            logging.info('Exported %d audit event(s)', count)
-            if count > 0:
+            logging.info('Exported %d audit event(s)', num_exported)
+            if num_exported > 0:
+                log_export.finalize_export(props)
                 AuditLogBaseExport.set_record_custom(record, 'last_event_time', str(last_event_time))
                 record_management.update_record(params, record)
                 params.sync_data = True
@@ -1933,6 +2027,17 @@ class ActionReportCommand(EnterpriseCommand):
 
             return action_handlers.get(action, lambda: invalid_action_msg)() if is_valid_action else invalid_action_msg
 
+        def get_report_data_and_headers(users, output_fmt):
+            from keepercommander.commands.enterprise import EnterpriseInfoCommand
+            ei_cmd = EnterpriseInfoCommand()
+            cmd_output = ei_cmd.execute(params, users=True, quiet=True, format='json', columns=kwargs.get('columns'))
+            data = json.loads(cmd_output)
+            data = [u for u in data if u.get('email') in users]
+            fields = next(iter(data)).keys() if data else []
+            headers = [field_to_title(f) for f in fields] if output_fmt != 'json' else list(fields)
+            data = [[user.get(f) for f in fields] for user in data]
+            return data, headers
+
         candidates = params.enterprise['users']
         from keepercommander.commands.enterprise import get_user_status_dict
         get_status_fn = lambda u: get_user_status_dict(u).get('acct_status')
@@ -1967,6 +2072,8 @@ class ActionReportCommand(EnterpriseCommand):
 
         admin_action = kwargs.get('apply_action', 'none')
         dry_run = kwargs.get('dry_run')
+        fmt = kwargs.get('format', 'table')
+        report_data, report_headers = get_report_data_and_headers(usernames, fmt)
         action_msg = apply_admin_action(target_users, target_status, admin_action, dry_run)
 
         # Sync local enterprise data if changes were made
@@ -1976,9 +2083,7 @@ class ActionReportCommand(EnterpriseCommand):
             get_enterprise_data_cmd.execute(params)
 
         title = f'Admin Action Taken:\n{action_msg}\n'
+        title += '\nNote: the following reflects data prior to any administrative action being applied'
         title += f'\n{len(usernames)} User(s) With "{target_status}" Status Older Than {days} Day(s): '
         filepath = kwargs.get('output')
-        fmt = kwargs.get('format', 'table')
-        formatted = [[name] for name in usernames]
-
-        return dump_report_data(data=formatted, headers=['username'], title=title, fmt=fmt, filename=filepath)
+        return dump_report_data(report_data, headers=report_headers, title=title, fmt=fmt, filename=filepath)

@@ -10,15 +10,18 @@
 #
 
 import argparse
+import getpass
 import logging
 import os
 import re
 
 from typing import Optional
-from .. import api, crypto, utils
+from cryptography.hazmat.primitives.serialization import pkcs12
+
+from .. import api, crypto, utils, error
 from ..params import KeeperParams
 
-from .base import GroupCommand, dump_report_data, report_output_parser, field_to_title
+from .base import GroupCommand, Command, dump_report_data, report_output_parser, field_to_title
 from .enterprise import EnterpriseCommand
 
 from ..proto import automator_pb2 as automator_proto
@@ -54,6 +57,9 @@ automator_delete_parser.add_argument('--force', '-f', dest='force', action='stor
 automator_action_parser = argparse.ArgumentParser(prog='automator-action')
 automator_action_parser.add_argument('target', help='Automator ID or Name.')
 
+automator_certificate_parser = argparse.ArgumentParser(prog='automator-certificate')
+automator_certificate_parser.add_argument('file', help='PFX Certificate file path.')
+
 
 def register_commands(commands):
     commands['automator'] = AutomatorCommand()
@@ -80,6 +86,7 @@ class AutomatorCommand(GroupCommand):
         action_command = AutomatorLogCommand()
         self.register_command('log', action_command, 'Retrieves automator logs.')
         self.register_command('log-clear', action_command, 'Clears automator logs.')
+        self.register_command('certificate', AutomatorCertificateCommand(), 'Display certificate information.')
 
         self.default_verb = 'list'
 
@@ -104,12 +111,12 @@ class AutomatorMixin(object):
     def dump_automators(params, fmt=None, filename=None):
         # type: (KeeperParams, Optional[str], Optional[str]) -> None
         table = []
-        headers = ['id', 'name', 'enabled', 'url', 'skills']
+        headers = ['id', 'name', 'node_id', 'enabled', 'url', 'skills']
         if fmt and fmt != 'json':
             headers = [field_to_title(x) for x in headers]
         if params.automators:
             for info in params.automators:
-                row = [info.automatorId, info.name, info.enabled, info.url,
+                row = [info.automatorId, info.name, info.nodeId, info.enabled, info.url,
                        [AutomatorMixin.skill_to_name(x.skillType) for x in info.automatorSkills]]
                 table.append(row)
         return dump_report_data(table, headers=headers, fmt=fmt, filename=filename)
@@ -118,6 +125,7 @@ class AutomatorMixin(object):
     def dump_automator(endpoint, status=False):    # type: (automator_proto.AutomatorInfo, bool) -> None
         logging.info('{0:>32s}: {1}'.format('Automator ID', endpoint.automatorId))
         logging.info('{0:>32s}: {1}'.format('Name', endpoint.name))
+        logging.info('{0:>32s}: {1}'.format('Node ID', endpoint.nodeId))
         logging.info('{0:>32s}: {1}'.format('URL', endpoint.url))
         logging.info('{0:>32s}: {1}'.format('Enabled', 'Yes' if endpoint.enabled else 'No'))
         if status:
@@ -453,3 +461,42 @@ class AutomatorLogCommand(EnterpriseCommand, AutomatorMixin):
         rs = api.communicate_rest(params, rq, endpoint, rs_type=automator_proto.AdminResponse)
         if rs.automatorInfo:
             self.dump_automator(rs.automatorInfo[0])
+
+
+class AutomatorCertificateCommand(Command):
+    def get_parser(self):
+        return automator_certificate_parser
+
+    def execute(self, params, **kwargs):
+        filename = kwargs.get('file')
+        if not filename:
+            raise error.CommandError('automator-certificate', 'PFX file name parameter is required')
+
+        filepath = os.path.expanduser(filename)
+        if not os.path.isfile(filepath):
+            raise error.CommandError('automator-certificate', f'File \"{filename}\" cannot be found')
+
+        password = getpass.getpass(prompt='...' + 'Certificate Passphrase'.rjust(30) + ': ', stream=None)
+        if not password:
+            password = None
+
+        with open(filepath, 'rb') as pfx:
+            _, cert, chain = pkcs12.load_key_and_certificates(pfx.read(), password.encode('utf-8'))
+
+        def print_cert(title, c):
+            print('')
+            print(f'{"":>16} {title}')
+            print(f'{"Subject:":>16} {c.subject.rfc4514_string()}')
+            print(f'{"Issuer:":>16} {c.issuer.rfc4514_string()}')
+            print(f'{"Valid from:":>16} {c.not_valid_before}')
+            print(f'{"Valid until:":>16} {c.not_valid_after}')
+
+        print_cert('MAIN CERTIFICATE', cert)
+        if chain:
+            for i in range(len(chain)):
+                print_cert(f'ADDITIONAL CERTIFICATE #{i+1}', chain[i])
+
+    def is_authorised(self):
+        return False
+
+    

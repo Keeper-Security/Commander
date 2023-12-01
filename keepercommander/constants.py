@@ -4,6 +4,19 @@ from typing import List, Tuple, Optional
 from datetime import timedelta
 from urllib.parse import urlparse
 
+ENTERPRISE_FILE_PLANS = [
+    (-1, 'NO_STORAGE', 'NO STORAGE'),
+    (0, 'STORAGE_TRIAL', 'TRIAL'),
+    (1, 'STORAGE_1GB', '1GB'),
+    (2, 'STORAGE_10GB', '10GB'),
+    (3, 'STORAGE_50GB', '50GB'),
+    (4, 'STORAGE_100GB', '100GB'),
+    (5, 'STORAGE_250GB', '250GB'),
+    (6, 'STORAGE_500GB', '500GB'),
+    (7, 'STORAGE_1000GB', '1TB'),
+    (8, 'STORAGE_10000GB', '10TB'),
+]
+
 MSP_FILE_PLANS = [
     (4, 'STORAGE_100GB', '100GB'),
     (7, 'STORAGE_1000GB', '1TB'),
@@ -19,6 +32,7 @@ MSP_PLANS = [
 
 MSP_ADDONS = [
     ('enterprise_breach_watch', 'BreachWatch', False, 'BreachWatch'),
+    ('consumer_breach_watch', 'Consumer BreachWatch', False, 'BreachWatch'),
     ('compliance_report', 'Compliance Reporting', False, 'Compliance'),
     ('enterprise_audit_and_reporting', 'Advanced Reporting & Alerts Module', False, 'ARAM'),
     ('onboarding_and_certificate', 'Dedicated Service & Support', False, 'Support'),
@@ -26,6 +40,9 @@ MSP_ADDONS = [
     ('secrets_manager', 'Keeper Secrets Manager (KSM)', False, 'Secrets Manager'),
     ('connection_manager', 'Keeper Connection Manager (KCM)', True, 'Connection Manager'),
     ('chat', 'KeeperChat', False, 'Chat'),
+    ('password_rotation', 'Password Rotation', False, 'Rotation'),
+    ('platinum_professional_services_add_on', 'Professional Services - Platinum Plan', False, 'Platinum Support'),
+    ('gold_professional_services_add_on', 'Professional Services - Gold Plan', False, 'Gold Support'),
 ]
 
 
@@ -74,7 +91,6 @@ _ENFORCEMENT_GROUPS = [
     "KEEPER_FILL",
     "ACCOUNT_SETTINGS",
     "ALLOW_IP_LIST",
-    "ACCOUNT_SETTINGS",
 ]
 
 _ENFORCEMENTS = [

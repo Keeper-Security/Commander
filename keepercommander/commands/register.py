@@ -30,6 +30,7 @@ from .base import dump_report_data, field_to_title, fields_to_titles, raise_pars
 from .helpers.record import get_record_uids
 from .helpers.timeout import parse_timeout
 from .record import RecordRemoveCommand
+from .utils import SyncDownCommand
 from .. import api, utils, crypto, constants, rest_api
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError, Error
@@ -49,15 +50,17 @@ def register_commands(commands):
     commands['share-report'] = ShareReportCommand()
     commands['record-permission'] = RecordPermissionCommand()
     commands['find-duplicate'] = FindDuplicateCommand()
-    commands['share'] = OneTimeShareCommand()
+    commands['one-time-share'] = OneTimeShareCommand()
     commands['create-account'] = CreateRegularUserCommand()
+    commands['find-ownerless'] = FindOwnerlessCommand()
     # commands['file-report'] = FileReportCommand()
 
 
 def register_command_info(aliases, command_info):
     aliases['sr'] = 'share-record'
     aliases['sf'] = 'share-folder'
-    aliases['ots'] = 'share'
+    aliases['ots'] = 'one-time-share'
+    aliases['share'] = 'one-time-share'
 
     for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser,
               find_duplicate_parser]:
@@ -150,6 +153,18 @@ record_permission_parser.add_argument('folder', nargs='?', type=str, action='sto
 record_permission_parser.error = raise_parse_exception
 record_permission_parser.exit = suppress_exit
 
+find_ownerless_desc = 'List (and, optionally, claim) records in the user\'s vault that currently do not have an owner'
+find_ownerless_parser = argparse.ArgumentParser(prog='find-ownerless', description=find_ownerless_desc)
+find_ownerless_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'],
+                                   default='table', help='output format')
+find_ownerless_parser.add_argument('--output', dest='output', action='store',
+                                   help='output file name (ignored for table format)')
+find_ownerless_parser.add_argument('--claim', dest='claim', action='store_true', help='claim records found')
+find_ownerless_parser.add_argument('-v', '--verbose', action='store_true', help='output details for each record found')
+folder_help = 'path or UID of folder to search (optional, with multiple values allowed)'
+find_ownerless_parser.add_argument('folder', nargs='*', type=str, action='store', help=folder_help)
+find_ownerless_parser.error = raise_parse_exception
+find_ownerless_parser.exit = suppress_exit
 
 find_duplicate_parser = argparse.ArgumentParser(prog='find-duplicate', description='List duplicated records.')
 find_duplicate_parser.add_argument('--title', dest='title', action='store_true', help='Match duplicates by title.')
@@ -627,7 +642,8 @@ class ShareRecordCommand(Command):
                     else:
                         if isinstance(folder, (SharedFolderNode, SharedFolderFolderNode)):
                             folder_uid = folder.uid
-                            shared_folder_uid = folder.shared_folder_uid
+                            shared_folder_uid = folder_uid if isinstance(folder, SharedFolderNode) \
+                                else folder.shared_folder_uid
 
         is_share_admin = False
         if record_uid is None and folder_uid is None and shared_folder_uid is None:
@@ -1628,6 +1644,88 @@ class RecordPermissionCommand(Command):
                 params.sync_data = True
 
 
+class FindOwnerlessCommand(Command):
+    def get_parser(self):
+        return find_ownerless_parser
+
+    def execute(self, params, **kwargs):
+        def to_ownerless_record_rq_param(records):
+            # type: (List[Dict[str, Any]]) -> List[APIRequest_pb2.OwnerlessRecord]
+            rq_param = []
+            for rec in records:
+                rq_ownerless_record = APIRequest_pb2.OwnerlessRecord()
+                rec_key = crypto.encrypt_aes_v1(rec.get('record_key_unencrypted'), params.data_key)
+                rec_uid = utils.base64_url_decode(rec.get('record_uid'))
+                rq_ownerless_record.recordUid = rec_uid
+                rq_ownerless_record.recordKey = rec_key
+                rq_param.append(rq_ownerless_record)
+            return rq_param
+
+        def claim_ownerless_records(records):
+            chunk_size = 1000
+            while records:
+                rq = APIRequest_pb2.OwnerlessRecords()
+                chunk = records[:chunk_size]
+                records = records[chunk_size:]
+                rq.ownerlessRecord.extend(to_ownerless_record_rq_param(chunk))
+                api.communicate_rest(params, rq, 'ownerless_records/set_owner', rs_type=APIRequest_pb2.OwnerlessRecords)
+
+        def fetch_ownerless_records():    # type: () -> List[Dict[str, Any]]
+            rq = APIRequest_pb2.OwnerlessRecords()
+            rs = api.communicate_rest(params, rq, 'ownerless_records/get_records',
+                                      rs_type=APIRequest_pb2.OwnerlessRecords)
+            rs_rec_uids = {utils.base64_url_encode(rec.recordUid) for rec in rs.ownerlessRecord if rec}
+            records = [params.record_cache.get(uid) for uid in rs_rec_uids]
+            return [rec for rec in records if rec and rec.get('record_key_unencrypted')]
+
+        def dump_record_details(records, output, output_fmt):
+            rec_uids = {r.get('record_uid') for r in records}
+            shared_records = get_shared_records(params, rec_uids).values()
+            headers = ['record_uid', 'title', 'shared_with', 'folder_path']
+            table = []
+            for shared_record in shared_records:
+                row = [
+                    shared_record.uid,
+                    shared_record.name,
+                    [f'{p.get_target(False)}' for p in shared_record.permissions.values()],
+                    shared_record.folder_paths
+                ]
+                table.append(row)
+            if fmt != 'json':
+                headers = [field_to_title(x) for x in headers]
+            return dump_report_data(table, headers, fmt=output_fmt, filename=output, row_number=True)
+
+        ownerless_records = fetch_ownerless_records()
+
+        # Filter records by containing folder(s)
+        folders = kwargs.get('folder')
+        if folders and ownerless_records:
+            for f in folders:
+                if not get_folder_uids(params, f):
+                    logging.warning(f'Folder "{f}" not found')
+            rec_uid_groups = [recs for f in folders for recs in get_contained_record_uids(params, f, False).values()]
+            whitelist = set(itertools.chain.from_iterable(rec_uid_groups))
+            ownerless_records = [r for r in ownerless_records if r.get('record_uid') in whitelist]
+
+        claim_records = kwargs.get('claim')
+        fmt = kwargs.get('format', 'table')
+        out = kwargs.get('output')
+        verbose = kwargs.get('verbose') or not claim_records or out
+        records_dump = None
+        if ownerless_records:
+            logging.info(f'Found [{len(ownerless_records)}] ownerless record(s)')
+            if verbose:
+                records_dump = dump_record_details(ownerless_records, out, fmt)
+            if claim_records:
+                claim_ownerless_records(ownerless_records)
+                SyncDownCommand().execute(params, force=True)
+            else:
+                logging.info('To claim the record(s) found above, re-run this command with the --claim flag.')
+        else:
+            logging.info('No ownerless records found')
+        return records_dump
+
+
 class FindDuplicateCommand(Command):
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return find_duplicate_parser
@@ -1866,8 +1964,8 @@ class FindDuplicateCommand(Command):
                     title = record.title or ''
                     login = record.login or ''
                     url = record.login_url or ''
-                    url = urllib.parse.urlparse(url.encode()).hostname
-                    url = url.decode()[:30] if url else ''
+                    url = urllib.parse.urlparse(url).hostname
+                    url = url[:30] if url else ''
                     url = [url] if by_url else []
                     owner = shared_record.owner
                     if not owner:

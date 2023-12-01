@@ -261,6 +261,14 @@ class SharedFolderNode(BaseFolderNode):
     def __init__(self):
         BaseFolderNode.__init__(self, BaseFolderNode.SharedFolderType)
 
+    @property
+    def shared_folder_uid(self):
+        return self.uid
+
+    @shared_folder_uid.setter
+    def shared_folder_uid(self, val):
+        self.uid = val
+
 
 class RootFolderNode(BaseFolderNode):
     def __init__(self):

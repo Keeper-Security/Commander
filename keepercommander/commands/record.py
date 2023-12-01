@@ -18,6 +18,7 @@ import json
 import logging
 import re
 from typing import Dict, Any, List, Optional, Iterable, Tuple
+from colorama import init, Fore, Back, Style
 
 from .base import Command, GroupCommand, RecordMixin, FolderMixin
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3, record_types
@@ -64,6 +65,7 @@ def register_command_info(aliases, command_info):
     aliases['ru'] = 'record-update'
     aliases['cc'] = 'clipboard-copy'
     aliases['find-password'] = ('clipboard-copy', '--output=stdout')
+    aliases['sh'] = ('clipboard-copy', '--output=stdouthidden')
     aliases['an'] = 'append-notes'
     aliases['da'] = 'download-attachment'
     aliases['ua'] = 'upload-attachment'
@@ -78,6 +80,8 @@ def register_command_info(aliases, command_info):
 
 get_info_parser = argparse.ArgumentParser(prog='get', description='Get the details of a record/folder/team by UID.')
 get_info_parser.add_argument('--unmask', dest='unmask', action='store_true', help='display hidden field content')
+get_info_parser.add_argument('--legacy', dest='legacy', action='store_true',
+                             help='json output: display typed records as legacy')
 get_info_parser.add_argument(
     '--format', dest='format', action='store', choices=['detail', 'json', 'password', 'fields'],
     default='detail', help='output format')
@@ -147,7 +151,7 @@ clipboard_copy_parser = argparse.ArgumentParser(
     prog='clipboard-copy', description='Retrieve the password for a specific record.')
 clipboard_copy_parser.add_argument('--username', dest='username', action='store', help='match login name (optional)')
 clipboard_copy_parser.add_argument(
-    '--output', dest='output', choices=['clipboard', 'stdout'], default='clipboard', action='store',
+    '--output', dest='output', choices=['clipboard', 'stdout', 'stdouthidden'], default='clipboard', action='store',
     help='password output destination')
 clipboard_copy_parser.add_argument(
     '-cu', '--copy-uid', dest='copy_uid', action='store_true', help='output uid instead of password')
@@ -283,7 +287,8 @@ class RecordGetUidCommand(Command):
                     'name': f.name
                 }
                 if isinstance(f, (subfolder.SharedFolderFolderNode, subfolder.SharedFolderNode)):
-                    fo['shared_folder_uid'] = f.shared_folder_uid
+                    fo['shared_folder_uid'] = f.shared_folder_uid if isinstance(f, subfolder.SharedFolderFolderNode) \
+                        else f.uid
                 if f.parent_uid:
                     fo['parent_folder_uid'] = f.parent_uid
                 print(json.dumps(fo, indent=2))
@@ -346,10 +351,11 @@ class RecordGetUidCommand(Command):
             if r:
                 params.queue_audit_event('open_record', record_uid=uid)
                 if fmt == 'json':
+
                     ro = {
                         'record_uid': uid,
                     }
-                    if version < 3:
+                    if version < 3 or kwargs.get('legacy') is True:
                         ro['title'] = r.title
                         if r.login:
                             ro['login'] = r.login
@@ -666,9 +672,9 @@ class RecordListCommand(Command):
                 elif rt == 'file':
                     record_version.update((3, 4))
                     record_type.add('file')
-                elif rt == 'general':
+                elif rt in ('general', 'legacy'):
                     record_version.update((1, 2))
-                if rt == 'pam':
+                elif rt == 'pam':
                     record_version.add(6)
                 else:
                     record_version.update((3, 6))
@@ -1532,6 +1538,8 @@ class ClipboardCommand(Command, RecordMixin):
                 import pyperclip
                 pyperclip.copy(txt)
                 logging.info(f'{copy_item} copied to clipboard')
+            elif kwargs['output'] == 'stdouthidden':
+                print(f'{Fore.RED}{Back.RED}{txt}{Style.RESET_ALL}')
             else:
                 print(txt)
 
