@@ -1,21 +1,21 @@
-import asyncio
-import logging
-import socket
 import sys
 import unittest
-
-from aiortc import RTCDataChannel
-from cryptography.utils import int_to_bytes
-from keepercommander import utils
-from keepercommander.commands.tunnel.port_forward.endpoint import (PrivateTunnelEntrance, ControlMessage,
-                                                                   CONTROL_MESSAGE_NO_LENGTH, CONNECTION_NO_LENGTH,
-                                                                   ConnectionNotFoundException,
-                                                                   TERMINATOR, DATA_LENGTH)
-from test_pam_tunnel import new_private_key
 from unittest import mock
 
+if sys.version_info >= (3, 15):
+    import asyncio
+    import logging
+    import socket
 
-if sys.version_info >= (3, 11):
+    from aiortc import RTCDataChannel
+    from cryptography.utils import int_to_bytes
+    from keepercommander import utils
+    from keepercommander.commands.tunnel.port_forward.endpoint import (PrivateTunnelEntrance, ControlMessage,
+                                                                       CONTROL_MESSAGE_NO_LENGTH, CONNECTION_NO_LENGTH,
+                                                                       ConnectionNotFoundException,
+                                                                       TERMINATOR, DATA_LENGTH)
+    from test_pam_tunnel import new_private_key
+
     # Only define the class if Python version is 3.8 or higher
     class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
         async def asyncSetUp(self):
