@@ -1,17 +1,18 @@
 import sys
 import unittest
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization
-from keeper_secrets_manager_core.utils import base64_to_bytes
-from keepercommander.commands.tunnel.port_forward.tunnel import ITunnel
-from keepercommander.commands.tunnel.port_forward.endpoint import (ControlMessage, CONTROL_MESSAGE_NO_LENGTH,
-                                                                   DATA_LENGTH, CONNECTION_NO_LENGTH, TunnelProtocol,
-                                                                   TERMINATOR, find_server_public_key)
 from unittest import mock
 
+if sys.version_info >= (3, 15):
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import serialization
+    from keeper_secrets_manager_core.utils import base64_to_bytes
+    from keepercommander.commands.tunnel.port_forward.tunnel import ITunnel
+    from keepercommander.commands.tunnel.port_forward.endpoint import (ControlMessage, CONTROL_MESSAGE_NO_LENGTH,
+                                                                       DATA_LENGTH, CONNECTION_NO_LENGTH, TunnelProtocol,
+                                                                       TERMINATOR, find_server_public_key)
 
-if sys.version_info >= (3, 11):
+
     # Only define the class if Python version is 3.8 or higher
     def make_private_key():
         private_key = ec.generate_private_key(

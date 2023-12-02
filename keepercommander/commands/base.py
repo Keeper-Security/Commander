@@ -113,9 +113,10 @@ def register_commands(commands, aliases, command_info):
     commands['2fa'] = TwoFaCommand()
     command_info['2fa'] = '2FA management'
 
-    from . import discoveryrotation
-    discoveryrotation.register_commands(commands)
-    discoveryrotation.register_command_info(aliases, command_info)
+    if sys.version_info.major >= 3 and sys.version_info.minor >= 8:
+        from . import discoveryrotation
+        discoveryrotation.register_commands(commands)
+        discoveryrotation.register_command_info(aliases, command_info)
 
 
 def register_enterprise_commands(commands, aliases, command_info):
