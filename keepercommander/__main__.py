@@ -12,6 +12,7 @@
 
 
 import argparse
+import certifi
 import json
 import logging
 import os
@@ -130,6 +131,7 @@ def handle_exceptions(exc_type, exc_value, exc_traceback):
 
 
 def main(from_package=False):
+    os.environ['SSL_CERT_FILE'] = certifi.where()
     logging.basicConfig(format='%(message)s')
 
     errno = 0
