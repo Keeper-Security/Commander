@@ -1830,9 +1830,6 @@ class PAMTunnelStartCommand(Command):
             'Cookie': cookie_str,
         }
 
-        ssl_context = ssl.SSLContext()
-        ssl_context.verify_mode = ssl.CERT_NONE
-
         entrance_ws = await websockets.connect(connection_url, ping_interval=10, extra_headers=extra_headers)
 
         print("--> 2. SEND START MESSAGE OVER REST TO GATEWAY")
