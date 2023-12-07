@@ -12,16 +12,14 @@ import argparse
 import asyncio
 import json
 import logging
+import os.path
 import queue
-import ssl
 import sys
 import threading
-import os.path
 from datetime import datetime
 from typing import Dict, Optional, Any
 
 import requests
-import websockets
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -38,16 +36,16 @@ from .pam.config_helper import pam_configurations_get_all, pam_configuration_get
 from .pam.pam_dto import GatewayActionGatewayInfo, GatewayActionDiscoverInputs, GatewayActionDiscover, \
     GatewayActionRotate, \
     GatewayActionRotateInputs, GatewayAction, GatewayActionJobInfoInputs, \
-    GatewayActionJobInfo, GatewayActionJobCancel
+    GatewayActionJobInfo, GatewayActionJobCancel, GatewayActionWebRTCSession
 from .pam.router_helper import router_send_action_to_gateway, print_router_response, \
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, \
-    get_router_url, router_send_message_to_gateway, get_router_ws_url, get_controller_cookie, request_cookie_jar_to_str
+    get_router_url, router_get_relay_access_creds
 from .record_edit import RecordEditMixin
-from .tunnel.port_forward import tunnel_connected, endpoint
-from .. import api, utils, vault_extensions, vault, record_management, attachment, record_facades, rest_api, crypto
+from .tunnel.port_forward.endpoint import establish_symmetric_key, tunnel_encrypt, WebRTCConnection, tunnel_decrypt, \
+    TunnelEntrance
+from .. import api, utils, vault_extensions, vault, record_management, attachment, record_facades
 from ..display import bcolors
 from ..error import CommandError
-from ..loginv3 import CommonHelperMethods
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..proto import pam_pb2, router_pb2, record_pb2
 from ..proto.APIRequest_pb2 import GetKsmPublicKeysRequest, GetKsmPublicKeysResponse
@@ -1569,69 +1567,67 @@ class PAMTunnelListCommand(Command):
     pam_cmd_parser.add_argument('--conversation-id', '-c', required=False, dest='convo_id', action='store',
                                 help='The connection ID of the Tunnel to list')
 
-    pam_cmd_parser.add_argument('--verbose', '-v', required=False, dest='verbose', action='store_true',
-                                help='Print out more details about the tunnel')
-
     def get_parser(self):
         return PAMTunnelListCommand.pam_cmd_parser
 
     def execute(self, params, **kwargs):
-        def print_thread(thread, verbose):
+        def gather_tabel_row_data(thread):
             # {"thread": t, "host": host, "port": port, "name": listener_name, "started": datetime.now(),
             # "record_uid": record_uid}
+            row = []
             run_time = None
             hours = 0
             minutes = 0
             seconds = 0
+
             if thread.get('started'):
                 run_time = datetime.now() - thread.get('started')
                 hours, remainder = divmod(run_time.seconds, 3600)
                 minutes, seconds = divmod(remainder, 60)
+            #
+            # row.append(f"{thread.get('name', '')}")
+            row.append(f"{bcolors.OKBLUE}{thread.get('convo_id', '')}{bcolors.ENDC}")
+            row.append(f"{thread.get('host')}" if thread.get('host') else '')
 
-            text_line = f"{bcolors.OKGREEN}Tunnel {thread.get('name', '')} '{thread.get('convo_id', '')}'"
-            text_line += f", Host: {thread.get('host')}" if thread.get('host') else ''
-            text_line += f", Port: {thread.get('port')}" if thread.get('port') else ''
-            text_line += f", Record UID: {thread.get('record_uid')}" if thread.get('record_uid') else ''
-            text_line += f", Up time:"
+            if not thread.get('entrance'):
+                row.append(f"{bcolors.WARNING}Connecting...{bcolors.ENDC}")
+            else:
+                row.append(f"{bcolors.OKBLUE}{thread.get('entrance')._port}{bcolors.ENDC}" if thread.get('entrance') else '')
+            row.append(f"{thread.get('record_uid')}" if thread.get('record_uid') else '')
+            text_line = ""
             if run_time:
-                text_line += f" days {run_time.days}" if run_time.days > 0 else ''
-                text_line += f" hours {hours}" if hours > 0 or run_time.days > 0 else ''
-            text_line += f" minutes {minutes}"
-            text_line += f" seconds {seconds}"
-            if verbose:
-                text_line += f", Public Key: {thread.get('entrance').gateway_public_key_bytes}"
-            text_line += f"{bcolors.ENDC}"
-            print(text_line)
+                if run_time.days == 1:
+                    text_line += f"{run_time.days} day "
+                elif run_time.days > 1:
+                    text_line += f"{run_time.days} days "
+                text_line += f"{hours} hr " if hours > 0 or run_time.days > 0 else ''
+            text_line += f"{minutes} min "
+            text_line += f"{seconds} sec"
+            row.append(text_line)
+            return row
 
         convo_id = kwargs.get('convo_id', None)
-        if kwargs.get('verbose'):
-            verbose = True
-        else:
-            verbose = False
-        record_uid = kwargs.get('record_uid', None)
 
         if not params.tunnel_threads:
             logging.warning(f"{bcolors.OKBLUE}No Tunnels running{bcolors.ENDC}")
             return
 
+        table = []
+        headers = ['Tunnel ID', 'Host', 'Port', 'Record UID', 'Up Time']
+
         if convo_id:
             if convo_id in params.tunnel_threads:
-                print_thread(params.tunnel_threads[convo_id], verbose)
+                table.append(gather_tabel_row_data(params.tunnel_threads[convo_id]))
             else:
                 print(f"{bcolors.FAIL}Tunnel {convo_id} not found{bcolors.ENDC}")
             return
+        else:
+            for i, convo_id in enumerate(params.tunnel_threads):
+                row = gather_tabel_row_data(params.tunnel_threads[convo_id])
+                if row:
+                    table.append(row)
 
-        if record_uid:
-            # Print out all tunnels for record uid
-            for convo_id in params.tunnel_threads:
-                if params.tunnel_threads[convo_id].get("record_uid", "") == record_uid:
-                    print_thread(params.tunnel_threads[convo_id], verbose)
-                    return
-            print(f"{bcolors.FAIL}Tunnel for record {record_uid} not found{bcolors.ENDC}")
-            return
-
-        for i, convo_id in enumerate(params.tunnel_threads):
-            print_thread(params.tunnel_threads[convo_id], verbose)
+        dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
 
 
 class PAMTunnelStopCommand(Command):
@@ -1644,7 +1640,7 @@ class PAMTunnelStopCommand(Command):
         if not tunnel_data:
             return
 
-        for task_name in ["ws_reader", "ws_writer", "connect"]:
+        for task_name in ["print", "connect"]:
             task = tunnel_data.get(task_name)
             if task:
                 task.cancel()
@@ -1677,7 +1673,7 @@ class PAMTunnelStopCommand(Command):
                 print(f"{bcolors.WARNING}Event loop is closed for conversation ID {convo_id}{bcolors.ENDC}")
             else:
                 # Run the disconnect method in the event loop
-                loop.create_task(entrance.disconnect())
+                loop.create_task(entrance.stop_server())
                 print(f"Disconnected entrance for {convo_id}")
 
         loop.call_soon_threadsafe(self.tunnel_cleanup, params, convo_id)
@@ -1695,6 +1691,14 @@ class PAMTunnelTailCommand(Command):
         convo_id = kwargs.get('convo_id')
 
         log_queue = params.tunnel_threads_queue.get(convo_id)
+
+        # TODO make this run in a new thread?
+        logger_level = logging.getLogger().getEffectiveLevel()
+
+        logging.getLogger('aiortc').setLevel(logging.DEBUG)
+        logging.getLogger('aioice').setLevel(logging.DEBUG)
+        logging.getLogger(convo_id).setLevel(logging.DEBUG)
+
         if log_queue:
             try:
                 while True:
@@ -1707,6 +1711,10 @@ class PAMTunnelTailCommand(Command):
             except Exception as e:
                 print(f'    {bcolors.WARNING}Exiting due to exception: {e}{bcolors.ENDC}')
                 return
+            finally:
+                logging.getLogger('aiortc').setLevel(logger_level)
+                logging.getLogger('aioice').setLevel(logger_level)
+                logging.getLogger(convo_id).setLevel(logger_level)
         else:
             print(f'    {bcolors.FAIL}Invalid conversation ID{bcolors.ENDC}')
             return
@@ -1743,12 +1751,12 @@ class PAMTunnelStartCommand(Command):
                                 help='Used to list all tunnels for the given Gateway UID')
     pam_cmd_parser.add_argument('--uid', '-u', required=True, dest='record_uid', action='store',
                                 help='Filter list with UID of the PAM record that was used to create the tunnel')
-    pam_cmd_parser.add_argument('--host', '-o', required=False, dest='host', action='store', default=None,
+    pam_cmd_parser.add_argument('--host', '-o', required=False, dest='host', action='store',
+                                default="127.0.0.1",
                                 help='The address on which the server will be accepting connections. It could be an '
                                      'IP address or a hostname. '
-                                     'Ex. if set to 127.0.0.1 then only connections from the same machine will be '
-                                     'accepted. By default, if nothing is set, which means that the server will accept '
-                                     'connections from any IP address.')
+                                     'Ex. set to 127.0.0.1 as default so only connections from the same machine will be'
+                                     ' accepted.')
     pam_cmd_parser.add_argument('--port', '-p', required=False, dest='port', action='store',
                                 type=int, default=0,
                                 help='The port number on which the server will be listening for incoming connections. '
@@ -1789,7 +1797,7 @@ class PAMTunnelStartCommand(Command):
         if not tunnel_data:
             return
 
-        for task_name in ["ws_reader", "ws_writer", "connect"]:
+        for task_name in ["print", "entrance"]:
             task = tunnel_data.get(task_name)
             if task:
                 task.cancel()
@@ -1808,72 +1816,98 @@ class PAMTunnelStartCommand(Command):
         # Setup custom logging to put logs into log_queue
         logger = self.setup_logging(convo_id, log_queue, logging.getLogger().getEffectiveLevel())
 
-        transmission_key = utils.generate_aes_key()
-        server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
+        print(f"{bcolors.HIGHINTENSITYWHITE}Establishing tunnel between Commander and Gateway. Please wait...{bcolors.ENDC}")
+        # get the keys
+        gateway_public_key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), gateway_public_key_bytes)
 
-        if params.rest_context.server_key_id < 7:
-            encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
-        else:
-            encrypted_transmission_key = crypto.encrypt_ec(transmission_key, server_public_key)
-        encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
-        router_url = get_router_ws_url(params)
-        connection_url = (f'{router_url}/api/user/tunnel/{convo_id}'
-                          f'?Authorization=KeeperUser%20'
-                          f'{CommonHelperMethods.bytes_to_url_safe_str(encrypted_session_token)}'
-                          f'&TransmissionKey={CommonHelperMethods.bytes_to_url_safe_str(encrypted_transmission_key)}')
+        """
+# Generate an EC private key
+private_key = ec.generate_private_key(
+    ec.SECP256R1(),  # Using P-256 curve
+    backend=default_backend()
+)
+# Serialize to PEM format
+private_key_str = private_key.private_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PrivateFormat.PKCS8,
+    encryption_algorithm=serialization.NoEncryption()
+).decode('utf-8')
+        """
 
-        print("--> 1. CONNECT TO WS --------")
-        cookies = get_controller_cookie(params, gateway_uid)
-        cookie_str = request_cookie_jar_to_str(cookies)
+        client_private_key_pem = serialization.load_pem_private_key(
+            client_private_key.encode(),
+            password=None,
+            backend=default_backend()
+        )
 
-        extra_headers = {
-            'Cookie': cookie_str,
-        }
+        # Get symmetric key
+        symmetric_key = establish_symmetric_key(client_private_key_pem, gateway_public_key)
 
-        entrance_ws = await websockets.connect(connection_url, ping_interval=10, extra_headers=extra_headers)
+        response = router_get_relay_access_creds(params=params)
 
-        print("--> 2. SEND START MESSAGE OVER REST TO GATEWAY")
+        # Set up the pc
+        print_ready_event = asyncio.Event()
+        pc = WebRTCConnection(endpoint_name=listener_name, print_ready_event=print_ready_event,
+                              username=response.username, password=response.password, logger=logger)
 
-        payload_dict = {
-            'kind': 'start',
-            'conversationType': 'tunnel',
-            'value': {'listenerName': listener_name, "recordUid": record_uid}
-        }
+        # make webRTC sdp offer
+        offer = await pc.make_offer()
+        encrypted_offer = tunnel_encrypt(symmetric_key, offer)
+        logger.debug("-->. SEND START MESSAGE OVER REST TO GATEWAY")
 
-        payload_json = json.dumps(payload_dict, default=lambda o: o.__dict__, sort_keys=True, indent=4)
-        payload_bytes = payload_json.encode('utf-8')
+        '''
+            'inputs': {
+                'conversationType': ['tunnel', 'guacd']
+                'kind': ['start', 'disconnect'], 
+                'recordUid': record_uid,                    <-- this is the record UID of the PAM resource record 
+                                                                with Network information
+                'listenerName': NAME OF LISTENER,           <-- Used in logging (not required)
+                'offer': encrypted_WebRTC_sdp_offer,        <-- WebRTC SDP offer encrypted with symmetric key
+                'allow_control': True,                      <-- only for guacd, False = readonly session (default True)
+                'guacamole_client_id: guacamole_client_id,  <-- only for guacd, Connect to an existing guacd session
+                'userRecordUid': userRecordUid,             <-- only for guacd, User record UID to connect for session
+            }
+        '''
+        # TODO create objects for WebRTC inputs
+        router_response = router_send_action_to_gateway(
+            params=params,
+            gateway_action=GatewayActionWebRTCSession(inputs={'listenerName': listener_name, "recordUid": record_uid,
+                                                              "offer": encrypted_offer, 'kind': 'start',
+                                                              'conversationType': 'tunnel'}),
+            message_type=pam_pb2.CMT_GENERAL,
+            is_streaming=False,
+            destination_gateway_uid_str=gateway_uid
+        )
+        if not router_response:
+            return
+        gateway_response = router_response.get('response', {})
+        if not gateway_response:
+            raise Exception(f"Error getting response from the Gateway: {router_response}")
+        try:
+            payload = json.loads(gateway_response.get('payload', None))
+            if not payload:
+                raise Exception(f"Error getting payload from the Gateway response: {gateway_response}")
+        except Exception as e:
+            raise Exception(f"Error getting payload from the Gateway response: {e}")
 
-        rq_proto = router_pb2.RouterControllerMessage()
-        rq_proto.messageUid = url_safe_str_to_bytes(convo_id)
-        rq_proto.controllerUid = url_safe_str_to_bytes(gateway_uid)
-        rq_proto.messageType = pam_pb2.CMT_STREAM
-        rq_proto.streamResponse = False
-        rq_proto.payload = payload_bytes
-        rq_proto.timeout = 1500000  # Default time out how long the response from the Gateway should be
+        encrypted_answer = payload.get('data', None)
+        if not encrypted_answer:
+            raise Exception(f"Error getting data from the Gateway response payload: {payload}")
 
-        rs = router_send_message_to_gateway(
-            params,
-            transmission_key,
-            rq_proto,
-            gateway_uid,
-            cookies)
+        # decrypt the sdp answer
+        answer = tunnel_decrypt(symmetric_key, encrypted_answer)
+        await pc.accept_answer(answer)
 
-        if b'No socket connection exist to start streaming.' in rs.content:
-            raise SocketNotConnectedException(f"Commander didn't connect to right instance of the router to connect to "
-                                              f'the Controller: {rs.content}')
+        logger.debug("starting private tunnel")
 
-        tunnel = tunnel_connected.ConnectedTunnel(entrance_ws)
-        entrance = endpoint.TunnelProtocol(tunnel, endpoint_name=listener_name, logger=logger,
-                                           gateway_public_key_bytes=gateway_public_key_bytes,
-                                           client_private_key=client_private_key, host=host, port=port)
+        private_tunnel = TunnelEntrance(host=host, port=port, endpoint_name=listener_name, pc=pc,
+                                        print_ready_event=print_ready_event, logger=logger)
 
-        t1 = asyncio.create_task(tunnel.ws_reader())
-        t2 = asyncio.create_task(tunnel.ws_writer())
-        t3 = asyncio.create_task(entrance.connect())
-        params.tunnel_threads[convo_id].update({"ws_reader": t1, "ws_writer": t2, "connect": t3, "entrance": entrance})
+        t1 = asyncio.create_task(private_tunnel.start_server())
+        params.tunnel_threads[convo_id].update({"print": t1, "entrance": private_tunnel})
 
-        print("--> 3. START LISTENING FOR MESSAGES FROM GATEWAY --------")
-        await asyncio.gather(t1, t2, t3)
+        logger.debug("--> START LISTENING FOR MESSAGES FROM GATEWAY --------")
+        await asyncio.gather(t1, private_tunnel.reader_task)
 
         self.tunnel_cleanup(params, convo_id)
 
@@ -1927,8 +1961,8 @@ class PAMTunnelStartCommand(Command):
         convo_id = GatewayAction.generate_conversation_id()
         params.tunnel_threads[convo_id] = {}
         gateway_uid = kwargs.get('gateway')
-        host = kwargs.get('host', "127.0.0.1")
-        port = kwargs.get('port', 0)
+        host = kwargs.get('host')
+        port = kwargs.get('port')
         listener_name = kwargs.get('listener_name')
 
         gateway_public_key_bytes = retrieve_gateway_public_key(gateway_uid, params, api, utils)
@@ -1957,7 +1991,7 @@ class PAMTunnelStartCommand(Command):
                 encryption_algorithm=serialization.NoEncryption()
             ).decode('utf-8')
             client_private_key = vault.TypedField.new_field('secret',
-                                                            client_private_key_value,"Client Private Key")
+                                                            client_private_key_value, "Client Private Key")
             record.custom.append(client_private_key)
             record_management.update_record(params, record)
             api.sync_down(params)
