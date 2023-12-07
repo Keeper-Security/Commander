@@ -13,3 +13,4 @@ keeper.txt
 *.csv
 Makefile
 *.db
+dr-logs
