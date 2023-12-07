@@ -2,7 +2,7 @@ import sys
 import unittest
 from unittest import mock
 
-if sys.version_info >= (3, 15):
+if sys.version_info >= (3, 11):
     import datetime
     import socket
     import string

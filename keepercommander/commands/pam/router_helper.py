@@ -88,8 +88,25 @@ def router_get_rotation_schedules(params, proto_request):
 
     return None
 
+def router_get_relay_access_creds(params, expire_sec=None):
+    query_params = {
+        'expire-sec': expire_sec
+    }
 
-def _post_request_to_router(params, path, rq_proto=None, method='post', raw_without_status_check_response=False):
+    rs = _post_request_to_router(params, 'relay_access_creds', query_params=query_params)
+
+    if type(rs) == bytes:
+        rac = pam_pb2.RelayAccessCreds()
+        rac.ParseFromString(rs)
+        if logging.getLogger().level <= logging.DEBUG:
+            js = google.protobuf.json_format.MessageToJson(rac)
+            logging.debug('>>> [GW RS] %s: %s', 'get_relay_access_creds', js)
+
+        return rac
+
+    return None
+
+def _post_request_to_router(params, path, rq_proto=None, method='post', raw_without_status_check_response=False, query_params=None):
     path = 'api/user/' + path
     krouter_host = get_router_url(params)
 
@@ -113,6 +130,7 @@ def _post_request_to_router(params, path, rq_proto=None, method='post', raw_with
     try:
         rs = requests.request(method,
                               krouter_host + "/" + path,
+                              params=query_params,
                               verify=VERIFY_SSL,
                               headers={
                                 'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
