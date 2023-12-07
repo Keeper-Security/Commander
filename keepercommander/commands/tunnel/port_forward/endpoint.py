@@ -6,7 +6,7 @@ import secrets
 import socket
 import string
 import time
-from typing import Optional, Dict, Tuple, Any, List, Union, Sequence
+from typing import Optional, Dict, Tuple
 
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
 from cryptography.hazmat.primitives import hashes
@@ -129,7 +129,8 @@ def tunnel_decrypt(symmetric_key: AESGCM, encrypted_data: str):
     data = data_bytes[NONCE_LENGTH:]
     try:
         return symmetric_key.decrypt(nonce, data, None)
-    except:
+    except Exception as e:
+        logging.error(f'Error decrypting data: {e}')
         return None
 
 
@@ -143,33 +144,26 @@ class WebRTCConnection:
         self.print_ready_event = print_ready_event
 
         # Define the STUN server URL
-        # krouter_server_url = 'https://connect.' + params.server  # https://connect.dev.keepersecurity.com
-        # stun_url = "stun:stun.l.google.com:19302"
+        # To use Google's STUN server
+        '''
+        stun_url = "stun:stun.l.google.com:19302"
+        # Create an RTCIceServer instance for the TURN server
+        turn_server = RTCIceServer(urls=turn_url)
+        config = RTCConfiguration(iceServers=[stun_server])
+        '''
 
+        # Using Keeper's STUN and TURN servers
+        # relay_url = 'relay.' + params.server  + '3478'  # relay.dev.keepersecurity.com:3478
         relay_url = 'relay.keeperpamlab.com'
         stun_url = f"stun:{relay_url}:3478"
-
         # Create an RTCIceServer instance for the STUN server
         stun_server = RTCIceServer(urls=stun_url)
-
         # Define the TURN server URL and credentials
         turn_url = f"turn:{relay_url}?transport=udp"
-
-        '''
-        # Define TURN server credentials
-        username = username
-        password = password
-
         # Create an RTCIceServer instance for the TURN server with credentials
-        '''
         turn_server = RTCIceServer(urls=turn_url, username=username, credential=password)
-
-        # Create an RTCIceServer instance for the TURN server
-        # turn_server = RTCIceServer(urls=turn_url)
-
         # Create a new RTCConfiguration with both STUN and TURN servers
         config = RTCConfiguration(iceServers=[stun_server, turn_server])
-        # config = RTCConfiguration(iceServers=[stun_server])
 
         self._pc = RTCPeerConnection(config)
         self.setup_data_channel()
@@ -237,38 +231,34 @@ class WebRTCConnection:
             self.logger.error(f'Endpoint {self.endpoint_name}: Data channel is not open.')
 
     async def close_connection(self):
+        if self.closed:
+            return
         # Close the data channel if it's open
         if self.data_channel and self.data_channel.readyState == "open":
-            self.data_channel.close()
-            self.logger.error(f'Endpoint {self.endpoint_name}: Data channel closed')
+            try:
+                self.data_channel.close()
+                self.data_channel = None
+                self.logger.error(f'Endpoint {self.endpoint_name}: Data channel closed')
+            except Exception as e:
+                self.logger.error(f'Endpoint {self.endpoint_name}: Error closing data channel: {e}')
 
         # Close the peer connection
         if self._pc:
             await self._pc.close()
-            print("Peer connection closed")
+            self.logger.error(f'Endpoint {self.endpoint_name}: "Peer connection closed')
 
         # Clear the asyncio queue
-        while not self.web_rtc_queue.empty():
-            self.web_rtc_queue.get_nowait()
-        self.web_rtc_queue = None
+        if self.web_rtc_queue:
+            while not self.web_rtc_queue.empty():
+                self.web_rtc_queue.get_nowait()
+            self.web_rtc_queue = None
 
         # Reset instance variables
         self.data_channel = None
-        self.pc = None
+        self._pc = None
 
         # Set the closed flag
         self.closed = True
-
-        # Close the asyncio event loop if necessary
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            try:
-                for task in asyncio.all_tasks(loop):
-                    task.cancel()
-                await loop.create_task(asyncio.sleep(.1))
-                loop.stop()
-            except Exception as e:
-                self.logger.error(f'Endpoint {self.endpoint_name}: Error stopping loop: {e}')
 
     """
     This class is used to set up the tunnel entrance. This is used for the signaling phase and control messages.
@@ -338,6 +328,7 @@ class TunnelEntrance:
                  print_ready_event,             # type: asyncio.Event
                  logger = None,                 # type: logging.Logger
                  ):                             # type: (...) -> None
+        self.closing = False
         self.ping_time = None
         self.to_local_task = None
         self._ping_attempt = 0
@@ -354,6 +345,7 @@ class TunnelEntrance:
         self.kill_server_event = asyncio.Event()
         self.pc = pc
         self.print_ready_event = print_ready_event
+        self.server_task = None
 
     async def send_to_web_rtc(self, data):
         if self.pc.is_data_channel_open():
@@ -495,7 +487,7 @@ class TunnelEntrance:
                 except asyncio.TimeoutError as et:
                     if self._ping_attempt > 3:
                         if self.is_connected:
-                            await self.stop_server()
+                            self.kill_server_event.set()
                         raise et
                     self.logger.debug(f'Endpoint {self.endpoint_name}: Tunnel reader timed out')
                     self.logger.debug(f'Endpoint {self.endpoint_name}: Send ping request')
@@ -528,7 +520,7 @@ class TunnelEntrance:
 
         finally:
             self.logger.debug(f"Endpoint {self.endpoint_name}: Closing tunnel")
-            await self.stop_server()
+            self.kill_server_event.set()
 
     async def start_reader(self):   # type: () -> None
         """
@@ -543,6 +535,8 @@ class TunnelEntrance:
             self.ping_time = time.perf_counter()
             await self.send_control_message(ControlMessage.Ping)
             self.logger.debug(f"Endpoint {self.endpoint_name}: Sent ping message to WebRTC connection")
+        except asyncio.CancelledError:
+            pass
         except Exception as e:
             self.logger.error(f"Endpoint {self.endpoint_name}: Error while establishing WebRTC connection: {e}")
             failed = True
@@ -550,7 +544,7 @@ class TunnelEntrance:
             if failed:
                 for connection_no in list(self.connections):
                     await self.close_connection(connection_no)
-                await self.stop_server()
+                self.kill_server_event.set()
                 self.is_connected = False
             return
 
@@ -616,8 +610,17 @@ class TunnelEntrance:
         """
         This server is used to listen for client connections to the local port.
         """
+        if self.server:
+            return
         try:
             self._port = find_open_port(tried_ports=[], preferred_port=self._port, host=self.host)
+        except asyncio.CancelledError:
+            self.logger.info(f"Endpoint {self.endpoint_name}: Server has been cancelled. Cleaning up...")
+            # Perform necessary cleanup here
+            self.server.close()  # Close the server
+            await self.server.wait_closed()  # Wait until the server is closed
+            return
+
         except Exception as e:
             self.logger.error(f"Endpoint {self.endpoint_name}: Error while finding open port: {e}")
             await self.print_not_ready()
@@ -632,7 +635,7 @@ class TunnelEntrance:
             self.server = await asyncio.start_server(self.handle_connection, family=socket.AF_INET, host=self.host,
                                                      port=self._port)
             async with self.server:
-                await asyncio.create_task(self.print_ready(self.host, self._port, self.print_ready_event))
+                self.server_task = await asyncio.create_task(self.print_ready(self.host, self._port, self.print_ready_event))
                 await self.server.serve_forever()
         except ConnectionRefusedError as er:
             self.logger.error(f"Endpoint {self.endpoint_name}: Connection Refused while starting server: {er}")
@@ -648,14 +651,13 @@ class TunnelEntrance:
             return
 
     async def print_not_ready(self):
-
-        print(f'{bcolors.FAIL}+---------------------------------------------------------{bcolors.ENDC}')
+        print(f'\n{bcolors.FAIL}+---------------------------------------------------------{bcolors.ENDC}')
         print(f'{bcolors.FAIL}| Endpoint {self.endpoint_name}{bcolors.ENDC} failed to start')
         print(f'{bcolors.FAIL}+---------------------------------------------------------{bcolors.ENDC}')
         await self.send_control_message(ControlMessage.CloseConnection, int_to_bytes(0))
         for c in list(self.connections):
             await self.close_connection(c)
-        await self.stop_server()
+        self.kill_server_event.set()
 
     async def print_ready(self, host,           # type: str
                           port,                 # type: int
@@ -678,33 +680,40 @@ class TunnelEntrance:
         # Sleep a little bit to print out last
         await asyncio.sleep(.5)
         host = host + ":" if host else ''
-        print(f'{bcolors.OKGREEN}+---------------------------------------------------------------{bcolors.ENDC}')
+        print(f'\n{bcolors.OKGREEN}+---------------------------------------------------------------{bcolors.ENDC}')
         print(
             f'{bcolors.OKGREEN}| Endpoint {bcolors.ENDC}{bcolors.OKBLUE}{self.endpoint_name}{bcolors.ENDC}'
             f'{bcolors.OKGREEN}: Listening on port: {bcolors.ENDC}'
             f'{bcolors.BOLD}{bcolors.OKBLUE}{host}{port}{bcolors.ENDC}')
         print(f'{bcolors.OKGREEN}+---------------------------------------------------------------{bcolors.ENDC}')
         print(f'{bcolors.OKGREEN}View all open tunnels   : {bcolors.ENDC}{bcolors.OKBLUE}pam tunnel list{bcolors.ENDC}')
-        print(f'{bcolors.OKGREEN}Tail logs on open tunnel: {bcolors.ENDC}{bcolors.OKBLUE}pam tunnel tail -c="[TUNNELID]"{bcolors.ENDC}')
-        print(f'{bcolors.OKGREEN}Stop a tunnel           : {bcolors.ENDC}{bcolors.OKBLUE}pam tunnel stop -c="[TUNNELID]"{bcolors.ENDC}')
-
+        print(f'{bcolors.OKGREEN}Tail logs on open tunnel: {bcolors.ENDC}'
+              f'{bcolors.OKBLUE}pam tunnel tail ' +
+              (f'--' if self.endpoint_name[0] == '-' else '') +
+              f'{self.endpoint_name}{bcolors.ENDC}')
+        print(f'{bcolors.OKGREEN}Stop a tunnel           : {bcolors.ENDC}'
+              f'{bcolors.OKBLUE}pam tunnel stop ' +
+              (f'--' if self.endpoint_name[0] == '-' else '') +
+              f'{self.endpoint_name}{bcolors.ENDC}')
 
     async def stop_server(self):
+        if self.closing:
+            return
         try:
             await self.send_control_message(ControlMessage.CloseConnection, int_to_bytes(0))
-            if self.server:
-                self.server.close()
-                await self.server.wait_closed()
-                self.logger.debug(f"Endpoint {self.endpoint_name}: Local server stopped")
-                self.server = None
-            if self.reader_task:
-                self.reader_task.cancel()
-            for t in list(self.to_tunnel_tasks):
-                self.to_tunnel_tasks[t].cancel()
-            if self.to_local_task:
-                self.to_local_task.cancel()
+        except Exception as ex:
+            self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception sending Close connection {ex}')
+
+        self.kill_server_event.set()
+        try:
+            # close aiortc data channel
+            await self.pc.close_connection()
+        except Exception as ex:
+            self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception closing data channel {ex}')
+
         finally:
-            self.kill_server_event.set()
+            self.closing = True
+            self.logger.debug(f"Endpoint {self.endpoint_name}: Tunnel stopped")
 
     async def close_connection(self, connection_no):
         try:
