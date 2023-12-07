@@ -10,16 +10,15 @@ if sys.version_info >= (3, 15):
     from aiortc import RTCDataChannel
     from cryptography.utils import int_to_bytes
     from keepercommander import utils
-    from keepercommander.commands.tunnel.port_forward.endpoint import (PrivateTunnelEntrance, ControlMessage,
+    from keepercommander.commands.tunnel.port_forward.endpoint import (TunnelEntrance, ControlMessage,
                                                                        CONTROL_MESSAGE_NO_LENGTH, CONNECTION_NO_LENGTH,
                                                                        ConnectionNotFoundException,
-                                                                       TERMINATOR, DATA_LENGTH)
+                                                                       TERMINATOR, DATA_LENGTH, WebRTCConnection)
     from test_pam_tunnel import new_private_key
 
     # Only define the class if Python version is 3.8 or higher
     class TestPrivateTunnelEntrance(unittest.IsolatedAsyncioTestCase):
         async def asyncSetUp(self):
-            self.event = asyncio.Event()
             self.host = 'localhost'
             self.port = 8080
             self.endpoint_name = 'TestEndpoint'
@@ -28,13 +27,12 @@ if sys.version_info >= (3, 15):
             self.logger = mock.MagicMock(spec=logging)
             self.kill_server_event = asyncio.Event()
             self.tunnel_symmetric_key = utils.generate_aes_key()
-            self.data_channel = mock.MagicMock(sepc=RTCDataChannel)
-            self.data_channel.readyState = 'open'
+            self.pc = mock.MagicMock(sepc=WebRTCConnection)
+            self.pc.data_channel.readyState = 'open'
             self.incoming_queue = mock.MagicMock(sepc=asyncio.Queue())
-            self.pte = PrivateTunnelEntrance(
-                self.event, self.host, self.port, self.endpoint_name, self.kill_server_event, self.data_channel,
-                self.incoming_queue, self.logger
-            )
+            self.print_ready_event = asyncio.Event()
+            self.pte = TunnelEntrance(self.host, self.port, self.endpoint_name, self.pc,
+                                      self.print_ready_event, self.logger)
 
         async def set_queue_side_effect(self):
             data = b'some_data'
@@ -46,7 +44,7 @@ if sys.version_info >= (3, 15):
                 yield None
 
             # Now use an iterator of this coroutine function as the side effect
-            self.pte.incoming_queue.get.side_effect = mock_incoming_queue_get().__anext__
+            self.pte.pc.web_rtc_queue.get.side_effect = mock_incoming_queue_get().__anext__
 
         async def asyncTearDown(self):
             await self.pte.stop_server()  # ensure the server is stopped after test
@@ -56,7 +54,7 @@ if sys.version_info >= (3, 15):
             self.pte.tls_writer = mock.MagicMock(spec=asyncio.StreamWriter)
 
             # Mock write and drain methods
-            with mock.patch.object(self.pte.data_channel, 'send', new_callable=mock.AsyncMock) as mock_send:
+            with mock.patch.object(self.pte.pc.data_channel, 'send', new_callable=mock.AsyncMock) as mock_send:
 
                 # Define the control message and optional data
                 control_message = ControlMessage.Ping
@@ -81,7 +79,7 @@ if sys.version_info >= (3, 15):
             self.pte.logger = mock.MagicMock()
 
             # Set side effect to raise an exception
-            self.pte.data_channel.send.side_effect = Exception("Mocked Exception")
+            self.pte.pc.data_channel.send.side_effect = Exception("Mocked Exception")
 
             # Define the control message and optional data
             control_message = ControlMessage.Ping
@@ -151,8 +149,7 @@ if sys.version_info >= (3, 15):
         async def test_start_server(self):
             with mock.patch('asyncio.start_server', new_callable=mock.AsyncMock) as mock_open_connection, \
                  mock.patch.object(self.pte, 'handle_connection', new_callable=mock.AsyncMock) as mock_handle_connection:
-                await self.pte.start_server(mock.AsyncMock(spec=asyncio.Event), mock.AsyncMock(spec=asyncio.Event),
-                                            mock.AsyncMock(spec=asyncio.Event))
+                await self.pte.start_server()
                 mock_open_connection.assert_called_with(mock_handle_connection, family=socket.AF_INET,
                                                         host='localhost', port=self.port)
 
@@ -163,8 +160,7 @@ if sys.version_info >= (3, 15):
 
                 self.pte.logger = mock.MagicMock()
 
-                await self.pte.start_server(mock.AsyncMock(spec=asyncio.Event), mock.AsyncMock(spec=asyncio.Event),
-                                            mock.AsyncMock(spec=asyncio.Event))
+                await self.pte.start_server()
 
                 print_ready.assert_called_once()
 
@@ -174,7 +170,7 @@ if sys.version_info >= (3, 15):
                 mock_start_server.side_effect = ConnectionRefusedError
                 self.pte.logger = mock.MagicMock()
 
-                await self.pte.start_server(mock.AsyncMock(), mock.AsyncMock(), mock.AsyncMock())
+                await self.pte.start_server()
 
                 self.pte.logger.error.assert_called_with('Endpoint TestEndpoint: Connection Refused while starting '
                                                          'server: ')
@@ -187,7 +183,7 @@ if sys.version_info >= (3, 15):
                 mock_start_server.side_effect = TimeoutError
                 self.pte.logger = mock.MagicMock()
 
-                await self.pte.start_server(mock.AsyncMock(), mock.AsyncMock(), mock.AsyncMock())
+                await self.pte.start_server()
 
                 self.pte.logger.error.assert_called_with('Endpoint TestEndpoint: OS Error while starting server: ')
                 mock_stop.assert_called()
@@ -199,7 +195,7 @@ if sys.version_info >= (3, 15):
                 mock_start_server.side_effect = OSError("Some OS Error")
                 self.pte.logger = mock.MagicMock()
 
-                await self.pte.start_server(mock.AsyncMock(), mock.AsyncMock(), mock.AsyncMock())
+                await self.pte.start_server()
 
                 self.pte.logger.error.assert_called_with('Endpoint TestEndpoint: OS Error while starting server: '
                                                          'Some OS Error')
@@ -212,7 +208,7 @@ if sys.version_info >= (3, 15):
                 mock_start_server.side_effect = Exception("Some generic exception")
                 self.pte.logger = mock.MagicMock()
 
-                await self.pte.start_server(mock.AsyncMock(), mock.AsyncMock(), mock.AsyncMock())
+                await self.pte.start_server()
 
                 self.pte.logger.error.assert_called_with('Endpoint TestEndpoint: Error while starting server: '
                                                          'Some generic exception')
@@ -242,13 +238,16 @@ if sys.version_info >= (3, 15):
 
             self.pte.kill_server_event = mock.MagicMock(spec=asyncio.Event)
             self.pte.kill_server_event.is_set.side_effect = [False, False, True]
+            self.pte.pc = mock.MagicMock(spec=WebRTCConnection)
+            self.pte.pc.data_channel = mock.MagicMock(spec=RTCDataChannel)
+            self.pte.pc.data_channel.readyState = 'open'
 
             # Run the task and wait for it to complete
             task = asyncio.create_task(self.pte.forward_data_to_tunnel(1))
             await asyncio.sleep(.01)  # Give some time for the task to run
             task.cancel()  # Cancel the task to stop it from running indefinitely
 
-            self.pte.data_channel.send.assert_called_with(b'\x00\x00\x00\x01\x00\x00\x00\x0bhello world;')
+            self.pte.pc.data_channel.send.assert_called_with(b'\x00\x00\x00\x01\x00\x00\x00\x0bhello world;')
 
         # Test Connection Not Found
         async def test_forward_data_to_tunnel_no_connection(self):
@@ -334,31 +333,17 @@ if sys.version_info >= (3, 15):
         # Test print_ready
         async def test_print_ready(self):
             with mock.patch('builtins.print') as mock_print:
-                await self.pte.print_ready('localhost', 8080, mock.AsyncMock(), mock.AsyncMock())
+                await self.pte.print_ready('localhost', 8080, mock.AsyncMock())
 
             # Check if print was called (optional)
             mock_print.assert_called()
 
         # Test print_ready with TimeoutError
         async def test_print_ready_timeout_error_forwarder(self):
-            forwarder_event = mock.AsyncMock(spec=asyncio.Event)
-            forwarder_event.wait.side_effect = asyncio.TimeoutError()
-            private_tunnel_event = mock.AsyncMock(spec=asyncio.Event)
+            print_event = mock.AsyncMock(spec=asyncio.Event)
+            print_event.wait.side_effect = asyncio.TimeoutError()
             with mock.patch.object(self.pte, 'print_not_ready', new_callable=mock.AsyncMock) as mock_print_not_ready:
-                await self.pte.print_ready('localhost', 8080, forwarder_event, private_tunnel_event)
-
-            # Check if logger.debug was called
-            self.pte.logger.debug.assert_called_with("Endpoint TestEndpoint: Timed out waiting for private tunnel to start")
-            # Check if print was called (optional)
-            mock_print_not_ready.assert_called()
-
-        # Test print_ready with TimeoutError
-        async def test_print_ready_timeout_error_private_tunnel(self):
-            forwarder_event = mock.AsyncMock(spec=asyncio.Event)
-            private_tunnel_event = mock.AsyncMock(spec=asyncio.Event)
-            private_tunnel_event.wait.side_effect = asyncio.TimeoutError()
-            with mock.patch.object(self.pte, 'print_not_ready', new_callable=mock.AsyncMock) as mock_print_not_ready:
-                await self.pte.print_ready('localhost', 8080, forwarder_event, private_tunnel_event)
+                await self.pte.print_ready('localhost', 8080, print_event)
 
             # Check if logger.debug was called
             self.pte.logger.debug.assert_called_with("Endpoint TestEndpoint: Timed out waiting for private tunnel to start")
