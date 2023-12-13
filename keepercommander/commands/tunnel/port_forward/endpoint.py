@@ -200,7 +200,7 @@ class WebRTCConnection:
         buffer += int.to_bytes(length, DATA_LENGTH, byteorder='big')
         buffer += int.to_bytes(ControlMessage.Ping, CONTROL_MESSAGE_NO_LENGTH, byteorder='big')
         buffer += data + TERMINATOR
-        self.data_channel.send(buffer)
+        self.send_message(buffer)
         self.logger.error(f'Endpoint {self.endpoint_name}: Data channel opened')
 
     def on_data_channel_message(self, message):
@@ -217,6 +217,7 @@ class WebRTCConnection:
             pass
         elif self._pc.connectionState in ["disconnected", "failed", "closed"]:
             # Handle disconnection or failure here
+            asyncio.get_event_loop().create_task(self.close_webrtc_connection())
             pass
 
     def is_data_channel_open(self):
@@ -226,21 +227,25 @@ class WebRTCConnection:
     # Example usage of state check in a method
     def send_message(self, message):
         if self.is_data_channel_open():
-            self.data_channel.send(message)
+            try:
+                self.data_channel.send(message)
+            except Exception as e:
+                self.logger.error(f'Endpoint {self.endpoint_name}: Error sending message: {e}')
         else:
             self.logger.error(f'Endpoint {self.endpoint_name}: Data channel is not open.')
 
-    async def close_connection(self):
+    async def close_webrtc_connection(self):
         if self.closed:
             return
-        # Close the data channel if it's open
-        if self.data_channel and self.data_channel.readyState == "open":
+        # Close the data channel
+        if self.data_channel:
             try:
                 self.data_channel.close()
-                self.data_channel = None
                 self.logger.error(f'Endpoint {self.endpoint_name}: Data channel closed')
             except Exception as e:
                 self.logger.error(f'Endpoint {self.endpoint_name}: Error closing data channel: {e}')
+
+        self.data_channel = None
 
         # Close the peer connection
         if self._pc:
@@ -327,6 +332,7 @@ class TunnelEntrance:
                  pc,                            # type: WebRTCConnection
                  print_ready_event,             # type: asyncio.Event
                  logger = None,                 # type: logging.Logger
+                 connect_task = None,           # type: asyncio.Task
                  ):                             # type: (...) -> None
         self.closing = False
         self.ping_time = None
@@ -346,6 +352,7 @@ class TunnelEntrance:
         self.pc = pc
         self.print_ready_event = print_ready_event
         self.server_task = None
+        self.connect_task = connect_task
 
     async def send_to_web_rtc(self, data):
         if self.pc.is_data_channel_open():
@@ -380,8 +387,7 @@ class TunnelEntrance:
             if data and len(data) > 0:
                 target_connection_no = int.from_bytes(data, byteorder='big')
                 if target_connection_no == 0:
-                    for c in list(self.connections):
-                        await self.close_connection(c)
+                    self.kill_server_event.set()
                 else:
                     self.logger.debug(f'Endpoint {self.endpoint_name}: Closing connection '
                                       f'{target_connection_no}')
@@ -431,8 +437,10 @@ class TunnelEntrance:
         try:
             self.logger.debug(f"Endpoint {self.endpoint_name}: Forwarding data to local...")
             buff = b''
-            should_exit = False
-            while not self.kill_server_event.is_set() and not should_exit:
+            while not self.kill_server_event.is_set():
+                if self.pc.closed:
+                    self.kill_server_event.set()
+                    break
                 while len(buff) >= CONNECTION_NO_LENGTH + DATA_LENGTH:
                     connection_no = int.from_bytes(buff[:CONNECTION_NO_LENGTH], byteorder='big')
                     length = int.from_bytes(buff[CONNECTION_NO_LENGTH:CONNECTION_NO_LENGTH+DATA_LENGTH],
@@ -442,7 +450,7 @@ class TunnelEntrance:
                                 CONNECTION_NO_LENGTH + DATA_LENGTH + length + len(TERMINATOR)] != TERMINATOR:
                             self.logger.warning(f'Endpoint {self.endpoint_name}: Invalid terminator')
                             # if we don't have a valid terminator then we don't know where the message ends or begins
-                            should_exit = True
+                            self.kill_server_event.set()
                             break
                         self.logger.debug(f'Endpoint {self.endpoint_name}: Buffer data received data')
                         send_data = buff[CONNECTION_NO_LENGTH + DATA_LENGTH:CONNECTION_NO_LENGTH + DATA_LENGTH + length]
@@ -482,6 +490,8 @@ class TunnelEntrance:
                         # Yield control back to the event loop for other tasks to execute
                         await asyncio.sleep(0)
                         break
+                if self.kill_server_event.is_set():
+                    break
                 try:
                     data = await asyncio.wait_for(self.pc.web_rtc_queue.get(), READ_TIMEOUT)
                 except asyncio.TimeoutError as et:
@@ -520,7 +530,7 @@ class TunnelEntrance:
 
         finally:
             self.logger.debug(f"Endpoint {self.endpoint_name}: Closing tunnel")
-            self.kill_server_event.set()
+            await self.stop_server()
 
     async def start_reader(self):   # type: () -> None
         """
@@ -542,8 +552,6 @@ class TunnelEntrance:
             failed = True
         finally:
             if failed:
-                for connection_no in list(self.connections):
-                    await self.close_connection(connection_no)
                 self.kill_server_event.set()
                 self.is_connected = False
             return
@@ -618,7 +626,11 @@ class TunnelEntrance:
             self.logger.info(f"Endpoint {self.endpoint_name}: Server has been cancelled. Cleaning up...")
             # Perform necessary cleanup here
             self.server.close()  # Close the server
-            await self.server.wait_closed()  # Wait until the server is closed
+            try:
+                await asyncio.wait_for(self.server.wait_closed(), timeout=5.0)
+            except asyncio.TimeoutError:
+                self.logger.warning(
+                    f"Endpoint {self.endpoint_name}: Timed out while trying to close server")
             return
 
         except Exception as e:
@@ -653,10 +665,7 @@ class TunnelEntrance:
     async def print_not_ready(self):
         print(f'\n{bcolors.FAIL}+---------------------------------------------------------{bcolors.ENDC}')
         print(f'{bcolors.FAIL}| Endpoint {self.endpoint_name}{bcolors.ENDC} failed to start')
-        print(f'{bcolors.FAIL}+---------------------------------------------------------{bcolors.ENDC}')
-        await self.send_control_message(ControlMessage.CloseConnection, int_to_bytes(0))
-        for c in list(self.connections):
-            await self.close_connection(c)
+        print(f'{bcolors.FAIL}+---------------------------------------------------------{bcolors.ENDC}\n')
         self.kill_server_event.set()
 
     async def print_ready(self, host,           # type: str
@@ -680,21 +689,29 @@ class TunnelEntrance:
         # Sleep a little bit to print out last
         await asyncio.sleep(.5)
         host = host + ":" if host else ''
-        print(f'\n{bcolors.OKGREEN}+---------------------------------------------------------------{bcolors.ENDC}')
+        # Total length of the dynamic parts (endpoint name, host, and port)
+        dynamic_length = \
+            (len("| Endpoint : Listening on port: ") + len(self.endpoint_name) + len(host) + len(str(port)))
+
+        # Dashed line adjusted to the length of the middle line
+        dashed_line = '+' + '-' * dynamic_length + '+'
+
+        # Print statements
+        print(f'\n{bcolors.OKGREEN}{dashed_line}{bcolors.ENDC}')
         print(
             f'{bcolors.OKGREEN}| Endpoint {bcolors.ENDC}{bcolors.OKBLUE}{self.endpoint_name}{bcolors.ENDC}'
             f'{bcolors.OKGREEN}: Listening on port: {bcolors.ENDC}'
-            f'{bcolors.BOLD}{bcolors.OKBLUE}{host}{port}{bcolors.ENDC}')
-        print(f'{bcolors.OKGREEN}+---------------------------------------------------------------{bcolors.ENDC}')
+            f'{bcolors.BOLD}{bcolors.OKBLUE}{host}{port}{bcolors.ENDC}{bcolors.OKGREEN} |{bcolors.ENDC}')
+        print(f'{bcolors.OKGREEN}{dashed_line}{bcolors.ENDC}')
         print(f'{bcolors.OKGREEN}View all open tunnels   : {bcolors.ENDC}{bcolors.OKBLUE}pam tunnel list{bcolors.ENDC}')
         print(f'{bcolors.OKGREEN}Tail logs on open tunnel: {bcolors.ENDC}'
               f'{bcolors.OKBLUE}pam tunnel tail ' +
-              (f'--' if self.endpoint_name[0] == '-' else '') +
+              (f'-- ' if self.endpoint_name[0] == '-' else '') +
               f'{self.endpoint_name}{bcolors.ENDC}')
         print(f'{bcolors.OKGREEN}Stop a tunnel           : {bcolors.ENDC}'
               f'{bcolors.OKBLUE}pam tunnel stop ' +
-              (f'--' if self.endpoint_name[0] == '-' else '') +
-              f'{self.endpoint_name}{bcolors.ENDC}')
+              (f'-- ' if self.endpoint_name[0] == '-' else '') +
+              f'{self.endpoint_name}{bcolors.ENDC}\n')
 
     async def stop_server(self):
         if self.closing:
@@ -704,16 +721,21 @@ class TunnelEntrance:
         except Exception as ex:
             self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception sending Close connection {ex}')
 
+        for c in list(self.connections):
+            await self.close_connection(c)
+
         self.kill_server_event.set()
         try:
             # close aiortc data channel
-            await self.pc.close_connection()
+            await self.pc.close_webrtc_connection()
         except Exception as ex:
             self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception closing data channel {ex}')
 
+        try:
+            self.connect_task.cancel()
         finally:
             self.closing = True
-            self.logger.debug(f"Endpoint {self.endpoint_name}: Tunnel stopped")
+            self.logger.info(f"Endpoint {self.endpoint_name}: Tunnel stopped")
 
     async def close_connection(self, connection_no):
         try:
