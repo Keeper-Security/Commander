@@ -212,8 +212,8 @@ def request_cookie_jar_to_str(cookie_jar):
     return ';'.join(found)
 
 
-def router_send_action_to_gateway(params, gateway_action: GatewayAction, message_type, is_streaming, destination_gateway_uid_str=None):
-
+def router_send_action_to_gateway(params, gateway_action: GatewayAction, message_type, is_streaming, destination_gateway_uid_str=None, gateway_timeout=15000):
+    # Default time out how long the response from the Gateway should be
     krouter_host = get_router_url(params)
 
     # 1. Find connected gateway to send action to
@@ -266,7 +266,7 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
     rq.messageType = message_type
     rq.streamResponse = is_streaming
     rq.payload = gateway_action.toJSON().encode('utf-8')
-    rq.timeout = 15000  # Default time out how long the response from the Gateway should be
+    rq.timeout = gateway_timeout
 
     transmission_key = utils.generate_aes_key()
 

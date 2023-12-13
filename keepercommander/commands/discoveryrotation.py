@@ -17,6 +17,7 @@ import queue
 import socket
 import sys
 import threading
+import time
 from datetime import datetime
 from typing import Dict, Optional, Any
 
@@ -1619,7 +1620,7 @@ class PAMTunnelListCommand(Command):
 
 class PAMTunnelStopCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-stop-command')
-    pam_cmd_parser.add_argument('uid', type= str, action='store', help='The Tunnel UID')
+    pam_cmd_parser.add_argument('uid', type=str, action='store', help='The Tunnel UID')
 
     def get_parser(self):
         return PAMTunnelStopCommand.pam_cmd_parser
@@ -1631,18 +1632,22 @@ class PAMTunnelStopCommand(Command):
 
         tunnel_data = params.tunnel_threads.get(convo_id, None)
         if not tunnel_data:
-            logging.debug(f"{bcolors.WARNING}No tunnel data found for {convo_id}{bcolors.ENDC}")
-            return
+            raise CommandError('tunnel stop', f"No tunnel data found for {convo_id}")
 
         connect_task = tunnel_data.get("connect_task", None)
         if connect_task:
             connect_task.cancel()
+        count = 0
+        while params.tunnel_threads.get(convo_id) and count < 10:
+            count += .1
+            time.sleep(.1)
+
         return
 
 
 class PAMTunnelTailCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-tail-command')
-    pam_cmd_parser.add_argument('uid', type= str, action='store', help='The Tunnel UID')
+    pam_cmd_parser.add_argument('uid', type=str, action='store', help='The Tunnel UID')
 
     def get_parser(self):
         return PAMTunnelTailCommand.pam_cmd_parser
@@ -1655,6 +1660,7 @@ class PAMTunnelTailCommand(Command):
         log_queue = params.tunnel_threads_queue.get(convo_id)
 
         logger_level = logging.getLogger().getEffectiveLevel()
+        aio_log_level = logging.getLogger('aiortc').getEffectiveLevel()
 
         logging.getLogger('aiortc').setLevel(logging.DEBUG)
         logging.getLogger('aioice').setLevel(logging.DEBUG)
@@ -1673,8 +1679,8 @@ class PAMTunnelTailCommand(Command):
                 print(f'    {bcolors.WARNING}Exiting due to exception: {e}{bcolors.ENDC}')
                 return
             finally:
-                logging.getLogger('aiortc').setLevel(logger_level)
-                logging.getLogger('aioice').setLevel(logger_level)
+                logging.getLogger('aiortc').setLevel(aio_log_level)
+                logging.getLogger('aioice').setLevel(aio_log_level)
                 logging.getLogger(convo_id).setLevel(logger_level)
         else:
             print(f'    {bcolors.FAIL}Invalid conversation ID{bcolors.ENDC}')
@@ -1710,8 +1716,9 @@ class PAMTunnelStartCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='dr-port-forward-command')
     pam_cmd_parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
                                 help='Used to list all tunnels for the given Gateway UID')
-    pam_cmd_parser.add_argument('--uid', '-u', required=True, dest='record_uid', action='store',
-                                help='Filter list with UID of the PAM record that was used to create the tunnel')
+    pam_cmd_parser.add_argument('--record', '-r', required=True, dest='record_uid', action='store',
+                                help='The Record UID of the PAM resource record with network information to use for '
+                                     'tunneling')
     pam_cmd_parser.add_argument('--host', '-o', required=False, dest='host', action='store',
                                 default="127.0.0.1",
                                 help='The address on which the server will be accepting connections. It could be an '
@@ -1823,7 +1830,8 @@ private_key_str = private_key.private_bytes(
                                                               'conversationType': 'tunnel'}),
             message_type=pam_pb2.CMT_GENERAL,
             is_streaming=False,
-            destination_gateway_uid_str=gateway_uid
+            destination_gateway_uid_str=gateway_uid,
+            gateway_timeout=30000
         )
         if not router_response:
             return
@@ -1837,6 +1845,9 @@ private_key_str = private_key.private_bytes(
         except Exception as e:
             raise Exception(f"Error getting payload from the Gateway response: {e}")
 
+        if payload.get('is_ok', False) is False or payload.get('progress_status') == 'Error':
+            raise Exception(f"Error getting payload from the Gateway response: {payload.get('data')}")
+
         encrypted_answer = payload.get('data', None)
         if not encrypted_answer:
             raise Exception(f"Error getting data from the Gateway response payload: {payload}")
@@ -1848,7 +1859,8 @@ private_key_str = private_key.private_bytes(
         logger.debug("starting private tunnel")
 
         private_tunnel = TunnelEntrance(host=host, port=port, endpoint_name=convo_id, pc=pc,
-                                        print_ready_event=print_ready_event, logger=logger)
+                                        print_ready_event=print_ready_event, logger=logger,
+                                        connect_task = params.tunnel_threads[convo_id].get("connect_task", None))
 
         t1 = asyncio.create_task(private_tunnel.start_server())
         params.tunnel_threads[convo_id].update({"server": t1, "entrance": private_tunnel})
@@ -1886,7 +1898,7 @@ private_key_str = private_key.private_bytes(
             except asyncio.CancelledError:
                 pass
         except SocketNotConnectedException as es:
-            print(f"{bcolors.FAIL}An exception occurred in pre_connect for connection {convo_id}: {es}{bcolors.ENDC}")
+            print(f"{bcolors.FAIL}Socket not connected exception in connection {convo_id}: {es}{bcolors.ENDC}")
         except Exception as e:
             print(f"{bcolors.FAIL}An exception occurred in pre_connect for connection {convo_id}: {e}{bcolors.ENDC}")
         finally:
@@ -1978,5 +1990,23 @@ private_key_str = private_key.private_bytes(
         # Setting the thread as a daemon thread
         t.daemon = True
         t.start()
+
         params.tunnel_threads[convo_id].update({"convo_id": convo_id, "thread": t, "host": host, "port": port,
                                                 "started": datetime.now(), "record_uid": record_uid})
+        count = 0
+        wait_time = 120
+
+        while count < wait_time and not params.tunnel_threads[convo_id].get("entrance"):
+            count += .1
+            time.sleep(.1)
+
+        if count >= wait_time:
+            # There could be an error that happened in the thread return
+            return
+
+        entrance = params.tunnel_threads[convo_id].get("entrance")
+        while not entrance.print_ready_event.is_set() and count < wait_time * 2:
+            count += .1
+            time.sleep(.1)
+        # After it is set to True the print waits for .5 seconds then prints so we need to wait a little longer
+        time.sleep(1)
