@@ -17,4 +17,4 @@ tabulate
 pyqrcode
 keeper-secrets-manager-core>=16.6.0
 websockets
-aiortc; python_version >= '3.8'
+aiortc; python_version>='3.8'
