@@ -8,12 +8,11 @@
 # Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-import bisect
-from typing import Iterator, List, Optional, Union, Dict, Tuple, Set, Iterable
-
 """Import and export functionality."""
+
 import abc
 import base64
+import bisect
 import collections
 import copy
 import datetime
@@ -22,11 +21,15 @@ import itertools
 import json
 import logging
 import os
+import pathlib
 import re
 import sys
 import math
 import requests
 import time
+import tempfile
+
+from typing import Iterator, List, Optional, Union, Dict, Tuple, Set, Iterable
 
 from urllib.parse import urlparse, parse_qs
 
@@ -36,7 +39,7 @@ from .importer import (importer_for_format, exporter_for_format, path_components
                        SharedFolder as ImportSharedFolder, Permission as ImportPermission, BytesAttachment,
                        Attachment as ImportAttachment, RecordSchemaField, File as ImportFile, Team as ImportTeam,
                        RecordReferences, FIELD_TYPE_ONE_TIME_CODE, TWO_FACTOR_CODE)
-from .. import api, sync_down, utils, crypto, vault, vault_extensions, record_types
+from .. import api, sync_down, utils, crypto, vault, vault_extensions, record_types, generator, attachment, record_management
 from ..commands import base
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError
@@ -243,8 +246,13 @@ def export(params, file_format, filename, **kwargs):
     if 'max_size' in kwargs:
         exporter.max_size = int(kwargs['max_size'])
 
-    if not filename and not exporter.supports_stdout():
-        raise CommandError('export', 'File name parameter is required.')
+    save_in_vault = kwargs.get('save_in_vault') is True
+    if save_in_vault and file_format != 'keepass':
+        save_in_vault = False
+
+    if not save_in_vault:
+        if not filename and not exporter.supports_stdout():
+            raise CommandError('export', 'File name parameter is required.')
 
     folder_filter = None      # type: Optional[Set[str]]
     record_filter = None      # type: Optional[Set[str]]
@@ -332,6 +340,9 @@ def export(params, file_format, filename, **kwargs):
             except:
                 logging.debug('Failed to export record \"%s\"', record_uid)
                 continue
+            if rec.title.lower() == 'exported vault':
+                logging.info('Record \"%s\" is skipped from export', record_uid)
+                continue
 
             if exporter.has_attachments():
                 if record_version == 2 and 'extra_unencrypted' in record:
@@ -410,9 +421,51 @@ def export(params, file_format, filename, **kwargs):
 
     rec_count = len(to_export) - sf_count
 
+    args = {}
     file_password = kwargs.get('file_password')
-    zip_archive = kwargs.get('zip_archive')
-    exporter.execute(filename, to_export, file_password=file_password, zip_archive=zip_archive)
+    if file_password:
+        args['file_password'] = file_password
+    zip_archive = kwargs.get('zip_archive') is True
+    if zip_archive:
+        args['zip_archive'] = zip_archive
+    if save_in_vault:
+        args['save_in_vault'] = True
+        if 'file_password' not in args:
+            args['file_password'] = generator.generate(20)
+        if not filename:
+            filename = tempfile.mktemp()
+            p = pathlib.Path(filename)
+            filename = str(p.with_suffix('.kdbx'))
+
+    exporter.execute(filename, to_export, **args)
+    if save_in_vault:
+        logging.info('Storing Keepass export file to Keeper record')
+        record = vault.KeeperRecord.create(params, 'encryptedNotes')  # type: Optional[vault.TypedRecord]
+        record.title = 'Exported Vault'
+        note = record.get_typed_field('note')
+        if note is None:
+            note = vault.TypedField.new_field('note', '')
+            record.fields.append(note)
+        note.value = 'Keepass Export'
+        dt = record.get_typed_field('date')
+        if dt is None:
+            dt = vault.TypedField.new_field('date', 0)
+            record.fields.append(dt)
+        dt.value = int(datetime.datetime.now().timestamp()) * 1000
+        pwd = vault.TypedField.new_field('password', args['file_password'], 'Keepass Password')
+        record.fields.append(pwd)
+        task = attachment.FileUploadTask(filename)
+        task.name = 'keeper_vault.kdbx'
+        task.title = 'keeper_vault.kdbx'
+        attachment.upload_attachments(params, record, [task])
+        record_management.add_record_to_folder(params, record)
+        logging.info('Vault has been exported to record UID "%s"', record.record_uid)
+        params.sync_data = True
+        os.remove(filename)
+    else:
+        if filename and os.path.isfile(filename):
+            logging.info('Vault has been exported to: %s', os.path.abspath(filename))
+
     params.queue_audit_event('exported_records', file_format=file_format)
     msg = f'{rec_count} records exported' if to_export \
         else 'Search results contain 0 records to be exported.\nDid you, perhaps, filter by (an) empty folder(s)?'

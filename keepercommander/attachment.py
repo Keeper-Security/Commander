@@ -160,7 +160,6 @@ class FileUploadTask(UploadTask):
         if not os.path.isfile(self.file_path):
             raise ValueError(f'File {self.file_path} does not exist')
         self.size = os.path.getsize(self.file_path)
-        self.name = os.path.basename(self.file_path)
         if not self.mime_type:
             mt = mimetypes.guess_type(self.file_path)
             if isinstance(mt, tuple) and mt[0]:
