@@ -49,6 +49,7 @@ FieldTypes = {x[0]: x for x in (
                           'username': '', 'createdDate': 0}, 'passwordless login passkey'),
     FieldType('script', {'fileRef': '', 'command': '', 'recordRef': [], }, 'Post rotation script'),
     FieldType('recordRef', '', 'reference to other record'),
+    FieldType('appFiller', {'macroSequence': '', 'applicationTitle': '', 'contentFilter': ''}, 'Native Application Filler'),
 )}   # type: Dict[str, FieldType]
 
 

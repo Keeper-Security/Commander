@@ -433,7 +433,10 @@ class RecordEditMixin:
                     should_rebuild = True
                 continue
 
-            field = vault.TypedField.new_field(field_type, None, field_label)
+            default_value = None
+            if field_type == 'appFiller' and 'appFillerData' in typed_field:
+                default_value = typed_field['appFillerData']
+            field = vault.TypedField.new_field(field_type, default_value, field_label)
             field.required = required
             new_fields.append(field)
             should_rebuild = True
@@ -737,7 +740,11 @@ class RecordAddCommand(Command, RecordEditMixin):
                     continue
                 label = rf.get('label', '')
                 required = rf.get('required', False)
-                field = vault.TypedField.new_field(ref, None, label)
+                default_value = None
+                if ref == 'appFiller':
+                    if 'appFillerData' in rf:
+                        default_value = rf['appFillerData']
+                field = vault.TypedField.new_field(ref, default_value, label)
                 if required is True:
                     field.required = True
                 record.fields.append(field)
