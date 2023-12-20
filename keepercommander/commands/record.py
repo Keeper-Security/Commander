@@ -615,14 +615,14 @@ class SearchCommand(Command):
             pattern = '.*'
 
         categories = (kwargs.get('categories') or 'rst').lower()
-        verbose = kwargs.get('verbose', False)
+        verbose = kwargs.get('verbose') is True
         skip_details = not verbose
 
         # Search records
         if 'r' in categories:
             records = list(vault_extensions.find_records(params, pattern))
             if records:
-                print('')
+                logging.info('')
                 table = []
                 headers = ['Record UID', 'Type', 'Title', 'Description']
                 for record in records:
@@ -632,7 +632,7 @@ class SearchCommand(Command):
                 table.sort(key=lambda x: (x[2] or '').lower())
 
                 base.dump_report_data(table, headers, row_number=True, column_width=None if verbose else 40)
-                if len(records) < 5:
+                if verbose and len(records) < 5:
                     get_command = RecordGetUidCommand()
                     for record in records:
                         get_command.execute(params, uid=record.record_uid)
@@ -641,14 +641,14 @@ class SearchCommand(Command):
         if 's' in categories:
             results = api.search_shared_folders(params, pattern)
             if results:
-                print('')
+                logging.info('')
                 display.formatted_shared_folders(results, params=params, skip_details=skip_details)
 
         # Search teams
         if 't' in categories:
             results = api.search_teams(params, pattern)
             if results:
-                print('')
+                logging.info('')
                 display.formatted_teams(results, params=params, skip_details=skip_details)
 
 

@@ -95,6 +95,8 @@ export_parser.add_argument('-kp', '--keepass-file-password', dest='file_password
                            help='Password for the exported file')
 export_parser.add_argument('--zip', dest='zip_archive', action='store_true',
                            help='Create ZIP archive for file attachments. JSON only')
+export_parser.add_argument('--save-in-vault', dest='save_in_vault', action='store_true',
+                           help='Stores exports file as a record attachment. KeePass only')
 export_parser.add_argument('--force', dest='force', action='store_true', help='Suppress user interaction. Assume "yes"')
 export_parser.add_argument('--folder', dest='folder', action='store', help='Export data from the specific folder only.')
 export_parser.add_argument('name', type=str, nargs='?', help='file name or console output if omitted (except keepass)')
@@ -270,10 +272,11 @@ class RecordExportCommand(ImporterCommand):
 
         export_format = kwargs.pop('format', None)
         export_name = kwargs.pop('name', None)
+        save_in_file = kwargs.pop('save_in_file', None)
 
         if export_format:
-            msize = kwargs.pop('max_size', None)    # type: str
-            if msize:
+            msize = kwargs.pop('max_size', None)
+            if isinstance(msize, str):
                 multiplier = 1
                 scale = msize[-1].upper()
                 if scale == 'K':
@@ -291,6 +294,7 @@ class RecordExportCommand(ImporterCommand):
                 except ValueError:
                     logging.error('Invalid maximum attachment file size parameter: %s', kwargs.get('max_size'))
                     return
+
 
             imp_exp.export(params, export_format, export_name, **kwargs)
         else:

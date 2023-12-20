@@ -217,11 +217,11 @@ class Record:
     def __init__(self):
         self.uid = None          # type: Optional[Any]
         self.type = None         # type: Optional[str]
-        self.title = None
-        self.login = None
-        self.password = None
-        self.login_url = None
-        self.notes = None
+        self.title = None        # type: Optional[str]
+        self.login = None        # type: Optional[str]
+        self.password = None     # type: Optional[str]
+        self.login_url = None    # type: Optional[str]
+        self.notes = None        # type: Optional[str]
         self.last_modified = 0
         self.fields = []         # type: List[RecordField]
         self.folders = None      # type: Optional[List[Folder]]
@@ -423,8 +423,6 @@ class BaseExporter(abc.ABC):
             raise CommandError('export', 'File name parameter is required.')
 
         self.do_export(filename, items, **kwargs)
-        if filename and os.path.isfile(filename):
-            logging.info('Vault has been exported to: %s', os.path.abspath(filename))
 
     @abc.abstractmethod
     def do_export(self, filename, records, **kwargs):
