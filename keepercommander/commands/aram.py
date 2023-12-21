@@ -24,7 +24,7 @@ import re
 import sys
 from functools import partial
 
-from typing import Optional, List, Union, Dict
+from typing import Optional, List, Union, Dict, Set, Any, Tuple
 
 import requests
 import socket
@@ -1861,13 +1861,8 @@ class ActionReportCommand(EnterpriseCommand):
         return action_report_parser
 
     def execute(self, params, **kwargs):
-        def cmd_rq(cmd, **kwargs):
-            rq = {
-                'command': cmd,
-                'scope': 'enterprise',
-                **kwargs
-            }
-            return rq
+        def cmd_rq(cmd):
+            return {'command': cmd, 'scope': 'enterprise'}
 
         def report_rq(query_filter, limit, cols=None, report_type='span'):
             rq = {
@@ -1883,34 +1878,34 @@ class ActionReportCommand(EnterpriseCommand):
 
             return rq
 
-        def get_excluded(candidates, query_filter, username_field='username'):
+        def get_excluded(candidate_usernames, query_filter, username_field='username'):
+            # type: (Set[str], Dict[str, Any], Optional[str]) -> Set[str]
             excluded = set()
             req_limit = API_EVENT_SUMMARY_ROW_LIMIT
-            columns = [username_field]
+            cols = [username_field]
 
             def adjust_filter(q_filter, max_ts=0):
                 if max_ts:
                     q_filter['created']['max'] = max_ts
-                if username_field != 'email':
-                    q_filter[username_field] = candidates
                 return q_filter
 
-            get_events = len(candidates) > len(excluded)
-            query_filter = adjust_filter(query_filter)
-            while get_events:
-                rq = report_rq(query_filter, req_limit, columns, report_type='span')
+            done = not candidate_usernames
+            while not done:
+                rq = report_rq(query_filter, req_limit, cols, report_type='span')
                 rs = api.communicate(params, rq)
                 events = rs['audit_event_overview_report_rows']
                 to_exclude = {event.get(username_field) for event in events}
-                excluded.update(to_exclude)
-                get_events = len(events) >= req_limit
-                if get_events:
-                    candidates = [user for user in candidates if user not in excluded]
-                    end = int(events[-1]['last_created']) + 1
-                    query_filter = adjust_filter(query_filter, end)
+                excluded.update(to_exclude.intersection(candidate_usernames))
+                end = int(events[-1]['last_created']) if events else 0
+                done = (len(events) < req_limit
+                        or len(candidate_usernames) == len(excluded)
+                        or query_filter.get('created', {}).get('min', end) >= end)
+                query_filter = adjust_filter(query_filter, end + 1) if not done else None
+
             return excluded
 
-        def get_no_action_users(candidates, days_since, event_types, name_key='username'):
+        def get_no_action_users(candidate_users, days_since, event_types, name_key='username'):
+            # type: (List[Dict[str, Any]], int, List[str], Optional[str]) -> List[Dict[str, Any]]
             days_since = 30 if not isinstance(days_since, int) else days_since
             now_dt = datetime.datetime.now()
             min_dt = now_dt - datetime.timedelta(days=days_since)
@@ -1919,33 +1914,32 @@ class ActionReportCommand(EnterpriseCommand):
 
             if 'accept_transfer' in event_types:
                 get_expiration_ts = lambda u: u.get('account_share_expiration', 0) / 1000
-                users = [user for user in candidates if get_expiration_ts(user) < start]
-                return users
+                return [user for user in candidate_users if get_expiration_ts(user) < start]
 
             period = {'min': start, 'max': end}
-            included = [candidate['username'] for candidate in candidates]
+            included = {candidate.get('username') for candidate in candidate_users}
             query_filter = {
                 'audit_event_type': ['login'] if event_types is None else event_types,
                 'created': period
             }
             excluded = get_excluded(included, query_filter, name_key)
-            return [user for user in candidates if user['username'] not in excluded]
+            return [user for user in candidate_users if user.get('username') not in excluded]
 
         def get_action_results_text(cmd, cmd_status, server_msg, affected):
             return f'\tCOMMAND: {cmd}\n\tSTATUS: {cmd_status}\n\tSERVER MESSAGE: {server_msg}\n\tAFFECTED: {affected}'
 
-        def run_cmd(users, cmd_exec_fn=None, cmd_name='None', dryrun=False):
+        def run_cmd(targets, cmd_exec_fn=None, cmd_name='None', dryrun=False):
             cmd_status = 'aborted' if cmd_exec_fn else 'n/a'
             affected = 0
             server_msg = 'n/a'
             cmd = 'NONE (No action specified)' if cmd_exec_fn is None else cmd_name
-            if cmd_exec_fn is not None and len(users):
+            if cmd_exec_fn is not None and len(targets):
                 if dryrun:
                     cmd_status = 'dry run'
                 else:
                     responses = cmd_exec_fn()
                     fails = [rs for rs in responses if rs.get('result') != 'success'] if responses else []
-                    affected = len(users) - len(fails)
+                    affected = len(targets) - len(fails)
                     cmd_status = 'fail' if not responses \
                         else 'incomplete' if any(fails) \
                         else 'success'
@@ -1989,7 +1983,8 @@ class ActionReportCommand(EnterpriseCommand):
 
             return get_action_results_text(cmd, cmd_status, server_msg, affected)
 
-        def apply_admin_action(users, target_status='no-update', action='none', dryrun=False):
+        def apply_admin_action(targets, status='no-update', action='none', dryrun=False):
+            # type: (List[Dict[str, Any]], Optional[str], Optional[str], Optional[bool]) -> str
             default_allowed = {'none'}
             status_actions = {
                 'no-logon':     {*default_allowed, 'lock'},
@@ -2000,26 +1995,30 @@ class ActionReportCommand(EnterpriseCommand):
                 'blocked':      {*default_allowed, 'delete'}
             }
 
-            actions_allowed = status_actions.get(target_status)
-            invalid_action_msg = f'NONE (Action \'{action}\' not allowed on \'{target_status}\' users: ' \
+            actions_allowed = status_actions.get(status)
+            invalid_action_msg = f'NONE (Action \'{action}\' not allowed on \'{status}\' users: ' \
                                  f'value must be one of {actions_allowed})'
             is_valid_action = action in actions_allowed
 
             from keepercommander.commands.enterprise import EnterpriseUserCommand
             exec_fn = EnterpriseUserCommand().execute
-            emails = [u.get('username') for u in users]
+            emails = [u.get('username') for u in targets]
             action_handlers = {
-                'none': partial(run_cmd, users, None, None, dryrun),
-                'lock': partial(run_cmd, users, lambda: exec_fn(params, email=emails, lock=True, force=True, return_results=True), 'lock', dry_run),
-                'delete': partial(run_cmd, users, lambda: exec_fn(params, email=emails, delete=True, force=True, return_results=True), 'delete', dry_run),
-                'transfer': partial(transfer_accounts, users, kwargs.get('target_user'), dryrun)
+                'none': partial(run_cmd, targets, None, None, dryrun),
+                'lock': partial(run_cmd, targets,
+                                lambda: exec_fn(params, email=emails, lock=True, force=True, return_results=True),
+                                'lock', dry_run),
+                'delete': partial(run_cmd, targets,
+                                  lambda: exec_fn(params, email=emails, delete=True, force=True, return_results=True),
+                                  'delete', dry_run),
+                'transfer': partial(transfer_accounts, targets, kwargs.get('target_user'), dryrun)
             }
 
-            if action in ('delete', 'transfer') and not dryrun and not kwargs.get('force') and users:
+            if action in ('delete', 'transfer') and not dryrun and not kwargs.get('force') and targets:
                 answer = user_choice(
                     bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
                     f'\nYou are about to {action} the following accounts:\n' +
-                    '\n'.join(str(idx + 1) + ') ' + val for idx, val in enumerate(u.get('username') for u in users)) +
+                    '\n'.join(str(idx + 1) + ') ' + val for idx, val in enumerate(u.get('username') for u in targets)) +
                     '\n\nThis action cannot be undone.' +
                     '\n\nDo you wish to proceed?', 'yn', 'n')
                 if answer.lower() != 'y':
@@ -2027,25 +2026,31 @@ class ActionReportCommand(EnterpriseCommand):
 
             return action_handlers.get(action, lambda: invalid_action_msg)() if is_valid_action else invalid_action_msg
 
-        def get_report_data_and_headers(users, output_fmt):
-            from keepercommander.commands.enterprise import EnterpriseInfoCommand
-            ei_cmd = EnterpriseInfoCommand()
-            cmd_output = ei_cmd.execute(params, users=True, quiet=True, format='json', columns=kwargs.get('columns'))
-            data = json.loads(cmd_output)
-            data = [u for u in data if u.get('email') in users]
+        def get_report_data_and_headers(targets, output_fmt):
+            # type: (Set[str], str) -> Tuple[List[List[Any]], List[str]]
+            cmd = EnterpriseInfoCommand()
+            output = cmd.execute(params, users=True, quiet=True, format='json', columns=kwargs.get('columns'))
+            data = json.loads(output)
+            data = [u for u in data if u.get('email') in targets]
             fields = next(iter(data)).keys() if data else []
             headers = [field_to_title(f) for f in fields] if output_fmt != 'json' else list(fields)
             data = [[user.get(f) for f in fields] for user in data]
             return data, headers
 
-        candidates = params.enterprise['users']
-        from keepercommander.commands.enterprise import get_user_status_dict
-        get_status_fn = lambda u: get_user_status_dict(u).get('acct_status')
-        get_xfer_status_fn = lambda u: get_user_status_dict(u).get('acct_transfer_status')
-        active = [u for u in candidates if get_status_fn(u) == 'Active']
-        locked = [u for u in candidates if get_status_fn(u) == 'Locked']
-        invited = [u for u in candidates if get_status_fn(u) == 'Invited']
-        blocked = [u for u in candidates if get_xfer_status_fn(u) == 'Blocked']
+        users = params.enterprise['users']
+        from keepercommander.commands.enterprise import EnterpriseInfoCommand
+        ei_cmd = EnterpriseInfoCommand()
+        columns = ['status', 'transfer_status']
+        cmd_output = ei_cmd.execute(params, users=True, quiet=True, format='json', columns=','.join(columns))
+        candidates = json.loads(cmd_output)
+        emails_active = {c.get('email') for c in candidates if c.get('status', '').lower() == 'active'}
+        active = [u for u in users if u.get('username') in emails_active]
+        emails_locked = {c.get('email') for c in candidates if c.get('status', '').lower() == 'locked'}
+        locked = [u for u in users if u.get('username') in emails_locked]
+        emails_invited = {c.get('email') for c in candidates if c.get('status', '').lower() == 'invited'}
+        invited = [u for u in users if u.get('username') in emails_invited]
+        emails_blocked = {c.get('email') for c in candidates if c.get('transfer_status', '').lower() == 'blocked'}
+        blocked = [u for u in users if u.get('username') in emails_blocked]
 
         target_status = kwargs.get('target_user_status', 'no-logon')
         days = kwargs.get('days_since')
@@ -2068,7 +2073,7 @@ class ActionReportCommand(EnterpriseCommand):
             return
 
         target_users = get_no_action_users(*args)
-        usernames = [user['username'] for user in target_users]
+        usernames = {user['username'] for user in target_users}
 
         admin_action = kwargs.get('apply_action', 'none')
         dry_run = kwargs.get('dry_run')
@@ -2084,6 +2089,6 @@ class ActionReportCommand(EnterpriseCommand):
 
         title = f'Admin Action Taken:\n{action_msg}\n'
         title += '\nNote: the following reflects data prior to any administrative action being applied'
-        title += f'\n{len(usernames)} User(s) With "{target_status}" Status Older Than {days} Day(s): '
+        title += f'\n{len(usernames)} User(s) With "{target_status.capitalize()}" Status Older Than {days} Day(s): '
         filepath = kwargs.get('output')
         return dump_report_data(report_data, headers=report_headers, title=title, fmt=fmt, filename=filepath)
