@@ -8,7 +8,7 @@ from keepercommander.commands.base import GroupCommand, dump_report_data, field_
 from keepercommander.commands.enterprise_common import EnterpriseCommand
 from keepercommander.sox.sox_types import RecordPermissions
 from .. import sox, api
-from ..error import Error
+from ..error import Error, CommandError
 from ..params import KeeperParams
 from ..sox import sox_types, get_node_id
 from ..sox.sox_data import SoxData
@@ -41,7 +41,12 @@ default_report_parser.add_argument('--record', action='append', help=record_sear
 default_report_parser.add_argument('--url', action='append',
                                    help='URL of record(s) to include in report (set once per URL)')
 default_report_parser.add_argument('--shared', action='store_true',
-                                   help='flag for excluding non-shared records from report')
+                                   help='show shared records only')
+deleted_status_group = default_report_parser.add_mutually_exclusive_group()
+deleted_status_group.add_argument('--deleted-items', action='store_true',
+                                   help='show deleted records only (not valid with --active-items flag)')
+deleted_status_group.add_argument('--active-items', action='store_true',
+                                   help='show active records only (not valid with --deleted-items flag)')
 
 team_report_desc = 'Run a report showing which shared folders enterprise teams have access to'
 team_report_parser = argparse.ArgumentParser(prog='compliance team-report', description=team_report_desc,
@@ -144,7 +149,7 @@ class BaseComplianceReportCommand(EnterpriseCommand):
 
 class ComplianceReportCommand(BaseComplianceReportCommand):
     def __init__(self):
-        headers = ['record_uid', 'title', 'type', 'username', 'permissions', 'url']
+        headers = ['record_uid', 'title', 'type', 'username', 'permissions', 'url', 'in_trash']
         super(ComplianceReportCommand, self).__init__(headers, allow_no_opts=False)
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
@@ -223,6 +228,14 @@ class ComplianceReportCommand(BaseComplianceReportCommand):
 
             filtered = [r for r in filtered if r.record_uid in r_refs or title_match(r.data.get('title'))] if r_refs \
                 else filtered
+            deleted_items = kwargs.get('deleted_items')
+            active_items = kwargs.get('active_items')
+            if active_items and deleted_items:
+                error_msg = '--deleted-items and --active-items flags are mutually exclusive'
+                raise CommandError(self.get_parser().prog, error_msg)
+            filtered = [r for r in filtered if r.in_trash] if deleted_items \
+                else [r for r in filtered if not r.in_trash] if active_items \
+                else filtered
             return filtered
 
         owners = filter_owners(sox_data.get_users().values())
@@ -274,7 +287,7 @@ class ComplianceReportCommand(BaseComplianceReportCommand):
                 formatted_rec_uid = rec_uid if report_fmt != 'table' or last_rec_uid != rec_uid else ''
                 u_email = row.get('email')
                 permissions = RecordPermissions.to_permissions_str(row.get('permissions'))
-                fmt_row = [formatted_rec_uid, r_title, r_type, u_email, permissions, r_url.rstrip('/')]
+                fmt_row = [formatted_rec_uid, r_title, r_type, u_email, permissions, r_url.rstrip('/'), rec.in_trash]
                 formatted_rows.append(fmt_row)
                 last_rec_uid = rec_uid
             return formatted_rows
