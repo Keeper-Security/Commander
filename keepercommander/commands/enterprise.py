@@ -1868,12 +1868,13 @@ class EnterpriseUserCommand(EnterpriseCommand):
         if 'queued_team_users' in params.enterprise:
             user_id = user['enterprise_user_id']
             ts = [t['team_uid'] for t in params.enterprise['queued_team_users'] if user_id in t['users']]
-            ts.sort(key=lambda x: team_nodes[x]['name'])
+            ts.sort(key=lambda x: team_nodes[x].get('name', '') if x in team_nodes else x)
             for i in range(len(ts)):
-                team_node = team_nodes[ts[i]]
-                print('{0:>16s}: {1:<24s}{2}'.format(
-                    'Queued Team' if i == 0 else '', team_node['name'],
-                    f' [{team_node["team_uid"]}]' if is_verbose else ''))
+                team_uid = ts[i]
+                team_node = team_nodes.get(team_uid) or team_uid
+                if team_node:
+                    print('{0:>16s}: {1:<24s}{2}'.format('Queued Team' if i == 0 else '', team_node['name'],
+                                                         f' [{team_node["team_uid"]}]' if is_verbose else ''))
 
         share_admins = self.get_share_administrators(params, user)
         if share_admins:
