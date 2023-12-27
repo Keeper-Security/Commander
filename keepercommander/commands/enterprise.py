@@ -3350,8 +3350,6 @@ class TeamApproveCommand(EnterpriseCommand):
         return team_approve_parser
 
     def execute(self, params, **kwargs):
-        table = []
-
         approve_teams = True
         approve_users = True
         if kwargs.get('team') or kwargs.get('user'):
@@ -3359,12 +3357,26 @@ class TeamApproveCommand(EnterpriseCommand):
             approve_users = kwargs.get('user') or False
 
         request_batch = []
+        added_team_keys = {}   # type: Dict[str, bytes]
+        added_teams = {}       # type: Dict[str, dict]
+
+        teams = {}
+        for t in params.enterprise['teams']:
+            teams[t['team_uid']] = t
+
+        active_users = {}    # type: Dict[int, str]
+        for u in params.enterprise['users']:
+            if u['status'] == 'active' and u['lock'] == 0:
+                active_users[u['enterprise_user_id']] = u['username']
+
         if approve_teams and 'queued_teams' in params.enterprise:
             for team in params.enterprise['queued_teams']:
                 team_name = team['name']
                 team_node_id = team['node_id']
                 team_uid = team['team_uid']
                 team_key = api.generate_aes_key()
+                added_team_keys[team_uid] = team_key
+                added_teams[team_uid] = team
                 tree_key = params.enterprise['unencrypted_tree_key']
                 pri_key, pub_key = crypto.generate_rsa_key()
                 private_key = crypto.unload_rsa_private_key(pri_key)
@@ -3386,56 +3398,30 @@ class TeamApproveCommand(EnterpriseCommand):
                     'manage_only': True
                 }
                 request_batch.append(rq)
-            if request_batch:
-                if not kwargs.get('dry_run'):
-                    rs = api.execute_batch(params, request_batch)
-                    if rs:
-                        success = 0
-                        failure = 0
-                        for status in rs:
-                            if 'result' in status:
-                                if status['result'] == 'success':
-                                    success += 1
-                                else:
-                                    failure += 1
-                        if success or failure:
-                            logging.info('Team approval: success %s; failure %s', success, failure)
-                    api.query_enterprise(params)
-                else:
-                    for rq in request_batch:
-                        table.append(['Approve Team', rq['team_name'], ''])
+            teams.update(added_teams)
 
-        request_batch.clear()
         if approve_users and 'queued_team_users' in params.enterprise and \
                 'teams' in params.enterprise and 'users' in params.enterprise:
-            active_users = {}    # type: Dict[int, str]
-            for u in params.enterprise['users']:
-                if u['status'] == 'active' and u['lock'] == 0:
-                    active_users[u['enterprise_user_id']] = u['username']
-
-            teams = {}
-            for t in params.enterprise['teams']:
-                teams[t['team_uid']] = t
-
             # load team and user keys
             team_keys = {}   # type: Dict[str, Optional[bytes]]
             user_keys = {}   # type: Dict[str, Any]
             for qtu in params.enterprise['queued_team_users']:
                 team_uid = qtu['team_uid']
-                if team_uid not in teams:
+                if team_uid not in teams and team_uid not in added_teams:
                     continue
                 if 'users' in qtu:
                     for u_id in qtu['users']:
                         email = active_users.get(u_id)
                         if email:
                             email = email.lower()
-                            if team_uid not in team_keys:
-                                team_keys[team_uid] = None
+                            if team_uid in teams and team_uid not in team_keys:
+                                    team_keys[team_uid] = None
                             if email not in user_keys:
                                 user_keys[email] = None
 
             self.get_team_keys(params, team_keys)
             self.get_public_keys(params, user_keys)
+            team_keys.update(added_team_keys)
 
             if len(team_keys) > 0 and len(user_keys) > 0:
                 for qtu in params.enterprise['queued_team_users']:
@@ -3465,38 +3451,53 @@ class TeamApproveCommand(EnterpriseCommand):
                             logging.warning('Cannot approve user \"%s\" to team \"%s\": %s', email, team_uid, e)
                             continue
 
-            if request_batch:
-                if not kwargs.get('dry_run'):
-                    rs = api.execute_batch(params, request_batch)
-                    if rs:
-                        success = 0
-                        failure = 0
-                        for status in rs:
-                            if 'result' in status:
-                                if status['result'] == 'success':
-                                    success += 1
+        if request_batch:
+            if not kwargs.get('dry_run'):
+                rs = api.execute_batch(params, request_batch)
+                if rs:
+                    team_add_success = 0
+                    team_add_failure = 0
+                    user_add_success = 0
+                    user_add_failure = 0
+                    for status in rs:
+                        is_team = status['command'] == 'team_add'
+                        if 'result' in status:
+                            if status['result'] == 'success':
+                                if is_team:
+                                    team_add_success += 1
                                 else:
-                                    failure += 1
-                        if success or failure:
-                            logging.info('Team User approval: success %s; failure %s', success, failure)
-                    api.query_enterprise(params)
-                else:
-                    for rq in request_batch:
-                        team_uid = rq['team_uid']
-                        team_name = team_uid
-                        if team_uid in teams:
-                            if 'name' in teams['team_uid']:
-                                team_name = teams['team_uid']['name']
+                                    user_add_success += 1
+                            else:
+                                if is_team:
+                                    team_add_failure += 1
+                                else:
+                                    user_add_failure += 1
+                    if team_add_success or team_add_failure:
+                        logging.info('Team approval: success %s; failure %s', team_add_success, team_add_failure)
+                    if user_add_success or user_add_failure:
+                        logging.info('Team User approval: success %s; failure %s', user_add_success, user_add_failure)
+                api.query_enterprise(params)
+            else:
+                table = []
+                for rq in request_batch:
+                    team_uid = rq['team_uid']
+                    team_name = team_uid
+                    if team_uid in teams:
+                        if 'name' in teams[team_uid]:
+                            team_name = teams[team_uid]['name']
+
+                    username = ''
+                    action = 'Approve Team'
+                    if rq['command'] == 'team_enterprise_user_add':
+                        action = 'Approve User'
                         user_id = rq['enterprise_user_id']
                         username = user_id
                         if user_id in active_users:
                             username = active_users[user_id]
 
-                        table.append(['Approve User', team_name, username])
-
-        if kwargs.get('dry_run') and len(table) > 0:
-            headers = ['Action', 'Team', 'User']
-            return dump_report_data(table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+                    table.append([action, team_name, username])
+                headers = ['Action', 'Team', 'User']
+                return dump_report_data(table, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
 
 class DeviceApproveCommand(EnterpriseCommand):
