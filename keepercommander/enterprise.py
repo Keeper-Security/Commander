@@ -94,11 +94,13 @@ class _EnterpriseLoader(object):
         if isinstance(teams, _EnterpriseEntity):
             teams.register_link('team_uid', self._data_types[proto.TEAM_USERS])
             teams.register_link('team_uid', self._data_types[proto.ROLE_TEAMS])
+            teams.register_link('team_uid', self._data_types[proto.QUEUED_TEAM_USERS])
 
         users = self._data_types[proto.USERS]
         if isinstance(teams, _EnterpriseEntity):
             users.register_link('enterprise_user_id', self._data_types[proto.TEAM_USERS])
             users.register_link('enterprise_user_id', self._data_types[proto.ROLE_USERS])
+            teams.register_link('enterprise_user_id', self._data_types[proto.QUEUED_TEAM_USERS])
 
         roles = self._data_types[proto.ROLES]
         if isinstance(roles, _EnterpriseEntity):
@@ -287,7 +289,7 @@ class _EnterpriseDataParser(abc.ABC):
 class _EnterpriseEntity(_EnterpriseDataParser):
     def __init__(self, enterprise):  # type: (EnterpriseInfo) -> None
         super(_EnterpriseEntity, self).__init__(enterprise)
-        self._links = []     # type: List[Tuple[str, _EnterpriseLink]]
+        self._links = []     # type: List[Tuple[str, _CascadeDeleteLink]]
 
     @abc.abstractmethod
     def get_keeper_entity_id(self, proto_entity):  # type: (dict) -> any
@@ -305,7 +307,7 @@ class _EnterpriseEntity(_EnterpriseDataParser):
         return d
 
     def register_link(self, keeper_entity_id_name, parser):  # type: (str, _EnterpriseDataParser) -> None
-        if isinstance(parser, _EnterpriseLink):
+        if isinstance(parser, _CascadeDeleteLink):
             self._links.append((keeper_entity_id_name, parser))
 
     def parse(self, params, enterprise_data, **kwargs):  # type: (KeeperParams, proto.EnterpriseData, dict) -> None
@@ -337,8 +339,13 @@ class _EnterpriseEntity(_EnterpriseDataParser):
             for keeper_entity_id_name, link in self._links:
                 link.cascade_delete(params, keeper_entity_id_name, deleted_entities)
 
+class _CascadeDeleteLink:
+    @abc.abstractmethod
+    def cascade_delete(self, params, keeper_entity_id, deleted_entities):   # type: (KeeperParams, str, Set) -> None
+        pass
 
-class _EnterpriseLink(_EnterpriseDataParser):
+
+class _EnterpriseLink(_EnterpriseDataParser, _CascadeDeleteLink):
     @abc.abstractmethod
     def get_keeper_entity1_id(self, proto_entity):  # type: (dict) -> any
         pass
@@ -866,7 +873,7 @@ class _EnterpriseManagedCompanyEntity(_EnterpriseEntity):
         return 'managed_companies'
 
 
-class _EnterpriseQueuedTeamUserEntity(_EnterpriseDataParser):
+class _EnterpriseQueuedTeamUserEntity(_EnterpriseDataParser, _CascadeDeleteLink):
     def parse(self, params, enterprise_data, **kwargs):  # type: (KeeperParams, proto.EnterpriseData, dict) -> None
         entities = self.get_entities(params)
         entity_map = {x['team_uid']: x for x in entities}
@@ -901,6 +908,21 @@ class _EnterpriseQueuedTeamUserEntity(_EnterpriseDataParser):
 
     def to_keeper_entity(self, proto_entity, keeper_entity):
         pass
+
+    def cascade_delete(self, params, keeper_entity_id, deleted_entities):   # type: (KeeperParams, str, Set) -> None
+        entities = self.get_entities(params)
+        if not entities:
+            return
+        if keeper_entity_id == 'team_uid':
+            to_keep = [x for x in entities if x['team_uid'] not in deleted_entities]
+            if len(to_keep) < len(entities):
+                entities.clear()
+                entities.extend(to_keep)
+        elif keeper_entity_id == 'enterprise_user_id':
+            for entity in entities:
+                users = entity.get('users')
+                if isinstance(users, set):
+                    users.difference_update(deleted_entities)
 
 
 class _EnterpriseUserAliasEntity(_EnterpriseEntity):
