@@ -34,6 +34,8 @@ class StorageRecordAging(IUid):
         self.record_uid = record_uid
         self.created = 0
         self.last_pw_change = 0
+        self.last_modified = 0
+        self.last_rotation = 0
 
     def uid(self):
         return self.record_uid
