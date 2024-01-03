@@ -28,9 +28,14 @@ def get_router_url(params: KeeperParams):
         krouter_server_url = os.getenv(krouter_env_var_name)
         logging.debug(f"Getting Krouter url from ENV Variable '{krouter_env_var_name}'='{krouter_server_url}'")
     else:
-        krouter_server_url = 'https://connect.' + params.server  # https://connect.dev.keepersecurity.com
+        base_server = params.server.lower()
+        if base_server.startswith('govcloud.'):
+            base_server = base_server.replace('govcloud.', '')
+
+        krouter_server_url = 'https://connect.' + base_server  # https://connect.dev.keepersecurity.com
 
     return krouter_server_url
+
 
 def get_router_ws_url(params: KeeperParams):
     router_url = get_router_url(params)
