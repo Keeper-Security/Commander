@@ -1,14 +1,15 @@
 import argparse
 import datetime
+import json
 import logging
 import operator
-from typing import Optional, Dict, Tuple, Union, List
+from typing import Optional, Dict, Tuple, List, Any
 
 from keepercommander.commands.base import GroupCommand, dump_report_data, field_to_title
 from keepercommander.commands.enterprise_common import EnterpriseCommand
 from keepercommander.sox.sox_types import RecordPermissions
 from .. import sox, api
-from ..error import Error, CommandError
+from ..error import CommandError
 from ..params import KeeperParams
 from ..sox import sox_types, get_node_id
 from ..sox.sox_data import SoxData
@@ -44,19 +45,24 @@ default_report_parser.add_argument('--shared', action='store_true',
                                    help='show shared records only')
 deleted_status_group = default_report_parser.add_mutually_exclusive_group()
 deleted_status_group.add_argument('--deleted-items', action='store_true',
-                                   help='show deleted records only (not valid with --active-items flag)')
+                                  help='show deleted records only (not valid with --active-items flag)')
 deleted_status_group.add_argument('--active-items', action='store_true',
-                                   help='show active records only (not valid with --deleted-items flag)')
+                                  help='show active records only (not valid with --deleted-items flag)')
 
 team_report_desc = 'Run a report showing which shared folders enterprise teams have access to'
 team_report_parser = argparse.ArgumentParser(prog='compliance team-report', description=team_report_desc,
                                              parents=[compliance_parser])
 team_report_parser.add_argument('-tu', '--show-team-users', action='store_true', help='show all members of each team')
 
-access_report_desc = 'Run a report showing all records a user has accessed'
+access_report_desc = 'Run a report showing all records a user has accessed or can access'
 access_report_parser = argparse.ArgumentParser(prog='compliance record-access-report', description=access_report_desc,
                                                parents=[compliance_parser])
-access_report_parser.add_argument('user', metavar='USER', type=str, help='username or ID')
+access_report_parser.add_argument('user', nargs='+', metavar='USER', type=str, help='username or ID')
+report_type_help = 'select type of record-access data to include in report (defaults to "history")'
+ACCESS_REPORT_TYPES = ('history', 'vault')
+access_report_parser.add_argument('--report-type', action='store', choices=ACCESS_REPORT_TYPES,
+                                  default='history', help=report_type_help)
+access_report_parser.add_argument('--aging', action='store_true',  help='include record-aging data')
 
 summary_report_desc = 'Run a summary SOX compliance report'
 summary_report_parser = argparse.ArgumentParser(prog='compliance summary-report', description=summary_report_desc,
@@ -106,6 +112,7 @@ class BaseComplianceReportCommand(EnterpriseCommand):
         self.report_headers = report_headers
         self.allow_no_opts = allow_no_opts
         self.prelim_only = prelim_only
+        self.group_by_column = None
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         pass
@@ -140,10 +147,10 @@ class BaseComplianceReportCommand(EnterpriseCommand):
         fn_kwargs = {'rebuild': rebuild, 'min_updated': min_data_ts, 'no_cache': no_cache, 'shared_only': shared_only}
         sd = get_sox_data_fn(*fn_args, **fn_kwargs)
         report_fmt = kwargs.get('format', 'table')
-        headers = self.report_headers if report_fmt == 'json' else [field_to_title(h) for h in self.report_headers]
         report_data = self.generate_report_data(params, kwargs, sd, report_fmt, node_id, root_node_id)
+        headers = self.report_headers if report_fmt == 'json' else [field_to_title(h) for h in self.report_headers]
         report = dump_report_data(report_data, headers, title=self.title, fmt=report_fmt, filename=kwargs.get('output'),
-                                  column_width=32)
+                                  column_width=32, group_by=self.group_by_column)
         return report
 
 
@@ -343,14 +350,8 @@ class ComplianceTeamReportCommand(BaseComplianceReportCommand):
 
 class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
     def __init__(self):
-        headers = ['record_uid',
-                   'record_title',
-                   'record_url',
-                   'record_owner',
-                   'ip_address',
-                   'device',
-                   'last_access']
-        super(ComplianceRecordAccessReportCommand, self).__init__(headers, allow_no_opts=True, prelim_only=True)
+        super(ComplianceRecordAccessReportCommand, self).__init__([], allow_no_opts=True, prelim_only=False)
+        self.group_by_column = 0
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return access_report_parser
@@ -360,10 +361,25 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
         return super().execute(params, **kwargs)
 
     def generate_report_data(self, params, kwargs, sox_data, report_fmt, node, root_node):
-        def get_accessed_records(user):
+        # type: (KeeperParams, Dict[str, Any], sox.sox_data.SoxData, str, int, int) -> List[List[str]]
+        def get_vault_records(email):
+            user_id = get_userid(email)
+            return sox_data.get_vault_records(user_id)
+
+        def get_userid(email):
+            return next(iter([k for k, v in user_lookup.items() if v == email]))
+
+        def get_records_accessed(email, records=None):
+            records_accessed = dict()   # type: Dict[str, Dict[str, Any]]
+            # Empty record filter list -> no records to search for
+            if records is not None and not records:
+                return records_accessed
+
             columns = ['record_uid', 'ip_address', 'keeper_version']
-            rq_filter = {'username': user, 'audit_event_type': 'open_record'}
-            from keepercommander.commands.aram import API_EVENT_SUMMARY_ROW_LIMIT
+            rq_filter = {'username': email}
+            if records is not None:
+                rq_filter['record_uid'] = records
+
             rq = {
                 'command':      'get_audit_event_reports',
                 'report_type':  'span',
@@ -373,60 +389,204 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
                 'filter':       rq_filter,
                 'columns':      columns,
             }
-            records_accessed = dict()   # type: Dict[str, Dict[str, Union[int, str]]]
 
-            def update_records_accessed(events):
-                for event in events:
+            def update_records_accessed(record_access_events):
+                for event in record_access_events:
                     r_uid = event.get('record_uid')
-                    if r_uid not in records_accessed:
-                        records_accessed.update({r_uid: event})
+                    records_accessed.setdefault(r_uid, event)
 
-            def get_events(max_ts):
-                rq_filter['created'] = {'max': max_ts}
+            def get_events(period_end, filter_recs):
+                if period_end:
+                    rq_filter['created'] = {'max': period_end}
+                rq_filter['record_uid'] = filter_recs
                 rs = api.communicate(params, rq)
                 return rs.get('audit_event_overview_report_rows')
 
-            max_ts = int(datetime.datetime.now().timestamp())
-            while True:
-                events = get_events(max_ts)
+            done = records is not None and not records
+            max_ts = 0
+            missing_records = [] if not records else [*records]
+            while not done:
+                chunk = missing_records[:API_EVENT_SUMMARY_ROW_LIMIT]
+                events = get_events(max_ts, chunk)
                 update_records_accessed(events)
-                if len(events) >= API_EVENT_SUMMARY_ROW_LIMIT:
-                    earliest_event = events[-1]
-                    max_ts = int(earliest_event.get('last_created'))
-                else:
-                    break
+                missing_records = [r for r in records if r not in records_accessed] if records else []
+                earliest_event = {} if not events else events[-1]
+                max_ts = int(earliest_event.get('last_created', 0))
+                done = not missing_records and records or len(events) < API_EVENT_SUMMARY_ROW_LIMIT
+
             return records_accessed
 
-        def fill_table(access_events):
-            table = []
-            for rec in access_events.values():
-                rec_uid = rec.get('record_uid')
-                sox_rec = sox_data.get_records().get(rec_uid)
+        def format_datetime(dt_str):
+            if not dt_str:
+                return None
+            ts = datetime.datetime.fromisoformat(dt_str).timestamp()
+            return datetime.datetime.fromtimestamp(int(ts))
+
+        def from_ts(ts):
+            return datetime.datetime.fromtimestamp(ts) if ts else None
+
+        def compile_user_report(user, access_events):
+            access_records = dict()
+            user_access_data = {user: access_records}
+            rec_uids = access_events.keys() if report_type == report_type_default \
+                else {r.record_uid for r in vault_records}
+
+            for uid in rec_uids:
+                access_event = access_events.get(uid, {})
+                sox_rec = sox_data.get_records().get(uid)
                 rec_info = sox_rec.data if sox_rec else {}
-                rec_owner = sox_data.get_record_owner(rec_uid)
-                row = [
-                    rec_uid,
-                    rec_info.get('title'),
-                    rec_info.get('url', '').rstrip('/'),
-                    rec_owner and rec_owner.email,
-                    rec.get('ip_address'),
-                    rec.get('keeper_version'),
-                    datetime.datetime.fromtimestamp(int(rec.get('last_created')))
-                ]
-                table.append(row)
-            return table
+                rec_owner = sox_data.get_record_owner(uid)
+                event_ts = access_event.get('last_created')
+                access_record = {uid: {'record_title': rec_info.get('title'),
+                                       'record_url': rec_info.get('url', '').rstrip('/'),
+                                       'record_owner': rec_owner and rec_owner.email,
+                                       'has_attachments': sox_rec.has_attachments if sox_rec else None,
+                                       'in_trash': sox_rec.in_trash if sox_rec else None,
+                                       'ip_address': access_event.get('ip_address'),
+                                       'device': access_event.get('keeper_version'),
+                                       'last_access': from_ts(int(event_ts)) if event_ts else None,
+                                       'vault_owner': user}}
+                access_records.update(access_record)
+            return user_access_data
+
+        def get_aging_data(rec_ids):
+            if not rec_ids:
+                return {}
+            aging_data = {r: {'created': None, 'last_modified': None, 'last_rotation': None} for r in rec_ids}
+            now = datetime.datetime.now()
+            max_stored_age_dt = now - datetime.timedelta(days=1)
+            max_stored_age_ts = int(max_stored_age_dt.timestamp())
+            stored_entities = sox_data.storage.get_record_aging().get_all()
+            stored_aging_data = {e.record_uid: {'created': from_ts(e.created), 'last_modified': from_ts(e.last_modified), 'last_rotation': from_ts(e.last_rotation)} for e in stored_entities}
+            aging_data.update(stored_aging_data)
+
+            from keepercommander.commands.aram import AuditReportCommand
+            cmd = AuditReportCommand()
+
+            def get_events(record_filter, type_filter, order='desc', aggregate='last_created'):
+                events = []
+                cmd_kwargs = {'report_type': 'span',
+                              'columns': ['record_uid'],
+                              'format': 'json',
+                              'limit': API_EVENT_SUMMARY_ROW_LIMIT,
+                              'order': order,
+                              'aggregate': [aggregate]}
+                if type_filter:
+                    cmd_kwargs['event_type'] = type_filter
+                while record_filter:
+                    chunk = record_filter[:API_EVENT_SUMMARY_ROW_LIMIT]
+                    record_filter = record_filter[API_EVENT_SUMMARY_ROW_LIMIT:]
+                    cmd_kwargs['record_uid'] = chunk
+                    event_data = cmd.execute(params, **cmd_kwargs)
+                    event_data = json.loads(event_data)
+                    events.extend(event_data)
+                return events
+
+            def get_known_aging_data(event_type):
+                return {r: events.get(event_type) for r, events in stored_aging_data.items() if events.get(event_type) or 0 >= max_stored_age_ts}
+
+            def get_created_dts():
+                known_rec_created_lookup = get_known_aging_data('created')
+                for rec_id, dt in known_rec_created_lookup.items():
+                    aging_data[rec_id]['created'] = dt
+                r_filter = [uid for uid in rec_ids if uid not in known_rec_created_lookup]
+                event_data = get_events(r_filter, None, 'asc', 'first_created')
+                record_created_lookup = {event.get('record_uid'): event.get('first_created') for event in event_data}
+                for rec, created in record_created_lookup.items():
+                    aging_data[rec]['created'] = format_datetime(created)
+
+            def get_last_modified_dts():
+                known_rec_last_modified_lookup = get_known_aging_data('last_modified')
+                for rec_id, dt in known_rec_last_modified_lookup.items():
+                    aging_data[rec_id]['last_modified'] = dt
+                r_filter = [uid for uid in rec_ids if uid not in known_rec_last_modified_lookup]
+                event_data = get_events(r_filter, ['record_update'])
+                dt_lookup = {event.get('record_uid'): event.get('last_created') for event in event_data}
+                for rec, dt in dt_lookup.items():
+                    aging_data[rec]['last_modified'] = format_datetime(dt)
+                for rec, events in aging_data.items():
+                    events['last_modified'] = events.get('last_modified') or events.get('created')
+
+            def get_last_rotation_dts():
+                known_rec_last_rotation_lookup = get_known_aging_data('last_rotation')
+                for rec_id, dt in known_rec_last_rotation_lookup.items():
+                    aging_data[rec_id]['last_rotation'] = dt
+                r_filter = [uid for uid in rec_ids if uid not in known_rec_last_rotation_lookup]
+                event_data = get_events(r_filter, ['record_rotation_scheduled_ok', 'record_rotation_on_demand_ok'])
+                dt_lookup = {event.get('record_uid'): event.get('last_created') for event in event_data}
+                for rec, dt in dt_lookup.items():
+                    aging_data[rec]['last_rotation'] = format_datetime(dt)
+
+            get_created_dts()
+            get_last_modified_dts()
+            get_last_rotation_dts()
+            save_aging_data(aging_data)
+            return aging_data
+
+        def save_aging_data(aging_data):
+            existing_entities = sox_data.storage.get_record_aging()
+            updated_entities = []
+            for r, events in aging_data.items():
+                entity = existing_entities.get_entity(r) or StorageRecordAging(r)
+                created_dt = events.get('created')
+                created_ts = int(created_dt.timestamp()) if created_dt else 0
+                modified_dt = events.get('last_modified')
+                modified_ts = int(modified_dt.timestamp()) if modified_dt else 0
+                rotation_dt = events.get('last_rotation')
+                rotation_ts = int(rotation_dt.timestamp()) if rotation_dt else 0
+
+                entity.created = created_ts
+                entity.last_modified = modified_ts
+                entity.last_rotation = rotation_ts
+                updated_entities.append(entity)
+            sox_data.storage.record_aging.put_entities(updated_entities)
+
+        def compile_report_data(rec_ids):
+            aging_data = get_aging_data(rec_ids)
+            for email, records in user_access_lookup.items():
+                for uid, access_data in records.items():
+                    row = [email, uid]
+                    for i in range(len(row), len(self.report_headers)):
+                        field = self.report_headers[i]
+                        value = aging_data.get(uid, {}).get(field) if field in aging_columns \
+                            else (access_data.get(field))
+                        row.append(value)
+                    report_data.append(row)
+
+        from keepercommander.sox.storage_types import StorageRecordAging
+        from keepercommander.commands.aram import API_EVENT_SUMMARY_ROW_LIMIT
+        from keepercommander.commands.enterprise import EnterpriseInfoCommand
 
         report_data = []
         user_lookup = {user.get('enterprise_user_id'): user.get('username') for user in params.enterprise.get('users')}
-        username_or_id = kwargs.get('user')
-        username = user_lookup.get(int(username_or_id)) if username_or_id.isdigit() else username_or_id
+        user_access_lookup = dict()
+        aging = kwargs.get('aging')
+        users = kwargs.get('user')
+        managed_users = json.loads(EnterpriseInfoCommand().execute(params, users=True, quiet=True, format='json'))
+        usernames = [user_lookup.get(user_id) for user_id in sox_data.get_users()] if '@all' in users \
+            else [user_lookup.get(int(ref)) if ref.isdigit() else ref for ref in users]
+        usernames = [u for u in usernames if u and u in [mu.get('email') for mu in managed_users]]
 
-        try:
-            accessed = get_accessed_records(username)
-            report_data = fill_table(accessed)
-        except Error as e:
-            logging.warning(f'User {username_or_id} not found, error = "{e.message}"')
+        report_type_default = self.get_parser().get_default('report_type')
+        report_type = kwargs.get('report_type', report_type_default)
+        if report_type not in ACCESS_REPORT_TYPES:
+            error_msg = f'Unrecognized report-type: "{report_type}"\nValues allowed: {ACCESS_REPORT_TYPES}'
+            raise CommandError(self.get_parser().prog, error_msg)
 
+        default_columns = ['vault_owner', 'record_uid', 'record_title', 'record_url', 'has_attachments', 'in_trash',
+                           'record_owner', 'ip_address', 'device', 'last_access']
+
+        aging_columns = ['created', 'last_modified', 'last_rotation'] if aging else []
+        self.report_headers = default_columns + aging_columns
+
+        for name in usernames:
+            vault_records = get_vault_records(name)
+            filter_by_recs = None if report_type == report_type_default else {r.record_uid for r in vault_records}
+            user_access_events = get_records_accessed(name, filter_by_recs)
+            user_access_lookup.update(compile_user_report(name, user_access_events))
+
+        record_ids = {r for recs in user_access_lookup.values() for r in recs} if aging else {}
+        compile_report_data(record_ids)
         return report_data
 
 

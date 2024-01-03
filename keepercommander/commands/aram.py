@@ -1350,10 +1350,11 @@ class AuditReportCommand(Command):
                 rq['aggregate'] = aggregates
 
         user_limit = kwargs.get('limit')
+        api_row_limit = API_EVENT_SUMMARY_ROW_LIMIT if report_type != 'raw' else API_EVENT_RAW_ROW_LIMIT
         if not user_limit and not has_aram:
-            user_limit = API_EVENT_RAW_ROW_LIMIT
-        rq_limit = 50 if user_limit is None else user_limit if user_limit > 0 else API_EVENT_RAW_ROW_LIMIT
-        rq['limit'] = min(rq_limit, API_EVENT_RAW_ROW_LIMIT)
+            user_limit = api_row_limit
+        rq_limit = 50 if user_limit is None else user_limit if user_limit > 0 else api_row_limit
+        rq['limit'] = min(rq_limit, api_row_limit)
 
         if kwargs.get('order'):
             rq['order'] = 'ascending' if kwargs['order'] == 'asc' else 'descending'

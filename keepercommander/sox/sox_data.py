@@ -98,6 +98,9 @@ class SoxData:
                     break
         return owner
 
+    def get_vault_records(self, userid):
+        return [r for r in self._records.values() if userid in r.user_permissions.keys()]
+
     def clear_records(self, uids=None):
         clear_lookup(self._records, uids)
 
@@ -167,6 +170,8 @@ class SoxData:
                 if record:
                     record.created = aging.created
                     record.last_pw_change = aging.last_pw_change
+                    record.last_modified = aging.last_modified
+                    record.last_rotation = aging.last_rotation
             return record_lookup
 
         def link_user_records(store, user_lookup):
