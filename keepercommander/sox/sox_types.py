@@ -42,6 +42,8 @@ class Record:
         self.data = {}
         self.created = 0
         self.last_pw_change = 0
+        self.last_modified = 0
+        self.last_rotation = 0
         self.shared = False
         self.in_trash = False
         self.has_attachments = False
