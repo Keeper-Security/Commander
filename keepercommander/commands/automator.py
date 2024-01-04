@@ -460,7 +460,13 @@ class AutomatorLogCommand(EnterpriseCommand, AutomatorMixin):
         rq.automatorId = automator.automatorId
         rs = api.communicate_rest(params, rq, endpoint, rs_type=automator_proto.AdminResponse)
         if rs.automatorInfo:
-            self.dump_automator(rs.automatorInfo[0])
+            endpoint = rs.automatorInfo[0]
+            if endpoint.logEntries:
+                logging.info('\n{0:>32s}\n'.format('Automator Log'))
+                for log in endpoint.logEntries:
+                    logging.info('<{0}> {1} - {2}'.format(log.messageLevel, log.serverTime, log.message))
+            else:
+                logging.info('\nNo log entries found.')
 
 
 class AutomatorCertificateCommand(Command):
