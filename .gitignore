@@ -14,3 +14,4 @@ keeper.txt
 Makefile
 *.db
 dr-logs
+/.venv*

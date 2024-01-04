@@ -1,5 +1,6 @@
 import asyncio
 import enum
+import json
 import logging
 import os
 import secrets
@@ -7,6 +8,7 @@ import socket
 import string
 import time
 from typing import Optional, Dict, Tuple
+from datetime import datetime
 
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
 from cryptography.hazmat.primitives import hashes
@@ -14,21 +16,25 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.utils import int_to_bytes
-from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes, bytes_to_string
+from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes, bytes_to_string, string_to_bytes
 
+from keepercommander.commands.pam.pam_dto import GatewayActionWebRTCSession
+from keepercommander.commands.pam.router_helper import router_get_relay_access_creds, router_send_action_to_gateway
 from keepercommander.display import bcolors
+from keepercommander.params import KeeperParams
+from keepercommander.proto import pam_pb2
 
 logging.getLogger('aiortc').setLevel(logging.WARNING)
 logging.getLogger('aioice').setLevel(logging.WARNING)
-
-BUFFER_TRUNCATION_THRESHOLD = 1400
+#TODO add why 9 is the length of the protocol
+BUFFER_TRUNCATION_THRESHOLD = 16000 - 9  # 16 Kbytes max https://viblast.com/blog/2015/2/5/webrtc-data-channel-message-size/ so we will use the max minus 9 bytes for the protocol
 READ_TIMEOUT = 10
 CONTROL_MESSAGE_NO_LENGTH = 2
 CONNECTION_NO_LENGTH = DATA_LENGTH = 4
-LATENCY_COUNT = 5
 NONCE_LENGTH = 12
 SYMMETRIC_KEY_LENGTH = RANDOM_LENGTH = 32
 TERMINATOR = b';'
+BUFFER_THRESHOLD = 134217728 * .90  # 16 MiB max https://viblast.com/blog/2015/2/25/webrtc-bufferedamount/ so we will use 14.4 MiB or 90% of the max, because in some cases if the max is reached the channel will close
 
 
 class ConnectionNotFoundException(Exception):
@@ -135,14 +141,99 @@ def tunnel_decrypt(symmetric_key: AESGCM, encrypted_data: str):
 
 
 class WebRTCConnection:
-    def __init__(self, endpoint_name: Optional[str] = "Keeper PAM Tunnel",
-                 print_ready_event: Optional[asyncio.Event] = None, username: Optional[str] = None,
-                 password: Optional[str] = None, logger: Optional[logging.Logger] = None):
+    def __init__(self, endpoint_name: str, params: KeeperParams, record_uid, gateway_uid, symmetric_key,
+                 print_ready_event: asyncio.Event, kill_server_event: asyncio.Event,
+                 logger: Optional[logging.Logger] = None):
+        self._pc = None
         self.web_rtc_queue = asyncio.Queue()
         self.closed = False
         self.data_channel = None
         self.print_ready_event = print_ready_event
+        self.logger = logger
+        self.endpoint_name = endpoint_name
+        self.params = params
+        self.record_uid = record_uid
+        self.gateway_uid = gateway_uid
+        self.symmetric_key = symmetric_key
+        self.kill_server_event = kill_server_event
+        try:
+            self.peer_ice_config()
+            self.setup_data_channel()
+            self.setup_event_handlers()
+        except Exception as e:
+            raise Exception(f'Error setting up WebRTC connection: {e}')
 
+    async def signal_channel(self, kind: str):
+
+        # make webRTC sdp offer
+        try:
+            if kind == 'start':
+                offer = await self.make_offer()
+            else:
+                raise Exception(f'Invalid kind: {kind}')
+        except socket.gaierror:
+            print(f"{bcolors.WARNING}Please upgrade Commander to the latest version to use this feature...{bcolors.ENDC}")
+            return
+        except Exception as e:
+            raise Exception(f'Error making WebRTC offer: {e}')
+        data = {"offer": bytes_to_base64(offer), 'kind': kind, 'conversationType': 'tunnel'}
+        string_data = json.dumps(data)
+        bytes_data = string_to_bytes(string_data)
+        encrypted_data = tunnel_encrypt(self.symmetric_key, bytes_data)
+        self.logger.debug("-->. SEND START MESSAGE OVER REST TO GATEWAY")
+        '''
+            'inputs': {
+                'recordUid': record_uid,                        <-- this is the record UID of the PAM resource record 
+                                                                    with Network information (REQUIRED)
+                                                                
+                'data': {                                       <-- All data is encrypted with symmetric key (REQUIRED)
+                    'conversationType': ['tunnel', 'guacd']     <-- What type of conversation is this
+                    'kind': ['start', 'disconnect'],            <-- What command to run (REQUIRED)
+                    'offer': encrypted_WebRTC_sdp_offer,        <-- WebRTC SDP offer, base64 encoded
+                    'allow_control': True,                      <-- only for guacd, False = readonly session
+                    'guacamole_client_id: guacamole_client_id,  <-- only for guacd, an existing guacd session
+                    'userRecordUid': userRecordUid,             <-- only for guacd, User record UID to connect with
+                    'conversations': []                         <-- only for disconnect, list of conversations to close
+                }
+            }
+        '''
+        # TODO create objects for WebRTC inputs
+        router_response = router_send_action_to_gateway(
+            params=self.params,
+            gateway_action=GatewayActionWebRTCSession(inputs={"recordUid": self.record_uid, "data": encrypted_data}),
+            message_type=pam_pb2.CMT_GENERAL,
+            is_streaming=False,
+            destination_gateway_uid_str=self.gateway_uid,
+            gateway_timeout=30000
+        )
+        if not router_response:
+            self.kill_server_event.set()
+            return
+        gateway_response = router_response.get('response', {})
+        if not gateway_response:
+            raise Exception(f"Error getting response from the Gateway: {router_response}")
+        try:
+            payload = json.loads(gateway_response.get('payload', None))
+            if not payload:
+                raise Exception(f"Error getting payload from the Gateway response: {gateway_response}")
+        except Exception as e:
+            raise Exception(f"Error getting payload from the Gateway response: {e}")
+
+        if payload.get('is_ok', False) is False or payload.get('progress_status') == 'Error':
+            raise Exception(f"Error getting payload from the Gateway response: {payload.get('data')}")
+
+        encrypted_answer = payload.get('data', None)
+        if not encrypted_answer:
+            raise Exception(f"Error getting data from the Gateway response payload: {payload}")
+
+        # decrypt the sdp answer
+        answer = tunnel_decrypt(self.symmetric_key, encrypted_answer)
+        await self.accept_answer(answer)
+
+        self.logger.debug("starting private tunnel")
+
+    def peer_ice_config(self):
+        response = router_get_relay_access_creds(params=self.params)
         # Define the STUN server URL
         # To use Google's STUN server
         '''
@@ -159,17 +250,13 @@ class WebRTCConnection:
         # Create an RTCIceServer instance for the STUN server
         stun_server = RTCIceServer(urls=stun_url)
         # Define the TURN server URL and credentials
-        turn_url = f"turn:{relay_url}?transport=udp"
+        turn_url = f"turn:{relay_url}"
         # Create an RTCIceServer instance for the TURN server with credentials
-        turn_server = RTCIceServer(urls=turn_url, username=username, credential=password)
+        turn_server = RTCIceServer(urls=turn_url, username=response.username, credential=response.password)
         # Create a new RTCConfiguration with both STUN and TURN servers
         config = RTCConfiguration(iceServers=[stun_server, turn_server])
 
         self._pc = RTCPeerConnection(config)
-        self.setup_data_channel()
-        self.setup_event_handlers()
-        self.logger = logger
-        self.endpoint_name = endpoint_name
 
     async def make_offer(self):
         offer = await self._pc.createOffer()
@@ -250,7 +337,7 @@ class WebRTCConnection:
         # Close the peer connection
         if self._pc:
             await self._pc.close()
-            self.logger.error(f'Endpoint {self.endpoint_name}: "Peer connection closed')
+            self.logger.error(f'Endpoint {self.endpoint_name}: Peer connection closed')
 
         # Clear the asyncio queue
         if self.web_rtc_queue:
@@ -333,6 +420,7 @@ class TunnelEntrance:
                  print_ready_event,             # type: asyncio.Event
                  logger = None,                 # type: logging.Logger
                  connect_task = None,           # type: asyncio.Task
+                 kill_server_event = None       # type: asyncio.Event
                  ):                             # type: (...) -> None
         self.closing = False
         self.ping_time = None
@@ -348,17 +436,34 @@ class TunnelEntrance:
         self.is_connected = True
         self.reader_task = asyncio.create_task(self.start_reader())
         self.to_tunnel_tasks = {}
-        self.kill_server_event = asyncio.Event()
+        self.kill_server_event = kill_server_event
         self.pc = pc
         self.print_ready_event = print_ready_event
-        self.server_task = None
         self.connect_task = connect_task
+        self.connection_time = {}
 
-    async def send_to_web_rtc(self, data):
+    async def send_to_web_rtc(self, data, connection_no=0):
+        # TODO: figure out networking issue here
         if self.pc.is_data_channel_open():
-            self.pc.send_message(data)
-            # Yield control back to the event loop for other tasks to execute
-            await asyncio.sleep(0)
+            try:
+                sleep_count = 0
+                while (self.pc.data_channel is not None and
+                       self.pc.data_channel.bufferedAmount >= BUFFER_THRESHOLD and
+                       not self.kill_server_event.is_set() and
+                       self.pc.is_data_channel_open()):
+                    self.logger.debug(f"{bcolors.WARNING}Buffered amount is too high ({sleep_count * 100}) "
+                                      f"{self.pc.data_channel.bufferedAmount}{bcolors.ENDC}")
+                    await asyncio.sleep(sleep_count)
+                    sleep_count += .01
+                self.logger.debug(f'Endpoint {self.endpoint_name}: buffer size: {self.pc.data_channel.bufferedAmount}' +
+                                  f', time since start: {datetime.now() - self.connection_time[connection_no]["start_time"]}' if connection_no > 0 else '')
+                self.pc.send_message(data)
+                # Yield control back to the event loop for other tasks to execute
+                await asyncio.sleep(0)
+
+            except Exception as e:
+                self.logger.error(f'Endpoint {self.endpoint_name}: Error sending message: {e}')
+                await asyncio.sleep(0.1)
         else:
             if self.print_ready_event.is_set():
                 self.logger.error(f'Endpoint {self.endpoint_name}: Data channel is not open. Data not sent.')
@@ -515,7 +620,7 @@ class TunnelEntrance:
                     continue
                 elif isinstance(data, bytes):
                     self.logger.debug(f"Endpoint {self.endpoint_name}: Got data from WebRTC connection "
-                                      f"{len(data)} bytes)")
+                                      f"{len(data)} bytes")
                     buff += data
                 else:
                     # Yield control back to the event loop for other tasks to execute
@@ -581,7 +686,7 @@ class TunnelEntrance:
                         else:
                             buffer = int.to_bytes(con_no, CONNECTION_NO_LENGTH, byteorder='big')
                             buffer += int.to_bytes(len(data), DATA_LENGTH, byteorder='big') + data + TERMINATOR
-                            await self.send_to_web_rtc(buffer)
+                            await self.send_to_web_rtc(buffer, con_no)
                     else:
                         # Yield control back to the event loop for other tasks to execute
                         await asyncio.sleep(0)
@@ -607,6 +712,7 @@ class TunnelEntrance:
         connection_no = self.connection_no
         self.connection_no += 1
         self.connections[connection_no] = (reader, writer)
+        self.connection_time[connection_no] = {"start_time": datetime.now()}
 
         self.logger.debug(f"Endpoint {self.endpoint_name}: Created local connection {connection_no}")
 
@@ -635,83 +741,31 @@ class TunnelEntrance:
 
         except Exception as e:
             self.logger.error(f"Endpoint {self.endpoint_name}: Error while finding open port: {e}")
-            await self.print_not_ready()
+            self.kill_server_event.set()
             return
 
         if not self._port:
             self.logger.error(f"Endpoint {self.endpoint_name}: No open ports found for local server")
-            await self.print_not_ready()
+            self.kill_server_event.set()
             return
 
         try:
             self.server = await asyncio.start_server(self.handle_connection, family=socket.AF_INET, host=self.host,
                                                      port=self._port)
             async with self.server:
-                self.server_task = await asyncio.create_task(self.print_ready(self.host, self._port, self.print_ready_event))
                 await self.server.serve_forever()
         except ConnectionRefusedError as er:
             self.logger.error(f"Endpoint {self.endpoint_name}: Connection Refused while starting server: {er}")
-            await self.print_not_ready()
+            self.kill_server_event.set()
             return
         except OSError as er:
             self.logger.error(f"Endpoint {self.endpoint_name}: OS Error while starting server: {er}")
-            await self.print_not_ready()
+            self.kill_server_event.set()
             return
         except Exception as e:
             self.logger.error(f"Endpoint {self.endpoint_name}: Error while starting server: {e}")
-            await self.print_not_ready()
+            self.kill_server_event.set()
             return
-
-    async def print_not_ready(self):
-        print(f'\n{bcolors.FAIL}+---------------------------------------------------------{bcolors.ENDC}')
-        print(f'{bcolors.FAIL}| Endpoint {self.endpoint_name}{bcolors.ENDC} failed to start')
-        print(f'{bcolors.FAIL}+---------------------------------------------------------{bcolors.ENDC}\n')
-        self.kill_server_event.set()
-
-    async def print_ready(self, host,           # type: str
-                          port,                 # type: int
-                          print_ready_event,    # type: asyncio.Event
-                          ):                    # type: (...) -> None
-        """
-        pretty prints the endpoint name and host:port after the tunnels are set up
-        """
-        wait_for_server = READ_TIMEOUT * 6
-        try:
-            await asyncio.wait_for(print_ready_event.wait(), wait_for_server)
-        except TimeoutError:
-            await self.print_not_ready()
-            return
-
-        if not self.server or not self.server.is_serving() if self.server else False:
-            await self.print_not_ready()
-            return
-
-        # Sleep a little bit to print out last
-        await asyncio.sleep(.5)
-        host = host + ":" if host else ''
-        # Total length of the dynamic parts (endpoint name, host, and port)
-        dynamic_length = \
-            (len("| Endpoint : Listening on port: ") + len(self.endpoint_name) + len(host) + len(str(port)))
-
-        # Dashed line adjusted to the length of the middle line
-        dashed_line = '+' + '-' * dynamic_length + '+'
-
-        # Print statements
-        print(f'\n{bcolors.OKGREEN}{dashed_line}{bcolors.ENDC}')
-        print(
-            f'{bcolors.OKGREEN}| Endpoint {bcolors.ENDC}{bcolors.OKBLUE}{self.endpoint_name}{bcolors.ENDC}'
-            f'{bcolors.OKGREEN}: Listening on port: {bcolors.ENDC}'
-            f'{bcolors.BOLD}{bcolors.OKBLUE}{host}{port}{bcolors.ENDC}{bcolors.OKGREEN} |{bcolors.ENDC}')
-        print(f'{bcolors.OKGREEN}{dashed_line}{bcolors.ENDC}')
-        print(f'{bcolors.OKGREEN}View all open tunnels   : {bcolors.ENDC}{bcolors.OKBLUE}pam tunnel list{bcolors.ENDC}')
-        print(f'{bcolors.OKGREEN}Tail logs on open tunnel: {bcolors.ENDC}'
-              f'{bcolors.OKBLUE}pam tunnel tail ' +
-              (f'-- ' if self.endpoint_name[0] == '-' else '') +
-              f'{self.endpoint_name}{bcolors.ENDC}')
-        print(f'{bcolors.OKGREEN}Stop a tunnel           : {bcolors.ENDC}'
-              f'{bcolors.OKBLUE}pam tunnel stop ' +
-              (f'-- ' if self.endpoint_name[0] == '-' else '') +
-              f'{self.endpoint_name}{bcolors.ENDC}\n')
 
     async def stop_server(self):
         if self.closing:
@@ -724,7 +778,9 @@ class TunnelEntrance:
         for c in list(self.connections):
             await self.close_connection(c)
 
-        self.kill_server_event.set()
+        if self.kill_server_event is not None:
+            if not self.kill_server_event.is_set():
+                self.kill_server_event.set()
         try:
             # close aiortc data channel
             await self.pc.close_webrtc_connection()
@@ -755,7 +811,8 @@ class TunnelEntrance:
                     f"Endpoint {self.endpoint_name}: Timed out while trying to close connection "
                     f"{connection_no}")
 
-            del self.connections[connection_no]
+            if connection_no in self.connections:
+                del self.connections[connection_no]
             self.logger.info(f"Endpoint {self.endpoint_name}: Closed connection {connection_no}")
         else:
             self.logger.info(f"Endpoint {self.endpoint_name}: Connection {connection_no} not found")
