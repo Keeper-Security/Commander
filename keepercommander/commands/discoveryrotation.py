@@ -358,7 +358,7 @@ class PAMListRecordRotationCommand(Command):
 
             enterprise_controllers_connected = router_get_connected_gateways(params)
             connected_controller = None
-            if enterprise_controllers_connected:
+            if enterprise_controllers_connected and controller_details:
                 # Find connected controller (TODO: Optimize, don't search for controllers every time, no N^n)
                 router_controllers = [x.controllerUid for x in enterprise_controllers_connected.controllers]
                 connected_controller = next(
