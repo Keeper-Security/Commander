@@ -2028,7 +2028,7 @@ private_key_str = private_key.private_bytes(
                 host = host + ":" if host else ''
                 # Total length of the dynamic parts (endpoint name, host, and port)
                 dynamic_length = \
-                    (len("| Endpoint : Listening on port: ") + len(convo_id) + len(host) + len(str(port)))
+                    (len("| Endpoint : Listening on port: ") + len(convo_id) + len(host) + len(str(entrance.port)))
 
                 # Dashed line adjusted to the length of the middle line
                 dashed_line = '+' + '-' * dynamic_length + '+'
@@ -2038,7 +2038,7 @@ private_key_str = private_key.private_bytes(
                 print(
                     f'{bcolors.OKGREEN}| Endpoint {bcolors.ENDC}{bcolors.OKBLUE}{convo_id}{bcolors.ENDC}'
                     f'{bcolors.OKGREEN}: Listening on port: {bcolors.ENDC}'
-                    f'{bcolors.BOLD}{bcolors.OKBLUE}{host}{port}{bcolors.ENDC}{bcolors.OKGREEN} |{bcolors.ENDC}')
+                    f'{bcolors.BOLD}{bcolors.OKBLUE}{host}{entrance.port}{bcolors.ENDC}{bcolors.OKGREEN} |{bcolors.ENDC}')
                 print(f'{bcolors.OKGREEN}{dashed_line}{bcolors.ENDC}')
                 print(
                     f'{bcolors.OKGREEN}View all open tunnels   : {bcolors.ENDC}{bcolors.OKBLUE}pam tunnel list{bcolors.ENDC}')
