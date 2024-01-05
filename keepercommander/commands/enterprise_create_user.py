@@ -218,6 +218,7 @@ class StoreUserKeysCommand(EnterpriseCommand):
                 user_key = enterprise_pb2.EnterpriseUserDataKey()
                 user_key.enterpriseUserId = user_id
                 user_key.userEncryptedDataKey = crypto.encrypt_ec(user_data_key, params.enterprise_ec_key)
+                user_key.keyTypeId = 4
                 rqs.append(user_key)
                 logging.info('Converting key for user "%s"', username)
             except Exception as e:
