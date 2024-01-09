@@ -331,6 +331,7 @@ def loop(params):  # type: (KeeperParams) -> int
     error_no = 0
     suppress_errno = False
 
+    logging.getLogger().setLevel(logging.DEBUG if params.debug else logging.WARNING if params.batch_mode else logging.INFO)
     enforcement_checked = set()
     prompt_session = None
     if not params.batch_mode:
@@ -344,9 +345,6 @@ def loop(params):  # type: (KeeperParams) -> int
 
         display.welcome()
         versioning.welcome_print_version(params)
-
-    else:
-        logging.getLogger().setLevel(logging.DEBUG if params.debug else logging.WARNING)
 
     if not params.batch_mode:
         if params.user:
