@@ -70,6 +70,8 @@ def get_params_from_config(config_filename, launched_with_shortcut=False):
                             params.commands.extend(params.config['commands'])
                     if 'plugins' in params.config:
                         params.plugins = params.config['plugins']
+                    if params.config.get('debug') is True:
+                        params.debug = True
             except loader.SecureStorageException as sse:
                 logging.error('Unable to load configuration from secure storage:\n%s',
                               '\033[1m' + str(sse) + '\033[0m')
