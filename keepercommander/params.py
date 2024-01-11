@@ -7,7 +7,7 @@
 # Keeper Commander 
 # Contact: ops@keepersecurity.com
 #
-
+import threading
 import warnings
 from datetime import datetime
 from typing import Dict, NamedTuple, Optional
@@ -224,11 +224,7 @@ class KeeperParams:
         if self.ssh_agent:
             self.ssh_agent.close()
             self.ssh_agent = None
-        if self.tunnel_threads:
-            for p in self.tunnel_threads.items():
-                p.terminate()
-            self.tunnel_threads.clear()
-            self.tunnel_threads = {}
+        self.tunnel_threads.clear()
         self.tunnel_threads_queue = {}
 
     def __get_rest_context(self):   # type: () -> RestApiContext
