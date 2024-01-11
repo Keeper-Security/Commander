@@ -57,12 +57,15 @@ team_report_parser.add_argument('-tu', '--show-team-users', action='store_true',
 access_report_desc = 'Run a report showing all records a user has accessed or can access'
 access_report_parser = argparse.ArgumentParser(prog='compliance record-access-report', description=access_report_desc,
                                                parents=[compliance_parser])
-access_report_parser.add_argument('user', nargs='+', metavar='USER', type=str, help='username or ID')
-report_type_help = 'select type of record-access data to include in report (defaults to "history")'
+user_arg_help = 'username(s) or ID(s). Set to "@all" to run report for all users'
+access_report_parser.add_argument('user', nargs='+', metavar='USER', type=str, help=user_arg_help)
+report_type_help = ('select type of record-access data to include in report (defaults to "history"). '
+                    'Set to "history" to view past record-access activity, "vault" to view current vault contents')
 ACCESS_REPORT_TYPES = ('history', 'vault')
 access_report_parser.add_argument('--report-type', action='store', choices=ACCESS_REPORT_TYPES,
                                   default='history', help=report_type_help)
-access_report_parser.add_argument('--aging', action='store_true',  help='include record-aging data')
+aging_help = 'include record-aging data (last modified, created, and last password rotation dates)'
+access_report_parser.add_argument('--aging', action='store_true',  help=aging_help)
 
 summary_report_desc = 'Run a summary SOX compliance report'
 summary_report_parser = argparse.ArgumentParser(prog='compliance summary-report', description=summary_report_desc,
@@ -438,6 +441,7 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
                 rec_owner = sox_data.get_record_owner(uid)
                 event_ts = access_event.get('last_created')
                 access_record = {uid: {'record_title': rec_info.get('title'),
+                                       'record_type':  rec_info.get('record_type'),
                                        'record_url': rec_info.get('url', '').rstrip('/'),
                                        'record_owner': rec_owner and rec_owner.email,
                                        'has_attachments': sox_rec.has_attachments if sox_rec else None,
@@ -573,8 +577,8 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
             error_msg = f'Unrecognized report-type: "{report_type}"\nValues allowed: {ACCESS_REPORT_TYPES}'
             raise CommandError(self.get_parser().prog, error_msg)
 
-        default_columns = ['vault_owner', 'record_uid', 'record_title', 'record_url', 'has_attachments', 'in_trash',
-                           'record_owner', 'ip_address', 'device', 'last_access']
+        default_columns = ['vault_owner', 'record_uid', 'record_title', 'record_type', 'record_url', 'has_attachments',
+                           'in_trash', 'record_owner', 'ip_address', 'device', 'last_access']
 
         aging_columns = ['created', 'last_modified', 'last_rotation'] if aging else []
         self.report_headers = default_columns + aging_columns
