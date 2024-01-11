@@ -10,6 +10,7 @@
 #
 
 import argparse
+import datetime
 import getpass
 import logging
 import os
@@ -130,10 +131,45 @@ class AutomatorMixin(object):
         logging.info('{0:>32s}: {1}'.format('Enabled', 'Yes' if endpoint.enabled else 'No'))
         if status:
             logging.info('{0:>32s}: {1}'.format('Initialized', 'Yes' if endpoint.status.initialized else 'No'))
+            if endpoint.status.initialized:
+                delta = datetime.datetime.now() - datetime.datetime.fromtimestamp (endpoint.status.initializedTimestamp//1000)
+                days = delta.days
+                seconds = delta.seconds
+                hours = seconds // 3600
+                uptime = ''
+                if days > 0:
+                    uptime += f'{days} days '
+                    if hours > 0:
+                        uptime += f'{hours} hours'
+                else:
+                    minutes = (seconds % 3600) // 60
+                    if hours > 0:
+                        uptime += f'{hours} hours'
+                        if minutes > 0:
+                            uptime += f' {minutes} minutes'
+                    else:
+                        uptime += f' {minutes} minutes'
+                logging.info('{0:>32s}: {1}'.format('Uptime', uptime))
+
+            if endpoint.status.sslCertificateExpiration > 0:
+                dt = datetime.datetime.fromtimestamp(endpoint.status.sslCertificateExpiration//1000)
+                logging.info('{0:>32}: {1}'.format('Certificate Expires', dt.strftime('%x')))
+
             if endpoint.status.numberOfDevicesApproved > 0:
                 logging.info('{0:>32}: {1}'.format('Approved Devices', endpoint.status.numberOfDevicesApproved))
             if endpoint.status.numberOfDevicesDenied > 0:
                 logging.info('{0:>32}: {1}'.format('Denied Devices', endpoint.status.numberOfDevicesDenied))
+
+            if endpoint.status.numberOfTeamsApproved > 0:
+                logging.info('{0:>32}: {1}'.format('Approved Teams', endpoint.status.numberOfTeamsApproved))
+            if endpoint.status.numberOfTeamsDenied > 0:
+                logging.info('{0:>32}: {1}'.format('Denied Teams', endpoint.status.numberOfTeamsDenied))
+
+            if endpoint.status.numberOfTeamMembershipsApproved > 0:
+                logging.info('{0:>32}: {1}'.format('Approved Team Memberships', endpoint.status.numberOfTeamMembershipsApproved))
+            if endpoint.status.numberOfTeamMembershipsDenied > 0:
+                logging.info('{0:>32}: {1}'.format('Denied Team Memberships', endpoint.status.numberOfTeamMembershipsDenied))
+
             if endpoint.status.numberOfErrors > 0:
                 logging.info('{0:>32}: {1}'.format('Number of Errors', endpoint.status.numberOfErrors))
 
@@ -376,13 +412,13 @@ class AutomatorSetupCommand(EnterpriseCommand, AutomatorMixin):
         rq = automator_proto.AdminSetupAutomatorRequest()
         rq.automatorId = automator.automatorId
         rq.automatorState = automator_proto.NEEDS_CRYPTO_STEP_2
-        automator_public_key = crypto.load_ec_public_key(rs.automatorEcPublicKey)
+        automator_public_key = crypto.load_ec_public_key(rs.automatorEccPublicKey)
         keys = params.enterprise['keys']
         if 'ecc_encrypted_private_key' in keys:
             encrypted_ec_private_key = utils.base64_url_decode(keys['ecc_encrypted_private_key'])
             ec_private_key = crypto.decrypt_aes_v2(encrypted_ec_private_key, params.enterprise['unencrypted_tree_key'])
             encrypted_ec_private_key = crypto.encrypt_ec(ec_private_key, automator_public_key)
-            rq.encryptedEcEnterprisePrivateKey = encrypted_ec_private_key
+            rq.encryptedEccEnterprisePrivateKey = encrypted_ec_private_key
 
         if 'rsa_encrypted_private_key' in keys:
             encrypted_rsa_private_key = utils.base64_url_decode(keys['rsa_encrypted_private_key'])
