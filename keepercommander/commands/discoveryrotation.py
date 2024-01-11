@@ -1733,7 +1733,7 @@ def retrieve_gateway_public_key(gateway_uid, params, api, utils) -> bytes:
 
 class PAMTunnelStartCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='dr-port-forward-command')
-    pam_cmd_parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
+    pam_cmd_parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                                 help='Used to list all tunnels for the given Gateway UID')
     pam_cmd_parser.add_argument('--record', '-r', required=True, dest='record_uid', action='store',
                                 help='The Record UID of the PAM resource record with network information to use for '

@@ -54,6 +54,7 @@ class ControlMessage(enum.IntEnum):
     OpenConnection = 101
     CloseConnection = 102
     ConnectionOpened = 103
+    SendEOF = 104
 
 
 def generate_random_bytes(pass_length=RANDOM_LENGTH):  # type: (int) -> bytes
@@ -463,6 +464,7 @@ class TunnelEntrance:
         self.pc = pc
         self.print_ready_event = print_ready_event
         self.connect_task = connect_task
+        self.eof_sent = False
 
     @property
     def port(self):
@@ -579,6 +581,14 @@ class TunnelEntrance:
                     self.logger.error(f"Endpoint {self.endpoint_name}: Error in forwarding data task: {e}")
             else:
                 self.logger.error(f"Endpoint {self.endpoint_name}: Invalid open connection message")
+        elif message_no == ControlMessage.SendEOF:
+            if len(data) >= CONNECTION_NO_LENGTH:
+                con_no = int.from_bytes(data[:CONNECTION_NO_LENGTH], byteorder='big')
+                if con_no in self.connections:
+                    self.logger.debug(f'Endpoint {self.endpoint_name}: Sending EOF to {con_no}')
+                    self.connections[con_no].writer.write_eof()
+                else:
+                    self.logger.error(f'Endpoint {self.endpoint_name}: Connection for EOF {con_no} not found')
         else:
             self.logger.warning(f'Endpoint {self.endpoint_name} Unknown tunnel control message: {message_no}')
 
@@ -726,10 +736,15 @@ class TunnelEntrance:
                         break
                     if isinstance(data, bytes):
                         if c.reader.at_eof() and len(data) == 0:
+                            if not self.eof_sent:
+                                await self.send_control_message(ControlMessage.SendEOF,
+                                                                int_to_bytes(con_no, CONNECTION_NO_LENGTH))
+                                self.eof_sent = True
                             # Yield control back to the event loop for other tasks to execute
                             await asyncio.sleep(0)
                             continue
                         else:
+                            self.eof_sent = False
                             buffer = int.to_bytes(con_no, CONNECTION_NO_LENGTH, byteorder='big')
                             buffer += int.to_bytes(len(data), DATA_LENGTH, byteorder='big') + data + TERMINATOR
                             await self.send_to_web_rtc(buffer)
@@ -849,7 +864,8 @@ class TunnelEntrance:
             self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception closing data channel {ex}')
 
         try:
-            self.connect_task.cancel()
+            if self.connect_task is not None:
+                self.connect_task.cancel()
         finally:
             self.closing = True
             self.logger.info(f"Endpoint {self.endpoint_name}: Tunnel stopped")
@@ -873,7 +889,8 @@ class TunnelEntrance:
 
             if connection_no in self.connections:
                 try:
-                    self.connections[connection_no].to_tunnel_task.cancel()
+                    if self.connections[connection_no].to_tunnel_task is not None:
+                        self.connections[connection_no].to_tunnel_task.cancel()
                 except Exception as ex:
                     self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception canceling tasks {ex}')
                 del self.connections[connection_no]
