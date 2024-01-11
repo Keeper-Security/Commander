@@ -306,6 +306,7 @@ class AutomatorEditCommand(EnterpriseCommand, AutomatorMixin):
         automator = self.find_automator(params, kwargs.get('target'))
         rq = automator_proto.AdminEditAutomatorRequest()
         rq.automatorId = automator.automatorId
+        rq.enabled = automator.enabled
         name = kwargs['name']
         if name:
             rq.name = name
