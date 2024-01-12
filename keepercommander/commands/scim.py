@@ -18,7 +18,7 @@ import logging
 import os
 import requests
 from typing import Iterable, Union, Optional, Dict, List
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 from .base import user_choice, dump_report_data, report_output_parser, field_to_title, GroupCommand
 from .enterprise import TeamApproveCommand, EnterpriseCommand
@@ -695,13 +695,21 @@ class ScimPushCommand(EnterpriseCommand):
     @staticmethod
     def get_scim_resource(url, token):
         resources = []
-        start_index = 0
+        start_index = 1
+        count = 500
         headers = {
             'Authorization': f'Bearer {token}'
         }
+        comps = urlparse(url)
+
         while True:
-            headers['startIndex'] = str(start_index)
-            rs = requests.get(url, headers=headers)
+            q = parse_qsl(comps.query, keep_blank_values=True)
+            q.append(('startIndex', str(start_index)))
+            q.append(('count', str(count)))
+            query = urlencode(q, doseq=True)
+            url_comp = (comps.scheme, comps.netloc, comps.path, None, query, None)
+            rq_url = urlunparse(url_comp)
+            rs = requests.get(rq_url, headers=headers)
             if rs.status_code != 200:
                 raise Exception(f'SCIM GET error code "{rs.status_code}"')
             response = rs.json()
