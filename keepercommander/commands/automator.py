@@ -128,6 +128,8 @@ class AutomatorMixin(object):
         logging.info('{0:>32s}: {1}'.format('Name', endpoint.name))
         logging.info('{0:>32s}: {1}'.format('Node ID', endpoint.nodeId))
         logging.info('{0:>32s}: {1}'.format('URL', endpoint.url))
+        if endpoint.version:
+            logging.info('{0:>32s}: {1}'.format('Version', endpoint.version))
         logging.info('{0:>32s}: {1}'.format('Enabled', 'Yes' if endpoint.enabled else 'No'))
         if status:
             logging.info('{0:>32s}: {1}'.format('Initialized', 'Yes' if endpoint.status.initialized else 'No'))
