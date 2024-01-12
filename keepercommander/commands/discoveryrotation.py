@@ -42,7 +42,8 @@ from .pam.router_helper import router_send_action_to_gateway, print_router_respo
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, \
     get_router_url
 from .record_edit import RecordEditMixin
-from .tunnel.port_forward.endpoint import establish_symmetric_key, WebRTCConnection, TunnelEntrance, READ_TIMEOUT
+from .tunnel.port_forward.endpoint import establish_symmetric_key, WebRTCConnection, TunnelEntrance, READ_TIMEOUT, \
+    find_open_port
 from .. import api, utils, vault_extensions, vault, record_management, attachment, record_facades
 from ..display import bcolors
 from ..error import CommandError
@@ -1640,7 +1641,8 @@ def clean_up_tunnel(params, convo_id):
         if params.tunnel_threads_queue.get(convo_id):
             del params.tunnel_threads_queue[convo_id]
     else:
-        print(f"{bcolors.WARNING}No tunnel data found to remove for {convo_id}{bcolors.ENDC}")
+        if params.debug:
+            print(f"{bcolors.WARNING}No tunnel data found to remove for {convo_id}{bcolors.ENDC}")
 
 
 class PAMTunnelStopCommand(Command):
@@ -1820,7 +1822,7 @@ private_key_str = private_key.private_bytes(
         try:
             await pc.signal_channel('start')
         except Exception as e:
-            CommandError('tunnel start', f"{e}")
+            raise CommandError('Tunnel Start', f"{e}")
 
         logger.debug("starting private tunnel")
 
@@ -1918,7 +1920,9 @@ private_key_str = private_key.private_bytes(
                         logging.debug(f"{bcolors.WARNING}Exception while stopping event loop: {e}{bcolors.ENDC}")
                 except Exception as e:
                     print(f"{bcolors.FAIL}An exception occurred in pre_connect for connection {convo_id}: {e}{bcolors.ENDC}")
-                print(f"{bcolors.OKBLUE}Tunnel {convo_id} closed.{bcolors.ENDC}")
+                finally:
+                    clean_up_tunnel(params, convo_id)
+                    print(f"{bcolors.OKBLUE}Tunnel {convo_id} closed.{bcolors.ENDC}")
 
     def execute(self, params, **kwargs):
         # https://pypi.org/project/aiortc/
@@ -1939,6 +1943,17 @@ private_key_str = private_key.private_bytes(
         gateway_uid = kwargs.get('gateway')
         host = kwargs.get('host')
         port = kwargs.get('port')
+        if port is not None and port > 0:
+            try:
+                port = find_open_port(tried_ports=[], preferred_port=port, host=host)
+            except CommandError as e:
+                print(f"{bcolors.FAIL}{e}{bcolors.ENDC}")
+                return
+        else:
+            port = find_open_port(tried_ports=[], host=host)
+            if port is None:
+                print(f"{bcolors.FAIL}Could not find open port to use for tunnel{bcolors.ENDC}")
+                return
 
         gateway_public_key_bytes = retrieve_gateway_public_key(gateway_uid, params, api, utils)
 
@@ -2007,14 +2022,14 @@ private_key_str = private_key.private_bytes(
                 time.sleep(.1)
 
         def print_fail():
-            fail_dynamic_length = len("| Endpoint :  failed to start..") + len(convo_id)
+            fail_dynamic_length = len("| Endpoint ") + len(convo_id) + len(" failed to start..")
 
             clean_up_tunnel(params, convo_id)
             time.sleep(.5)
             # Dashed line adjusted to the length of the middle line
             fail_dashed_line = '+' + '-' * fail_dynamic_length + '+'
             print(f'\n{bcolors.FAIL}{fail_dashed_line}{bcolors.ENDC}')
-            print(f'{bcolors.FAIL}| Endpoint {convo_id}{bcolors.ENDC} failed to start..')
+            print(f'{bcolors.FAIL}| Endpoint {bcolors.ENDC}{convo_id}{bcolors.FAIL} failed to start..{bcolors.ENDC}')
             print(f'{bcolors.FAIL}{fail_dashed_line}{bcolors.ENDC}\n')
 
         if entrance is not None:
@@ -2028,7 +2043,7 @@ private_key_str = private_key.private_bytes(
                 host = host + ":" if host else ''
                 # Total length of the dynamic parts (endpoint name, host, and port)
                 dynamic_length = \
-                    (len("| Endpoint : Listening on port: ") + len(convo_id) + len(host) + len(str(entrance.port)))
+                    (len("| Endpoint : Listening on: ") + len(convo_id) + len(host) + len(str(entrance.port)))
 
                 # Dashed line adjusted to the length of the middle line
                 dashed_line = '+' + '-' * dynamic_length + '+'
@@ -2037,7 +2052,7 @@ private_key_str = private_key.private_bytes(
                 print(f'\n{bcolors.OKGREEN}{dashed_line}{bcolors.ENDC}')
                 print(
                     f'{bcolors.OKGREEN}| Endpoint {bcolors.ENDC}{bcolors.OKBLUE}{convo_id}{bcolors.ENDC}'
-                    f'{bcolors.OKGREEN}: Listening on port: {bcolors.ENDC}'
+                    f'{bcolors.OKGREEN}: Listening on: {bcolors.ENDC}'
                     f'{bcolors.BOLD}{bcolors.OKBLUE}{host}{entrance.port}{bcolors.ENDC}{bcolors.OKGREEN} |{bcolors.ENDC}')
                 print(f'{bcolors.OKGREEN}{dashed_line}{bcolors.ENDC}')
                 print(

@@ -22,6 +22,7 @@ from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes, 
 from keepercommander.commands.pam.pam_dto import GatewayActionWebRTCSession
 from keepercommander.commands.pam.router_helper import router_get_relay_access_creds, router_send_action_to_gateway
 from keepercommander.display import bcolors
+from keepercommander.error import CommandError
 from keepercommander.params import KeeperParams
 from keepercommander.proto import pam_pb2
 
@@ -92,6 +93,8 @@ def find_open_port(tried_ports: [], start_port=49152, end_port=65535, preferred_
         if is_port_open(host, preferred_port):
             time.sleep(0.1)  # Short delay to ensure port release
             return preferred_port
+        else:
+            raise CommandError("Tunnel Start", f"Port {preferred_port} is already in use.")
 
     for port in range(start_port, end_port + 1):
         if port not in tried_ports and is_port_open(host, port):
@@ -229,7 +232,7 @@ class WebRTCConnection:
             raise Exception(f"Error getting payload from the Gateway response: {e}")
 
         if payload.get('is_ok', False) is False or payload.get('progress_status') == 'Error':
-            raise Exception(f"Error getting payload from the Gateway response: {payload.get('data')}")
+            raise Exception(f"Gateway response: {payload.get('data')}")
 
         encrypted_answer = payload.get('data', None)
         if not encrypted_answer:
@@ -802,24 +805,6 @@ class TunnelEntrance:
         """
         if self.server:
             return
-        try:
-            self._port = find_open_port(tried_ports=[], preferred_port=self._port, host=self.host)
-        except asyncio.CancelledError:
-            self.logger.info(f"Endpoint {self.endpoint_name}: Server has been cancelled. Cleaning up...")
-            # Perform necessary cleanup here
-            self.server.close()  # Close the server
-            try:
-                await asyncio.wait_for(self.server.wait_closed(), timeout=5.0)
-            except asyncio.TimeoutError:
-                self.logger.warning(
-                    f"Endpoint {self.endpoint_name}: Timed out while trying to close server")
-            return
-
-        except Exception as e:
-            self.logger.error(f"Endpoint {self.endpoint_name}: Error while finding open port: {e}")
-            self.kill_server_event.set()
-            return
-
         if not self._port:
             self.logger.error(f"Endpoint {self.endpoint_name}: No open ports found for local server")
             self.kill_server_event.set()
@@ -832,14 +817,18 @@ class TunnelEntrance:
                 await self.server.serve_forever()
         except ConnectionRefusedError as er:
             self.logger.error(f"Endpoint {self.endpoint_name}: Connection Refused while starting server: {er}")
-            self.kill_server_event.set()
-            return
         except OSError as er:
             self.logger.error(f"Endpoint {self.endpoint_name}: OS Error while starting server: {er}")
-            self.kill_server_event.set()
-            return
         except Exception as e:
             self.logger.error(f"Endpoint {self.endpoint_name}: Error while starting server: {e}")
+        finally:
+            if self.server is not None:
+                self.server.close()
+                try:
+                    await asyncio.wait_for(self.server.wait_closed(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    self.logger.warning(
+                        f"Endpoint {self.endpoint_name}: Timed out while trying to close server")
             self.kill_server_event.set()
             return
 
