@@ -2,6 +2,8 @@ import sys
 import unittest
 from unittest import mock
 
+from keepercommander.error import CommandError
+
 if sys.version_info >= (3, 8):
     import datetime
     import socket
@@ -71,8 +73,8 @@ if sys.version_info >= (3, 8):
             # Mock the bind method to simulate that port 80 is in use
             with mock.patch('socket.socket.bind', side_effect=OSError("Address already in use")):
                 preferred_port = 80
-                open_port = find_open_port([], preferred_port=preferred_port)
-                self.assertIsNone(open_port)
+                with self.assertRaises(CommandError):
+                    open_port = find_open_port([], preferred_port=preferred_port)
 
         def test_range(self):
             # Test that the function returns a port within the specified range
