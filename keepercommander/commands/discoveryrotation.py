@@ -1661,6 +1661,7 @@ class PAMTunnelStopCommand(Command):
         if not tunnel_data:
             raise CommandError('tunnel stop', f"No tunnel data to remove found for {convo_id}")
         clean_up_tunnel(params, convo_id)
+
         return
 
 
@@ -1890,8 +1891,10 @@ private_key_str = private_key.private_bytes(
             print(f"{bcolors.FAIL}Socket not connected exception in connection {convo_id}: {es}{bcolors.ENDC}")
         except KeyboardInterrupt:
             print(f"{bcolors.OKBLUE}Exiting: {convo_id}{bcolors.ENDC}")
+        except CommandError as ce:
+            print(f"{bcolors.FAIL}{ce}{bcolors.ENDC}")
         except Exception as e:
-            print(f"{bcolors.FAIL}An exception occurred in pre_connect for connection {convo_id}: {e}{bcolors.ENDC}")
+            print(f"{bcolors.FAIL}An exception occurred in connection {convo_id}: {e}{bcolors.ENDC}")
         finally:
             if loop:
                 try:
