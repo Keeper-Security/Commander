@@ -77,9 +77,9 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                         with open(filename, 'r') as f:
                             lines = f.readlines()
                         for line in lines:
+                            line = line.strip()
                             if not line:
                                 continue
-                            line = line.strip()
                             if line[0] in {'#', ';', '-'}:
                                 continue
                             p = line.partition('->')
