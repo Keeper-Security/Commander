@@ -496,6 +496,8 @@ class TunnelEntrance:
         else:
             if self.print_ready_event.is_set():
                 self.logger.error(f'Endpoint {self.endpoint_name}: Data channel is not open. Data not sent.')
+            if self.connection_no > 1:
+                self.kill_server_event.set()
 
     async def send_control_message(self, message_no, data=None):  # type: (ControlMessage, Optional[bytes]) -> None
         """
@@ -853,6 +855,15 @@ class TunnelEntrance:
             self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception closing data channel {ex}')
 
         try:
+            self.server.close()
+            await asyncio.wait_for(self.server.wait_closed(), timeout=5.0)
+        except asyncio.TimeoutError:
+            self.logger.warning(
+                f"Endpoint {self.endpoint_name}: Timed out while trying to close server")
+        except Exception as ex:
+            self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception closing server {ex}')
+
+        try:
             if self.connect_task is not None:
                 self.connect_task.cancel()
         finally:
@@ -867,14 +878,24 @@ class TunnelEntrance:
             self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception sending Close connection {ex}')
 
         if connection_no in self.connections and connection_no != 0:
-            self.connections[connection_no].writer.close()
-            # Wait for it to actually close.
             try:
+                self.connections[connection_no].writer.close()
+                # Wait for it to actually close.
                 await asyncio.wait_for(self.connections[connection_no].writer.wait_closed(), timeout=5.0)
             except asyncio.TimeoutError:
                 self.logger.warning(
                     f"Endpoint {self.endpoint_name}: Timed out while trying to close connection "
                     f"{connection_no}")
+            except Exception as ex:
+                self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception closing connection {ex}')
+
+            try:
+                # clean up reader
+                if self.connections[connection_no].reader is not None:
+                    self.connections[connection_no].reader.feed_eof()
+                    self.connections[connection_no].reader = None
+            except Exception as ex:
+                self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception closing reader {ex}')
 
             if connection_no in self.connections:
                 try:
@@ -882,7 +903,10 @@ class TunnelEntrance:
                         self.connections[connection_no].to_tunnel_task.cancel()
                 except Exception as ex:
                     self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception canceling tasks {ex}')
-                del self.connections[connection_no]
+                try:
+                    del self.connections[connection_no]
+                except Exception as ex:
+                    self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception deleting connection {ex}')
             self.logger.info(f"Endpoint {self.endpoint_name}: Closed connection {connection_no}")
         else:
             self.logger.info(f"Endpoint {self.endpoint_name}: Connection {connection_no} not found")
