@@ -282,12 +282,17 @@ class AutomatorCreateCommand(EnterpriseCommand, AutomatorMixin):
         if len(nodes) > 1:
             logging.warning('Node name \'%s\' is not unique. Use Node ID.', node)
             return
-        matched_node = nodes[0]
+        matched_node_id = nodes[0]['node_id']
+        self.ensure_loaded(params, False)
+        if params.automators:    # type: list[automator_proto.AutomatorInfo]
+            n = next((True for x in params.automators if x.nodeId == matched_node_id), None)
+            if n:
+                logging.warning('Automator for node \"%s\" already exists', node)
+                return
 
         rq = automator_proto.AdminCreateAutomatorRequest()
-        rq.nodeId = matched_node['node_id']
+        rq.nodeId = matched_node_id
         rq.name = name
-
         rs = api.communicate_rest(params, rq, 'automator/automator_create', rs_type=automator_proto.AdminResponse)
         if rs.success:
             self.dump_automator(rs.automatorInfo[0])
