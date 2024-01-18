@@ -1248,9 +1248,7 @@ def execute_import_folder_record(params, folders, records):
             for e in chunk:
                 rq.recordRequest.append(e)
 
-        rs = api.communicate_rest(params, rq, "folder/import_folders_and_records")
-        import_rs = folder_pb2.ImportFolderRecordResponse()
-        import_rs.ParseFromString(rs)
+        import_rs = api.communicate_rest(params, rq, "folder/import_folders_and_records", rs_type=folder_pb2.ImportFolderRecordResponse)
         if len(import_rs.folderResponse) > 0:
             rs_folder.extend(import_rs.folderResponse)
         if len(import_rs.recordResponse) > 0:
@@ -1372,9 +1370,7 @@ def upload_v3_attachments(params, records_with_attachments):  # type: (KeeperPar
             return
 
         rq.client_time = api.current_milli_time()
-        rs = api.communicate_rest(params, rq, 'vault/files_add')
-        files_add_rs = record_pb2.FilesAddResponse()
-        files_add_rs.ParseFromString(rs)
+        files_add_rs = api.communicate_rest(params, rq, 'vault/files_add', rs_type=record_pb2.FilesAddResponse)
 
         new_attachments_by_parent_uid = {}  # type: Dict[str, List[Tuple[ImportAttachment, bytes, bytes]]]
         for f in files_add_rs.files:
