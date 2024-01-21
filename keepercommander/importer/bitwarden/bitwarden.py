@@ -81,7 +81,7 @@ class BitwardenImporter(importer.BaseFileImporter):
             if isinstance(login, dict):
                 record.login = login.get('username') or ''
                 record.password = login.get('password') or ''
-                totp = login.get('password')
+                totp = login.get('totp')
                 if totp:
                     if not totp.startswith('otpauth://'):
                         totp = f'otpauth://totp/?secret={totp}'
