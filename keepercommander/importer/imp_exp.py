@@ -854,9 +854,10 @@ def _import(params, file_format, filename, **kwargs):
 
     folder_add = prepare_folder_add(params, folders, records, manage_users, manage_records, can_edit, can_share)
     if folder_add:
-        fol_rs, _ = execute_import_folder_record(params, folder_add, None)
-        _ = fol_rs
-        sync_down.sync_down(params)
+        if not dry_run:
+            fol_rs, _ = execute_import_folder_record(params, folder_add, None)
+            _ = fol_rs
+            sync_down.sync_down(params)
 
     record_keys = {}
     audit_uids = []
