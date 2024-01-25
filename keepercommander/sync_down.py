@@ -11,7 +11,7 @@
 
 import json
 import logging
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Optional
 
 import google
 
@@ -20,7 +20,7 @@ from .display import bcolors
 from .params import KeeperParams, RecordOwner
 from .proto import SyncDown_pb2, record_pb2, client_pb2, breachwatch_pb2
 from .proto.SyncDown_pb2 import BreachWatchRecord, BreachWatchSecurityData
-from .subfolder import RootFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode
+from .subfolder import RootFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, BaseFolderNode
 
 
 def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> None
@@ -341,6 +341,8 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                             del shared_folder['records']
                     if 'shared_folder_key_unencrypted' in shared_folder:
                         del shared_folder['shared_folder_key_unencrypted']
+                    if 'data_unencrypted' in shared_folder:
+                        del shared_folder['data_unencrypted']
                 assign_shared_folder(p_sf, shared_folder)
 
                 if p_sf.sharedFolderKey:
@@ -730,6 +732,10 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                                 crypto.decrypt_aes_v1(utils.base64_url_decode(data), sf_key)
                             data_json = json.loads(shared_folder['data_unencrypted'].decode('utf-8'))
                             shared_folder['name_unencrypted'] = data_json['name']
+                if 'data' in shared_folder and 'data_unencrypted' not in shared_folder:
+                    data = utils.base64_url_decode(shared_folder['data'])
+                    shared_folder['data_unencrypted'] = crypto.decrypt_aes_v1(data, sf_key)
+
             except Exception as e:
                 logging.debug('Shared folder %s name decryption error: %s', shared_folder_uid, e)
             if 'name_unencrypted' not in shared_folder:
@@ -973,45 +979,42 @@ def prepare_folder_tree(params):    # type: (KeeperParams) -> None
     params.root_folder = RootFolderNode()
 
     for sf in params.subfolder_cache.values():
+        data_unencrypted = sf.get('data_unencrypted')    # type: Optional[bytes]
+        folder_uid = None
         if sf['type'] == 'user_folder':
+            folder_uid = sf['folder_uid']
             uf = UserFolderNode()
-            uf.uid = sf['folder_uid']
+            uf.uid = folder_uid
             uf.parent_uid = sf.get('parent_uid')
-            if 'data_unencrypted' in sf:
-                try:
-                    data = json.loads(sf['data_unencrypted'].decode())
-                except Exception as e:
-                    logging.debug('Error decrypting user folder name. Folder UID: %s. Error: %s', uf.uid, e)
-                    data = {}
-            else:
-                data = {}
-            uf.name = data['name'] if 'name' in data else uf.uid
             params.folder_cache[uf.uid] = uf
 
         elif sf['type'] == 'shared_folder_folder':
+            folder_uid = sf['folder_uid']
             sff = SharedFolderFolderNode()
-            sff.uid = sf['folder_uid']
+            sff.uid = folder_uid
             sff.shared_folder_uid = sf['shared_folder_uid']
             sff.parent_uid = sf.get('parent_uid') or sff.shared_folder_uid
-            if 'data_unencrypted' in sf:
-                try:
-                    data = json.loads(sf['data_unencrypted'].decode())
-                except Exception as e:
-                    logging.debug('Error decrypting shared folder folder name. Folder UID: %s. Error: %s', sff.uid, e)
-                    data = {}
-            else:
-                data = {}
-            sff.name = data['name'] if 'name' in data else sff.uid
             params.folder_cache[sff.uid] = sff
 
         elif sf['type'] == 'shared_folder':
+            folder_uid = sf['shared_folder_uid']
             shf = SharedFolderNode()
-            shf.uid = sf['shared_folder_uid']
+            shf.uid = folder_uid
             shf.parent_uid = sf.get('folder_uid')
             folder = params.shared_folder_cache.get(shf.uid)
             if folder is not None:
+                data_unencrypted = folder.get('data_unencrypted')
                 shf.name = folder['name_unencrypted']
             params.folder_cache[shf.uid] = shf
+
+        if data_unencrypted and folder_uid:
+            try:
+                f = params.folder_cache.get(folder_uid)    # type: Optional[BaseFolderNode]
+                data = json.loads(data_unencrypted.decode())
+                f.name = data.get('name') or f.name or f.uid
+                f.color = data.get('color')
+            except Exception as e:
+                logging.debug('Error decrypting user folder name. Folder UID: %s. Error: %s', sf.uid, e)
 
     for f in params.folder_cache.values():
         parent_folder = params.folder_cache.get(f.parent_uid) if f.parent_uid else params.root_folder

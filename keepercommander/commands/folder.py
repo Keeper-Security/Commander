@@ -11,26 +11,33 @@
 
 import argparse
 import collections
-import logging
-import re
 import fnmatch
-import shutil
 import functools
-import os
 import json
+import logging
+import os
+import re
+import shutil
 from collections import OrderedDict
 from typing import Tuple, List, Optional, Dict, Set, Any
 
+from asciitree import LeftAligned, BoxStyle, drawing
+from colorama import Style
+
+from prompt_toolkit.shortcuts import print_formatted_text
+from prompt_toolkit.formatted_text import FormattedText
+
+
 from . import base
-from .. import api, display, vault, vault_extensions, crypto, utils
-from ..proto import folder_pb2, record_pb2
-from ..recordv3 import RecordV3
-from ..subfolder import BaseFolderNode, try_resolve_path, find_folders
-from ..params import KeeperParams
-from ..record import Record
 from .base import user_choice, dump_report_data, suppress_exit, raise_parse_exception, Command, GroupCommand, RecordMixin
-from ..params import LAST_SHARED_FOLDER_UID, LAST_FOLDER_UID
+from .. import api, display, vault, vault_extensions, crypto, utils
 from ..error import CommandError, KeeperApiError, Error
+from ..params import KeeperParams
+from ..params import LAST_SHARED_FOLDER_UID, LAST_FOLDER_UID
+from ..proto import folder_pb2, record_pb2
+from ..record import Record
+from ..recordv3 import RecordV3
+from ..subfolder import BaseFolderNode, try_resolve_path, find_folders, SharedFolderNode, get_contained_record_uids
 
 
 def register_commands(commands):
@@ -58,8 +65,8 @@ def register_command_info(aliases, command_info):
 
 ls_parser = argparse.ArgumentParser(prog='ls', description='List folder contents.', parents=[base.report_output_parser])
 ls_parser.add_argument('-l', '--list', dest='detail', action='store_true', help='show detailed list')
-ls_parser.add_argument('-f', '--folders', dest='folders', action='store_true', help='display folders')
-ls_parser.add_argument('-r', '--records', dest='records', action='store_true', help='display records')
+ls_parser.add_argument('-f', '--folders', dest='folders_only', action='store_true', help='display folders only')
+ls_parser.add_argument('-r', '--records', dest='records_only', action='store_true', help='display records only')
 ls_parser.add_argument('-s', '--short', dest='short', action='store_true',
                        help='Do not display record details. (Not used)')
 ls_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
@@ -95,7 +102,9 @@ rmdir_parser.error = raise_parse_exception
 rmdir_parser.exit = suppress_exit
 
 rndir_parser = argparse.ArgumentParser(prog='rndir', description='Rename a folder.')
-rndir_parser.add_argument('-n', '--name', dest='name', action='store', required=True, help='folder new name')
+rndir_parser.add_argument('-n', '--name', dest='name', action='store', help='folder new name')
+rndir_parser.add_argument('--color', dest='color', action='store', choices=['none', 'red', 'green', 'blue', 'orange', 'yellow', 'gray'],
+                          help='folder color')
 rndir_parser.add_argument('-q', '--quiet', action='store_true', help='rename folder without folder info')
 rndir_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path or UID')
 
@@ -108,6 +117,8 @@ mkdir_parser.add_argument('-u', '--manage-users', dest='manage_users', action='s
 mkdir_parser.add_argument('-r', '--manage-records', dest='manage_records', action='store_true', help='anyone can manage records by default')
 mkdir_parser.add_argument('-s', '--can-share', dest='can_share', action='store_true', help='anyone can share records by default')
 mkdir_parser.add_argument('-e', '--can-edit', dest='can_edit', action='store_true', help='anyone can edit records by default')
+mkdir_parser.add_argument('--color', dest='color', action='store', choices=['none', 'red', 'green', 'blue', 'orange', 'yellow', 'gray'],
+                          help='folder color')
 mkdir_parser.add_argument('folder', nargs='?', type=str, action='store', help='folder path')
 mkdir_parser.error = raise_parse_exception
 mkdir_parser.exit = suppress_exit
@@ -179,8 +190,8 @@ class FolderListCommand(Command, RecordMixin):
         return ls_parser
 
     def execute(self, params, **kwargs):
-        show_folders = kwargs['folders'] if 'folders' in kwargs else None
-        show_records = kwargs['records'] if 'records' in kwargs else None
+        show_folders = kwargs.get('folders_only') is True
+        show_records = kwargs.get('records_only') is True
         show_detail = kwargs['detail'] if 'detail' in kwargs else False
         if not show_folders and not show_records:
             show_folders = True
@@ -240,14 +251,22 @@ class FolderListCommand(Command, RecordMixin):
                     headers = ['folder_uid', 'name', 'flags']
 
                     def folder_flags(f):
-                        flags = ''
                         if f.type == 'shared_folder':
-                            flags = flags + 'S'
+                            flags = 'S'
+                        else:
+                            flags = ''
                         return flags
+                    colors = {}
                     for f in folders:
+                        if f.color:
+                            colors[f.name] = f.color
                         row = [f.uid, f.name, folder_flags(f)]
                         table.append(row)
                     table.sort(key=lambda x: (x[1] or '').lower())
+                    for i in range(len(table)):
+                        name = table[i][1]
+                        if name in colors:
+                            table[i][1] = display.keeper_colorize(name, colors[name])
                     if fmt != 'json':
                         headers = base.fields_to_titles(headers)
                     if fmt in ('json', 'csv'):
@@ -268,13 +287,14 @@ class FolderListCommand(Command, RecordMixin):
                     else:
                         dump_report_data(table, headers, row_number=True, append=True)
             else:
-                names = []
+                names = []   # type: List[Tuple[str, Optional[str]]]
                 for f in folders:
                     name = f.name or f.uid
                     if len(name) > 40:
                         name = name[:25] + '...' + name[-12:]
-                    names.append(name + '/')
-                names.sort()
+                    name = name + '/'
+                    names.append((name, f.color))
+                names.sort(key=lambda x: x[0])
 
                 rnames = []
                 for r in records:
@@ -284,10 +304,10 @@ class FolderListCommand(Command, RecordMixin):
                     rnames.append(name)
                 rnames.sort()
 
-                names.extend(rnames)
+                names.extend(((x, None) for x in rnames))
 
                 width, _ = shutil.get_terminal_size(fallback=(1, 1))
-                max_name = functools.reduce(lambda val, elem: len(elem) if len(elem) > val else val, names, 0)
+                max_name = functools.reduce(lambda val, elem: len(elem[0]) if len(elem[0]) > val else val, names, 0)
                 cols = width // max_name
                 if cols == 0:
                     cols = 1
@@ -298,10 +318,13 @@ class FolderListCommand(Command, RecordMixin):
                     else:
                         break
 
-                tbl = FolderListCommand.chunk_list([x.ljust(max_name) if cols > 1 else x for x in names], cols)
-
-                rows = ['  '.join(x) for x in tbl]
-                print('\n'.join(rows))
+                # formatted_text = FormattedText((('fg: Tomato', x[0].ljust(max_name + 2)) for x in names))
+                # print_formatted_text(formatted_text)
+                tbl = FolderListCommand.chunk_list([FormattedText([(display.keeper_color_to_prompt(x[1]), x[0].ljust(max_name))]) for x in names], cols)
+                for row in tbl:
+                    print_formatted_text(*row, sep='  ')
+                # rows = ['  '.join(x) for x in tbl]
+                # print('\n'.join(rows))
 
 
 class FolderCdCommand(Command):
@@ -336,14 +359,12 @@ class FolderTreeCommand(Command):
         title = kwargs.get('title')
         if folder_name in params.folder_cache:
             folder = params.folder_cache.get(folder_name)
-            display.formatted_tree(params, folder, verbose=verbose, show_records=records, shares=shares,
-                                   hide_shares_key=hide_key, title=title)
+            formatted_tree(params, folder, verbose=verbose, show_records=records, shares=shares, hide_shares_key=hide_key, title=title)
         else:
             folders, pattern = try_resolve_path(params, folder_name, find_all_matches=True)
             if not pattern:
                 for idx, folder in enumerate(folders):
-                    display.formatted_tree(params, folder, verbose=verbose, show_records=records, shares=shares,
-                                           hide_shares_key=hide_key or idx > 0, title=title)
+                    formatted_tree(params, folder, verbose=verbose, show_records=records, shares=shares, hide_shares_key=hide_key or idx > 0, title=title)
             else:
                 raise CommandError('tree', f'Folder {folder_name} not found')
 
@@ -353,13 +374,14 @@ class FolderRenameCommand(Command):
         return rndir_parser
 
     def execute(self, params, **kwargs):
+        color = kwargs.get('color')
         new_name = kwargs.get('name')
-        if not new_name:
-            raise CommandError('rendir', 'New folder name parameter is required.')
+        if not new_name and not color:
+            raise CommandError('', 'New folder name and/or color parameters are required.')
 
         folder_name = kwargs.get('folder')
         if not folder_name:
-            raise CommandError('rendir', 'Enter the path or UID of existing folder.')
+            raise CommandError('', 'Enter the path or UID of existing folder.')
 
         folder_uid = None
         if folder_name in params.folder_cache:
@@ -371,7 +393,7 @@ class FolderRenameCommand(Command):
                 if len(pattern) == 0:
                     folder_uid = folder.uid
                 else:
-                    raise CommandError('rendir', f'Folder {folder_name} not found')
+                    raise CommandError('', f'Folder {folder_name} not found')
 
         sub_folder = params.subfolder_cache[folder_uid]    # type: Dict
         rq = {
@@ -385,12 +407,15 @@ class FolderRenameCommand(Command):
             encrypted_data = sub_folder.get('data')
         elif sub_folder['type'] == 'shared_folder':
             if folder_uid not in params.shared_folder_cache:
-                raise CommandError('rendir', f'Shared Folder UID \"{folder_uid}\" not found.')
+                raise CommandError('', f'Shared Folder UID \"{folder_uid}\" not found.')
             rq['shared_folder_uid'] = folder_uid
             shared_folder = params.shared_folder_cache[folder_uid]
             encryption_key = shared_folder['shared_folder_key_unencrypted']
             encrypted_data = shared_folder.get('data')
-            rq['name'] = utils.base64_url_encode(crypto.encrypt_aes_v1(new_name.encode('utf-8'), encryption_key))
+            if new_name:
+                rq['name'] = utils.base64_url_encode(crypto.encrypt_aes_v1(new_name.encode('utf-8'), encryption_key))
+            else:
+                rq['name'] = shared_folder['name']
         elif sub_folder['type'] == 'shared_folder_folder':
             rq['shared_folder_uid'] = sub_folder['shared_folder_uid']
             encryption_key = sub_folder['folder_key_unencrypted']
@@ -407,14 +432,22 @@ class FolderRenameCommand(Command):
         else:
             data = {}
 
-        data['name'] = new_name
-        rq['data'] = utils.base64_url_encode(crypto.encrypt_aes_v1(json.dumps(data).encode('utf-8'), encryption_key))
+        if new_name:
+            data['name'] = new_name
+        if color:
+            if color == 'none':
+                if 'color' in data:
+                    del data['color']
+            else:
+                data['color'] = color
 
+        rq['data'] = utils.base64_url_encode(crypto.encrypt_aes_v1(json.dumps(data).encode('utf-8'), encryption_key))
         api.communicate(params, rq)
         params.sync_data = True
-        folder = params.folder_cache[folder_uid]
         if not kwargs.get('quiet'):
-            logging.info('Folder \"%s\" has been renamed to \"%s\"', folder.name, new_name)
+            folder = params.folder_cache[folder_uid]
+            if new_name:
+                logging.info('Folder \"%s\" has been renamed to \"%s\"', folder.name, new_name)
 
 
 class FolderMakeCommand(Command):
@@ -519,8 +552,11 @@ class FolderMakeCommand(Command):
 
         if request['folder_type'] == 'shared_folder':
             request['name'] = utils.base64_url_encode(crypto.encrypt_aes_v1(name.encode('utf-8'), folder_key))
-
-        data = json.dumps({'name': name})
+        data_dict = {'name': name}
+        color = kwargs.get('color')
+        if isinstance(color, str) and len(color) > 0 and color != 'none':
+            data_dict['color'] = kwargs['color']
+        data = json.dumps(data_dict)
         request['data'] = utils.base64_url_encode(crypto.encrypt_aes_v1(data.encode('utf-8'), folder_key))
 
         api.communicate(params, request)
@@ -1645,3 +1681,101 @@ class FolderTransformCommand(Command):
                 remove_trees(transformed)
         params.current_folder = current_folder
 
+
+def formatted_tree(params, folder, verbose=False, show_records=False, shares=False, hide_shares_key=False, title=None):
+    def print_share_permissions_key():
+        perms_key = 'Share Permissions Key:\n' \
+                    '======================\n' \
+                    'RO = Read-Only\n' \
+                    'MU = Can Manage Users\n' \
+                    'MR = Can Manage Records\n' \
+                    'CE = Can Edit\n' \
+                    'CS = Can Share\n' \
+                    '======================\n'
+        print(perms_key)
+
+    def get_share_info(node):
+        MU_KEY = 'manage_users'
+        MR_KEY = 'manage_records'
+        DMR_KEY = 'default_manage_records'
+        DMU_KEY = 'default_manage_user'
+        DCE_KEY = 'default_can_edit'
+        DCS_KEY = 'default_can_share'
+        perm_abbrev_lookup = {MU_KEY: 'MU', MR_KEY: 'MR', DMR_KEY: 'MU', DMU_KEY: 'MU', DCE_KEY: 'CE', DCS_KEY: 'CS'}
+
+        def get_users_info(users):
+            info = []
+            for u in users:
+                email = u.get('username')
+                if email == params.user:
+                    continue
+                privs = [v for k, v in perm_abbrev_lookup.items() if u.get(k)] or ['RO']
+                info.append(f'[{email}:{",".join(privs)}]')
+            return 'users:' + ','.join(info) if info else ''
+
+        def get_teams_info(teams):
+            info = []
+            for t in teams:
+                name = t.get('name')
+                privs = [v for k, v in perm_abbrev_lookup.items() if t.get(k)] or ['RO']
+                info.append(f'[{name}:{",".join(privs)}]')
+            return 'teams:' + ','.join(info) if info else ''
+
+        result = ''
+        if isinstance(node, SharedFolderNode):
+            sf = params.shared_folder_cache.get(node.uid)
+            teams_info = get_teams_info(sf.get('teams', []))
+            users_info = get_users_info(sf.get('users', []))
+            default_perms = [v for k, v in perm_abbrev_lookup.items() if sf.get(k)] or ['RO']
+            default_perms = 'default:' + ','.join(default_perms)
+            user_perms = [v for k, v in perm_abbrev_lookup.items() if sf.get(k)] or ['RO']
+            user_perms = 'user:' + ','.join(user_perms)
+            perms = [default_perms, user_perms, teams_info, users_info]
+            perms = [p for p in perms if p]
+            result = f' ({"; ".join(perms)})' if shares else ''
+
+        return result
+
+    def tree_node(node):
+        node_uid = node.record_uid if isinstance(node, Record) else node.uid or ''
+        node_name = node.title if isinstance(node, Record) else node.name
+        node_name = f'{node_name} ({node_uid})'
+        share_info = get_share_info(node) if isinstance(node, SharedFolderNode) and shares else ''
+        node_name = f'{Style.DIM}{node_name} [Record]{Style.NORMAL}' if isinstance(node, Record) \
+            else f'{node_name}{Style.BRIGHT} [SHARED]{Style.NORMAL}{share_info}' if isinstance(node, SharedFolderNode) \
+            else node_name
+
+        dir_nodes = [] if isinstance(node, Record) \
+            else [params.folder_cache.get(fuid) for fuid in node.subfolders]
+        rec_nodes = []
+        if show_records and isinstance(node, BaseFolderNode):
+            node_uid = '' if node.type == '/' else node.uid
+            rec_uids = get_contained_record_uids(params, node_uid).get(node_uid)
+            records = [api.get_record(params, rec_uid) for rec_uid in rec_uids]
+            records = [r for r in records if isinstance(r, Record)]
+            rec_nodes.extend(records)
+
+        dir_nodes.sort(key=lambda f: f.name.lower(), reverse=False)
+        rec_nodes.sort(key=lambda r: r.title.lower(), reverse=False)
+        child_nodes = dir_nodes + rec_nodes
+
+        tns = [tree_node(n) for n in child_nodes]
+        return node_name, OrderedDict(tns)
+
+    root, branches = tree_node(folder)
+    tree = {root: branches}
+    tr = LeftAligned(draw=BoxStyle(gfx=drawing.BOX_LIGHT))
+    if shares and not hide_shares_key:
+        print_share_permissions_key()
+    if title:
+        print(title)
+    tree_txt = tr(tree)
+    tree_txt = re.sub(r'\s+\(\)', '', tree_txt)
+    if not verbose:
+        lines = tree_txt.splitlines()
+        for idx, line in enumerate(lines):
+            line = re.sub(r'\s+\(.+?\)', '', line, count=1)
+            lines[idx] = line
+        tree_txt = '\n'.join(lines)
+    print(tree_txt)
+    print('')

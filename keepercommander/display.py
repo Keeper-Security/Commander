@@ -8,18 +8,16 @@
 # Contact: ops@keepersecurity.com
 #
 import json
-import re
 import shutil
-from collections import OrderedDict as OD
-from typing import Tuple, List, Union
+from typing import Tuple, List, Union, Optional
 
-from asciitree import LeftAligned, BoxStyle, drawing
 from colorama import init, Fore, Back, Style
 from tabulate import tabulate
 
-from keepercommander import __version__, api
-from .record import Record
-from .subfolder import BaseFolderNode, SharedFolderNode, get_contained_record_uids
+from prompt_toolkit.styles.named_colors import NAMED_COLORS
+
+from keepercommander import __version__
+from .subfolder import BaseFolderNode
 
 init()
 
@@ -37,6 +35,38 @@ class bcolors:
     WHITE = '\033[0;37m'
     HIGHINTENSITYWHITE = '\033[97m'
 
+
+def keeper_color_to_prompt(color):   # type: (Optional[str]) -> str
+    if color is None:
+        return ''
+    if color == 'red':
+        return 'fg:ansired'
+    if color == 'green':
+        return 'fg:ansigreen'
+    if color == 'blue':
+        return 'fg:ansiblue'
+    if color == 'orange':
+        return 'fg:ansimagenta'
+    if color == 'yellow':
+        return 'fg:ansiyellow'
+    if color == 'gray':
+        return 'fg:ansilightblack'
+    return ''
+
+def keeper_colorize(text, color):
+    if color == 'red':
+        return f'{Fore.RED}{text}{Fore.RESET}'
+    if color == 'green':
+        return f'{Fore.GREEN}{text}{Fore.RESET}'
+    if color == 'blue':
+        return f'{Fore.BLUE}{text}{Fore.RESET}'
+    if color == 'orange':
+        return f'{Fore.MAGENTA}{text}{Fore.RESET}'
+    if color == 'yellow':
+        return f'{Fore.YELLOW}{text}{Fore.RESET}'
+    if color == 'gray':
+        return f'{Fore.LIGHTBLACK_EX}{text}{Fore.RESET}'
+    return text
 
 
 def welcome():
@@ -172,105 +202,6 @@ def formatted_teams(teams, **kwargs):
     if len(teams) < 5 and not skip_details:
         for team in teams:
             team.display()
-
-
-def formatted_tree(params, folder, verbose=False, show_records=False, shares=False, hide_shares_key=False, title=None):
-    def print_share_permissions_key():
-        perms_key = 'Share Permissions Key:\n' \
-               '======================\n' \
-               'RO = Read-Only\n' \
-               'MU = Can Manage Users\n' \
-               'MR = Can Manage Records\n' \
-               'CE = Can Edit\n' \
-               'CS = Can Share\n' \
-               '======================\n'
-        print(perms_key)
-
-    def get_share_info(node):
-        MU_KEY = 'manage_users'
-        MR_KEY = 'manage_records'
-        DMR_KEY = 'default_manage_records'
-        DMU_KEY = 'default_manage_user'
-        DCE_KEY = 'default_can_edit'
-        DCS_KEY = 'default_can_share'
-        perm_abbrev_lookup = {MU_KEY: 'MU', MR_KEY: 'MR', DMR_KEY: 'MU', DMU_KEY: 'MU', DCE_KEY: 'CE', DCS_KEY: 'CS'}
-
-        def get_users_info(users):
-            info = []
-            for u in users:
-                email = u.get('username')
-                if email == params.user:
-                    continue
-                privs = [v for k, v in perm_abbrev_lookup.items() if u.get(k)] or ['RO']
-                info.append(f'[{email}:{",".join(privs)}]')
-            return 'users:' + ','.join(info) if info else ''
-
-        def get_teams_info(teams):
-            info = []
-            for t in teams:
-                name = t.get('name')
-                privs = [v for k, v in perm_abbrev_lookup.items() if t.get(k)] or ['RO']
-                info.append(f'[{name}:{",".join(privs)}]')
-            return 'teams:' + ','.join(info) if info else ''
-
-        result = ''
-        if isinstance(node, SharedFolderNode):
-            sf = params.shared_folder_cache.get(node.uid)
-            teams_info = get_teams_info(sf.get('teams', []))
-            users_info = get_users_info(sf.get('users', []))
-            default_perms = [v for k, v in perm_abbrev_lookup.items() if sf.get(k)] or ['RO']
-            default_perms = 'default:' + ','.join(default_perms)
-            user_perms = [v for k, v in perm_abbrev_lookup.items() if sf.get(k)] or ['RO']
-            user_perms = 'user:' + ','.join(user_perms)
-            perms = [default_perms, user_perms, teams_info, users_info]
-            perms = [p for p in perms if p]
-            result = f' ({"; ".join(perms)})' if shares else ''
-
-        return result
-
-    def tree_node(node):
-        node_uid = node.record_uid if isinstance(node, Record) else node.uid or ''
-        node_name = node.title if isinstance(node, Record) else node.name
-        node_name = f'{node_name} ({node_uid})'
-        share_info = get_share_info(node) if isinstance(node, SharedFolderNode) and shares else ''
-        node_name = f'{Style.DIM}{node_name} [Record]{Style.NORMAL}' if isinstance(node, Record) \
-            else f'{node_name}{Style.BRIGHT} [SHARED]{Style.NORMAL}{share_info}' if isinstance(node, SharedFolderNode)\
-            else node_name
-
-        dir_nodes = [] if isinstance(node, Record) \
-            else [params.folder_cache.get(fuid) for fuid in node.subfolders]
-        rec_nodes = []
-        if show_records and isinstance(node, BaseFolderNode):
-            node_uid = '' if node.type == '/' else node.uid
-            rec_uids = get_contained_record_uids(params, node_uid).get(node_uid)
-            records = [api.get_record(params, rec_uid) for rec_uid in rec_uids]
-            records = [r for r in records if isinstance(r, Record)]
-            rec_nodes.extend(records)
-
-        dir_nodes.sort(key=lambda f: f.name.lower(), reverse=False)
-        rec_nodes.sort(key=lambda r: r.title.lower(), reverse=False)
-        child_nodes = dir_nodes + rec_nodes
-
-        tns = [tree_node(n) for n in child_nodes]
-        return node_name, OD(tns)
-
-    root, branches = tree_node(folder)
-    tree = {root: branches}
-    tr = LeftAligned(draw=BoxStyle(gfx=drawing.BOX_LIGHT))
-    if shares and not hide_shares_key:
-        print_share_permissions_key()
-    if title:
-        print(title)
-    tree_txt = tr(tree)
-    tree_txt = re.sub(r'\s+\(\)', '', tree_txt)
-    if not verbose:
-        lines = tree_txt.splitlines()
-        for idx, line in enumerate(lines):
-            line = re.sub(r'\s+\(.+?\)', '', line, count=1)
-            lines[idx] = line
-        tree_txt = '\n'.join(lines)
-    print(tree_txt)
-    print('')
 
 
 def formatted_history(history):
