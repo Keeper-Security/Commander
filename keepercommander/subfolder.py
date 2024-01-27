@@ -213,6 +213,7 @@ class BaseFolderNode:
         self.uid = None
         self.parent_uid = None
         self.name = None
+        self.color = None    # type: Optional[str]
         self.subfolders = []
 
     def get_folder_type(self):
