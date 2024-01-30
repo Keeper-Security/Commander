@@ -301,6 +301,29 @@ external_share_report_parser.error = raise_parse_exception
 external_share_report_parser.exit = suppress_exit
 
 
+_DEFAULT_PASSWORD_COMPLEXITY = """[
+  {
+    "domains": ["_default_"],
+    "length": 10,
+    "lower-use": true,
+    "lower-min": 2,
+    "upper-use": true,
+    "upper-min": 2,
+    "digit-use": true,
+    "digit-min": 2,
+    "special-use": true,
+    "special-min": 2,
+    "special": "!@#$%^?();'\\\",.=+[]<>{}&",
+    "passphrase-allow": true,
+    "passphrase-length": 5,
+    "passphrase-capitalize": false,
+    "passphrase-number": false,
+    "passphrase-separator": "-",
+    "apply-privacy-screen": true
+  }
+]"""
+
+
 def get_user_status_dict(user):
 
     def lock_text(lock):
@@ -1901,8 +1924,14 @@ class EnterpriseRoleCommand(EnterpriseCommand):
         return enterprise_role_parser
 
     @staticmethod
+    def expand_file_path(filepath):   # type: (str) -> string
+        if not os.path.isfile(filepath):
+            filepath = os.path.expanduser(filepath)
+        return filepath
+
+    @staticmethod
     def enforcement_value_from_file(filepath):
-        filepath = os.path.expanduser(filepath)
+        filepath = EnterpriseRoleCommand.expand_file_path(filepath)
         if os.path.isfile(filepath):
             with open(filepath, 'r') as f:
                 enforcement_value = f.read()
@@ -2037,17 +2066,44 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                         logging.warning('Enforcement \"%s\" does not exist', key)
                         continue
                     enforcement_value = tokens[1].strip()
+                    if enforcement_type == 'password_complexity' and enforcement_value:
+                        if not enforcement_value.startswith(file_prefix):
+                            logging.warning('Enforcement "%s" can be set only from a file.', key)
+                            logging.warning('Use the following syntax "%s:%s<FILEPATH>" to set enforcement value', key, file_prefix)
+                            logging.warning('If file does not exist it will be created with the current or default values')
+                            continue
                     if enforcement_value.startswith(file_prefix):
                         # Get value from file
                         filepath = enforcement_value[len(file_prefix):]
                         if filepath:
-                            enforcement_value = self.enforcement_value_from_file(filepath)
-                            if enforcement_value is None:
-                                logging.warning(f'Could not load enforcement value from "{filepath}"')
+                            filepath = self.expand_file_path(filepath)
+                            if os.path.isfile(filepath):
+                                enforcement_value = self.enforcement_value_from_file(filepath)
+                                if enforcement_value is None:
+                                    logging.warning(f'Could not load enforcement value from "{filepath}"')
+                                    continue
+                            else:
+                                template_value = ''
+                                if enforcement_type == 'password_complexity':
+                                    if len(matched_roles) == 1:
+                                        role_id = matched_roles[0]['role_id']
+                                        role_enforcements = params.enterprise.get('role_enforcements') or []
+                                        enforcements = next((x['enforcements'] for x in role_enforcements if x['role_id'] == role_id), None)
+                                        template_value = enforcements.get(key) if enforcements else None
+                                        if template_value:
+                                            try:
+                                                _ = json.loads(template_value)
+                                            except:
+                                                template_value = ''
+                                        if not template_value:
+                                            template_value = _DEFAULT_PASSWORD_COMPLEXITY
+                                if template_value:
+                                    with open(filepath, 'wt') as fd:
+                                        fd.write(template_value)
+                                    logging.warning('Enforcement "%s" value has been stored to file "%s"', key, filepath)
+                                else:
+                                    logging.warning('Enforcement "%s" is skipped. Expected format: KEY:$FILE=<FILEPATH>', key)
                                 continue
-                        else:
-                            logging.warning(f'Enforcement {key} is skipped. Expected format: KEY:$FILE=<FILEPATH>')
-                            continue
                     if enforcement_value:
                         if enforcement_type == 'long':
                             try:
@@ -2192,6 +2248,40 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                 enforcement_value = str(role_id)
                             else:
                                 logging.warning('Enforcement \"%s\". Role \"%s\" does not have \"TRANSFER_ACCOUNT\" privilege', key, role['data'].get('displayname', ''))
+                                continue
+                        elif enforcement_type =='password_complexity':
+                            try:
+                                complexity = json.loads(enforcement_value)
+                            except Exception as e:
+                                logging.warning('Error parsing "%s" enforcement JSON value: %s', key, e)
+                                continue
+                            if not isinstance(complexity, list):
+                                if isinstance(complexity, dict):
+                                    complexity = [complexity]
+                                else:
+                                    logging.warning('Enforcement "%s" should be a JSON array of complexity objects', key)
+                                    continue
+
+                            dc = json.loads(_DEFAULT_PASSWORD_COMPLEXITY)
+                            default_complexity = dc[0]
+                            errors = []
+                            for pc in complexity:
+                                if not isinstance(pc, dict):
+                                    errors.append(f'Enforcement "{key}" should be a JSON array of complexity objects')
+                                    break
+                                for c_key, c_value in pc.items():
+                                    if c_key in default_complexity:
+                                        default_type = type(default_complexity[c_key])
+                                        if not isinstance(c_value, default_type):
+                                            errors.append(f'Property "{c_key}" of complexity objects should be a {default_type.__name__}')
+
+                                domains = pc.get('domains')
+                                if not isinstance(domains, list):
+                                    errors.append(f'Enforcement complexity object should contain "domains" property: a list of domains or ["_default_"]')
+                                    break
+                            if len(errors) > 0:
+                                for error in errors:
+                                    logging.warning(error)
                                 continue
                         else:
                             logging.warning('Enforcement \"%s\". Value type \"%s\" is not supported', key, enforcement_type)

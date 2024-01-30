@@ -1267,7 +1267,7 @@ class LoginV3API:
     @staticmethod
     def accountSummary(params: KeeperParams):
         rq = proto_as.AccountSummaryRequest()
-        rq.summaryVersion = 1
+        rq.summaryVersion = 3
         return api.communicate_rest(params, rq, 'login/account_summary', rs_type=proto_as.AccountSummaryElements)
 
     @staticmethod
