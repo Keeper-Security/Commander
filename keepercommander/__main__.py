@@ -12,6 +12,8 @@
 
 
 import argparse
+from typing import Optional
+
 import certifi
 import json
 import logging
@@ -26,8 +28,7 @@ from . import cli
 from .params import KeeperParams
 from .config_storage import loader
 
-
-def get_params_from_config(config_filename, launched_with_shortcut=False):
+def get_params_from_config(config_filename=None, launched_with_shortcut=False):    # type: (Optional[str], bool) -> KeeperParams
     if os.getenv("KEEPER_COMMANDER_DEBUG"):
         logging.getLogger().setLevel(logging.DEBUG)
         logging.info('Debug ON')
