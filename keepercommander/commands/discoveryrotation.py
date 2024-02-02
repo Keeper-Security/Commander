@@ -92,6 +92,8 @@ class PAMTunnelCommand(GroupCommand):
         self.register_command('list', PAMTunnelListCommand(), 'List all Tunnels', 'l')
         self.register_command('stop', PAMTunnelStopCommand(), 'Stop Tunnel to the server', 'x')
         self.register_command('tail', PAMTunnelTailCommand(), 'View Tunnel Log', 't')
+        self.register_command('disable', PAMTunnelDisableCommand(), 'Disable Tunnel', 'd')
+        self.register_command('enable', PAMTunnelEnableCommand(), 'Enable Tunnel', 'e')
         # self.default_verb = 'list'
 
 
@@ -1734,6 +1736,92 @@ def retrieve_gateway_public_key(gateway_uid, params, api, utils) -> bytes:
     return gateway_public_key_bytes
 
 
+class PAMTunnelEnableCommand(Command):
+    pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-enable-command')
+    pam_cmd_parser.add_argument('uid', type=str, action='store', help='The Record UID of the PAM '
+                                                                      'resource record with network information to use '
+                                                                      'for tunneling')
+
+    def get_parser(self):
+        return PAMTunnelEnableCommand.pam_cmd_parser
+
+    def execute(self, params, **kwargs):
+        record_uid = kwargs.get('uid')
+        if not record_uid:
+            raise CommandError('tunnel Enable', '"record" argument is required')
+        dirty = False
+
+        record = vault.KeeperRecord.load(params, record_uid)
+
+        if not isinstance(record, vault.TypedRecord):
+            print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
+            return
+
+        pam_settings = record.get_typed_field('pamSettings')
+        if not pam_settings:
+            pam_settings = vault.TypedField.new_field('pamSettings',
+                                                      {"portForward": {"enabled": True}}, "")
+            record.custom.append(pam_settings)
+        else:
+            if not pam_settings.value[0]['portForward']['enabled']:
+                pam_settings.value[0]['portForward']['enabled'] = True
+                dirty = True
+
+        client_private_key = record.get_typed_field('trafficEncryptionKey')
+        if not client_private_key:
+            # Generate an EC private key
+            # TODO: maybe try to use keeper method to generate key
+            # private_key, _ = crypto.generate_ec_key()
+            # client_private_key_value = crypto.unload_ec_private_key(private_key).decode('utf-8')
+            private_key = ec.generate_private_key(
+                ec.SECP256R1(),  # Using P-256 curve
+                backend=default_backend()
+            )
+            # Serialize to PEM format
+            client_private_key_value = private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption()
+            ).decode('utf-8')
+            client_private_key = vault.TypedField.new_field('trafficEncryptionKey',
+                                                            client_private_key_value, "")
+            record.custom.append(client_private_key)
+            dirty = True
+
+        if dirty:
+            record_management.update_record(params, record)
+            api.sync_down(params)
+
+
+class PAMTunnelDisableCommand(Command):
+    pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-disable-command')
+    pam_cmd_parser.add_argument('uid', type=str, action='store', help='The Record UID of the PAM '
+                                                                      'resource record with network information to use '
+                                                                      'for tunneling')
+
+    def get_parser(self):
+        return PAMTunnelDisableCommand.pam_cmd_parser
+
+    def execute(self, params, **kwargs):
+
+        record_uid = kwargs.get('uid')
+        if not record_uid:
+            raise CommandError('tunnel Disable', '"record" argument is required')
+
+        record = vault.KeeperRecord.load(params, record_uid)
+
+        if not isinstance(record, vault.TypedRecord):
+            print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
+            return
+
+        pam_settings = record.get_typed_field('pamSettings')
+        if pam_settings:
+            if pam_settings.value[0]['portForward']['enabled']:
+                pam_settings.value[0]['portForward']['enabled'] = False
+                record_management.update_record(params, record)
+                api.sync_down(params)
+
+
 class PAMTunnelStartCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='dr-port-forward-command')
     pam_cmd_parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
@@ -1970,30 +2058,27 @@ private_key_str = private_key.private_bytes(
             print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
             return
 
-        # TODO: for now use custom params from the record to get client private key
-        client_private_key = record.get_typed_field('secret', "Client Private Key")
+        pam_settings = record.get_typed_field('pamSettings')
+        if not pam_settings:
+            print(f"{bcolors.FAIL}PAM Settings not enabled for record {record_uid}.{bcolors.ENDC}")
+            return
+
+        try:
+            dag_info = pam_settings.value[0]
+            enabled_port_forward = dag_info.get("portForward", {}).get("enabled", False)
+            if not enabled_port_forward:
+                print(f"{bcolors.FAIL}PAM Settings not enabled for record {record_uid}.{bcolors.ENDC}")
+                return
+        except Exception as e:
+            print(f"{bcolors.FAIL}Error parsing PAM Settings for record {record_uid}: {e}{bcolors.ENDC}")
+            return
+
+        client_private_key = record.get_typed_field('trafficEncryptionKey')
         if not client_private_key:
-            # Generate an EC private key
-            # TODO: maybe try to use keeper method to generate key
-            # private_key, _ = crypto.generate_ec_key()
-            # client_private_key_value = crypto.unload_ec_private_key(private_key).decode('utf-8')
-            private_key = ec.generate_private_key(
-                ec.SECP256R1(),  # Using P-256 curve
-                backend=default_backend()
-            )
-            # Serialize to PEM format
-            client_private_key_value = private_key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption()
-            ).decode('utf-8')
-            client_private_key = vault.TypedField.new_field('secret',
-                                                            client_private_key_value, "Client Private Key")
-            record.custom.append(client_private_key)
-            record_management.update_record(params, record)
-            api.sync_down(params)
-        else:
-            client_private_key_value = client_private_key.get_default_value(str)
+            print(f"{bcolors.FAIL}Traffic Encryption Key not found for record {record_uid}.{bcolors.ENDC}")
+            return
+
+        client_private_key_value = client_private_key.get_default_value(str)
 
         t = threading.Thread(target=self.pre_connect, args=(params, record_uid, convo_id, gateway_uid, host, port,
                                                             gateway_public_key_bytes, client_private_key_value)
@@ -2012,17 +2097,15 @@ private_key_str = private_key.private_bytes(
         count = 0
         wait_time = 120
         entrance = None
-        # run once
-        while count == 0:
-            while count < wait_time:
-                if params.tunnel_threads.get(convo_id):
-                    entrance = params.tunnel_threads[convo_id].get("entrance", None)
-                    if entrance:
-                        break
-                else:
+        while count < wait_time:
+            if params.tunnel_threads.get(convo_id):
+                entrance = params.tunnel_threads[convo_id].get("entrance", None)
+                if entrance:
                     break
-                count += .1
-                time.sleep(.1)
+            else:
+                break
+            count += .1
+            time.sleep(.1)
 
         def print_fail():
             fail_dynamic_length = len("| Endpoint ") + len(convo_id) + len(" failed to start..")
@@ -2039,6 +2122,8 @@ private_key_str = private_key.private_bytes(
             while not entrance.print_ready_event.is_set() and count < wait_time * 2:
                 count += .1
                 time.sleep(.1)
+                if entrance.kill_server_event.is_set():
+                    break
 
             if entrance.print_ready_event.is_set():
                 # Sleep a little bit to print out last
