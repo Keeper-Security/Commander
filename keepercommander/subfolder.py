@@ -227,6 +227,22 @@ class BaseFolderNode:
             return 'Subfolder in Shared Folder'
         return ''
 
+    def __eq__(self, other):
+        if not isinstance(other, BaseFolderNode):
+            return False
+
+        return (
+                self.type == other.type and
+                self.uid == other.uid and
+                self.parent_uid == other.parent_uid and
+                self.name == other.name and
+                self.color == other.color and
+                self.subfolders == other.subfolders
+        )
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
     def __repr__(self):
         return 'BaseFolderNode(type={}, uid={}, parent_uid={}, name={}, subfolders={})'.format(
             self.type,
