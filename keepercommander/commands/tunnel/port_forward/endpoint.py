@@ -7,8 +7,8 @@ import secrets
 import socket
 import string
 import time
-from typing import Optional, Dict, Tuple
 from datetime import datetime
+from typing import Optional, Dict
 
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
 from cryptography.hazmat.primitives import hashes
@@ -41,8 +41,12 @@ TERMINATOR = b';'
 PROTOCOL_LENGTH = CONNECTION_NO_LENGTH + DATA_LENGTH + CONTROL_MESSAGE_NO_LENGTH + len(TERMINATOR)
 
 # WebRTC constants
-BUFFER_THRESHOLD = 134217728 * .90  # 16 MiB max https://viblast.com/blog/2015/2/25/webrtc-bufferedamount/ so we will use 14.4 MiB or 90% of the max, because in some cases if the max is reached the channel will close
-BUFFER_TRUNCATION_THRESHOLD = 16000 - PROTOCOL_LENGTH  # 16 Kbytes max https://viblast.com/blog/2015/2/5/webrtc-data-channel-message-size/ so we will use the max minus bytes for the protocol
+# 16 MiB max https://viblast.com/blog/2015/2/25/webrtc-bufferedamount/, so we will use 14.4 MiB or 90% of the max,
+# because in some cases if the max is reached the channel will close
+BUFFER_THRESHOLD = 134217728 * .90
+# 16 Kbytes max https://viblast.com/blog/2015/2/5/webrtc-data-channel-message-size/,
+# so we will use the max minus bytes for the protocol
+BUFFER_TRUNCATION_THRESHOLD = 16000 - PROTOCOL_LENGTH
 
 
 class ConnectionNotFoundException(Exception):
@@ -234,12 +238,26 @@ class WebRTCConnection:
         if payload.get('is_ok', False) is False or payload.get('progress_status') == 'Error':
             raise Exception(f"Gateway response: {payload.get('data')}")
 
-        encrypted_answer = payload.get('data', None)
-        if not encrypted_answer:
+        data = payload.get('data', None)
+        if not data:
             raise Exception(f"Error getting data from the Gateway response payload: {payload}")
 
         # decrypt the sdp answer
-        answer = tunnel_decrypt(self.symmetric_key, encrypted_answer)
+        try:
+            data = tunnel_decrypt(self.symmetric_key, data)
+        except Exception as e:
+            raise Exception(f'Error decrypting WebRTC answer from data: {data}\nError: {e}')
+        try:
+            str_data = bytes_to_string(data).replace("'", '"')
+            data = json.loads(str_data)
+        except Exception as e:
+            raise Exception(f'Error loading WebRTC answer from data: {data}\nError: {e}')
+        if not data.get('answer'):
+            raise Exception(f"Error getting answer from the Gateway response data: {data}")
+        try:
+            answer = base64_to_bytes(data.get('answer'))
+        except Exception as e:
+            raise Exception(f'Error decoding WebRTC answer from data: {data}\nError: {e}')
         await self.accept_answer(answer)
 
         self.logger.debug("starting private tunnel")
@@ -247,16 +265,9 @@ class WebRTCConnection:
     def peer_ice_config(self):
         response = router_get_relay_access_creds(params=self.params)
         # Define the STUN server URL
-        # To use Google's STUN server
-        '''
-        stun_url = "stun:stun.l.google.com:19302"
-        # Create an RTCIceServer instance for the TURN server
-        turn_server = RTCIceServer(urls=turn_url)
-        config = RTCConfiguration(iceServers=[stun_server])
-        '''
-
         # Using Keeper's STUN and TURN servers
         # relay_url = 'relay.' + params.server  + '3478'  # relay.dev.keepersecurity.com:3478
+        # relay_url = get_router_url(self.params).replace('https://connect', 'relay')
         relay_url = 'relay.keeperpamlab.com'
         stun_url = f"stun:{relay_url}:3478"
         # Create an RTCIceServer instance for the STUN server
@@ -267,6 +278,12 @@ class WebRTCConnection:
         turn_server = RTCIceServer(urls=turn_url, username=response.username, credential=response.password)
         # Create a new RTCConfiguration with both STUN and TURN servers
         config = RTCConfiguration(iceServers=[stun_server, turn_server])
+
+        # # To use Google's STUN server
+        # stun_url = "stun:stun.l.google.com:19302"
+        # # Create an RTCIceServer instance for the TURN server
+        # stun_server = RTCIceServer(urls=stun_url)
+        # config = RTCConfiguration(iceServers=[stun_server])
 
         self._pc = RTCPeerConnection(config)
 
@@ -307,6 +324,7 @@ class WebRTCConnection:
 
     def on_data_channel(self, channel):
         channel.on("open", self.on_data_channel_open)
+        channel.on("error", self.on_data_channel_error)
         channel.on("message", self.on_data_channel_message)
 
     def on_connection_state_change(self):
@@ -322,6 +340,9 @@ class WebRTCConnection:
     def is_data_channel_open(self):
         return (self.data_channel is not None and self.data_channel.readyState == "open"
                 and self._pc.connectionState == "connected")
+
+    def on_data_channel_error(self, error):
+        self.logger.error(f'Endpoint {self.endpoint_name}: Data channel error: {error}')
 
     # Example usage of state check in a method
     def send_message(self, message):
@@ -360,6 +381,7 @@ class WebRTCConnection:
         # Reset instance variables
         self.data_channel = None
         self._pc = None
+        self.kill_server_event.set()
 
         # Set the closed flag
         self.closed = True
@@ -474,7 +496,6 @@ class TunnelEntrance:
         return self._port
 
     async def send_to_web_rtc(self, data):
-        # TODO: figure out networking issue here
         if self.pc.is_data_channel_open():
             try:
                 sleep_count = 0
@@ -593,7 +614,7 @@ class TunnelEntrance:
                     self.logger.debug(f'Endpoint {self.endpoint_name}: Sending EOF to {con_no}')
                     self.connections[con_no].writer.write_eof()
                 else:
-                    self.logger.error(f'Endpoint {self.endpoint_name}: Connection for EOF {con_no} not found')
+                    self.logger.error(f'Endpoint {self.endpoint_name}: EOF for Connection {con_no} not found')
         else:
             self.logger.warning(f'Endpoint {self.endpoint_name} Unknown tunnel control message: {message_no}')
 
@@ -617,7 +638,7 @@ class TunnelEntrance:
                                             byteorder='big')
                     if len(buff) >= CONNECTION_NO_LENGTH + DATA_LENGTH + length + len(TERMINATOR):
                         if buff[CONNECTION_NO_LENGTH + DATA_LENGTH + length:
-                        CONNECTION_NO_LENGTH + DATA_LENGTH + length + len(TERMINATOR)] != TERMINATOR:
+                                CONNECTION_NO_LENGTH + DATA_LENGTH + length + len(TERMINATOR)] != TERMINATOR:
                             self.logger.warning(f'Endpoint {self.endpoint_name}: Invalid terminator')
                             # if we don't have a valid terminator then we don't know where the message ends or begins
                             self.kill_server_event.set()
@@ -670,7 +691,7 @@ class TunnelEntrance:
                         raise et
                     self.logger.debug(f'Endpoint {self.endpoint_name}: Tunnel reader timed out')
                     self.logger.debug(f'Endpoint {self.endpoint_name}: Send ping request')
-                    await self.send_control_message(ControlMessage.Ping, )
+                    await self.send_control_message(ControlMessage.Ping, int_to_bytes(0))
                     self._ping_attempt += 1
                     continue
                 self.pc.web_rtc_queue.task_done()
@@ -710,7 +731,7 @@ class TunnelEntrance:
             self.to_local_task = asyncio.create_task(self.forward_data_to_local())
 
             # Send hello world open connection message
-            await self.send_control_message(ControlMessage.Ping, )
+            await self.send_control_message(ControlMessage.Ping, int_to_bytes(0))
             self.logger.debug(f"Endpoint {self.endpoint_name}: Sent ping message to WebRTC connection")
         except asyncio.CancelledError:
             pass
@@ -759,7 +780,8 @@ class TunnelEntrance:
                                 f', time since start: {datetime.now() - c.start_time}')
 
                             c.message_counter += 1
-                            if c.message_counter >= MESSAGE_MAX and self.pc.data_channel.bufferedAmount > BUFFER_TRUNCATION_THRESHOLD:
+                            if (c.message_counter >= MESSAGE_MAX and
+                                    self.pc.data_channel.bufferedAmount > BUFFER_TRUNCATION_THRESHOLD):
                                 c.ping_time = time.perf_counter()
                                 await self.send_control_message(ControlMessage.Ping, int_to_bytes(con_no))
                                 self._ping_attempt += 1
@@ -767,7 +789,8 @@ class TunnelEntrance:
                                 while c.message_counter >= MESSAGE_MAX:
                                     await asyncio.sleep(wait_count)
                                     wait_count += .1
-                            elif c.message_counter >= MESSAGE_MAX and self.pc.data_channel.bufferedAmount <= BUFFER_TRUNCATION_THRESHOLD:
+                            elif (c.message_counter >= MESSAGE_MAX and
+                                  self.pc.data_channel.bufferedAmount <= BUFFER_TRUNCATION_THRESHOLD):
                                 c.message_counter = 0
 
                     else:
