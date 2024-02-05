@@ -172,7 +172,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         save_report = kwargs.get('save')
         show_updated = save_report or kwargs.get('show_updated')
         updated_security_reports = []
-        tree_key = params.enterprise.get('unencrypted_tree_key')
+        tree_key = (params.enterprise or {}).get('unencrypted_tree_key')
         from_page = 0
         complete = False
         rows = []
@@ -270,7 +270,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         if fmt == 'table':
             field_descriptions = (field_to_title(x) for x in fields)
 
-        report_title = 'Security Audit Report'
+        report_title = f'Security Audit Report{" (BreachWatch)" if kwargs.get("breachwatch") else ""}'
         table = []
         for raw in rows:
             row = []
