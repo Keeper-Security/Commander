@@ -15,6 +15,7 @@ import getpass
 import logging
 from typing import Optional, Any, Dict
 
+from .security_audit import SecurityAuditReportCommand
 from .. import api, crypto, utils, vault, vault_extensions
 from .base import GroupCommand, Command, dump_report_data
 from ..breachwatch import BreachWatch
@@ -42,6 +43,12 @@ breachwatch_scan_parser = argparse.ArgumentParser(prog='breachwatch-scan')
 breachwatch_ignore_parser = argparse.ArgumentParser(prog='breachwatch-ignore')
 breachwatch_ignore_parser.add_argument('records', type=str, nargs='+', help='Record UID to ignore')
 
+breachwatch_report_parser = argparse.ArgumentParser(prog='breachwatch-report')
+breachwatch_report_parser.add_argument('--format', dest='format', action='store',
+                                       choices=['table', 'csv', 'json'], default='table', help='output format.')
+breachwatch_report_parser.add_argument('--output', dest='output', action='store',
+                                       help='output file name. (ignored for table format)')
+
 
 def register_commands(commands):
     commands['breachwatch'] = BreachWatchCommand()
@@ -60,6 +67,8 @@ class BreachWatchCommand(GroupCommand):
         self.register_command('password', BreachWatchPasswordCommand(),
                               'Check a password against our database of breached accounts.')
         self.register_command('scan', BreachWatchScanCommand(), 'Scan vault passwords.')
+        report_desc = 'Run report on BreachWatch scan results across all vaults (must be an admin).'
+        self.register_command('report', BreachWatchReportCommand(), report_desc)
 
         self.default_verb = 'list'
 
@@ -268,3 +277,12 @@ class BreachWatchIgnoreCommand(Command):
                                           rs_type=breachwatch_proto.BreachWatchUpdateResponse)
                 for status in rs.breachWatchRecordStatus:
                     logging.info(f'{utils.base64_url_encode(status.recordUid)}: {status.status} {status.reason}')
+
+
+class BreachWatchReportCommand(Command):
+    def get_parser(self):
+        return breachwatch_report_parser
+
+    def execute(self, params, **kwargs):
+        cmd = SecurityAuditReportCommand()
+        return cmd.execute(params, **{'breachwatch':True, **kwargs})
