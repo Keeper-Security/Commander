@@ -3,7 +3,7 @@ import datetime
 import json
 import logging
 import operator
-from typing import Optional, Dict, Tuple, List, Any
+from typing import Optional, Dict, Tuple, List, Any, Iterable
 
 from keepercommander.commands.base import GroupCommand, dump_report_data, field_to_title
 from keepercommander.commands.enterprise_common import EnterpriseCommand
@@ -365,13 +365,6 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
 
     def generate_report_data(self, params, kwargs, sox_data, report_fmt, node, root_node):
         # type: (KeeperParams, Dict[str, Any], sox.sox_data.SoxData, str, int, int) -> List[List[str]]
-        def get_vault_records(email):
-            user_id = get_userid(email)
-            return sox_data.get_vault_records(user_id)
-
-        def get_userid(email):
-            return next(iter([k for k, v in user_lookup.items() if v == email]))
-
         def get_records_accessed(email, records=None):
             records_accessed = dict()   # type: Dict[str, Dict[str, Any]]
             # Empty record filter list -> no records to search for
@@ -584,7 +577,7 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
         self.report_headers = default_columns + aging_columns
 
         for name in usernames:
-            vault_records = get_vault_records(name)
+            vault_records = sox_data.get_vault_records(name)
             filter_by_recs = None if report_type == report_type_default else {r.record_uid for r in vault_records}
             user_access_events = get_records_accessed(name, filter_by_recs)
             user_access_lookup.update(compile_user_report(name, user_access_events))
@@ -596,24 +589,28 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
 
 class ComplianceSummaryReportCommand(BaseComplianceReportCommand):
     def __init__(self):
-        headers = ['email', 'records', 'active', 'deleted']
+        headers = ['email', 'total_items', 'total_owned', 'active_owned', 'deleted_owned']
         super(ComplianceSummaryReportCommand, self).__init__(headers, allow_no_opts=True, prelim_only=False)
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return summary_report_parser
 
     def generate_report_data(self, params, kwargs, sox_data, report_fmt, node, root_node):
+        # type: (KeeperParams, any, SoxData, str, int, int) -> List[Iterable[any]]
         def get_row(u):
             num_deleted = len(u.trash_records)
             num_active = len(u.active_records)
-            total = len(u.records)
-            return u.email, total, num_active, num_deleted
+            num_owned = len(u.records)
+            vault_recs = sox_data.get_vault_records(u.user_uid)
+            num_total = len(vault_recs)
+            return u.email, num_total, num_owned, num_active, num_deleted
 
         report_data = [get_row(u) for u in sox_data.get_users().values()]
-        total_active = sum([num_active for _, _, num_active, _ in report_data])
-        total_deleted = sum([num_deleted for _, _, _, num_deleted in report_data])
-        total_all = sum([total for _, total, _, _ in report_data])
-        report_data.append(('TOTAL', total_all, total_active, total_deleted))
+        total_active = sum([num_active for _, _, _, num_active, _ in report_data])
+        total_deleted = sum([num_deleted for _, _, _, _, num_deleted in report_data])
+        total_owned = sum([owned for _, _, owned, _, _ in report_data])
+        total_items = sum([in_vault for _, in_vault, _, _, _ in report_data])
+        report_data.append(('TOTAL', total_items, total_owned, total_active, total_deleted))
         return report_data
 
 
