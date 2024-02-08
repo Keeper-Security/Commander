@@ -175,6 +175,8 @@ find_duplicate_parser.add_argument('--shares', action='store_true', help='Match 
 find_duplicate_parser.add_argument('--full', dest='full', action='store_true', help='Match duplicates by all fields.')
 merge_help = 'Consolidate duplicate records (matched by all fields, including shares)'
 find_duplicate_parser.add_argument('-m', '--merge', action='store_true', help=merge_help)
+ignore_shares_txt = 'ignore share permissions when grouping duplicate records to merge'
+find_duplicate_parser.add_argument('--ignore-shares-on-merge', action='store_true', help=ignore_shares_txt)
 force_help = 'Delete duplicates w/o being prompted for confirmation (valid only w/ --merge option)'
 find_duplicate_parser.add_argument('-f', '--force', action='store_true', help=force_help)
 dry_run_help = 'Simulate removing duplicates (with this flog, no records are ever removed or modified). ' \
@@ -1858,7 +1860,7 @@ class FindDuplicateCommand(Command):
             by_login = True
             by_password = True
             by_url = True
-            by_shares = True
+            by_shares = not kwargs.get('ignore_shares_on_merge') if consolidate else True
         elif not by_title and not by_login and not by_password and not by_url:
             by_title = True
             by_login = True
