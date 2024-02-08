@@ -98,8 +98,9 @@ class SoxData:
                     break
         return owner
 
-    def get_vault_records(self, userid):
-        return [r for r in self._records.values() if userid in r.user_permissions.keys()]
+    def get_vault_records(self, user_ref):
+        user_id = user_ref if isinstance(user_ref, int) or user_ref.isdigit() else next((k for k, v in self._users.items() if v.email == user_ref), 0)
+        return [r for r in self._records.values() if user_id in r.user_permissions.keys()]
 
     def clear_records(self, uids=None):
         clear_lookup(self._records, uids)
@@ -124,7 +125,10 @@ class SoxData:
         return len(self._records)
 
     def rebuild_data(self, changes, no_cache=False):   # type: (RebuildTask, Optional[bool]) -> None
-        def decrypt(data):  # type: (bytes) -> str
+        def decrypt(data):  # type: (bytes or str) -> str
+            if isinstance(data, str):
+                return data
+
             decrypted = ''
             try:
                 decrypted_bytes = crypto.decrypt_aes_v1(data, self.tree_key) if data else b''
