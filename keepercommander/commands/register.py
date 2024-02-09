@@ -16,6 +16,7 @@ import hashlib
 import itertools
 import json
 import logging
+import math
 import re
 import time
 import urllib.parse
@@ -324,11 +325,15 @@ class ShareFolderCommand(Command):
             logging.info('Nothing to do')
             return
 
-        requests = []
+        rq_groups = []
+        sf_users = set(as_users)
+        sf_teams = set(as_teams)
+        sf_records = set(record_uids)
+
+        def prep_rq(recs, users, curr_sf):
+            return self.prepare_request(params, kwargs, curr_sf, users, sf_teams, recs, default_record, default_account)
+
         for sf_uid in shared_folder_uids:
-            sf_users = set(as_users)
-            sf_teams = set(as_teams)
-            sf_records = set(record_uids)
             if sf_uid in params.shared_folder_cache:
                 sh_fol = params.shared_folder_cache[sf_uid]
                 if all_users or all_records:
@@ -350,76 +355,26 @@ class ShareFolderCommand(Command):
                     'records': [{'record_uid': x, 'can_share': action != 'grant', 'can_edit': action != 'grant'}
                                 for x in record_uids]
                 }
+            chunk_size = 500
+            rec_list = list(sf_records)
+            user_list = list(sf_users)
+            num_rec_chunks = math.ceil(len(sf_records) / chunk_size)
+            num_user_chunks = math.ceil(len(sf_users) / chunk_size)
+            num_rq_groups = num_user_chunks * num_rec_chunks
+            while len(rq_groups) < num_rq_groups:
+                rq_groups.append([])
+            rec_chunks = [rec_list[i * chunk_size:(i + 1) * chunk_size] for i in range(num_rec_chunks)]
+            user_chunks = [user_list[i * chunk_size:(i + 1) * chunk_size] for i in range(num_user_chunks)]
 
-            rq = self.prepare_request(params, kwargs, sh_fol, sf_users, sf_teams, sf_records,
-                                      default_record, default_account)
-            if rq:
-                requests.append(rq)
-
-        while len(requests) > 0:
-            params.sync_data = True
-            chunk = requests[:999]
-            requests = requests[999:]
-            rqs = folder_pb2.SharedFolderUpdateV3RequestV2()
-            rqs.sharedFoldersUpdateV3.extend(chunk)
-            try:
-                rss = api.communicate_rest(params, rqs, 'vault/shared_folder_update_v3', payload_version=1,
-                                           rs_type=folder_pb2.SharedFolderUpdateV3ResponseV2)
-                for rs in rss.sharedFoldersUpdateV3Response:
-                    team_cache = params.available_team_cache or []
-                    for attr in ('sharedFolderAddTeamStatus', 'sharedFolderUpdateTeamStatus', 'sharedFolderRemoveTeamStatus'):
-                        if hasattr(rs, attr):
-                            statuses = getattr(rs, attr)
-                            for t in statuses:
-                                team_uid = utils.base64_url_encode(t.teamUid)
-                                team = next((x for x in team_cache if x.get('team_uid') == team_uid), None)
-                                if team:
-                                    status = t.status
-                                    if status == 'success':
-                                        logging.info('Team share \'%s\' %s', team['team_name'],
-                                                     'added' if attr == 'sharedFolderAddTeamStatus' else
-                                                     'updated' if attr == 'sharedFolderUpdateTeamStatus' else
-                                                     'removed')
-                                    else:
-                                        logging.warning('Team share \'%s\' failed', team['team_name'])
-
-                    for attr in ('sharedFolderAddUserStatus', 'sharedFolderUpdateUserStatus', 'sharedFolderRemoveUserStatus'):
-                        if hasattr(rs, attr):
-                            statuses = getattr(rs, attr)
-                            for s in statuses:
-                                username = s.username
-                                status = s.status
-                                if status == 'success':
-                                    logging.info('User share \'%s\' %s', username,
-                                                 'added' if attr == 'sharedFolderAddUserStatus' else
-                                                 'updated' if attr == 'sharedFolderUpdateUserStatus' else
-                                                 'removed')
-                                elif status == 'invited':
-                                    logging.info('User \'%s\' invited', username)
-                                else:
-                                    logging.warning('User share \'%s\' failed', username)
-
-                    for attr in ('sharedFolderAddRecordStatus', 'sharedFolderUpdateRecordStatus', 'sharedFolderRemoveRecordStatus'):
-                        if hasattr(rs, attr):
-                            statuses = getattr(rs, attr)
-                            for r in statuses:
-                                record_uid = utils.base64_url_encode(r.recordUid)
-                                status = r.status
-                                if record_uid in params.record_cache:
-                                    rec = api.get_record(params, record_uid)
-                                    title = rec.title
-                                else:
-                                    title = record_uid
-                                if status == 'success':
-                                    logging.info('Record share \'%s\' %s', title,
-                                                 'added' if attr == 'sharedFolderAddRecordStatus' else
-                                                 'updated' if attr == 'sharedFolderUpdateRecordStatus' else
-                                                 'removed')
-                                else:
-                                    logging.warning('Record share \'%s\' failed', title)
-            except KeeperApiError as kae:
-                if kae.result_code != 'bad_inputs_nothing_to_do':
-                    raise kae
+            group_idx = 0
+            for r_chunk in rec_chunks:
+                for u_chunk in user_chunks:
+                    sf_info = sh_fol.copy()
+                    if group_idx:
+                        del sf_info['revision']
+                    rq_groups[group_idx].append(prep_rq(r_chunk, u_chunk, sf_info))
+                    group_idx += 1
+        self.send_requests(params, rq_groups)
 
     @staticmethod
     def prepare_request(params, kwargs, curr_sf, users, teams, rec_uids, default_record=False, default_account=False):
@@ -563,6 +518,79 @@ class ShareFolderCommand(Command):
                                 ro.encryptedRecordKey = crypto.encrypt_aes_v2(rec_key, sf_key)
                         rq.sharedFolderAddRecord.append(ro)
         return rq
+
+    @staticmethod
+    def send_requests(params, partitioned_requests):
+        for requests in partitioned_requests:
+            while requests:
+                params.sync_data = True
+                chunk = requests[:999]
+                requests = requests[999:]
+                rqs = folder_pb2.SharedFolderUpdateV3RequestV2()
+                rqs.sharedFoldersUpdateV3.extend(chunk)
+                try:
+                    rss = api.communicate_rest(params, rqs, 'vault/shared_folder_update_v3', payload_version=1,
+                                               rs_type=folder_pb2.SharedFolderUpdateV3ResponseV2)
+                    for rs in rss.sharedFoldersUpdateV3Response:
+                        team_cache = params.available_team_cache or []
+                        for attr in (
+                                'sharedFolderAddTeamStatus', 'sharedFolderUpdateTeamStatus',
+                                'sharedFolderRemoveTeamStatus'):
+                            if hasattr(rs, attr):
+                                statuses = getattr(rs, attr)
+                                for t in statuses:
+                                    team_uid = utils.base64_url_encode(t.teamUid)
+                                    team = next((x for x in team_cache if x.get('team_uid') == team_uid), None)
+                                    if team:
+                                        status = t.status
+                                        if status == 'success':
+                                            logging.info('Team share \'%s\' %s', team['team_name'],
+                                                         'added' if attr == 'sharedFolderAddTeamStatus' else
+                                                         'updated' if attr == 'sharedFolderUpdateTeamStatus' else
+                                                         'removed')
+                                        else:
+                                            logging.warning('Team share \'%s\' failed', team['team_name'])
+
+                        for attr in (
+                                'sharedFolderAddUserStatus', 'sharedFolderUpdateUserStatus',
+                                'sharedFolderRemoveUserStatus'):
+                            if hasattr(rs, attr):
+                                statuses = getattr(rs, attr)
+                                for s in statuses:
+                                    username = s.username
+                                    status = s.status
+                                    if status == 'success':
+                                        logging.info('User share \'%s\' %s', username,
+                                                     'added' if attr == 'sharedFolderAddUserStatus' else
+                                                     'updated' if attr == 'sharedFolderUpdateUserStatus' else
+                                                     'removed')
+                                    elif status == 'invited':
+                                        logging.info('User \'%s\' invited', username)
+                                    else:
+                                        logging.warning('User share \'%s\' failed', username)
+
+                        for attr in ('sharedFolderAddRecordStatus', 'sharedFolderUpdateRecordStatus',
+                                     'sharedFolderRemoveRecordStatus'):
+                            if hasattr(rs, attr):
+                                statuses = getattr(rs, attr)
+                                for r in statuses:
+                                    record_uid = utils.base64_url_encode(r.recordUid)
+                                    status = r.status
+                                    if record_uid in params.record_cache:
+                                        rec = api.get_record(params, record_uid)
+                                        title = rec.title
+                                    else:
+                                        title = record_uid
+                                    if status == 'success':
+                                        logging.info('Record share \'%s\' %s', title,
+                                                     'added' if attr == 'sharedFolderAddRecordStatus' else
+                                                     'updated' if attr == 'sharedFolderUpdateRecordStatus' else
+                                                     'removed')
+                                    else:
+                                        logging.warning('Record share \'%s\' failed', title)
+                except KeeperApiError as kae:
+                    if kae.result_code != 'bad_inputs_nothing_to_do':
+                        raise kae
 
 
 class ShareRecordCommand(Command):
