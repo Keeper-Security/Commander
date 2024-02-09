@@ -360,12 +360,11 @@ class ShareFolderCommand(Command):
             user_list = list(sf_users)
             num_rec_chunks = math.ceil(len(sf_records) / chunk_size)
             num_user_chunks = math.ceil(len(sf_users) / chunk_size)
-            num_rq_groups = num_user_chunks * num_rec_chunks
+            num_rq_groups = num_user_chunks or 1 * num_rec_chunks or 1
             while len(rq_groups) < num_rq_groups:
                 rq_groups.append([])
-            rec_chunks = [rec_list[i * chunk_size:(i + 1) * chunk_size] for i in range(num_rec_chunks)]
-            user_chunks = [user_list[i * chunk_size:(i + 1) * chunk_size] for i in range(num_user_chunks)]
-
+            rec_chunks = [rec_list[i * chunk_size:(i + 1) * chunk_size] for i in range(num_rec_chunks)] or [[]]
+            user_chunks = [user_list[i * chunk_size:(i + 1) * chunk_size] for i in range(num_user_chunks)] or [[]]
             group_idx = 0
             for r_chunk in rec_chunks:
                 for u_chunk in user_chunks:
