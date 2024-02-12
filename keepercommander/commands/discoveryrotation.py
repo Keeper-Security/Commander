@@ -1741,14 +1741,18 @@ class PAMTunnelEnableCommand(Command):
     pam_cmd_parser.add_argument('uid', type=str, action='store', help='The Record UID of the PAM '
                                                                       'resource record with network information to use '
                                                                       'for tunneling')
+    pam_cmd_parser.add_argument('--configuration', '-c', required=False, dest='config', action='store',
+                                help='The PAM Configuration UID to use for tunneling. '
+                                     'Use command `pam config list` to view available PAM Configurations.')
 
     def get_parser(self):
         return PAMTunnelEnableCommand.pam_cmd_parser
 
     def execute(self, params, **kwargs):
         record_uid = kwargs.get('uid')
+        config_uid = kwargs.get('config')
         if not record_uid:
-            raise CommandError('tunnel Enable', '"record" argument is required')
+            raise CommandError('tunnel Enable', '"record UID" argument is required')
         dirty = False
 
         record = vault.KeeperRecord.load(params, record_uid)
@@ -1757,15 +1761,41 @@ class PAMTunnelEnableCommand(Command):
             print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
             return
 
+        record_type = record.record_type
+        if record_type not in "pamMachine pamDatabase pamDirectory".split():
+            print(f"{bcolors.FAIL}This record's type is not supported for tunnels. "
+                  f"Tunnels are only supported on Pam Machine, Pam Database, and Pam Directory records{bcolors.ENDC}")
+            return
+
+        if config_uid:
+            configuration = vault.KeeperRecord.load(params, config_uid)
+            if not isinstance(configuration, vault.TypedRecord):
+                print(f"{bcolors.FAIL}Configuration {config_uid} not found.{bcolors.ENDC}")
+                return
+            if configuration.record_type != 'pamNetworkConfiguration':
+                print(f"{bcolors.FAIL}The record {config_uid} is not a Pam Configuration.{bcolors.ENDC}")
+                return
+
         pam_settings = record.get_typed_field('pamSettings')
         if not pam_settings:
-            pam_settings = vault.TypedField.new_field('pamSettings',
-                                                      {"portForward": {"enabled": True}}, "")
+            pre_settings = {"portForward": {"enabled": True}}
+            if config_uid:
+                pre_settings["configUid"] = config_uid
+            pam_settings = vault.TypedField.new_field('pamSettings', pre_settings, "")
             record.custom.append(pam_settings)
+            dirty = True
         else:
+            if config_uid:
+                if pam_settings.value[0].get('configUid') != config_uid:
+                    pam_settings.value[0]['configUid'] = config_uid
+                    dirty = True
             if not pam_settings.value[0]['portForward']['enabled']:
                 pam_settings.value[0]['portForward']['enabled'] = True
                 dirty = True
+        if not pam_settings.value[0].get('configUid'):
+            print(f"{bcolors.WARNING}No PAM Configuration UID found. "
+                  f"This must be set for tunneling to work. You can do this by running 'pam tunnel enable {record_uid} "
+                  f"--config [ConfigUID]' The ConfigUID can be found by running 'pam config list'{bcolors.ENDC}")
 
         client_private_key = record.get_typed_field('trafficEncryptionKey')
         if not client_private_key:
@@ -1791,6 +1821,11 @@ class PAMTunnelEnableCommand(Command):
         if dirty:
             record_management.update_record(params, record)
             api.sync_down(params)
+        if pam_settings.value[0].get('configUid'):
+            print(f"{bcolors.OKGREEN}Tunneling enabled for {record_uid} using configuration "
+                  f"{pam_settings.value[0].get('configUid')} {bcolors.ENDC}")
+        else:
+            print(f"{bcolors.OKGREEN}Tunneling enabled for {record_uid}{bcolors.ENDC}")
 
 
 class PAMTunnelDisableCommand(Command):
@@ -1820,12 +1855,11 @@ class PAMTunnelDisableCommand(Command):
                 pam_settings.value[0]['portForward']['enabled'] = False
                 record_management.update_record(params, record)
                 api.sync_down(params)
+        print(f"{bcolors.OKGREEN}Tunneling disabled for {record_uid}{bcolors.ENDC}")
 
 
 class PAMTunnelStartCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='dr-port-forward-command')
-    pam_cmd_parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
-                                help='Used to list all tunnels for the given Gateway UID')
     pam_cmd_parser.add_argument('--record', '-r', required=True, dest='record_uid', action='store',
                                 help='The Record UID of the PAM resource record with network information to use for '
                                      'tunneling')
@@ -2031,7 +2065,6 @@ private_key_str = private_key.private_bytes(
         record_uid = kwargs.get('record_uid')
         convo_id = GatewayAction.generate_conversation_id()
         params.tunnel_threads[convo_id] = {}
-        gateway_uid = kwargs.get('gateway')
         host = kwargs.get('host')
         port = kwargs.get('port')
         if port is not None and port > 0:
@@ -2046,12 +2079,6 @@ private_key_str = private_key.private_bytes(
                 print(f"{bcolors.FAIL}Could not find open port to use for tunnel{bcolors.ENDC}")
                 return
 
-        gateway_public_key_bytes = retrieve_gateway_public_key(gateway_uid, params, api, utils)
-
-        if not gateway_public_key_bytes:
-            print(f"{bcolors.FAIL}Could not retrieve public key for gateway {gateway_uid}{bcolors.ENDC}")
-            return
-
         api.sync_down(params)
         record = vault.KeeperRecord.load(params, record_uid)
         if not isinstance(record, vault.TypedRecord):
@@ -2064,8 +2091,8 @@ private_key_str = private_key.private_bytes(
             return
 
         try:
-            dag_info = pam_settings.value[0]
-            enabled_port_forward = dag_info.get("portForward", {}).get("enabled", False)
+            pam_info = pam_settings.value[0]
+            enabled_port_forward = pam_info.get("portForward", {}).get("enabled", False)
             if not enabled_port_forward:
                 print(f"{bcolors.FAIL}PAM Settings not enabled for record {record_uid}.{bcolors.ENDC}")
                 return
@@ -2079,6 +2106,39 @@ private_key_str = private_key.private_bytes(
             return
 
         client_private_key_value = client_private_key.get_default_value(str)
+
+        configuration_uid = pam_info.get("configUid", None)
+        if not configuration_uid:
+            print(f"{bcolors.FAIL}Configuration UID not found for record {record_uid}.{bcolors.ENDC}")
+            return
+        configuration = vault.KeeperRecord.load(params, configuration_uid)
+        if not isinstance(configuration, vault.TypedRecord):
+            print(f"{bcolors.FAIL}Configuration {configuration_uid} not found.{bcolors.ENDC}")
+            return
+
+        pam_resources = configuration.get_typed_field('pamResources')
+        if not pam_resources:
+            print(f"{bcolors.FAIL}PAM Resources not found for configuration {configuration_uid}.{bcolors.ENDC}")
+            return
+        if len(pam_resources.value) == 0:
+            print(f"{bcolors.FAIL}PAM Resources not found for configuration {configuration_uid}.{bcolors.ENDC}")
+            return
+        gateway_uid = ''
+        try:
+            gateway_uid = pam_resources.value[0].get("controllerUid", '')
+        except Exception as e:
+            print(f"{bcolors.FAIL}Error parsing PAM Resources for configuration {configuration_uid}: {e}{bcolors.ENDC}")
+            CommandError('Tunnel Start', f"{e}")
+
+        if not gateway_uid:
+            print(f"{bcolors.FAIL}Gateway UID not found for configuration {configuration_uid}.{bcolors.ENDC}")
+            return
+
+        gateway_public_key_bytes = retrieve_gateway_public_key(gateway_uid, params, api, utils)
+
+        if not gateway_public_key_bytes:
+            print(f"{bcolors.FAIL}Could not retrieve public key for gateway {gateway_uid}{bcolors.ENDC}")
+            return
 
         t = threading.Thread(target=self.pre_connect, args=(params, record_uid, convo_id, gateway_uid, host, port,
                                                             gateway_public_key_bytes, client_private_key_value)
