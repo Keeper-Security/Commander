@@ -1564,7 +1564,7 @@ class PAMCreateGatewayCommand(Command):
 
 ############################################## TUNNELING ###############################################################
 class PAMTunnelListCommand(Command):
-    pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-list-command')
+    pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel list')
 
     def get_parser(self):
         return PAMTunnelListCommand.pam_cmd_parser
@@ -1648,7 +1648,7 @@ def clean_up_tunnel(params, convo_id):
 
 
 class PAMTunnelStopCommand(Command):
-    pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-stop-command')
+    pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel stop')
     pam_cmd_parser.add_argument('uid', type=str, action='store', help='The Tunnel UID')
 
     def get_parser(self):
@@ -1668,7 +1668,7 @@ class PAMTunnelStopCommand(Command):
 
 
 class PAMTunnelTailCommand(Command):
-    pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-tail-command')
+    pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel tail')
     pam_cmd_parser.add_argument('uid', type=str, action='store', help='The Tunnel UID')
 
     def get_parser(self):
@@ -1737,7 +1737,7 @@ def retrieve_gateway_public_key(gateway_uid, params, api, utils) -> bytes:
 
 
 class PAMTunnelEnableCommand(Command):
-    pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-enable-command')
+    pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel enable')
     pam_cmd_parser.add_argument('uid', type=str, action='store', help='The Record UID of the PAM '
                                                                       'resource record with network information to use '
                                                                       'for tunneling')
@@ -1829,7 +1829,7 @@ class PAMTunnelEnableCommand(Command):
 
 
 class PAMTunnelDisableCommand(Command):
-    pam_cmd_parser = argparse.ArgumentParser(prog='dr-tunnel-disable-command')
+    pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel disable')
     pam_cmd_parser.add_argument('uid', type=str, action='store', help='The Record UID of the PAM '
                                                                       'resource record with network information to use '
                                                                       'for tunneling')
@@ -1859,10 +1859,10 @@ class PAMTunnelDisableCommand(Command):
 
 
 class PAMTunnelStartCommand(Command):
-    pam_cmd_parser = argparse.ArgumentParser(prog='dr-port-forward-command')
-    pam_cmd_parser.add_argument('--record', '-r', required=True, dest='record_uid', action='store',
-                                help='The Record UID of the PAM resource record with network information to use for '
-                                     'tunneling')
+    pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel start')
+    pam_cmd_parser.add_argument('uid', type=str, action='store', help='The Record UID of the PAM resource '
+                                                                      'record with network information to use for '
+                                                                      'tunneling')
     pam_cmd_parser.add_argument('--host', '-o', required=False, dest='host', action='store',
                                 default="127.0.0.1",
                                 help='The address on which the server will be accepting connections. It could be an '
@@ -2062,7 +2062,7 @@ private_key_str = private_key.private_bytes(
                   f"You are using {major_version}.{minor_version}.{micro_version}.{bcolors.ENDC}")
             return
 
-        record_uid = kwargs.get('record_uid')
+        record_uid = kwargs.get('uid')
         convo_id = GatewayAction.generate_conversation_id()
         params.tunnel_threads[convo_id] = {}
         host = kwargs.get('host')
@@ -2087,14 +2087,17 @@ private_key_str = private_key.private_bytes(
 
         pam_settings = record.get_typed_field('pamSettings')
         if not pam_settings:
-            print(f"{bcolors.FAIL}PAM Settings not enabled for record {record_uid}.{bcolors.ENDC}")
+            print(f"{bcolors.FAIL}PAM Settings not enabled for record {record_uid}'.{bcolors.ENDC}")
+            print(f"{bcolors.WARNING}This is done by running 'pam tunnel enable {record_uid} "
+                  f"--config [ConfigUID]' The ConfigUID can be found by running 'pam config list'{bcolors.ENDC}.")
             return
 
         try:
             pam_info = pam_settings.value[0]
             enabled_port_forward = pam_info.get("portForward", {}).get("enabled", False)
             if not enabled_port_forward:
-                print(f"{bcolors.FAIL}PAM Settings not enabled for record {record_uid}.{bcolors.ENDC}")
+                print(f"{bcolors.FAIL}PAM Settings not enabled for record {record_uid}. "
+                      f"{bcolors.WARNING}This is done by running 'pam tunnel enable {record_uid}'.{bcolors.ENDC}")
                 return
         except Exception as e:
             print(f"{bcolors.FAIL}Error parsing PAM Settings for record {record_uid}: {e}{bcolors.ENDC}")
