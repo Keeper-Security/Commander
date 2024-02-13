@@ -178,26 +178,40 @@ def get_folder_uids(params, name):  # type: (KeeperParams, str or None) -> Set[O
     return uids
 
 
+def get_contained_folder_uids(params, name, children_only=True):
+    def on_folder(f):
+        f_uid = f.uid or ''
+        parent_uid = f.parent_uid or ''
+        if f_uid and f_uid not in root_folder_uids and (not children_only or parent_uid in root_folder_uids):
+            folder_uids.add(f_uid)
+
+    folder_uids = set()
+    root_folder_uids = get_folder_uids(params, name)
+    from keepercommander.commands.base import FolderMixin
+    for uid in get_folder_uids(params, name):
+        FolderMixin.traverse_folder_tree(params, uid, on_folder)
+
+    return folder_uids
+
+
 def get_contained_record_uids(params, name, children_only=True):
     # type: (KeeperParams, str, bool) -> Dict[str, Iterable[str]]
     from keepercommander.commands.base import FolderMixin
     recs_by_folder = dict()
+    root_folder_uids = get_folder_uids(params, name)
 
     def add_child_recs(f_uid):
         child_recs = params.subfolder_record_cache.get(f_uid, set())
         recs_by_folder.update({f_uid: child_recs})
 
     def on_folder(f):  # type: (BaseFolderNode) -> None
-        if f.uid in params.subfolder_record_cache:
-            add_child_recs(f.uid)
-            for sf_uid in f.subfolders:
-                FolderMixin.traverse_folder_tree(params, sf_uid, on_folder)
+        f_uid = f.uid or ''
+        if not children_only or f_uid in root_folder_uids:
+            add_child_recs(f_uid)
 
-    for uid in get_folder_uids(params, name):
-        if children_only:
-            add_child_recs(uid)
-        else:
-            FolderMixin.traverse_folder_tree(params, uid, on_folder)
+    for uid in root_folder_uids:
+        FolderMixin.traverse_folder_tree(params, uid, on_folder)
+
     return recs_by_folder
 
 

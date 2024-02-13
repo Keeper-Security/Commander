@@ -37,7 +37,8 @@ from ..params import LAST_SHARED_FOLDER_UID, LAST_FOLDER_UID
 from ..proto import folder_pb2, record_pb2
 from ..record import Record
 from ..recordv3 import RecordV3
-from ..subfolder import BaseFolderNode, try_resolve_path, find_folders, SharedFolderNode, get_contained_record_uids
+from ..subfolder import BaseFolderNode, try_resolve_path, find_folders, SharedFolderNode, get_contained_record_uids, \
+    get_contained_folder_uids
 
 
 def register_commands(commands):
@@ -70,6 +71,8 @@ ls_parser.add_argument('-r', '--records', dest='records_only', action='store_tru
 ls_parser.add_argument('-s', '--short', dest='short', action='store_true',
                        help='Do not display record details. (Not used)')
 ls_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
+recursive_help = 'list all folders/records in subfolders'
+ls_parser.add_argument('-R', '--recursive', dest='recursive', action='store_true', help=recursive_help)
 ls_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 ls_parser.error = raise_parse_exception
 ls_parser.exit = suppress_exit
@@ -216,16 +219,20 @@ class FolderListCommand(Command, RecordMixin):
         folders = []    # type: List[BaseFolderNode]
         records = []    # type: List[vault.KeeperRecord]
 
+        recursive_search = kwargs.get('recursive')
+        folder_uid = folder.uid or ''
         if show_folders:
-            for uid in folder.subfolders:
+            sub_folder_uids = get_contained_folder_uids(params, folder_uid, not recursive_search)
+            for uid in sub_folder_uids:
                 f = params.folder_cache[uid]
                 if any(filter(lambda x: regex(x) is not None, FolderListCommand.folder_match_strings(f))) if regex is not None else True:
                     folders.append(f)
 
         if show_records and params.record_cache:
-            folder_uid = folder.uid or ''
             if folder_uid in params.subfolder_record_cache:
-                for uid in params.subfolder_record_cache[folder_uid]:
+                record_uids_by_folder = get_contained_record_uids(params, folder_uid, not recursive_search)
+                record_uids = {rec_uid for recs in record_uids_by_folder.values() for rec_uid in recs}
+                for uid in record_uids:
                     if uid not in params.record_cache:
                         continue
                     rec = params.record_cache[uid]
@@ -1750,7 +1757,7 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
         rec_nodes = []
         if show_records and isinstance(node, BaseFolderNode):
             node_uid = '' if node.type == '/' else node.uid
-            rec_uids = get_contained_record_uids(params, node_uid).get(node_uid)
+            rec_uids = {rec for recs in get_contained_record_uids(params, node_uid).values() for rec in recs}
             records = [api.get_record(params, rec_uid) for rec_uid in rec_uids]
             records = [r for r in records if isinstance(r, Record)]
             rec_nodes.extend(records)
