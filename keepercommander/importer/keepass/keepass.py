@@ -26,6 +26,7 @@ from pykeepass.group import Group
 from ..importer import path_components, PathDelimiter, BaseFileImporter, BaseExporter, \
     Record, Folder, SharedFolder, BytesAttachment, RecordField
 from ... import utils
+from ...display import bcolors
 
 _REFERENCE = r'\{REF:([TUPAN])@([IT]):([^\}]+)\}'
 
@@ -226,9 +227,16 @@ class KeepassExporter(BaseExporter, XmlUtils):
 
     def do_export(self, filename, records, file_password=None, **kwargs):
         master_password = file_password
-        if not master_password:
+        confirmed = True
+        while not master_password or not confirmed:
             print('Choose password for your Keepass file')
             master_password = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None)
+            print('\nRe-enter password for your Keepass file')
+            confirmation = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None)
+            confirmed = master_password == confirmation
+            retry_msg = 'The passwords you entered do not match.\nPlease try again.\n'
+            fail_msg = bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + retry_msg + bcolors.ENDC
+            not confirmed and print(fail_msg)
 
         sfs = []  # type: list[SharedFolder]
         rs = []   # type: list[Record]
