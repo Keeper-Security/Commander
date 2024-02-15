@@ -12,7 +12,7 @@ pykeepass
 pyperclip
 pysocks
 pytest
-requests
+requests>=2.30.0
 tabulate
 pyqrcode
 keeper-secrets-manager-core>=16.6.0
