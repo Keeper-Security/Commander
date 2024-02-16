@@ -1793,9 +1793,10 @@ class PAMTunnelEnableCommand(Command):
                 pam_settings.value[0]['portForward']['enabled'] = True
                 dirty = True
         if not pam_settings.value[0].get('configUid'):
-            print(f"{bcolors.WARNING}No PAM Configuration UID found. "
-                  f"This must be set for tunneling to work. You can do this by running 'pam tunnel enable {record_uid} "
-                  f"--config [ConfigUID]' The ConfigUID can be found by running 'pam config list'{bcolors.ENDC}")
+            print(f"{bcolors.FAIL}No PAM Configuration UID set. This must be set for tunneling to work. "
+                  f"This can be done by running 'pam tunnel enable {record_uid} --config [ConfigUID]' "
+                  f"The ConfigUID can be found by running 'pam config list'{bcolors.ENDC}")
+            return
 
         client_private_key = record.get_typed_field('trafficEncryptionKey')
         if not client_private_key:
