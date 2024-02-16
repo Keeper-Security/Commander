@@ -12,7 +12,8 @@ pykeepass
 pyperclip
 pysocks
 pytest
-requests>=2.30.0
+requests; python_version<'3.7'
+requests>=2.30.0; python_version>='3.7'
 tabulate
 pyqrcode
 keeper-secrets-manager-core>=16.6.0
