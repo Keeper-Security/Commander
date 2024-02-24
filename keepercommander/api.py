@@ -693,7 +693,6 @@ def execute_batch(params, requests):
     throttle_delay = 10
     chunk_size = 999
     queue = requests.copy()
-    unthrottled = 0
     delay_next_batch = False
 
     while len(queue) > 0:
@@ -707,23 +706,19 @@ def execute_batch(params, requests):
         try:
             if delay_next_batch:
                 time.sleep(throttle_delay)
-                unthrottled = 0
             rs = communicate(params, rq)
             if 'results' in rs:
                 results = rs['results']  # type: list
                 if len(results) > 0:
-                    throttled = [r for r in results if r['result'] != 'success' and r['result_code'] == 'throttled']
+                    error_rs = results[-1]
+                    throttled = error_rs.get('result') != 'success' and error_rs.get('result_code') == 'throttled'
                     if throttled:
-                        throttled_rs = next(iter(throttled))
-                        throttled_idx = results.index(throttled_rs)
-                        queue = chunk[throttled_idx:] + queue
-                        responses.extend(results[:throttled_idx])
-                        unthrottled += throttled_idx
-                        chunk_size = unthrottled
                         delay_next_batch = True
-                    else:
-                        responses.extend(results)
-                        unthrottled += len(results)
+                        results.pop()
+                responses.extend(results)
+
+                if len(results) < len(chunk):
+                    queue = chunk[len(results):] + queue
         except Exception as e:
             logging.error(e)
 
@@ -1276,11 +1271,11 @@ def get_record_shares(params, record_uids, is_share_admin=False):
         return result
 
 
-def query_enterprise(params, force=False):
+def query_enterprise(params, force=False, tree_key=None):
     try:
         if force is True and params.enterprise:
             params.enterprise = None
-        qe(params)
+        qe(params, tree_key=tree_key)
     except Exception as e:
         share_account_by = params.get_share_account_timestamp()
         share_account_expired = share_account_by and datetime.today() > share_account_by
@@ -1314,9 +1309,10 @@ def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
 
     mc_params.session_token = loginv3.CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedSessionToken)
     mc_params.msp_tree_key = params.enterprise['unencrypted_tree_key']
+    tree_key = crypto.decrypt_aes_v2(utils.base64_url_decode(resp.encryptedTreeKey), mc_params.msp_tree_key)
 
     sync_down(mc_params)
-    query_enterprise(mc_params, True)
+    query_enterprise(mc_params, True, tree_key=tree_key)
 
     return mc_params
 
