@@ -21,9 +21,9 @@ from .proto import enterprise_pb2 as proto
 from . import api, utils, crypto
 
 
-def query_enterprise(params):  # type: (KeeperParams) -> None
+def query_enterprise(params, tree_key=None):  # type: (KeeperParams, Optional[bytes]) -> None
     if not params.enterprise_loader:
-        params.enterprise_loader = _EnterpriseLoader()
+        params.enterprise_loader = _EnterpriseLoader(tree_key)
     params.enterprise_loader.load(params)
 
 
@@ -64,9 +64,10 @@ class EnterpriseInfo(object):
 
 
 class _EnterpriseLoader(object):
-    def __init__(self):
+    def __init__(self, tree_key=None):
         super(_EnterpriseLoader, self).__init__()
         self._enterprise = EnterpriseInfo()
+        self._enterprise._tree_key = tree_key
         self._continuationToken = b''
         self._data_types = {   # type: dict[int, _EnterpriseDataParser]
             proto.NODES: _EnterpriseNodeEntity(self._enterprise),
@@ -117,20 +118,18 @@ class _EnterpriseLoader(object):
             params.enterprise = {}
             self._continuationToken = b''
 
-        if not self._enterprise.tree_key or not self._continuationToken:
+        if 'unencrypted_tree_key' not in params.enterprise or 'keys' not in params.enterprise:
             rq = proto.GetEnterpriseDataKeysRequest()
             rs = api.communicate_rest(params, rq, 'enterprise/get_enterprise_data_keys',
                                       rs_type=proto.GetEnterpriseDataKeysResponse)
-            if rs.treeKey:
-                encrypted_tree_key = utils.base64_url_decode(rs.treeKey.treeKey)
-                if rs.treeKey.keyTypeId == proto.ENCRYPTED_BY_DATA_KEY:
-                    self._enterprise._tree_key = crypto.decrypt_aes_v1(encrypted_tree_key, params.data_key)
-                elif rs.treeKey.keyTypeId == proto.ENCRYPTED_BY_PUBLIC_KEY:
-                    if len(encrypted_tree_key) == 60:
-                        self._enterprise._tree_key = crypto.decrypt_aes_v2(encrypted_tree_key, params.msp_tree_key)
-                    else:
+            if not self._enterprise.tree_key:
+                if rs.treeKey.treeKey:
+                    encrypted_tree_key = utils.base64_url_decode(rs.treeKey.treeKey)
+                    if rs.treeKey.keyTypeId == proto.ENCRYPTED_BY_DATA_KEY:
+                        self._enterprise._tree_key = crypto.decrypt_aes_v1(encrypted_tree_key, params.data_key)
+                    elif rs.treeKey.keyTypeId == proto.ENCRYPTED_BY_PUBLIC_KEY:
                         self._enterprise._tree_key = crypto.decrypt_rsa(encrypted_tree_key, params.rsa_key2)
-                params.enterprise['unencrypted_tree_key'] = self._enterprise.tree_key
+            params.enterprise['unencrypted_tree_key'] = self._enterprise.tree_key
 
             keys = {}    # type: Dict[str, str]
             if rs.enterpriseKeys:

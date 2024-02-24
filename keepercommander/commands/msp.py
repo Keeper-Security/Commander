@@ -1315,11 +1315,11 @@ class MSPCopyRoleCommand(EnterpriseCommand):
                 for enforcement in src_enforcements:
                     src_value = src_enforcements[enforcement]
                     if enforcement in dst_enforcements:
-                        command = 'role_enforcement_update'
                         dst_value = dst_enforcements[enforcement]
-                        if src_value != dst_value:
-                            command = 'role_enforcement_update'
                         dst_enforcements.pop(enforcement)
+                        if src_value == dst_value:
+                            continue
+                        command = 'role_enforcement_update'
                     else:
                         command = 'role_enforcement_add'
                     if command:
