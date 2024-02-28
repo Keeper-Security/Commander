@@ -21,14 +21,19 @@ from typing import List, Optional, Any, Dict, Union, Sequence
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
+from urllib.parse import urlunparse
+
 from keepercommander.breachwatch import BreachWatch
 
 from .base import Command, RecordMixin, FolderMixin
-from .. import api, vault, record_types, generator, crypto, attachment, record_facades, record_management
+from .helpers.timeout import parse_timeout
+from .. import api, utils, vault, record_types, generator, crypto, attachment, record_facades, record_management
 from ..commands import recordv3
 from ..error import CommandError
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
+from ..proto import APIRequest_pb2
+
 
 record_add_parser = argparse.ArgumentParser(prog='record-add', description='Add a record to folder.')
 record_add_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true',
@@ -39,6 +44,9 @@ record_add_parser.add_argument('-rt', '--record-type', dest='record_type', actio
 record_add_parser.add_argument('-n', '--notes', dest='notes', action='store', help='record notes')
 record_add_parser.add_argument('--folder', dest='folder', action='store',
                                help='folder name or UID to store record')
+record_add_parser.add_argument('--self-destruct', dest='self_destruct', action='store',
+                               metavar='<NUMBER>[(m)inutes|(h)ours|(d)ays]',
+                               help='Time period record share URL is valid. The record will be deleted in your vault in 5 minutes since open')
 record_add_parser.add_argument('fields', nargs='*', type=str,
                                help='load record type data from strings with dot notation')
 
@@ -703,6 +711,13 @@ class RecordAddCommand(Command, RecordEditMixin):
             print(record_fields_description)
             return
 
+        expiration_period = None
+        self_destruct = kwargs.get('self_destruct')
+        if self_destruct:
+            expiration_period = parse_timeout(self_destruct)
+            if expiration_period.total_seconds() > 182 * 24 * 60 * 60:
+                raise CommandError('', 'URL expiration period cannot be greater than 6 months.')
+
         folder_uid = self.resolve_folder(params, kwargs.get('folder'))
 
         self.warnings.clear()
@@ -770,12 +785,25 @@ class RecordAddCommand(Command, RecordEditMixin):
                     return
 
         record_management.add_record_to_folder(params, record, folder_uid)
-
-        params.environment_variables[LAST_RECORD_UID] = record.record_uid
-        BreachWatch.scan_and_update_security_data(params, record.record_uid, params.breach_watch)
         params.sync_data = True
-
-        return record.record_uid
+        if expiration_period is not None:
+            record_uid = record.record_uid
+            record_key = record.record_key
+            client_key = utils.generate_aes_key()
+            client_id = crypto.hmac_sha512(client_key, 'KEEPER_SECRETS_MANAGER_CLIENT_ID'.encode())
+            rq = APIRequest_pb2.AddExternalShareRequest()
+            rq.recordUid = utils.base64_url_decode(record_uid)
+            rq.encryptedRecordKey = crypto.encrypt_aes_v2(record_key, client_key)
+            rq.clientId = client_id
+            rq.accessExpireOn = utils.current_milli_time() + int(expiration_period.total_seconds() * 1000)
+            rq.isSelfDestruct = True
+            api.communicate_rest(params, rq, 'vault/external_share_add', rs_type=APIRequest_pb2.Device)
+            url = urlunparse(('https', params.server, '/vault/share', None, None, utils.base64_url_encode(client_key)))
+            return url
+        else:
+            params.environment_variables[LAST_RECORD_UID] = record.record_uid
+            BreachWatch.scan_and_update_security_data(params, record.record_uid, params.breach_watch)
+            return record.record_uid
 
 
 class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
