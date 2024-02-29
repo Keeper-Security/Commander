@@ -7,7 +7,6 @@
 # Keeper Commander 
 # Contact: ops@keepersecurity.com
 #
-import threading
 import warnings
 from datetime import datetime
 from typing import Dict, NamedTuple, Optional
@@ -42,6 +41,24 @@ class RestApiContext:
         self.proxies = None
         self._certificate_check = True
         self.fail_on_throttle = False
+
+    def __eq__(self, other):
+        if not isinstance(other, RestApiContext):
+            return False
+
+        return (
+                self.server_base == other.server_base and
+                self.transmission_key == other.transmission_key and
+                self.__server_key_id == other.__server_key_id and
+                self.locale == other.locale and
+                self.__store_server_key == other.__store_server_key and
+                self.proxies == other.proxies and
+                self._certificate_check == other._certificate_check and
+                self.fail_on_throttle == other.fail_on_throttle
+        )
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
 
     def __get_server_base(self):
         return self.__server_base
@@ -89,30 +106,8 @@ class RestApiContext:
     store_server_key = property(__get_store_server_key)
 
 
-class KeeperParams:
-    """ Global storage of data during the session """
-
-    def __init__(self, config_filename='', config=None, server='keepersecurity.com'):
-        self.config_filename = config_filename
-        self.config = config or {}
-        self.auth_verifier = None
-        self.__server = server
-        self.user = ''
-        self.password = ''
-        self.commands = []
-        self.plugins = []
-        self.session_token = None
-        self.salt = None
-        self.iterations = 0
-        self.data_key = None
-        self.client_key = None
-        self.rsa_key = None
-        self.rsa_key2 = None
-        self.ecc_key = None
-        self.enterprise_ec_key = None
-        self.enterprise_rsa_key = None
-        self.revision = 0
-        self.sync_down_token = None    # type: Optional[bytes]
+class Cache:
+    def __init__(self):
         self.record_cache = {}
         self.meta_data_cache = {}
         self.non_shared_data_cache = {}
@@ -120,31 +115,125 @@ class KeeperParams:
         self.team_cache = {}
         self.record_link_cache = {}
         self.record_rotation_cache = {}
-        self.record_owner_cache = {}   # type: Dict[str, RecordOwner]
-        self.key_cache = {}            # type: Dict[str, PublicKeys]
+        self.record_owner_cache = {}  # type: Dict[str, RecordOwner]
+        self.record_type_cache = {}  # RT definitions only
+        self.key_cache = {}  # type: Dict[str, PublicKeys]
         self.available_team_cache = None
         self.user_cache = {}
         self.subfolder_cache = {}
         self.subfolder_record_cache = {}
-        self.root_folder = None
-        self.current_folder = None
         self.folder_cache = {}
-        self.debug = False
-        self.timedelay = 0
-        self.sync_data = True
+
+    def clear(self):
+        self.record_cache.clear()
+        self.meta_data_cache.clear()
+        self.non_shared_data_cache.clear()
+        self.shared_folder_cache.clear()
+        self.team_cache.clear()
+        self.record_link_cache.clear()
+        self.record_rotation_cache.clear()
+        self.record_owner_cache.clear()
+        self.available_team_cache = None
+        self.key_cache.clear()
+        self.subfolder_cache.clear()
+        self.subfolder_record_cache.clear()
+        if self.folder_cache:
+            self.folder_cache.clear()
+        self.user_cache.clear()
+        self.record_type_cache = {}
+
+    def __eq__(self, other):
+        if not isinstance(other, Cache):
+            return False
+
+        # Compare relevant attributes
+        return (
+                self.record_cache == other.record_cache and
+                self.meta_data_cache == other.meta_data_cache and
+                self.non_shared_data_cache == other.non_shared_data_cache and
+                self.shared_folder_cache == other.shared_folder_cache and
+                self.team_cache == other.team_cache and
+                self.record_link_cache == other.record_link_cache and
+                self.record_rotation_cache == other.record_rotation_cache and
+                self.record_owner_cache == other.record_owner_cache and
+                self.record_type_cache == other.record_type_cache and
+                self.key_cache == other.key_cache and
+                self.available_team_cache == other.available_team_cache and
+                self.user_cache == other.user_cache and
+                self.subfolder_cache == other.subfolder_cache and
+                self.subfolder_record_cache == other.subfolder_record_cache and
+                self.folder_cache == other.folder_cache
+        )
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __call__(self, *args, **kwargs):
+        pass
+
+
+class KeeperParams:
+    """ Global storage of data during the session """
+
+    def __init__(self,
+                 config_filename='',
+                 config: dict | None = None,
+                 server='keepersecurity.com',
+                 iterations=0,
+                 revision=0,
+                 cache=Cache(),
+                 root_folder=None,
+                 current_folder=None,
+                 commands: list | None=None,
+                 plugins: list | None=None,
+                 debug=False,
+                 timedelay=0,
+                 sync_data=True,
+                 enterprise_id=0,
+                 batch_mode=False,
+                 environment_variables: dict | None = None,
+                 rest_context: RestApiContext | None = None,
+                 proxy: dict | None = None,
+                 ):
+        self.config_filename = config_filename
+        self.config = config or {}
+        self.auth_verifier = None
+        self.__server = server
+        self.user = ''
+        self.password = ''
+        self.commands = commands or []
+        self.plugins = plugins or []
+        self.session_token = None
+        self.salt = None
+        self.iterations = iterations
+        self.data_key = None
+        self.client_key = None
+        self.rsa_key = None
+        self.rsa_key2 = None
+        self.ecc_key = None
+        self.enterprise_ec_key = None
+        self.enterprise_rsa_key = None
+        self.revision = revision
+        self.sync_down_token = None    # type: Optional[bytes]
+        self.cache = cache
+        self.root_folder = root_folder
+        self.current_folder = current_folder
+        self.debug = debug
+        self.timedelay = timedelay
+        self.sync_data = sync_data
         self.license = None
         self.settings = None
         self.enforcements = None
         self.enterprise = None
         self.automators = None
         self.enterprise_loader = None
-        self.enterprise_id = 0
+        self.enterprise_id = enterprise_id
         self.msp_tree_key = None
         self.prepare_commands = False
-        self.batch_mode = False
-        self.__rest_context = RestApiContext(server=server)
+        self.batch_mode = batch_mode
+        self.__rest_context = rest_context or RestApiContext(server=server)
         self.pending_share_requests = set()
-        self.environment_variables = {}
+        self.environment_variables = environment_variables or {}
         self.record_history = {}        # type: dict[str, (list[dict], int)]
         self.event_queue = []
         self.logout_timer = 0
@@ -153,17 +242,16 @@ class KeeperParams:
         self.device_private_key = None
         self.account_uid_bytes = None
         self.session_token_bytes = None
-        self.record_type_cache = {}  # RT definitions only
         self.breach_watch = None
         self.breach_watch_records = {}
         self.breach_watch_security_data = {}
         self.sso_login_info = None
-        self.__proxy = None
+        self.__proxy = proxy
         self.ssh_agent = None
         self.unmask_all = False
         self.ws = None
         self.tunnel_threads = {}
-        self.tunnel_threads_queue = {} # add ability to tail tunnel process
+        self.tunnel_threads_queue = {}  # add ability to tail tunnel process
 
     def clear_session(self):
         self.auth_verifier = None
@@ -182,21 +270,7 @@ class KeeperParams:
         self.enterprise_rsa_key = None
         self.revision = 0
         self.sync_down_token = None
-        self.record_cache.clear()
-        self.meta_data_cache.clear()
-        self.non_shared_data_cache.clear()
-        self.shared_folder_cache.clear()
-        self.team_cache.clear()
-        self.record_link_cache.clear()
-        self.record_rotation_cache.clear()
-        self.record_owner_cache.clear()
-        self.available_team_cache = None
-        self.key_cache.clear()
-        self.subfolder_cache .clear()
-        self.subfolder_record_cache.clear()
-        if self.folder_cache:
-            self.folder_cache.clear()
-        self.user_cache.clear()
+        self.cache.clear()
         self.root_folder = None
         self.current_folder = None
         self.sync_data = True
@@ -215,7 +289,6 @@ class KeeperParams:
         self.event_queue.clear()
         self.account_uid_bytes = None
         self.session_token_bytes = None
-        self.record_type_cache = {}
         self.breach_watch = None
         self.breach_watch_records = {}
         self.breach_watch_security_data = {}
@@ -226,6 +299,147 @@ class KeeperParams:
             self.ssh_agent = None
         self.tunnel_threads.clear()
         self.tunnel_threads_queue = {}
+
+    def __reduce__(self):
+        return (self.__class__, (
+            self.config_filename,
+            self.config,
+            self.__server,
+            self.iterations,
+            self.revision,
+            self.cache,
+            self.root_folder,
+            self.current_folder,
+            self.commands,
+            self.plugins,
+            self.debug,
+            self.timedelay,
+            self.sync_data,
+            self.enterprise_id,
+            self.batch_mode,
+            self.environment_variables,
+            self.__rest_context,
+            self.__proxy))
+
+    @property
+    def record_cache(self):
+        return self.cache.record_cache
+
+    @record_cache.setter
+    def record_cache(self, value):
+        self.cache.record_cache = value
+
+    @property
+    def meta_data_cache(self):
+        return self.cache.meta_data_cache
+
+    @meta_data_cache.setter
+    def meta_data_cache(self, value):
+        self.cache.meta_data_cache = value
+
+    @property
+    def non_shared_data_cache(self):
+        return self.cache.non_shared_data_cache
+
+    @non_shared_data_cache.setter
+    def non_shared_data_cache(self, value):
+        self.cache.non_shared_data_cache = value
+
+    @property
+    def shared_folder_cache(self):
+        return self.cache.shared_folder_cache
+
+    @shared_folder_cache.setter
+    def shared_folder_cache(self, value):
+        self.cache.shared_folder_cache = value
+
+    @property
+    def team_cache(self):
+        return self.cache.team_cache
+
+    @team_cache.setter
+    def team_cache(self, value):
+        self.cache.team_cache = value
+
+    @property
+    def record_link_cache(self):
+        return self.cache.record_link_cache
+
+    @record_link_cache.setter
+    def record_link_cache(self, value):
+        self.cache.record_link_cache = value
+
+    @property
+    def record_rotation_cache(self):
+        return self.cache.record_rotation_cache
+
+    @record_rotation_cache.setter
+    def record_rotation_cache(self, value):
+        self.cache.record_rotation_cache = value
+
+    @property
+    def record_owner_cache(self):
+        return self.cache.record_owner_cache
+
+    @record_owner_cache.setter
+    def record_owner_cache(self, value):
+        self.cache.record_owner_cache = value
+
+    @property
+    def record_type_cache(self):
+        return self.cache.record_type_cache
+
+    @record_type_cache.setter
+    def record_type_cache(self, value):
+        self.cache.record_type_cache = value
+
+    @property
+    def available_team_cache(self):
+        return self.cache.available_team_cache
+
+    @available_team_cache.setter
+    def available_team_cache(self, value):
+        self.cache.available_team_cache = value
+
+    @property
+    def key_cache(self):
+        return self.cache.key_cache
+
+    @key_cache.setter
+    def key_cache(self, value):
+        self.cache.key_cache = value
+
+    @property
+    def subfolder_cache(self):
+        return self.cache.subfolder_cache
+
+    @subfolder_cache.setter
+    def subfolder_cache(self, value):
+        self.cache.subfolder_cache = value
+
+    @property
+    def subfolder_record_cache(self):
+        return self.cache.subfolder_record_cache
+
+    @subfolder_record_cache.setter
+    def subfolder_record_cache(self, value):
+        self.cache.subfolder_record_cache = value
+
+    @property
+    def folder_cache(self):
+        return self.cache.folder_cache
+
+    @folder_cache.setter
+    def folder_cache(self, value):
+        self.cache.folder_cache = value
+
+    @property
+    def user_cache(self):
+        return self.cache.user_cache
+
+    @user_cache.setter
+    def user_cache(self, value):
+        self.cache.user_cache = value
 
     def __get_rest_context(self):   # type: () -> RestApiContext
         return self.__rest_context
