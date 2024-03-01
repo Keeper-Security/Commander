@@ -325,13 +325,9 @@ class FolderListCommand(Command, RecordMixin):
                     else:
                         break
 
-                # formatted_text = FormattedText((('fg: Tomato', x[0].ljust(max_name + 2)) for x in names))
-                # print_formatted_text(formatted_text)
-                tbl = FolderListCommand.chunk_list([FormattedText([(display.keeper_color_to_prompt(x[1]), x[0].ljust(max_name))]) for x in names], cols)
-                for row in tbl:
-                    print_formatted_text(*row, sep='  ')
-                # rows = ['  '.join(x) for x in tbl]
-                # print('\n'.join(rows))
+                tbl = FolderListCommand.chunk_list([display.keeper_colorize(x[0].ljust(max_name), x[1]) for x in names], cols)
+                rows = ['  '.join(x) for x in tbl]
+                print('\n'.join(rows))
 
 
 class FolderCdCommand(Command):

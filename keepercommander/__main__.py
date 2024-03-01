@@ -134,6 +134,12 @@ def handle_exceptions(exc_type, exc_value, exc_traceback):
 
 
 def main(from_package=False):
+    if sys.platform == 'win32' and sys.version_info >= (3, 7):
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+            sys.stderr.reconfigure(encoding='utf-8')
+        except:
+            pass
     os.environ['SSL_CERT_FILE'] = certifi.where()
     logging.basicConfig(format='%(message)s')
 

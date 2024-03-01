@@ -17,7 +17,7 @@ import itertools
 import json
 import logging
 import re
-from typing import Dict, Any, List, Optional, Iterable, Tuple
+from typing import Dict, Any, List, Optional, Iterable, Tuple, Set
 from colorama import init, Fore, Back, Style
 
 from .base import Command, GroupCommand, RecordMixin, FolderMixin
@@ -135,15 +135,12 @@ record_history_parser.add_argument('-v', '--verbose', dest='verbose', action='st
 record_history_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 
 
-shared_records_report_parser = argparse.ArgumentParser(
-    prog='shared-records-report', description='Report shared records for a logged-in user.')
-shared_records_report_parser.add_argument(
-    '--format', dest='format', choices=['json', 'csv', 'table'], default='table', help='Data format output')
-shared_records_report_parser.add_argument('-o', '--output', action='store',
-                                          help='output file name (ignored for table format)')
-shared_records_report_parser.add_argument(
-    '-tu', '--show-team-users', action='store_true',
-    help='show members of team for records shared via share team folders.')
+shared_records_report_parser = argparse.ArgumentParser(prog='shared-records-report', parents=[base.report_output_parser],
+                                                       description='Report shared records for a logged-in user.')
+shared_records_report_parser.add_argument('-tu', '--show-team-users', dest='show_team_users', action='store_true',
+                                          help='show members of team for records shared via share team folders.')
+shared_records_report_parser.add_argument('--all-records', dest='all_records', action='store_true',
+                                          help='report on all records in the vault. only owned records are included if this argument is omitted.')
 shared_folder_help = 'Optional (w/ multiple values allowed). Path or UID of folder containing the records to be shown'
 shared_records_report_parser.add_argument('folder', type=str, nargs='*', help=shared_folder_help)
 
@@ -1314,23 +1311,81 @@ class SharedRecordsReport(Command):
     def get_parser(self):
         return shared_records_report_parser
 
+    @staticmethod
+    def permissions_text(*, can_share=None, can_edit=None, can_view=True):  # type: (Any, Optional[bool], Optional[bool], Optional[bool]) -> str
+        if not can_edit and not can_share:
+            return 'Read Only' if can_view else 'Launch Only'
+        else:
+            privs = [can_share and 'Share', can_edit and 'Edit']
+            return f'Can {" & ".join([p for p in privs if p])}'
+
     def execute(self, params, **kwargs):
         export_format = kwargs['format'] if 'format' in kwargs else None
         export_name = kwargs.get('output')
-        containers = kwargs.get('folder')
-        f_uids = set()
-        log_folder_fn = lambda f_name: logging.info(f'Folder {f_name} could not be found.')
-        on_folder_fn = lambda folder: f_uids.add(folder.uid)
-        for name in containers:
-            folder_uids = get_folder_uids(params, name)
-            if not folder_uids:
-                log_folder_fn(name)
-                continue
-            for uid in folder_uids:
-                FolderMixin.traverse_folder_tree(params, uid, on_folder_fn)
 
-        shared_records_data_rs = api.communicate_rest(
-            params, None, 'report/get_shared_record_report', rs_type=enterprise_pb2.SharedRecordResponse)
+        all_records = kwargs.get('all_records') is True
+        records = {}   # type: Dict[str, vault.KeeperRecord]
+        containers = kwargs.get('folder')
+        filter_folders = None
+        versions = (0, 1, 2, 3, 5, 6) if all_records else (2, 3)
+        if isinstance(containers, list) and len(containers) > 0:
+            filter_folders = set()
+            log_folder_fn = lambda f_name: logging.info(f'Folder {f_name} could not be found.')
+            def on_folder_fn(f):   # type: (BaseFolderNode) -> None
+                filter_folders.add(f.uid)
+                for record_uid in params.subfolder_record_cache.get(f.uid or '', []):
+                    if record_uid not in records:
+                        record = vault.KeeperRecord.load(params, record_uid)
+                        if not record:
+                            continue
+                        if not record.shared:
+                            continue
+                        if not all_records:
+                            ro = params.record_owner_cache.get(record.record_uid)
+                            if not ro or not ro.owner:
+                                continue
+                        if record.version not in versions:
+                            continue
+                        records[record.record_uid] = record
+            for name in containers:
+                folder_uids = get_folder_uids(params, name)
+                if not folder_uids:
+                    log_folder_fn(name)
+                    continue
+                for uid in folder_uids:
+                    FolderMixin.traverse_folder_tree(params, uid, on_folder_fn)
+        else:
+            for record in vault_extensions.find_records(params, record_version=versions):
+                if not record.shared:
+                    continue
+                if not all_records:
+                    ro = params.record_owner_cache.get(record.record_uid)
+                    if not ro or not ro.owner:
+                        continue
+                records[record.record_uid] = record
+
+        expand_teams = kwargs.get('show_team_users') is True
+        team_membership = None   # type: Optional[Dict[str, List[str]]]
+        if expand_teams:
+            team_membership = {}
+            if params.enterprise is not None:
+                user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise['users'] if x.get('status') == 'active'}
+                if 'team_users' in params.enterprise:
+                    for tu in params.enterprise['team_users']:
+                        team_uid = tu['team_uid']
+                        enterprise_user_id = tu['enterprise_user_id']
+                        if enterprise_user_id in user_lookup:
+                            members = team_membership.get(team_uid)
+                            if members is None:
+                                members = []
+                                team_membership[team_uid] = members
+                            members.append(user_lookup[enterprise_user_id])
+
+        rows = []
+        fields = ['record_uid', 'title', 'share_type', 'shared_to', 'permissions', 'folder_path']
+        if all_records:
+            fields.insert(0, 'owner')
+        api.get_record_shares(params, records.keys())
 
         shared_from_mapping = {
             1: "Direct Share",
@@ -1338,30 +1393,78 @@ class SharedRecordsReport(Command):
             3: "Share Team Folder"
         }
 
-        show_team_users = kwargs.get('show_team_users')
-        rows = []
-        from keepercommander.shared_record import get_shared_records
-        shared_records = get_shared_records(params, {utils.base64_url_encode(e.recordUid) for e in
-                                                     shared_records_data_rs.events})
-        for uid, sr in shared_records.items():
-            # Filter by containing folder if specified
-            if containers and not f_uids.intersection(find_folders(params, uid)):
+        for record_uid, record in records.items():
+            r = params.record_cache.get(record_uid)
+            if not r:
                 continue
-
-            folder_paths = '\n'.join(sr.folder_paths)
-            permissions = sr.get_ordered_permissions()
-            permissions = [p for p in permissions if sr.owner != p.to_name]
-            for p in permissions:
-                sources = [t.value for t in p.types]
-                share_from = '\n'.join([shared_from_mapping.get(min(s, max(shared_from_mapping.keys())), 'Other Share') for s in sources])
-                row = [sr.uid, sr.name, share_from, p.get_target(show_team_users), p.permissions_text, folder_paths]
+            if 'shares' not in r:
+                continue
+            record_title = record.title
+            if export_format == 'table' and len(record_title) > 40:
+                record_title = record_title[:38] + '...'
+            shares = r['shares']
+            owner = next((x.get('username') for x in shares.get('user_permissions', []) if x.get('owner') is True), None)
+            record_folders = set(find_folders(params, record_uid))
+            if filter_folders is not None:
+                record_folders.intersection_update(filter_folders)
+            folder_path = '\n'.join((get_folder_path(params, x) for x in record_folders))
+            for up in shares.get('user_permissions', []):
+                username = up.get('username')
+                if not username:
+                    continue
+                if not all_records and username == params.user:
+                    continue
+                permission = self.permissions_text(can_share=up.get('shareable'), can_edit=up.get('editable'))
+                row = [record_uid, record_title, shared_from_mapping[1], username, permission, folder_path]
+                if all_records:
+                    row.insert(0, owner)
                 rows.append(row)
-        rows.sort(key=lambda x: x[5], reverse=True)
-        fields = ['record_uid', 'title', 'share_to', 'shared_from', 'permissions', 'folder_path']
+            for sfp in shares.get('shared_folder_permissions', []):
+                shared_folder_uid = sfp.get('shared_folder_uid')
+                can_share = sfp.get('reshareable')
+                can_edit = sfp.get('editable')
+                permission = self.permissions_text(can_share=can_share, can_edit=can_edit)
+                if shared_folder_uid in params.shared_folder_cache:
+                    shared_folder = api.get_shared_folder(params, shared_folder_uid)
+                    folder_path = get_folder_path(params, shared_folder_uid)
+                    for sfu in shared_folder.users or []:
+                        username = sfu.get('username')
+                        if not all_records and username == params.user:
+                            continue
+                        row = [record_uid, record_title, shared_from_mapping[2], username, permission, folder_path]
+                        if all_records:
+                            row.insert(0, owner)
+                        rows.append(row)
+                    for sft in shared_folder.teams or []:
+                        team_uid = sft['team_uid']
+                        team_name = sft['name']
+                        team_permission = permission
+                        if team_uid in params.team_cache:
+                            team = api.get_team(params, team_uid)
+                            team_permission = self.permissions_text(can_share=can_share and not team.restrict_share,
+                                                                    can_edit=can_edit and not team.restrict_edit,
+                                                                    can_view=not team.restrict_view)
+                        if team_membership and team_uid in team_membership:
+                            for u in team_membership[team_uid]:
+                                row = [record_uid, record_title, shared_from_mapping[3], f'({team_name}) {u}', team_permission, folder_path]
+                                if all_records:
+                                    row.insert(0, owner)
+                                rows.append(row)
+                        else:
+                            row = [record_uid, record_title, shared_from_mapping[3], team_name, team_permission, folder_path]
+                            if all_records:
+                                row.insert(0, owner)
+                            rows.append(row)
+                else:
+                    row = [record_uid, record_title, shared_from_mapping[2], '***', permission, shared_folder_uid]
+                    if all_records:
+                        row.insert(0, owner)
+                    rows.append(row)
 
+        sort_by = (1,3) if all_records else (0,2)
         if export_format == 'table':
             fields = [base.field_to_title(x) for x in fields]
-        return base.dump_report_data(rows, fields, fmt=export_format, filename=export_name, row_number=True)
+        return base.dump_report_data(rows, fields, fmt=export_format, filename=export_name, row_number=True, sort_by=sort_by)
 
 
 class ClipboardCommand(Command, RecordMixin):

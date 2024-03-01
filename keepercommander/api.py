@@ -384,9 +384,6 @@ def get_team(params,team_uid):
         return
 
     cached_team = params.team_cache[team_uid]
-
-    logging.debug('Cached Team: %s', cached_team)
-
     team = Team(team_uid)
     team.load(cached_team)
 

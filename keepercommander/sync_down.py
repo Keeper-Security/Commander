@@ -31,6 +31,10 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
     if not token:
         logging.info('Syncing...')
 
+    for record in params.record_cache.values():
+        if 'shares' in record:
+            del record['shares']
+
     def delete_record_key(rec_uid):
         if rec_uid in params.record_cache:
             record = params.record_cache[rec_uid]
@@ -528,8 +532,6 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                 if record_uid in params.record_cache:
                     record = params.record_cache[record_uid]
                     record['shared'] = sharing_change.shared
-                    if 'shares' in record:
-                        del record['shares']
 
         if len(response.shareInvitations) > 0:
             params.pending_share_requests.update((x.username for x in response.shareInvitations))
