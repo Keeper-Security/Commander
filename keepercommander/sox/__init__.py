@@ -3,7 +3,7 @@ import logging
 import os
 import sqlite3
 import sys
-from typing import Dict
+from typing import Dict, Tuple
 
 from .. import api, crypto, utils
 from ..error import CommandError, Error
@@ -272,23 +272,33 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
             sdata.storage.get_sf_record_links().put_links(links)
 
         def save_record_permissions(sf_records, user_records):
-            def to_rec_perm_links(user_uid, record_permissions):
-                rp_links = []
-                for rp in record_permissions:
-                    ruid = utils.base64_url_encode(rp.recordUid)
-                    link = StorageRecordPermissions(ruid, user_uid, rp.permissionBits)
-                    rp_links.append(link)
-                return rp_links
+            def update_permissions_lookup(perm_lookup, record_uid, enterprise_user_id, perm_bits):
+                lookup_key = record_uid, enterprise_user_id
+                p_bits = perm_lookup.get(lookup_key, perm_bits)
+                perm_lookup.update({lookup_key: perm_bits | p_bits})
 
-            links = []
+            # Aggregate record-permissions for each user-record pair
+            rec_perms_lookup = dict()   # type: Dict[Tuple[str, int], int]
+            # Save share-admin permissions
             for folder in sf_records:
                 rec_perms = folder.recordPermissions
                 for sar in folder.shareAdminRecords:
                     rec_perm_idxs = sar.recordPermissionIndexes
                     sar_perms = [rp for idx, rp in enumerate(rec_perms) if idx in rec_perm_idxs]
-                    links.extend(to_rec_perm_links(sar.enterpriseUserId, sar_perms))
+                    rec_uids = [utils.base64_url_encode(rp.recordUid) for rp in sar_perms]
+                    for ruid in rec_uids:
+                        update_permissions_lookup(rec_perms_lookup, ruid, sar.enterpriseUserId, 16)
+
             for ur in user_records:
-                links.extend(to_rec_perm_links(ur.enterpriseUserId, ur.recordPermissions))
+                for rp in ur.recordPermissions:
+                    ruid = utils.base64_url_encode(rp.recordUid)
+                    update_permissions_lookup(rec_perms_lookup, ruid, ur.enterpriseUserId, rp.permissionBits)
+
+            links = []
+            for k, v in rec_perms_lookup.items():
+                rec_uid, user_id = k
+                link = StorageRecordPermissions(rec_uid, user_id, v)
+                links.append(link)
             sdata.storage.get_record_permissions().put_links(links)
 
         def save_shared_folder_users(sf_users):

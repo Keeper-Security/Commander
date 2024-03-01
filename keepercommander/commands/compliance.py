@@ -3,6 +3,7 @@ import datetime
 import json
 import logging
 import operator
+from functools import partial
 from typing import Optional, Dict, Tuple, List, Any, Iterable
 
 from keepercommander.commands.base import GroupCommand, dump_report_data, field_to_title
@@ -605,12 +606,28 @@ class ComplianceSummaryReportCommand(BaseComplianceReportCommand):
             num_total = len(vault_recs)
             return u.email, num_total, num_owned, num_active, num_deleted
 
-        report_data = [get_row(u) for u in sox_data.get_users().values()]
+        filter_by_node = node != root_node
+        from keepercommander.commands.enterprise import EnterpriseInfoCommand
+        cmd = EnterpriseInfoCommand()
+        cmd_kwargs = {
+            'users': True,
+            'quiet': True,
+            'format': 'json',
+            'node': str(node) if filter_by_node else None,
+            'pattern': 'active'
+        }
+        cmd_rs = partial(cmd.execute, params, **cmd_kwargs)()
+        managed_users = json.loads(cmd_rs)
+        managed_user_ids = {mu.get('user_id') for mu in managed_users}
+        empty_vault_user_ids = {user_id for user_id in managed_user_ids if user_id not in sox_data.get_users()}
+        empty_vault_users = [mu for mu in managed_users if mu.get('user_id') in empty_vault_user_ids]
+        sox_users = sox_data.get_users().values()
+        report_data = [get_row(u) for u in sox_users if not filter_by_node or u.user_uid in managed_user_ids]
+        report_data.extend([(u.get('email'), 0, 0, 0, 0) for u in empty_vault_users])
         total_active = sum([num_active for _, _, _, num_active, _ in report_data])
         total_deleted = sum([num_deleted for _, _, _, _, num_deleted in report_data])
         total_owned = sum([owned for _, _, owned, _, _ in report_data])
-        total_items = sum([in_vault for _, in_vault, _, _, _ in report_data])
-        report_data.append(('TOTAL', total_items, total_owned, total_active, total_deleted))
+        report_data.append(('TOTAL', None, total_owned, total_active, total_deleted))
         return report_data
 
 

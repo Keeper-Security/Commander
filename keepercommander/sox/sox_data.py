@@ -100,7 +100,20 @@ class SoxData:
 
     def get_vault_records(self, user_ref):
         user_id = user_ref if isinstance(user_ref, int) or user_ref.isdigit() else next((k for k, v in self._users.items() if v.email == user_ref), 0)
-        return [r for r in self._records.values() if user_id in r.user_permissions.keys()]
+        owned_sa_ruids = {ruid: rec for ruid, rec in self._records.items() if user_id in rec.user_permissions.keys()}
+
+        # Get SF-shared records
+        # Shared to team
+        user_teams = {t for tuid, t in self._teams.items() if user_id in t.users}
+        team_sf_uids = {sfuid for sfuid, sf in self._shared_folders.items() if sf.teams.intersection(user_teams)}
+        # Shared to user
+        user_sf_uids = {sfuid for sfuid, sf in self._shared_folders.items() if user_id in sf.users}
+        sf_uids = team_sf_uids.union(user_sf_uids)
+        user_sfs = [sf for uid, sf in self._shared_folders.items() if uid in sf_uids]
+        user_sf_rec_uids = {rp.record_uid for sf in user_sfs for rp in sf.record_permissions}
+
+        vault_record_uids = user_sf_rec_uids.union(owned_sa_ruids)
+        return self.get_records(vault_record_uids)
 
     def clear_records(self, uids=None):
         clear_lookup(self._records, uids)
