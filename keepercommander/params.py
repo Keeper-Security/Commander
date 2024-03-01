@@ -10,7 +10,7 @@
 import threading
 import warnings
 from datetime import datetime
-from typing import Dict, NamedTuple, Optional
+from typing import Dict, NamedTuple, Optional, List, Set
 from urllib.parse import urlparse, urlunparse
 
 from urllib3.exceptions import InsecureRequestWarning
@@ -125,7 +125,7 @@ class KeeperParams:
         self.available_team_cache = None
         self.user_cache = {}
         self.subfolder_cache = {}
-        self.subfolder_record_cache = {}
+        self.subfolder_record_cache = {}   # type: Dict[str, Set[str]]
         self.root_folder = None
         self.current_folder = None
         self.folder_cache = {}
