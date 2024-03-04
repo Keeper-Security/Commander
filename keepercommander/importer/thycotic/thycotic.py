@@ -43,7 +43,7 @@ class ThycoticMixin:
                 logging.warning('Thycotic Host or URL is required')
                 return
 
-        if not url.startswith('https://'):
+        if not url.startswith('http'):
             url = f'https://{url}'
         username = input('...' + 'Thycotic Username'.rjust(30) + ': ')
         if not username:
@@ -179,6 +179,13 @@ class ThycoticMixin:
                             are_same = False
                             break
                         if user_permission != parent_user_permissions[user_id]:
+                            are_same = False
+                            break
+                    for group_id, group_permission in group_permissions.items():
+                        if group_id not in parent_group_permissions:
+                            are_same = False
+                            break
+                        if group_permission != parent_group_permissions[group_id]:
                             are_same = False
                             break
                     if are_same:
