@@ -62,26 +62,22 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
         if len(nodes) > 1:
             logging.warning('More than one nodes \"%s\" are found', node_name)
             return
+        node_id = nodes[0]['node_id']
 
         email = kwargs.get('email')
         if not email:
             logging.warning('Email parameter is required..')
-
-        node_id = nodes[0]['node_id']
-        emails = kwargs.get('email', [])
         email_pattern = re.compile(EMAIL_PATTERN)
-
-        rq = enterprise_pb2.EnterpriseUsersProvisionRequest()
-        rq.clientVersion = rest_api.CLIENT_VERSION
-        tree_key = params.enterprise['unencrypted_tree_key']
-        name = kwargs.get('name') or ''
-
         match = email_pattern.match(email)
         if not match:
             logging.warning('"%s" appears not a valid email address. Skipping.', email)
             return
 
-        displayname = name if len(emails) == 1 else ''
+        tree_key = params.enterprise['unencrypted_tree_key']
+        displayname = kwargs.get('name') or ''
+
+        rq = enterprise_pb2.EnterpriseUsersProvisionRequest()
+        rq.clientVersion = rest_api.CLIENT_VERSION
         data = {'displayname': displayname or email}
         user_data = json.dumps(data).encode('utf-8')
         user_password = generator.generate(20)
@@ -135,7 +131,6 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
 
         login_facade = vault_extensions.LoginFacade()
         ots_command = OneTimeShareCreateCommand()
-        records = []
 
         folder_uid = None
         folder_name = kwargs.get('folder')
@@ -152,7 +147,6 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
         login_facade.notes = 'The user is required to change their Master Password upon login.'
         record_management.add_record_to_folder(params, record, folder_uid=folder_uid)
         api.sync_down(params)
-        records.append(record)
         ots_url = ots_command.execute(params, record=record.record_uid, share_name=f'{email}: Master Password', expire='7d')
         if ots_url:
             record.custom.append(vault.TypedField.new_field('url', ots_url, 'One-Time Share'))
@@ -163,8 +157,8 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
             print(f'The account {login_facade.login} has been created. Login details below:')
             print(f'{"Vault Login URL:":>24s} {login_facade.url}')
             print(f'{"Email:":>24s} {login_facade.login}')
-            if name:
-                print(f'{"Name:":>24s} {name}')
+            if displayname:
+                print(f'{"Name:":>24s} {displayname}')
             if len(nodes) > 0:
                 node_name = (nodes[0].get('data') or {}).get('displayname') or ''
                 if node_name:
@@ -175,6 +169,7 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
             print(f'{"Note:":>24s} {login_facade.notes}')
         else:
             logging.info('User \"%s\" credentials are stored to record \"%s\"', login_facade.login, login_facade.title)
+            return record.record_uid
 
     @staticmethod
     def resolve_folder(params, folder_name):    # type: (KeeperParams, str) -> Optional[str]
