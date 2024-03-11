@@ -1941,7 +1941,7 @@ private_key_str = private_key.private_bytes(
         kill_server_event = asyncio.Event()
         pc = WebRTCConnection(endpoint_name=convo_id,  params=params, record_uid=record_uid, gateway_uid=gateway_uid,
                               symmetric_key=symmetric_key, print_ready_event=print_ready_event,
-                              kill_server_event=kill_server_event, logger=logger)
+                              kill_server_event=kill_server_event, logger=logger, server=params.server)
 
         try:
             await pc.signal_channel('start')
