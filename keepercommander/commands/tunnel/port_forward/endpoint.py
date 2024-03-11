@@ -160,7 +160,7 @@ class WebRTCConnection:
     def __init__(self, endpoint_name: str, params: KeeperParams, record_uid, gateway_uid, symmetric_key,
                  print_ready_event: asyncio.Event, kill_server_event: asyncio.Event,
                  logger: Optional[logging.Logger] = None, server='keepersecurity.com'):
-        self.relay_url = None
+
         self._pc = None
         self.web_rtc_queue = asyncio.Queue()
         self.closed = False
@@ -173,7 +173,12 @@ class WebRTCConnection:
         self.gateway_uid = gateway_uid
         self.symmetric_key = symmetric_key
         self.kill_server_event = kill_server_event
-        self.server = server
+        # Using Keeper's STUN and TURN servers
+        self.relay_url = 'krelay.' + server
+        krelay_url = os.getenv(KRELAY_URL)
+        if krelay_url:
+            self.relay_url = krelay_url
+        self.logger.debug(f'Using relay server: {self.relay_url}')
         try:
             self.peer_ice_config()
             self.setup_data_channel()
@@ -272,12 +277,6 @@ class WebRTCConnection:
 
     def peer_ice_config(self):
         response = router_get_relay_access_creds(params=self.params, expire_sec=60000000)
-        # Using Keeper's STUN and TURN servers
-        self.relay_url = 'krelay.' + self.server
-        krelay_url = os.getenv(KRELAY_URL)
-        if krelay_url:
-            self.relay_url = krelay_url
-        self.logger.debug(f'Using relay server: {self.relay_url}')
         stun_url = f"stun:{self.relay_url}:3478"
         # Create an RTCIceServer instance for the STUN server
         stun_server = RTCIceServer(urls=stun_url)
