@@ -39,6 +39,7 @@ CONTROL_MESSAGE_NO_LENGTH = 2
 CONNECTION_NO_LENGTH = DATA_LENGTH = 4
 TERMINATOR = b';'
 PROTOCOL_LENGTH = CONNECTION_NO_LENGTH + DATA_LENGTH + CONTROL_MESSAGE_NO_LENGTH + len(TERMINATOR)
+KRELAY_URL = 'KRELAY_URL'
 
 # WebRTC constants
 # 16 MiB max https://viblast.com/blog/2015/2/25/webrtc-bufferedamount/, so we will use 14.4 MiB or 90% of the max,
@@ -158,7 +159,8 @@ def tunnel_decrypt(symmetric_key: AESGCM, encrypted_data: str):
 class WebRTCConnection:
     def __init__(self, endpoint_name: str, params: KeeperParams, record_uid, gateway_uid, symmetric_key,
                  print_ready_event: asyncio.Event, kill_server_event: asyncio.Event,
-                 logger: Optional[logging.Logger] = None):
+                 logger: Optional[logging.Logger] = None, server='keepersecurity.com'):
+        self.relay_url = None
         self._pc = None
         self.web_rtc_queue = asyncio.Queue()
         self.closed = False
@@ -171,6 +173,7 @@ class WebRTCConnection:
         self.gateway_uid = gateway_uid
         self.symmetric_key = symmetric_key
         self.kill_server_event = kill_server_event
+        self.server = server
         try:
             self.peer_ice_config()
             self.setup_data_channel()
@@ -186,9 +189,14 @@ class WebRTCConnection:
                 offer = await self.make_offer()
             else:
                 raise Exception(f'Invalid kind: {kind}')
-        except socket.gaierror:
-            print(
-                f"{bcolors.WARNING}Please upgrade Commander to the latest version to use this feature...{bcolors.ENDC}")
+        except socket.gaierror as e:
+            if 'nodename nor servname provided, or not known' in str(e):
+                print(
+                    f"{bcolors.WARNING}Error connecting to relay server {self.relay_url}: {e}")
+            else:
+                print(
+                    f"{bcolors.WARNING}Please upgrade Commander to the latest version to use this feature...{e}"
+                    f"{bcolors.ENDC}")
             return
         except Exception as e:
             raise Exception(f'Error making WebRTC offer: {e}')
@@ -263,27 +271,22 @@ class WebRTCConnection:
         self.logger.debug("starting private tunnel")
 
     def peer_ice_config(self):
-        response = router_get_relay_access_creds(params=self.params)
-        # Define the STUN server URL
+        response = router_get_relay_access_creds(params=self.params, expire_sec=60000000)
         # Using Keeper's STUN and TURN servers
-        # relay_url = 'relay.' + params.server  + '3478'  # relay.dev.keepersecurity.com:3478
-        # relay_url = get_router_url(self.params).replace('https://connect', 'relay')
-        relay_url = 'relay.keeperpamlab.com'
-        stun_url = f"stun:{relay_url}:3478"
+        self.relay_url = 'krelay.' + self.server
+        krelay_url = os.getenv(KRELAY_URL)
+        if krelay_url:
+            self.relay_url = krelay_url
+        self.logger.debug(f'Using relay server: {self.relay_url}')
+        stun_url = f"stun:{self.relay_url}:3478"
         # Create an RTCIceServer instance for the STUN server
         stun_server = RTCIceServer(urls=stun_url)
         # Define the TURN server URL and credentials
-        turn_url = f"turn:{relay_url}"
+        turn_url = f"turn:{self.relay_url}"
         # Create an RTCIceServer instance for the TURN server with credentials
         turn_server = RTCIceServer(urls=turn_url, username=response.username, credential=response.password)
         # Create a new RTCConfiguration with both STUN and TURN servers
         config = RTCConfiguration(iceServers=[stun_server, turn_server])
-
-        # # To use Google's STUN server
-        # stun_url = "stun:stun.l.google.com:19302"
-        # # Create an RTCIceServer instance for the TURN server
-        # stun_server = RTCIceServer(urls=stun_url)
-        # config = RTCConfiguration(iceServers=[stun_server])
 
         self._pc = RTCPeerConnection(config)
 
