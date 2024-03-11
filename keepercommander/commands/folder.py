@@ -1426,7 +1426,7 @@ class FolderTransformCommand(Command):
         def get_copy_name(folder, dest):
             def get_path_tokens(folder_node:BaseFolderNode):
                 result = []
-                while folder_node:
+                while folder_node and folder_node is not params.root_folder:
                     result = [folder_node.name, *result]
                     folder_node = params.folder_cache.get(folder_node.parent_uid) or params.root_folder \
                         if folder_node is not params.root_folder \
