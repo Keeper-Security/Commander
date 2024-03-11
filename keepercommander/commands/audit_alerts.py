@@ -105,12 +105,15 @@ alert_edit_parser = argparse.ArgumentParser(prog='audit-alert edit', parents=[al
 
 class AuditSettingMixin:
     LAST_USERNAME = ""
+    LAST_ENTERPRISE_ID = 0
     SETTINGS = None   # type: Optional[dict]
     EVENT_TYPES = None  # type: Optional[List[Tuple[int, str]]]
 
     @staticmethod
     def load_settings(params, reload=False):  # type: (KeeperParams, Optional[bool]) -> Optional[dict]
         if params.enterprise is None:
+            AuditSettingMixin.SETTINGS = None
+            AuditSettingMixin.LAST_ENTERPRISE_ID = 0
             return
         if AuditSettingMixin.EVENT_TYPES is None:
             rq = {
@@ -125,9 +128,15 @@ class AuditSettingMixin:
                 if event_name and isinstance(event_id, int):
                     AuditSettingMixin.EVENT_TYPES.append((event_id, event_name))
 
+        enterprise_id = 0
+        if isinstance(params.license, dict):
+            enterprise_id = params.license.get('enterprise_id')
+
         if AuditSettingMixin.SETTINGS is None:
             reload = True
         elif AuditSettingMixin.LAST_USERNAME != params.user:
+            reload = True
+        elif enterprise_id == 0 or AuditSettingMixin.LAST_ENTERPRISE_ID != enterprise_id:
             reload = True
 
         if reload:
@@ -137,6 +146,7 @@ class AuditSettingMixin:
             }
             AuditSettingMixin.SETTINGS = api.communicate(params, rq)
             AuditSettingMixin.LAST_USERNAME = params.user
+            AuditSettingMixin.LAST_ENTERPRISE_ID = enterprise_id
         return AuditSettingMixin.SETTINGS
 
     @staticmethod
