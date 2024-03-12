@@ -426,7 +426,7 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
             access_records = dict()
             user_access_data = {user: access_records}
             rec_uids = access_events.keys() if report_type == report_type_default \
-                else {r.record_uid for r in vault_records}
+                else {r for r in vault_records}
 
             for uid in rec_uids:
                 access_event = access_events.get(uid, {})
@@ -579,7 +579,7 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
 
         for name in usernames:
             vault_records = sox_data.get_vault_records(name)
-            filter_by_recs = None if report_type == report_type_default else {r.record_uid for r in vault_records}
+            filter_by_recs = None if report_type == report_type_default else {r for r in vault_records}
             user_access_events = get_records_accessed(name, filter_by_recs)
             user_access_lookup.update(compile_user_report(name, user_access_events))
 
