@@ -104,7 +104,7 @@ class SoxData:
 
         # Get SF-shared records
         # Shared to team
-        user_teams = {t for tuid, t in self._teams.items() if user_id in t.users}
+        user_teams = {tuid for tuid, t in self._teams.items() if user_id in t.users}
         team_sf_uids = {sfuid for sfuid, sf in self._shared_folders.items() if sf.teams.intersection(user_teams)}
         # Shared to user
         user_sf_uids = {sfuid for sfuid, sf in self._shared_folders.items() if user_id in sf.users}
