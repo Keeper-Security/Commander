@@ -164,10 +164,10 @@ def parse_SHAR(chunk, encryption_key, rsa_key):   # type: (Any, bytes, bytes) ->
 def parse_ATTA(chunk, accounts):
     attachment = None
     io = BytesIO(chunk.payload)
-    id = read_item(io).decode('utf-8')
-    parent_id = read_item(io).decode('utf-8')
-    mimetype = read_item(io).decode('utf-8')
-    storagekey = read_item(io).decode('utf-8')
+    id = read_item(io).decode('utf-8', 'ignore')
+    parent_id = read_item(io).decode('utf-8', 'ignore')
+    mimetype = read_item(io).decode('utf-8', 'ignore')
+    storagekey = read_item(io).decode('utf-8', 'ignore')
     size = read_item(io)
     try:
         lastpass_size = int(size)
@@ -188,14 +188,14 @@ def parse_ATTA(chunk, accounts):
 
 def parse_ACFL(chunk, encryption_key):
     io = BytesIO(chunk.payload)
-    field_name = read_item(io).decode('utf-8')
-    field_type = read_item(io).decode('utf-8')
+    field_name = read_item(io).decode('utf-8', 'ignore')
+    field_type = read_item(io).decode('utf-8', 'ignore')
     if field_type in {'email', 'tel', 'text', 'password', 'textarea'}:
         field_value = decode_aes256_plain_auto(read_item(io), encryption_key)
     else:
         field_value = read_item(io)
-    field_value = field_value.decode('utf-8')
-    checked = read_item(io).decode('utf-8')
+    field_value = field_value.decode('utf-8', 'ignore')
+    checked = read_item(io).decode('utf-8', 'ignore')
     return CustomField(field_name, field_type, field_value, checked == '1')
 
 
