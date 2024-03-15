@@ -19,7 +19,7 @@ import os
 import re
 import shutil
 from collections import OrderedDict
-from typing import Tuple, List, Optional, Dict, Set, Any
+from typing import Tuple, List, Optional, Dict, Set, Any, Iterable
 
 from asciitree import LeftAligned, BoxStyle, drawing
 from colorama import Style
@@ -231,7 +231,7 @@ class FolderListCommand(Command, RecordMixin):
                     folders.append(f)
 
         if show_records and params.record_cache:
-            if folder_uid in params.subfolder_record_cache:
+            if folder_uid in params.subfolder_record_cache or recursive_search:
                 record_uids_by_folder = get_contained_record_uids(params, folder_uid, not recursive_search)
                 record_uids = {rec_uid for recs in record_uids_by_folder.values() for rec_uid in recs}
                 for uid in record_uids:
@@ -1265,13 +1265,23 @@ class FolderTransformCommand(Command):
                 else:
                     raise CommandError('transform-folder', f'Folder {path} not found')
 
-        def validate(root_folders):   # type: (List[BaseFolderNode]) -> None
+        def validate(root_folders):   # type: (Iterable[BaseFolderNode]) -> None
             SF_UID_KEY = 'shared_folder_uid'
             shared_folders = []
             contained_recs = []
             for folder in root_folders:
                 shared_folders.extend(get_shared_folders(folder))
                 contained_recs.extend(get_contained_records(folder))
+
+            # Check for overlapping trees
+            root_uids = set()
+            contained_folder_uids = set()
+            for rf in root_folders:
+                root_uids.add(rf.uid)
+                contained_folder_uids.update(get_contained_folder_uids(params, rf.uid, children_only=False))
+            if contained_folder_uids.intersection(root_uids):
+                error_msg = 'Transformation of overlapping folder trees in the same command is not allowed.'
+                raise CommandError('transform-folder', error_msg)
 
             # Check relevant shared folders in each tree: descendants, root, and/or ancestor shared-folders
             def has_full_sf_privs(sf):   # type: (Dict[str, Any]) -> bool
@@ -1318,7 +1328,7 @@ class FolderTransformCommand(Command):
                 msg += '\n'.join(sfs)
                 raise CommandError('transform-folder', msg)
 
-        def get_shared_folders(folder):     # type: (BaseFolderNode) -> Dict[str, Dict[str, Any]]
+        def get_shared_folders(folder):     # type: (BaseFolderNode) -> List[Dict[str, Any]]
             api.sync_down(params)
             shared_folders = []
             # Folder is a shared-folder subfolder, return only the containing shared-folder
@@ -1368,6 +1378,9 @@ class FolderTransformCommand(Command):
                 return {**rq_base, 'to_uid': dst.uid, 'to_type': dst.type}
 
             for src_folder, r_uids in get_contained_records(folder):
+                # This folder has no records to move, skip to the next one
+                if not r_uids:
+                    continue
                 dst_folder = get_copy(src_folder)
                 rq = new_mv_request(dst_folder)
                 transition_keys = []
@@ -1424,12 +1437,12 @@ class FolderTransformCommand(Command):
                 raise KeeperApiError(result_code, error_msg)
 
         def get_copy_name(folder, dest):
-            def get_path_tokens(folder_node:BaseFolderNode):
+            def get_path_tokens(f):   # type: (BaseFolderNode) -> List[str]
                 result = []
-                while folder_node and folder_node is not params.root_folder:
-                    result = [folder_node.name, *result]
-                    folder_node = params.folder_cache.get(folder_node.parent_uid) or params.root_folder \
-                        if folder_node is not params.root_folder \
+                while f and f is not params.root_folder:
+                    result = [f.name, *result]
+                    f = params.folder_cache.get(f.parent_uid) or params.root_folder \
+                        if f is not params.root_folder \
                         else None
                 return result or []
 
@@ -1438,7 +1451,7 @@ class FolderTransformCommand(Command):
                 path_tokens = get_path_tokens(folder)
                 name = ' - '.join(path_tokens)
                 copy_name = name
-            else :
+            else:
                 copy_name = folder.name + '(TRANSFORMED)' if folder.parent_uid == dest.uid else folder.name
 
             while True:
@@ -1455,29 +1468,28 @@ class FolderTransformCommand(Command):
 
         copy_uid_lookup = dict()    # type: Dict[str, str]
 
-        def copy_folder(folder, new_folder_type='user_folder', rebase=False):
+        def copy_folder(original_folder, new_folder_type='user_folder', rebase=False):
             # type: (BaseFolderNode, Optional[str], Optional[bool]) -> BaseFolderNode
             folders_cache = params.folder_cache
             vault_root = params.root_folder
-            dest_uid = copy_uid_lookup.get(folder.parent_uid) or folder.parent_uid or ''
+            dest_uid = copy_uid_lookup.get(original_folder.parent_uid) or original_folder.parent_uid or ''
             dest = vault_root if rebase else folders_cache.get(dest_uid) or vault_root
             params.current_folder = dest.uid or ''
 
             # Create folder copy of appropriate type
             mkdir_cmd = FolderMakeCommand()
-            copy_name = get_copy_name(folder, dest)
+            copy_name = get_copy_name(original_folder, dest)
             cmd_kwargs = {'folder': copy_name, new_folder_type: True}
-            mkdir_cmd.execute(params, **cmd_kwargs)
+            copy_uid = mkdir_cmd.execute(params, **cmd_kwargs)
             api.sync_down(params)
-            copy_uid = get_folder_uid(copy_name)
-            copy_uid_lookup.update({folder.uid: copy_uid})
+            copy_uid_lookup.update({original_folder.uid: copy_uid})
             return params.folder_cache.get(copy_uid)
 
-        def get_copy(folder):   # type: (BaseFolderNode) -> BaseFolderNode
-            copy_uid = copy_uid_lookup.get(folder.uid)
+        def get_copy(original_folder):   # type: (BaseFolderNode) -> BaseFolderNode
+            copy_uid = copy_uid_lookup.get(original_folder.uid)
             return params.folder_cache.get(copy_uid)
 
-        def remove_trees(roots):
+        def remove_trees(roots):    # type: (Iterable[BaseFolderNode]) -> None
             if roots:
                 rmdir_cmd = FolderRemoveCommand()
                 rmdir_cmd.execute(params, pattern=[root.uid for root in roots], force=True, quiet=True)
@@ -1619,7 +1631,7 @@ class FolderTransformCommand(Command):
             for root, xformed in xform_pairs:
                 params.current_folder = root.parent_uid or ''
                 tree_cmd = FolderTreeCommand()
-                tree_cmd.execute(params, folder=root.name, records=True, shares=True, hide_shares_key=hide_key,
+                tree_cmd.execute(params, folder=root.uid, records=True, shares=True, hide_shares_key=hide_key,
                                  title='ORIGINAL:\n=========')
                 params.current_folder = xformed.parent_uid or ''
                 tree_cmd.execute(params, folder=xformed.uid, records=True, shares=True, hide_shares_key=True,
@@ -1658,32 +1670,37 @@ class FolderTransformCommand(Command):
         if not isinstance(folders, list):
             folders = [folders]
 
-        targets = []
-        for f in folders:
-            folder_uid = f if f in params.folder_cache else get_folder_uid(f)
-            target_folder = params.folder_cache.get(folder_uid)
-            if not target_folder:
-                raise CommandError('transform-folder', f'Folder {f} not found')
+        children_transform = kwargs.get('children')
+        folder_uids = {(f if f in params.folder_cache else get_folder_uid(f)) for f in folders}
+        folder_nodes = dict()
+        targets = dict()
+        for f_uid in folder_uids:
+            folder_node = params.folder_cache.get(f_uid)
+            if not folder_node:
+                raise CommandError('transform-folder', f'Folder {f_uid} not found')
             else:
-                targets.append(target_folder)
+                folder_map = {f_uid: folder_node}
+                folder_nodes.update(folder_map)
+                if not children_transform:
+                    targets.update(folder_map)
 
-        if kwargs.get('children'):
-            targets = [params.folder_cache.get(sub_f) for t in targets for sub_f in t.subfolders]
+        if children_transform:
+            targets.update({sub_f: params.folder_cache.get(sub_f) for f in folder_nodes.values() for sub_f in f.subfolders})
 
-        validate(targets)
+        validate(targets.values())
 
         transformed = []
-        for t in targets:
+        for t in targets.values():
             try:
                 transformed.append(transform_tree(t))
             except Error as e:
                 params.current_folder = current_folder
-                on_abort(targets)
+                on_abort(targets.values())
                 raise CommandError('transform-folder', f'Folder {t.name} could not be transformed.\n{e.message}')
 
-        transform_pairs = zip(targets, transformed)
+        transform_pairs = zip(targets.values(), transformed)
         if force:
-            finalize_transform(targets)
+            finalize_transform(targets.values())
         elif dry_run:
             logging.info('Executing command in "dry-run" mode...')
             preview_transform(transform_pairs)
@@ -1693,7 +1710,7 @@ class FolderTransformCommand(Command):
             inp = user_choice('Are you sure you want to proceed with this/these transformation(s)?', 'yn', default='n')
             if inp.lower() == 'y':
                 logging.info('Executing transformation(s)...')
-                finalize_transform(targets)
+                finalize_transform(targets.values())
             else:
                 logging.info('Transformation cancelled by user.')
                 remove_trees(transformed)
