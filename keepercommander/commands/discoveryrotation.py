@@ -1772,7 +1772,8 @@ class PAMTunnelEnableCommand(Command):
             if not isinstance(configuration, vault.TypedRecord):
                 print(f"{bcolors.FAIL}Configuration {config_uid} not found.{bcolors.ENDC}")
                 return
-            if configuration.record_type != 'pamNetworkConfiguration':
+            if (configuration.record_type not in
+                    'pamNetworkConfiguration pamAwsConfiguration pamAzureConfiguration'.split()):
                 print(f"{bcolors.FAIL}The record {config_uid} is not a Pam Configuration.{bcolors.ENDC}")
                 return
 
