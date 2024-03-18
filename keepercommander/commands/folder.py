@@ -1464,6 +1464,10 @@ class FolderTransformCommand(Command):
                         copy_name += '_'
                     else:
                         break
+
+            # To allow new folder creation via FolderAddCommand, make sure the name provided adheres to the naming rules
+            pattern = re.compile(r'(?<!/)/(?!/)')
+            copy_name = re.sub(pattern, r'//', copy_name)
             return copy_name
 
         copy_uid_lookup = dict()    # type: Dict[str, str]
