@@ -109,8 +109,9 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
             user_password, crypto.get_random_bytes(16), constants.PBKDF2_ITERATIONS)
         user_rq.encryptionParams = utils.create_encryption_params(
             user_password, crypto.get_random_bytes(16), constants.PBKDF2_ITERATIONS, user_data_key)
-        user_rq.rsaPublicKey = rsa_public
-        user_rq.rsaEncryptedPrivateKey = crypto.encrypt_aes_v1(rsa_private, user_data_key)
+        if not params.forbid_rsa:
+            user_rq.rsaPublicKey = rsa_public
+            user_rq.rsaEncryptedPrivateKey = crypto.encrypt_aes_v1(rsa_private, user_data_key)
         user_rq.eccPublicKey = ec_public
         user_rq.eccEncryptedPrivateKey = crypto.encrypt_aes_v2(ec_private, user_data_key)
         user_rq.encryptedDeviceToken = LoginV3API.get_device_id(params)

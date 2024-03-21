@@ -16,7 +16,7 @@ _sym_db = _symbol_database.Default()
 from . import enterprise_pb2 as enterprise__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x10\x41PIRequest.proto\x12\x0e\x41uthentication\x1a\x10\x65nterprise.proto\"\xb0\x01\n\nApiRequest\x12 \n\x18\x65ncryptedTransmissionKey\x18\x01 \x01(\x0c\x12\x13\n\x0bpublicKeyId\x18\x02 \x01(\x05\x12\x0e\n\x06locale\x18\x03 \x01(\t\x12\x18\n\x10\x65ncryptedPayload\x18\x04 \x01(\x0c\x12\x16\n\x0e\x65ncryptionType\x18\x05 \x01(\x05\x12\x11\n\trecaptcha\x18\x06 \x01(\t\x12\x16\n\x0esubEnvironment\x18\x07 \x01(\t\"j\n\x11\x41piRequestPayload\x12\x0f\n\x07payload\x18\x01 \x01(\x0c\x12\x1d\n\x15\x65ncryptedSessionToken\x18\x02 \x01(\x0c\x12\x11\n\ttimeToken\x18\x03 \x01(\x0c\x12\x12\n\napiVersion\x18\x04 \x01(\x05\"6\n\tTransform\x12\x0b\n\x03key\x18\x01 \x01(\x0c\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x02 \x01(\x0c\":\n\rDeviceRequest\x12\x15\n\rclientVersion\x18\x01 \x01(\t\x12\x12\n\ndeviceName\x18\x02 \x01(\t\"T\n\x0b\x41uthRequest\x12\x15\n\rclientVersion\x18\x01 \x01(\t\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x03 \x01(\x0c\"\x8b\x01\n\x14NewUserMinimumParams\x12\x19\n\x11minimumIterations\x18\x01 \x01(\x05\x12\x1a\n\x12passwordMatchRegex\x18\x02 \x03(\t\x12 \n\x18passwordMatchDescription\x18\x03 \x03(\t\x12\x1a\n\x12isEnterpriseDomain\x18\x04 \x01(\x08\"\x89\x01\n\x0fPreLoginRequest\x12\x30\n\x0b\x61uthRequest\x18\x01 \x01(\x0b\x32\x1b.Authentication.AuthRequest\x12,\n\tloginType\x18\x02 \x01(\x0e\x32\x19.Authentication.LoginType\x12\x16\n\x0etwoFactorToken\x18\x03 \x01(\x0c\"\x80\x02\n\x0cLoginRequest\x12\x30\n\x0b\x61uthRequest\x18\x01 \x01(\x0b\x32\x1b.Authentication.AuthRequest\x12,\n\tloginType\x18\x02 \x01(\x0e\x32\x19.Authentication.LoginType\x12\x1f\n\x17\x61uthenticationHashPrime\x18\x03 \x01(\x0c\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x04 \x01(\x0c\x12\x14\n\x0c\x61uthResponse\x18\x05 \x01(\x0c\x12\x16\n\x0emcEnterpriseId\x18\x06 \x01(\x05\x12\x12\n\npush_token\x18\x07 \x01(\t\x12\x10\n\x08platform\x18\x08 \x01(\t\"\\\n\x0e\x44\x65viceResponse\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12,\n\x06status\x18\x02 \x01(\x0e\x32\x1c.Authentication.DeviceStatus\"V\n\x04Salt\x12\x12\n\niterations\x18\x01 \x01(\x05\x12\x0c\n\x04salt\x18\x02 \x01(\x0c\x12\x11\n\talgorithm\x18\x03 \x01(\x05\x12\x0b\n\x03uid\x18\x04 \x01(\x0c\x12\x0c\n\x04name\x18\x05 \x01(\t\" \n\x10TwoFactorChannel\x12\x0c\n\x04type\x18\x01 \x01(\x05\"\xe2\x02\n\x11StartLoginRequest\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x15\n\rclientVersion\x18\x03 \x01(\t\x12\x19\n\x11messageSessionUid\x18\x04 \x01(\x0c\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x05 \x01(\x0c\x12,\n\tloginType\x18\x06 \x01(\x0e\x32\x19.Authentication.LoginType\x12\x16\n\x0emcEnterpriseId\x18\x07 \x01(\x05\x12\x30\n\x0bloginMethod\x18\x08 \x01(\x0e\x32\x1b.Authentication.LoginMethod\x12\x15\n\rforceNewLogin\x18\t \x01(\x08\x12\x11\n\tcloneCode\x18\n \x01(\x0c\x12\x18\n\x10v2TwoFactorToken\x18\x0b \x01(\t\x12\x12\n\naccountUid\x18\x0c \x01(\x0c\"\xa7\x04\n\rLoginResponse\x12.\n\nloginState\x18\x01 \x01(\x0e\x32\x1a.Authentication.LoginState\x12\x12\n\naccountUid\x18\x02 \x01(\x0c\x12\x17\n\x0fprimaryUsername\x18\x03 \x01(\t\x12\x18\n\x10\x65ncryptedDataKey\x18\x04 \x01(\x0c\x12\x42\n\x14\x65ncryptedDataKeyType\x18\x05 \x01(\x0e\x32$.Authentication.EncryptedDataKeyType\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x06 \x01(\x0c\x12\x1d\n\x15\x65ncryptedSessionToken\x18\x07 \x01(\x0c\x12:\n\x10sessionTokenType\x18\x08 \x01(\x0e\x32 .Authentication.SessionTokenType\x12\x0f\n\x07message\x18\t \x01(\t\x12\x0b\n\x03url\x18\n \x01(\t\x12\x36\n\x08\x63hannels\x18\x0b \x03(\x0b\x32$.Authentication.TwoFactorChannelInfo\x12\"\n\x04salt\x18\x0c \x03(\x0b\x32\x14.Authentication.Salt\x12\x11\n\tcloneCode\x18\r \x01(\x0c\x12\x1a\n\x12stateSpecificValue\x18\x0e \x01(\t\x12\x18\n\x10ssoClientVersion\x18\x0f \x01(\t\x12 \n\x18sessionTokenTypeModifier\x18\x10 \x01(\t\"\x8c\x01\n\x0bSsoUserInfo\x12\x13\n\x0b\x63ompanyName\x18\x01 \x01(\t\x12\x13\n\x0bsamlRequest\x18\x02 \x01(\t\x12\x17\n\x0fsamlRequestType\x18\x03 \x01(\t\x12\x15\n\rssoDomainName\x18\x04 \x01(\t\x12\x10\n\x08loginUrl\x18\x05 \x01(\t\x12\x11\n\tlogoutUrl\x18\x06 \x01(\t\"\xd6\x01\n\x10PreLoginResponse\x12\x32\n\x0c\x64\x65viceStatus\x18\x01 \x01(\x0e\x32\x1c.Authentication.DeviceStatus\x12\"\n\x04salt\x18\x02 \x03(\x0b\x32\x14.Authentication.Salt\x12\x38\n\x0eOBSOLETE_FIELD\x18\x03 \x03(\x0b\x32 .Authentication.TwoFactorChannel\x12\x30\n\x0bssoUserInfo\x18\x04 \x01(\x0b\x32\x1b.Authentication.SsoUserInfo\"&\n\x12LoginAsUserRequest\x12\x10\n\x08username\x18\x01 \x01(\t\"W\n\x13LoginAsUserResponse\x12\x1d\n\x15\x65ncryptedSessionToken\x18\x01 \x01(\x0c\x12!\n\x19\x65ncryptedSharedAccountKey\x18\x02 \x01(\x0c\"\x84\x01\n\x17ValidateAuthHashRequest\x12\x36\n\x0epasswordMethod\x18\x01 \x01(\x0e\x32\x1e.Authentication.PasswordMethod\x12\x14\n\x0c\x61uthResponse\x18\x02 \x01(\x0c\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x03 \x01(\x0c\"\xc4\x02\n\x14TwoFactorChannelInfo\x12\x39\n\x0b\x63hannelType\x18\x01 \x01(\x0e\x32$.Authentication.TwoFactorChannelType\x12\x13\n\x0b\x63hannel_uid\x18\x02 \x01(\x0c\x12\x13\n\x0b\x63hannelName\x18\x03 \x01(\t\x12\x11\n\tchallenge\x18\x04 \x01(\t\x12\x14\n\x0c\x63\x61pabilities\x18\x05 \x03(\t\x12\x13\n\x0bphoneNumber\x18\x06 \x01(\t\x12:\n\rmaxExpiration\x18\x07 \x01(\x0e\x32#.Authentication.TwoFactorExpiration\x12\x11\n\tcreatedOn\x18\x08 \x01(\x03\x12:\n\rlastFrequency\x18\t \x01(\x0e\x32#.Authentication.TwoFactorExpiration\"d\n\x12TwoFactorDuoStatus\x12\x14\n\x0c\x63\x61pabilities\x18\x01 \x03(\t\x12\x13\n\x0bphoneNumber\x18\x02 \x01(\t\x12\x12\n\nenroll_url\x18\x03 \x01(\t\x12\x0f\n\x07message\x18\x04 \x01(\t\"\xc7\x01\n\x13TwoFactorAddRequest\x12\x39\n\x0b\x63hannelType\x18\x01 \x01(\x0e\x32$.Authentication.TwoFactorChannelType\x12\x13\n\x0b\x63hannel_uid\x18\x02 \x01(\x0c\x12\x13\n\x0b\x63hannelName\x18\x03 \x01(\t\x12\x13\n\x0bphoneNumber\x18\x04 \x01(\t\x12\x36\n\x0b\x64uoPushType\x18\x05 \x01(\x0e\x32!.Authentication.TwoFactorPushType\"B\n\x16TwoFactorRenameRequest\x12\x13\n\x0b\x63hannel_uid\x18\x01 \x01(\x0c\x12\x13\n\x0b\x63hannelName\x18\x02 \x01(\t\"=\n\x14TwoFactorAddResponse\x12\x11\n\tchallenge\x18\x01 \x01(\t\x12\x12\n\nbackupKeys\x18\x02 \x03(\t\"-\n\x16TwoFactorDeleteRequest\x12\x13\n\x0b\x63hannel_uid\x18\x01 \x01(\x0c\"a\n\x15TwoFactorListResponse\x12\x36\n\x08\x63hannels\x18\x01 \x03(\x0b\x32$.Authentication.TwoFactorChannelInfo\x12\x10\n\x08\x65xpireOn\x18\x02 \x01(\x03\"Y\n TwoFactorUpdateExpirationRequest\x12\x35\n\x08\x65xpireIn\x18\x01 \x01(\x0e\x32#.Authentication.TwoFactorExpiration\"\xc9\x01\n\x18TwoFactorValidateRequest\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x01 \x01(\x0c\x12\x35\n\tvalueType\x18\x02 \x01(\x0e\x32\".Authentication.TwoFactorValueType\x12\r\n\x05value\x18\x03 \x01(\t\x12\x13\n\x0b\x63hannel_uid\x18\x04 \x01(\x0c\x12\x35\n\x08\x65xpireIn\x18\x05 \x01(\x0e\x32#.Authentication.TwoFactorExpiration\"8\n\x19TwoFactorValidateResponse\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x01 \x01(\x0c\"\xb8\x01\n\x18TwoFactorSendPushRequest\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x01 \x01(\x0c\x12\x33\n\x08pushType\x18\x02 \x01(\x0e\x32!.Authentication.TwoFactorPushType\x12\x13\n\x0b\x63hannel_uid\x18\x03 \x01(\x0c\x12\x35\n\x08\x65xpireIn\x18\x04 \x01(\x0e\x32#.Authentication.TwoFactorExpiration\"\x83\x01\n\x07License\x12\x0f\n\x07\x63reated\x18\x01 \x01(\x03\x12\x12\n\nexpiration\x18\x02 \x01(\x03\x12\x34\n\rlicenseStatus\x18\x03 \x01(\x0e\x32\x1d.Authentication.LicenseStatus\x12\x0c\n\x04paid\x18\x04 \x01(\x08\x12\x0f\n\x07message\x18\x05 \x01(\t\"G\n\x0fOwnerlessRecord\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x11\n\trecordKey\x18\x02 \x01(\x0c\x12\x0e\n\x06status\x18\x03 \x01(\x05\"L\n\x10OwnerlessRecords\x12\x38\n\x0fownerlessRecord\x18\x01 \x03(\x0b\x32\x1f.Authentication.OwnerlessRecord\"\xd7\x01\n\x0fUserAuthRequest\x12\x0b\n\x03uid\x18\x01 \x01(\x0c\x12\x0c\n\x04salt\x18\x02 \x01(\x0c\x12\x12\n\niterations\x18\x03 \x01(\x05\x12\x1a\n\x12\x65ncryptedClientKey\x18\x04 \x01(\x0c\x12\x10\n\x08\x61uthHash\x18\x05 \x01(\x0c\x12\x18\n\x10\x65ncryptedDataKey\x18\x06 \x01(\x0c\x12,\n\tloginType\x18\x07 \x01(\x0e\x32\x19.Authentication.LoginType\x12\x0c\n\x04name\x18\x08 \x01(\t\x12\x11\n\talgorithm\x18\t \x01(\x05\"\x19\n\nUidRequest\x12\x0b\n\x03uid\x18\x01 \x03(\x0c\"\xab\x01\n\x13\x44\x65viceUpdateRequest\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12\x15\n\rclientVersion\x18\x02 \x01(\t\x12\x12\n\ndeviceName\x18\x03 \x01(\t\x12\x17\n\x0f\x64\x65vicePublicKey\x18\x04 \x01(\x0c\x12\x32\n\x0c\x64\x65viceStatus\x18\x05 \x01(\x0e\x32\x1c.Authentication.DeviceStatus\"\x81\x01\n\x1dRegisterDeviceInRegionRequest\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12\x15\n\rclientVersion\x18\x02 \x01(\t\x12\x12\n\ndeviceName\x18\x03 \x01(\t\x12\x17\n\x0f\x64\x65vicePublicKey\x18\x04 \x01(\x0c\"\xf8\x02\n\x13RegistrationRequest\x12\x30\n\x0b\x61uthRequest\x18\x01 \x01(\x0b\x32\x1b.Authentication.AuthRequest\x12\x38\n\x0fuserAuthRequest\x18\x02 \x01(\x0b\x32\x1f.Authentication.UserAuthRequest\x12\x1a\n\x12\x65ncryptedClientKey\x18\x03 \x01(\x0c\x12\x1b\n\x13\x65ncryptedPrivateKey\x18\x04 \x01(\x0c\x12\x11\n\tpublicKey\x18\x05 \x01(\x0c\x12\x18\n\x10verificationCode\x18\x06 \x01(\t\x12\x1e\n\x16\x64\x65precatedAuthHashHash\x18\x07 \x01(\x0c\x12$\n\x1c\x64\x65precatedEncryptedClientKey\x18\x08 \x01(\x0c\x12%\n\x1d\x64\x65precatedEncryptedPrivateKey\x18\t \x01(\x0c\x12\"\n\x1a\x64\x65precatedEncryptionParams\x18\n \x01(\x0c\"\xd0\x01\n\x16\x43onvertUserToV3Request\x12\x30\n\x0b\x61uthRequest\x18\x01 \x01(\x0b\x32\x1b.Authentication.AuthRequest\x12\x38\n\x0fuserAuthRequest\x18\x02 \x01(\x0b\x32\x1f.Authentication.UserAuthRequest\x12\x1a\n\x12\x65ncryptedClientKey\x18\x03 \x01(\x0c\x12\x1b\n\x13\x65ncryptedPrivateKey\x18\x04 \x01(\x0c\x12\x11\n\tpublicKey\x18\x05 \x01(\x0c\"$\n\x10RevisionResponse\x12\x10\n\x08revision\x18\x01 \x01(\x03\"&\n\x12\x43hangeEmailRequest\x12\x10\n\x08newEmail\x18\x01 \x01(\t\"8\n\x13\x43hangeEmailResponse\x12!\n\x19\x65ncryptedChangeEmailToken\x18\x01 \x01(\x0c\"6\n\x1d\x45mailVerificationLinkResponse\x12\x15\n\remailVerified\x18\x01 \x01(\x08\")\n\x0cSecurityData\x12\x0b\n\x03uid\x18\x01 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"\x91\x01\n\x13SecurityDataRequest\x12\x38\n\x12recordSecurityData\x18\x01 \x03(\x0b\x32\x1c.Authentication.SecurityData\x12@\n\x1amasterPasswordSecurityData\x18\x02 \x03(\x0b\x32\x1c.Authentication.SecurityData\"\xb5\x01\n\x1dSecurityReportIncrementalData\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x1b\n\x13\x63urrentSecurityData\x18\x02 \x01(\x0c\x12#\n\x1b\x63urrentSecurityDataRevision\x18\x03 \x01(\x03\x12\x17\n\x0foldSecurityData\x18\x04 \x01(\x0c\x12\x1f\n\x17oldSecurityDataRevision\x18\x05 \x01(\x03\"\x85\x02\n\x0eSecurityReport\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x1b\n\x13\x65ncryptedReportData\x18\x02 \x01(\x0c\x12\x10\n\x08revision\x18\x03 \x01(\x03\x12\x11\n\ttwoFactor\x18\x04 \x01(\t\x12\x11\n\tlastLogin\x18\x05 \x01(\x03\x12\x1e\n\x16numberOfReusedPassword\x18\x06 \x01(\x05\x12T\n\x1dsecurityReportIncrementalData\x18\x07 \x03(\x0b\x32-.Authentication.SecurityReportIncrementalData\x12\x0e\n\x06userId\x18\x08 \x01(\x05\"S\n\x19SecurityReportSaveRequest\x12\x36\n\x0esecurityReport\x18\x01 \x03(\x0b\x32\x1e.Authentication.SecurityReport\")\n\x15SecurityReportRequest\x12\x10\n\x08\x66romPage\x18\x01 \x01(\x03\"\xb8\x01\n\x16SecurityReportResponse\x12\x1c\n\x14\x65nterprisePrivateKey\x18\x01 \x01(\x0c\x12\x36\n\x0esecurityReport\x18\x02 \x03(\x0b\x32\x1e.Authentication.SecurityReport\x12\x14\n\x0c\x61sOfRevision\x18\x03 \x01(\x03\x12\x10\n\x08\x66romPage\x18\x04 \x01(\x03\x12\x0e\n\x06toPage\x18\x05 \x01(\x03\x12\x10\n\x08\x63omplete\x18\x06 \x01(\x08\"\'\n\x16ReusedPasswordsRequest\x12\r\n\x05\x63ount\x18\x01 \x01(\x05\">\n\x14SummaryConsoleReport\x12\x12\n\nreportType\x18\x01 \x01(\x05\x12\x12\n\nreportData\x18\x02 \x01(\x0c\"|\n\x12\x43hangeToKeyTypeOne\x12/\n\nobjectType\x18\x01 \x01(\x0e\x32\x1b.Authentication.ObjectTypes\x12\x12\n\nprimaryUid\x18\x02 \x01(\x0c\x12\x14\n\x0csecondaryUid\x18\x03 \x01(\x0c\x12\x0b\n\x03key\x18\x04 \x01(\x0c\"[\n\x19\x43hangeToKeyTypeOneRequest\x12>\n\x12\x63hangeToKeyTypeOne\x18\x01 \x03(\x0b\x32\".Authentication.ChangeToKeyTypeOne\"U\n\x18\x43hangeToKeyTypeOneStatus\x12\x0b\n\x03uid\x18\x01 \x01(\x0c\x12\x0c\n\x04type\x18\x02 \x01(\t\x12\x0e\n\x06status\x18\x03 \x01(\t\x12\x0e\n\x06reason\x18\x04 \x01(\t\"h\n\x1a\x43hangeToKeyTypeOneResponse\x12J\n\x18\x63hangeToKeyTypeOneStatus\x18\x01 \x03(\x0b\x32(.Authentication.ChangeToKeyTypeOneStatus\"!\n\x06SetKey\x12\n\n\x02id\x18\x01 \x01(\x03\x12\x0b\n\x03key\x18\x02 \x01(\x0c\"5\n\rSetKeyRequest\x12$\n\x04keys\x18\x01 \x03(\x0b\x32\x16.Authentication.SetKey\"\xf2\x04\n\x11\x43reateUserRequest\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x14\n\x0c\x61uthVerifier\x18\x02 \x01(\x0c\x12\x18\n\x10\x65ncryptionParams\x18\x03 \x01(\x0c\x12\x14\n\x0crsaPublicKey\x18\x04 \x01(\x0c\x12\x1e\n\x16rsaEncryptedPrivateKey\x18\x05 \x01(\x0c\x12\x14\n\x0c\x65\x63\x63PublicKey\x18\x06 \x01(\x0c\x12\x1e\n\x16\x65\x63\x63\x45ncryptedPrivateKey\x18\x07 \x01(\x0c\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x08 \x01(\x0c\x12\x1a\n\x12\x65ncryptedClientKey\x18\t \x01(\x0c\x12\x15\n\rclientVersion\x18\n \x01(\t\x12\x1e\n\x16\x65ncryptedDeviceDataKey\x18\x0b \x01(\x0c\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x0c \x01(\x0c\x12\x19\n\x11messageSessionUid\x18\r \x01(\x0c\x12\x17\n\x0finstallReferrer\x18\x0e \x01(\t\x12\x0e\n\x06mccMNC\x18\x0f \x01(\x05\x12\x0b\n\x03mfg\x18\x10 \x01(\t\x12\r\n\x05model\x18\x11 \x01(\t\x12\r\n\x05\x62rand\x18\x12 \x01(\t\x12\x0f\n\x07product\x18\x13 \x01(\t\x12\x0e\n\x06\x64\x65vice\x18\x14 \x01(\t\x12\x0f\n\x07\x63\x61rrier\x18\x15 \x01(\t\x12\x18\n\x10verificationCode\x18\x16 \x01(\t\x12\x42\n\x16\x65nterpriseRegistration\x18\x17 \x01(\x0b\x32\".Enterprise.EnterpriseRegistration\x12\"\n\x1a\x65ncryptedVerificationToken\x18\x18 \x01(\x0c\"W\n!NodeEnforcementAddOrUpdateRequest\x12\x0e\n\x06nodeId\x18\x01 \x01(\x03\x12\x13\n\x0b\x65nforcement\x18\x02 \x01(\t\x12\r\n\x05value\x18\x03 \x01(\t\"C\n\x1cNodeEnforcementRemoveRequest\x12\x0e\n\x06nodeId\x18\x01 \x01(\x03\x12\x13\n\x0b\x65nforcement\x18\x02 \x01(\t\"\x9f\x01\n\x0f\x41piRequestByKey\x12\r\n\x05keyId\x18\x01 \x01(\x05\x12\x0f\n\x07payload\x18\x02 \x01(\x0c\x12\x10\n\x08username\x18\x03 \x01(\t\x12\x0e\n\x06locale\x18\x04 \x01(\t\x12<\n\x11supportedLanguage\x18\x05 \x01(\x0e\x32!.Authentication.SupportedLanguage\x12\x0c\n\x04type\x18\x06 \x01(\x05\"\xc7\x01\n\x15\x41piRequestByKAtoKAKey\x12,\n\x0csourceRegion\x18\x01 \x01(\x0e\x32\x16.Authentication.Region\x12\x0f\n\x07payload\x18\x02 \x01(\x0c\x12<\n\x11supportedLanguage\x18\x03 \x01(\x0e\x32!.Authentication.SupportedLanguage\x12\x31\n\x11\x64\x65stinationRegion\x18\x04 \x01(\x0e\x32\x16.Authentication.Region\".\n\x0fMemcacheRequest\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\x0e\n\x06userId\x18\x02 \x01(\x05\".\n\x10MemcacheResponse\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t\"w\n\x1cMasterPasswordReentryRequest\x12\x16\n\x0epbkdf2Password\x18\x01 \x01(\t\x12?\n\x06\x61\x63tion\x18\x02 \x01(\x0e\x32/.Authentication.MasterPasswordReentryActionType\"\\\n\x1dMasterPasswordReentryResponse\x12;\n\x06status\x18\x01 \x01(\x0e\x32+.Authentication.MasterPasswordReentryStatus\"_\n\x19\x44\x65viceRegistrationRequest\x12\x15\n\rclientVersion\x18\x01 \x01(\t\x12\x12\n\ndeviceName\x18\x02 \x01(\t\x12\x17\n\x0f\x64\x65vicePublicKey\x18\x03 \x01(\x0c\"\x9a\x01\n\x19\x44\x65viceVerificationRequest\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x1b\n\x13verificationChannel\x18\x03 \x01(\t\x12\x19\n\x11messageSessionUid\x18\x04 \x01(\x0c\x12\x15\n\rclientVersion\x18\x05 \x01(\t\"\xb2\x01\n\x1a\x44\x65viceVerificationResponse\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x19\n\x11messageSessionUid\x18\x03 \x01(\x0c\x12\x15\n\rclientVersion\x18\x04 \x01(\t\x12\x32\n\x0c\x64\x65viceStatus\x18\x05 \x01(\x0e\x32\x1c.Authentication.DeviceStatus\"\xc8\x01\n\x15\x44\x65viceApprovalRequest\x12\r\n\x05\x65mail\x18\x01 \x01(\t\x12\x18\n\x10twoFactorChannel\x18\x02 \x01(\t\x12\x15\n\rclientVersion\x18\x03 \x01(\t\x12\x0e\n\x06locale\x18\x04 \x01(\t\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x05 \x01(\x0c\x12\x10\n\x08totpCode\x18\x06 \x01(\t\x12\x10\n\x08\x64\x65viceIp\x18\x07 \x01(\t\x12\x1d\n\x15\x64\x65viceTokenExpireDays\x18\x08 \x01(\t\"9\n\x16\x44\x65viceApprovalResponse\x12\x1f\n\x17\x65ncryptedTwoFactorToken\x18\x01 \x01(\x0c\"~\n\x14\x41pproveDeviceRequest\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12\x1e\n\x16\x65ncryptedDeviceDataKey\x18\x02 \x01(\x0c\x12\x14\n\x0c\x64\x65nyApproval\x18\x03 \x01(\x08\x12\x12\n\nlinkDevice\x18\x04 \x01(\x08\"E\n\x1a\x45nterpriseUserAliasRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\r\n\x05\x61lias\x18\x02 \x01(\t\"Y\n\x1d\x45nterpriseUserAddAliasRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\r\n\x05\x61lias\x18\x02 \x01(\t\x12\x0f\n\x07primary\x18\x03 \x01(\x08\"w\n\x1f\x45nterpriseUserAddAliasRequestV2\x12T\n\x1d\x65nterpriseUserAddAliasRequest\x18\x01 \x03(\x0b\x32-.Authentication.EnterpriseUserAddAliasRequest\"H\n\x1c\x45nterpriseUserAddAliasStatus\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x0e\n\x06status\x18\x02 \x01(\t\"^\n\x1e\x45nterpriseUserAddAliasResponse\x12<\n\x06status\x18\x01 \x03(\x0b\x32,.Authentication.EnterpriseUserAddAliasStatus\"&\n\x06\x44\x65vice\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\"\\\n\x1cRegisterDeviceDataKeyRequest\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12\x1e\n\x16\x65ncryptedDeviceDataKey\x18\x02 \x01(\x0c\"n\n)ValidateCreateUserVerificationCodeRequest\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x15\n\rclientVersion\x18\x02 \x01(\t\x12\x18\n\x10verificationCode\x18\x03 \x01(\t\"\xa3\x01\n%ValidateDeviceVerificationCodeRequest\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x15\n\rclientVersion\x18\x02 \x01(\t\x12\x18\n\x10verificationCode\x18\x03 \x01(\t\x12\x19\n\x11messageSessionUid\x18\x04 \x01(\x0c\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x05 \x01(\x0c\"Y\n\x19SendSessionMessageRequest\x12\x19\n\x11messageSessionUid\x18\x01 \x01(\x0c\x12\x0f\n\x07\x63ommand\x18\x02 \x01(\t\x12\x10\n\x08username\x18\x03 \x01(\t\"M\n\x11GlobalUserAccount\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x12\n\naccountUid\x18\x02 \x01(\x0c\x12\x12\n\nregionName\x18\x03 \x01(\t\"7\n\x0f\x41\x63\x63ountUsername\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x12\n\ndateActive\x18\x02 \x01(\t\"P\n\x19SsoServiceProviderRequest\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x15\n\rclientVersion\x18\x02 \x01(\t\x12\x0e\n\x06locale\x18\x03 \x01(\t\"a\n\x1aSsoServiceProviderResponse\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\r\n\x05spUrl\x18\x02 \x01(\t\x12\x0f\n\x07isCloud\x18\x03 \x01(\x08\x12\x15\n\rclientVersion\x18\x04 \x01(\t\"4\n\x12UserSettingRequest\x12\x0f\n\x07setting\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t\"f\n\rThrottleState\x12*\n\x04type\x18\x01 \x01(\x0e\x32\x1c.Authentication.ThrottleType\x12\x0b\n\x03key\x18\x02 \x01(\t\x12\r\n\x05value\x18\x03 \x01(\t\x12\r\n\x05state\x18\x04 \x01(\x08\"\xb5\x01\n\x0eThrottleState2\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\x16\n\x0ekeyDescription\x18\x02 \x01(\t\x12\r\n\x05value\x18\x03 \x01(\t\x12\x18\n\x10valueDescription\x18\x04 \x01(\t\x12\x12\n\nidentifier\x18\x05 \x01(\t\x12\x0e\n\x06locked\x18\x06 \x01(\x08\x12\x1a\n\x12includedInAllClear\x18\x07 \x01(\x08\x12\x15\n\rexpireSeconds\x18\x08 \x01(\x05\"\x97\x01\n\x11\x44\x65viceInformation\x12\x10\n\x08\x64\x65viceId\x18\x01 \x01(\x03\x12\x12\n\ndeviceName\x18\x02 \x01(\t\x12\x15\n\rclientVersion\x18\x03 \x01(\t\x12\x11\n\tlastLogin\x18\x04 \x01(\x03\x12\x32\n\x0c\x64\x65viceStatus\x18\x05 \x01(\x0e\x32\x1c.Authentication.DeviceStatus\"*\n\x0bUserSetting\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x08\".\n\x12UserDataKeyRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x03(\x03\"Q\n\x1b\x45nterpriseUserIdDataKeyPair\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x18\n\x10\x65ncryptedDataKey\x18\x02 \x01(\x0c\"\x95\x01\n\x0bUserDataKey\x12\x0e\n\x06roleId\x18\x01 \x01(\x03\x12\x0f\n\x07roleKey\x18\x02 \x01(\x0c\x12\x12\n\nprivateKey\x18\x03 \x01(\t\x12Q\n\x1c\x65nterpriseUserIdDataKeyPairs\x18\x04 \x03(\x0b\x32+.Authentication.EnterpriseUserIdDataKeyPair\"z\n\x13UserDataKeyResponse\x12\x31\n\x0cuserDataKeys\x18\x01 \x03(\x0b\x32\x1b.Authentication.UserDataKey\x12\x14\n\x0c\x61\x63\x63\x65ssDenied\x18\x02 \x03(\x03\x12\x1a\n\x12noEncryptedDataKey\x18\x03 \x03(\x03\"H\n)MasterPasswordRecoveryVerificationRequest\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x01 \x01(\x0c\"U\n\x1cGetSecurityQuestionV3Request\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x01 \x01(\x0c\x12\x18\n\x10verificationCode\x18\x02 \x01(\t\"r\n\x1dGetSecurityQuestionV3Response\x12\x18\n\x10securityQuestion\x18\x01 \x01(\t\x12\x15\n\rbackupKeyDate\x18\x02 \x01(\x03\x12\x0c\n\x04salt\x18\x03 \x01(\x0c\x12\x12\n\niterations\x18\x04 \x01(\x05\"n\n\x19GetDataKeyBackupV3Request\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x01 \x01(\x0c\x12\x18\n\x10verificationCode\x18\x02 \x01(\t\x12\x1a\n\x12securityAnswerHash\x18\x03 \x01(\x0c\"v\n\rPasswordRules\x12\x10\n\x08ruleType\x18\x01 \x01(\t\x12\r\n\x05match\x18\x02 \x01(\x08\x12\x0f\n\x07pattern\x18\x03 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x04 \x01(\t\x12\x0f\n\x07minimum\x18\x05 \x01(\x05\x12\r\n\x05value\x18\x06 \x01(\t\"\xa3\x02\n\x1aGetDataKeyBackupV3Response\x12\x15\n\rdataKeyBackup\x18\x01 \x01(\x0c\x12\x19\n\x11\x64\x61taKeyBackupDate\x18\x02 \x01(\x03\x12\x11\n\tpublicKey\x18\x03 \x01(\x0c\x12\x1b\n\x13\x65ncryptedPrivateKey\x18\x04 \x01(\x0c\x12\x11\n\tclientKey\x18\x05 \x01(\x0c\x12\x1d\n\x15\x65ncryptedSessionToken\x18\x06 \x01(\x0c\x12\x34\n\rpasswordRules\x18\x07 \x03(\x0b\x32\x1d.Authentication.PasswordRules\x12\x1a\n\x12passwordRulesIntro\x18\x08 \x01(\t\x12\x1f\n\x17minimumPbkdf2Iterations\x18\t \x01(\x05\")\n\x14GetPublicKeysRequest\x12\x11\n\tusernames\x18\x01 \x03(\t\"r\n\x11PublicKeyResponse\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x11\n\tpublicKey\x18\x02 \x01(\x0c\x12\x14\n\x0cpublicEccKey\x18\x03 \x01(\x0c\x12\x0f\n\x07message\x18\x04 \x01(\t\x12\x11\n\terrorCode\x18\x05 \x01(\t\"P\n\x15GetPublicKeysResponse\x12\x37\n\x0ckeyResponses\x18\x01 \x03(\x0b\x32!.Authentication.PublicKeyResponse\"F\n\x14SetEccKeyPairRequest\x12\x11\n\tpublicKey\x18\x01 \x01(\x0c\x12\x1b\n\x13\x65ncryptedPrivateKey\x18\x02 \x01(\x0c\"D\n\x17GetKsmPublicKeysRequest\x12\x11\n\tclientIds\x18\x01 \x03(\x0c\x12\x16\n\x0e\x63ontrollerUids\x18\x02 \x03(\x0c\"U\n\x17\x44\x65vicePublicKeyResponse\x12\x10\n\x08\x63lientId\x18\x01 \x01(\x0c\x12\x11\n\tpublicKey\x18\x02 \x01(\x0c\x12\x15\n\rcontrollerUid\x18\x03 \x01(\x0c\"Y\n\x18GetKsmPublicKeysResponse\x12=\n\x0ckeyResponses\x18\x01 \x03(\x0b\x32\'.Authentication.DevicePublicKeyResponse\"X\n\x13\x41\x64\x64\x41ppSharesRequest\x12\x14\n\x0c\x61ppRecordUid\x18\x01 \x01(\x0c\x12+\n\x06shares\x18\x02 \x03(\x0b\x32\x1b.Authentication.AppShareAdd\">\n\x16RemoveAppSharesRequest\x12\x14\n\x0c\x61ppRecordUid\x18\x01 \x01(\x0c\x12\x0e\n\x06shares\x18\x02 \x03(\x0c\"\x87\x01\n\x0b\x41ppShareAdd\x12\x11\n\tsecretUid\x18\x02 \x01(\x0c\x12\x37\n\tshareType\x18\x03 \x01(\x0e\x32$.Authentication.ApplicationShareType\x12\x1a\n\x12\x65ncryptedSecretKey\x18\x04 \x01(\x0c\x12\x10\n\x08\x65\x64itable\x18\x05 \x01(\x08\"{\n\x08\x41ppShare\x12\x11\n\tsecretUid\x18\x01 \x01(\x0c\x12\x37\n\tshareType\x18\x02 \x01(\x0e\x32$.Authentication.ApplicationShareType\x12\x10\n\x08\x65\x64itable\x18\x03 \x01(\x08\x12\x11\n\tcreatedOn\x18\x04 \x01(\x03\"\xd9\x01\n\x13\x41\x64\x64\x41ppClientRequest\x12\x14\n\x0c\x61ppRecordUid\x18\x01 \x01(\x0c\x12\x17\n\x0f\x65ncryptedAppKey\x18\x02 \x01(\x0c\x12\x10\n\x08\x63lientId\x18\x03 \x01(\x0c\x12\x0e\n\x06lockIp\x18\x04 \x01(\x08\x12\x1b\n\x13\x66irstAccessExpireOn\x18\x05 \x01(\x03\x12\x16\n\x0e\x61\x63\x63\x65ssExpireOn\x18\x06 \x01(\x03\x12\n\n\x02id\x18\x07 \x01(\t\x12\x30\n\rappClientType\x18\x08 \x01(\x0e\x32\x19.Enterprise.AppClientType\"@\n\x17RemoveAppClientsRequest\x12\x14\n\x0c\x61ppRecordUid\x18\x01 \x01(\x0c\x12\x0f\n\x07\x63lients\x18\x02 \x03(\x0c\"~\n\x17\x41\x64\x64\x45xternalShareRequest\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x1a\n\x12\x65ncryptedRecordKey\x18\x02 \x01(\x0c\x12\x10\n\x08\x63lientId\x18\x03 \x01(\x0c\x12\x16\n\x0e\x61\x63\x63\x65ssExpireOn\x18\x04 \x01(\x03\x12\n\n\x02id\x18\x05 \x01(\t\"\x82\x02\n\tAppClient\x12\n\n\x02id\x18\x01 \x01(\t\x12\x10\n\x08\x63lientId\x18\x02 \x01(\x0c\x12\x11\n\tcreatedOn\x18\x03 \x01(\x03\x12\x13\n\x0b\x66irstAccess\x18\x04 \x01(\x03\x12\x12\n\nlastAccess\x18\x05 \x01(\x03\x12\x11\n\tpublicKey\x18\x06 \x01(\x0c\x12\x0e\n\x06lockIp\x18\x07 \x01(\x08\x12\x11\n\tipAddress\x18\x08 \x01(\t\x12\x1b\n\x13\x66irstAccessExpireOn\x18\t \x01(\x03\x12\x16\n\x0e\x61\x63\x63\x65ssExpireOn\x18\n \x01(\x03\x12\x30\n\rappClientType\x18\x0b \x01(\x0e\x32\x19.Enterprise.AppClientType\")\n\x11GetAppInfoRequest\x12\x14\n\x0c\x61ppRecordUid\x18\x01 \x03(\x0c\"\x8e\x01\n\x07\x41ppInfo\x12\x14\n\x0c\x61ppRecordUid\x18\x01 \x01(\x0c\x12(\n\x06shares\x18\x02 \x03(\x0b\x32\x18.Authentication.AppShare\x12*\n\x07\x63lients\x18\x03 \x03(\x0b\x32\x19.Authentication.AppClient\x12\x17\n\x0fisExternalShare\x18\x04 \x01(\x08\">\n\x12GetAppInfoResponse\x12(\n\x07\x61ppInfo\x18\x01 \x03(\x0b\x32\x17.Authentication.AppInfo\"\xb2\x01\n\x12\x41pplicationSummary\x12\x14\n\x0c\x61ppRecordUid\x18\x01 \x01(\x0c\x12\x12\n\nlastAccess\x18\x02 \x01(\x03\x12\x14\n\x0crecordShares\x18\x03 \x01(\x05\x12\x14\n\x0c\x66olderShares\x18\x04 \x01(\x05\x12\x15\n\rfolderRecords\x18\x05 \x01(\x05\x12\x13\n\x0b\x63lientCount\x18\x06 \x01(\x05\x12\x1a\n\x12\x65xpiredClientCount\x18\x07 \x01(\x05\"`\n\x1eGetApplicationsSummaryResponse\x12>\n\x12\x61pplicationSummary\x18\x01 \x03(\x0b\x32\".Authentication.ApplicationSummary\"/\n\x1bGetVerificationTokenRequest\x12\x10\n\x08username\x18\x01 \x01(\t\"B\n\x1cGetVerificationTokenResponse\x12\"\n\x1a\x65ncryptedVerificationToken\x18\x01 \x01(\x0c\"\'\n\x16SendShareInviteRequest\x12\r\n\x05\x65mail\x18\x01 \x01(\t\"+\n\x16RequestDownloadRequest\x12\x11\n\tfileNames\x18\x01 \x03(\t\"g\n\x17RequestDownloadResponse\x12\x0e\n\x06result\x18\x01 \x01(\t\x12\x0f\n\x07message\x18\x02 \x01(\t\x12+\n\tdownloads\x18\x03 \x03(\x0b\x32\x18.Authentication.Download\"D\n\x08\x44ownload\x12\x10\n\x08\x66ileName\x18\x01 \x01(\t\x12\x0b\n\x03url\x18\x02 \x01(\t\x12\x19\n\x11successStatusCode\x18\x03 \x01(\x05\"#\n\x11\x44\x65leteUserRequest\x12\x0e\n\x06reason\x18\x01 \x01(\t\"\x84\x01\n\x1b\x43hangeMasterPasswordRequest\x12\x14\n\x0c\x61uthVerifier\x18\x01 \x01(\x0c\x12\x18\n\x10\x65ncryptionParams\x18\x02 \x01(\x0c\x12\x1b\n\x13\x66romServiceProvider\x18\x03 \x01(\x08\x12\x18\n\x10iterationsChange\x18\x04 \x01(\x08\"=\n\x1c\x43hangeMasterPasswordResponse\x12\x1d\n\x15\x65ncryptedSessionToken\x18\x01 \x01(\x0c\"Y\n\x1b\x41\x63\x63ountRecoverySetupRequest\x12 \n\x18recoveryEncryptedDataKey\x18\x01 \x01(\x0c\x12\x18\n\x10recoveryAuthHash\x18\x02 \x01(\x0c\"\xac\x01\n!AccountRecoveryVerifyCodeResponse\x12\x34\n\rbackupKeyType\x18\x01 \x01(\x0e\x32\x1d.Authentication.BackupKeyType\x12\x15\n\rbackupKeyDate\x18\x02 \x01(\x03\x12\x18\n\x10securityQuestion\x18\x03 \x01(\t\x12\x0c\n\x04salt\x18\x04 \x01(\x0c\x12\x12\n\niterations\x18\x05 \x01(\x05\"\xb2\x01\n\x0bUserTeamKey\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x18\n\x10\x65nterpriseUserId\x18\x03 \x01(\x03\x12\x1b\n\x13\x65ncryptedTeamKeyRSA\x18\x04 \x01(\x0c\x12\x1a\n\x12\x65ncryptedTeamKeyEC\x18\x05 \x01(\x0c\x12-\n\x06status\x18\x06 \x01(\x0e\x32\x1d.Authentication.GenericStatus\")\n\x16GenericRequestResponse\x12\x0f\n\x07request\x18\x01 \x03(\x0c*\xb9\x02\n\x11SupportedLanguage\x12\x0b\n\x07\x45NGLISH\x10\x00\x12\n\n\x06\x41RABIC\x10\x01\x12\x0b\n\x07\x42RITISH\x10\x02\x12\x0b\n\x07\x43HINESE\x10\x03\x12\x15\n\x11\x43HINESE_HONG_KONG\x10\x04\x12\x12\n\x0e\x43HINESE_TAIWAN\x10\x05\x12\t\n\x05\x44UTCH\x10\x06\x12\n\n\x06\x46RENCH\x10\x07\x12\n\n\x06GERMAN\x10\x08\x12\t\n\x05GREEK\x10\t\x12\n\n\x06HEBREW\x10\n\x12\x0b\n\x07ITALIAN\x10\x0b\x12\x0c\n\x08JAPANESE\x10\x0c\x12\n\n\x06KOREAN\x10\r\x12\n\n\x06POLISH\x10\x0e\x12\x0e\n\nPORTUGUESE\x10\x0f\x12\x15\n\x11PORTUGUESE_BRAZIL\x10\x10\x12\x0c\n\x08ROMANIAN\x10\x11\x12\x0b\n\x07RUSSIAN\x10\x12\x12\n\n\x06SLOVAK\x10\x13\x12\x0b\n\x07SPANISH\x10\x14*Z\n\tLoginType\x12\n\n\x06NORMAL\x10\x00\x12\x07\n\x03SSO\x10\x01\x12\x07\n\x03\x42IO\x10\x02\x12\r\n\tALTERNATE\x10\x03\x12\x0b\n\x07OFFLINE\x10\x04\x12\x13\n\x0f\x46ORGOT_PASSWORD\x10\x05*q\n\x0c\x44\x65viceStatus\x12\x19\n\x15\x44\x45VICE_NEEDS_APPROVAL\x10\x00\x12\r\n\tDEVICE_OK\x10\x01\x12\x1b\n\x17\x44\x45VICE_DISABLED_BY_USER\x10\x02\x12\x1a\n\x16\x44\x45VICE_LOCKED_BY_ADMIN\x10\x03*A\n\rLicenseStatus\x12\t\n\x05OTHER\x10\x00\x12\n\n\x06\x41\x43TIVE\x10\x01\x12\x0b\n\x07\x45XPIRED\x10\x02\x12\x0c\n\x08\x44ISABLED\x10\x03*7\n\x0b\x41\x63\x63ountType\x12\x0c\n\x08\x43ONSUMER\x10\x00\x12\n\n\x06\x46\x41MILY\x10\x01\x12\x0e\n\nENTERPRISE\x10\x02*\xcc\x01\n\x10SessionTokenType\x12\x12\n\x0eNO_RESTRICTION\x10\x00\x12\x14\n\x10\x41\x43\x43OUNT_RECOVERY\x10\x01\x12\x11\n\rSHARE_ACCOUNT\x10\x02\x12\x0c\n\x08PURCHASE\x10\x03\x12\x0c\n\x08RESTRICT\x10\x04\x12\x11\n\rACCEPT_INVITE\x10\x05\x12\x12\n\x0eSUPPORT_SERVER\x10\x06\x12\x17\n\x13\x45NTERPRISE_CREATION\x10\x07\x12\x1f\n\x1b\x45XPIRED_BUT_ALLOWED_TO_SYNC\x10\x08*G\n\x07Version\x12\x13\n\x0finvalid_version\x10\x00\x12\x13\n\x0f\x64\x65\x66\x61ult_version\x10\x01\x12\x12\n\x0esecond_version\x10\x02*7\n\x1fMasterPasswordReentryActionType\x12\n\n\x06UNMASK\x10\x00\x12\x08\n\x04\x43OPY\x10\x01*l\n\x0bLoginMethod\x12\x17\n\x13INVALID_LOGINMETHOD\x10\x00\x12\x14\n\x10\x45XISTING_ACCOUNT\x10\x01\x12\x0e\n\nSSO_DOMAIN\x10\x02\x12\r\n\tAFTER_SSO\x10\x03\x12\x0f\n\x0bNEW_ACCOUNT\x10\x04*\xc7\x03\n\nLoginState\x12\x16\n\x12INVALID_LOGINSTATE\x10\x00\x12\x0e\n\nLOGGED_OUT\x10\x01\x12\x1c\n\x18\x44\x45VICE_APPROVAL_REQUIRED\x10\x02\x12\x11\n\rDEVICE_LOCKED\x10\x03\x12\x12\n\x0e\x41\x43\x43OUNT_LOCKED\x10\x04\x12\x19\n\x15\x44\x45VICE_ACCOUNT_LOCKED\x10\x05\x12\x0b\n\x07UPGRADE\x10\x06\x12\x13\n\x0fLICENSE_EXPIRED\x10\x07\x12\x13\n\x0fREGION_REDIRECT\x10\x08\x12\x16\n\x12REDIRECT_CLOUD_SSO\x10\t\x12\x17\n\x13REDIRECT_ONSITE_SSO\x10\n\x12\x10\n\x0cREQUIRES_2FA\x10\x0c\x12\x16\n\x12REQUIRES_AUTH_HASH\x10\r\x12\x15\n\x11REQUIRES_USERNAME\x10\x0e\x12\x19\n\x15\x41\x46TER_CLOUD_SSO_LOGIN\x10\x0f\x12\x1d\n\x19REQUIRES_ACCOUNT_CREATION\x10\x10\x12&\n\"REQUIRES_DEVICE_ENCRYPTED_DATA_KEY\x10\x11\x12\x17\n\x13LOGIN_TOKEN_EXPIRED\x10\x12\x12\r\n\tLOGGED_IN\x10\x63*k\n\x14\x45ncryptedDataKeyType\x12\n\n\x06NO_KEY\x10\x00\x12\x18\n\x14\x42Y_DEVICE_PUBLIC_KEY\x10\x01\x12\x0f\n\x0b\x42Y_PASSWORD\x10\x02\x12\x10\n\x0c\x42Y_ALTERNATE\x10\x03\x12\n\n\x06\x42Y_BIO\x10\x04*-\n\x0ePasswordMethod\x12\x0b\n\x07\x45NTERED\x10\x00\x12\x0e\n\nBIOMETRICS\x10\x01*\xb9\x01\n\x11TwoFactorPushType\x12\x14\n\x10TWO_FA_PUSH_NONE\x10\x00\x12\x13\n\x0fTWO_FA_PUSH_SMS\x10\x01\x12\x16\n\x12TWO_FA_PUSH_KEEPER\x10\x02\x12\x18\n\x14TWO_FA_PUSH_DUO_PUSH\x10\x03\x12\x18\n\x14TWO_FA_PUSH_DUO_TEXT\x10\x04\x12\x18\n\x14TWO_FA_PUSH_DUO_CALL\x10\x05\x12\x13\n\x0fTWO_FA_PUSH_DNA\x10\x06*\xc3\x01\n\x12TwoFactorValueType\x12\x14\n\x10TWO_FA_CODE_NONE\x10\x00\x12\x14\n\x10TWO_FA_CODE_TOTP\x10\x01\x12\x13\n\x0fTWO_FA_CODE_SMS\x10\x02\x12\x13\n\x0fTWO_FA_CODE_DUO\x10\x03\x12\x13\n\x0fTWO_FA_CODE_RSA\x10\x04\x12\x13\n\x0fTWO_FA_RESP_U2F\x10\x05\x12\x18\n\x14TWO_FA_RESP_WEBAUTHN\x10\x06\x12\x13\n\x0fTWO_FA_CODE_DNA\x10\x07*\xe1\x01\n\x14TwoFactorChannelType\x12\x12\n\x0eTWO_FA_CT_NONE\x10\x00\x12\x12\n\x0eTWO_FA_CT_TOTP\x10\x01\x12\x11\n\rTWO_FA_CT_SMS\x10\x02\x12\x11\n\rTWO_FA_CT_DUO\x10\x03\x12\x11\n\rTWO_FA_CT_RSA\x10\x04\x12\x14\n\x10TWO_FA_CT_BACKUP\x10\x05\x12\x11\n\rTWO_FA_CT_U2F\x10\x06\x12\x16\n\x12TWO_FA_CT_WEBAUTHN\x10\x07\x12\x14\n\x10TWO_FA_CT_KEEPER\x10\x08\x12\x11\n\rTWO_FA_CT_DNA\x10\t*\xab\x01\n\x13TwoFactorExpiration\x12\x1a\n\x16TWO_FA_EXP_IMMEDIATELY\x10\x00\x12\x18\n\x14TWO_FA_EXP_5_MINUTES\x10\x01\x12\x17\n\x13TWO_FA_EXP_12_HOURS\x10\x02\x12\x17\n\x13TWO_FA_EXP_24_HOURS\x10\x03\x12\x16\n\x12TWO_FA_EXP_30_DAYS\x10\x04\x12\x14\n\x10TWO_FA_EXP_NEVER\x10\x05*@\n\x0bLicenseType\x12\t\n\x05VAULT\x10\x00\x12\x08\n\x04\x43HAT\x10\x01\x12\x0b\n\x07STORAGE\x10\x02\x12\x0f\n\x0b\x42REACHWATCH\x10\x03*i\n\x0bObjectTypes\x12\n\n\x06RECORD\x10\x00\x12\x16\n\x12SHARED_FOLDER_USER\x10\x01\x12\x16\n\x12SHARED_FOLDER_TEAM\x10\x02\x12\x0f\n\x0bUSER_FOLDER\x10\x03\x12\r\n\tTEAM_USER\x10\x04*M\n\x1bMasterPasswordReentryStatus\x12\x0e\n\nMP_UNKNOWN\x10\x00\x12\x0e\n\nMP_SUCCESS\x10\x01\x12\x0e\n\nMP_FAILURE\x10\x02*`\n\x1b\x41lternateAuthenticationType\x12\x1d\n\x19\x41LTERNATE_MASTER_PASSWORD\x10\x00\x12\r\n\tBIOMETRIC\x10\x01\x12\x13\n\x0f\x41\x43\x43OUNT_RECOVER\x10\x02*\x9a\x02\n\x0cThrottleType\x12\x1b\n\x17PASSWORD_RETRY_THROTTLE\x10\x00\x12\"\n\x1ePASSWORD_RETRY_LEGACY_THROTTLE\x10\x01\x12\x13\n\x0fTWO_FA_THROTTLE\x10\x02\x12\x1a\n\x16TWO_FA_LEGACY_THROTTLE\x10\x03\x12\x15\n\x11QA_RETRY_THROTTLE\x10\x04\x12\x1c\n\x18\x41\x43\x43OUNT_RECOVER_THROTTLE\x10\x05\x12.\n*VALIDATE_DEVICE_VERIFICATION_CODE_THROTTLE\x10\x06\x12\x33\n/VALIDATE_CREATE_USER_VERIFICATION_CODE_THROTTLE\x10\x07*H\n\x06Region\x12\x0b\n\x07UNKNOWN\x10\x00\x12\x06\n\x02\x65u\x10\x01\x12\x06\n\x02us\x10\x02\x12\t\n\x05usgov\x10\x03\x12\x06\n\x02\x61u\x10\x04\x12\x06\n\x02jp\x10\x05\x12\x06\n\x02\x63\x61\x10\x06*D\n\x14\x41pplicationShareType\x12\x15\n\x11SHARE_TYPE_RECORD\x10\x00\x12\x15\n\x11SHARE_TYPE_FOLDER\x10\x01*<\n\rBackupKeyType\x12\x12\n\x0e\x42KT_SEC_ANSWER\x10\x00\x12\x17\n\x13\x42KT_PASSPHRASE_HASH\x10\x01*W\n\rGenericStatus\x12\x0b\n\x07SUCCESS\x10\x00\x12\x12\n\x0eINVALID_OBJECT\x10\x01\x12\x12\n\x0e\x41LREADY_EXISTS\x10\x02\x12\x11\n\rACCESS_DENIED\x10\x03\x42*\n\x18\x63om.keepersecurity.protoB\x0e\x41uthenticationb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x10\x41PIRequest.proto\x12\x0e\x41uthentication\x1a\x10\x65nterprise.proto\"\xb0\x01\n\nApiRequest\x12 \n\x18\x65ncryptedTransmissionKey\x18\x01 \x01(\x0c\x12\x13\n\x0bpublicKeyId\x18\x02 \x01(\x05\x12\x0e\n\x06locale\x18\x03 \x01(\t\x12\x18\n\x10\x65ncryptedPayload\x18\x04 \x01(\x0c\x12\x16\n\x0e\x65ncryptionType\x18\x05 \x01(\x05\x12\x11\n\trecaptcha\x18\x06 \x01(\t\x12\x16\n\x0esubEnvironment\x18\x07 \x01(\t\"j\n\x11\x41piRequestPayload\x12\x0f\n\x07payload\x18\x01 \x01(\x0c\x12\x1d\n\x15\x65ncryptedSessionToken\x18\x02 \x01(\x0c\x12\x11\n\ttimeToken\x18\x03 \x01(\x0c\x12\x12\n\napiVersion\x18\x04 \x01(\x05\"6\n\tTransform\x12\x0b\n\x03key\x18\x01 \x01(\x0c\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x02 \x01(\x0c\":\n\rDeviceRequest\x12\x15\n\rclientVersion\x18\x01 \x01(\t\x12\x12\n\ndeviceName\x18\x02 \x01(\t\"T\n\x0b\x41uthRequest\x12\x15\n\rclientVersion\x18\x01 \x01(\t\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x03 \x01(\x0c\"\xc3\x01\n\x14NewUserMinimumParams\x12\x19\n\x11minimumIterations\x18\x01 \x01(\x05\x12\x1a\n\x12passwordMatchRegex\x18\x02 \x03(\t\x12 \n\x18passwordMatchDescription\x18\x03 \x03(\t\x12\x1a\n\x12isEnterpriseDomain\x18\x04 \x01(\x08\x12\x1e\n\x16\x65nterpriseEccPublicKey\x18\x05 \x01(\x0c\x12\x16\n\x0e\x66orbidKeyType2\x18\x06 \x01(\x08\"\x89\x01\n\x0fPreLoginRequest\x12\x30\n\x0b\x61uthRequest\x18\x01 \x01(\x0b\x32\x1b.Authentication.AuthRequest\x12,\n\tloginType\x18\x02 \x01(\x0e\x32\x19.Authentication.LoginType\x12\x16\n\x0etwoFactorToken\x18\x03 \x01(\x0c\"\x80\x02\n\x0cLoginRequest\x12\x30\n\x0b\x61uthRequest\x18\x01 \x01(\x0b\x32\x1b.Authentication.AuthRequest\x12,\n\tloginType\x18\x02 \x01(\x0e\x32\x19.Authentication.LoginType\x12\x1f\n\x17\x61uthenticationHashPrime\x18\x03 \x01(\x0c\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x04 \x01(\x0c\x12\x14\n\x0c\x61uthResponse\x18\x05 \x01(\x0c\x12\x16\n\x0emcEnterpriseId\x18\x06 \x01(\x05\x12\x12\n\npush_token\x18\x07 \x01(\t\x12\x10\n\x08platform\x18\x08 \x01(\t\"\\\n\x0e\x44\x65viceResponse\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12,\n\x06status\x18\x02 \x01(\x0e\x32\x1c.Authentication.DeviceStatus\"V\n\x04Salt\x12\x12\n\niterations\x18\x01 \x01(\x05\x12\x0c\n\x04salt\x18\x02 \x01(\x0c\x12\x11\n\talgorithm\x18\x03 \x01(\x05\x12\x0b\n\x03uid\x18\x04 \x01(\x0c\x12\x0c\n\x04name\x18\x05 \x01(\t\" \n\x10TwoFactorChannel\x12\x0c\n\x04type\x18\x01 \x01(\x05\"\xe2\x02\n\x11StartLoginRequest\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x15\n\rclientVersion\x18\x03 \x01(\t\x12\x19\n\x11messageSessionUid\x18\x04 \x01(\x0c\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x05 \x01(\x0c\x12,\n\tloginType\x18\x06 \x01(\x0e\x32\x19.Authentication.LoginType\x12\x16\n\x0emcEnterpriseId\x18\x07 \x01(\x05\x12\x30\n\x0bloginMethod\x18\x08 \x01(\x0e\x32\x1b.Authentication.LoginMethod\x12\x15\n\rforceNewLogin\x18\t \x01(\x08\x12\x11\n\tcloneCode\x18\n \x01(\x0c\x12\x18\n\x10v2TwoFactorToken\x18\x0b \x01(\t\x12\x12\n\naccountUid\x18\x0c \x01(\x0c\"\xa7\x04\n\rLoginResponse\x12.\n\nloginState\x18\x01 \x01(\x0e\x32\x1a.Authentication.LoginState\x12\x12\n\naccountUid\x18\x02 \x01(\x0c\x12\x17\n\x0fprimaryUsername\x18\x03 \x01(\t\x12\x18\n\x10\x65ncryptedDataKey\x18\x04 \x01(\x0c\x12\x42\n\x14\x65ncryptedDataKeyType\x18\x05 \x01(\x0e\x32$.Authentication.EncryptedDataKeyType\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x06 \x01(\x0c\x12\x1d\n\x15\x65ncryptedSessionToken\x18\x07 \x01(\x0c\x12:\n\x10sessionTokenType\x18\x08 \x01(\x0e\x32 .Authentication.SessionTokenType\x12\x0f\n\x07message\x18\t \x01(\t\x12\x0b\n\x03url\x18\n \x01(\t\x12\x36\n\x08\x63hannels\x18\x0b \x03(\x0b\x32$.Authentication.TwoFactorChannelInfo\x12\"\n\x04salt\x18\x0c \x03(\x0b\x32\x14.Authentication.Salt\x12\x11\n\tcloneCode\x18\r \x01(\x0c\x12\x1a\n\x12stateSpecificValue\x18\x0e \x01(\t\x12\x18\n\x10ssoClientVersion\x18\x0f \x01(\t\x12 \n\x18sessionTokenTypeModifier\x18\x10 \x01(\t\"\x8c\x01\n\x0bSsoUserInfo\x12\x13\n\x0b\x63ompanyName\x18\x01 \x01(\t\x12\x13\n\x0bsamlRequest\x18\x02 \x01(\t\x12\x17\n\x0fsamlRequestType\x18\x03 \x01(\t\x12\x15\n\rssoDomainName\x18\x04 \x01(\t\x12\x10\n\x08loginUrl\x18\x05 \x01(\t\x12\x11\n\tlogoutUrl\x18\x06 \x01(\t\"\xd6\x01\n\x10PreLoginResponse\x12\x32\n\x0c\x64\x65viceStatus\x18\x01 \x01(\x0e\x32\x1c.Authentication.DeviceStatus\x12\"\n\x04salt\x18\x02 \x03(\x0b\x32\x14.Authentication.Salt\x12\x38\n\x0eOBSOLETE_FIELD\x18\x03 \x03(\x0b\x32 .Authentication.TwoFactorChannel\x12\x30\n\x0bssoUserInfo\x18\x04 \x01(\x0b\x32\x1b.Authentication.SsoUserInfo\"&\n\x12LoginAsUserRequest\x12\x10\n\x08username\x18\x01 \x01(\t\"W\n\x13LoginAsUserResponse\x12\x1d\n\x15\x65ncryptedSessionToken\x18\x01 \x01(\x0c\x12!\n\x19\x65ncryptedSharedAccountKey\x18\x02 \x01(\x0c\"\x84\x01\n\x17ValidateAuthHashRequest\x12\x36\n\x0epasswordMethod\x18\x01 \x01(\x0e\x32\x1e.Authentication.PasswordMethod\x12\x14\n\x0c\x61uthResponse\x18\x02 \x01(\x0c\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x03 \x01(\x0c\"\xc4\x02\n\x14TwoFactorChannelInfo\x12\x39\n\x0b\x63hannelType\x18\x01 \x01(\x0e\x32$.Authentication.TwoFactorChannelType\x12\x13\n\x0b\x63hannel_uid\x18\x02 \x01(\x0c\x12\x13\n\x0b\x63hannelName\x18\x03 \x01(\t\x12\x11\n\tchallenge\x18\x04 \x01(\t\x12\x14\n\x0c\x63\x61pabilities\x18\x05 \x03(\t\x12\x13\n\x0bphoneNumber\x18\x06 \x01(\t\x12:\n\rmaxExpiration\x18\x07 \x01(\x0e\x32#.Authentication.TwoFactorExpiration\x12\x11\n\tcreatedOn\x18\x08 \x01(\x03\x12:\n\rlastFrequency\x18\t \x01(\x0e\x32#.Authentication.TwoFactorExpiration\"d\n\x12TwoFactorDuoStatus\x12\x14\n\x0c\x63\x61pabilities\x18\x01 \x03(\t\x12\x13\n\x0bphoneNumber\x18\x02 \x01(\t\x12\x12\n\nenroll_url\x18\x03 \x01(\t\x12\x0f\n\x07message\x18\x04 \x01(\t\"\xc7\x01\n\x13TwoFactorAddRequest\x12\x39\n\x0b\x63hannelType\x18\x01 \x01(\x0e\x32$.Authentication.TwoFactorChannelType\x12\x13\n\x0b\x63hannel_uid\x18\x02 \x01(\x0c\x12\x13\n\x0b\x63hannelName\x18\x03 \x01(\t\x12\x13\n\x0bphoneNumber\x18\x04 \x01(\t\x12\x36\n\x0b\x64uoPushType\x18\x05 \x01(\x0e\x32!.Authentication.TwoFactorPushType\"B\n\x16TwoFactorRenameRequest\x12\x13\n\x0b\x63hannel_uid\x18\x01 \x01(\x0c\x12\x13\n\x0b\x63hannelName\x18\x02 \x01(\t\"=\n\x14TwoFactorAddResponse\x12\x11\n\tchallenge\x18\x01 \x01(\t\x12\x12\n\nbackupKeys\x18\x02 \x03(\t\"-\n\x16TwoFactorDeleteRequest\x12\x13\n\x0b\x63hannel_uid\x18\x01 \x01(\x0c\"a\n\x15TwoFactorListResponse\x12\x36\n\x08\x63hannels\x18\x01 \x03(\x0b\x32$.Authentication.TwoFactorChannelInfo\x12\x10\n\x08\x65xpireOn\x18\x02 \x01(\x03\"Y\n TwoFactorUpdateExpirationRequest\x12\x35\n\x08\x65xpireIn\x18\x01 \x01(\x0e\x32#.Authentication.TwoFactorExpiration\"\xc9\x01\n\x18TwoFactorValidateRequest\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x01 \x01(\x0c\x12\x35\n\tvalueType\x18\x02 \x01(\x0e\x32\".Authentication.TwoFactorValueType\x12\r\n\x05value\x18\x03 \x01(\t\x12\x13\n\x0b\x63hannel_uid\x18\x04 \x01(\x0c\x12\x35\n\x08\x65xpireIn\x18\x05 \x01(\x0e\x32#.Authentication.TwoFactorExpiration\"8\n\x19TwoFactorValidateResponse\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x01 \x01(\x0c\"\xb8\x01\n\x18TwoFactorSendPushRequest\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x01 \x01(\x0c\x12\x33\n\x08pushType\x18\x02 \x01(\x0e\x32!.Authentication.TwoFactorPushType\x12\x13\n\x0b\x63hannel_uid\x18\x03 \x01(\x0c\x12\x35\n\x08\x65xpireIn\x18\x04 \x01(\x0e\x32#.Authentication.TwoFactorExpiration\"\x83\x01\n\x07License\x12\x0f\n\x07\x63reated\x18\x01 \x01(\x03\x12\x12\n\nexpiration\x18\x02 \x01(\x03\x12\x34\n\rlicenseStatus\x18\x03 \x01(\x0e\x32\x1d.Authentication.LicenseStatus\x12\x0c\n\x04paid\x18\x04 \x01(\x08\x12\x0f\n\x07message\x18\x05 \x01(\t\"G\n\x0fOwnerlessRecord\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x11\n\trecordKey\x18\x02 \x01(\x0c\x12\x0e\n\x06status\x18\x03 \x01(\x05\"L\n\x10OwnerlessRecords\x12\x38\n\x0fownerlessRecord\x18\x01 \x03(\x0b\x32\x1f.Authentication.OwnerlessRecord\"\xd7\x01\n\x0fUserAuthRequest\x12\x0b\n\x03uid\x18\x01 \x01(\x0c\x12\x0c\n\x04salt\x18\x02 \x01(\x0c\x12\x12\n\niterations\x18\x03 \x01(\x05\x12\x1a\n\x12\x65ncryptedClientKey\x18\x04 \x01(\x0c\x12\x10\n\x08\x61uthHash\x18\x05 \x01(\x0c\x12\x18\n\x10\x65ncryptedDataKey\x18\x06 \x01(\x0c\x12,\n\tloginType\x18\x07 \x01(\x0e\x32\x19.Authentication.LoginType\x12\x0c\n\x04name\x18\x08 \x01(\t\x12\x11\n\talgorithm\x18\t \x01(\x05\"\x19\n\nUidRequest\x12\x0b\n\x03uid\x18\x01 \x03(\x0c\"\xab\x01\n\x13\x44\x65viceUpdateRequest\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12\x15\n\rclientVersion\x18\x02 \x01(\t\x12\x12\n\ndeviceName\x18\x03 \x01(\t\x12\x17\n\x0f\x64\x65vicePublicKey\x18\x04 \x01(\x0c\x12\x32\n\x0c\x64\x65viceStatus\x18\x05 \x01(\x0e\x32\x1c.Authentication.DeviceStatus\"\x81\x01\n\x1dRegisterDeviceInRegionRequest\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12\x15\n\rclientVersion\x18\x02 \x01(\t\x12\x12\n\ndeviceName\x18\x03 \x01(\t\x12\x17\n\x0f\x64\x65vicePublicKey\x18\x04 \x01(\x0c\"\xf8\x02\n\x13RegistrationRequest\x12\x30\n\x0b\x61uthRequest\x18\x01 \x01(\x0b\x32\x1b.Authentication.AuthRequest\x12\x38\n\x0fuserAuthRequest\x18\x02 \x01(\x0b\x32\x1f.Authentication.UserAuthRequest\x12\x1a\n\x12\x65ncryptedClientKey\x18\x03 \x01(\x0c\x12\x1b\n\x13\x65ncryptedPrivateKey\x18\x04 \x01(\x0c\x12\x11\n\tpublicKey\x18\x05 \x01(\x0c\x12\x18\n\x10verificationCode\x18\x06 \x01(\t\x12\x1e\n\x16\x64\x65precatedAuthHashHash\x18\x07 \x01(\x0c\x12$\n\x1c\x64\x65precatedEncryptedClientKey\x18\x08 \x01(\x0c\x12%\n\x1d\x64\x65precatedEncryptedPrivateKey\x18\t \x01(\x0c\x12\"\n\x1a\x64\x65precatedEncryptionParams\x18\n \x01(\x0c\"\xd0\x01\n\x16\x43onvertUserToV3Request\x12\x30\n\x0b\x61uthRequest\x18\x01 \x01(\x0b\x32\x1b.Authentication.AuthRequest\x12\x38\n\x0fuserAuthRequest\x18\x02 \x01(\x0b\x32\x1f.Authentication.UserAuthRequest\x12\x1a\n\x12\x65ncryptedClientKey\x18\x03 \x01(\x0c\x12\x1b\n\x13\x65ncryptedPrivateKey\x18\x04 \x01(\x0c\x12\x11\n\tpublicKey\x18\x05 \x01(\x0c\"$\n\x10RevisionResponse\x12\x10\n\x08revision\x18\x01 \x01(\x03\"&\n\x12\x43hangeEmailRequest\x12\x10\n\x08newEmail\x18\x01 \x01(\t\"8\n\x13\x43hangeEmailResponse\x12!\n\x19\x65ncryptedChangeEmailToken\x18\x01 \x01(\x0c\"6\n\x1d\x45mailVerificationLinkResponse\x12\x15\n\remailVerified\x18\x01 \x01(\x08\")\n\x0cSecurityData\x12\x0b\n\x03uid\x18\x01 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"\xc7\x01\n\x13SecurityDataRequest\x12\x38\n\x12recordSecurityData\x18\x01 \x03(\x0b\x32\x1c.Authentication.SecurityData\x12@\n\x1amasterPasswordSecurityData\x18\x02 \x03(\x0b\x32\x1c.Authentication.SecurityData\x12\x34\n\x0e\x65ncryptionType\x18\x03 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\"\xb3\x02\n\x1dSecurityReportIncrementalData\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x1b\n\x13\x63urrentSecurityData\x18\x02 \x01(\x0c\x12#\n\x1b\x63urrentSecurityDataRevision\x18\x03 \x01(\x03\x12\x17\n\x0foldSecurityData\x18\x04 \x01(\x0c\x12\x1f\n\x17oldSecurityDataRevision\x18\x05 \x01(\x03\x12?\n\x19\x63urrentDataEncryptionType\x18\x06 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\x12;\n\x15oldDataEncryptionType\x18\x07 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\"\x9f\x02\n\x0eSecurityReport\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x1b\n\x13\x65ncryptedReportData\x18\x02 \x01(\x0c\x12\x10\n\x08revision\x18\x03 \x01(\x03\x12\x11\n\ttwoFactor\x18\x04 \x01(\t\x12\x11\n\tlastLogin\x18\x05 \x01(\x03\x12\x1e\n\x16numberOfReusedPassword\x18\x06 \x01(\x05\x12T\n\x1dsecurityReportIncrementalData\x18\x07 \x03(\x0b\x32-.Authentication.SecurityReportIncrementalData\x12\x0e\n\x06userId\x18\x08 \x01(\x05\x12\x18\n\x10hasOldEncryption\x18\t \x01(\x08\"S\n\x19SecurityReportSaveRequest\x12\x36\n\x0esecurityReport\x18\x01 \x03(\x0b\x32\x1e.Authentication.SecurityReport\")\n\x15SecurityReportRequest\x12\x10\n\x08\x66romPage\x18\x01 \x01(\x03\"\xd9\x01\n\x16SecurityReportResponse\x12\x1c\n\x14\x65nterprisePrivateKey\x18\x01 \x01(\x0c\x12\x36\n\x0esecurityReport\x18\x02 \x03(\x0b\x32\x1e.Authentication.SecurityReport\x12\x14\n\x0c\x61sOfRevision\x18\x03 \x01(\x03\x12\x10\n\x08\x66romPage\x18\x04 \x01(\x03\x12\x0e\n\x06toPage\x18\x05 \x01(\x03\x12\x10\n\x08\x63omplete\x18\x06 \x01(\x08\x12\x1f\n\x17\x65nterpriseEccPrivateKey\x18\x07 \x01(\x0c\"\'\n\x16ReusedPasswordsRequest\x12\r\n\x05\x63ount\x18\x01 \x01(\x05\">\n\x14SummaryConsoleReport\x12\x12\n\nreportType\x18\x01 \x01(\x05\x12\x12\n\nreportData\x18\x02 \x01(\x0c\"|\n\x12\x43hangeToKeyTypeOne\x12/\n\nobjectType\x18\x01 \x01(\x0e\x32\x1b.Authentication.ObjectTypes\x12\x12\n\nprimaryUid\x18\x02 \x01(\x0c\x12\x14\n\x0csecondaryUid\x18\x03 \x01(\x0c\x12\x0b\n\x03key\x18\x04 \x01(\x0c\"[\n\x19\x43hangeToKeyTypeOneRequest\x12>\n\x12\x63hangeToKeyTypeOne\x18\x01 \x03(\x0b\x32\".Authentication.ChangeToKeyTypeOne\"U\n\x18\x43hangeToKeyTypeOneStatus\x12\x0b\n\x03uid\x18\x01 \x01(\x0c\x12\x0c\n\x04type\x18\x02 \x01(\t\x12\x0e\n\x06status\x18\x03 \x01(\t\x12\x0e\n\x06reason\x18\x04 \x01(\t\"h\n\x1a\x43hangeToKeyTypeOneResponse\x12J\n\x18\x63hangeToKeyTypeOneStatus\x18\x01 \x03(\x0b\x32(.Authentication.ChangeToKeyTypeOneStatus\"\xb9\x01\n\x18GetChangeKeyTypesRequest\x12=\n\x10onlyTheseObjects\x18\x01 \x03(\x0e\x32#.Authentication.EncryptedObjectType\x12\r\n\x05limit\x18\x02 \x01(\x05\x12\x1a\n\x12includeRecommended\x18\x03 \x01(\x08\x12\x13\n\x0bincludeKeys\x18\x04 \x01(\x08\x12\x1e\n\x16includeAllowedKeyTypes\x18\x05 \x01(\x08\"\x82\x01\n\x19GetChangeKeyTypesResponse\x12+\n\x04keys\x18\x01 \x03(\x0b\x32\x1d.Authentication.ChangeKeyType\x12\x38\n\x0f\x61llowedKeyTypes\x18\x02 \x03(\x0b\x32\x1f.Authentication.AllowedKeyTypes\"\x81\x01\n\x0f\x41llowedKeyTypes\x12\x37\n\nobjectType\x18\x01 \x01(\x0e\x32#.Authentication.EncryptedObjectType\x12\x35\n\x0f\x61llowedKeyTypes\x18\x02 \x03(\x0e\x32\x1c.Enterprise.EncryptedKeyType\"=\n\x0e\x43hangeKeyTypes\x12+\n\x04keys\x18\x01 \x03(\x0b\x32\x1d.Authentication.ChangeKeyType\"\xd6\x01\n\rChangeKeyType\x12\x37\n\nobjectType\x18\x01 \x01(\x0e\x32#.Authentication.EncryptedObjectType\x12\x0b\n\x03uid\x18\x02 \x01(\x0c\x12\x14\n\x0csecondaryUid\x18\x03 \x01(\x0c\x12\x0b\n\x03key\x18\x04 \x01(\x0c\x12-\n\x07keyType\x18\x05 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\x12-\n\x06status\x18\x06 \x01(\x0e\x32\x1d.Authentication.GenericStatus\"!\n\x06SetKey\x12\n\n\x02id\x18\x01 \x01(\x03\x12\x0b\n\x03key\x18\x02 \x01(\x0c\"5\n\rSetKeyRequest\x12$\n\x04keys\x18\x01 \x03(\x0b\x32\x16.Authentication.SetKey\"\x92\x05\n\x11\x43reateUserRequest\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x14\n\x0c\x61uthVerifier\x18\x02 \x01(\x0c\x12\x18\n\x10\x65ncryptionParams\x18\x03 \x01(\x0c\x12\x14\n\x0crsaPublicKey\x18\x04 \x01(\x0c\x12\x1e\n\x16rsaEncryptedPrivateKey\x18\x05 \x01(\x0c\x12\x14\n\x0c\x65\x63\x63PublicKey\x18\x06 \x01(\x0c\x12\x1e\n\x16\x65\x63\x63\x45ncryptedPrivateKey\x18\x07 \x01(\x0c\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x08 \x01(\x0c\x12\x1a\n\x12\x65ncryptedClientKey\x18\t \x01(\x0c\x12\x15\n\rclientVersion\x18\n \x01(\t\x12\x1e\n\x16\x65ncryptedDeviceDataKey\x18\x0b \x01(\x0c\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x0c \x01(\x0c\x12\x19\n\x11messageSessionUid\x18\r \x01(\x0c\x12\x17\n\x0finstallReferrer\x18\x0e \x01(\t\x12\x0e\n\x06mccMNC\x18\x0f \x01(\x05\x12\x0b\n\x03mfg\x18\x10 \x01(\t\x12\r\n\x05model\x18\x11 \x01(\t\x12\r\n\x05\x62rand\x18\x12 \x01(\t\x12\x0f\n\x07product\x18\x13 \x01(\t\x12\x0e\n\x06\x64\x65vice\x18\x14 \x01(\t\x12\x0f\n\x07\x63\x61rrier\x18\x15 \x01(\t\x12\x18\n\x10verificationCode\x18\x16 \x01(\t\x12\x42\n\x16\x65nterpriseRegistration\x18\x17 \x01(\x0b\x32\".Enterprise.EnterpriseRegistration\x12\"\n\x1a\x65ncryptedVerificationToken\x18\x18 \x01(\x0c\x12\x1e\n\x16\x65nterpriseUsersDataKey\x18\x19 \x01(\x0c\"W\n!NodeEnforcementAddOrUpdateRequest\x12\x0e\n\x06nodeId\x18\x01 \x01(\x03\x12\x13\n\x0b\x65nforcement\x18\x02 \x01(\t\x12\r\n\x05value\x18\x03 \x01(\t\"C\n\x1cNodeEnforcementRemoveRequest\x12\x0e\n\x06nodeId\x18\x01 \x01(\x03\x12\x13\n\x0b\x65nforcement\x18\x02 \x01(\t\"\x9f\x01\n\x0f\x41piRequestByKey\x12\r\n\x05keyId\x18\x01 \x01(\x05\x12\x0f\n\x07payload\x18\x02 \x01(\x0c\x12\x10\n\x08username\x18\x03 \x01(\t\x12\x0e\n\x06locale\x18\x04 \x01(\t\x12<\n\x11supportedLanguage\x18\x05 \x01(\x0e\x32!.Authentication.SupportedLanguage\x12\x0c\n\x04type\x18\x06 \x01(\x05\"\xc7\x01\n\x15\x41piRequestByKAtoKAKey\x12,\n\x0csourceRegion\x18\x01 \x01(\x0e\x32\x16.Authentication.Region\x12\x0f\n\x07payload\x18\x02 \x01(\x0c\x12<\n\x11supportedLanguage\x18\x03 \x01(\x0e\x32!.Authentication.SupportedLanguage\x12\x31\n\x11\x64\x65stinationRegion\x18\x04 \x01(\x0e\x32\x16.Authentication.Region\".\n\x0fMemcacheRequest\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\x0e\n\x06userId\x18\x02 \x01(\x05\".\n\x10MemcacheResponse\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t\"w\n\x1cMasterPasswordReentryRequest\x12\x16\n\x0epbkdf2Password\x18\x01 \x01(\t\x12?\n\x06\x61\x63tion\x18\x02 \x01(\x0e\x32/.Authentication.MasterPasswordReentryActionType\"\\\n\x1dMasterPasswordReentryResponse\x12;\n\x06status\x18\x01 \x01(\x0e\x32+.Authentication.MasterPasswordReentryStatus\"_\n\x19\x44\x65viceRegistrationRequest\x12\x15\n\rclientVersion\x18\x01 \x01(\t\x12\x12\n\ndeviceName\x18\x02 \x01(\t\x12\x17\n\x0f\x64\x65vicePublicKey\x18\x03 \x01(\x0c\"\x9a\x01\n\x19\x44\x65viceVerificationRequest\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x1b\n\x13verificationChannel\x18\x03 \x01(\t\x12\x19\n\x11messageSessionUid\x18\x04 \x01(\x0c\x12\x15\n\rclientVersion\x18\x05 \x01(\t\"\xb2\x01\n\x1a\x44\x65viceVerificationResponse\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x19\n\x11messageSessionUid\x18\x03 \x01(\x0c\x12\x15\n\rclientVersion\x18\x04 \x01(\t\x12\x32\n\x0c\x64\x65viceStatus\x18\x05 \x01(\x0e\x32\x1c.Authentication.DeviceStatus\"\xc8\x01\n\x15\x44\x65viceApprovalRequest\x12\r\n\x05\x65mail\x18\x01 \x01(\t\x12\x18\n\x10twoFactorChannel\x18\x02 \x01(\t\x12\x15\n\rclientVersion\x18\x03 \x01(\t\x12\x0e\n\x06locale\x18\x04 \x01(\t\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x05 \x01(\x0c\x12\x10\n\x08totpCode\x18\x06 \x01(\t\x12\x10\n\x08\x64\x65viceIp\x18\x07 \x01(\t\x12\x1d\n\x15\x64\x65viceTokenExpireDays\x18\x08 \x01(\t\"9\n\x16\x44\x65viceApprovalResponse\x12\x1f\n\x17\x65ncryptedTwoFactorToken\x18\x01 \x01(\x0c\"~\n\x14\x41pproveDeviceRequest\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12\x1e\n\x16\x65ncryptedDeviceDataKey\x18\x02 \x01(\x0c\x12\x14\n\x0c\x64\x65nyApproval\x18\x03 \x01(\x08\x12\x12\n\nlinkDevice\x18\x04 \x01(\x08\"E\n\x1a\x45nterpriseUserAliasRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\r\n\x05\x61lias\x18\x02 \x01(\t\"Y\n\x1d\x45nterpriseUserAddAliasRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\r\n\x05\x61lias\x18\x02 \x01(\t\x12\x0f\n\x07primary\x18\x03 \x01(\x08\"w\n\x1f\x45nterpriseUserAddAliasRequestV2\x12T\n\x1d\x65nterpriseUserAddAliasRequest\x18\x01 \x03(\x0b\x32-.Authentication.EnterpriseUserAddAliasRequest\"H\n\x1c\x45nterpriseUserAddAliasStatus\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x0e\n\x06status\x18\x02 \x01(\t\"^\n\x1e\x45nterpriseUserAddAliasResponse\x12<\n\x06status\x18\x01 \x03(\x0b\x32,.Authentication.EnterpriseUserAddAliasStatus\"&\n\x06\x44\x65vice\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\"\\\n\x1cRegisterDeviceDataKeyRequest\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x01 \x01(\x0c\x12\x1e\n\x16\x65ncryptedDeviceDataKey\x18\x02 \x01(\x0c\"n\n)ValidateCreateUserVerificationCodeRequest\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x15\n\rclientVersion\x18\x02 \x01(\t\x12\x18\n\x10verificationCode\x18\x03 \x01(\t\"\xa3\x01\n%ValidateDeviceVerificationCodeRequest\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x15\n\rclientVersion\x18\x02 \x01(\t\x12\x18\n\x10verificationCode\x18\x03 \x01(\t\x12\x19\n\x11messageSessionUid\x18\x04 \x01(\x0c\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x05 \x01(\x0c\"Y\n\x19SendSessionMessageRequest\x12\x19\n\x11messageSessionUid\x18\x01 \x01(\x0c\x12\x0f\n\x07\x63ommand\x18\x02 \x01(\t\x12\x10\n\x08username\x18\x03 \x01(\t\"M\n\x11GlobalUserAccount\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x12\n\naccountUid\x18\x02 \x01(\x0c\x12\x12\n\nregionName\x18\x03 \x01(\t\"7\n\x0f\x41\x63\x63ountUsername\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x12\n\ndateActive\x18\x02 \x01(\t\"P\n\x19SsoServiceProviderRequest\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x15\n\rclientVersion\x18\x02 \x01(\t\x12\x0e\n\x06locale\x18\x03 \x01(\t\"a\n\x1aSsoServiceProviderResponse\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\r\n\x05spUrl\x18\x02 \x01(\t\x12\x0f\n\x07isCloud\x18\x03 \x01(\x08\x12\x15\n\rclientVersion\x18\x04 \x01(\t\"4\n\x12UserSettingRequest\x12\x0f\n\x07setting\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t\"f\n\rThrottleState\x12*\n\x04type\x18\x01 \x01(\x0e\x32\x1c.Authentication.ThrottleType\x12\x0b\n\x03key\x18\x02 \x01(\t\x12\r\n\x05value\x18\x03 \x01(\t\x12\r\n\x05state\x18\x04 \x01(\x08\"\xb5\x01\n\x0eThrottleState2\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\x16\n\x0ekeyDescription\x18\x02 \x01(\t\x12\r\n\x05value\x18\x03 \x01(\t\x12\x18\n\x10valueDescription\x18\x04 \x01(\t\x12\x12\n\nidentifier\x18\x05 \x01(\t\x12\x0e\n\x06locked\x18\x06 \x01(\x08\x12\x1a\n\x12includedInAllClear\x18\x07 \x01(\x08\x12\x15\n\rexpireSeconds\x18\x08 \x01(\x05\"\x97\x01\n\x11\x44\x65viceInformation\x12\x10\n\x08\x64\x65viceId\x18\x01 \x01(\x03\x12\x12\n\ndeviceName\x18\x02 \x01(\t\x12\x15\n\rclientVersion\x18\x03 \x01(\t\x12\x11\n\tlastLogin\x18\x04 \x01(\x03\x12\x32\n\x0c\x64\x65viceStatus\x18\x05 \x01(\x0e\x32\x1c.Authentication.DeviceStatus\"*\n\x0bUserSetting\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x08\".\n\x12UserDataKeyRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x03(\x03\"\x80\x01\n\x1b\x45nterpriseUserIdDataKeyPair\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x18\n\x10\x65ncryptedDataKey\x18\x02 \x01(\x0c\x12-\n\x07keyType\x18\x03 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\"\x95\x01\n\x0bUserDataKey\x12\x0e\n\x06roleId\x18\x01 \x01(\x03\x12\x0f\n\x07roleKey\x18\x02 \x01(\x0c\x12\x12\n\nprivateKey\x18\x03 \x01(\t\x12Q\n\x1c\x65nterpriseUserIdDataKeyPairs\x18\x04 \x03(\x0b\x32+.Authentication.EnterpriseUserIdDataKeyPair\"z\n\x13UserDataKeyResponse\x12\x31\n\x0cuserDataKeys\x18\x01 \x03(\x0b\x32\x1b.Authentication.UserDataKey\x12\x14\n\x0c\x61\x63\x63\x65ssDenied\x18\x02 \x03(\x03\x12\x1a\n\x12noEncryptedDataKey\x18\x03 \x03(\x03\"H\n)MasterPasswordRecoveryVerificationRequest\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x01 \x01(\x0c\"U\n\x1cGetSecurityQuestionV3Request\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x01 \x01(\x0c\x12\x18\n\x10verificationCode\x18\x02 \x01(\t\"r\n\x1dGetSecurityQuestionV3Response\x12\x18\n\x10securityQuestion\x18\x01 \x01(\t\x12\x15\n\rbackupKeyDate\x18\x02 \x01(\x03\x12\x0c\n\x04salt\x18\x03 \x01(\x0c\x12\x12\n\niterations\x18\x04 \x01(\x05\"n\n\x19GetDataKeyBackupV3Request\x12\x1b\n\x13\x65ncryptedLoginToken\x18\x01 \x01(\x0c\x12\x18\n\x10verificationCode\x18\x02 \x01(\t\x12\x1a\n\x12securityAnswerHash\x18\x03 \x01(\x0c\"v\n\rPasswordRules\x12\x10\n\x08ruleType\x18\x01 \x01(\t\x12\r\n\x05match\x18\x02 \x01(\x08\x12\x0f\n\x07pattern\x18\x03 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x04 \x01(\t\x12\x0f\n\x07minimum\x18\x05 \x01(\x05\x12\r\n\x05value\x18\x06 \x01(\t\"\xa3\x02\n\x1aGetDataKeyBackupV3Response\x12\x15\n\rdataKeyBackup\x18\x01 \x01(\x0c\x12\x19\n\x11\x64\x61taKeyBackupDate\x18\x02 \x01(\x03\x12\x11\n\tpublicKey\x18\x03 \x01(\x0c\x12\x1b\n\x13\x65ncryptedPrivateKey\x18\x04 \x01(\x0c\x12\x11\n\tclientKey\x18\x05 \x01(\x0c\x12\x1d\n\x15\x65ncryptedSessionToken\x18\x06 \x01(\x0c\x12\x34\n\rpasswordRules\x18\x07 \x03(\x0b\x32\x1d.Authentication.PasswordRules\x12\x1a\n\x12passwordRulesIntro\x18\x08 \x01(\t\x12\x1f\n\x17minimumPbkdf2Iterations\x18\t \x01(\x05\")\n\x14GetPublicKeysRequest\x12\x11\n\tusernames\x18\x01 \x03(\t\"r\n\x11PublicKeyResponse\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x11\n\tpublicKey\x18\x02 \x01(\x0c\x12\x14\n\x0cpublicEccKey\x18\x03 \x01(\x0c\x12\x0f\n\x07message\x18\x04 \x01(\t\x12\x11\n\terrorCode\x18\x05 \x01(\t\"P\n\x15GetPublicKeysResponse\x12\x37\n\x0ckeyResponses\x18\x01 \x03(\x0b\x32!.Authentication.PublicKeyResponse\"F\n\x14SetEccKeyPairRequest\x12\x11\n\tpublicKey\x18\x01 \x01(\x0c\x12\x1b\n\x13\x65ncryptedPrivateKey\x18\x02 \x01(\x0c\"I\n\x15SetEccKeyPairsRequest\x12\x30\n\x08teamKeys\x18\x01 \x03(\x0b\x32\x1e.Authentication.TeamEccKeyPair\"R\n\x16SetEccKeyPairsResponse\x12\x38\n\x08teamKeys\x18\x01 \x03(\x0b\x32&.Authentication.TeamEccKeyPairResponse\"Q\n\x0eTeamEccKeyPair\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\x11\n\tpublicKey\x18\x02 \x01(\x0c\x12\x1b\n\x13\x65ncryptedPrivateKey\x18\x03 \x01(\x0c\"X\n\x16TeamEccKeyPairResponse\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12-\n\x06status\x18\x02 \x01(\x0e\x32\x1d.Authentication.GenericStatus\"D\n\x17GetKsmPublicKeysRequest\x12\x11\n\tclientIds\x18\x01 \x03(\x0c\x12\x16\n\x0e\x63ontrollerUids\x18\x02 \x03(\x0c\"U\n\x17\x44\x65vicePublicKeyResponse\x12\x10\n\x08\x63lientId\x18\x01 \x01(\x0c\x12\x11\n\tpublicKey\x18\x02 \x01(\x0c\x12\x15\n\rcontrollerUid\x18\x03 \x01(\x0c\"Y\n\x18GetKsmPublicKeysResponse\x12=\n\x0ckeyResponses\x18\x01 \x03(\x0b\x32\'.Authentication.DevicePublicKeyResponse\"X\n\x13\x41\x64\x64\x41ppSharesRequest\x12\x14\n\x0c\x61ppRecordUid\x18\x01 \x01(\x0c\x12+\n\x06shares\x18\x02 \x03(\x0b\x32\x1b.Authentication.AppShareAdd\">\n\x16RemoveAppSharesRequest\x12\x14\n\x0c\x61ppRecordUid\x18\x01 \x01(\x0c\x12\x0e\n\x06shares\x18\x02 \x03(\x0c\"\x87\x01\n\x0b\x41ppShareAdd\x12\x11\n\tsecretUid\x18\x02 \x01(\x0c\x12\x37\n\tshareType\x18\x03 \x01(\x0e\x32$.Authentication.ApplicationShareType\x12\x1a\n\x12\x65ncryptedSecretKey\x18\x04 \x01(\x0c\x12\x10\n\x08\x65\x64itable\x18\x05 \x01(\x08\"\x89\x01\n\x08\x41ppShare\x12\x11\n\tsecretUid\x18\x01 \x01(\x0c\x12\x37\n\tshareType\x18\x02 \x01(\x0e\x32$.Authentication.ApplicationShareType\x12\x10\n\x08\x65\x64itable\x18\x03 \x01(\x08\x12\x11\n\tcreatedOn\x18\x04 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x05 \x01(\x0c\"\xd9\x01\n\x13\x41\x64\x64\x41ppClientRequest\x12\x14\n\x0c\x61ppRecordUid\x18\x01 \x01(\x0c\x12\x17\n\x0f\x65ncryptedAppKey\x18\x02 \x01(\x0c\x12\x10\n\x08\x63lientId\x18\x03 \x01(\x0c\x12\x0e\n\x06lockIp\x18\x04 \x01(\x08\x12\x1b\n\x13\x66irstAccessExpireOn\x18\x05 \x01(\x03\x12\x16\n\x0e\x61\x63\x63\x65ssExpireOn\x18\x06 \x01(\x03\x12\n\n\x02id\x18\x07 \x01(\t\x12\x30\n\rappClientType\x18\x08 \x01(\x0e\x32\x19.Enterprise.AppClientType\"@\n\x17RemoveAppClientsRequest\x12\x14\n\x0c\x61ppRecordUid\x18\x01 \x01(\x0c\x12\x0f\n\x07\x63lients\x18\x02 \x03(\x0c\"\x96\x01\n\x17\x41\x64\x64\x45xternalShareRequest\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x1a\n\x12\x65ncryptedRecordKey\x18\x02 \x01(\x0c\x12\x10\n\x08\x63lientId\x18\x03 \x01(\x0c\x12\x16\n\x0e\x61\x63\x63\x65ssExpireOn\x18\x04 \x01(\x03\x12\n\n\x02id\x18\x05 \x01(\t\x12\x16\n\x0eisSelfDestruct\x18\x06 \x01(\x08\"\x82\x02\n\tAppClient\x12\n\n\x02id\x18\x01 \x01(\t\x12\x10\n\x08\x63lientId\x18\x02 \x01(\x0c\x12\x11\n\tcreatedOn\x18\x03 \x01(\x03\x12\x13\n\x0b\x66irstAccess\x18\x04 \x01(\x03\x12\x12\n\nlastAccess\x18\x05 \x01(\x03\x12\x11\n\tpublicKey\x18\x06 \x01(\x0c\x12\x0e\n\x06lockIp\x18\x07 \x01(\x08\x12\x11\n\tipAddress\x18\x08 \x01(\t\x12\x1b\n\x13\x66irstAccessExpireOn\x18\t \x01(\x03\x12\x16\n\x0e\x61\x63\x63\x65ssExpireOn\x18\n \x01(\x03\x12\x30\n\rappClientType\x18\x0b \x01(\x0e\x32\x19.Enterprise.AppClientType\")\n\x11GetAppInfoRequest\x12\x14\n\x0c\x61ppRecordUid\x18\x01 \x03(\x0c\"\x8e\x01\n\x07\x41ppInfo\x12\x14\n\x0c\x61ppRecordUid\x18\x01 \x01(\x0c\x12(\n\x06shares\x18\x02 \x03(\x0b\x32\x18.Authentication.AppShare\x12*\n\x07\x63lients\x18\x03 \x03(\x0b\x32\x19.Authentication.AppClient\x12\x17\n\x0fisExternalShare\x18\x04 \x01(\x08\">\n\x12GetAppInfoResponse\x12(\n\x07\x61ppInfo\x18\x01 \x03(\x0b\x32\x17.Authentication.AppInfo\"\xd5\x01\n\x12\x41pplicationSummary\x12\x14\n\x0c\x61ppRecordUid\x18\x01 \x01(\x0c\x12\x12\n\nlastAccess\x18\x02 \x01(\x03\x12\x14\n\x0crecordShares\x18\x03 \x01(\x05\x12\x14\n\x0c\x66olderShares\x18\x04 \x01(\x05\x12\x15\n\rfolderRecords\x18\x05 \x01(\x05\x12\x13\n\x0b\x63lientCount\x18\x06 \x01(\x05\x12\x1a\n\x12\x65xpiredClientCount\x18\x07 \x01(\x05\x12\x10\n\x08username\x18\x08 \x01(\t\x12\x0f\n\x07\x61ppData\x18\t \x01(\x0c\"`\n\x1eGetApplicationsSummaryResponse\x12>\n\x12\x61pplicationSummary\x18\x01 \x03(\x0b\x32\".Authentication.ApplicationSummary\"/\n\x1bGetVerificationTokenRequest\x12\x10\n\x08username\x18\x01 \x01(\t\"B\n\x1cGetVerificationTokenResponse\x12\"\n\x1a\x65ncryptedVerificationToken\x18\x01 \x01(\x0c\"\'\n\x16SendShareInviteRequest\x12\r\n\x05\x65mail\x18\x01 \x01(\t\"\xc5\x01\n\x18TimeLimitedAccessRequest\x12\x12\n\naccountUid\x18\x01 \x03(\x0c\x12\x0f\n\x07teamUid\x18\x02 \x03(\x0c\x12\x11\n\trecordUid\x18\x03 \x03(\x0c\x12\x17\n\x0fsharedObjectUid\x18\x04 \x01(\x0c\x12\x44\n\x15timeLimitedAccessType\x18\x05 \x01(\x0e\x32%.Authentication.TimeLimitedAccessType\x12\x12\n\nexpiration\x18\x06 \x01(\x03\"7\n\x17TimeLimitedAccessStatus\x12\x0b\n\x03uid\x18\x01 \x01(\x0c\x12\x0f\n\x07message\x18\x02 \x01(\t\"\xf8\x01\n\x19TimeLimitedAccessResponse\x12\x10\n\x08revision\x18\x01 \x01(\x03\x12\x41\n\x10userAccessStatus\x18\x02 \x03(\x0b\x32\'.Authentication.TimeLimitedAccessStatus\x12\x41\n\x10teamAccessStatus\x18\x03 \x03(\x0b\x32\'.Authentication.TimeLimitedAccessStatus\x12\x43\n\x12recordAccessStatus\x18\x04 \x03(\x0b\x32\'.Authentication.TimeLimitedAccessStatus\"+\n\x16RequestDownloadRequest\x12\x11\n\tfileNames\x18\x01 \x03(\t\"g\n\x17RequestDownloadResponse\x12\x0e\n\x06result\x18\x01 \x01(\t\x12\x0f\n\x07message\x18\x02 \x01(\t\x12+\n\tdownloads\x18\x03 \x03(\x0b\x32\x18.Authentication.Download\"D\n\x08\x44ownload\x12\x10\n\x08\x66ileName\x18\x01 \x01(\t\x12\x0b\n\x03url\x18\x02 \x01(\t\x12\x19\n\x11successStatusCode\x18\x03 \x01(\x05\"#\n\x11\x44\x65leteUserRequest\x12\x0e\n\x06reason\x18\x01 \x01(\t\"\x84\x01\n\x1b\x43hangeMasterPasswordRequest\x12\x14\n\x0c\x61uthVerifier\x18\x01 \x01(\x0c\x12\x18\n\x10\x65ncryptionParams\x18\x02 \x01(\x0c\x12\x1b\n\x13\x66romServiceProvider\x18\x03 \x01(\x08\x12\x18\n\x10iterationsChange\x18\x04 \x01(\x08\"=\n\x1c\x43hangeMasterPasswordResponse\x12\x1d\n\x15\x65ncryptedSessionToken\x18\x01 \x01(\x0c\"Y\n\x1b\x41\x63\x63ountRecoverySetupRequest\x12 \n\x18recoveryEncryptedDataKey\x18\x01 \x01(\x0c\x12\x18\n\x10recoveryAuthHash\x18\x02 \x01(\x0c\"\xac\x01\n!AccountRecoveryVerifyCodeResponse\x12\x34\n\rbackupKeyType\x18\x01 \x01(\x0e\x32\x1d.Authentication.BackupKeyType\x12\x15\n\rbackupKeyDate\x18\x02 \x01(\x03\x12\x18\n\x10securityQuestion\x18\x03 \x01(\t\x12\x0c\n\x04salt\x18\x04 \x01(\x0c\x12\x12\n\niterations\x18\x05 \x01(\x05\",\n\x1b\x45mergencyAccessLoginRequest\x12\r\n\x05owner\x18\x01 \x01(\t\"\xb5\x01\n\x1c\x45mergencyAccessLoginResponse\x12\x14\n\x0csessionToken\x18\x01 \x01(\x0c\x12%\n\x07\x64\x61taKey\x18\x02 \x01(\x0b\x32\x14.Enterprise.TypedKey\x12+\n\rrsaPrivateKey\x18\x03 \x01(\x0b\x32\x14.Enterprise.TypedKey\x12+\n\reccPrivateKey\x18\x04 \x01(\x0b\x32\x14.Enterprise.TypedKey\"\xb2\x01\n\x0bUserTeamKey\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x18\n\x10\x65nterpriseUserId\x18\x03 \x01(\x03\x12\x1b\n\x13\x65ncryptedTeamKeyRSA\x18\x04 \x01(\x0c\x12\x1a\n\x12\x65ncryptedTeamKeyEC\x18\x05 \x01(\x0c\x12-\n\x06status\x18\x06 \x01(\x0e\x32\x1d.Authentication.GenericStatus\")\n\x16GenericRequestResponse\x12\x0f\n\x07request\x18\x01 \x03(\x0c*\xb9\x02\n\x11SupportedLanguage\x12\x0b\n\x07\x45NGLISH\x10\x00\x12\n\n\x06\x41RABIC\x10\x01\x12\x0b\n\x07\x42RITISH\x10\x02\x12\x0b\n\x07\x43HINESE\x10\x03\x12\x15\n\x11\x43HINESE_HONG_KONG\x10\x04\x12\x12\n\x0e\x43HINESE_TAIWAN\x10\x05\x12\t\n\x05\x44UTCH\x10\x06\x12\n\n\x06\x46RENCH\x10\x07\x12\n\n\x06GERMAN\x10\x08\x12\t\n\x05GREEK\x10\t\x12\n\n\x06HEBREW\x10\n\x12\x0b\n\x07ITALIAN\x10\x0b\x12\x0c\n\x08JAPANESE\x10\x0c\x12\n\n\x06KOREAN\x10\r\x12\n\n\x06POLISH\x10\x0e\x12\x0e\n\nPORTUGUESE\x10\x0f\x12\x15\n\x11PORTUGUESE_BRAZIL\x10\x10\x12\x0c\n\x08ROMANIAN\x10\x11\x12\x0b\n\x07RUSSIAN\x10\x12\x12\n\n\x06SLOVAK\x10\x13\x12\x0b\n\x07SPANISH\x10\x14*Z\n\tLoginType\x12\n\n\x06NORMAL\x10\x00\x12\x07\n\x03SSO\x10\x01\x12\x07\n\x03\x42IO\x10\x02\x12\r\n\tALTERNATE\x10\x03\x12\x0b\n\x07OFFLINE\x10\x04\x12\x13\n\x0f\x46ORGOT_PASSWORD\x10\x05*q\n\x0c\x44\x65viceStatus\x12\x19\n\x15\x44\x45VICE_NEEDS_APPROVAL\x10\x00\x12\r\n\tDEVICE_OK\x10\x01\x12\x1b\n\x17\x44\x45VICE_DISABLED_BY_USER\x10\x02\x12\x1a\n\x16\x44\x45VICE_LOCKED_BY_ADMIN\x10\x03*A\n\rLicenseStatus\x12\t\n\x05OTHER\x10\x00\x12\n\n\x06\x41\x43TIVE\x10\x01\x12\x0b\n\x07\x45XPIRED\x10\x02\x12\x0c\n\x08\x44ISABLED\x10\x03*7\n\x0b\x41\x63\x63ountType\x12\x0c\n\x08\x43ONSUMER\x10\x00\x12\n\n\x06\x46\x41MILY\x10\x01\x12\x0e\n\nENTERPRISE\x10\x02*\xfc\x01\n\x10SessionTokenType\x12\x12\n\x0eNO_RESTRICTION\x10\x00\x12\x14\n\x10\x41\x43\x43OUNT_RECOVERY\x10\x01\x12\x11\n\rSHARE_ACCOUNT\x10\x02\x12\x0c\n\x08PURCHASE\x10\x03\x12\x0c\n\x08RESTRICT\x10\x04\x12\x11\n\rACCEPT_INVITE\x10\x05\x12\x12\n\x0eSUPPORT_SERVER\x10\x06\x12\x17\n\x13\x45NTERPRISE_CREATION\x10\x07\x12\x1f\n\x1b\x45XPIRED_BUT_ALLOWED_TO_SYNC\x10\x08\x12\x18\n\x14\x41\x43\x43\x45PT_FAMILY_INVITE\x10\t\x12\x14\n\x10\x45MERGENCY_ACCESS\x10\n*G\n\x07Version\x12\x13\n\x0finvalid_version\x10\x00\x12\x13\n\x0f\x64\x65\x66\x61ult_version\x10\x01\x12\x12\n\x0esecond_version\x10\x02*7\n\x1fMasterPasswordReentryActionType\x12\n\n\x06UNMASK\x10\x00\x12\x08\n\x04\x43OPY\x10\x01*l\n\x0bLoginMethod\x12\x17\n\x13INVALID_LOGINMETHOD\x10\x00\x12\x14\n\x10\x45XISTING_ACCOUNT\x10\x01\x12\x0e\n\nSSO_DOMAIN\x10\x02\x12\r\n\tAFTER_SSO\x10\x03\x12\x0f\n\x0bNEW_ACCOUNT\x10\x04*\xc7\x03\n\nLoginState\x12\x16\n\x12INVALID_LOGINSTATE\x10\x00\x12\x0e\n\nLOGGED_OUT\x10\x01\x12\x1c\n\x18\x44\x45VICE_APPROVAL_REQUIRED\x10\x02\x12\x11\n\rDEVICE_LOCKED\x10\x03\x12\x12\n\x0e\x41\x43\x43OUNT_LOCKED\x10\x04\x12\x19\n\x15\x44\x45VICE_ACCOUNT_LOCKED\x10\x05\x12\x0b\n\x07UPGRADE\x10\x06\x12\x13\n\x0fLICENSE_EXPIRED\x10\x07\x12\x13\n\x0fREGION_REDIRECT\x10\x08\x12\x16\n\x12REDIRECT_CLOUD_SSO\x10\t\x12\x17\n\x13REDIRECT_ONSITE_SSO\x10\n\x12\x10\n\x0cREQUIRES_2FA\x10\x0c\x12\x16\n\x12REQUIRES_AUTH_HASH\x10\r\x12\x15\n\x11REQUIRES_USERNAME\x10\x0e\x12\x19\n\x15\x41\x46TER_CLOUD_SSO_LOGIN\x10\x0f\x12\x1d\n\x19REQUIRES_ACCOUNT_CREATION\x10\x10\x12&\n\"REQUIRES_DEVICE_ENCRYPTED_DATA_KEY\x10\x11\x12\x17\n\x13LOGIN_TOKEN_EXPIRED\x10\x12\x12\r\n\tLOGGED_IN\x10\x63*k\n\x14\x45ncryptedDataKeyType\x12\n\n\x06NO_KEY\x10\x00\x12\x18\n\x14\x42Y_DEVICE_PUBLIC_KEY\x10\x01\x12\x0f\n\x0b\x42Y_PASSWORD\x10\x02\x12\x10\n\x0c\x42Y_ALTERNATE\x10\x03\x12\n\n\x06\x42Y_BIO\x10\x04*-\n\x0ePasswordMethod\x12\x0b\n\x07\x45NTERED\x10\x00\x12\x0e\n\nBIOMETRICS\x10\x01*\xb9\x01\n\x11TwoFactorPushType\x12\x14\n\x10TWO_FA_PUSH_NONE\x10\x00\x12\x13\n\x0fTWO_FA_PUSH_SMS\x10\x01\x12\x16\n\x12TWO_FA_PUSH_KEEPER\x10\x02\x12\x18\n\x14TWO_FA_PUSH_DUO_PUSH\x10\x03\x12\x18\n\x14TWO_FA_PUSH_DUO_TEXT\x10\x04\x12\x18\n\x14TWO_FA_PUSH_DUO_CALL\x10\x05\x12\x13\n\x0fTWO_FA_PUSH_DNA\x10\x06*\xc3\x01\n\x12TwoFactorValueType\x12\x14\n\x10TWO_FA_CODE_NONE\x10\x00\x12\x14\n\x10TWO_FA_CODE_TOTP\x10\x01\x12\x13\n\x0fTWO_FA_CODE_SMS\x10\x02\x12\x13\n\x0fTWO_FA_CODE_DUO\x10\x03\x12\x13\n\x0fTWO_FA_CODE_RSA\x10\x04\x12\x13\n\x0fTWO_FA_RESP_U2F\x10\x05\x12\x18\n\x14TWO_FA_RESP_WEBAUTHN\x10\x06\x12\x13\n\x0fTWO_FA_CODE_DNA\x10\x07*\xe1\x01\n\x14TwoFactorChannelType\x12\x12\n\x0eTWO_FA_CT_NONE\x10\x00\x12\x12\n\x0eTWO_FA_CT_TOTP\x10\x01\x12\x11\n\rTWO_FA_CT_SMS\x10\x02\x12\x11\n\rTWO_FA_CT_DUO\x10\x03\x12\x11\n\rTWO_FA_CT_RSA\x10\x04\x12\x14\n\x10TWO_FA_CT_BACKUP\x10\x05\x12\x11\n\rTWO_FA_CT_U2F\x10\x06\x12\x16\n\x12TWO_FA_CT_WEBAUTHN\x10\x07\x12\x14\n\x10TWO_FA_CT_KEEPER\x10\x08\x12\x11\n\rTWO_FA_CT_DNA\x10\t*\xab\x01\n\x13TwoFactorExpiration\x12\x1a\n\x16TWO_FA_EXP_IMMEDIATELY\x10\x00\x12\x18\n\x14TWO_FA_EXP_5_MINUTES\x10\x01\x12\x17\n\x13TWO_FA_EXP_12_HOURS\x10\x02\x12\x17\n\x13TWO_FA_EXP_24_HOURS\x10\x03\x12\x16\n\x12TWO_FA_EXP_30_DAYS\x10\x04\x12\x14\n\x10TWO_FA_EXP_NEVER\x10\x05*@\n\x0bLicenseType\x12\t\n\x05VAULT\x10\x00\x12\x08\n\x04\x43HAT\x10\x01\x12\x0b\n\x07STORAGE\x10\x02\x12\x0f\n\x0b\x42REACHWATCH\x10\x03*i\n\x0bObjectTypes\x12\n\n\x06RECORD\x10\x00\x12\x16\n\x12SHARED_FOLDER_USER\x10\x01\x12\x16\n\x12SHARED_FOLDER_TEAM\x10\x02\x12\x0f\n\x0bUSER_FOLDER\x10\x03\x12\r\n\tTEAM_USER\x10\x04*\x8a\x02\n\x13\x45ncryptedObjectType\x12\x13\n\x0f\x45OT_UNSPECIFIED\x10\x00\x12\x12\n\x0e\x45OT_RECORD_KEY\x10\x01\x12\x1e\n\x1a\x45OT_SHARED_FOLDER_USER_KEY\x10\x02\x12\x1e\n\x1a\x45OT_SHARED_FOLDER_TEAM_KEY\x10\x03\x12\x15\n\x11\x45OT_TEAM_USER_KEY\x10\x04\x12\x17\n\x13\x45OT_USER_FOLDER_KEY\x10\x05\x12\x15\n\x11\x45OT_SECURITY_DATA\x10\x06\x12%\n!EOT_SECURITY_DATA_MASTER_PASSWORD\x10\x07\x12\x1c\n\x18\x45OT_EMERGENCY_ACCESS_KEY\x10\x08*M\n\x1bMasterPasswordReentryStatus\x12\x0e\n\nMP_UNKNOWN\x10\x00\x12\x0e\n\nMP_SUCCESS\x10\x01\x12\x0e\n\nMP_FAILURE\x10\x02*`\n\x1b\x41lternateAuthenticationType\x12\x1d\n\x19\x41LTERNATE_MASTER_PASSWORD\x10\x00\x12\r\n\tBIOMETRIC\x10\x01\x12\x13\n\x0f\x41\x43\x43OUNT_RECOVER\x10\x02*\x9a\x02\n\x0cThrottleType\x12\x1b\n\x17PASSWORD_RETRY_THROTTLE\x10\x00\x12\"\n\x1ePASSWORD_RETRY_LEGACY_THROTTLE\x10\x01\x12\x13\n\x0fTWO_FA_THROTTLE\x10\x02\x12\x1a\n\x16TWO_FA_LEGACY_THROTTLE\x10\x03\x12\x15\n\x11QA_RETRY_THROTTLE\x10\x04\x12\x1c\n\x18\x41\x43\x43OUNT_RECOVER_THROTTLE\x10\x05\x12.\n*VALIDATE_DEVICE_VERIFICATION_CODE_THROTTLE\x10\x06\x12\x33\n/VALIDATE_CREATE_USER_VERIFICATION_CODE_THROTTLE\x10\x07*H\n\x06Region\x12\x0b\n\x07UNKNOWN\x10\x00\x12\x06\n\x02\x65u\x10\x01\x12\x06\n\x02us\x10\x02\x12\t\n\x05usgov\x10\x03\x12\x06\n\x02\x61u\x10\x04\x12\x06\n\x02jp\x10\x05\x12\x06\n\x02\x63\x61\x10\x06*D\n\x14\x41pplicationShareType\x12\x15\n\x11SHARE_TYPE_RECORD\x10\x00\x12\x15\n\x11SHARE_TYPE_FOLDER\x10\x01*\xa4\x01\n\x15TimeLimitedAccessType\x12$\n INVALID_TIME_LIMITED_ACCESS_TYPE\x10\x00\x12\x19\n\x15USER_ACCESS_TO_RECORD\x10\x01\x12\'\n#USER_OR_TEAM_ACCESS_TO_SHAREDFOLDER\x10\x02\x12!\n\x1dRECORD_ACCESS_TO_SHAREDFOLDER\x10\x03*<\n\rBackupKeyType\x12\x12\n\x0e\x42KT_SEC_ANSWER\x10\x00\x12\x17\n\x13\x42KT_PASSPHRASE_HASH\x10\x01*W\n\rGenericStatus\x12\x0b\n\x07SUCCESS\x10\x00\x12\x12\n\x0eINVALID_OBJECT\x10\x01\x12\x12\n\x0e\x41LREADY_EXISTS\x10\x02\x12\x11\n\rACCESS_DENIED\x10\x03\x42*\n\x18\x63om.keepersecurity.protoB\x0e\x41uthenticationb\x06proto3')
 
 _SUPPORTEDLANGUAGE = DESCRIPTOR.enum_types_by_name['SupportedLanguage']
 SupportedLanguage = enum_type_wrapper.EnumTypeWrapper(_SUPPORTEDLANGUAGE)
@@ -54,6 +54,8 @@ _LICENSETYPE = DESCRIPTOR.enum_types_by_name['LicenseType']
 LicenseType = enum_type_wrapper.EnumTypeWrapper(_LICENSETYPE)
 _OBJECTTYPES = DESCRIPTOR.enum_types_by_name['ObjectTypes']
 ObjectTypes = enum_type_wrapper.EnumTypeWrapper(_OBJECTTYPES)
+_ENCRYPTEDOBJECTTYPE = DESCRIPTOR.enum_types_by_name['EncryptedObjectType']
+EncryptedObjectType = enum_type_wrapper.EnumTypeWrapper(_ENCRYPTEDOBJECTTYPE)
 _MASTERPASSWORDREENTRYSTATUS = DESCRIPTOR.enum_types_by_name['MasterPasswordReentryStatus']
 MasterPasswordReentryStatus = enum_type_wrapper.EnumTypeWrapper(_MASTERPASSWORDREENTRYSTATUS)
 _ALTERNATEAUTHENTICATIONTYPE = DESCRIPTOR.enum_types_by_name['AlternateAuthenticationType']
@@ -64,6 +66,8 @@ _REGION = DESCRIPTOR.enum_types_by_name['Region']
 Region = enum_type_wrapper.EnumTypeWrapper(_REGION)
 _APPLICATIONSHARETYPE = DESCRIPTOR.enum_types_by_name['ApplicationShareType']
 ApplicationShareType = enum_type_wrapper.EnumTypeWrapper(_APPLICATIONSHARETYPE)
+_TIMELIMITEDACCESSTYPE = DESCRIPTOR.enum_types_by_name['TimeLimitedAccessType']
+TimeLimitedAccessType = enum_type_wrapper.EnumTypeWrapper(_TIMELIMITEDACCESSTYPE)
 _BACKUPKEYTYPE = DESCRIPTOR.enum_types_by_name['BackupKeyType']
 BackupKeyType = enum_type_wrapper.EnumTypeWrapper(_BACKUPKEYTYPE)
 _GENERICSTATUS = DESCRIPTOR.enum_types_by_name['GenericStatus']
@@ -115,6 +119,8 @@ ACCEPT_INVITE = 5
 SUPPORT_SERVER = 6
 ENTERPRISE_CREATION = 7
 EXPIRED_BUT_ALLOWED_TO_SYNC = 8
+ACCEPT_FAMILY_INVITE = 9
+EMERGENCY_ACCESS = 10
 invalid_version = 0
 default_version = 1
 second_version = 2
@@ -191,6 +197,15 @@ SHARED_FOLDER_USER = 1
 SHARED_FOLDER_TEAM = 2
 USER_FOLDER = 3
 TEAM_USER = 4
+EOT_UNSPECIFIED = 0
+EOT_RECORD_KEY = 1
+EOT_SHARED_FOLDER_USER_KEY = 2
+EOT_SHARED_FOLDER_TEAM_KEY = 3
+EOT_TEAM_USER_KEY = 4
+EOT_USER_FOLDER_KEY = 5
+EOT_SECURITY_DATA = 6
+EOT_SECURITY_DATA_MASTER_PASSWORD = 7
+EOT_EMERGENCY_ACCESS_KEY = 8
 MP_UNKNOWN = 0
 MP_SUCCESS = 1
 MP_FAILURE = 2
@@ -214,6 +229,10 @@ jp = 5
 ca = 6
 SHARE_TYPE_RECORD = 0
 SHARE_TYPE_FOLDER = 1
+INVALID_TIME_LIMITED_ACCESS_TYPE = 0
+USER_ACCESS_TO_RECORD = 1
+USER_OR_TEAM_ACCESS_TO_SHAREDFOLDER = 2
+RECORD_ACCESS_TO_SHAREDFOLDER = 3
 BKT_SEC_ANSWER = 0
 BKT_PASSPHRASE_HASH = 1
 SUCCESS = 0
@@ -277,6 +296,11 @@ _CHANGETOKEYTYPEONE = DESCRIPTOR.message_types_by_name['ChangeToKeyTypeOne']
 _CHANGETOKEYTYPEONEREQUEST = DESCRIPTOR.message_types_by_name['ChangeToKeyTypeOneRequest']
 _CHANGETOKEYTYPEONESTATUS = DESCRIPTOR.message_types_by_name['ChangeToKeyTypeOneStatus']
 _CHANGETOKEYTYPEONERESPONSE = DESCRIPTOR.message_types_by_name['ChangeToKeyTypeOneResponse']
+_GETCHANGEKEYTYPESREQUEST = DESCRIPTOR.message_types_by_name['GetChangeKeyTypesRequest']
+_GETCHANGEKEYTYPESRESPONSE = DESCRIPTOR.message_types_by_name['GetChangeKeyTypesResponse']
+_ALLOWEDKEYTYPES = DESCRIPTOR.message_types_by_name['AllowedKeyTypes']
+_CHANGEKEYTYPES = DESCRIPTOR.message_types_by_name['ChangeKeyTypes']
+_CHANGEKEYTYPE = DESCRIPTOR.message_types_by_name['ChangeKeyType']
 _SETKEY = DESCRIPTOR.message_types_by_name['SetKey']
 _SETKEYREQUEST = DESCRIPTOR.message_types_by_name['SetKeyRequest']
 _CREATEUSERREQUEST = DESCRIPTOR.message_types_by_name['CreateUserRequest']
@@ -327,6 +351,10 @@ _GETPUBLICKEYSREQUEST = DESCRIPTOR.message_types_by_name['GetPublicKeysRequest']
 _PUBLICKEYRESPONSE = DESCRIPTOR.message_types_by_name['PublicKeyResponse']
 _GETPUBLICKEYSRESPONSE = DESCRIPTOR.message_types_by_name['GetPublicKeysResponse']
 _SETECCKEYPAIRREQUEST = DESCRIPTOR.message_types_by_name['SetEccKeyPairRequest']
+_SETECCKEYPAIRSREQUEST = DESCRIPTOR.message_types_by_name['SetEccKeyPairsRequest']
+_SETECCKEYPAIRSRESPONSE = DESCRIPTOR.message_types_by_name['SetEccKeyPairsResponse']
+_TEAMECCKEYPAIR = DESCRIPTOR.message_types_by_name['TeamEccKeyPair']
+_TEAMECCKEYPAIRRESPONSE = DESCRIPTOR.message_types_by_name['TeamEccKeyPairResponse']
 _GETKSMPUBLICKEYSREQUEST = DESCRIPTOR.message_types_by_name['GetKsmPublicKeysRequest']
 _DEVICEPUBLICKEYRESPONSE = DESCRIPTOR.message_types_by_name['DevicePublicKeyResponse']
 _GETKSMPUBLICKEYSRESPONSE = DESCRIPTOR.message_types_by_name['GetKsmPublicKeysResponse']
@@ -346,6 +374,9 @@ _GETAPPLICATIONSSUMMARYRESPONSE = DESCRIPTOR.message_types_by_name['GetApplicati
 _GETVERIFICATIONTOKENREQUEST = DESCRIPTOR.message_types_by_name['GetVerificationTokenRequest']
 _GETVERIFICATIONTOKENRESPONSE = DESCRIPTOR.message_types_by_name['GetVerificationTokenResponse']
 _SENDSHAREINVITEREQUEST = DESCRIPTOR.message_types_by_name['SendShareInviteRequest']
+_TIMELIMITEDACCESSREQUEST = DESCRIPTOR.message_types_by_name['TimeLimitedAccessRequest']
+_TIMELIMITEDACCESSSTATUS = DESCRIPTOR.message_types_by_name['TimeLimitedAccessStatus']
+_TIMELIMITEDACCESSRESPONSE = DESCRIPTOR.message_types_by_name['TimeLimitedAccessResponse']
 _REQUESTDOWNLOADREQUEST = DESCRIPTOR.message_types_by_name['RequestDownloadRequest']
 _REQUESTDOWNLOADRESPONSE = DESCRIPTOR.message_types_by_name['RequestDownloadResponse']
 _DOWNLOAD = DESCRIPTOR.message_types_by_name['Download']
@@ -354,6 +385,8 @@ _CHANGEMASTERPASSWORDREQUEST = DESCRIPTOR.message_types_by_name['ChangeMasterPas
 _CHANGEMASTERPASSWORDRESPONSE = DESCRIPTOR.message_types_by_name['ChangeMasterPasswordResponse']
 _ACCOUNTRECOVERYSETUPREQUEST = DESCRIPTOR.message_types_by_name['AccountRecoverySetupRequest']
 _ACCOUNTRECOVERYVERIFYCODERESPONSE = DESCRIPTOR.message_types_by_name['AccountRecoveryVerifyCodeResponse']
+_EMERGENCYACCESSLOGINREQUEST = DESCRIPTOR.message_types_by_name['EmergencyAccessLoginRequest']
+_EMERGENCYACCESSLOGINRESPONSE = DESCRIPTOR.message_types_by_name['EmergencyAccessLoginResponse']
 _USERTEAMKEY = DESCRIPTOR.message_types_by_name['UserTeamKey']
 _GENERICREQUESTRESPONSE = DESCRIPTOR.message_types_by_name['GenericRequestResponse']
 ApiRequest = _reflection.GeneratedProtocolMessageType('ApiRequest', (_message.Message,), {
@@ -741,6 +774,41 @@ ChangeToKeyTypeOneResponse = _reflection.GeneratedProtocolMessageType('ChangeToK
   })
 _sym_db.RegisterMessage(ChangeToKeyTypeOneResponse)
 
+GetChangeKeyTypesRequest = _reflection.GeneratedProtocolMessageType('GetChangeKeyTypesRequest', (_message.Message,), {
+  'DESCRIPTOR' : _GETCHANGEKEYTYPESREQUEST,
+  '__module__' : 'APIRequest_pb2'
+  # @@protoc_insertion_point(class_scope:Authentication.GetChangeKeyTypesRequest)
+  })
+_sym_db.RegisterMessage(GetChangeKeyTypesRequest)
+
+GetChangeKeyTypesResponse = _reflection.GeneratedProtocolMessageType('GetChangeKeyTypesResponse', (_message.Message,), {
+  'DESCRIPTOR' : _GETCHANGEKEYTYPESRESPONSE,
+  '__module__' : 'APIRequest_pb2'
+  # @@protoc_insertion_point(class_scope:Authentication.GetChangeKeyTypesResponse)
+  })
+_sym_db.RegisterMessage(GetChangeKeyTypesResponse)
+
+AllowedKeyTypes = _reflection.GeneratedProtocolMessageType('AllowedKeyTypes', (_message.Message,), {
+  'DESCRIPTOR' : _ALLOWEDKEYTYPES,
+  '__module__' : 'APIRequest_pb2'
+  # @@protoc_insertion_point(class_scope:Authentication.AllowedKeyTypes)
+  })
+_sym_db.RegisterMessage(AllowedKeyTypes)
+
+ChangeKeyTypes = _reflection.GeneratedProtocolMessageType('ChangeKeyTypes', (_message.Message,), {
+  'DESCRIPTOR' : _CHANGEKEYTYPES,
+  '__module__' : 'APIRequest_pb2'
+  # @@protoc_insertion_point(class_scope:Authentication.ChangeKeyTypes)
+  })
+_sym_db.RegisterMessage(ChangeKeyTypes)
+
+ChangeKeyType = _reflection.GeneratedProtocolMessageType('ChangeKeyType', (_message.Message,), {
+  'DESCRIPTOR' : _CHANGEKEYTYPE,
+  '__module__' : 'APIRequest_pb2'
+  # @@protoc_insertion_point(class_scope:Authentication.ChangeKeyType)
+  })
+_sym_db.RegisterMessage(ChangeKeyType)
+
 SetKey = _reflection.GeneratedProtocolMessageType('SetKey', (_message.Message,), {
   'DESCRIPTOR' : _SETKEY,
   '__module__' : 'APIRequest_pb2'
@@ -1091,6 +1159,34 @@ SetEccKeyPairRequest = _reflection.GeneratedProtocolMessageType('SetEccKeyPairRe
   })
 _sym_db.RegisterMessage(SetEccKeyPairRequest)
 
+SetEccKeyPairsRequest = _reflection.GeneratedProtocolMessageType('SetEccKeyPairsRequest', (_message.Message,), {
+  'DESCRIPTOR' : _SETECCKEYPAIRSREQUEST,
+  '__module__' : 'APIRequest_pb2'
+  # @@protoc_insertion_point(class_scope:Authentication.SetEccKeyPairsRequest)
+  })
+_sym_db.RegisterMessage(SetEccKeyPairsRequest)
+
+SetEccKeyPairsResponse = _reflection.GeneratedProtocolMessageType('SetEccKeyPairsResponse', (_message.Message,), {
+  'DESCRIPTOR' : _SETECCKEYPAIRSRESPONSE,
+  '__module__' : 'APIRequest_pb2'
+  # @@protoc_insertion_point(class_scope:Authentication.SetEccKeyPairsResponse)
+  })
+_sym_db.RegisterMessage(SetEccKeyPairsResponse)
+
+TeamEccKeyPair = _reflection.GeneratedProtocolMessageType('TeamEccKeyPair', (_message.Message,), {
+  'DESCRIPTOR' : _TEAMECCKEYPAIR,
+  '__module__' : 'APIRequest_pb2'
+  # @@protoc_insertion_point(class_scope:Authentication.TeamEccKeyPair)
+  })
+_sym_db.RegisterMessage(TeamEccKeyPair)
+
+TeamEccKeyPairResponse = _reflection.GeneratedProtocolMessageType('TeamEccKeyPairResponse', (_message.Message,), {
+  'DESCRIPTOR' : _TEAMECCKEYPAIRRESPONSE,
+  '__module__' : 'APIRequest_pb2'
+  # @@protoc_insertion_point(class_scope:Authentication.TeamEccKeyPairResponse)
+  })
+_sym_db.RegisterMessage(TeamEccKeyPairResponse)
+
 GetKsmPublicKeysRequest = _reflection.GeneratedProtocolMessageType('GetKsmPublicKeysRequest', (_message.Message,), {
   'DESCRIPTOR' : _GETKSMPUBLICKEYSREQUEST,
   '__module__' : 'APIRequest_pb2'
@@ -1224,6 +1320,27 @@ SendShareInviteRequest = _reflection.GeneratedProtocolMessageType('SendShareInvi
   })
 _sym_db.RegisterMessage(SendShareInviteRequest)
 
+TimeLimitedAccessRequest = _reflection.GeneratedProtocolMessageType('TimeLimitedAccessRequest', (_message.Message,), {
+  'DESCRIPTOR' : _TIMELIMITEDACCESSREQUEST,
+  '__module__' : 'APIRequest_pb2'
+  # @@protoc_insertion_point(class_scope:Authentication.TimeLimitedAccessRequest)
+  })
+_sym_db.RegisterMessage(TimeLimitedAccessRequest)
+
+TimeLimitedAccessStatus = _reflection.GeneratedProtocolMessageType('TimeLimitedAccessStatus', (_message.Message,), {
+  'DESCRIPTOR' : _TIMELIMITEDACCESSSTATUS,
+  '__module__' : 'APIRequest_pb2'
+  # @@protoc_insertion_point(class_scope:Authentication.TimeLimitedAccessStatus)
+  })
+_sym_db.RegisterMessage(TimeLimitedAccessStatus)
+
+TimeLimitedAccessResponse = _reflection.GeneratedProtocolMessageType('TimeLimitedAccessResponse', (_message.Message,), {
+  'DESCRIPTOR' : _TIMELIMITEDACCESSRESPONSE,
+  '__module__' : 'APIRequest_pb2'
+  # @@protoc_insertion_point(class_scope:Authentication.TimeLimitedAccessResponse)
+  })
+_sym_db.RegisterMessage(TimeLimitedAccessResponse)
+
 RequestDownloadRequest = _reflection.GeneratedProtocolMessageType('RequestDownloadRequest', (_message.Message,), {
   'DESCRIPTOR' : _REQUESTDOWNLOADREQUEST,
   '__module__' : 'APIRequest_pb2'
@@ -1280,6 +1397,20 @@ AccountRecoveryVerifyCodeResponse = _reflection.GeneratedProtocolMessageType('Ac
   })
 _sym_db.RegisterMessage(AccountRecoveryVerifyCodeResponse)
 
+EmergencyAccessLoginRequest = _reflection.GeneratedProtocolMessageType('EmergencyAccessLoginRequest', (_message.Message,), {
+  'DESCRIPTOR' : _EMERGENCYACCESSLOGINREQUEST,
+  '__module__' : 'APIRequest_pb2'
+  # @@protoc_insertion_point(class_scope:Authentication.EmergencyAccessLoginRequest)
+  })
+_sym_db.RegisterMessage(EmergencyAccessLoginRequest)
+
+EmergencyAccessLoginResponse = _reflection.GeneratedProtocolMessageType('EmergencyAccessLoginResponse', (_message.Message,), {
+  'DESCRIPTOR' : _EMERGENCYACCESSLOGINRESPONSE,
+  '__module__' : 'APIRequest_pb2'
+  # @@protoc_insertion_point(class_scope:Authentication.EmergencyAccessLoginResponse)
+  })
+_sym_db.RegisterMessage(EmergencyAccessLoginResponse)
+
 UserTeamKey = _reflection.GeneratedProtocolMessageType('UserTeamKey', (_message.Message,), {
   'DESCRIPTOR' : _USERTEAMKEY,
   '__module__' : 'APIRequest_pb2'
@@ -1298,56 +1429,60 @@ if _descriptor._USE_C_DESCRIPTORS == False:
 
   DESCRIPTOR._options = None
   DESCRIPTOR._serialized_options = b'\n\030com.keepersecurity.protoB\016Authentication'
-  _SUPPORTEDLANGUAGE._serialized_start=16060
-  _SUPPORTEDLANGUAGE._serialized_end=16373
-  _LOGINTYPE._serialized_start=16375
-  _LOGINTYPE._serialized_end=16465
-  _DEVICESTATUS._serialized_start=16467
-  _DEVICESTATUS._serialized_end=16580
-  _LICENSESTATUS._serialized_start=16582
-  _LICENSESTATUS._serialized_end=16647
-  _ACCOUNTTYPE._serialized_start=16649
-  _ACCOUNTTYPE._serialized_end=16704
-  _SESSIONTOKENTYPE._serialized_start=16707
-  _SESSIONTOKENTYPE._serialized_end=16911
-  _VERSION._serialized_start=16913
-  _VERSION._serialized_end=16984
-  _MASTERPASSWORDREENTRYACTIONTYPE._serialized_start=16986
-  _MASTERPASSWORDREENTRYACTIONTYPE._serialized_end=17041
-  _LOGINMETHOD._serialized_start=17043
-  _LOGINMETHOD._serialized_end=17151
-  _LOGINSTATE._serialized_start=17154
-  _LOGINSTATE._serialized_end=17609
-  _ENCRYPTEDDATAKEYTYPE._serialized_start=17611
-  _ENCRYPTEDDATAKEYTYPE._serialized_end=17718
-  _PASSWORDMETHOD._serialized_start=17720
-  _PASSWORDMETHOD._serialized_end=17765
-  _TWOFACTORPUSHTYPE._serialized_start=17768
-  _TWOFACTORPUSHTYPE._serialized_end=17953
-  _TWOFACTORVALUETYPE._serialized_start=17956
-  _TWOFACTORVALUETYPE._serialized_end=18151
-  _TWOFACTORCHANNELTYPE._serialized_start=18154
-  _TWOFACTORCHANNELTYPE._serialized_end=18379
-  _TWOFACTOREXPIRATION._serialized_start=18382
-  _TWOFACTOREXPIRATION._serialized_end=18553
-  _LICENSETYPE._serialized_start=18555
-  _LICENSETYPE._serialized_end=18619
-  _OBJECTTYPES._serialized_start=18621
-  _OBJECTTYPES._serialized_end=18726
-  _MASTERPASSWORDREENTRYSTATUS._serialized_start=18728
-  _MASTERPASSWORDREENTRYSTATUS._serialized_end=18805
-  _ALTERNATEAUTHENTICATIONTYPE._serialized_start=18807
-  _ALTERNATEAUTHENTICATIONTYPE._serialized_end=18903
-  _THROTTLETYPE._serialized_start=18906
-  _THROTTLETYPE._serialized_end=19188
-  _REGION._serialized_start=19190
-  _REGION._serialized_end=19262
-  _APPLICATIONSHARETYPE._serialized_start=19264
-  _APPLICATIONSHARETYPE._serialized_end=19332
-  _BACKUPKEYTYPE._serialized_start=19334
-  _BACKUPKEYTYPE._serialized_end=19394
-  _GENERICSTATUS._serialized_start=19396
-  _GENERICSTATUS._serialized_end=19483
+  _SUPPORTEDLANGUAGE._serialized_start=18313
+  _SUPPORTEDLANGUAGE._serialized_end=18626
+  _LOGINTYPE._serialized_start=18628
+  _LOGINTYPE._serialized_end=18718
+  _DEVICESTATUS._serialized_start=18720
+  _DEVICESTATUS._serialized_end=18833
+  _LICENSESTATUS._serialized_start=18835
+  _LICENSESTATUS._serialized_end=18900
+  _ACCOUNTTYPE._serialized_start=18902
+  _ACCOUNTTYPE._serialized_end=18957
+  _SESSIONTOKENTYPE._serialized_start=18960
+  _SESSIONTOKENTYPE._serialized_end=19212
+  _VERSION._serialized_start=19214
+  _VERSION._serialized_end=19285
+  _MASTERPASSWORDREENTRYACTIONTYPE._serialized_start=19287
+  _MASTERPASSWORDREENTRYACTIONTYPE._serialized_end=19342
+  _LOGINMETHOD._serialized_start=19344
+  _LOGINMETHOD._serialized_end=19452
+  _LOGINSTATE._serialized_start=19455
+  _LOGINSTATE._serialized_end=19910
+  _ENCRYPTEDDATAKEYTYPE._serialized_start=19912
+  _ENCRYPTEDDATAKEYTYPE._serialized_end=20019
+  _PASSWORDMETHOD._serialized_start=20021
+  _PASSWORDMETHOD._serialized_end=20066
+  _TWOFACTORPUSHTYPE._serialized_start=20069
+  _TWOFACTORPUSHTYPE._serialized_end=20254
+  _TWOFACTORVALUETYPE._serialized_start=20257
+  _TWOFACTORVALUETYPE._serialized_end=20452
+  _TWOFACTORCHANNELTYPE._serialized_start=20455
+  _TWOFACTORCHANNELTYPE._serialized_end=20680
+  _TWOFACTOREXPIRATION._serialized_start=20683
+  _TWOFACTOREXPIRATION._serialized_end=20854
+  _LICENSETYPE._serialized_start=20856
+  _LICENSETYPE._serialized_end=20920
+  _OBJECTTYPES._serialized_start=20922
+  _OBJECTTYPES._serialized_end=21027
+  _ENCRYPTEDOBJECTTYPE._serialized_start=21030
+  _ENCRYPTEDOBJECTTYPE._serialized_end=21296
+  _MASTERPASSWORDREENTRYSTATUS._serialized_start=21298
+  _MASTERPASSWORDREENTRYSTATUS._serialized_end=21375
+  _ALTERNATEAUTHENTICATIONTYPE._serialized_start=21377
+  _ALTERNATEAUTHENTICATIONTYPE._serialized_end=21473
+  _THROTTLETYPE._serialized_start=21476
+  _THROTTLETYPE._serialized_end=21758
+  _REGION._serialized_start=21760
+  _REGION._serialized_end=21832
+  _APPLICATIONSHARETYPE._serialized_start=21834
+  _APPLICATIONSHARETYPE._serialized_end=21902
+  _TIMELIMITEDACCESSTYPE._serialized_start=21905
+  _TIMELIMITEDACCESSTYPE._serialized_end=22069
+  _BACKUPKEYTYPE._serialized_start=22071
+  _BACKUPKEYTYPE._serialized_end=22131
+  _GENERICSTATUS._serialized_start=22133
+  _GENERICSTATUS._serialized_end=22220
   _APIREQUEST._serialized_start=55
   _APIREQUEST._serialized_end=231
   _APIREQUESTPAYLOAD._serialized_start=233
@@ -1359,261 +1494,289 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _AUTHREQUEST._serialized_start=457
   _AUTHREQUEST._serialized_end=541
   _NEWUSERMINIMUMPARAMS._serialized_start=544
-  _NEWUSERMINIMUMPARAMS._serialized_end=683
-  _PRELOGINREQUEST._serialized_start=686
-  _PRELOGINREQUEST._serialized_end=823
-  _LOGINREQUEST._serialized_start=826
-  _LOGINREQUEST._serialized_end=1082
-  _DEVICERESPONSE._serialized_start=1084
-  _DEVICERESPONSE._serialized_end=1176
-  _SALT._serialized_start=1178
-  _SALT._serialized_end=1264
-  _TWOFACTORCHANNEL._serialized_start=1266
-  _TWOFACTORCHANNEL._serialized_end=1298
-  _STARTLOGINREQUEST._serialized_start=1301
-  _STARTLOGINREQUEST._serialized_end=1655
-  _LOGINRESPONSE._serialized_start=1658
-  _LOGINRESPONSE._serialized_end=2209
-  _SSOUSERINFO._serialized_start=2212
-  _SSOUSERINFO._serialized_end=2352
-  _PRELOGINRESPONSE._serialized_start=2355
-  _PRELOGINRESPONSE._serialized_end=2569
-  _LOGINASUSERREQUEST._serialized_start=2571
-  _LOGINASUSERREQUEST._serialized_end=2609
-  _LOGINASUSERRESPONSE._serialized_start=2611
-  _LOGINASUSERRESPONSE._serialized_end=2698
-  _VALIDATEAUTHHASHREQUEST._serialized_start=2701
-  _VALIDATEAUTHHASHREQUEST._serialized_end=2833
-  _TWOFACTORCHANNELINFO._serialized_start=2836
-  _TWOFACTORCHANNELINFO._serialized_end=3160
-  _TWOFACTORDUOSTATUS._serialized_start=3162
-  _TWOFACTORDUOSTATUS._serialized_end=3262
-  _TWOFACTORADDREQUEST._serialized_start=3265
-  _TWOFACTORADDREQUEST._serialized_end=3464
-  _TWOFACTORRENAMEREQUEST._serialized_start=3466
-  _TWOFACTORRENAMEREQUEST._serialized_end=3532
-  _TWOFACTORADDRESPONSE._serialized_start=3534
-  _TWOFACTORADDRESPONSE._serialized_end=3595
-  _TWOFACTORDELETEREQUEST._serialized_start=3597
-  _TWOFACTORDELETEREQUEST._serialized_end=3642
-  _TWOFACTORLISTRESPONSE._serialized_start=3644
-  _TWOFACTORLISTRESPONSE._serialized_end=3741
-  _TWOFACTORUPDATEEXPIRATIONREQUEST._serialized_start=3743
-  _TWOFACTORUPDATEEXPIRATIONREQUEST._serialized_end=3832
-  _TWOFACTORVALIDATEREQUEST._serialized_start=3835
-  _TWOFACTORVALIDATEREQUEST._serialized_end=4036
-  _TWOFACTORVALIDATERESPONSE._serialized_start=4038
-  _TWOFACTORVALIDATERESPONSE._serialized_end=4094
-  _TWOFACTORSENDPUSHREQUEST._serialized_start=4097
-  _TWOFACTORSENDPUSHREQUEST._serialized_end=4281
-  _LICENSE._serialized_start=4284
-  _LICENSE._serialized_end=4415
-  _OWNERLESSRECORD._serialized_start=4417
-  _OWNERLESSRECORD._serialized_end=4488
-  _OWNERLESSRECORDS._serialized_start=4490
-  _OWNERLESSRECORDS._serialized_end=4566
-  _USERAUTHREQUEST._serialized_start=4569
-  _USERAUTHREQUEST._serialized_end=4784
-  _UIDREQUEST._serialized_start=4786
-  _UIDREQUEST._serialized_end=4811
-  _DEVICEUPDATEREQUEST._serialized_start=4814
-  _DEVICEUPDATEREQUEST._serialized_end=4985
-  _REGISTERDEVICEINREGIONREQUEST._serialized_start=4988
-  _REGISTERDEVICEINREGIONREQUEST._serialized_end=5117
-  _REGISTRATIONREQUEST._serialized_start=5120
-  _REGISTRATIONREQUEST._serialized_end=5496
-  _CONVERTUSERTOV3REQUEST._serialized_start=5499
-  _CONVERTUSERTOV3REQUEST._serialized_end=5707
-  _REVISIONRESPONSE._serialized_start=5709
-  _REVISIONRESPONSE._serialized_end=5745
-  _CHANGEEMAILREQUEST._serialized_start=5747
-  _CHANGEEMAILREQUEST._serialized_end=5785
-  _CHANGEEMAILRESPONSE._serialized_start=5787
-  _CHANGEEMAILRESPONSE._serialized_end=5843
-  _EMAILVERIFICATIONLINKRESPONSE._serialized_start=5845
-  _EMAILVERIFICATIONLINKRESPONSE._serialized_end=5899
-  _SECURITYDATA._serialized_start=5901
-  _SECURITYDATA._serialized_end=5942
-  _SECURITYDATAREQUEST._serialized_start=5945
-  _SECURITYDATAREQUEST._serialized_end=6090
-  _SECURITYREPORTINCREMENTALDATA._serialized_start=6093
-  _SECURITYREPORTINCREMENTALDATA._serialized_end=6274
-  _SECURITYREPORT._serialized_start=6277
-  _SECURITYREPORT._serialized_end=6538
-  _SECURITYREPORTSAVEREQUEST._serialized_start=6540
-  _SECURITYREPORTSAVEREQUEST._serialized_end=6623
-  _SECURITYREPORTREQUEST._serialized_start=6625
-  _SECURITYREPORTREQUEST._serialized_end=6666
-  _SECURITYREPORTRESPONSE._serialized_start=6669
-  _SECURITYREPORTRESPONSE._serialized_end=6853
-  _REUSEDPASSWORDSREQUEST._serialized_start=6855
-  _REUSEDPASSWORDSREQUEST._serialized_end=6894
-  _SUMMARYCONSOLEREPORT._serialized_start=6896
-  _SUMMARYCONSOLEREPORT._serialized_end=6958
-  _CHANGETOKEYTYPEONE._serialized_start=6960
-  _CHANGETOKEYTYPEONE._serialized_end=7084
-  _CHANGETOKEYTYPEONEREQUEST._serialized_start=7086
-  _CHANGETOKEYTYPEONEREQUEST._serialized_end=7177
-  _CHANGETOKEYTYPEONESTATUS._serialized_start=7179
-  _CHANGETOKEYTYPEONESTATUS._serialized_end=7264
-  _CHANGETOKEYTYPEONERESPONSE._serialized_start=7266
-  _CHANGETOKEYTYPEONERESPONSE._serialized_end=7370
-  _SETKEY._serialized_start=7372
-  _SETKEY._serialized_end=7405
-  _SETKEYREQUEST._serialized_start=7407
-  _SETKEYREQUEST._serialized_end=7460
-  _CREATEUSERREQUEST._serialized_start=7463
-  _CREATEUSERREQUEST._serialized_end=8089
-  _NODEENFORCEMENTADDORUPDATEREQUEST._serialized_start=8091
-  _NODEENFORCEMENTADDORUPDATEREQUEST._serialized_end=8178
-  _NODEENFORCEMENTREMOVEREQUEST._serialized_start=8180
-  _NODEENFORCEMENTREMOVEREQUEST._serialized_end=8247
-  _APIREQUESTBYKEY._serialized_start=8250
-  _APIREQUESTBYKEY._serialized_end=8409
-  _APIREQUESTBYKATOKAKEY._serialized_start=8412
-  _APIREQUESTBYKATOKAKEY._serialized_end=8611
-  _MEMCACHEREQUEST._serialized_start=8613
-  _MEMCACHEREQUEST._serialized_end=8659
-  _MEMCACHERESPONSE._serialized_start=8661
-  _MEMCACHERESPONSE._serialized_end=8707
-  _MASTERPASSWORDREENTRYREQUEST._serialized_start=8709
-  _MASTERPASSWORDREENTRYREQUEST._serialized_end=8828
-  _MASTERPASSWORDREENTRYRESPONSE._serialized_start=8830
-  _MASTERPASSWORDREENTRYRESPONSE._serialized_end=8922
-  _DEVICEREGISTRATIONREQUEST._serialized_start=8924
-  _DEVICEREGISTRATIONREQUEST._serialized_end=9019
-  _DEVICEVERIFICATIONREQUEST._serialized_start=9022
-  _DEVICEVERIFICATIONREQUEST._serialized_end=9176
-  _DEVICEVERIFICATIONRESPONSE._serialized_start=9179
-  _DEVICEVERIFICATIONRESPONSE._serialized_end=9357
-  _DEVICEAPPROVALREQUEST._serialized_start=9360
-  _DEVICEAPPROVALREQUEST._serialized_end=9560
-  _DEVICEAPPROVALRESPONSE._serialized_start=9562
-  _DEVICEAPPROVALRESPONSE._serialized_end=9619
-  _APPROVEDEVICEREQUEST._serialized_start=9621
-  _APPROVEDEVICEREQUEST._serialized_end=9747
-  _ENTERPRISEUSERALIASREQUEST._serialized_start=9749
-  _ENTERPRISEUSERALIASREQUEST._serialized_end=9818
-  _ENTERPRISEUSERADDALIASREQUEST._serialized_start=9820
-  _ENTERPRISEUSERADDALIASREQUEST._serialized_end=9909
-  _ENTERPRISEUSERADDALIASREQUESTV2._serialized_start=9911
-  _ENTERPRISEUSERADDALIASREQUESTV2._serialized_end=10030
-  _ENTERPRISEUSERADDALIASSTATUS._serialized_start=10032
-  _ENTERPRISEUSERADDALIASSTATUS._serialized_end=10104
-  _ENTERPRISEUSERADDALIASRESPONSE._serialized_start=10106
-  _ENTERPRISEUSERADDALIASRESPONSE._serialized_end=10200
-  _DEVICE._serialized_start=10202
-  _DEVICE._serialized_end=10240
-  _REGISTERDEVICEDATAKEYREQUEST._serialized_start=10242
-  _REGISTERDEVICEDATAKEYREQUEST._serialized_end=10334
-  _VALIDATECREATEUSERVERIFICATIONCODEREQUEST._serialized_start=10336
-  _VALIDATECREATEUSERVERIFICATIONCODEREQUEST._serialized_end=10446
-  _VALIDATEDEVICEVERIFICATIONCODEREQUEST._serialized_start=10449
-  _VALIDATEDEVICEVERIFICATIONCODEREQUEST._serialized_end=10612
-  _SENDSESSIONMESSAGEREQUEST._serialized_start=10614
-  _SENDSESSIONMESSAGEREQUEST._serialized_end=10703
-  _GLOBALUSERACCOUNT._serialized_start=10705
-  _GLOBALUSERACCOUNT._serialized_end=10782
-  _ACCOUNTUSERNAME._serialized_start=10784
-  _ACCOUNTUSERNAME._serialized_end=10839
-  _SSOSERVICEPROVIDERREQUEST._serialized_start=10841
-  _SSOSERVICEPROVIDERREQUEST._serialized_end=10921
-  _SSOSERVICEPROVIDERRESPONSE._serialized_start=10923
-  _SSOSERVICEPROVIDERRESPONSE._serialized_end=11020
-  _USERSETTINGREQUEST._serialized_start=11022
-  _USERSETTINGREQUEST._serialized_end=11074
-  _THROTTLESTATE._serialized_start=11076
-  _THROTTLESTATE._serialized_end=11178
-  _THROTTLESTATE2._serialized_start=11181
-  _THROTTLESTATE2._serialized_end=11362
-  _DEVICEINFORMATION._serialized_start=11365
-  _DEVICEINFORMATION._serialized_end=11516
-  _USERSETTING._serialized_start=11518
-  _USERSETTING._serialized_end=11560
-  _USERDATAKEYREQUEST._serialized_start=11562
-  _USERDATAKEYREQUEST._serialized_end=11608
-  _ENTERPRISEUSERIDDATAKEYPAIR._serialized_start=11610
-  _ENTERPRISEUSERIDDATAKEYPAIR._serialized_end=11691
-  _USERDATAKEY._serialized_start=11694
-  _USERDATAKEY._serialized_end=11843
-  _USERDATAKEYRESPONSE._serialized_start=11845
-  _USERDATAKEYRESPONSE._serialized_end=11967
-  _MASTERPASSWORDRECOVERYVERIFICATIONREQUEST._serialized_start=11969
-  _MASTERPASSWORDRECOVERYVERIFICATIONREQUEST._serialized_end=12041
-  _GETSECURITYQUESTIONV3REQUEST._serialized_start=12043
-  _GETSECURITYQUESTIONV3REQUEST._serialized_end=12128
-  _GETSECURITYQUESTIONV3RESPONSE._serialized_start=12130
-  _GETSECURITYQUESTIONV3RESPONSE._serialized_end=12244
-  _GETDATAKEYBACKUPV3REQUEST._serialized_start=12246
-  _GETDATAKEYBACKUPV3REQUEST._serialized_end=12356
-  _PASSWORDRULES._serialized_start=12358
-  _PASSWORDRULES._serialized_end=12476
-  _GETDATAKEYBACKUPV3RESPONSE._serialized_start=12479
-  _GETDATAKEYBACKUPV3RESPONSE._serialized_end=12770
-  _GETPUBLICKEYSREQUEST._serialized_start=12772
-  _GETPUBLICKEYSREQUEST._serialized_end=12813
-  _PUBLICKEYRESPONSE._serialized_start=12815
-  _PUBLICKEYRESPONSE._serialized_end=12929
-  _GETPUBLICKEYSRESPONSE._serialized_start=12931
-  _GETPUBLICKEYSRESPONSE._serialized_end=13011
-  _SETECCKEYPAIRREQUEST._serialized_start=13013
-  _SETECCKEYPAIRREQUEST._serialized_end=13083
-  _GETKSMPUBLICKEYSREQUEST._serialized_start=13085
-  _GETKSMPUBLICKEYSREQUEST._serialized_end=13153
-  _DEVICEPUBLICKEYRESPONSE._serialized_start=13155
-  _DEVICEPUBLICKEYRESPONSE._serialized_end=13240
-  _GETKSMPUBLICKEYSRESPONSE._serialized_start=13242
-  _GETKSMPUBLICKEYSRESPONSE._serialized_end=13331
-  _ADDAPPSHARESREQUEST._serialized_start=13333
-  _ADDAPPSHARESREQUEST._serialized_end=13421
-  _REMOVEAPPSHARESREQUEST._serialized_start=13423
-  _REMOVEAPPSHARESREQUEST._serialized_end=13485
-  _APPSHAREADD._serialized_start=13488
-  _APPSHAREADD._serialized_end=13623
-  _APPSHARE._serialized_start=13625
-  _APPSHARE._serialized_end=13748
-  _ADDAPPCLIENTREQUEST._serialized_start=13751
-  _ADDAPPCLIENTREQUEST._serialized_end=13968
-  _REMOVEAPPCLIENTSREQUEST._serialized_start=13970
-  _REMOVEAPPCLIENTSREQUEST._serialized_end=14034
-  _ADDEXTERNALSHAREREQUEST._serialized_start=14036
-  _ADDEXTERNALSHAREREQUEST._serialized_end=14162
-  _APPCLIENT._serialized_start=14165
-  _APPCLIENT._serialized_end=14423
-  _GETAPPINFOREQUEST._serialized_start=14425
-  _GETAPPINFOREQUEST._serialized_end=14466
-  _APPINFO._serialized_start=14469
-  _APPINFO._serialized_end=14611
-  _GETAPPINFORESPONSE._serialized_start=14613
-  _GETAPPINFORESPONSE._serialized_end=14675
-  _APPLICATIONSUMMARY._serialized_start=14678
-  _APPLICATIONSUMMARY._serialized_end=14856
-  _GETAPPLICATIONSSUMMARYRESPONSE._serialized_start=14858
-  _GETAPPLICATIONSSUMMARYRESPONSE._serialized_end=14954
-  _GETVERIFICATIONTOKENREQUEST._serialized_start=14956
-  _GETVERIFICATIONTOKENREQUEST._serialized_end=15003
-  _GETVERIFICATIONTOKENRESPONSE._serialized_start=15005
-  _GETVERIFICATIONTOKENRESPONSE._serialized_end=15071
-  _SENDSHAREINVITEREQUEST._serialized_start=15073
-  _SENDSHAREINVITEREQUEST._serialized_end=15112
-  _REQUESTDOWNLOADREQUEST._serialized_start=15114
-  _REQUESTDOWNLOADREQUEST._serialized_end=15157
-  _REQUESTDOWNLOADRESPONSE._serialized_start=15159
-  _REQUESTDOWNLOADRESPONSE._serialized_end=15262
-  _DOWNLOAD._serialized_start=15264
-  _DOWNLOAD._serialized_end=15332
-  _DELETEUSERREQUEST._serialized_start=15334
-  _DELETEUSERREQUEST._serialized_end=15369
-  _CHANGEMASTERPASSWORDREQUEST._serialized_start=15372
-  _CHANGEMASTERPASSWORDREQUEST._serialized_end=15504
-  _CHANGEMASTERPASSWORDRESPONSE._serialized_start=15506
-  _CHANGEMASTERPASSWORDRESPONSE._serialized_end=15567
-  _ACCOUNTRECOVERYSETUPREQUEST._serialized_start=15569
-  _ACCOUNTRECOVERYSETUPREQUEST._serialized_end=15658
-  _ACCOUNTRECOVERYVERIFYCODERESPONSE._serialized_start=15661
-  _ACCOUNTRECOVERYVERIFYCODERESPONSE._serialized_end=15833
-  _USERTEAMKEY._serialized_start=15836
-  _USERTEAMKEY._serialized_end=16014
-  _GENERICREQUESTRESPONSE._serialized_start=16016
-  _GENERICREQUESTRESPONSE._serialized_end=16057
+  _NEWUSERMINIMUMPARAMS._serialized_end=739
+  _PRELOGINREQUEST._serialized_start=742
+  _PRELOGINREQUEST._serialized_end=879
+  _LOGINREQUEST._serialized_start=882
+  _LOGINREQUEST._serialized_end=1138
+  _DEVICERESPONSE._serialized_start=1140
+  _DEVICERESPONSE._serialized_end=1232
+  _SALT._serialized_start=1234
+  _SALT._serialized_end=1320
+  _TWOFACTORCHANNEL._serialized_start=1322
+  _TWOFACTORCHANNEL._serialized_end=1354
+  _STARTLOGINREQUEST._serialized_start=1357
+  _STARTLOGINREQUEST._serialized_end=1711
+  _LOGINRESPONSE._serialized_start=1714
+  _LOGINRESPONSE._serialized_end=2265
+  _SSOUSERINFO._serialized_start=2268
+  _SSOUSERINFO._serialized_end=2408
+  _PRELOGINRESPONSE._serialized_start=2411
+  _PRELOGINRESPONSE._serialized_end=2625
+  _LOGINASUSERREQUEST._serialized_start=2627
+  _LOGINASUSERREQUEST._serialized_end=2665
+  _LOGINASUSERRESPONSE._serialized_start=2667
+  _LOGINASUSERRESPONSE._serialized_end=2754
+  _VALIDATEAUTHHASHREQUEST._serialized_start=2757
+  _VALIDATEAUTHHASHREQUEST._serialized_end=2889
+  _TWOFACTORCHANNELINFO._serialized_start=2892
+  _TWOFACTORCHANNELINFO._serialized_end=3216
+  _TWOFACTORDUOSTATUS._serialized_start=3218
+  _TWOFACTORDUOSTATUS._serialized_end=3318
+  _TWOFACTORADDREQUEST._serialized_start=3321
+  _TWOFACTORADDREQUEST._serialized_end=3520
+  _TWOFACTORRENAMEREQUEST._serialized_start=3522
+  _TWOFACTORRENAMEREQUEST._serialized_end=3588
+  _TWOFACTORADDRESPONSE._serialized_start=3590
+  _TWOFACTORADDRESPONSE._serialized_end=3651
+  _TWOFACTORDELETEREQUEST._serialized_start=3653
+  _TWOFACTORDELETEREQUEST._serialized_end=3698
+  _TWOFACTORLISTRESPONSE._serialized_start=3700
+  _TWOFACTORLISTRESPONSE._serialized_end=3797
+  _TWOFACTORUPDATEEXPIRATIONREQUEST._serialized_start=3799
+  _TWOFACTORUPDATEEXPIRATIONREQUEST._serialized_end=3888
+  _TWOFACTORVALIDATEREQUEST._serialized_start=3891
+  _TWOFACTORVALIDATEREQUEST._serialized_end=4092
+  _TWOFACTORVALIDATERESPONSE._serialized_start=4094
+  _TWOFACTORVALIDATERESPONSE._serialized_end=4150
+  _TWOFACTORSENDPUSHREQUEST._serialized_start=4153
+  _TWOFACTORSENDPUSHREQUEST._serialized_end=4337
+  _LICENSE._serialized_start=4340
+  _LICENSE._serialized_end=4471
+  _OWNERLESSRECORD._serialized_start=4473
+  _OWNERLESSRECORD._serialized_end=4544
+  _OWNERLESSRECORDS._serialized_start=4546
+  _OWNERLESSRECORDS._serialized_end=4622
+  _USERAUTHREQUEST._serialized_start=4625
+  _USERAUTHREQUEST._serialized_end=4840
+  _UIDREQUEST._serialized_start=4842
+  _UIDREQUEST._serialized_end=4867
+  _DEVICEUPDATEREQUEST._serialized_start=4870
+  _DEVICEUPDATEREQUEST._serialized_end=5041
+  _REGISTERDEVICEINREGIONREQUEST._serialized_start=5044
+  _REGISTERDEVICEINREGIONREQUEST._serialized_end=5173
+  _REGISTRATIONREQUEST._serialized_start=5176
+  _REGISTRATIONREQUEST._serialized_end=5552
+  _CONVERTUSERTOV3REQUEST._serialized_start=5555
+  _CONVERTUSERTOV3REQUEST._serialized_end=5763
+  _REVISIONRESPONSE._serialized_start=5765
+  _REVISIONRESPONSE._serialized_end=5801
+  _CHANGEEMAILREQUEST._serialized_start=5803
+  _CHANGEEMAILREQUEST._serialized_end=5841
+  _CHANGEEMAILRESPONSE._serialized_start=5843
+  _CHANGEEMAILRESPONSE._serialized_end=5899
+  _EMAILVERIFICATIONLINKRESPONSE._serialized_start=5901
+  _EMAILVERIFICATIONLINKRESPONSE._serialized_end=5955
+  _SECURITYDATA._serialized_start=5957
+  _SECURITYDATA._serialized_end=5998
+  _SECURITYDATAREQUEST._serialized_start=6001
+  _SECURITYDATAREQUEST._serialized_end=6200
+  _SECURITYREPORTINCREMENTALDATA._serialized_start=6203
+  _SECURITYREPORTINCREMENTALDATA._serialized_end=6510
+  _SECURITYREPORT._serialized_start=6513
+  _SECURITYREPORT._serialized_end=6800
+  _SECURITYREPORTSAVEREQUEST._serialized_start=6802
+  _SECURITYREPORTSAVEREQUEST._serialized_end=6885
+  _SECURITYREPORTREQUEST._serialized_start=6887
+  _SECURITYREPORTREQUEST._serialized_end=6928
+  _SECURITYREPORTRESPONSE._serialized_start=6931
+  _SECURITYREPORTRESPONSE._serialized_end=7148
+  _REUSEDPASSWORDSREQUEST._serialized_start=7150
+  _REUSEDPASSWORDSREQUEST._serialized_end=7189
+  _SUMMARYCONSOLEREPORT._serialized_start=7191
+  _SUMMARYCONSOLEREPORT._serialized_end=7253
+  _CHANGETOKEYTYPEONE._serialized_start=7255
+  _CHANGETOKEYTYPEONE._serialized_end=7379
+  _CHANGETOKEYTYPEONEREQUEST._serialized_start=7381
+  _CHANGETOKEYTYPEONEREQUEST._serialized_end=7472
+  _CHANGETOKEYTYPEONESTATUS._serialized_start=7474
+  _CHANGETOKEYTYPEONESTATUS._serialized_end=7559
+  _CHANGETOKEYTYPEONERESPONSE._serialized_start=7561
+  _CHANGETOKEYTYPEONERESPONSE._serialized_end=7665
+  _GETCHANGEKEYTYPESREQUEST._serialized_start=7668
+  _GETCHANGEKEYTYPESREQUEST._serialized_end=7853
+  _GETCHANGEKEYTYPESRESPONSE._serialized_start=7856
+  _GETCHANGEKEYTYPESRESPONSE._serialized_end=7986
+  _ALLOWEDKEYTYPES._serialized_start=7989
+  _ALLOWEDKEYTYPES._serialized_end=8118
+  _CHANGEKEYTYPES._serialized_start=8120
+  _CHANGEKEYTYPES._serialized_end=8181
+  _CHANGEKEYTYPE._serialized_start=8184
+  _CHANGEKEYTYPE._serialized_end=8398
+  _SETKEY._serialized_start=8400
+  _SETKEY._serialized_end=8433
+  _SETKEYREQUEST._serialized_start=8435
+  _SETKEYREQUEST._serialized_end=8488
+  _CREATEUSERREQUEST._serialized_start=8491
+  _CREATEUSERREQUEST._serialized_end=9149
+  _NODEENFORCEMENTADDORUPDATEREQUEST._serialized_start=9151
+  _NODEENFORCEMENTADDORUPDATEREQUEST._serialized_end=9238
+  _NODEENFORCEMENTREMOVEREQUEST._serialized_start=9240
+  _NODEENFORCEMENTREMOVEREQUEST._serialized_end=9307
+  _APIREQUESTBYKEY._serialized_start=9310
+  _APIREQUESTBYKEY._serialized_end=9469
+  _APIREQUESTBYKATOKAKEY._serialized_start=9472
+  _APIREQUESTBYKATOKAKEY._serialized_end=9671
+  _MEMCACHEREQUEST._serialized_start=9673
+  _MEMCACHEREQUEST._serialized_end=9719
+  _MEMCACHERESPONSE._serialized_start=9721
+  _MEMCACHERESPONSE._serialized_end=9767
+  _MASTERPASSWORDREENTRYREQUEST._serialized_start=9769
+  _MASTERPASSWORDREENTRYREQUEST._serialized_end=9888
+  _MASTERPASSWORDREENTRYRESPONSE._serialized_start=9890
+  _MASTERPASSWORDREENTRYRESPONSE._serialized_end=9982
+  _DEVICEREGISTRATIONREQUEST._serialized_start=9984
+  _DEVICEREGISTRATIONREQUEST._serialized_end=10079
+  _DEVICEVERIFICATIONREQUEST._serialized_start=10082
+  _DEVICEVERIFICATIONREQUEST._serialized_end=10236
+  _DEVICEVERIFICATIONRESPONSE._serialized_start=10239
+  _DEVICEVERIFICATIONRESPONSE._serialized_end=10417
+  _DEVICEAPPROVALREQUEST._serialized_start=10420
+  _DEVICEAPPROVALREQUEST._serialized_end=10620
+  _DEVICEAPPROVALRESPONSE._serialized_start=10622
+  _DEVICEAPPROVALRESPONSE._serialized_end=10679
+  _APPROVEDEVICEREQUEST._serialized_start=10681
+  _APPROVEDEVICEREQUEST._serialized_end=10807
+  _ENTERPRISEUSERALIASREQUEST._serialized_start=10809
+  _ENTERPRISEUSERALIASREQUEST._serialized_end=10878
+  _ENTERPRISEUSERADDALIASREQUEST._serialized_start=10880
+  _ENTERPRISEUSERADDALIASREQUEST._serialized_end=10969
+  _ENTERPRISEUSERADDALIASREQUESTV2._serialized_start=10971
+  _ENTERPRISEUSERADDALIASREQUESTV2._serialized_end=11090
+  _ENTERPRISEUSERADDALIASSTATUS._serialized_start=11092
+  _ENTERPRISEUSERADDALIASSTATUS._serialized_end=11164
+  _ENTERPRISEUSERADDALIASRESPONSE._serialized_start=11166
+  _ENTERPRISEUSERADDALIASRESPONSE._serialized_end=11260
+  _DEVICE._serialized_start=11262
+  _DEVICE._serialized_end=11300
+  _REGISTERDEVICEDATAKEYREQUEST._serialized_start=11302
+  _REGISTERDEVICEDATAKEYREQUEST._serialized_end=11394
+  _VALIDATECREATEUSERVERIFICATIONCODEREQUEST._serialized_start=11396
+  _VALIDATECREATEUSERVERIFICATIONCODEREQUEST._serialized_end=11506
+  _VALIDATEDEVICEVERIFICATIONCODEREQUEST._serialized_start=11509
+  _VALIDATEDEVICEVERIFICATIONCODEREQUEST._serialized_end=11672
+  _SENDSESSIONMESSAGEREQUEST._serialized_start=11674
+  _SENDSESSIONMESSAGEREQUEST._serialized_end=11763
+  _GLOBALUSERACCOUNT._serialized_start=11765
+  _GLOBALUSERACCOUNT._serialized_end=11842
+  _ACCOUNTUSERNAME._serialized_start=11844
+  _ACCOUNTUSERNAME._serialized_end=11899
+  _SSOSERVICEPROVIDERREQUEST._serialized_start=11901
+  _SSOSERVICEPROVIDERREQUEST._serialized_end=11981
+  _SSOSERVICEPROVIDERRESPONSE._serialized_start=11983
+  _SSOSERVICEPROVIDERRESPONSE._serialized_end=12080
+  _USERSETTINGREQUEST._serialized_start=12082
+  _USERSETTINGREQUEST._serialized_end=12134
+  _THROTTLESTATE._serialized_start=12136
+  _THROTTLESTATE._serialized_end=12238
+  _THROTTLESTATE2._serialized_start=12241
+  _THROTTLESTATE2._serialized_end=12422
+  _DEVICEINFORMATION._serialized_start=12425
+  _DEVICEINFORMATION._serialized_end=12576
+  _USERSETTING._serialized_start=12578
+  _USERSETTING._serialized_end=12620
+  _USERDATAKEYREQUEST._serialized_start=12622
+  _USERDATAKEYREQUEST._serialized_end=12668
+  _ENTERPRISEUSERIDDATAKEYPAIR._serialized_start=12671
+  _ENTERPRISEUSERIDDATAKEYPAIR._serialized_end=12799
+  _USERDATAKEY._serialized_start=12802
+  _USERDATAKEY._serialized_end=12951
+  _USERDATAKEYRESPONSE._serialized_start=12953
+  _USERDATAKEYRESPONSE._serialized_end=13075
+  _MASTERPASSWORDRECOVERYVERIFICATIONREQUEST._serialized_start=13077
+  _MASTERPASSWORDRECOVERYVERIFICATIONREQUEST._serialized_end=13149
+  _GETSECURITYQUESTIONV3REQUEST._serialized_start=13151
+  _GETSECURITYQUESTIONV3REQUEST._serialized_end=13236
+  _GETSECURITYQUESTIONV3RESPONSE._serialized_start=13238
+  _GETSECURITYQUESTIONV3RESPONSE._serialized_end=13352
+  _GETDATAKEYBACKUPV3REQUEST._serialized_start=13354
+  _GETDATAKEYBACKUPV3REQUEST._serialized_end=13464
+  _PASSWORDRULES._serialized_start=13466
+  _PASSWORDRULES._serialized_end=13584
+  _GETDATAKEYBACKUPV3RESPONSE._serialized_start=13587
+  _GETDATAKEYBACKUPV3RESPONSE._serialized_end=13878
+  _GETPUBLICKEYSREQUEST._serialized_start=13880
+  _GETPUBLICKEYSREQUEST._serialized_end=13921
+  _PUBLICKEYRESPONSE._serialized_start=13923
+  _PUBLICKEYRESPONSE._serialized_end=14037
+  _GETPUBLICKEYSRESPONSE._serialized_start=14039
+  _GETPUBLICKEYSRESPONSE._serialized_end=14119
+  _SETECCKEYPAIRREQUEST._serialized_start=14121
+  _SETECCKEYPAIRREQUEST._serialized_end=14191
+  _SETECCKEYPAIRSREQUEST._serialized_start=14193
+  _SETECCKEYPAIRSREQUEST._serialized_end=14266
+  _SETECCKEYPAIRSRESPONSE._serialized_start=14268
+  _SETECCKEYPAIRSRESPONSE._serialized_end=14350
+  _TEAMECCKEYPAIR._serialized_start=14352
+  _TEAMECCKEYPAIR._serialized_end=14433
+  _TEAMECCKEYPAIRRESPONSE._serialized_start=14435
+  _TEAMECCKEYPAIRRESPONSE._serialized_end=14523
+  _GETKSMPUBLICKEYSREQUEST._serialized_start=14525
+  _GETKSMPUBLICKEYSREQUEST._serialized_end=14593
+  _DEVICEPUBLICKEYRESPONSE._serialized_start=14595
+  _DEVICEPUBLICKEYRESPONSE._serialized_end=14680
+  _GETKSMPUBLICKEYSRESPONSE._serialized_start=14682
+  _GETKSMPUBLICKEYSRESPONSE._serialized_end=14771
+  _ADDAPPSHARESREQUEST._serialized_start=14773
+  _ADDAPPSHARESREQUEST._serialized_end=14861
+  _REMOVEAPPSHARESREQUEST._serialized_start=14863
+  _REMOVEAPPSHARESREQUEST._serialized_end=14925
+  _APPSHAREADD._serialized_start=14928
+  _APPSHAREADD._serialized_end=15063
+  _APPSHARE._serialized_start=15066
+  _APPSHARE._serialized_end=15203
+  _ADDAPPCLIENTREQUEST._serialized_start=15206
+  _ADDAPPCLIENTREQUEST._serialized_end=15423
+  _REMOVEAPPCLIENTSREQUEST._serialized_start=15425
+  _REMOVEAPPCLIENTSREQUEST._serialized_end=15489
+  _ADDEXTERNALSHAREREQUEST._serialized_start=15492
+  _ADDEXTERNALSHAREREQUEST._serialized_end=15642
+  _APPCLIENT._serialized_start=15645
+  _APPCLIENT._serialized_end=15903
+  _GETAPPINFOREQUEST._serialized_start=15905
+  _GETAPPINFOREQUEST._serialized_end=15946
+  _APPINFO._serialized_start=15949
+  _APPINFO._serialized_end=16091
+  _GETAPPINFORESPONSE._serialized_start=16093
+  _GETAPPINFORESPONSE._serialized_end=16155
+  _APPLICATIONSUMMARY._serialized_start=16158
+  _APPLICATIONSUMMARY._serialized_end=16371
+  _GETAPPLICATIONSSUMMARYRESPONSE._serialized_start=16373
+  _GETAPPLICATIONSSUMMARYRESPONSE._serialized_end=16469
+  _GETVERIFICATIONTOKENREQUEST._serialized_start=16471
+  _GETVERIFICATIONTOKENREQUEST._serialized_end=16518
+  _GETVERIFICATIONTOKENRESPONSE._serialized_start=16520
+  _GETVERIFICATIONTOKENRESPONSE._serialized_end=16586
+  _SENDSHAREINVITEREQUEST._serialized_start=16588
+  _SENDSHAREINVITEREQUEST._serialized_end=16627
+  _TIMELIMITEDACCESSREQUEST._serialized_start=16630
+  _TIMELIMITEDACCESSREQUEST._serialized_end=16827
+  _TIMELIMITEDACCESSSTATUS._serialized_start=16829
+  _TIMELIMITEDACCESSSTATUS._serialized_end=16884
+  _TIMELIMITEDACCESSRESPONSE._serialized_start=16887
+  _TIMELIMITEDACCESSRESPONSE._serialized_end=17135
+  _REQUESTDOWNLOADREQUEST._serialized_start=17137
+  _REQUESTDOWNLOADREQUEST._serialized_end=17180
+  _REQUESTDOWNLOADRESPONSE._serialized_start=17182
+  _REQUESTDOWNLOADRESPONSE._serialized_end=17285
+  _DOWNLOAD._serialized_start=17287
+  _DOWNLOAD._serialized_end=17355
+  _DELETEUSERREQUEST._serialized_start=17357
+  _DELETEUSERREQUEST._serialized_end=17392
+  _CHANGEMASTERPASSWORDREQUEST._serialized_start=17395
+  _CHANGEMASTERPASSWORDREQUEST._serialized_end=17527
+  _CHANGEMASTERPASSWORDRESPONSE._serialized_start=17529
+  _CHANGEMASTERPASSWORDRESPONSE._serialized_end=17590
+  _ACCOUNTRECOVERYSETUPREQUEST._serialized_start=17592
+  _ACCOUNTRECOVERYSETUPREQUEST._serialized_end=17681
+  _ACCOUNTRECOVERYVERIFYCODERESPONSE._serialized_start=17684
+  _ACCOUNTRECOVERYVERIFYCODERESPONSE._serialized_end=17856
+  _EMERGENCYACCESSLOGINREQUEST._serialized_start=17858
+  _EMERGENCYACCESSLOGINREQUEST._serialized_end=17902
+  _EMERGENCYACCESSLOGINRESPONSE._serialized_start=17905
+  _EMERGENCYACCESSLOGINRESPONSE._serialized_end=18086
+  _USERTEAMKEY._serialized_start=18089
+  _USERTEAMKEY._serialized_end=18267
+  _GENERICREQUESTRESPONSE._serialized_start=18269
+  _GENERICREQUESTRESPONSE._serialized_end=18310
 # @@protoc_insertion_point(module_scope)

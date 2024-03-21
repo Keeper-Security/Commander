@@ -593,7 +593,10 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     root_name = params.enterprise['enterprise_name']
                 if kwargs.get('verbose'):
                     root_name += ' ({0})'.format(r['node_id'])
-                tree['{0} {1}'.format(root_name, ' |Isolated| ' if r.get('isolated') else '')] = tree_node(r)
+                node_name = root_name
+                if r.get('isolated') is True:
+                    node_name += ' |Isolated| '
+                tree[node_name] = tree_node(r)
             if len(root_nodes) > 1:
                 tree = OD([('', tree)])
             else:
@@ -1573,7 +1576,6 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                             is_managed_role = True
                                             break
                             if is_managed_role:
-
                                 if 'role_keys2' in params.enterprise:
                                     for rk2 in params.enterprise['role_keys2']:
                                         if rk2['role_id'] == role_id:
@@ -1592,37 +1594,49 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                                 role_key = crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
                                             break
 
-                            user_pkeys = {}
+                            api.load_user_public_keys(params, [x['username'] for x in matched_users])
                             for user in matched_users:
-                                if is_add and user['enterprise_user_id'] in role_users:
-                                    logging.warning('User %s is already in \'%s\' group: Add to group is skipped', user['username'], role_name)
+                                username = user['username']
+                                user_id = user['enterprise_user_id']
+                                if is_add and user_id in role_users:
+                                    logging.warning('User %s is already in \'%s\' group: Add to group is skipped', username, role_name)
                                     continue
-                                if not is_add and user['enterprise_user_id'] not in role_users:
-                                    logging.warning('User %s is not in \'%s\': Remove from group is skipped', user['username'], role_name)
+                                if not is_add and user_id not in role_users:
+                                    logging.warning('User %s is not in \'%s\': Remove from group is skipped', username, role_name)
                                     continue
 
-                                user_id = user['enterprise_user_id']
                                 rq = {
                                     'command': 'role_user_add' if is_add else 'role_user_remove',
                                     'enterprise_user_id': user['enterprise_user_id'],
                                     'role_id': role_id
                                 }
-                                if is_managed_role:
-                                    if user_id not in user_pkeys:
+                                if is_managed_role and is_add:
+                                    tree_key = params.enterprise['unencrypted_tree_key']
+                                    if username in params.key_cache:
                                         answer = 'y' if kwargs.get('force') else user_choice('Do you want to grant administrative privileges to {0}'.format(user['username']), 'yn', 'n')
-                                        public_key = None
-                                        if answer == 'y':
-                                            public_key = self.get_public_key(params, user['username'])
-                                            if public_key is None:
-                                                logging.warning('Cannot get public key for user %s', user['username'])
-                                        user_pkeys[user_id] = public_key
-                                    if user_pkeys[user_id]:
-                                        encrypted_tree_key = crypto.encrypt_rsa(params.enterprise['unencrypted_tree_key'], user_pkeys[user_id])
-                                        rq['tree_key'] = utils.base64_url_encode(encrypted_tree_key)
-                                        if role_key:
-                                            encrypted_role_key = crypto.encrypt_rsa(role_key, user_pkeys[user_id])
-                                            rq['role_admin_key'] = utils.base64_url_encode(encrypted_role_key)
+                                        if answer != 'y':
+                                            continue
+                                        public_key = params.key_cache[username]
+                                        if params.forbid_rsa and public_key.ec:
+                                            ec_key = crypto.load_ec_public_key(public_key.ec)
+                                            encrypted_tree_key = crypto.encrypt_ec(tree_key, ec_key)
+                                            rq['tree_key_type'] = 'encrypted_by_public_key_ecc'
+                                            rq['tree_key'] = utils.base64_url_encode(encrypted_tree_key)
+                                            if role_key:
+                                                encrypted_role_key = crypto.encrypt_ec(role_key, ec_key)
+                                                rq['role_admin_key'] = utils.base64_url_encode(encrypted_role_key)
+                                        elif not params.forbid_rsa and public_key.rsa:
+                                            rsa_key = crypto.load_rsa_public_key(public_key.rsa)
+                                            encrypted_tree_key = crypto.encrypt_rsa(tree_key, rsa_key)
+                                            rq['tree_key'] = utils.base64_url_encode(encrypted_tree_key)
+                                            if role_key:
+                                                encrypted_role_key = crypto.encrypt_rsa(role_key, rsa_key)
+                                                rq['role_admin_key'] = utils.base64_url_encode(encrypted_role_key)
+                                        else:
+                                            continue
                                         request_batch.append(rq)
+                                    else:
+                                        logging.warning('Cannot get public key for user %s', username)
                                 else:
                                     request_batch.append(rq)
 
@@ -1645,11 +1659,14 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                     raise CommandError('enterprise-user', 'Team {0} could be resolved'.format(t))
 
                     if teams:
+                        api.load_team_keys(params, list(teams.keys()))
+                        api.load_user_public_keys(params, [x['username'] for x in matched_users])
                         for team_uid in teams:
                             is_add, team_name = teams[team_uid]
                             for user in matched_users:
                                 if is_add:
                                     user_id = user['enterprise_user_id']
+                                    username = user['username']
                                     if user['status'] == 'active':
                                         hsf = kwargs.get('hide_shared_folders') or ''
                                         is_added = False
@@ -1670,13 +1687,33 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                                 'command': 'team_enterprise_user_add',
                                                 'team_uid': team_uid,
                                                 'enterprise_user_id': user_id,
+                                                'user_type': 0,
                                             }
-                                            team_key = self.get_team_key(params, team_uid)
-                                            public_key = self.get_public_key(params, user['username'])
-                                            encrypted_team_key = crypto.encrypt_rsa(team_key, public_key)
-                                            if team_key and public_key:
-                                                rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
-                                                rq['user_type'] = 0
+                                            team_keys = params.key_cache.get(team_uid)
+                                            team_key = team_keys.aes if team_keys else None
+                                            if not team_key:
+                                                continue
+                                            public_key = params.key_cache.get(username)
+                                            if not public_key:
+                                                continue
+                                            if params.forbid_rsa:
+                                                if public_key.ec:
+                                                    ec_key = crypto.load_ec_public_key(public_key.ec)
+                                                    encrypted_team_key = crypto.encrypt_ec(team_key, ec_key)
+                                                    rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
+                                                    rq['team_key_type'] = 'encrypted_by_public_key_ecc'
+                                                else:
+                                                    logging.warning('User %s does not have EC key. Skipping', username)
+                                                    continue
+                                            else:
+                                                if public_key.rsa:
+                                                    rsa_key = crypto.load_rsa_public_key(public_key.rsa)
+                                                    encrypted_team_key = crypto.encrypt_rsa(team_key, rsa_key)
+                                                    rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
+                                                    rq['team_key_type'] = 'encrypted_by_public_key'
+                                                else:
+                                                    logging.warning('User %s does not have RSA key. Skipping', username)
+                                                    continue
                                         if hsf:
                                             rq['user_type'] = 0 if hsf == 'off' else 2
                                         request_batch.append(rq)
@@ -1716,6 +1753,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                             rq['full_name'] = user_name
                         request_batch.append(rq)
 
+        results = None
         if request_batch:
             results = api.execute_batch(params, request_batch)
             for rq, rs in zip(request_batch, results):
@@ -1968,10 +2006,10 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     matched[role_in_node['role_id']] = role_in_node
                 else:
                     logging.warning('Role name \'%s\' is not unique. Use Role ID. Skipping', role_name)
-            elif type(r) == dict:
+            elif isinstance(r, dict):
                 matched[r['role_id']] = r
 
-        matched_roles = list(matched.values())
+        matched_roles = list(matched.values())   # type: List[dict]
 
         request_batch = []
         non_batch_update_msgs = []
@@ -2254,37 +2292,50 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     if ul:
                         for u in ul:
                             value = node_lookup.get(u.lower())
-                            if value:
-                                if value is None:
-                                    logging.warning('Node %s could be resolved', u)
-                                if type(value) == dict:
-                                    node_changes[value['node_id']] = is_add, value['data'].get('displayname') or params.enterprise['enterprise_name']
-                                elif type(value) == list:
-                                    logging.warning('Node name \'%s\' is not unique. Use Node ID. Skipping', u)
+                            if value is None:
+                                logging.warning('Node %s could be resolved', u)
+                            elif isinstance(value, dict):
+                                node_changes[value['node_id']] = is_add, value['data'].get('displayname') or params.enterprise['enterprise_name']
+                            elif isinstance(value, list):
+                                logging.warning('Node name \'%s\' is not unique. Use Node ID. Skipping', u)
 
                 for role in matched_roles:
                     role_id = role['role_id']
                     for node_id in node_changes:
                         is_add, node_name = node_changes[node_id]
                         rq = {
-                            "command": "role_managed_node_add" if is_add else "role_managed_node_remove",
-                            "role_id": role_id,
-                            "managed_node_id": node_id
+                            'command': 'role_managed_node_add' if is_add else 'role_managed_node_remove',
+                            'role_id': role_id,
+                            'managed_node_id': node_id
                         }
                         if is_add:
                             rq['cascade_node_management'] = (kwargs.get('cascade') == 'on') or False
                             rq['tree_keys'] = []
                             if 'role_users' in params.enterprise:
                                 for user_id in [x['enterprise_user_id'] for x in params.enterprise['role_users'] if x['role_id'] == role_id]:
-                                    emails = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] == user_id]
-                                    if emails:
-                                        public_key = self.get_public_key(params, emails[0])
-                                        encrypted_tree_key = crypto.encrypt_rsa(params.enterprise['unencrypted_tree_key'], public_key)
-                                        if public_key:
-                                            rq['tree_keys'].append({
-                                                "enterprise_user_id": user_id,
-                                                "tree_key": utils.base64_url_encode(encrypted_tree_key)
-                                            })
+                                    email = next((x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] == user_id), None)
+                                    if email:
+                                        api.load_user_public_keys(params, [email], False)
+                                        public_keys = params.key_cache.get(email)
+                                        if public_keys:
+                                            tree_key = params.enterprise['unencrypted_tree_key']
+                                            if params.forbid_rsa and public_keys.ec:
+                                                ec_key = crypto.load_ec_public_key(public_keys.ec)
+                                                encrypted_tree_key = crypto.encrypt_ec(tree_key, ec_key)
+                                                rq['tree_keys'].append({
+                                                    'enterprise_user_id': user_id,
+                                                    'tree_key': utils.base64_url_encode(encrypted_tree_key),
+                                                    'tree_key_type': 'encrypted_by_public_key_ecc'
+                                                })
+                                            elif not params.forbid_rsa and public_keys.rsa:
+                                                rsa_key = crypto.load_rsa_public_key(public_keys.rsa)
+                                                encrypted_tree_key = crypto.encrypt_rsa(tree_key, rsa_key)
+                                                rq['tree_keys'].append({
+                                                    'enterprise_user_id': user_id,
+                                                    'tree_key': utils.base64_url_encode(encrypted_tree_key),
+                                                })
+                                            else:
+                                                continue
                         request_batch.append(rq)
 
             elif kwargs.get('add_privilege') or kwargs.get('remove_privilege'):
@@ -2333,38 +2384,49 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                 'privilege': privilege
                             }
                             if is_add and privilege in ('transfer_account', 'manage_companies'):
-                                role_key = utils.generate_aes_key()
-                                encrypted_role_key = crypto.encrypt_aes_v2(
-                                    role_key, params.enterprise['unencrypted_tree_key'])
-                                rq['role_key_enc_with_tree_key'] = utils.base64_url_encode(encrypted_role_key)
-                                priv_key, pub_key = crypto.generate_rsa_key()
-                                public_key = crypto.unload_rsa_public_key(pub_key)
-                                rq['role_public_key'] = utils.base64_url_encode(public_key)
-                                private_key = crypto.unload_rsa_private_key(priv_key)
-                                rq['role_private_key'] = utils.base64_url_encode(
-                                    crypto.encrypt_aes_v1(private_key, role_key))
-                                # TODO resolve actual user list
-                                if 'role_users' in params.enterprise:
-                                    rq['role_keys'] = []
-                                    user_ids = {x['enterprise_user_id']: None for x in
-                                                params.enterprise['role_users'] if x['role_id'] == role_id}
-                                    if len(user_ids) > 0:
-                                        user_lookup = {x['enterprise_user_id']: x['username'] for x in
-                                                       params.enterprise['users'] if x['enterprise_user_id'] in user_ids}
-                                        emails = {user_lookup[x]: None for x in user_ids if x in user_lookup}
-                                        if len(emails) > 0:
-                                            self.get_public_keys(params, emails)
-                                            reverse_lookup = {value: key for key, value in user_lookup.items()}
-                                            for email, key in emails.items():
-                                                if not key:
-                                                    continue
-                                                if email in reverse_lookup:
-                                                    encrypted_key = crypto.encrypt_rsa(role_key, key)
-                                                    rq['role_keys'].append({
-                                                        'enterprise_user_id': reverse_lookup[email],
-                                                        'role_key': utils.base64_url_encode(encrypted_key)
-                                                    })
+                                if not params.forbid_rsa:
+                                    tree_key = params.enterprise['unencrypted_tree_key']
+                                    role_key = utils.generate_aes_key()
+                                    encrypted_role_key = crypto.encrypt_aes_v2(role_key, tree_key)
+                                    rq['role_key_enc_with_tree_key'] = utils.base64_url_encode(encrypted_role_key)
+                                    priv_key, pub_key = crypto.generate_rsa_key()
+                                    public_key = crypto.unload_rsa_public_key(pub_key)
+                                    rq['role_public_key'] = utils.base64_url_encode(public_key)
+                                    private_key = crypto.unload_rsa_private_key(priv_key)
+                                    rq['role_private_key'] = utils.base64_url_encode(
+                                        crypto.encrypt_aes_v1(private_key, role_key))
 
+                                    # TODO resolve actual user list
+                                    if 'role_users' in params.enterprise:
+                                        rq['role_keys'] = []
+                                        user_ids = {x['enterprise_user_id']: None for x in
+                                                    params.enterprise['role_users'] if x['role_id'] == role_id}
+                                        if len(user_ids) > 0:
+                                            user_lookup = {x['username']: x['enterprise_user_id']  for x in
+                                                           params.enterprise['users'] if x['enterprise_user_id'] in user_ids}
+                                            if len(user_lookup) > 0:
+                                                api.load_user_public_keys(params, list(user_lookup.keys()), False)
+                                                for email, enterprise_user_id in user_lookup.items():
+                                                    key = params.key_cache.get(email)
+                                                    if not key:
+                                                        continue
+                                                    if params.forbid_rsa:
+                                                        if key.ec:
+                                                            ec_public_key = crypto.load_ec_public_key(key.ec)
+                                                            encrypted_key = crypto.encrypt_ec(role_key, ec_public_key)
+                                                            rq['role_keys'].append({
+                                                                'enterprise_user_id': enterprise_user_id,
+                                                                'role_key': utils.base64_url_encode(encrypted_key),
+                                                                'tree_key_type': 'encrypted_by_public_key_ecc'
+                                                            })
+                                                    else:
+                                                        if key.rsa:
+                                                            rsa_public_key = crypto.load_rsa_public_key(key.rsa)
+                                                            encrypted_key = crypto.encrypt_rsa(role_key, rsa_public_key)
+                                                            rq['role_keys'].append({
+                                                                'enterprise_user_id': enterprise_user_id,
+                                                                'role_key': utils.base64_url_encode(encrypted_key),
+                                                            })
                             request_batch.append(rq)
 
             elif kwargs.get('copy') or kwargs.get('clone'):
@@ -2472,7 +2534,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     role = None
                     if not role and 'role_id' in rq:
                         role = role_lookup.get(str(rq['role_id']))
-                    if role:
+                    if isinstance(role, dict):
                         role_name = role['data'].get('displayname')
                         if command in { 'role_delete', 'role_update' }:
                             if rs['result'] == 'success':
@@ -2852,8 +2914,6 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                 team_key = api.generate_aes_key()
                 encrypted_team_key = crypto.encrypt_aes_v2(team_key, params.enterprise['unencrypted_tree_key'])
 
-                private_key, public_key = crypto.generate_rsa_key()
-                encrypted_private_key = crypto.encrypt_aes_v1(crypto.unload_rsa_private_key(private_key), team_key)
                 rq = {
                     'command': 'team_add',
                     'team_uid': team_uid,
@@ -2861,13 +2921,22 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                     'restrict_edit': kwargs.get('restrict_edit') == 'on',
                     'restrict_share': kwargs.get('restrict_share') == 'on',
                     'restrict_view': kwargs.get('restrict_view') == 'on',
-                    'public_key': utils.base64_url_encode(crypto.unload_rsa_public_key(public_key)),
-                    'private_key': utils.base64_url_encode(encrypted_private_key),
                     'node_id': team_node_id,
                     'team_key': utils.base64_url_encode(crypto.encrypt_aes_v1(team_key, params.data_key)),
                     'encrypted_team_key': utils.base64_url_encode(encrypted_team_key),
                     'manage_only': True
                 }
+                if params.forbid_rsa:
+                    ec_private_key, ec_public_key = crypto.generate_ec_key()
+                    encrypted_ec_private_key = crypto.encrypt_aes_v2(crypto.unload_ec_private_key(ec_private_key), team_key)
+                    rq['ecc_private_key'] = utils.base64_url_encode(encrypted_ec_private_key)
+                    rq['ecc_public_key'] = utils.base64_url_encode(crypto.unload_ec_public_key(ec_public_key))
+                else:
+                    rsa_private_key, rsa_public_key = crypto.generate_rsa_key()
+                    encrypted_rsa_private_key = crypto.encrypt_aes_v1(crypto.unload_rsa_private_key(rsa_private_key), team_key)
+                    rq['public_key'] = utils.base64_url_encode(crypto.unload_rsa_public_key(rsa_public_key)),
+                    rq['private_key'] =  utils.base64_url_encode(encrypted_rsa_private_key),
+
                 request_batch.append(rq)
         else:
             for team_name in team_names:
@@ -2937,17 +3006,40 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                                             'enterprise_user_id': user_id,
                                         }
                                     else:
-                                        public_key = self.get_public_key(params, user['username'])
-                                        team_key = self.get_team_key(params, team['team_uid'])
-                                        encrypted_team_key = crypto.encrypt_rsa(team_key, public_key)
-                                        if public_key and team_key:
+                                        username = user['username']
+                                        api.load_user_public_keys(params, [username], False)
+                                        user_keys = params.key_cache.get(username)
+                                        team_uid = team['team_uid']
+                                        api.load_team_keys(params, [team_uid])
+                                        team_keys = params.key_cache.get(team_uid)
+                                        team_key = team_keys.aes if team_keys else None
+                                        if user_keys and team_key:
                                             rq = {
                                                 'command': 'team_enterprise_user_add',
                                                 'team_uid': team['team_uid'],
                                                 'enterprise_user_id': user_id,
                                                 'user_type': 0,
-                                                'team_key': utils.base64_url_encode(encrypted_team_key)
                                             }
+                                            if params.forbid_rsa:
+                                                if user_keys.ec:
+                                                    ec_key = crypto.load_ec_public_key(user_keys.ec)
+                                                    encrypted_team_key = crypto.encrypt_ec(team_key, ec_key)
+                                                    rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
+                                                    rq['team_key_type'] = 'encrypted_by_public_key_ecc'
+                                                else:
+                                                    logging.warning('User %s does not have EC key', username)
+                                                    rq = None
+                                            else:
+                                                if user_keys.rsa:
+                                                    rsa_key = crypto.load_rsa_public_key(user_keys.rsa)
+                                                    encrypted_team_key = crypto.encrypt_rsa(team_key, rsa_key)
+                                                    rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
+                                                    rq['team_key_type'] = 'encrypted_by_public_key'
+                                                else:
+                                                    logging.warning('User %s does not have RSA key', username)
+                                                    rq = None
+                                        else:
+                                            logging.warning('Cannot get user %s public key', username)
                                     if hsf:
                                         rq['user_type'] = 2 if hsf == 'on' else 1
                                 else:
@@ -3404,7 +3496,7 @@ class TeamApproveCommand(EnterpriseCommand):
                 'teams' in params.enterprise and 'users' in params.enterprise:
             # load team and user keys
             team_keys = {}   # type: Dict[str, Optional[bytes]]
-            user_keys = {}   # type: Dict[str, Any]
+            all_users = set()   # type: Set[str]
             for qtu in params.enterprise['queued_team_users']:
                 team_uid = qtu['team_uid']
                 if team_uid not in teams and team_uid not in added_teams:
@@ -3416,39 +3508,59 @@ class TeamApproveCommand(EnterpriseCommand):
                             email = email.lower()
                             if team_uid in teams and team_uid not in team_keys:
                                     team_keys[team_uid] = None
-                            if email not in user_keys:
-                                user_keys[email] = None
+                            if email not in all_users:
+                                all_users.add(email)
 
-            self.get_team_keys(params, team_keys)
-            self.get_public_keys(params, user_keys)
+            api.load_team_keys(params, list(team_keys.keys()))
+            for team_uid in team_keys.keys():
+                team_key = params.key_cache.get(team_uid)
+                if team_key and team_key.aes:
+                    team_keys[team_uid] = team_key.aes
             team_keys.update(added_team_keys)
+            api.load_user_public_keys(params, list(all_users), False)
 
-            if len(team_keys) > 0 and len(user_keys) > 0:
+            if len(team_keys) > 0 and len(all_users) > 0:
                 for qtu in params.enterprise['queued_team_users']:
                     team_uid = qtu['team_uid']
                     team_key = team_keys.get(team_uid)
                     if not team_key:
                         continue
                     for u_id in qtu.get('users') or []:
-                        email = active_users.get(u_id)
-                        if not email:
+                        username = active_users.get(u_id)
+                        if not username:
                             continue
-                        email = email.lower()
-                        public_key =  user_keys.get(email)
-                        if not public_key:
+                        keys = params.key_cache.get(username.lower())
+                        if not keys:
                             continue
                         rq = {
                             'command': 'team_enterprise_user_add',
                             'team_uid': team_uid,
                             'enterprise_user_id': u_id,
+                            'user_type': 0,
                         }
                         try:
-                            encrypted_team_key = crypto.encrypt_rsa(team_key, public_key)
-                            rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
-                            rq['user_type'] = 0
+                            if params.forbid_rsa:
+                                if keys.ec:
+                                    ec_key = crypto.load_ec_public_key(keys.ec)
+                                    encrypted_team_key = crypto.encrypt_ec(team_key, ec_key)
+                                    rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
+                                    rq['team_key_type'] = 'encrypted_by_public_key_ecc'
+                                else:
+                                    logging.warning('User %s does not have EC key. Skipping', username)
+                                    continue
+                            else:
+                                if keys.rsa:
+                                    rsa_key = crypto.load_rsa_public_key(keys.rsa)
+                                    encrypted_team_key = crypto.encrypt_rsa(team_key, rsa_key)
+                                    rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
+                                    rq['team_key_type'] = 'encrypted_by_public_key'
+                                else:
+                                    logging.warning('User %s does not have RSA key. Skipping', username)
+                                    continue
+
                             request_batch.append(rq)
                         except Exception as e:
-                            logging.warning('Cannot approve user \"%s\" to team \"%s\": %s', email, team_uid, e)
+                            logging.warning('Cannot approve user \"%s\" to team \"%s\": %s', username, team_uid, e)
                             continue
 
         if request_batch:
@@ -3674,8 +3786,9 @@ class DeviceApproveCommand(EnterpriseCommand):
                                 private_key = crypto.load_rsa_private_key(decrypted_private_key)
                                 for user_dk in dk.enterpriseUserIdDataKeyPairs:
                                     if user_dk.enterpriseUserId not in data_keys:
-                                        data_key = crypto.decrypt_rsa(user_dk.encryptedDataKey, private_key)
-                                        data_keys[user_dk.enterpriseUserId] = data_key
+                                        if user_dk.keyType in (enterprise_pb2.KT_NO_KEY, enterprise_pb2.KT_ENCRYPTED_BY_PUBLIC_KEY):
+                                            data_key = crypto.decrypt_rsa(user_dk.encryptedDataKey, private_key)
+                                            data_keys[user_dk.enterpriseUserId] = data_key
                             except Exception as ex:
                                 logging.debug(ex)
 

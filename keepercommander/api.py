@@ -71,26 +71,44 @@ def login(params, new_login=False):
         loginv3.LoginV3Flow.login(params, new_device=True)
 
 
-def accept_account_transfer_consent(params):
+def accept_account_transfer_consent(params):     # type: (KeeperParams) -> bool
     share_account_by = params.get_share_account_timestamp()
     print(constants.ACCOUNT_TRANSFER_MSG.format(share_account_by.strftime('%a, %b %d %Y')))
 
     expired = datetime.today() > share_account_by
     input_options = 'Accept/L(ogout)' if expired else 'Accept/L(ater)'
-    answer = input('Do you accept Account Transfer policy? {}: '.format(input_options))
+    answer = input(f'Do you accept Account Transfer policy? {input_options}: ')
     answer = answer.lower()
     if answer.lower() == 'accept':
-        for role in params.settings['share_account_to']:
-            encoded_public = utils.base64_url_decode(role['public_key'])
-            public_key = crypto.load_rsa_public_key(encoded_public)
-            transfer_key = crypto.encrypt_rsa(params.data_key, public_key)
+        ok = True
+        requests = []
+        if 'share_account_to' in params.settings:
+            for role in params.settings['share_account_to']:
+                request = {
+                    'command': 'share_account',
+                    'to_role_id': role['role_id'],
+                }
+                if 'public_key' in role:
+                    encoded_public = utils.base64_url_decode(role['public_key'])
+                    public_key = crypto.load_rsa_public_key(encoded_public)
+                    transfer_key = crypto.encrypt_rsa(params.data_key, public_key)
+                    request['transfer_key'] = utils.base64_url_encode(transfer_key)
+
+                requests.append(request)
+        else:
             request = {
-                'command': 'share_account',
-                'to_role_id': role['role_id'],
-                'transfer_key': utils.base64_url_encode(transfer_key)
+                'command': 'share_account'
             }
-            communicate(params, request)
-        return True
+            requests.append(request)
+
+        responses = execute_batch(params, requests)
+        if isinstance(responses, list):
+            for response in responses:
+                if response['result'] != 'success':
+                    logging.warning('Account Transfer policy acceptance error: %s',
+                                    response.get('message') or response['result_code'])
+                    ok = False
+        return ok
     else:
         return False
 
@@ -342,12 +360,15 @@ def load_team_keys(params, team_uids):          # type: (KeeperParams, List[str]
                         aes = b''
                         rsa = b''
                         encrypted_key = utils.base64_url_decode(tk['key'])
-                        if tk['type'] == 1:
+                        key_type = tk['type']
+                        if key_type == 1:
                             aes = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
-                        elif tk['type'] == 2:
-                            aes = crypto.decrypt_rsa(tk['key'], params.rsa_key2)
-                        elif tk['type'] == 3:
+                        elif key_type == 2:
+                            aes = crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
+                        elif key_type == 3:
                             rsa = encrypted_key
+                        elif key_type == 4:
+                            aes = crypto.decrypt_ec(encrypted_key, params.ecc_key)
                         params.key_cache[team_uid] = PublicKeys(rsa=rsa, aes=aes)
                     except Exception as e:
                         logging.debug(e)

@@ -1590,23 +1590,40 @@ class RecordPermissionCommand(Command):
                 if not kwargs.get('force') else 'Y'
             if answer.lower() == 'y':
                 table = []
-                while len(direct_shares_update) > 0:
-                    batch = direct_shares_update[:80]
-                    direct_shares_update = direct_shares_update[80:]
-                    rq = {
-                        'command': 'record_share_update',
-                        'pt': 'Commander',
-                        'update_shares': batch
-                    }
 
-                    rs = api.communicate(params, rq)
-                    if 'update_statuses' in rs:
-                        for status in rs['update_statuses']:
-                            code = status['status']
-                            if code != 'success':
-                                record_uid = status['record_uid']
-                                username = status.get('username') or status.get('to_username')
-                                table.append([record_uid, username, code, status.get('message')])
+                def to_share_record_proto(srd):   # type: (dict) -> record_pb2.SharedRecord
+                    srp = record_pb2.SharedRecord()
+                    srp.toUsername = srd['to_username']
+                    srp.recordUid = utils.base64_url_decode(srd['record_uid'])
+                    if 'shared_folder_uid' in srd:
+                        srp.sharedFolderUid = utils.base64_url_decode(srd['shared_folder_uid'])
+                    if 'team_uid' in srd:
+                        srp.teamUid = utils.base64_url_decode(srd['team_uid'])
+                    if 'record_key' in srd:
+                        srp.recordKey = utils.base64_url_decode(srd['record_key'])
+                    if 'use_ecc_key' in srd:
+                        srp.useEccKey = srd['use_ecc_key']
+                    if 'editable' in srd:
+                        srp.editable = srd['editable']
+                    if 'shareable' in srd:
+                        srp.shareable = srd['shareable']
+                    if 'transfer' in srd:
+                        srp.shareable = srd['transfer']
+
+                    return srp
+
+                while len(direct_shares_update) > 0:
+                    rsu_rq = record_pb2.RecordShareUpdateRequest()
+                    rsu_rq.updateSharedRecord.extend((to_share_record_proto(x) for x in direct_shares_update[:900]))
+                    direct_shares_update = direct_shares_update[900:]
+
+                    rsu_rs = api.communicate_rest(params, rsu_rq, 'vault/records_share_update',
+                                                  rs_type=record_pb2.RecordShareUpdateResponse)
+                    for status in rsu_rs.updateSharedRecordStatus:
+                        code = status.status.lower()
+                        if code != 'success':
+                            record_uid = utils.base64_url_encode(status.recordUid)
+                            table.append([record_uid, status.username, code, status.message])
 
                 if len(table) > 0:
                     headers = ['Record UID', 'Email', 'Error Code', 'Message']
@@ -2283,8 +2300,9 @@ class CreateRegularUserCommand(Command):
             user_password, crypto.get_random_bytes(16), iterations)
         user_rq.encryptionParams = utils.create_encryption_params(
             user_password, crypto.get_random_bytes(16), iterations, user_data_key)
-        user_rq.rsaPublicKey = rsa_public
-        user_rq.rsaEncryptedPrivateKey = crypto.encrypt_aes_v1(rsa_private, user_data_key)
+        if not params.forbid_rsa:
+            user_rq.rsaPublicKey = rsa_public
+            user_rq.rsaEncryptedPrivateKey = crypto.encrypt_aes_v1(rsa_private, user_data_key)
         user_rq.eccPublicKey = ec_public
         user_rq.eccEncryptedPrivateKey = crypto.encrypt_aes_v2(ec_private, user_data_key)
         user_rq.encryptedDeviceToken = LoginV3API.get_device_id(params)

@@ -43,6 +43,9 @@ MSP_ADDONS = [
     ('password_rotation', 'Password Rotation', False, 'Rotation'),
     ('platinum_professional_services_add_on', 'Professional Services - Platinum Plan', False, 'Platinum Support'),
     ('gold_professional_services_add_on', 'Professional Services - Gold Plan', False, 'Gold Support'),
+    ('professional_services_silver_add_on', 'Professional Services - Silver Plan', False, 'Silver Support'),
+
+
 ]
 
 

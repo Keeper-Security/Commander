@@ -29,6 +29,7 @@ from . import __version__
 
 # CLIENT_VERSION = 'c' + __version__
 CLIENT_VERSION = 'c16.10.0'
+# CLIENT_VERSION = 'c16.99.99'
 
 SERVER_PUBLIC_KEYS = {
     1: crypto.load_rsa_public_key(utils.base64_url_decode(

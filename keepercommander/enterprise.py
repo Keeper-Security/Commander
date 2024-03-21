@@ -147,7 +147,7 @@ class _EnterpriseLoader(object):
                     keys['ecc_public_key'] = utils.base64_url_encode(rs.enterpriseKeys.eccPublicKey)
                     keys['ecc_encrypted_private_key'] = \
                         utils.base64_url_encode(rs.enterpriseKeys.eccEncryptedPrivateKey)
-            if 'rsa_encrypted_private_key' not in keys:
+            if 'rsa_encrypted_private_key' not in keys and not params.forbid_rsa:
                 rsa_private, rsa_public = crypto.generate_rsa_key()
                 rsa_private_key = crypto.unload_rsa_private_key(rsa_private)
                 rsa_encrypted_private_key = crypto.encrypt_aes_v2(rsa_private_key, self._enterprise.tree_key)

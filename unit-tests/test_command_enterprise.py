@@ -323,10 +323,6 @@ class TestEnterprise(TestCase):
         with self.assertRaises(CommandError):
             cmd.execute(params, user=[ent_env.user2_email])
 
-        def get_public_keys(_params, emails):
-            for email in emails:
-                emails[email] = vault_env.public_key
-
     @staticmethod
     def get_audit_event():
         return {

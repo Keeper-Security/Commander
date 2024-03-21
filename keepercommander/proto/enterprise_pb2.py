@@ -15,10 +15,12 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x10\x65nterprise.proto\x12\nEnterprise\"\x84\x01\n\x18\x45nterpriseKeyPairRequest\x12\x1b\n\x13\x65nterprisePublicKey\x18\x01 \x01(\x0c\x12%\n\x1d\x65ncryptedEnterprisePrivateKey\x18\x02 \x01(\x0c\x12$\n\x07keyType\x18\x03 \x01(\x0e\x32\x13.Enterprise.KeyType\"\'\n\x14GetTeamMemberRequest\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\"k\n\x0e\x45nterpriseUser\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\r\n\x05\x65mail\x18\x02 \x01(\t\x12\x1a\n\x12\x65nterpriseUsername\x18\x03 \x01(\t\x12\x14\n\x0cisShareAdmin\x18\x04 \x01(\x08\"K\n\x15GetTeamMemberResponse\x12\x32\n\x0e\x65nterpriseUser\x18\x01 \x03(\x0b\x32\x1a.Enterprise.EnterpriseUser\"-\n\x11\x45nterpriseUserIds\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x03(\x03\"B\n\x19\x45nterprisePersonalAccount\x12\r\n\x05\x65mail\x18\x01 \x01(\t\x12\x16\n\x0eOBSOLETE_FIELD\x18\x02 \x01(\x0c\"S\n\x17\x45ncryptedTeamKeyRequest\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\x18\n\x10\x65ncryptedTeamKey\x18\x02 \x01(\x0c\x12\r\n\x05\x66orce\x18\x03 \x01(\x08\"+\n\x0fReEncryptedData\x12\n\n\x02id\x18\x01 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\t\"?\n\x12ReEncryptedRoleKey\x12\x0f\n\x07role_id\x18\x01 \x01(\x03\x12\x18\n\x10\x65ncryptedRoleKey\x18\x02 \x01(\x0c\"\x9d\x02\n\x1bNodeToManagedCompanyRequest\x12\x11\n\tcompanyId\x18\x01 \x01(\x05\x12*\n\x05nodes\x18\x02 \x03(\x0b\x32\x1b.Enterprise.ReEncryptedData\x12*\n\x05roles\x18\x03 \x03(\x0b\x32\x1b.Enterprise.ReEncryptedData\x12*\n\x05users\x18\x04 \x03(\x0b\x32\x1b.Enterprise.ReEncryptedData\x12\x30\n\x08roleKeys\x18\x05 \x03(\x0b\x32\x1e.Enterprise.ReEncryptedRoleKey\x12\x35\n\x08teamKeys\x18\x06 \x03(\x0b\x32#.Enterprise.EncryptedTeamKeyRequest\",\n\x08RoleTeam\x12\x0f\n\x07role_id\x18\x01 \x01(\x03\x12\x0f\n\x07teamUid\x18\x02 \x01(\x0c\"4\n\tRoleTeams\x12\'\n\trole_team\x18\x01 \x03(\x0b\x32\x14.Enterprise.RoleTeam\"\xc1\x03\n\x16\x45nterpriseRegistration\x12\x18\n\x10\x65ncryptedTreeKey\x18\x01 \x01(\x0c\x12\x16\n\x0e\x65nterpriseName\x18\x02 \x01(\t\x12\x14\n\x0crootNodeData\x18\x03 \x01(\x0c\x12\x15\n\radminUserData\x18\x04 \x01(\x0c\x12\x11\n\tadminName\x18\x05 \x01(\t\x12\x10\n\x08roleData\x18\x06 \x01(\x0c\x12\x38\n\nrsaKeyPair\x18\x07 \x01(\x0b\x32$.Enterprise.EnterpriseKeyPairRequest\x12\x13\n\x0bnumberSeats\x18\x08 \x01(\x05\x12\x32\n\x0e\x65nterpriseType\x18\t \x01(\x0e\x32\x1a.Enterprise.EnterpriseType\x12\x15\n\rrolePublicKey\x18\n \x01(\x0c\x12*\n\"rolePrivateKeyEncryptedWithRoleKey\x18\x0b \x01(\x0c\x12#\n\x1broleKeyEncryptedWithTreeKey\x18\x0c \x01(\x0c\x12\x38\n\neccKeyPair\x18\r \x01(\x0b\x32$.Enterprise.EnterpriseKeyPairRequest\".\n\x1a\x44omainPasswordRulesRequest\x12\x10\n\x08username\x18\x01 \x01(\t\"\\\n\x19\x44omainPasswordRulesFields\x12\x0c\n\x04type\x18\x01 \x01(\t\x12\x0f\n\x07minimum\x18\x02 \x01(\x05\x12\x0f\n\x07maximum\x18\x03 \x01(\x05\x12\x0f\n\x07\x61llowed\x18\x04 \x01(\x08\"E\n\x10LoginToMcRequest\x12\x16\n\x0emcEnterpriseId\x18\x01 \x01(\x05\x12\x19\n\x11messageSessionUid\x18\x02 \x01(\x0c\"L\n\x11LoginToMcResponse\x12\x1d\n\x15\x65ncryptedSessionToken\x18\x01 \x01(\x0c\x12\x18\n\x10\x65ncryptedTreeKey\x18\x02 \x01(\t\"g\n\x1b\x44omainPasswordRulesResponse\x12H\n\x19\x64omainPasswordRulesFields\x18\x01 \x03(\x0b\x32%.Enterprise.DomainPasswordRulesFields\"\x88\x01\n\x18\x41pproveUserDeviceRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x02 \x01(\x0c\x12\x1e\n\x16\x65ncryptedDeviceDataKey\x18\x03 \x01(\x0c\x12\x14\n\x0c\x64\x65nyApproval\x18\x04 \x01(\x08\"t\n\x19\x41pproveUserDeviceResponse\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x02 \x01(\x0c\x12\x0e\n\x06\x66\x61iled\x18\x03 \x01(\x08\x12\x0f\n\x07message\x18\x04 \x01(\t\"Y\n\x19\x41pproveUserDevicesRequest\x12<\n\x0e\x64\x65viceRequests\x18\x01 \x03(\x0b\x32$.Enterprise.ApproveUserDeviceRequest\"\\\n\x1a\x41pproveUserDevicesResponse\x12>\n\x0f\x64\x65viceResponses\x18\x01 \x03(\x0b\x32%.Enterprise.ApproveUserDeviceResponse\"\x87\x01\n\x15\x45nterpriseUserDataKey\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x1c\n\x14userEncryptedDataKey\x18\x02 \x01(\x0c\x12\x11\n\tkeyTypeId\x18\x03 \x01(\x05\x12\x0f\n\x07roleKey\x18\x04 \x01(\x0c\x12\x12\n\nprivateKey\x18\x05 \x01(\x0c\"I\n\x16\x45nterpriseUserDataKeys\x12/\n\x04keys\x18\x01 \x03(\x0b\x32!.Enterprise.EnterpriseUserDataKey\"2\n\x15\x45nterpriseDataRequest\x12\x19\n\x11\x63ontinuationToken\x18\x01 \x01(\x0c\"0\n\x13SpecialProvisioning\x12\x0b\n\x03url\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\"\xcc\x01\n\x11GeneralDataEntity\x12\x16\n\x0e\x65nterpriseName\x18\x01 \x01(\t\x12\x1a\n\x12restrictVisibility\x18\x02 \x01(\x08\x12<\n\x13specialProvisioning\x18\x04 \x01(\x0b\x32\x1f.Enterprise.SpecialProvisioning\x12\x30\n\ruserPrivilege\x18\x07 \x01(\x0b\x32\x19.Enterprise.UserPrivilege\x12\x13\n\x0b\x64istributor\x18\x08 \x01(\x08\"\xfd\x01\n\x04Node\x12\x0e\n\x06nodeId\x18\x01 \x01(\x03\x12\x10\n\x08parentId\x18\x02 \x01(\x03\x12\x10\n\x08\x62ridgeId\x18\x03 \x01(\x03\x12\x0e\n\x06scimId\x18\x04 \x01(\x03\x12\x11\n\tlicenseId\x18\x05 \x01(\x03\x12\x15\n\rencryptedData\x18\x06 \x01(\t\x12\x12\n\nduoEnabled\x18\x07 \x01(\x08\x12\x12\n\nrsaEnabled\x18\x08 \x01(\x08\x12 \n\x14ssoServiceProviderId\x18\t \x01(\x03\x42\x02\x18\x01\x12\x1a\n\x12restrictVisibility\x18\n \x01(\x08\x12!\n\x15ssoServiceProviderIds\x18\x0b \x03(\x03\x42\x02\x10\x01\"\x8e\x01\n\x04Role\x12\x0e\n\x06roleId\x18\x01 \x01(\x03\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x15\n\rencryptedData\x18\x03 \x01(\t\x12\x0f\n\x07keyType\x18\x04 \x01(\t\x12\x14\n\x0cvisibleBelow\x18\x05 \x01(\x08\x12\x16\n\x0enewUserInherit\x18\x06 \x01(\x08\x12\x10\n\x08roleType\x18\x07 \x01(\t\"\xb8\x02\n\x04User\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x15\n\rencryptedData\x18\x03 \x01(\t\x12\x0f\n\x07keyType\x18\x04 \x01(\t\x12\x10\n\x08username\x18\x05 \x01(\t\x12\x0e\n\x06status\x18\x06 \x01(\t\x12\x0c\n\x04lock\x18\x07 \x01(\x05\x12\x0e\n\x06userId\x18\x08 \x01(\x05\x12\x1e\n\x16\x61\x63\x63ountShareExpiration\x18\t \x01(\x03\x12\x10\n\x08\x66ullName\x18\n \x01(\t\x12\x10\n\x08jobTitle\x18\x0b \x01(\t\x12\x12\n\ntfaEnabled\x18\x0c \x01(\x08\x12\x46\n\x18transferAcceptanceStatus\x18\r \x01(\x0e\x32$.Enterprise.TransferAcceptanceStatus\"7\n\tUserAlias\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x10\n\x08username\x18\x02 \x01(\t\"\xac\x01\n\x18\x43omplianceReportMetaData\x12\x11\n\treportUid\x18\x01 \x01(\x0c\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x12\n\nreportName\x18\x03 \x01(\t\x12\x15\n\rdateGenerated\x18\x04 \x01(\x03\x12\x11\n\trunByName\x18\x05 \x01(\t\x12\x16\n\x0enumberOfOwners\x18\x07 \x01(\x05\x12\x17\n\x0fnumberOfRecords\x18\x08 \x01(\x05\"S\n\x0bManagedNode\x12\x0e\n\x06roleId\x18\x01 \x01(\x03\x12\x15\n\rmanagedNodeId\x18\x02 \x01(\x03\x12\x1d\n\x15\x63\x61scadeNodeManagement\x18\x03 \x01(\x08\"T\n\x0fUserManagedNode\x12\x0e\n\x06nodeId\x18\x01 \x01(\x03\x12\x1d\n\x15\x63\x61scadeNodeManagement\x18\x02 \x01(\x08\x12\x12\n\nprivileges\x18\x03 \x03(\t\"w\n\rUserPrivilege\x12\x35\n\x10userManagedNodes\x18\x01 \x03(\x0b\x32\x1b.Enterprise.UserManagedNode\x12\x18\n\x10\x65nterpriseUserId\x18\x02 \x01(\x03\x12\x15\n\rencryptedData\x18\x03 \x01(\t\"4\n\x08RoleUser\x12\x0e\n\x06roleId\x18\x01 \x01(\x03\x12\x18\n\x10\x65nterpriseUserId\x18\x02 \x01(\x03\"M\n\rRolePrivilege\x12\x15\n\rmanagedNodeId\x18\x01 \x01(\x03\x12\x0e\n\x06roleId\x18\x02 \x01(\x03\x12\x15\n\rprivilegeType\x18\x03 \x01(\t\"I\n\x0fRoleEnforcement\x12\x0e\n\x06roleId\x18\x01 \x01(\x03\x12\x17\n\x0f\x65nforcementType\x18\x02 \x01(\t\x12\r\n\x05value\x18\x03 \x01(\t\"\xa9\x01\n\x04Team\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0e\n\x06nodeId\x18\x03 \x01(\x03\x12\x14\n\x0crestrictEdit\x18\x04 \x01(\x08\x12\x15\n\rrestrictShare\x18\x05 \x01(\x08\x12\x14\n\x0crestrictView\x18\x06 \x01(\x08\x12\x15\n\rencryptedData\x18\x07 \x01(\t\x12\x18\n\x10\x65ncryptedTeamKey\x18\x08 \x01(\t\"G\n\x08TeamUser\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\x18\n\x10\x65nterpriseUserId\x18\x02 \x01(\x03\x12\x10\n\x08userType\x18\x03 \x01(\t\"K\n\x1aGetDistributorInfoResponse\x12-\n\x0c\x64istributors\x18\x01 \x03(\x0b\x32\x17.Enterprise.Distributor\"B\n\x0b\x44istributor\x12\x0c\n\x04name\x18\x01 \x01(\t\x12%\n\x08mspInfos\x18\x02 \x03(\x0b\x32\x13.Enterprise.MspInfo\"\x9d\x02\n\x07MspInfo\x12\x14\n\x0c\x65nterpriseId\x18\x01 \x01(\x05\x12\x16\n\x0e\x65nterpriseName\x18\x02 \x01(\t\x12\x19\n\x11\x61llocatedLicenses\x18\x03 \x01(\x05\x12\x19\n\x11\x61llowedMcProducts\x18\x04 \x03(\t\x12\x15\n\rallowedAddOns\x18\x05 \x03(\t\x12\x17\n\x0fmaxFilePlanType\x18\x06 \x01(\t\x12\x34\n\x10managedCompanies\x18\x07 \x03(\x0b\x32\x1a.Enterprise.ManagedCompany\x12\x1e\n\x16\x61llowUnlimitedLicenses\x18\x08 \x01(\x08\x12(\n\x06\x61\x64\x64Ons\x18\t \x03(\x0b\x32\x18.Enterprise.LicenseAddOn\"\x91\x02\n\x0eManagedCompany\x12\x16\n\x0emcEnterpriseId\x18\x01 \x01(\x05\x12\x18\n\x10mcEnterpriseName\x18\x02 \x01(\t\x12\x11\n\tmspNodeId\x18\x03 \x01(\x03\x12\x15\n\rnumberOfSeats\x18\x04 \x01(\x05\x12\x15\n\rnumberOfUsers\x18\x05 \x01(\x05\x12\x11\n\tproductId\x18\x06 \x01(\t\x12\x11\n\tisExpired\x18\x07 \x01(\x08\x12\x0f\n\x07treeKey\x18\x08 \x01(\t\x12\x15\n\rtree_key_role\x18\t \x01(\x03\x12\x14\n\x0c\x66ilePlanType\x18\n \x01(\t\x12(\n\x06\x61\x64\x64Ons\x18\x0b \x03(\x0b\x32\x18.Enterprise.LicenseAddOn\"R\n\x07MSPPool\x12\x11\n\tproductId\x18\x01 \x01(\t\x12\r\n\x05seats\x18\x02 \x01(\x05\x12\x16\n\x0e\x61vailableSeats\x18\x03 \x01(\x05\x12\r\n\x05stash\x18\x04 \x01(\x05\":\n\nMSPContact\x12\x14\n\x0c\x65nterpriseId\x18\x01 \x01(\x05\x12\x16\n\x0e\x65nterpriseName\x18\x02 \x01(\t\"\xbb\x01\n\x0cLicenseAddOn\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0f\n\x07\x65nabled\x18\x02 \x01(\x08\x12\x0f\n\x07isTrial\x18\x03 \x01(\x08\x12\x12\n\nexpiration\x18\x04 \x01(\x03\x12\x0f\n\x07\x63reated\x18\x05 \x01(\x03\x12\r\n\x05seats\x18\x06 \x01(\x05\x12\x16\n\x0e\x61\x63tivationTime\x18\x07 \x01(\x03\x12\x19\n\x11includedInProduct\x18\x08 \x01(\x08\x12\x14\n\x0c\x61piCallCount\x18\t \x01(\x05\"s\n\tMCDefault\x12\x11\n\tmcProduct\x18\x01 \x01(\t\x12\x0e\n\x06\x61\x64\x64Ons\x18\x02 \x03(\t\x12\x14\n\x0c\x66ilePlanType\x18\x03 \x01(\t\x12\x13\n\x0bmaxLicenses\x18\x04 \x01(\x05\x12\x18\n\x10\x66ixedMaxLicenses\x18\x05 \x01(\x08\"\xd2\x01\n\nMSPPermits\x12\x12\n\nrestricted\x18\x01 \x01(\x08\x12\x1a\n\x12maxAllowedLicenses\x18\x02 \x01(\x05\x12\x19\n\x11\x61llowedMcProducts\x18\x03 \x03(\t\x12\x15\n\rallowedAddOns\x18\x04 \x03(\t\x12\x17\n\x0fmaxFilePlanType\x18\x05 \x01(\t\x12\x1e\n\x16\x61llowUnlimitedLicenses\x18\x06 \x01(\x08\x12)\n\nmcDefaults\x18\x07 \x03(\x0b\x32\x15.Enterprise.MCDefault\"\xa0\x04\n\x07License\x12\x0c\n\x04paid\x18\x01 \x01(\x08\x12\x15\n\rnumberOfSeats\x18\x02 \x01(\x05\x12\x12\n\nexpiration\x18\x03 \x01(\x03\x12\x14\n\x0clicenseKeyId\x18\x04 \x01(\x05\x12\x15\n\rproductTypeId\x18\x05 \x01(\x05\x12\x0c\n\x04name\x18\x06 \x01(\t\x12\x1b\n\x13\x65nterpriseLicenseId\x18\x07 \x01(\x03\x12\x16\n\x0eseatsAllocated\x18\x08 \x01(\x05\x12\x14\n\x0cseatsPending\x18\t \x01(\x05\x12\x0c\n\x04tier\x18\n \x01(\x05\x12\x16\n\x0e\x66ilePlanTypeId\x18\x0b \x01(\x05\x12\x10\n\x08maxBytes\x18\x0c \x01(\x03\x12\x19\n\x11storageExpiration\x18\r \x01(\x03\x12\x15\n\rlicenseStatus\x18\x0e \x01(\t\x12$\n\x07mspPool\x18\x0f \x03(\x0b\x32\x13.Enterprise.MSPPool\x12)\n\tmanagedBy\x18\x10 \x01(\x0b\x32\x16.Enterprise.MSPContact\x12(\n\x06\x61\x64\x64Ons\x18\x11 \x03(\x0b\x32\x18.Enterprise.LicenseAddOn\x12\x17\n\x0fnextBillingDate\x18\x12 \x01(\x03\x12\x17\n\x0fhasMSPLegacyLog\x18\x13 \x01(\x08\x12*\n\nmspPermits\x18\x14 \x01(\x0b\x32\x16.Enterprise.MSPPermits\x12\x13\n\x0b\x64istributor\x18\x15 \x01(\x08\"n\n\x06\x42ridge\x12\x10\n\x08\x62ridgeId\x18\x01 \x01(\x03\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x18\n\x10wanIpEnforcement\x18\x03 \x01(\t\x12\x18\n\x10lanIpEnforcement\x18\x04 \x01(\t\x12\x0e\n\x06status\x18\x05 \x01(\t\"t\n\x04Scim\x12\x0e\n\x06scimId\x18\x01 \x01(\x03\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x0e\n\x06status\x18\x03 \x01(\t\x12\x12\n\nlastSynced\x18\x04 \x01(\x03\x12\x12\n\nrolePrefix\x18\x05 \x01(\t\x12\x14\n\x0cuniqueGroups\x18\x06 \x01(\x08\"L\n\x0e\x45mailProvision\x12\n\n\x02id\x18\x01 \x01(\x05\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x0e\n\x06\x64omain\x18\x03 \x01(\t\x12\x0e\n\x06method\x18\x04 \x01(\t\"R\n\nQueuedTeam\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0e\n\x06nodeId\x18\x03 \x01(\x03\x12\x15\n\rencryptedData\x18\x04 \x01(\t\"0\n\x0eQueuedTeamUser\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\r\n\x05users\x18\x02 \x03(\x03\"\x91\x01\n\nSsoService\x12\x1c\n\x14ssoServiceProviderId\x18\x01 \x01(\x03\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x0c\n\x04name\x18\x03 \x01(\t\x12\x0e\n\x06sp_url\x18\x04 \x01(\t\x12\x16\n\x0einviteNewUsers\x18\x05 \x01(\x08\x12\x0e\n\x06\x61\x63tive\x18\x06 \x01(\x08\x12\x0f\n\x07isCloud\x18\x07 \x01(\x08\"1\n\x10ReportFilterUser\x12\x0e\n\x06userId\x18\x01 \x01(\x05\x12\r\n\x05\x65mail\x18\x02 \x01(\t\"\x97\x02\n\x1d\x44\x65viceRequestForAdminApproval\x12\x10\n\x08\x64\x65viceId\x18\x01 \x01(\x03\x12\x18\n\x10\x65nterpriseUserId\x18\x02 \x01(\x03\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x03 \x01(\x0c\x12\x17\n\x0f\x64\x65vicePublicKey\x18\x04 \x01(\x0c\x12\x12\n\ndeviceName\x18\x05 \x01(\t\x12\x15\n\rclientVersion\x18\x06 \x01(\t\x12\x12\n\ndeviceType\x18\x07 \x01(\t\x12\x0c\n\x04\x64\x61te\x18\x08 \x01(\x03\x12\x11\n\tipAddress\x18\t \x01(\t\x12\x10\n\x08location\x18\n \x01(\t\x12\r\n\x05\x65mail\x18\x0b \x01(\t\x12\x12\n\naccountUid\x18\x0c \x01(\x0c\"`\n\x0e\x45nterpriseData\x12\x30\n\x06\x65ntity\x18\x01 \x01(\x0e\x32 .Enterprise.EnterpriseDataEntity\x12\x0e\n\x06\x64\x65lete\x18\x02 \x01(\x08\x12\x0c\n\x04\x64\x61ta\x18\x03 \x03(\x0c\"\xd0\x01\n\x16\x45nterpriseDataResponse\x12\x19\n\x11\x63ontinuationToken\x18\x01 \x01(\x0c\x12\x0f\n\x07hasMore\x18\x02 \x01(\x08\x12,\n\x0b\x63\x61\x63heStatus\x18\x03 \x01(\x0e\x32\x17.Enterprise.CacheStatus\x12(\n\x04\x64\x61ta\x18\x04 \x03(\x0b\x32\x1a.Enterprise.EnterpriseData\x12\x32\n\x0bgeneralData\x18\x05 \x01(\x0b\x32\x1d.Enterprise.GeneralDataEntity\"*\n\rBackupRequest\x12\x19\n\x11\x63ontinuationToken\x18\x01 \x01(\x0c\"\x98\x01\n\x0c\x42\x61\x63kupRecord\x12\x0e\n\x06userId\x18\x01 \x01(\x05\x12\x11\n\trecordUid\x18\x02 \x01(\x0c\x12\x0b\n\x03key\x18\x03 \x01(\x0c\x12*\n\x07keyType\x18\x04 \x01(\x0e\x32\x19.Enterprise.BackupKeyType\x12\x0f\n\x07version\x18\x05 \x01(\x05\x12\x0c\n\x04\x64\x61ta\x18\x06 \x01(\x0c\x12\r\n\x05\x65xtra\x18\x07 \x01(\x0c\".\n\tBackupKey\x12\x0e\n\x06userId\x18\x01 \x01(\x05\x12\x11\n\tbackupKey\x18\x02 \x01(\x0c\"\x8d\x02\n\nBackupUser\x12\x0e\n\x06userId\x18\x01 \x01(\x05\x12\x10\n\x08userName\x18\x02 \x01(\t\x12\x0f\n\x07\x64\x61taKey\x18\x03 \x01(\x0c\x12\x36\n\x0b\x64\x61taKeyType\x18\x04 \x01(\x0e\x32!.Enterprise.BackupUserDataKeyType\x12\x12\n\nprivateKey\x18\x05 \x01(\x0c\x12\x0f\n\x07treeKey\x18\x06 \x01(\x0c\x12.\n\x0btreeKeyType\x18\x07 \x01(\x0e\x32\x19.Enterprise.BackupKeyType\x12)\n\nbackupKeys\x18\x08 \x03(\x0b\x32\x15.Enterprise.BackupKey\x12\x14\n\x0cprivateECKey\x18\t \x01(\x0c\"\x9e\x01\n\x0e\x42\x61\x63kupResponse\x12\x1f\n\x17\x65nterpriseEccPrivateKey\x18\x01 \x01(\x0c\x12%\n\x05users\x18\x02 \x03(\x0b\x32\x16.Enterprise.BackupUser\x12)\n\x07records\x18\x03 \x03(\x0b\x32\x18.Enterprise.BackupRecord\x12\x19\n\x11\x63ontinuationToken\x18\x04 \x01(\x0c\"e\n\nBackupFile\x12\x0c\n\x04user\x18\x01 \x01(\t\x12\x11\n\tbackupUid\x18\x02 \x01(\x0c\x12\x10\n\x08\x66ileName\x18\x03 \x01(\t\x12\x0f\n\x07\x63reated\x18\x04 \x01(\x03\x12\x13\n\x0b\x64ownloadUrl\x18\x05 \x01(\t\"8\n\x0f\x42\x61\x63kupsResponse\x12%\n\x05\x66iles\x18\x01 \x03(\x0b\x32\x16.Enterprise.BackupFile\".\n\x1cGetEnterpriseDataKeysRequest\x12\x0e\n\x06roleId\x18\x01 \x03(\x03\"\xff\x01\n\x1dGetEnterpriseDataKeysResponse\x12:\n\x12reEncryptedRoleKey\x18\x01 \x03(\x0b\x32\x1e.Enterprise.ReEncryptedRoleKey\x12$\n\x07roleKey\x18\x02 \x03(\x0b\x32\x13.Enterprise.RoleKey\x12\"\n\x06mspKey\x18\x03 \x01(\x0b\x32\x12.Enterprise.MspKey\x12\x32\n\x0e\x65nterpriseKeys\x18\x04 \x01(\x0b\x32\x1a.Enterprise.EnterpriseKeys\x12$\n\x07treeKey\x18\x05 \x01(\x0b\x32\x13.Enterprise.TreeKey\"^\n\x07RoleKey\x12\x0e\n\x06roleId\x18\x01 \x01(\x03\x12\x14\n\x0c\x65ncryptedKey\x18\x02 \x01(\t\x12-\n\x07keyType\x18\x03 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\"d\n\x06MspKey\x12\x1b\n\x13\x65ncryptedMspTreeKey\x18\x01 \x01(\t\x12=\n\x17\x65ncryptedMspTreeKeyType\x18\x02 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\"|\n\x0e\x45nterpriseKeys\x12\x14\n\x0crsaPublicKey\x18\x01 \x01(\x0c\x12\x1e\n\x16rsaEncryptedPrivateKey\x18\x02 \x01(\x0c\x12\x14\n\x0c\x65\x63\x63PublicKey\x18\x03 \x01(\x0c\x12\x1e\n\x16\x65\x63\x63\x45ncryptedPrivateKey\x18\x04 \x01(\x0c\"H\n\x07TreeKey\x12\x0f\n\x07treeKey\x18\x01 \x01(\t\x12,\n\tkeyTypeId\x18\x02 \x01(\x0e\x32\x19.Enterprise.BackupKeyType\"E\n\x14SharedRecordResponse\x12-\n\x06\x65vents\x18\x01 \x03(\x0b\x32\x1d.Enterprise.SharedRecordEvent\"p\n\x11SharedRecordEvent\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x10\n\x08userName\x18\x02 \x01(\t\x12\x0f\n\x07\x63\x61nEdit\x18\x03 \x01(\x08\x12\x12\n\ncanReshare\x18\x04 \x01(\x08\x12\x11\n\tshareFrom\x18\x05 \x01(\x05\".\n\x1cSetRestrictVisibilityRequest\x12\x0e\n\x06nodeId\x18\x01 \x01(\x03\"\xd0\x01\n\x0eUserAddRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x15\n\rencryptedData\x18\x03 \x01(\x0c\x12-\n\x07keyType\x18\x04 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\x12\x10\n\x08\x66ullName\x18\x05 \x01(\t\x12\x10\n\x08jobTitle\x18\x06 \x01(\t\x12\r\n\x05\x65mail\x18\x07 \x01(\t\x12\x1b\n\x13suppressEmailInvite\x18\x08 \x01(\x08\":\n\x11UserUpdateRequest\x12%\n\x05users\x18\x01 \x03(\x0b\x32\x16.Enterprise.UserUpdate\"\xaf\x01\n\nUserUpdate\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x15\n\rencryptedData\x18\x03 \x01(\x0c\x12-\n\x07keyType\x18\x04 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\x12\x10\n\x08\x66ullName\x18\x05 \x01(\t\x12\x10\n\x08jobTitle\x18\x06 \x01(\t\x12\r\n\x05\x65mail\x18\x07 \x01(\t\"A\n\x12UserUpdateResponse\x12+\n\x05users\x18\x01 \x03(\x0b\x32\x1c.Enterprise.UserUpdateResult\"Z\n\x10UserUpdateResult\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12,\n\x06status\x18\x02 \x01(\x0e\x32\x1c.Enterprise.UserUpdateStatus\"J\n\x1d\x43omplianceRecordOwnersRequest\x12\x0f\n\x07nodeIds\x18\x01 \x03(\x03\x12\x18\n\x10includeNonShared\x18\x02 \x01(\x08\"O\n\x1e\x43omplianceRecordOwnersResponse\x12-\n\x0crecordOwners\x18\x01 \x03(\x0b\x32\x17.Enterprise.RecordOwner\"7\n\x0bRecordOwner\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x0e\n\x06shared\x18\x02 \x01(\x08\"\xa6\x01\n PreliminaryComplianceDataRequest\x12\x19\n\x11\x65nterpriseUserIds\x18\x01 \x03(\x03\x12\x18\n\x10includeNonShared\x18\x02 \x01(\x08\x12\x19\n\x11\x63ontinuationToken\x18\x03 \x01(\x0c\x12\x32\n*includeTotalMatchingRecordsInFirstResponse\x18\x04 \x01(\x08\"\x9f\x01\n!PreliminaryComplianceDataResponse\x12\x30\n\rauditUserData\x18\x01 \x03(\x0b\x32\x19.Enterprise.AuditUserData\x12\x19\n\x11\x63ontinuationToken\x18\x02 \x01(\x0c\x12\x0f\n\x07hasMore\x18\x03 \x01(\x08\x12\x1c\n\x14totalMatchingRecords\x18\x04 \x01(\x05\"K\n\x0f\x41uditUserRecord\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x15\n\rencryptedData\x18\x02 \x01(\x0c\x12\x0e\n\x06shared\x18\x03 \x01(\x08\"\x8d\x01\n\rAuditUserData\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x35\n\x10\x61uditUserRecords\x18\x02 \x03(\x0b\x32\x1b.Enterprise.AuditUserRecord\x12+\n\x06status\x18\x03 \x01(\x0e\x32\x1b.Enterprise.AuditUserStatus\"\x7f\n\x17\x43omplianceReportFilters\x12\x14\n\x0crecordTitles\x18\x01 \x03(\t\x12\x12\n\nrecordUids\x18\x02 \x03(\x0c\x12\x11\n\tjobTitles\x18\x03 \x03(\x03\x12\x0c\n\x04urls\x18\x04 \x03(\t\x12\x19\n\x11\x65nterpriseUserIds\x18\x05 \x03(\x03\"\x7f\n\x17\x43omplianceReportRequest\x12<\n\x13\x63omplianceReportRun\x18\x01 \x01(\x0b\x32\x1f.Enterprise.ComplianceReportRun\x12\x12\n\nreportName\x18\x02 \x01(\t\x12\x12\n\nsaveReport\x18\x03 \x01(\x08\"\x85\x01\n\x13\x43omplianceReportRun\x12N\n\x17reportCriteriaAndFilter\x18\x01 \x01(\x0b\x32-.Enterprise.ComplianceReportCriteriaAndFilter\x12\r\n\x05users\x18\x02 \x03(\x03\x12\x0f\n\x07records\x18\x03 \x03(\x0c\"\xfc\x01\n!ComplianceReportCriteriaAndFilter\x12\x0e\n\x06nodeId\x18\x01 \x01(\x03\x12\x13\n\x0b\x63riteriaUid\x18\x02 \x01(\x0c\x12\x14\n\x0c\x63riteriaName\x18\x03 \x01(\t\x12\x36\n\x08\x63riteria\x18\x04 \x01(\x0b\x32$.Enterprise.ComplianceReportCriteria\x12\x33\n\x07\x66ilters\x18\x05 \x03(\x0b\x32\".Enterprise.ComplianceReportFilter\x12\x14\n\x0clastModified\x18\x06 \x01(\x03\x12\x19\n\x11nodeEncryptedData\x18\x07 \x01(\x0c\"b\n\x18\x43omplianceReportCriteria\x12\x11\n\tjobTitles\x18\x01 \x03(\t\x12\x19\n\x11\x65nterpriseUserIds\x18\x02 \x03(\x03\x12\x18\n\x10includeNonShared\x18\x03 \x01(\x08\"x\n\x16\x43omplianceReportFilter\x12\x14\n\x0crecordTitles\x18\x01 \x03(\t\x12\x12\n\nrecordUids\x18\x02 \x03(\x0c\x12\x11\n\tjobTitles\x18\x03 \x03(\t\x12\x0c\n\x04urls\x18\x04 \x03(\t\x12\x13\n\x0brecordTypes\x18\x05 \x03(\t\"\xa1\x05\n\x18\x43omplianceReportResponse\x12\x15\n\rdateGenerated\x18\x01 \x01(\x03\x12\x15\n\rrunByUserName\x18\x02 \x01(\t\x12\x12\n\nreportName\x18\x03 \x01(\t\x12\x11\n\treportUid\x18\x04 \x01(\x0c\x12<\n\x13\x63omplianceReportRun\x18\x05 \x01(\x0b\x32\x1f.Enterprise.ComplianceReportRun\x12-\n\x0cuserProfiles\x18\x06 \x03(\x0b\x32\x17.Enterprise.UserProfile\x12)\n\nauditTeams\x18\x07 \x03(\x0b\x32\x15.Enterprise.AuditTeam\x12-\n\x0c\x61uditRecords\x18\x08 \x03(\x0b\x32\x17.Enterprise.AuditRecord\x12+\n\x0buserRecords\x18\t \x03(\x0b\x32\x16.Enterprise.UserRecord\x12;\n\x13sharedFolderRecords\x18\n \x03(\x0b\x32\x1e.Enterprise.SharedFolderRecord\x12\x37\n\x11sharedFolderUsers\x18\x0b \x03(\x0b\x32\x1c.Enterprise.SharedFolderUser\x12\x37\n\x11sharedFolderTeams\x18\x0c \x03(\x0b\x32\x1c.Enterprise.SharedFolderTeam\x12\x31\n\x0e\x61uditTeamUsers\x18\r \x03(\x0b\x32\x19.Enterprise.AuditTeamUser\x12)\n\nauditRoles\x18\x0e \x03(\x0b\x32\x15.Enterprise.AuditRole\x12/\n\rlinkedRecords\x18\x0f \x03(\x0b\x32\x18.Enterprise.LinkedRecord\"\x81\x01\n\x0b\x41uditRecord\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x11\n\tauditData\x18\x02 \x01(\x0c\x12\x16\n\x0ehasAttachments\x18\x03 \x01(\x08\x12\x0f\n\x07inTrash\x18\x04 \x01(\x08\x12\x10\n\x08treeLeft\x18\x05 \x01(\x05\x12\x11\n\ttreeRight\x18\x06 \x01(\x05\"\x80\x02\n\tAuditRole\x12\x0e\n\x06roleId\x18\x01 \x01(\x03\x12\x15\n\rencryptedData\x18\x02 \x01(\x0c\x12&\n\x1erestrictShareOutsideEnterprise\x18\x03 \x01(\x08\x12\x18\n\x10restrictShareAll\x18\x04 \x01(\x08\x12\"\n\x1arestrictShareOfAttachments\x18\x05 \x01(\x08\x12)\n!restrictMaskPasswordsWhileEditing\x18\x06 \x01(\x08\x12;\n\x13roleNodeManagements\x18\x07 \x03(\x0b\x32\x1e.Enterprise.RoleNodeManagement\"^\n\x12RoleNodeManagement\x12\x10\n\x08treeLeft\x18\x01 \x01(\x05\x12\x11\n\ttreeRight\x18\x02 \x01(\x05\x12\x0f\n\x07\x63\x61scade\x18\x03 \x01(\x08\x12\x12\n\nprivileges\x18\x04 \x01(\x05\"k\n\x0bUserProfile\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x10\n\x08\x66ullName\x18\x02 \x01(\t\x12\x10\n\x08jobTitle\x18\x03 \x01(\t\x12\r\n\x05\x65mail\x18\x04 \x01(\t\x12\x0f\n\x07roleIds\x18\x05 \x03(\x03\"=\n\x10RecordPermission\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x16\n\x0epermissionBits\x18\x02 \x01(\x05\"_\n\nUserRecord\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x37\n\x11recordPermissions\x18\x02 \x03(\x0b\x32\x1c.Enterprise.RecordPermission\"[\n\tAuditTeam\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\x10\n\x08teamName\x18\x02 \x01(\t\x12\x14\n\x0crestrictEdit\x18\x03 \x01(\x08\x12\x15\n\rrestrictShare\x18\x04 \x01(\x08\";\n\rAuditTeamUser\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\x19\n\x11\x65nterpriseUserIds\x18\x02 \x03(\x03\"\x9f\x01\n\x12SharedFolderRecord\x12\x17\n\x0fsharedFolderUid\x18\x01 \x01(\x0c\x12\x37\n\x11recordPermissions\x18\x02 \x03(\x0b\x32\x1c.Enterprise.RecordPermission\x12\x37\n\x11shareAdminRecords\x18\x03 \x03(\x0b\x32\x1c.Enterprise.ShareAdminRecord\"M\n\x10ShareAdminRecord\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x1f\n\x17recordPermissionIndexes\x18\x02 \x03(\x05\"F\n\x10SharedFolderUser\x12\x17\n\x0fsharedFolderUid\x18\x01 \x01(\x0c\x12\x19\n\x11\x65nterpriseUserIds\x18\x02 \x03(\x03\"=\n\x10SharedFolderTeam\x12\x17\n\x0fsharedFolderUid\x18\x01 \x01(\x0c\x12\x10\n\x08teamUids\x18\x02 \x03(\x0c\"/\n\x1aGetComplianceReportRequest\x12\x11\n\treportUid\x18\x01 \x01(\x0c\"2\n\x1bGetComplianceReportResponse\x12\x13\n\x0b\x64ownloadUrl\x18\x01 \x01(\t\"6\n\x1f\x43omplianceReportCriteriaRequest\x12\x13\n\x0b\x63riteriaUid\x18\x01 \x01(\x0c\";\n$SaveComplianceReportCriteriaResponse\x12\x13\n\x0b\x63riteriaUid\x18\x01 \x01(\x0c\"4\n\x0cLinkedRecord\x12\x10\n\x08ownerUid\x18\x01 \x01(\x0c\x12\x12\n\nrecordUids\x18\x02 \x03(\x0c\"W\n\x17GetSharingAdminsRequest\x12\x17\n\x0fsharedFolderUid\x18\x01 \x01(\x0c\x12\x11\n\trecordUid\x18\x02 \x01(\x0c\x12\x10\n\x08username\x18\x03 \x01(\t\"\xe0\x01\n\x0eUserProfileExt\x12\r\n\x05\x65mail\x18\x01 \x01(\t\x12\x10\n\x08\x66ullName\x18\x02 \x01(\t\x12\x10\n\x08jobTitle\x18\x03 \x01(\t\x12\x14\n\x0cisMSPMCAdmin\x18\x04 \x01(\x08\x12\x18\n\x10isInSharedFolder\x18\x05 \x01(\x08\x12&\n\x1eisShareAdminForRequestedObject\x18\x06 \x01(\x08\x12(\n isShareAdminForSharedFolderOwner\x18\x07 \x01(\x08\x12\x19\n\x11hasAccessToObject\x18\x08 \x01(\x08\"O\n\x18GetSharingAdminsResponse\x12\x33\n\x0fuserProfileExts\x18\x01 \x03(\x0b\x32\x1a.Enterprise.UserProfileExt\"_\n\x1eTeamsEnterpriseUsersAddRequest\x12=\n\x05teams\x18\x01 \x03(\x0b\x32..Enterprise.TeamsEnterpriseUsersAddTeamRequest\"t\n\"TeamsEnterpriseUsersAddTeamRequest\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12=\n\x05users\x18\x02 \x03(\x0b\x32..Enterprise.TeamsEnterpriseUsersAddUserRequest\"{\n\"TeamsEnterpriseUsersAddUserRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12*\n\x08userType\x18\x02 \x01(\x0e\x32\x18.Enterprise.TeamUserType\x12\x0f\n\x07teamKey\x18\x03 \x01(\t\"s\n\x1fTeamsEnterpriseUsersAddResponse\x12>\n\x05teams\x18\x01 \x03(\x0b\x32/.Enterprise.TeamsEnterpriseUsersAddTeamResponse\x12\x10\n\x08revision\x18\x02 \x01(\x03\"\xc4\x01\n#TeamsEnterpriseUsersAddTeamResponse\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12>\n\x05users\x18\x02 \x03(\x0b\x32/.Enterprise.TeamsEnterpriseUsersAddUserResponse\x12\x0f\n\x07success\x18\x03 \x01(\x08\x12\x0f\n\x07message\x18\x04 \x01(\t\x12\x12\n\nresultCode\x18\x05 \x01(\t\x12\x16\n\x0e\x61\x64\x64itionalInfo\x18\x06 \x01(\t\"\x9f\x01\n#TeamsEnterpriseUsersAddUserResponse\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x10\n\x08revision\x18\x02 \x01(\x03\x12\x0f\n\x07success\x18\x03 \x01(\x08\x12\x0f\n\x07message\x18\x04 \x01(\t\x12\x12\n\nresultCode\x18\x05 \x01(\t\x12\x16\n\x0e\x61\x64\x64itionalInfo\x18\x06 \x01(\t\"M\n\x0b\x44omainAlias\x12\x0e\n\x06\x64omain\x18\x01 \x01(\t\x12\r\n\x05\x61lias\x18\x02 \x01(\t\x12\x0e\n\x06status\x18\x03 \x01(\x05\x12\x0f\n\x07message\x18\x04 \x01(\t\"B\n\x12\x44omainAliasRequest\x12,\n\x0b\x64omainAlias\x18\x01 \x03(\x0b\x32\x17.Enterprise.DomainAlias\"C\n\x13\x44omainAliasResponse\x12,\n\x0b\x64omainAlias\x18\x01 \x03(\x0b\x32\x17.Enterprise.DomainAlias\"m\n\x1f\x45nterpriseUsersProvisionRequest\x12\x33\n\x05users\x18\x01 \x03(\x0b\x32$.Enterprise.EnterpriseUsersProvision\x12\x15\n\rclientVersion\x18\x02 \x01(\t\"\xb6\x03\n\x18\x45nterpriseUsersProvision\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x0e\n\x06nodeId\x18\x03 \x01(\x03\x12\x15\n\rencryptedData\x18\x04 \x01(\t\x12-\n\x07keyType\x18\x05 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\x12\x10\n\x08\x66ullName\x18\x06 \x01(\t\x12\x10\n\x08jobTitle\x18\x07 \x01(\t\x12\x1e\n\x16\x65nterpriseUsersDataKey\x18\x08 \x01(\x0c\x12\x14\n\x0c\x61uthVerifier\x18\t \x01(\x0c\x12\x18\n\x10\x65ncryptionParams\x18\n \x01(\x0c\x12\x14\n\x0crsaPublicKey\x18\x0b \x01(\x0c\x12\x1e\n\x16rsaEncryptedPrivateKey\x18\x0c \x01(\x0c\x12\x14\n\x0c\x65\x63\x63PublicKey\x18\r \x01(\x0c\x12\x1e\n\x16\x65\x63\x63\x45ncryptedPrivateKey\x18\x0e \x01(\x0c\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x0f \x01(\x0c\x12\x1a\n\x12\x65ncryptedClientKey\x18\x10 \x01(\x0c\"_\n EnterpriseUsersProvisionResponse\x12;\n\x07results\x18\x01 \x03(\x0b\x32*.Enterprise.EnterpriseUsersProvisionResult\"q\n\x1e\x45nterpriseUsersProvisionResult\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x0c\n\x04\x63ode\x18\x02 \x01(\t\x12\x0f\n\x07message\x18\x03 \x01(\t\x12\x16\n\x0e\x61\x64\x64itionalInfo\x18\x04 \x01(\t\"a\n\x19\x45nterpriseUsersAddRequest\x12-\n\x05users\x18\x01 \x03(\x0b\x32\x1e.Enterprise.EnterpriseUsersAdd\x12\x15\n\rclientVersion\x18\x02 \x01(\t\"\x8c\x02\n\x12\x45nterpriseUsersAdd\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x0e\n\x06nodeId\x18\x03 \x01(\x03\x12\x15\n\rencryptedData\x18\x04 \x01(\t\x12-\n\x07keyType\x18\x05 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\x12\x10\n\x08\x66ullName\x18\x06 \x01(\t\x12\x10\n\x08jobTitle\x18\x07 \x01(\t\x12\x1b\n\x13suppressEmailInvite\x18\x08 \x01(\x08\x12\x15\n\rinviteeLocale\x18\t \x01(\t\x12\x0c\n\x04move\x18\n \x01(\x08\x12\x0e\n\x06roleId\x18\x0b \x01(\x03\"\x9b\x01\n\x1a\x45nterpriseUsersAddResponse\x12\x35\n\x07results\x18\x01 \x03(\x0b\x32$.Enterprise.EnterpriseUsersAddResult\x12\x0f\n\x07success\x18\x02 \x01(\x08\x12\x0c\n\x04\x63ode\x18\x03 \x01(\t\x12\x0f\n\x07message\x18\x04 \x01(\t\x12\x16\n\x0e\x61\x64\x64itionalInfo\x18\x05 \x01(\t\"\x96\x01\n\x18\x45nterpriseUsersAddResult\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x0f\n\x07success\x18\x02 \x01(\x08\x12\x18\n\x10verificationCode\x18\x03 \x01(\t\x12\x0c\n\x04\x63ode\x18\x04 \x01(\t\x12\x0f\n\x07message\x18\x05 \x01(\t\x12\x16\n\x0e\x61\x64\x64itionalInfo\x18\x06 \x01(\t\"\xb9\x01\n\x17UpdateMSPPermitsRequest\x12\x17\n\x0fmspEnterpriseId\x18\x01 \x01(\x05\x12\x1a\n\x12maxAllowedLicenses\x18\x02 \x01(\x05\x12\x19\n\x11\x61llowedMcProducts\x18\x03 \x03(\t\x12\x15\n\rallowedAddOns\x18\x04 \x03(\t\x12\x17\n\x0fmaxFilePlanType\x18\x05 \x01(\t\x12\x1e\n\x16\x61llowUnlimitedLicenses\x18\x06 \x01(\x08\"9\n\x1c\x44\x65leteEnterpriseUsersRequest\x12\x19\n\x11\x65nterpriseUserIds\x18\x01 \x03(\x03\"o\n\x1a\x44\x65leteEnterpriseUserStatus\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x37\n\x06status\x18\x02 \x01(\x0e\x32\'.Enterprise.DeleteEnterpriseUsersResult\"]\n\x1d\x44\x65leteEnterpriseUsersResponse\x12<\n\x0c\x64\x65leteStatus\x18\x01 \x03(\x0b\x32&.Enterprise.DeleteEnterpriseUserStatus\"w\n\x18\x43learSecurityDataRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x03(\x03\x12\x10\n\x08\x61llUsers\x18\x02 \x01(\x08\x12/\n\x04type\x18\x03 \x01(\x0e\x32!.Enterprise.ClearSecurityDataType*\x1b\n\x07KeyType\x12\x07\n\x03RSA\x10\x00\x12\x07\n\x03\x45\x43\x43\x10\x01*=\n\x0e\x45nterpriseType\x12\x17\n\x13\x45NTERPRISE_STANDARD\x10\x00\x12\x12\n\x0e\x45NTERPRISE_MSP\x10\x01*s\n\x18TransferAcceptanceStatus\x12\r\n\tUNDEFINED\x10\x00\x12\x10\n\x0cNOT_REQUIRED\x10\x01\x12\x10\n\x0cNOT_ACCEPTED\x10\x02\x12\x16\n\x12PARTIALLY_ACCEPTED\x10\x03\x12\x0c\n\x08\x41\x43\x43\x45PTED\x10\x04*\xe1\x03\n\x14\x45nterpriseDataEntity\x12\x0b\n\x07UNKNOWN\x10\x00\x12\t\n\x05NODES\x10\x01\x12\t\n\x05ROLES\x10\x02\x12\t\n\x05USERS\x10\x03\x12\t\n\x05TEAMS\x10\x04\x12\x0e\n\nTEAM_USERS\x10\x05\x12\x0e\n\nROLE_USERS\x10\x06\x12\x13\n\x0fROLE_PRIVILEGES\x10\x07\x12\x15\n\x11ROLE_ENFORCEMENTS\x10\x08\x12\x0e\n\nROLE_TEAMS\x10\t\x12\x0c\n\x08LICENSES\x10\n\x12\x11\n\rMANAGED_NODES\x10\x0b\x12\x15\n\x11MANAGED_COMPANIES\x10\x0c\x12\x0b\n\x07\x42RIDGES\x10\r\x12\t\n\x05SCIMS\x10\x0e\x12\x13\n\x0f\x45MAIL_PROVISION\x10\x0f\x12\x10\n\x0cQUEUED_TEAMS\x10\x10\x12\x15\n\x11QUEUED_TEAM_USERS\x10\x11\x12\x10\n\x0cSSO_SERVICES\x10\x12\x12\x17\n\x13REPORT_FILTER_USERS\x10\x13\x12&\n\"DEVICES_REQUEST_FOR_ADMIN_APPROVAL\x10\x14\x12\x10\n\x0cUSER_ALIASES\x10\x15\x12)\n%COMPLIANCE_REPORT_CRITERIA_AND_FILTER\x10\x16\x12\x16\n\x12\x43OMPLIANCE_REPORTS\x10\x17*\"\n\x0b\x43\x61\x63heStatus\x12\x08\n\x04KEEP\x10\x00\x12\t\n\x05\x43LEAR\x10\x01*\x93\x01\n\rBackupKeyType\x12\n\n\x06NO_KEY\x10\x00\x12\x19\n\x15\x45NCRYPTED_BY_DATA_KEY\x10\x01\x12\x1b\n\x17\x45NCRYPTED_BY_PUBLIC_KEY\x10\x02\x12\x1d\n\x19\x45NCRYPTED_BY_DATA_KEY_GCM\x10\x03\x12\x1f\n\x1b\x45NCRYPTED_BY_PUBLIC_KEY_ECC\x10\x04*:\n\x15\x42\x61\x63kupUserDataKeyType\x12\x07\n\x03OWN\x10\x00\x12\x18\n\x14SHARED_TO_ENTERPRISE\x10\x01*\xa5\x01\n\x10\x45ncryptedKeyType\x12\r\n\tKT_NO_KEY\x10\x00\x12\x1c\n\x18KT_ENCRYPTED_BY_DATA_KEY\x10\x01\x12\x1e\n\x1aKT_ENCRYPTED_BY_PUBLIC_KEY\x10\x02\x12 \n\x1cKT_ENCRYPTED_BY_DATA_KEY_GCM\x10\x03\x12\"\n\x1eKT_ENCRYPTED_BY_PUBLIC_KEY_ECC\x10\x04*\x95\x01\n\x12\x45nterpriseFlagType\x12\x0b\n\x07INVALID\x10\x00\x12\x1a\n\x16\x41LLOW_PERSONAL_LICENSE\x10\x01\x12\x18\n\x14SPECIAL_PROVISIONING\x10\x02\x12\x10\n\x0cRECORD_TYPES\x10\x03\x12\x13\n\x0fSECRETS_MANAGER\x10\x04\x12\x15\n\x11\x45NTERPRISE_LOCKED\x10\x05*E\n\x10UserUpdateStatus\x12\x12\n\x0eUSER_UPDATE_OK\x10\x00\x12\x1d\n\x19USER_UPDATE_ACCESS_DENIED\x10\x01*I\n\x0f\x41uditUserStatus\x12\x06\n\x02OK\x10\x00\x12\x11\n\rACCESS_DENIED\x10\x01\x12\x1b\n\x17NO_LONGER_IN_ENTERPRISE\x10\x02*3\n\x0cTeamUserType\x12\x08\n\x04USER\x10\x00\x12\t\n\x05\x41\x44MIN\x10\x01\x12\x0e\n\nADMIN_ONLY\x10\x02*e\n\rAppClientType\x12\x0c\n\x08NOT_USED\x10\x00\x12\x0b\n\x07GENERAL\x10\x01\x12%\n!DISCOVERY_AND_ROTATION_CONTROLLER\x10\x02\x12\x12\n\x0eKCM_CONTROLLER\x10\x03*\x8f\x01\n\x1b\x44\x65leteEnterpriseUsersResult\x12\x0b\n\x07SUCCESS\x10\x00\x12\x1a\n\x16NOT_AN_ENTERPRISE_USER\x10\x01\x12\x16\n\x12\x43\x41NNOT_DELETE_SELF\x10\x02\x12$\n BRIDGE_CANNOT_DELETE_ACTIVE_USER\x10\x03\x12\t\n\x05\x45RROR\x10\x04*\x87\x01\n\x15\x43learSecurityDataType\x12\x1e\n\x1aRECALCULATE_SUMMARY_REPORT\x10\x00\x12\'\n#FORCE_CLIENT_CHECK_FOR_MISSING_DATA\x10\x01\x12%\n!FORCE_CLIENT_RESEND_SECURITY_DATA\x10\x02\x42&\n\x18\x63om.keepersecurity.protoB\nEnterpriseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x10\x65nterprise.proto\x12\nEnterprise\"\x84\x01\n\x18\x45nterpriseKeyPairRequest\x12\x1b\n\x13\x65nterprisePublicKey\x18\x01 \x01(\x0c\x12%\n\x1d\x65ncryptedEnterprisePrivateKey\x18\x02 \x01(\x0c\x12$\n\x07keyType\x18\x03 \x01(\x0e\x32\x13.Enterprise.KeyType\"\'\n\x14GetTeamMemberRequest\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\"}\n\x0e\x45nterpriseUser\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\r\n\x05\x65mail\x18\x02 \x01(\t\x12\x1a\n\x12\x65nterpriseUsername\x18\x03 \x01(\t\x12\x14\n\x0cisShareAdmin\x18\x04 \x01(\x08\x12\x10\n\x08username\x18\x05 \x01(\t\"K\n\x15GetTeamMemberResponse\x12\x32\n\x0e\x65nterpriseUser\x18\x01 \x03(\x0b\x32\x1a.Enterprise.EnterpriseUser\"-\n\x11\x45nterpriseUserIds\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x03(\x03\"B\n\x19\x45nterprisePersonalAccount\x12\r\n\x05\x65mail\x18\x01 \x01(\t\x12\x16\n\x0eOBSOLETE_FIELD\x18\x02 \x01(\x0c\"S\n\x17\x45ncryptedTeamKeyRequest\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\x18\n\x10\x65ncryptedTeamKey\x18\x02 \x01(\x0c\x12\r\n\x05\x66orce\x18\x03 \x01(\x08\"+\n\x0fReEncryptedData\x12\n\n\x02id\x18\x01 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\t\"?\n\x12ReEncryptedRoleKey\x12\x0f\n\x07role_id\x18\x01 \x01(\x03\x12\x18\n\x10\x65ncryptedRoleKey\x18\x02 \x01(\x0c\"\x9d\x02\n\x1bNodeToManagedCompanyRequest\x12\x11\n\tcompanyId\x18\x01 \x01(\x05\x12*\n\x05nodes\x18\x02 \x03(\x0b\x32\x1b.Enterprise.ReEncryptedData\x12*\n\x05roles\x18\x03 \x03(\x0b\x32\x1b.Enterprise.ReEncryptedData\x12*\n\x05users\x18\x04 \x03(\x0b\x32\x1b.Enterprise.ReEncryptedData\x12\x30\n\x08roleKeys\x18\x05 \x03(\x0b\x32\x1e.Enterprise.ReEncryptedRoleKey\x12\x35\n\x08teamKeys\x18\x06 \x03(\x0b\x32#.Enterprise.EncryptedTeamKeyRequest\",\n\x08RoleTeam\x12\x0f\n\x07role_id\x18\x01 \x01(\x03\x12\x0f\n\x07teamUid\x18\x02 \x01(\x0c\"4\n\tRoleTeams\x12\'\n\trole_team\x18\x01 \x03(\x0b\x32\x14.Enterprise.RoleTeam\"R\n\x0fRoleUserAddKeys\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x0f\n\x07treeKey\x18\x02 \x01(\t\x12\x14\n\x0croleAdminKey\x18\x03 \x01(\t\"T\n\x0bRoleUserAdd\x12\x0f\n\x07role_id\x18\x01 \x01(\x03\x12\x34\n\x0froleUserAddKeys\x18\x02 \x03(\x0b\x32\x1b.Enterprise.RoleUserAddKeys\"D\n\x13RoleUsersAddRequest\x12-\n\x0croleUserAdds\x18\x01 \x03(\x0b\x32\x17.Enterprise.RoleUserAdd\"\x80\x01\n\x11RoleUserAddResult\x12\x0e\n\x06roleId\x18\x01 \x01(\x03\x12\x18\n\x10\x65nterpriseUserId\x18\x02 \x01(\x03\x12\x30\n\x06status\x18\x03 \x01(\x0e\x32 .Enterprise.RoleUserModifyStatus\x12\x0f\n\x07message\x18\x04 \x01(\t\"F\n\x14RoleUsersAddResponse\x12.\n\x07results\x18\x01 \x03(\x0b\x32\x1d.Enterprise.RoleUserAddResult\"<\n\x0eRoleUserRemove\x12\x0f\n\x07role_id\x18\x01 \x01(\x03\x12\x19\n\x11\x65nterpriseUserIds\x18\x02 \x03(\x03\"M\n\x16RoleUsersRemoveRequest\x12\x33\n\x0froleUserRemoves\x18\x01 \x03(\x0b\x32\x1a.Enterprise.RoleUserRemove\"\x83\x01\n\x14RoleUserRemoveResult\x12\x0e\n\x06roleId\x18\x01 \x01(\x03\x12\x18\n\x10\x65nterpriseUserId\x18\x02 \x01(\x03\x12\x30\n\x06status\x18\x03 \x01(\x0e\x32 .Enterprise.RoleUserModifyStatus\x12\x0f\n\x07message\x18\x04 \x01(\t\"L\n\x17RoleUsersRemoveResponse\x12\x31\n\x07results\x18\x01 \x03(\x0b\x32 .Enterprise.RoleUserRemoveResult\"\xdb\x03\n\x16\x45nterpriseRegistration\x12\x18\n\x10\x65ncryptedTreeKey\x18\x01 \x01(\x0c\x12\x16\n\x0e\x65nterpriseName\x18\x02 \x01(\t\x12\x14\n\x0crootNodeData\x18\x03 \x01(\x0c\x12\x15\n\radminUserData\x18\x04 \x01(\x0c\x12\x11\n\tadminName\x18\x05 \x01(\t\x12\x10\n\x08roleData\x18\x06 \x01(\x0c\x12\x38\n\nrsaKeyPair\x18\x07 \x01(\x0b\x32$.Enterprise.EnterpriseKeyPairRequest\x12\x13\n\x0bnumberSeats\x18\x08 \x01(\x05\x12\x32\n\x0e\x65nterpriseType\x18\t \x01(\x0e\x32\x1a.Enterprise.EnterpriseType\x12\x15\n\rrolePublicKey\x18\n \x01(\x0c\x12*\n\"rolePrivateKeyEncryptedWithRoleKey\x18\x0b \x01(\x0c\x12#\n\x1broleKeyEncryptedWithTreeKey\x18\x0c \x01(\x0c\x12\x38\n\neccKeyPair\x18\r \x01(\x0b\x32$.Enterprise.EnterpriseKeyPairRequest\x12\x18\n\x10\x61llUsersRoleData\x18\x0e \x01(\x0c\"H\n\x1a\x44omainPasswordRulesRequest\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x18\n\x10verificationCode\x18\x02 \x01(\t\"\\\n\x19\x44omainPasswordRulesFields\x12\x0c\n\x04type\x18\x01 \x01(\t\x12\x0f\n\x07minimum\x18\x02 \x01(\x05\x12\x0f\n\x07maximum\x18\x03 \x01(\x05\x12\x0f\n\x07\x61llowed\x18\x04 \x01(\x08\"E\n\x10LoginToMcRequest\x12\x16\n\x0emcEnterpriseId\x18\x01 \x01(\x05\x12\x19\n\x11messageSessionUid\x18\x02 \x01(\x0c\"L\n\x11LoginToMcResponse\x12\x1d\n\x15\x65ncryptedSessionToken\x18\x01 \x01(\x0c\x12\x18\n\x10\x65ncryptedTreeKey\x18\x02 \x01(\t\"g\n\x1b\x44omainPasswordRulesResponse\x12H\n\x19\x64omainPasswordRulesFields\x18\x01 \x03(\x0b\x32%.Enterprise.DomainPasswordRulesFields\"\x88\x01\n\x18\x41pproveUserDeviceRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x02 \x01(\x0c\x12\x1e\n\x16\x65ncryptedDeviceDataKey\x18\x03 \x01(\x0c\x12\x14\n\x0c\x64\x65nyApproval\x18\x04 \x01(\x08\"t\n\x19\x41pproveUserDeviceResponse\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x02 \x01(\x0c\x12\x0e\n\x06\x66\x61iled\x18\x03 \x01(\x08\x12\x0f\n\x07message\x18\x04 \x01(\t\"Y\n\x19\x41pproveUserDevicesRequest\x12<\n\x0e\x64\x65viceRequests\x18\x01 \x03(\x0b\x32$.Enterprise.ApproveUserDeviceRequest\"\\\n\x1a\x41pproveUserDevicesResponse\x12>\n\x0f\x64\x65viceResponses\x18\x01 \x03(\x0b\x32%.Enterprise.ApproveUserDeviceResponse\"\x87\x01\n\x15\x45nterpriseUserDataKey\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x1c\n\x14userEncryptedDataKey\x18\x02 \x01(\x0c\x12\x11\n\tkeyTypeId\x18\x03 \x01(\x05\x12\x0f\n\x07roleKey\x18\x04 \x01(\x0c\x12\x12\n\nprivateKey\x18\x05 \x01(\x0c\"I\n\x16\x45nterpriseUserDataKeys\x12/\n\x04keys\x18\x01 \x03(\x0b\x32!.Enterprise.EnterpriseUserDataKey\"2\n\x15\x45nterpriseDataRequest\x12\x19\n\x11\x63ontinuationToken\x18\x01 \x01(\x0c\"0\n\x13SpecialProvisioning\x12\x0b\n\x03url\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\"\xeb\x01\n\x11GeneralDataEntity\x12\x16\n\x0e\x65nterpriseName\x18\x01 \x01(\t\x12\x1a\n\x12restrictVisibility\x18\x02 \x01(\x08\x12<\n\x13specialProvisioning\x18\x04 \x01(\x0b\x32\x1f.Enterprise.SpecialProvisioning\x12\x30\n\ruserPrivilege\x18\x07 \x01(\x0b\x32\x19.Enterprise.UserPrivilege\x12\x13\n\x0b\x64istributor\x18\x08 \x01(\x08\x12\x1d\n\x15\x66orbidAccountTransfer\x18\t \x01(\x08\"\xfd\x01\n\x04Node\x12\x0e\n\x06nodeId\x18\x01 \x01(\x03\x12\x10\n\x08parentId\x18\x02 \x01(\x03\x12\x10\n\x08\x62ridgeId\x18\x03 \x01(\x03\x12\x0e\n\x06scimId\x18\x04 \x01(\x03\x12\x11\n\tlicenseId\x18\x05 \x01(\x03\x12\x15\n\rencryptedData\x18\x06 \x01(\t\x12\x12\n\nduoEnabled\x18\x07 \x01(\x08\x12\x12\n\nrsaEnabled\x18\x08 \x01(\x08\x12 \n\x14ssoServiceProviderId\x18\t \x01(\x03\x42\x02\x18\x01\x12\x1a\n\x12restrictVisibility\x18\n \x01(\x08\x12!\n\x15ssoServiceProviderIds\x18\x0b \x03(\x03\x42\x02\x10\x01\"\x8e\x01\n\x04Role\x12\x0e\n\x06roleId\x18\x01 \x01(\x03\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x15\n\rencryptedData\x18\x03 \x01(\t\x12\x0f\n\x07keyType\x18\x04 \x01(\t\x12\x14\n\x0cvisibleBelow\x18\x05 \x01(\x08\x12\x16\n\x0enewUserInherit\x18\x06 \x01(\x08\x12\x10\n\x08roleType\x18\x07 \x01(\t\"\xb8\x02\n\x04User\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x15\n\rencryptedData\x18\x03 \x01(\t\x12\x0f\n\x07keyType\x18\x04 \x01(\t\x12\x10\n\x08username\x18\x05 \x01(\t\x12\x0e\n\x06status\x18\x06 \x01(\t\x12\x0c\n\x04lock\x18\x07 \x01(\x05\x12\x0e\n\x06userId\x18\x08 \x01(\x05\x12\x1e\n\x16\x61\x63\x63ountShareExpiration\x18\t \x01(\x03\x12\x10\n\x08\x66ullName\x18\n \x01(\t\x12\x10\n\x08jobTitle\x18\x0b \x01(\t\x12\x12\n\ntfaEnabled\x18\x0c \x01(\x08\x12\x46\n\x18transferAcceptanceStatus\x18\r \x01(\x0e\x32$.Enterprise.TransferAcceptanceStatus\"7\n\tUserAlias\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x10\n\x08username\x18\x02 \x01(\t\"\xac\x01\n\x18\x43omplianceReportMetaData\x12\x11\n\treportUid\x18\x01 \x01(\x0c\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x12\n\nreportName\x18\x03 \x01(\t\x12\x15\n\rdateGenerated\x18\x04 \x01(\x03\x12\x11\n\trunByName\x18\x05 \x01(\t\x12\x16\n\x0enumberOfOwners\x18\x07 \x01(\x05\x12\x17\n\x0fnumberOfRecords\x18\x08 \x01(\x05\"S\n\x0bManagedNode\x12\x0e\n\x06roleId\x18\x01 \x01(\x03\x12\x15\n\rmanagedNodeId\x18\x02 \x01(\x03\x12\x1d\n\x15\x63\x61scadeNodeManagement\x18\x03 \x01(\x08\"T\n\x0fUserManagedNode\x12\x0e\n\x06nodeId\x18\x01 \x01(\x03\x12\x1d\n\x15\x63\x61scadeNodeManagement\x18\x02 \x01(\x08\x12\x12\n\nprivileges\x18\x03 \x03(\t\"w\n\rUserPrivilege\x12\x35\n\x10userManagedNodes\x18\x01 \x03(\x0b\x32\x1b.Enterprise.UserManagedNode\x12\x18\n\x10\x65nterpriseUserId\x18\x02 \x01(\x03\x12\x15\n\rencryptedData\x18\x03 \x01(\t\"4\n\x08RoleUser\x12\x0e\n\x06roleId\x18\x01 \x01(\x03\x12\x18\n\x10\x65nterpriseUserId\x18\x02 \x01(\x03\"M\n\rRolePrivilege\x12\x15\n\rmanagedNodeId\x18\x01 \x01(\x03\x12\x0e\n\x06roleId\x18\x02 \x01(\x03\x12\x15\n\rprivilegeType\x18\x03 \x01(\t\"I\n\x0fRoleEnforcement\x12\x0e\n\x06roleId\x18\x01 \x01(\x03\x12\x17\n\x0f\x65nforcementType\x18\x02 \x01(\t\x12\r\n\x05value\x18\x03 \x01(\t\"\xa9\x01\n\x04Team\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0e\n\x06nodeId\x18\x03 \x01(\x03\x12\x14\n\x0crestrictEdit\x18\x04 \x01(\x08\x12\x15\n\rrestrictShare\x18\x05 \x01(\x08\x12\x14\n\x0crestrictView\x18\x06 \x01(\x08\x12\x15\n\rencryptedData\x18\x07 \x01(\t\x12\x18\n\x10\x65ncryptedTeamKey\x18\x08 \x01(\t\"G\n\x08TeamUser\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\x18\n\x10\x65nterpriseUserId\x18\x02 \x01(\x03\x12\x10\n\x08userType\x18\x03 \x01(\t\"K\n\x1aGetDistributorInfoResponse\x12-\n\x0c\x64istributors\x18\x01 \x03(\x0b\x32\x17.Enterprise.Distributor\"B\n\x0b\x44istributor\x12\x0c\n\x04name\x18\x01 \x01(\t\x12%\n\x08mspInfos\x18\x02 \x03(\x0b\x32\x13.Enterprise.MspInfo\"\x9d\x02\n\x07MspInfo\x12\x14\n\x0c\x65nterpriseId\x18\x01 \x01(\x05\x12\x16\n\x0e\x65nterpriseName\x18\x02 \x01(\t\x12\x19\n\x11\x61llocatedLicenses\x18\x03 \x01(\x05\x12\x19\n\x11\x61llowedMcProducts\x18\x04 \x03(\t\x12\x15\n\rallowedAddOns\x18\x05 \x03(\t\x12\x17\n\x0fmaxFilePlanType\x18\x06 \x01(\t\x12\x34\n\x10managedCompanies\x18\x07 \x03(\x0b\x32\x1a.Enterprise.ManagedCompany\x12\x1e\n\x16\x61llowUnlimitedLicenses\x18\x08 \x01(\x08\x12(\n\x06\x61\x64\x64Ons\x18\t \x03(\x0b\x32\x18.Enterprise.LicenseAddOn\"\x91\x02\n\x0eManagedCompany\x12\x16\n\x0emcEnterpriseId\x18\x01 \x01(\x05\x12\x18\n\x10mcEnterpriseName\x18\x02 \x01(\t\x12\x11\n\tmspNodeId\x18\x03 \x01(\x03\x12\x15\n\rnumberOfSeats\x18\x04 \x01(\x05\x12\x15\n\rnumberOfUsers\x18\x05 \x01(\x05\x12\x11\n\tproductId\x18\x06 \x01(\t\x12\x11\n\tisExpired\x18\x07 \x01(\x08\x12\x0f\n\x07treeKey\x18\x08 \x01(\t\x12\x15\n\rtree_key_role\x18\t \x01(\x03\x12\x14\n\x0c\x66ilePlanType\x18\n \x01(\t\x12(\n\x06\x61\x64\x64Ons\x18\x0b \x03(\x0b\x32\x18.Enterprise.LicenseAddOn\"R\n\x07MSPPool\x12\x11\n\tproductId\x18\x01 \x01(\t\x12\r\n\x05seats\x18\x02 \x01(\x05\x12\x16\n\x0e\x61vailableSeats\x18\x03 \x01(\x05\x12\r\n\x05stash\x18\x04 \x01(\x05\":\n\nMSPContact\x12\x14\n\x0c\x65nterpriseId\x18\x01 \x01(\x05\x12\x16\n\x0e\x65nterpriseName\x18\x02 \x01(\t\"\xd4\x01\n\x0cLicenseAddOn\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0f\n\x07\x65nabled\x18\x02 \x01(\x08\x12\x0f\n\x07isTrial\x18\x03 \x01(\x08\x12\x12\n\nexpiration\x18\x04 \x01(\x03\x12\x0f\n\x07\x63reated\x18\x05 \x01(\x03\x12\r\n\x05seats\x18\x06 \x01(\x05\x12\x16\n\x0e\x61\x63tivationTime\x18\x07 \x01(\x03\x12\x19\n\x11includedInProduct\x18\x08 \x01(\x08\x12\x14\n\x0c\x61piCallCount\x18\t \x01(\x05\x12\x17\n\x0ftierDescription\x18\n \x01(\t\"s\n\tMCDefault\x12\x11\n\tmcProduct\x18\x01 \x01(\t\x12\x0e\n\x06\x61\x64\x64Ons\x18\x02 \x03(\t\x12\x14\n\x0c\x66ilePlanType\x18\x03 \x01(\t\x12\x13\n\x0bmaxLicenses\x18\x04 \x01(\x05\x12\x18\n\x10\x66ixedMaxLicenses\x18\x05 \x01(\x08\"\xd2\x01\n\nMSPPermits\x12\x12\n\nrestricted\x18\x01 \x01(\x08\x12\x1a\n\x12maxAllowedLicenses\x18\x02 \x01(\x05\x12\x19\n\x11\x61llowedMcProducts\x18\x03 \x03(\t\x12\x15\n\rallowedAddOns\x18\x04 \x03(\t\x12\x17\n\x0fmaxFilePlanType\x18\x05 \x01(\t\x12\x1e\n\x16\x61llowUnlimitedLicenses\x18\x06 \x01(\x08\x12)\n\nmcDefaults\x18\x07 \x03(\x0b\x32\x15.Enterprise.MCDefault\"\xa0\x04\n\x07License\x12\x0c\n\x04paid\x18\x01 \x01(\x08\x12\x15\n\rnumberOfSeats\x18\x02 \x01(\x05\x12\x12\n\nexpiration\x18\x03 \x01(\x03\x12\x14\n\x0clicenseKeyId\x18\x04 \x01(\x05\x12\x15\n\rproductTypeId\x18\x05 \x01(\x05\x12\x0c\n\x04name\x18\x06 \x01(\t\x12\x1b\n\x13\x65nterpriseLicenseId\x18\x07 \x01(\x03\x12\x16\n\x0eseatsAllocated\x18\x08 \x01(\x05\x12\x14\n\x0cseatsPending\x18\t \x01(\x05\x12\x0c\n\x04tier\x18\n \x01(\x05\x12\x16\n\x0e\x66ilePlanTypeId\x18\x0b \x01(\x05\x12\x10\n\x08maxBytes\x18\x0c \x01(\x03\x12\x19\n\x11storageExpiration\x18\r \x01(\x03\x12\x15\n\rlicenseStatus\x18\x0e \x01(\t\x12$\n\x07mspPool\x18\x0f \x03(\x0b\x32\x13.Enterprise.MSPPool\x12)\n\tmanagedBy\x18\x10 \x01(\x0b\x32\x16.Enterprise.MSPContact\x12(\n\x06\x61\x64\x64Ons\x18\x11 \x03(\x0b\x32\x18.Enterprise.LicenseAddOn\x12\x17\n\x0fnextBillingDate\x18\x12 \x01(\x03\x12\x17\n\x0fhasMSPLegacyLog\x18\x13 \x01(\x08\x12*\n\nmspPermits\x18\x14 \x01(\x0b\x32\x16.Enterprise.MSPPermits\x12\x13\n\x0b\x64istributor\x18\x15 \x01(\x08\"n\n\x06\x42ridge\x12\x10\n\x08\x62ridgeId\x18\x01 \x01(\x03\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x18\n\x10wanIpEnforcement\x18\x03 \x01(\t\x12\x18\n\x10lanIpEnforcement\x18\x04 \x01(\t\x12\x0e\n\x06status\x18\x05 \x01(\t\"t\n\x04Scim\x12\x0e\n\x06scimId\x18\x01 \x01(\x03\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x0e\n\x06status\x18\x03 \x01(\t\x12\x12\n\nlastSynced\x18\x04 \x01(\x03\x12\x12\n\nrolePrefix\x18\x05 \x01(\t\x12\x14\n\x0cuniqueGroups\x18\x06 \x01(\x08\"L\n\x0e\x45mailProvision\x12\n\n\x02id\x18\x01 \x01(\x05\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x0e\n\x06\x64omain\x18\x03 \x01(\t\x12\x0e\n\x06method\x18\x04 \x01(\t\"R\n\nQueuedTeam\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x0e\n\x06nodeId\x18\x03 \x01(\x03\x12\x15\n\rencryptedData\x18\x04 \x01(\t\"0\n\x0eQueuedTeamUser\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\r\n\x05users\x18\x02 \x03(\x03\"\xa4\x01\n\x0eTeamsAddResult\x12\x34\n\x11successfulTeamAdd\x18\x01 \x03(\x0b\x32\x19.Enterprise.TeamAddResult\x12\x36\n\x13unsuccessfulTeamAdd\x18\x02 \x03(\x0b\x32\x19.Enterprise.TeamAddResult\x12\x0e\n\x06result\x18\x03 \x01(\t\x12\x14\n\x0c\x65rrorMessage\x18\x04 \x01(\t\"U\n\rTeamAddResult\x12\x1e\n\x04team\x18\x01 \x01(\x0b\x32\x10.Enterprise.Team\x12\x0e\n\x06result\x18\x02 \x01(\t\x12\x14\n\x0c\x65rrorMessage\x18\x03 \x01(\t\"\x91\x01\n\nSsoService\x12\x1c\n\x14ssoServiceProviderId\x18\x01 \x01(\x03\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x0c\n\x04name\x18\x03 \x01(\t\x12\x0e\n\x06sp_url\x18\x04 \x01(\t\x12\x16\n\x0einviteNewUsers\x18\x05 \x01(\x08\x12\x0e\n\x06\x61\x63tive\x18\x06 \x01(\x08\x12\x0f\n\x07isCloud\x18\x07 \x01(\x08\"1\n\x10ReportFilterUser\x12\x0e\n\x06userId\x18\x01 \x01(\x05\x12\r\n\x05\x65mail\x18\x02 \x01(\t\"\x97\x02\n\x1d\x44\x65viceRequestForAdminApproval\x12\x10\n\x08\x64\x65viceId\x18\x01 \x01(\x03\x12\x18\n\x10\x65nterpriseUserId\x18\x02 \x01(\x03\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x03 \x01(\x0c\x12\x17\n\x0f\x64\x65vicePublicKey\x18\x04 \x01(\x0c\x12\x12\n\ndeviceName\x18\x05 \x01(\t\x12\x15\n\rclientVersion\x18\x06 \x01(\t\x12\x12\n\ndeviceType\x18\x07 \x01(\t\x12\x0c\n\x04\x64\x61te\x18\x08 \x01(\x03\x12\x11\n\tipAddress\x18\t \x01(\t\x12\x10\n\x08location\x18\n \x01(\t\x12\r\n\x05\x65mail\x18\x0b \x01(\t\x12\x12\n\naccountUid\x18\x0c \x01(\x0c\"`\n\x0e\x45nterpriseData\x12\x30\n\x06\x65ntity\x18\x01 \x01(\x0e\x32 .Enterprise.EnterpriseDataEntity\x12\x0e\n\x06\x64\x65lete\x18\x02 \x01(\x08\x12\x0c\n\x04\x64\x61ta\x18\x03 \x03(\x0c\"\xd0\x01\n\x16\x45nterpriseDataResponse\x12\x19\n\x11\x63ontinuationToken\x18\x01 \x01(\x0c\x12\x0f\n\x07hasMore\x18\x02 \x01(\x08\x12,\n\x0b\x63\x61\x63heStatus\x18\x03 \x01(\x0e\x32\x17.Enterprise.CacheStatus\x12(\n\x04\x64\x61ta\x18\x04 \x03(\x0b\x32\x1a.Enterprise.EnterpriseData\x12\x32\n\x0bgeneralData\x18\x05 \x01(\x0b\x32\x1d.Enterprise.GeneralDataEntity\"*\n\rBackupRequest\x12\x19\n\x11\x63ontinuationToken\x18\x01 \x01(\x0c\"\x98\x01\n\x0c\x42\x61\x63kupRecord\x12\x0e\n\x06userId\x18\x01 \x01(\x05\x12\x11\n\trecordUid\x18\x02 \x01(\x0c\x12\x0b\n\x03key\x18\x03 \x01(\x0c\x12*\n\x07keyType\x18\x04 \x01(\x0e\x32\x19.Enterprise.BackupKeyType\x12\x0f\n\x07version\x18\x05 \x01(\x05\x12\x0c\n\x04\x64\x61ta\x18\x06 \x01(\x0c\x12\r\n\x05\x65xtra\x18\x07 \x01(\x0c\".\n\tBackupKey\x12\x0e\n\x06userId\x18\x01 \x01(\x05\x12\x11\n\tbackupKey\x18\x02 \x01(\x0c\"\x8d\x02\n\nBackupUser\x12\x0e\n\x06userId\x18\x01 \x01(\x05\x12\x10\n\x08userName\x18\x02 \x01(\t\x12\x0f\n\x07\x64\x61taKey\x18\x03 \x01(\x0c\x12\x36\n\x0b\x64\x61taKeyType\x18\x04 \x01(\x0e\x32!.Enterprise.BackupUserDataKeyType\x12\x12\n\nprivateKey\x18\x05 \x01(\x0c\x12\x0f\n\x07treeKey\x18\x06 \x01(\x0c\x12.\n\x0btreeKeyType\x18\x07 \x01(\x0e\x32\x19.Enterprise.BackupKeyType\x12)\n\nbackupKeys\x18\x08 \x03(\x0b\x32\x15.Enterprise.BackupKey\x12\x14\n\x0cprivateECKey\x18\t \x01(\x0c\"\x9e\x01\n\x0e\x42\x61\x63kupResponse\x12\x1f\n\x17\x65nterpriseEccPrivateKey\x18\x01 \x01(\x0c\x12%\n\x05users\x18\x02 \x03(\x0b\x32\x16.Enterprise.BackupUser\x12)\n\x07records\x18\x03 \x03(\x0b\x32\x18.Enterprise.BackupRecord\x12\x19\n\x11\x63ontinuationToken\x18\x04 \x01(\x0c\"e\n\nBackupFile\x12\x0c\n\x04user\x18\x01 \x01(\t\x12\x11\n\tbackupUid\x18\x02 \x01(\x0c\x12\x10\n\x08\x66ileName\x18\x03 \x01(\t\x12\x0f\n\x07\x63reated\x18\x04 \x01(\x03\x12\x13\n\x0b\x64ownloadUrl\x18\x05 \x01(\t\"8\n\x0f\x42\x61\x63kupsResponse\x12%\n\x05\x66iles\x18\x01 \x03(\x0b\x32\x16.Enterprise.BackupFile\".\n\x1cGetEnterpriseDataKeysRequest\x12\x0e\n\x06roleId\x18\x01 \x03(\x03\"\xff\x01\n\x1dGetEnterpriseDataKeysResponse\x12:\n\x12reEncryptedRoleKey\x18\x01 \x03(\x0b\x32\x1e.Enterprise.ReEncryptedRoleKey\x12$\n\x07roleKey\x18\x02 \x03(\x0b\x32\x13.Enterprise.RoleKey\x12\"\n\x06mspKey\x18\x03 \x01(\x0b\x32\x12.Enterprise.MspKey\x12\x32\n\x0e\x65nterpriseKeys\x18\x04 \x01(\x0b\x32\x1a.Enterprise.EnterpriseKeys\x12$\n\x07treeKey\x18\x05 \x01(\x0b\x32\x13.Enterprise.TreeKey\"^\n\x07RoleKey\x12\x0e\n\x06roleId\x18\x01 \x01(\x03\x12\x14\n\x0c\x65ncryptedKey\x18\x02 \x01(\t\x12-\n\x07keyType\x18\x03 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\"d\n\x06MspKey\x12\x1b\n\x13\x65ncryptedMspTreeKey\x18\x01 \x01(\t\x12=\n\x17\x65ncryptedMspTreeKeyType\x18\x02 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\"|\n\x0e\x45nterpriseKeys\x12\x14\n\x0crsaPublicKey\x18\x01 \x01(\x0c\x12\x1e\n\x16rsaEncryptedPrivateKey\x18\x02 \x01(\x0c\x12\x14\n\x0c\x65\x63\x63PublicKey\x18\x03 \x01(\x0c\x12\x1e\n\x16\x65\x63\x63\x45ncryptedPrivateKey\x18\x04 \x01(\x0c\"H\n\x07TreeKey\x12\x0f\n\x07treeKey\x18\x01 \x01(\t\x12,\n\tkeyTypeId\x18\x02 \x01(\x0e\x32\x19.Enterprise.BackupKeyType\"E\n\x14SharedRecordResponse\x12-\n\x06\x65vents\x18\x01 \x03(\x0b\x32\x1d.Enterprise.SharedRecordEvent\"p\n\x11SharedRecordEvent\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x10\n\x08userName\x18\x02 \x01(\t\x12\x0f\n\x07\x63\x61nEdit\x18\x03 \x01(\x08\x12\x12\n\ncanReshare\x18\x04 \x01(\x08\x12\x11\n\tshareFrom\x18\x05 \x01(\x05\".\n\x1cSetRestrictVisibilityRequest\x12\x0e\n\x06nodeId\x18\x01 \x01(\x03\"\xd0\x01\n\x0eUserAddRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x15\n\rencryptedData\x18\x03 \x01(\x0c\x12-\n\x07keyType\x18\x04 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\x12\x10\n\x08\x66ullName\x18\x05 \x01(\t\x12\x10\n\x08jobTitle\x18\x06 \x01(\t\x12\r\n\x05\x65mail\x18\x07 \x01(\t\x12\x1b\n\x13suppressEmailInvite\x18\x08 \x01(\x08\":\n\x11UserUpdateRequest\x12%\n\x05users\x18\x01 \x03(\x0b\x32\x16.Enterprise.UserUpdate\"\xaf\x01\n\nUserUpdate\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x15\n\rencryptedData\x18\x03 \x01(\x0c\x12-\n\x07keyType\x18\x04 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\x12\x10\n\x08\x66ullName\x18\x05 \x01(\t\x12\x10\n\x08jobTitle\x18\x06 \x01(\t\x12\r\n\x05\x65mail\x18\x07 \x01(\t\"A\n\x12UserUpdateResponse\x12+\n\x05users\x18\x01 \x03(\x0b\x32\x1c.Enterprise.UserUpdateResult\"Z\n\x10UserUpdateResult\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12,\n\x06status\x18\x02 \x01(\x0e\x32\x1c.Enterprise.UserUpdateStatus\"J\n\x1d\x43omplianceRecordOwnersRequest\x12\x0f\n\x07nodeIds\x18\x01 \x03(\x03\x12\x18\n\x10includeNonShared\x18\x02 \x01(\x08\"O\n\x1e\x43omplianceRecordOwnersResponse\x12-\n\x0crecordOwners\x18\x01 \x03(\x0b\x32\x17.Enterprise.RecordOwner\"7\n\x0bRecordOwner\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x0e\n\x06shared\x18\x02 \x01(\x08\"\xa6\x01\n PreliminaryComplianceDataRequest\x12\x19\n\x11\x65nterpriseUserIds\x18\x01 \x03(\x03\x12\x18\n\x10includeNonShared\x18\x02 \x01(\x08\x12\x19\n\x11\x63ontinuationToken\x18\x03 \x01(\x0c\x12\x32\n*includeTotalMatchingRecordsInFirstResponse\x18\x04 \x01(\x08\"\x9f\x01\n!PreliminaryComplianceDataResponse\x12\x30\n\rauditUserData\x18\x01 \x03(\x0b\x32\x19.Enterprise.AuditUserData\x12\x19\n\x11\x63ontinuationToken\x18\x02 \x01(\x0c\x12\x0f\n\x07hasMore\x18\x03 \x01(\x08\x12\x1c\n\x14totalMatchingRecords\x18\x04 \x01(\x05\"K\n\x0f\x41uditUserRecord\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x15\n\rencryptedData\x18\x02 \x01(\x0c\x12\x0e\n\x06shared\x18\x03 \x01(\x08\"\x8d\x01\n\rAuditUserData\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x35\n\x10\x61uditUserRecords\x18\x02 \x03(\x0b\x32\x1b.Enterprise.AuditUserRecord\x12+\n\x06status\x18\x03 \x01(\x0e\x32\x1b.Enterprise.AuditUserStatus\"\x7f\n\x17\x43omplianceReportFilters\x12\x14\n\x0crecordTitles\x18\x01 \x03(\t\x12\x12\n\nrecordUids\x18\x02 \x03(\x0c\x12\x11\n\tjobTitles\x18\x03 \x03(\x03\x12\x0c\n\x04urls\x18\x04 \x03(\t\x12\x19\n\x11\x65nterpriseUserIds\x18\x05 \x03(\x03\"\x7f\n\x17\x43omplianceReportRequest\x12<\n\x13\x63omplianceReportRun\x18\x01 \x01(\x0b\x32\x1f.Enterprise.ComplianceReportRun\x12\x12\n\nreportName\x18\x02 \x01(\t\x12\x12\n\nsaveReport\x18\x03 \x01(\x08\"\x85\x01\n\x13\x43omplianceReportRun\x12N\n\x17reportCriteriaAndFilter\x18\x01 \x01(\x0b\x32-.Enterprise.ComplianceReportCriteriaAndFilter\x12\r\n\x05users\x18\x02 \x03(\x03\x12\x0f\n\x07records\x18\x03 \x03(\x0c\"\xfc\x01\n!ComplianceReportCriteriaAndFilter\x12\x0e\n\x06nodeId\x18\x01 \x01(\x03\x12\x13\n\x0b\x63riteriaUid\x18\x02 \x01(\x0c\x12\x14\n\x0c\x63riteriaName\x18\x03 \x01(\t\x12\x36\n\x08\x63riteria\x18\x04 \x01(\x0b\x32$.Enterprise.ComplianceReportCriteria\x12\x33\n\x07\x66ilters\x18\x05 \x03(\x0b\x32\".Enterprise.ComplianceReportFilter\x12\x14\n\x0clastModified\x18\x06 \x01(\x03\x12\x19\n\x11nodeEncryptedData\x18\x07 \x01(\x0c\"b\n\x18\x43omplianceReportCriteria\x12\x11\n\tjobTitles\x18\x01 \x03(\t\x12\x19\n\x11\x65nterpriseUserIds\x18\x02 \x03(\x03\x12\x18\n\x10includeNonShared\x18\x03 \x01(\x08\"x\n\x16\x43omplianceReportFilter\x12\x14\n\x0crecordTitles\x18\x01 \x03(\t\x12\x12\n\nrecordUids\x18\x02 \x03(\x0c\x12\x11\n\tjobTitles\x18\x03 \x03(\t\x12\x0c\n\x04urls\x18\x04 \x03(\t\x12\x13\n\x0brecordTypes\x18\x05 \x03(\t\"\xa1\x05\n\x18\x43omplianceReportResponse\x12\x15\n\rdateGenerated\x18\x01 \x01(\x03\x12\x15\n\rrunByUserName\x18\x02 \x01(\t\x12\x12\n\nreportName\x18\x03 \x01(\t\x12\x11\n\treportUid\x18\x04 \x01(\x0c\x12<\n\x13\x63omplianceReportRun\x18\x05 \x01(\x0b\x32\x1f.Enterprise.ComplianceReportRun\x12-\n\x0cuserProfiles\x18\x06 \x03(\x0b\x32\x17.Enterprise.UserProfile\x12)\n\nauditTeams\x18\x07 \x03(\x0b\x32\x15.Enterprise.AuditTeam\x12-\n\x0c\x61uditRecords\x18\x08 \x03(\x0b\x32\x17.Enterprise.AuditRecord\x12+\n\x0buserRecords\x18\t \x03(\x0b\x32\x16.Enterprise.UserRecord\x12;\n\x13sharedFolderRecords\x18\n \x03(\x0b\x32\x1e.Enterprise.SharedFolderRecord\x12\x37\n\x11sharedFolderUsers\x18\x0b \x03(\x0b\x32\x1c.Enterprise.SharedFolderUser\x12\x37\n\x11sharedFolderTeams\x18\x0c \x03(\x0b\x32\x1c.Enterprise.SharedFolderTeam\x12\x31\n\x0e\x61uditTeamUsers\x18\r \x03(\x0b\x32\x19.Enterprise.AuditTeamUser\x12)\n\nauditRoles\x18\x0e \x03(\x0b\x32\x15.Enterprise.AuditRole\x12/\n\rlinkedRecords\x18\x0f \x03(\x0b\x32\x18.Enterprise.LinkedRecord\"\x81\x01\n\x0b\x41uditRecord\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x11\n\tauditData\x18\x02 \x01(\x0c\x12\x16\n\x0ehasAttachments\x18\x03 \x01(\x08\x12\x0f\n\x07inTrash\x18\x04 \x01(\x08\x12\x10\n\x08treeLeft\x18\x05 \x01(\x05\x12\x11\n\ttreeRight\x18\x06 \x01(\x05\"\x80\x02\n\tAuditRole\x12\x0e\n\x06roleId\x18\x01 \x01(\x03\x12\x15\n\rencryptedData\x18\x02 \x01(\x0c\x12&\n\x1erestrictShareOutsideEnterprise\x18\x03 \x01(\x08\x12\x18\n\x10restrictShareAll\x18\x04 \x01(\x08\x12\"\n\x1arestrictShareOfAttachments\x18\x05 \x01(\x08\x12)\n!restrictMaskPasswordsWhileEditing\x18\x06 \x01(\x08\x12;\n\x13roleNodeManagements\x18\x07 \x03(\x0b\x32\x1e.Enterprise.RoleNodeManagement\"^\n\x12RoleNodeManagement\x12\x10\n\x08treeLeft\x18\x01 \x01(\x05\x12\x11\n\ttreeRight\x18\x02 \x01(\x05\x12\x0f\n\x07\x63\x61scade\x18\x03 \x01(\x08\x12\x12\n\nprivileges\x18\x04 \x01(\x05\"k\n\x0bUserProfile\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x10\n\x08\x66ullName\x18\x02 \x01(\t\x12\x10\n\x08jobTitle\x18\x03 \x01(\t\x12\r\n\x05\x65mail\x18\x04 \x01(\t\x12\x0f\n\x07roleIds\x18\x05 \x03(\x03\"=\n\x10RecordPermission\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x16\n\x0epermissionBits\x18\x02 \x01(\x05\"_\n\nUserRecord\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x37\n\x11recordPermissions\x18\x02 \x03(\x0b\x32\x1c.Enterprise.RecordPermission\"[\n\tAuditTeam\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\x10\n\x08teamName\x18\x02 \x01(\t\x12\x14\n\x0crestrictEdit\x18\x03 \x01(\x08\x12\x15\n\rrestrictShare\x18\x04 \x01(\x08\";\n\rAuditTeamUser\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12\x19\n\x11\x65nterpriseUserIds\x18\x02 \x03(\x03\"\x9f\x01\n\x12SharedFolderRecord\x12\x17\n\x0fsharedFolderUid\x18\x01 \x01(\x0c\x12\x37\n\x11recordPermissions\x18\x02 \x03(\x0b\x32\x1c.Enterprise.RecordPermission\x12\x37\n\x11shareAdminRecords\x18\x03 \x03(\x0b\x32\x1c.Enterprise.ShareAdminRecord\"M\n\x10ShareAdminRecord\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x1f\n\x17recordPermissionIndexes\x18\x02 \x03(\x05\"F\n\x10SharedFolderUser\x12\x17\n\x0fsharedFolderUid\x18\x01 \x01(\x0c\x12\x19\n\x11\x65nterpriseUserIds\x18\x02 \x03(\x03\"=\n\x10SharedFolderTeam\x12\x17\n\x0fsharedFolderUid\x18\x01 \x01(\x0c\x12\x10\n\x08teamUids\x18\x02 \x03(\x0c\"/\n\x1aGetComplianceReportRequest\x12\x11\n\treportUid\x18\x01 \x01(\x0c\"2\n\x1bGetComplianceReportResponse\x12\x13\n\x0b\x64ownloadUrl\x18\x01 \x01(\t\"6\n\x1f\x43omplianceReportCriteriaRequest\x12\x13\n\x0b\x63riteriaUid\x18\x01 \x01(\x0c\";\n$SaveComplianceReportCriteriaResponse\x12\x13\n\x0b\x63riteriaUid\x18\x01 \x01(\x0c\"4\n\x0cLinkedRecord\x12\x10\n\x08ownerUid\x18\x01 \x01(\x0c\x12\x12\n\nrecordUids\x18\x02 \x03(\x0c\"W\n\x17GetSharingAdminsRequest\x12\x17\n\x0fsharedFolderUid\x18\x01 \x01(\x0c\x12\x11\n\trecordUid\x18\x02 \x01(\x0c\x12\x10\n\x08username\x18\x03 \x01(\t\"\xe0\x01\n\x0eUserProfileExt\x12\r\n\x05\x65mail\x18\x01 \x01(\t\x12\x10\n\x08\x66ullName\x18\x02 \x01(\t\x12\x10\n\x08jobTitle\x18\x03 \x01(\t\x12\x14\n\x0cisMSPMCAdmin\x18\x04 \x01(\x08\x12\x18\n\x10isInSharedFolder\x18\x05 \x01(\x08\x12&\n\x1eisShareAdminForRequestedObject\x18\x06 \x01(\x08\x12(\n isShareAdminForSharedFolderOwner\x18\x07 \x01(\x08\x12\x19\n\x11hasAccessToObject\x18\x08 \x01(\x08\"O\n\x18GetSharingAdminsResponse\x12\x33\n\x0fuserProfileExts\x18\x01 \x03(\x0b\x32\x1a.Enterprise.UserProfileExt\"_\n\x1eTeamsEnterpriseUsersAddRequest\x12=\n\x05teams\x18\x01 \x03(\x0b\x32..Enterprise.TeamsEnterpriseUsersAddTeamRequest\"t\n\"TeamsEnterpriseUsersAddTeamRequest\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12=\n\x05users\x18\x02 \x03(\x0b\x32..Enterprise.TeamsEnterpriseUsersAddUserRequest\"\xab\x01\n\"TeamsEnterpriseUsersAddUserRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12*\n\x08userType\x18\x02 \x01(\x0e\x32\x18.Enterprise.TeamUserType\x12\x13\n\x07teamKey\x18\x03 \x01(\tB\x02\x18\x01\x12*\n\x0ctypedTeamKey\x18\x04 \x01(\x0b\x32\x14.Enterprise.TypedKey\"F\n\x08TypedKey\x12\x0b\n\x03key\x18\x01 \x01(\x0c\x12-\n\x07keyType\x18\x02 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\"s\n\x1fTeamsEnterpriseUsersAddResponse\x12>\n\x05teams\x18\x01 \x03(\x0b\x32/.Enterprise.TeamsEnterpriseUsersAddTeamResponse\x12\x10\n\x08revision\x18\x02 \x01(\x03\"\xc4\x01\n#TeamsEnterpriseUsersAddTeamResponse\x12\x0f\n\x07teamUid\x18\x01 \x01(\x0c\x12>\n\x05users\x18\x02 \x03(\x0b\x32/.Enterprise.TeamsEnterpriseUsersAddUserResponse\x12\x0f\n\x07success\x18\x03 \x01(\x08\x12\x0f\n\x07message\x18\x04 \x01(\t\x12\x12\n\nresultCode\x18\x05 \x01(\t\x12\x16\n\x0e\x61\x64\x64itionalInfo\x18\x06 \x01(\t\"\x9f\x01\n#TeamsEnterpriseUsersAddUserResponse\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x10\n\x08revision\x18\x02 \x01(\x03\x12\x0f\n\x07success\x18\x03 \x01(\x08\x12\x0f\n\x07message\x18\x04 \x01(\t\x12\x12\n\nresultCode\x18\x05 \x01(\t\x12\x16\n\x0e\x61\x64\x64itionalInfo\x18\x06 \x01(\t\"M\n\x0b\x44omainAlias\x12\x0e\n\x06\x64omain\x18\x01 \x01(\t\x12\r\n\x05\x61lias\x18\x02 \x01(\t\x12\x0e\n\x06status\x18\x03 \x01(\x05\x12\x0f\n\x07message\x18\x04 \x01(\t\"B\n\x12\x44omainAliasRequest\x12,\n\x0b\x64omainAlias\x18\x01 \x03(\x0b\x32\x17.Enterprise.DomainAlias\"C\n\x13\x44omainAliasResponse\x12,\n\x0b\x64omainAlias\x18\x01 \x03(\x0b\x32\x17.Enterprise.DomainAlias\"m\n\x1f\x45nterpriseUsersProvisionRequest\x12\x33\n\x05users\x18\x01 \x03(\x0b\x32$.Enterprise.EnterpriseUsersProvision\x12\x15\n\rclientVersion\x18\x02 \x01(\t\"\xb6\x03\n\x18\x45nterpriseUsersProvision\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x0e\n\x06nodeId\x18\x03 \x01(\x03\x12\x15\n\rencryptedData\x18\x04 \x01(\t\x12-\n\x07keyType\x18\x05 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\x12\x10\n\x08\x66ullName\x18\x06 \x01(\t\x12\x10\n\x08jobTitle\x18\x07 \x01(\t\x12\x1e\n\x16\x65nterpriseUsersDataKey\x18\x08 \x01(\x0c\x12\x14\n\x0c\x61uthVerifier\x18\t \x01(\x0c\x12\x18\n\x10\x65ncryptionParams\x18\n \x01(\x0c\x12\x14\n\x0crsaPublicKey\x18\x0b \x01(\x0c\x12\x1e\n\x16rsaEncryptedPrivateKey\x18\x0c \x01(\x0c\x12\x14\n\x0c\x65\x63\x63PublicKey\x18\r \x01(\x0c\x12\x1e\n\x16\x65\x63\x63\x45ncryptedPrivateKey\x18\x0e \x01(\x0c\x12\x1c\n\x14\x65ncryptedDeviceToken\x18\x0f \x01(\x0c\x12\x1a\n\x12\x65ncryptedClientKey\x18\x10 \x01(\x0c\"_\n EnterpriseUsersProvisionResponse\x12;\n\x07results\x18\x01 \x03(\x0b\x32*.Enterprise.EnterpriseUsersProvisionResult\"q\n\x1e\x45nterpriseUsersProvisionResult\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x0c\n\x04\x63ode\x18\x02 \x01(\t\x12\x0f\n\x07message\x18\x03 \x01(\t\x12\x16\n\x0e\x61\x64\x64itionalInfo\x18\x04 \x01(\t\"a\n\x19\x45nterpriseUsersAddRequest\x12-\n\x05users\x18\x01 \x03(\x0b\x32\x1e.Enterprise.EnterpriseUsersAdd\x12\x15\n\rclientVersion\x18\x02 \x01(\t\"\x8c\x02\n\x12\x45nterpriseUsersAdd\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x0e\n\x06nodeId\x18\x03 \x01(\x03\x12\x15\n\rencryptedData\x18\x04 \x01(\t\x12-\n\x07keyType\x18\x05 \x01(\x0e\x32\x1c.Enterprise.EncryptedKeyType\x12\x10\n\x08\x66ullName\x18\x06 \x01(\t\x12\x10\n\x08jobTitle\x18\x07 \x01(\t\x12\x1b\n\x13suppressEmailInvite\x18\x08 \x01(\x08\x12\x15\n\rinviteeLocale\x18\t \x01(\t\x12\x0c\n\x04move\x18\n \x01(\x08\x12\x0e\n\x06roleId\x18\x0b \x01(\x03\"\x9b\x01\n\x1a\x45nterpriseUsersAddResponse\x12\x35\n\x07results\x18\x01 \x03(\x0b\x32$.Enterprise.EnterpriseUsersAddResult\x12\x0f\n\x07success\x18\x02 \x01(\x08\x12\x0c\n\x04\x63ode\x18\x03 \x01(\t\x12\x0f\n\x07message\x18\x04 \x01(\t\x12\x16\n\x0e\x61\x64\x64itionalInfo\x18\x05 \x01(\t\"\x96\x01\n\x18\x45nterpriseUsersAddResult\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x0f\n\x07success\x18\x02 \x01(\x08\x12\x18\n\x10verificationCode\x18\x03 \x01(\t\x12\x0c\n\x04\x63ode\x18\x04 \x01(\t\x12\x0f\n\x07message\x18\x05 \x01(\t\x12\x16\n\x0e\x61\x64\x64itionalInfo\x18\x06 \x01(\t\"\xb9\x01\n\x17UpdateMSPPermitsRequest\x12\x17\n\x0fmspEnterpriseId\x18\x01 \x01(\x05\x12\x1a\n\x12maxAllowedLicenses\x18\x02 \x01(\x05\x12\x19\n\x11\x61llowedMcProducts\x18\x03 \x03(\t\x12\x15\n\rallowedAddOns\x18\x04 \x03(\t\x12\x17\n\x0fmaxFilePlanType\x18\x05 \x01(\t\x12\x1e\n\x16\x61llowUnlimitedLicenses\x18\x06 \x01(\x08\"9\n\x1c\x44\x65leteEnterpriseUsersRequest\x12\x19\n\x11\x65nterpriseUserIds\x18\x01 \x03(\x03\"o\n\x1a\x44\x65leteEnterpriseUserStatus\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\x12\x37\n\x06status\x18\x02 \x01(\x0e\x32\'.Enterprise.DeleteEnterpriseUsersResult\"]\n\x1d\x44\x65leteEnterpriseUsersResponse\x12<\n\x0c\x64\x65leteStatus\x18\x01 \x03(\x0b\x32&.Enterprise.DeleteEnterpriseUserStatus\"w\n\x18\x43learSecurityDataRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x03(\x03\x12\x10\n\x08\x61llUsers\x18\x02 \x01(\x08\x12/\n\x04type\x18\x03 \x01(\x0e\x32!.Enterprise.ClearSecurityDataType*\x1b\n\x07KeyType\x12\x07\n\x03RSA\x10\x00\x12\x07\n\x03\x45\x43\x43\x10\x01*\xe6\x01\n\x14RoleUserModifyStatus\x12\x0f\n\x0bROLE_EXISTS\x10\x00\x12\x14\n\x10MISSING_TREE_KEY\x10\x01\x12\x14\n\x10MISSING_ROLE_KEY\x10\x02\x12\x1e\n\x1aINVALID_ENTERPRISE_USER_ID\x10\x03\x12\x1b\n\x17PENDING_ENTERPRISE_USER\x10\x04\x12\x13\n\x0fINVALID_NODE_ID\x10\x05\x12!\n\x1dMAY_NOT_REMOVE_SELF_FROM_ROLE\x10\x06\x12\x1c\n\x18MUST_HAVE_ONE_USER_ADMIN\x10\x07*=\n\x0e\x45nterpriseType\x12\x17\n\x13\x45NTERPRISE_STANDARD\x10\x00\x12\x12\n\x0e\x45NTERPRISE_MSP\x10\x01*s\n\x18TransferAcceptanceStatus\x12\r\n\tUNDEFINED\x10\x00\x12\x10\n\x0cNOT_REQUIRED\x10\x01\x12\x10\n\x0cNOT_ACCEPTED\x10\x02\x12\x16\n\x12PARTIALLY_ACCEPTED\x10\x03\x12\x0c\n\x08\x41\x43\x43\x45PTED\x10\x04*\xe1\x03\n\x14\x45nterpriseDataEntity\x12\x0b\n\x07UNKNOWN\x10\x00\x12\t\n\x05NODES\x10\x01\x12\t\n\x05ROLES\x10\x02\x12\t\n\x05USERS\x10\x03\x12\t\n\x05TEAMS\x10\x04\x12\x0e\n\nTEAM_USERS\x10\x05\x12\x0e\n\nROLE_USERS\x10\x06\x12\x13\n\x0fROLE_PRIVILEGES\x10\x07\x12\x15\n\x11ROLE_ENFORCEMENTS\x10\x08\x12\x0e\n\nROLE_TEAMS\x10\t\x12\x0c\n\x08LICENSES\x10\n\x12\x11\n\rMANAGED_NODES\x10\x0b\x12\x15\n\x11MANAGED_COMPANIES\x10\x0c\x12\x0b\n\x07\x42RIDGES\x10\r\x12\t\n\x05SCIMS\x10\x0e\x12\x13\n\x0f\x45MAIL_PROVISION\x10\x0f\x12\x10\n\x0cQUEUED_TEAMS\x10\x10\x12\x15\n\x11QUEUED_TEAM_USERS\x10\x11\x12\x10\n\x0cSSO_SERVICES\x10\x12\x12\x17\n\x13REPORT_FILTER_USERS\x10\x13\x12&\n\"DEVICES_REQUEST_FOR_ADMIN_APPROVAL\x10\x14\x12\x10\n\x0cUSER_ALIASES\x10\x15\x12)\n%COMPLIANCE_REPORT_CRITERIA_AND_FILTER\x10\x16\x12\x16\n\x12\x43OMPLIANCE_REPORTS\x10\x17*\"\n\x0b\x43\x61\x63heStatus\x12\x08\n\x04KEEP\x10\x00\x12\t\n\x05\x43LEAR\x10\x01*\x93\x01\n\rBackupKeyType\x12\n\n\x06NO_KEY\x10\x00\x12\x19\n\x15\x45NCRYPTED_BY_DATA_KEY\x10\x01\x12\x1b\n\x17\x45NCRYPTED_BY_PUBLIC_KEY\x10\x02\x12\x1d\n\x19\x45NCRYPTED_BY_DATA_KEY_GCM\x10\x03\x12\x1f\n\x1b\x45NCRYPTED_BY_PUBLIC_KEY_ECC\x10\x04*:\n\x15\x42\x61\x63kupUserDataKeyType\x12\x07\n\x03OWN\x10\x00\x12\x18\n\x14SHARED_TO_ENTERPRISE\x10\x01*\xa5\x01\n\x10\x45ncryptedKeyType\x12\r\n\tKT_NO_KEY\x10\x00\x12\x1c\n\x18KT_ENCRYPTED_BY_DATA_KEY\x10\x01\x12\x1e\n\x1aKT_ENCRYPTED_BY_PUBLIC_KEY\x10\x02\x12 \n\x1cKT_ENCRYPTED_BY_DATA_KEY_GCM\x10\x03\x12\"\n\x1eKT_ENCRYPTED_BY_PUBLIC_KEY_ECC\x10\x04*\xe0\x01\n\x12\x45nterpriseFlagType\x12\x0b\n\x07INVALID\x10\x00\x12\x1a\n\x16\x41LLOW_PERSONAL_LICENSE\x10\x01\x12\x18\n\x14SPECIAL_PROVISIONING\x10\x02\x12\x10\n\x0cRECORD_TYPES\x10\x03\x12\x13\n\x0fSECRETS_MANAGER\x10\x04\x12\x15\n\x11\x45NTERPRISE_LOCKED\x10\x05\x12\x15\n\x11\x46ORBID_KEY_TYPE_2\x10\x06\x12\x15\n\x11\x43ONSOLE_ONBOARDED\x10\x07\x12\x1b\n\x17\x46ORBID_ACCOUNT_TRANSFER\x10\x08*E\n\x10UserUpdateStatus\x12\x12\n\x0eUSER_UPDATE_OK\x10\x00\x12\x1d\n\x19USER_UPDATE_ACCESS_DENIED\x10\x01*I\n\x0f\x41uditUserStatus\x12\x06\n\x02OK\x10\x00\x12\x11\n\rACCESS_DENIED\x10\x01\x12\x1b\n\x17NO_LONGER_IN_ENTERPRISE\x10\x02*3\n\x0cTeamUserType\x12\x08\n\x04USER\x10\x00\x12\t\n\x05\x41\x44MIN\x10\x01\x12\x0e\n\nADMIN_ONLY\x10\x02*x\n\rAppClientType\x12\x0c\n\x08NOT_USED\x10\x00\x12\x0b\n\x07GENERAL\x10\x01\x12%\n!DISCOVERY_AND_ROTATION_CONTROLLER\x10\x02\x12\x12\n\x0eKCM_CONTROLLER\x10\x03\x12\x11\n\rSELF_DESTRUCT\x10\x04*\x8f\x01\n\x1b\x44\x65leteEnterpriseUsersResult\x12\x0b\n\x07SUCCESS\x10\x00\x12\x1a\n\x16NOT_AN_ENTERPRISE_USER\x10\x01\x12\x16\n\x12\x43\x41NNOT_DELETE_SELF\x10\x02\x12$\n BRIDGE_CANNOT_DELETE_ACTIVE_USER\x10\x03\x12\t\n\x05\x45RROR\x10\x04*\x87\x01\n\x15\x43learSecurityDataType\x12\x1e\n\x1aRECALCULATE_SUMMARY_REPORT\x10\x00\x12\'\n#FORCE_CLIENT_CHECK_FOR_MISSING_DATA\x10\x01\x12%\n!FORCE_CLIENT_RESEND_SECURITY_DATA\x10\x02\x42&\n\x18\x63om.keepersecurity.protoB\nEnterpriseb\x06proto3')
 
 _KEYTYPE = DESCRIPTOR.enum_types_by_name['KeyType']
 KeyType = enum_type_wrapper.EnumTypeWrapper(_KEYTYPE)
+_ROLEUSERMODIFYSTATUS = DESCRIPTOR.enum_types_by_name['RoleUserModifyStatus']
+RoleUserModifyStatus = enum_type_wrapper.EnumTypeWrapper(_ROLEUSERMODIFYSTATUS)
 _ENTERPRISETYPE = DESCRIPTOR.enum_types_by_name['EnterpriseType']
 EnterpriseType = enum_type_wrapper.EnumTypeWrapper(_ENTERPRISETYPE)
 _TRANSFERACCEPTANCESTATUS = DESCRIPTOR.enum_types_by_name['TransferAcceptanceStatus']
@@ -49,6 +51,14 @@ _CLEARSECURITYDATATYPE = DESCRIPTOR.enum_types_by_name['ClearSecurityDataType']
 ClearSecurityDataType = enum_type_wrapper.EnumTypeWrapper(_CLEARSECURITYDATATYPE)
 RSA = 0
 ECC = 1
+ROLE_EXISTS = 0
+MISSING_TREE_KEY = 1
+MISSING_ROLE_KEY = 2
+INVALID_ENTERPRISE_USER_ID = 3
+PENDING_ENTERPRISE_USER = 4
+INVALID_NODE_ID = 5
+MAY_NOT_REMOVE_SELF_FROM_ROLE = 6
+MUST_HAVE_ONE_USER_ADMIN = 7
 ENTERPRISE_STANDARD = 0
 ENTERPRISE_MSP = 1
 UNDEFINED = 0
@@ -100,6 +110,9 @@ SPECIAL_PROVISIONING = 2
 RECORD_TYPES = 3
 SECRETS_MANAGER = 4
 ENTERPRISE_LOCKED = 5
+FORBID_KEY_TYPE_2 = 6
+CONSOLE_ONBOARDED = 7
+FORBID_ACCOUNT_TRANSFER = 8
 USER_UPDATE_OK = 0
 USER_UPDATE_ACCESS_DENIED = 1
 OK = 0
@@ -112,6 +125,7 @@ NOT_USED = 0
 GENERAL = 1
 DISCOVERY_AND_ROTATION_CONTROLLER = 2
 KCM_CONTROLLER = 3
+SELF_DESTRUCT = 4
 SUCCESS = 0
 NOT_AN_ENTERPRISE_USER = 1
 CANNOT_DELETE_SELF = 2
@@ -134,6 +148,15 @@ _REENCRYPTEDROLEKEY = DESCRIPTOR.message_types_by_name['ReEncryptedRoleKey']
 _NODETOMANAGEDCOMPANYREQUEST = DESCRIPTOR.message_types_by_name['NodeToManagedCompanyRequest']
 _ROLETEAM = DESCRIPTOR.message_types_by_name['RoleTeam']
 _ROLETEAMS = DESCRIPTOR.message_types_by_name['RoleTeams']
+_ROLEUSERADDKEYS = DESCRIPTOR.message_types_by_name['RoleUserAddKeys']
+_ROLEUSERADD = DESCRIPTOR.message_types_by_name['RoleUserAdd']
+_ROLEUSERSADDREQUEST = DESCRIPTOR.message_types_by_name['RoleUsersAddRequest']
+_ROLEUSERADDRESULT = DESCRIPTOR.message_types_by_name['RoleUserAddResult']
+_ROLEUSERSADDRESPONSE = DESCRIPTOR.message_types_by_name['RoleUsersAddResponse']
+_ROLEUSERREMOVE = DESCRIPTOR.message_types_by_name['RoleUserRemove']
+_ROLEUSERSREMOVEREQUEST = DESCRIPTOR.message_types_by_name['RoleUsersRemoveRequest']
+_ROLEUSERREMOVERESULT = DESCRIPTOR.message_types_by_name['RoleUserRemoveResult']
+_ROLEUSERSREMOVERESPONSE = DESCRIPTOR.message_types_by_name['RoleUsersRemoveResponse']
 _ENTERPRISEREGISTRATION = DESCRIPTOR.message_types_by_name['EnterpriseRegistration']
 _DOMAINPASSWORDRULESREQUEST = DESCRIPTOR.message_types_by_name['DomainPasswordRulesRequest']
 _DOMAINPASSWORDRULESFIELDS = DESCRIPTOR.message_types_by_name['DomainPasswordRulesFields']
@@ -177,6 +200,8 @@ _SCIM = DESCRIPTOR.message_types_by_name['Scim']
 _EMAILPROVISION = DESCRIPTOR.message_types_by_name['EmailProvision']
 _QUEUEDTEAM = DESCRIPTOR.message_types_by_name['QueuedTeam']
 _QUEUEDTEAMUSER = DESCRIPTOR.message_types_by_name['QueuedTeamUser']
+_TEAMSADDRESULT = DESCRIPTOR.message_types_by_name['TeamsAddResult']
+_TEAMADDRESULT = DESCRIPTOR.message_types_by_name['TeamAddResult']
 _SSOSERVICE = DESCRIPTOR.message_types_by_name['SsoService']
 _REPORTFILTERUSER = DESCRIPTOR.message_types_by_name['ReportFilterUser']
 _DEVICEREQUESTFORADMINAPPROVAL = DESCRIPTOR.message_types_by_name['DeviceRequestForAdminApproval']
@@ -240,6 +265,7 @@ _GETSHARINGADMINSRESPONSE = DESCRIPTOR.message_types_by_name['GetSharingAdminsRe
 _TEAMSENTERPRISEUSERSADDREQUEST = DESCRIPTOR.message_types_by_name['TeamsEnterpriseUsersAddRequest']
 _TEAMSENTERPRISEUSERSADDTEAMREQUEST = DESCRIPTOR.message_types_by_name['TeamsEnterpriseUsersAddTeamRequest']
 _TEAMSENTERPRISEUSERSADDUSERREQUEST = DESCRIPTOR.message_types_by_name['TeamsEnterpriseUsersAddUserRequest']
+_TYPEDKEY = DESCRIPTOR.message_types_by_name['TypedKey']
 _TEAMSENTERPRISEUSERSADDRESPONSE = DESCRIPTOR.message_types_by_name['TeamsEnterpriseUsersAddResponse']
 _TEAMSENTERPRISEUSERSADDTEAMRESPONSE = DESCRIPTOR.message_types_by_name['TeamsEnterpriseUsersAddTeamResponse']
 _TEAMSENTERPRISEUSERSADDUSERRESPONSE = DESCRIPTOR.message_types_by_name['TeamsEnterpriseUsersAddUserResponse']
@@ -342,6 +368,69 @@ RoleTeams = _reflection.GeneratedProtocolMessageType('RoleTeams', (_message.Mess
   # @@protoc_insertion_point(class_scope:Enterprise.RoleTeams)
   })
 _sym_db.RegisterMessage(RoleTeams)
+
+RoleUserAddKeys = _reflection.GeneratedProtocolMessageType('RoleUserAddKeys', (_message.Message,), {
+  'DESCRIPTOR' : _ROLEUSERADDKEYS,
+  '__module__' : 'enterprise_pb2'
+  # @@protoc_insertion_point(class_scope:Enterprise.RoleUserAddKeys)
+  })
+_sym_db.RegisterMessage(RoleUserAddKeys)
+
+RoleUserAdd = _reflection.GeneratedProtocolMessageType('RoleUserAdd', (_message.Message,), {
+  'DESCRIPTOR' : _ROLEUSERADD,
+  '__module__' : 'enterprise_pb2'
+  # @@protoc_insertion_point(class_scope:Enterprise.RoleUserAdd)
+  })
+_sym_db.RegisterMessage(RoleUserAdd)
+
+RoleUsersAddRequest = _reflection.GeneratedProtocolMessageType('RoleUsersAddRequest', (_message.Message,), {
+  'DESCRIPTOR' : _ROLEUSERSADDREQUEST,
+  '__module__' : 'enterprise_pb2'
+  # @@protoc_insertion_point(class_scope:Enterprise.RoleUsersAddRequest)
+  })
+_sym_db.RegisterMessage(RoleUsersAddRequest)
+
+RoleUserAddResult = _reflection.GeneratedProtocolMessageType('RoleUserAddResult', (_message.Message,), {
+  'DESCRIPTOR' : _ROLEUSERADDRESULT,
+  '__module__' : 'enterprise_pb2'
+  # @@protoc_insertion_point(class_scope:Enterprise.RoleUserAddResult)
+  })
+_sym_db.RegisterMessage(RoleUserAddResult)
+
+RoleUsersAddResponse = _reflection.GeneratedProtocolMessageType('RoleUsersAddResponse', (_message.Message,), {
+  'DESCRIPTOR' : _ROLEUSERSADDRESPONSE,
+  '__module__' : 'enterprise_pb2'
+  # @@protoc_insertion_point(class_scope:Enterprise.RoleUsersAddResponse)
+  })
+_sym_db.RegisterMessage(RoleUsersAddResponse)
+
+RoleUserRemove = _reflection.GeneratedProtocolMessageType('RoleUserRemove', (_message.Message,), {
+  'DESCRIPTOR' : _ROLEUSERREMOVE,
+  '__module__' : 'enterprise_pb2'
+  # @@protoc_insertion_point(class_scope:Enterprise.RoleUserRemove)
+  })
+_sym_db.RegisterMessage(RoleUserRemove)
+
+RoleUsersRemoveRequest = _reflection.GeneratedProtocolMessageType('RoleUsersRemoveRequest', (_message.Message,), {
+  'DESCRIPTOR' : _ROLEUSERSREMOVEREQUEST,
+  '__module__' : 'enterprise_pb2'
+  # @@protoc_insertion_point(class_scope:Enterprise.RoleUsersRemoveRequest)
+  })
+_sym_db.RegisterMessage(RoleUsersRemoveRequest)
+
+RoleUserRemoveResult = _reflection.GeneratedProtocolMessageType('RoleUserRemoveResult', (_message.Message,), {
+  'DESCRIPTOR' : _ROLEUSERREMOVERESULT,
+  '__module__' : 'enterprise_pb2'
+  # @@protoc_insertion_point(class_scope:Enterprise.RoleUserRemoveResult)
+  })
+_sym_db.RegisterMessage(RoleUserRemoveResult)
+
+RoleUsersRemoveResponse = _reflection.GeneratedProtocolMessageType('RoleUsersRemoveResponse', (_message.Message,), {
+  'DESCRIPTOR' : _ROLEUSERSREMOVERESPONSE,
+  '__module__' : 'enterprise_pb2'
+  # @@protoc_insertion_point(class_scope:Enterprise.RoleUsersRemoveResponse)
+  })
+_sym_db.RegisterMessage(RoleUsersRemoveResponse)
 
 EnterpriseRegistration = _reflection.GeneratedProtocolMessageType('EnterpriseRegistration', (_message.Message,), {
   'DESCRIPTOR' : _ENTERPRISEREGISTRATION,
@@ -643,6 +732,20 @@ QueuedTeamUser = _reflection.GeneratedProtocolMessageType('QueuedTeamUser', (_me
   # @@protoc_insertion_point(class_scope:Enterprise.QueuedTeamUser)
   })
 _sym_db.RegisterMessage(QueuedTeamUser)
+
+TeamsAddResult = _reflection.GeneratedProtocolMessageType('TeamsAddResult', (_message.Message,), {
+  'DESCRIPTOR' : _TEAMSADDRESULT,
+  '__module__' : 'enterprise_pb2'
+  # @@protoc_insertion_point(class_scope:Enterprise.TeamsAddResult)
+  })
+_sym_db.RegisterMessage(TeamsAddResult)
+
+TeamAddResult = _reflection.GeneratedProtocolMessageType('TeamAddResult', (_message.Message,), {
+  'DESCRIPTOR' : _TEAMADDRESULT,
+  '__module__' : 'enterprise_pb2'
+  # @@protoc_insertion_point(class_scope:Enterprise.TeamAddResult)
+  })
+_sym_db.RegisterMessage(TeamAddResult)
 
 SsoService = _reflection.GeneratedProtocolMessageType('SsoService', (_message.Message,), {
   'DESCRIPTOR' : _SSOSERVICE,
@@ -1085,6 +1188,13 @@ TeamsEnterpriseUsersAddUserRequest = _reflection.GeneratedProtocolMessageType('T
   })
 _sym_db.RegisterMessage(TeamsEnterpriseUsersAddUserRequest)
 
+TypedKey = _reflection.GeneratedProtocolMessageType('TypedKey', (_message.Message,), {
+  'DESCRIPTOR' : _TYPEDKEY,
+  '__module__' : 'enterprise_pb2'
+  # @@protoc_insertion_point(class_scope:Enterprise.TypedKey)
+  })
+_sym_db.RegisterMessage(TypedKey)
+
 TeamsEnterpriseUsersAddResponse = _reflection.GeneratedProtocolMessageType('TeamsEnterpriseUsersAddResponse', (_message.Message,), {
   'DESCRIPTOR' : _TEAMSENTERPRISEUSERSADDRESPONSE,
   '__module__' : 'enterprise_pb2'
@@ -1226,308 +1336,336 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _NODE.fields_by_name['ssoServiceProviderId']._serialized_options = b'\030\001'
   _NODE.fields_by_name['ssoServiceProviderIds']._options = None
   _NODE.fields_by_name['ssoServiceProviderIds']._serialized_options = b'\020\001'
-  _KEYTYPE._serialized_start=17458
-  _KEYTYPE._serialized_end=17485
-  _ENTERPRISETYPE._serialized_start=17487
-  _ENTERPRISETYPE._serialized_end=17548
-  _TRANSFERACCEPTANCESTATUS._serialized_start=17550
-  _TRANSFERACCEPTANCESTATUS._serialized_end=17665
-  _ENTERPRISEDATAENTITY._serialized_start=17668
-  _ENTERPRISEDATAENTITY._serialized_end=18149
-  _CACHESTATUS._serialized_start=18151
-  _CACHESTATUS._serialized_end=18185
-  _BACKUPKEYTYPE._serialized_start=18188
-  _BACKUPKEYTYPE._serialized_end=18335
-  _BACKUPUSERDATAKEYTYPE._serialized_start=18337
-  _BACKUPUSERDATAKEYTYPE._serialized_end=18395
-  _ENCRYPTEDKEYTYPE._serialized_start=18398
-  _ENCRYPTEDKEYTYPE._serialized_end=18563
-  _ENTERPRISEFLAGTYPE._serialized_start=18566
-  _ENTERPRISEFLAGTYPE._serialized_end=18715
-  _USERUPDATESTATUS._serialized_start=18717
-  _USERUPDATESTATUS._serialized_end=18786
-  _AUDITUSERSTATUS._serialized_start=18788
-  _AUDITUSERSTATUS._serialized_end=18861
-  _TEAMUSERTYPE._serialized_start=18863
-  _TEAMUSERTYPE._serialized_end=18914
-  _APPCLIENTTYPE._serialized_start=18916
-  _APPCLIENTTYPE._serialized_end=19017
-  _DELETEENTERPRISEUSERSRESULT._serialized_start=19020
-  _DELETEENTERPRISEUSERSRESULT._serialized_end=19163
-  _CLEARSECURITYDATATYPE._serialized_start=19166
-  _CLEARSECURITYDATATYPE._serialized_end=19301
+  _TEAMSENTERPRISEUSERSADDUSERREQUEST.fields_by_name['teamKey']._options = None
+  _TEAMSENTERPRISEUSERSADDUSERREQUEST.fields_by_name['teamKey']._serialized_options = b'\030\001'
+  _KEYTYPE._serialized_start=18755
+  _KEYTYPE._serialized_end=18782
+  _ROLEUSERMODIFYSTATUS._serialized_start=18785
+  _ROLEUSERMODIFYSTATUS._serialized_end=19015
+  _ENTERPRISETYPE._serialized_start=19017
+  _ENTERPRISETYPE._serialized_end=19078
+  _TRANSFERACCEPTANCESTATUS._serialized_start=19080
+  _TRANSFERACCEPTANCESTATUS._serialized_end=19195
+  _ENTERPRISEDATAENTITY._serialized_start=19198
+  _ENTERPRISEDATAENTITY._serialized_end=19679
+  _CACHESTATUS._serialized_start=19681
+  _CACHESTATUS._serialized_end=19715
+  _BACKUPKEYTYPE._serialized_start=19718
+  _BACKUPKEYTYPE._serialized_end=19865
+  _BACKUPUSERDATAKEYTYPE._serialized_start=19867
+  _BACKUPUSERDATAKEYTYPE._serialized_end=19925
+  _ENCRYPTEDKEYTYPE._serialized_start=19928
+  _ENCRYPTEDKEYTYPE._serialized_end=20093
+  _ENTERPRISEFLAGTYPE._serialized_start=20096
+  _ENTERPRISEFLAGTYPE._serialized_end=20320
+  _USERUPDATESTATUS._serialized_start=20322
+  _USERUPDATESTATUS._serialized_end=20391
+  _AUDITUSERSTATUS._serialized_start=20393
+  _AUDITUSERSTATUS._serialized_end=20466
+  _TEAMUSERTYPE._serialized_start=20468
+  _TEAMUSERTYPE._serialized_end=20519
+  _APPCLIENTTYPE._serialized_start=20521
+  _APPCLIENTTYPE._serialized_end=20641
+  _DELETEENTERPRISEUSERSRESULT._serialized_start=20644
+  _DELETEENTERPRISEUSERSRESULT._serialized_end=20787
+  _CLEARSECURITYDATATYPE._serialized_start=20790
+  _CLEARSECURITYDATATYPE._serialized_end=20925
   _ENTERPRISEKEYPAIRREQUEST._serialized_start=33
   _ENTERPRISEKEYPAIRREQUEST._serialized_end=165
   _GETTEAMMEMBERREQUEST._serialized_start=167
   _GETTEAMMEMBERREQUEST._serialized_end=206
   _ENTERPRISEUSER._serialized_start=208
-  _ENTERPRISEUSER._serialized_end=315
-  _GETTEAMMEMBERRESPONSE._serialized_start=317
-  _GETTEAMMEMBERRESPONSE._serialized_end=392
-  _ENTERPRISEUSERIDS._serialized_start=394
-  _ENTERPRISEUSERIDS._serialized_end=439
-  _ENTERPRISEPERSONALACCOUNT._serialized_start=441
-  _ENTERPRISEPERSONALACCOUNT._serialized_end=507
-  _ENCRYPTEDTEAMKEYREQUEST._serialized_start=509
-  _ENCRYPTEDTEAMKEYREQUEST._serialized_end=592
-  _REENCRYPTEDDATA._serialized_start=594
-  _REENCRYPTEDDATA._serialized_end=637
-  _REENCRYPTEDROLEKEY._serialized_start=639
-  _REENCRYPTEDROLEKEY._serialized_end=702
-  _NODETOMANAGEDCOMPANYREQUEST._serialized_start=705
-  _NODETOMANAGEDCOMPANYREQUEST._serialized_end=990
-  _ROLETEAM._serialized_start=992
-  _ROLETEAM._serialized_end=1036
-  _ROLETEAMS._serialized_start=1038
-  _ROLETEAMS._serialized_end=1090
-  _ENTERPRISEREGISTRATION._serialized_start=1093
-  _ENTERPRISEREGISTRATION._serialized_end=1542
-  _DOMAINPASSWORDRULESREQUEST._serialized_start=1544
-  _DOMAINPASSWORDRULESREQUEST._serialized_end=1590
-  _DOMAINPASSWORDRULESFIELDS._serialized_start=1592
-  _DOMAINPASSWORDRULESFIELDS._serialized_end=1684
-  _LOGINTOMCREQUEST._serialized_start=1686
-  _LOGINTOMCREQUEST._serialized_end=1755
-  _LOGINTOMCRESPONSE._serialized_start=1757
-  _LOGINTOMCRESPONSE._serialized_end=1833
-  _DOMAINPASSWORDRULESRESPONSE._serialized_start=1835
-  _DOMAINPASSWORDRULESRESPONSE._serialized_end=1938
-  _APPROVEUSERDEVICEREQUEST._serialized_start=1941
-  _APPROVEUSERDEVICEREQUEST._serialized_end=2077
-  _APPROVEUSERDEVICERESPONSE._serialized_start=2079
-  _APPROVEUSERDEVICERESPONSE._serialized_end=2195
-  _APPROVEUSERDEVICESREQUEST._serialized_start=2197
-  _APPROVEUSERDEVICESREQUEST._serialized_end=2286
-  _APPROVEUSERDEVICESRESPONSE._serialized_start=2288
-  _APPROVEUSERDEVICESRESPONSE._serialized_end=2380
-  _ENTERPRISEUSERDATAKEY._serialized_start=2383
-  _ENTERPRISEUSERDATAKEY._serialized_end=2518
-  _ENTERPRISEUSERDATAKEYS._serialized_start=2520
-  _ENTERPRISEUSERDATAKEYS._serialized_end=2593
-  _ENTERPRISEDATAREQUEST._serialized_start=2595
-  _ENTERPRISEDATAREQUEST._serialized_end=2645
-  _SPECIALPROVISIONING._serialized_start=2647
-  _SPECIALPROVISIONING._serialized_end=2695
-  _GENERALDATAENTITY._serialized_start=2698
-  _GENERALDATAENTITY._serialized_end=2902
-  _NODE._serialized_start=2905
-  _NODE._serialized_end=3158
-  _ROLE._serialized_start=3161
-  _ROLE._serialized_end=3303
-  _USER._serialized_start=3306
-  _USER._serialized_end=3618
-  _USERALIAS._serialized_start=3620
-  _USERALIAS._serialized_end=3675
-  _COMPLIANCEREPORTMETADATA._serialized_start=3678
-  _COMPLIANCEREPORTMETADATA._serialized_end=3850
-  _MANAGEDNODE._serialized_start=3852
-  _MANAGEDNODE._serialized_end=3935
-  _USERMANAGEDNODE._serialized_start=3937
-  _USERMANAGEDNODE._serialized_end=4021
-  _USERPRIVILEGE._serialized_start=4023
-  _USERPRIVILEGE._serialized_end=4142
-  _ROLEUSER._serialized_start=4144
-  _ROLEUSER._serialized_end=4196
-  _ROLEPRIVILEGE._serialized_start=4198
-  _ROLEPRIVILEGE._serialized_end=4275
-  _ROLEENFORCEMENT._serialized_start=4277
-  _ROLEENFORCEMENT._serialized_end=4350
-  _TEAM._serialized_start=4353
-  _TEAM._serialized_end=4522
-  _TEAMUSER._serialized_start=4524
-  _TEAMUSER._serialized_end=4595
-  _GETDISTRIBUTORINFORESPONSE._serialized_start=4597
-  _GETDISTRIBUTORINFORESPONSE._serialized_end=4672
-  _DISTRIBUTOR._serialized_start=4674
-  _DISTRIBUTOR._serialized_end=4740
-  _MSPINFO._serialized_start=4743
-  _MSPINFO._serialized_end=5028
-  _MANAGEDCOMPANY._serialized_start=5031
-  _MANAGEDCOMPANY._serialized_end=5304
-  _MSPPOOL._serialized_start=5306
-  _MSPPOOL._serialized_end=5388
-  _MSPCONTACT._serialized_start=5390
-  _MSPCONTACT._serialized_end=5448
-  _LICENSEADDON._serialized_start=5451
-  _LICENSEADDON._serialized_end=5638
-  _MCDEFAULT._serialized_start=5640
-  _MCDEFAULT._serialized_end=5755
-  _MSPPERMITS._serialized_start=5758
-  _MSPPERMITS._serialized_end=5968
-  _LICENSE._serialized_start=5971
-  _LICENSE._serialized_end=6515
-  _BRIDGE._serialized_start=6517
-  _BRIDGE._serialized_end=6627
-  _SCIM._serialized_start=6629
-  _SCIM._serialized_end=6745
-  _EMAILPROVISION._serialized_start=6747
-  _EMAILPROVISION._serialized_end=6823
-  _QUEUEDTEAM._serialized_start=6825
-  _QUEUEDTEAM._serialized_end=6907
-  _QUEUEDTEAMUSER._serialized_start=6909
-  _QUEUEDTEAMUSER._serialized_end=6957
-  _SSOSERVICE._serialized_start=6960
-  _SSOSERVICE._serialized_end=7105
-  _REPORTFILTERUSER._serialized_start=7107
-  _REPORTFILTERUSER._serialized_end=7156
-  _DEVICEREQUESTFORADMINAPPROVAL._serialized_start=7159
-  _DEVICEREQUESTFORADMINAPPROVAL._serialized_end=7438
-  _ENTERPRISEDATA._serialized_start=7440
-  _ENTERPRISEDATA._serialized_end=7536
-  _ENTERPRISEDATARESPONSE._serialized_start=7539
-  _ENTERPRISEDATARESPONSE._serialized_end=7747
-  _BACKUPREQUEST._serialized_start=7749
-  _BACKUPREQUEST._serialized_end=7791
-  _BACKUPRECORD._serialized_start=7794
-  _BACKUPRECORD._serialized_end=7946
-  _BACKUPKEY._serialized_start=7948
-  _BACKUPKEY._serialized_end=7994
-  _BACKUPUSER._serialized_start=7997
-  _BACKUPUSER._serialized_end=8266
-  _BACKUPRESPONSE._serialized_start=8269
-  _BACKUPRESPONSE._serialized_end=8427
-  _BACKUPFILE._serialized_start=8429
-  _BACKUPFILE._serialized_end=8530
-  _BACKUPSRESPONSE._serialized_start=8532
-  _BACKUPSRESPONSE._serialized_end=8588
-  _GETENTERPRISEDATAKEYSREQUEST._serialized_start=8590
-  _GETENTERPRISEDATAKEYSREQUEST._serialized_end=8636
-  _GETENTERPRISEDATAKEYSRESPONSE._serialized_start=8639
-  _GETENTERPRISEDATAKEYSRESPONSE._serialized_end=8894
-  _ROLEKEY._serialized_start=8896
-  _ROLEKEY._serialized_end=8990
-  _MSPKEY._serialized_start=8992
-  _MSPKEY._serialized_end=9092
-  _ENTERPRISEKEYS._serialized_start=9094
-  _ENTERPRISEKEYS._serialized_end=9218
-  _TREEKEY._serialized_start=9220
-  _TREEKEY._serialized_end=9292
-  _SHAREDRECORDRESPONSE._serialized_start=9294
-  _SHAREDRECORDRESPONSE._serialized_end=9363
-  _SHAREDRECORDEVENT._serialized_start=9365
-  _SHAREDRECORDEVENT._serialized_end=9477
-  _SETRESTRICTVISIBILITYREQUEST._serialized_start=9479
-  _SETRESTRICTVISIBILITYREQUEST._serialized_end=9525
-  _USERADDREQUEST._serialized_start=9528
-  _USERADDREQUEST._serialized_end=9736
-  _USERUPDATEREQUEST._serialized_start=9738
-  _USERUPDATEREQUEST._serialized_end=9796
-  _USERUPDATE._serialized_start=9799
-  _USERUPDATE._serialized_end=9974
-  _USERUPDATERESPONSE._serialized_start=9976
-  _USERUPDATERESPONSE._serialized_end=10041
-  _USERUPDATERESULT._serialized_start=10043
-  _USERUPDATERESULT._serialized_end=10133
-  _COMPLIANCERECORDOWNERSREQUEST._serialized_start=10135
-  _COMPLIANCERECORDOWNERSREQUEST._serialized_end=10209
-  _COMPLIANCERECORDOWNERSRESPONSE._serialized_start=10211
-  _COMPLIANCERECORDOWNERSRESPONSE._serialized_end=10290
-  _RECORDOWNER._serialized_start=10292
-  _RECORDOWNER._serialized_end=10347
-  _PRELIMINARYCOMPLIANCEDATAREQUEST._serialized_start=10350
-  _PRELIMINARYCOMPLIANCEDATAREQUEST._serialized_end=10516
-  _PRELIMINARYCOMPLIANCEDATARESPONSE._serialized_start=10519
-  _PRELIMINARYCOMPLIANCEDATARESPONSE._serialized_end=10678
-  _AUDITUSERRECORD._serialized_start=10680
-  _AUDITUSERRECORD._serialized_end=10755
-  _AUDITUSERDATA._serialized_start=10758
-  _AUDITUSERDATA._serialized_end=10899
-  _COMPLIANCEREPORTFILTERS._serialized_start=10901
-  _COMPLIANCEREPORTFILTERS._serialized_end=11028
-  _COMPLIANCEREPORTREQUEST._serialized_start=11030
-  _COMPLIANCEREPORTREQUEST._serialized_end=11157
-  _COMPLIANCEREPORTRUN._serialized_start=11160
-  _COMPLIANCEREPORTRUN._serialized_end=11293
-  _COMPLIANCEREPORTCRITERIAANDFILTER._serialized_start=11296
-  _COMPLIANCEREPORTCRITERIAANDFILTER._serialized_end=11548
-  _COMPLIANCEREPORTCRITERIA._serialized_start=11550
-  _COMPLIANCEREPORTCRITERIA._serialized_end=11648
-  _COMPLIANCEREPORTFILTER._serialized_start=11650
-  _COMPLIANCEREPORTFILTER._serialized_end=11770
-  _COMPLIANCEREPORTRESPONSE._serialized_start=11773
-  _COMPLIANCEREPORTRESPONSE._serialized_end=12446
-  _AUDITRECORD._serialized_start=12449
-  _AUDITRECORD._serialized_end=12578
-  _AUDITROLE._serialized_start=12581
-  _AUDITROLE._serialized_end=12837
-  _ROLENODEMANAGEMENT._serialized_start=12839
-  _ROLENODEMANAGEMENT._serialized_end=12933
-  _USERPROFILE._serialized_start=12935
-  _USERPROFILE._serialized_end=13042
-  _RECORDPERMISSION._serialized_start=13044
-  _RECORDPERMISSION._serialized_end=13105
-  _USERRECORD._serialized_start=13107
-  _USERRECORD._serialized_end=13202
-  _AUDITTEAM._serialized_start=13204
-  _AUDITTEAM._serialized_end=13295
-  _AUDITTEAMUSER._serialized_start=13297
-  _AUDITTEAMUSER._serialized_end=13356
-  _SHAREDFOLDERRECORD._serialized_start=13359
-  _SHAREDFOLDERRECORD._serialized_end=13518
-  _SHAREADMINRECORD._serialized_start=13520
-  _SHAREADMINRECORD._serialized_end=13597
-  _SHAREDFOLDERUSER._serialized_start=13599
-  _SHAREDFOLDERUSER._serialized_end=13669
-  _SHAREDFOLDERTEAM._serialized_start=13671
-  _SHAREDFOLDERTEAM._serialized_end=13732
-  _GETCOMPLIANCEREPORTREQUEST._serialized_start=13734
-  _GETCOMPLIANCEREPORTREQUEST._serialized_end=13781
-  _GETCOMPLIANCEREPORTRESPONSE._serialized_start=13783
-  _GETCOMPLIANCEREPORTRESPONSE._serialized_end=13833
-  _COMPLIANCEREPORTCRITERIAREQUEST._serialized_start=13835
-  _COMPLIANCEREPORTCRITERIAREQUEST._serialized_end=13889
-  _SAVECOMPLIANCEREPORTCRITERIARESPONSE._serialized_start=13891
-  _SAVECOMPLIANCEREPORTCRITERIARESPONSE._serialized_end=13950
-  _LINKEDRECORD._serialized_start=13952
-  _LINKEDRECORD._serialized_end=14004
-  _GETSHARINGADMINSREQUEST._serialized_start=14006
-  _GETSHARINGADMINSREQUEST._serialized_end=14093
-  _USERPROFILEEXT._serialized_start=14096
-  _USERPROFILEEXT._serialized_end=14320
-  _GETSHARINGADMINSRESPONSE._serialized_start=14322
-  _GETSHARINGADMINSRESPONSE._serialized_end=14401
-  _TEAMSENTERPRISEUSERSADDREQUEST._serialized_start=14403
-  _TEAMSENTERPRISEUSERSADDREQUEST._serialized_end=14498
-  _TEAMSENTERPRISEUSERSADDTEAMREQUEST._serialized_start=14500
-  _TEAMSENTERPRISEUSERSADDTEAMREQUEST._serialized_end=14616
-  _TEAMSENTERPRISEUSERSADDUSERREQUEST._serialized_start=14618
-  _TEAMSENTERPRISEUSERSADDUSERREQUEST._serialized_end=14741
-  _TEAMSENTERPRISEUSERSADDRESPONSE._serialized_start=14743
-  _TEAMSENTERPRISEUSERSADDRESPONSE._serialized_end=14858
-  _TEAMSENTERPRISEUSERSADDTEAMRESPONSE._serialized_start=14861
-  _TEAMSENTERPRISEUSERSADDTEAMRESPONSE._serialized_end=15057
-  _TEAMSENTERPRISEUSERSADDUSERRESPONSE._serialized_start=15060
-  _TEAMSENTERPRISEUSERSADDUSERRESPONSE._serialized_end=15219
-  _DOMAINALIAS._serialized_start=15221
-  _DOMAINALIAS._serialized_end=15298
-  _DOMAINALIASREQUEST._serialized_start=15300
-  _DOMAINALIASREQUEST._serialized_end=15366
-  _DOMAINALIASRESPONSE._serialized_start=15368
-  _DOMAINALIASRESPONSE._serialized_end=15435
-  _ENTERPRISEUSERSPROVISIONREQUEST._serialized_start=15437
-  _ENTERPRISEUSERSPROVISIONREQUEST._serialized_end=15546
-  _ENTERPRISEUSERSPROVISION._serialized_start=15549
-  _ENTERPRISEUSERSPROVISION._serialized_end=15987
-  _ENTERPRISEUSERSPROVISIONRESPONSE._serialized_start=15989
-  _ENTERPRISEUSERSPROVISIONRESPONSE._serialized_end=16084
-  _ENTERPRISEUSERSPROVISIONRESULT._serialized_start=16086
-  _ENTERPRISEUSERSPROVISIONRESULT._serialized_end=16199
-  _ENTERPRISEUSERSADDREQUEST._serialized_start=16201
-  _ENTERPRISEUSERSADDREQUEST._serialized_end=16298
-  _ENTERPRISEUSERSADD._serialized_start=16301
-  _ENTERPRISEUSERSADD._serialized_end=16569
-  _ENTERPRISEUSERSADDRESPONSE._serialized_start=16572
-  _ENTERPRISEUSERSADDRESPONSE._serialized_end=16727
-  _ENTERPRISEUSERSADDRESULT._serialized_start=16730
-  _ENTERPRISEUSERSADDRESULT._serialized_end=16880
-  _UPDATEMSPPERMITSREQUEST._serialized_start=16883
-  _UPDATEMSPPERMITSREQUEST._serialized_end=17068
-  _DELETEENTERPRISEUSERSREQUEST._serialized_start=17070
-  _DELETEENTERPRISEUSERSREQUEST._serialized_end=17127
-  _DELETEENTERPRISEUSERSTATUS._serialized_start=17129
-  _DELETEENTERPRISEUSERSTATUS._serialized_end=17240
-  _DELETEENTERPRISEUSERSRESPONSE._serialized_start=17242
-  _DELETEENTERPRISEUSERSRESPONSE._serialized_end=17335
-  _CLEARSECURITYDATAREQUEST._serialized_start=17337
-  _CLEARSECURITYDATAREQUEST._serialized_end=17456
+  _ENTERPRISEUSER._serialized_end=333
+  _GETTEAMMEMBERRESPONSE._serialized_start=335
+  _GETTEAMMEMBERRESPONSE._serialized_end=410
+  _ENTERPRISEUSERIDS._serialized_start=412
+  _ENTERPRISEUSERIDS._serialized_end=457
+  _ENTERPRISEPERSONALACCOUNT._serialized_start=459
+  _ENTERPRISEPERSONALACCOUNT._serialized_end=525
+  _ENCRYPTEDTEAMKEYREQUEST._serialized_start=527
+  _ENCRYPTEDTEAMKEYREQUEST._serialized_end=610
+  _REENCRYPTEDDATA._serialized_start=612
+  _REENCRYPTEDDATA._serialized_end=655
+  _REENCRYPTEDROLEKEY._serialized_start=657
+  _REENCRYPTEDROLEKEY._serialized_end=720
+  _NODETOMANAGEDCOMPANYREQUEST._serialized_start=723
+  _NODETOMANAGEDCOMPANYREQUEST._serialized_end=1008
+  _ROLETEAM._serialized_start=1010
+  _ROLETEAM._serialized_end=1054
+  _ROLETEAMS._serialized_start=1056
+  _ROLETEAMS._serialized_end=1108
+  _ROLEUSERADDKEYS._serialized_start=1110
+  _ROLEUSERADDKEYS._serialized_end=1192
+  _ROLEUSERADD._serialized_start=1194
+  _ROLEUSERADD._serialized_end=1278
+  _ROLEUSERSADDREQUEST._serialized_start=1280
+  _ROLEUSERSADDREQUEST._serialized_end=1348
+  _ROLEUSERADDRESULT._serialized_start=1351
+  _ROLEUSERADDRESULT._serialized_end=1479
+  _ROLEUSERSADDRESPONSE._serialized_start=1481
+  _ROLEUSERSADDRESPONSE._serialized_end=1551
+  _ROLEUSERREMOVE._serialized_start=1553
+  _ROLEUSERREMOVE._serialized_end=1613
+  _ROLEUSERSREMOVEREQUEST._serialized_start=1615
+  _ROLEUSERSREMOVEREQUEST._serialized_end=1692
+  _ROLEUSERREMOVERESULT._serialized_start=1695
+  _ROLEUSERREMOVERESULT._serialized_end=1826
+  _ROLEUSERSREMOVERESPONSE._serialized_start=1828
+  _ROLEUSERSREMOVERESPONSE._serialized_end=1904
+  _ENTERPRISEREGISTRATION._serialized_start=1907
+  _ENTERPRISEREGISTRATION._serialized_end=2382
+  _DOMAINPASSWORDRULESREQUEST._serialized_start=2384
+  _DOMAINPASSWORDRULESREQUEST._serialized_end=2456
+  _DOMAINPASSWORDRULESFIELDS._serialized_start=2458
+  _DOMAINPASSWORDRULESFIELDS._serialized_end=2550
+  _LOGINTOMCREQUEST._serialized_start=2552
+  _LOGINTOMCREQUEST._serialized_end=2621
+  _LOGINTOMCRESPONSE._serialized_start=2623
+  _LOGINTOMCRESPONSE._serialized_end=2699
+  _DOMAINPASSWORDRULESRESPONSE._serialized_start=2701
+  _DOMAINPASSWORDRULESRESPONSE._serialized_end=2804
+  _APPROVEUSERDEVICEREQUEST._serialized_start=2807
+  _APPROVEUSERDEVICEREQUEST._serialized_end=2943
+  _APPROVEUSERDEVICERESPONSE._serialized_start=2945
+  _APPROVEUSERDEVICERESPONSE._serialized_end=3061
+  _APPROVEUSERDEVICESREQUEST._serialized_start=3063
+  _APPROVEUSERDEVICESREQUEST._serialized_end=3152
+  _APPROVEUSERDEVICESRESPONSE._serialized_start=3154
+  _APPROVEUSERDEVICESRESPONSE._serialized_end=3246
+  _ENTERPRISEUSERDATAKEY._serialized_start=3249
+  _ENTERPRISEUSERDATAKEY._serialized_end=3384
+  _ENTERPRISEUSERDATAKEYS._serialized_start=3386
+  _ENTERPRISEUSERDATAKEYS._serialized_end=3459
+  _ENTERPRISEDATAREQUEST._serialized_start=3461
+  _ENTERPRISEDATAREQUEST._serialized_end=3511
+  _SPECIALPROVISIONING._serialized_start=3513
+  _SPECIALPROVISIONING._serialized_end=3561
+  _GENERALDATAENTITY._serialized_start=3564
+  _GENERALDATAENTITY._serialized_end=3799
+  _NODE._serialized_start=3802
+  _NODE._serialized_end=4055
+  _ROLE._serialized_start=4058
+  _ROLE._serialized_end=4200
+  _USER._serialized_start=4203
+  _USER._serialized_end=4515
+  _USERALIAS._serialized_start=4517
+  _USERALIAS._serialized_end=4572
+  _COMPLIANCEREPORTMETADATA._serialized_start=4575
+  _COMPLIANCEREPORTMETADATA._serialized_end=4747
+  _MANAGEDNODE._serialized_start=4749
+  _MANAGEDNODE._serialized_end=4832
+  _USERMANAGEDNODE._serialized_start=4834
+  _USERMANAGEDNODE._serialized_end=4918
+  _USERPRIVILEGE._serialized_start=4920
+  _USERPRIVILEGE._serialized_end=5039
+  _ROLEUSER._serialized_start=5041
+  _ROLEUSER._serialized_end=5093
+  _ROLEPRIVILEGE._serialized_start=5095
+  _ROLEPRIVILEGE._serialized_end=5172
+  _ROLEENFORCEMENT._serialized_start=5174
+  _ROLEENFORCEMENT._serialized_end=5247
+  _TEAM._serialized_start=5250
+  _TEAM._serialized_end=5419
+  _TEAMUSER._serialized_start=5421
+  _TEAMUSER._serialized_end=5492
+  _GETDISTRIBUTORINFORESPONSE._serialized_start=5494
+  _GETDISTRIBUTORINFORESPONSE._serialized_end=5569
+  _DISTRIBUTOR._serialized_start=5571
+  _DISTRIBUTOR._serialized_end=5637
+  _MSPINFO._serialized_start=5640
+  _MSPINFO._serialized_end=5925
+  _MANAGEDCOMPANY._serialized_start=5928
+  _MANAGEDCOMPANY._serialized_end=6201
+  _MSPPOOL._serialized_start=6203
+  _MSPPOOL._serialized_end=6285
+  _MSPCONTACT._serialized_start=6287
+  _MSPCONTACT._serialized_end=6345
+  _LICENSEADDON._serialized_start=6348
+  _LICENSEADDON._serialized_end=6560
+  _MCDEFAULT._serialized_start=6562
+  _MCDEFAULT._serialized_end=6677
+  _MSPPERMITS._serialized_start=6680
+  _MSPPERMITS._serialized_end=6890
+  _LICENSE._serialized_start=6893
+  _LICENSE._serialized_end=7437
+  _BRIDGE._serialized_start=7439
+  _BRIDGE._serialized_end=7549
+  _SCIM._serialized_start=7551
+  _SCIM._serialized_end=7667
+  _EMAILPROVISION._serialized_start=7669
+  _EMAILPROVISION._serialized_end=7745
+  _QUEUEDTEAM._serialized_start=7747
+  _QUEUEDTEAM._serialized_end=7829
+  _QUEUEDTEAMUSER._serialized_start=7831
+  _QUEUEDTEAMUSER._serialized_end=7879
+  _TEAMSADDRESULT._serialized_start=7882
+  _TEAMSADDRESULT._serialized_end=8046
+  _TEAMADDRESULT._serialized_start=8048
+  _TEAMADDRESULT._serialized_end=8133
+  _SSOSERVICE._serialized_start=8136
+  _SSOSERVICE._serialized_end=8281
+  _REPORTFILTERUSER._serialized_start=8283
+  _REPORTFILTERUSER._serialized_end=8332
+  _DEVICEREQUESTFORADMINAPPROVAL._serialized_start=8335
+  _DEVICEREQUESTFORADMINAPPROVAL._serialized_end=8614
+  _ENTERPRISEDATA._serialized_start=8616
+  _ENTERPRISEDATA._serialized_end=8712
+  _ENTERPRISEDATARESPONSE._serialized_start=8715
+  _ENTERPRISEDATARESPONSE._serialized_end=8923
+  _BACKUPREQUEST._serialized_start=8925
+  _BACKUPREQUEST._serialized_end=8967
+  _BACKUPRECORD._serialized_start=8970
+  _BACKUPRECORD._serialized_end=9122
+  _BACKUPKEY._serialized_start=9124
+  _BACKUPKEY._serialized_end=9170
+  _BACKUPUSER._serialized_start=9173
+  _BACKUPUSER._serialized_end=9442
+  _BACKUPRESPONSE._serialized_start=9445
+  _BACKUPRESPONSE._serialized_end=9603
+  _BACKUPFILE._serialized_start=9605
+  _BACKUPFILE._serialized_end=9706
+  _BACKUPSRESPONSE._serialized_start=9708
+  _BACKUPSRESPONSE._serialized_end=9764
+  _GETENTERPRISEDATAKEYSREQUEST._serialized_start=9766
+  _GETENTERPRISEDATAKEYSREQUEST._serialized_end=9812
+  _GETENTERPRISEDATAKEYSRESPONSE._serialized_start=9815
+  _GETENTERPRISEDATAKEYSRESPONSE._serialized_end=10070
+  _ROLEKEY._serialized_start=10072
+  _ROLEKEY._serialized_end=10166
+  _MSPKEY._serialized_start=10168
+  _MSPKEY._serialized_end=10268
+  _ENTERPRISEKEYS._serialized_start=10270
+  _ENTERPRISEKEYS._serialized_end=10394
+  _TREEKEY._serialized_start=10396
+  _TREEKEY._serialized_end=10468
+  _SHAREDRECORDRESPONSE._serialized_start=10470
+  _SHAREDRECORDRESPONSE._serialized_end=10539
+  _SHAREDRECORDEVENT._serialized_start=10541
+  _SHAREDRECORDEVENT._serialized_end=10653
+  _SETRESTRICTVISIBILITYREQUEST._serialized_start=10655
+  _SETRESTRICTVISIBILITYREQUEST._serialized_end=10701
+  _USERADDREQUEST._serialized_start=10704
+  _USERADDREQUEST._serialized_end=10912
+  _USERUPDATEREQUEST._serialized_start=10914
+  _USERUPDATEREQUEST._serialized_end=10972
+  _USERUPDATE._serialized_start=10975
+  _USERUPDATE._serialized_end=11150
+  _USERUPDATERESPONSE._serialized_start=11152
+  _USERUPDATERESPONSE._serialized_end=11217
+  _USERUPDATERESULT._serialized_start=11219
+  _USERUPDATERESULT._serialized_end=11309
+  _COMPLIANCERECORDOWNERSREQUEST._serialized_start=11311
+  _COMPLIANCERECORDOWNERSREQUEST._serialized_end=11385
+  _COMPLIANCERECORDOWNERSRESPONSE._serialized_start=11387
+  _COMPLIANCERECORDOWNERSRESPONSE._serialized_end=11466
+  _RECORDOWNER._serialized_start=11468
+  _RECORDOWNER._serialized_end=11523
+  _PRELIMINARYCOMPLIANCEDATAREQUEST._serialized_start=11526
+  _PRELIMINARYCOMPLIANCEDATAREQUEST._serialized_end=11692
+  _PRELIMINARYCOMPLIANCEDATARESPONSE._serialized_start=11695
+  _PRELIMINARYCOMPLIANCEDATARESPONSE._serialized_end=11854
+  _AUDITUSERRECORD._serialized_start=11856
+  _AUDITUSERRECORD._serialized_end=11931
+  _AUDITUSERDATA._serialized_start=11934
+  _AUDITUSERDATA._serialized_end=12075
+  _COMPLIANCEREPORTFILTERS._serialized_start=12077
+  _COMPLIANCEREPORTFILTERS._serialized_end=12204
+  _COMPLIANCEREPORTREQUEST._serialized_start=12206
+  _COMPLIANCEREPORTREQUEST._serialized_end=12333
+  _COMPLIANCEREPORTRUN._serialized_start=12336
+  _COMPLIANCEREPORTRUN._serialized_end=12469
+  _COMPLIANCEREPORTCRITERIAANDFILTER._serialized_start=12472
+  _COMPLIANCEREPORTCRITERIAANDFILTER._serialized_end=12724
+  _COMPLIANCEREPORTCRITERIA._serialized_start=12726
+  _COMPLIANCEREPORTCRITERIA._serialized_end=12824
+  _COMPLIANCEREPORTFILTER._serialized_start=12826
+  _COMPLIANCEREPORTFILTER._serialized_end=12946
+  _COMPLIANCEREPORTRESPONSE._serialized_start=12949
+  _COMPLIANCEREPORTRESPONSE._serialized_end=13622
+  _AUDITRECORD._serialized_start=13625
+  _AUDITRECORD._serialized_end=13754
+  _AUDITROLE._serialized_start=13757
+  _AUDITROLE._serialized_end=14013
+  _ROLENODEMANAGEMENT._serialized_start=14015
+  _ROLENODEMANAGEMENT._serialized_end=14109
+  _USERPROFILE._serialized_start=14111
+  _USERPROFILE._serialized_end=14218
+  _RECORDPERMISSION._serialized_start=14220
+  _RECORDPERMISSION._serialized_end=14281
+  _USERRECORD._serialized_start=14283
+  _USERRECORD._serialized_end=14378
+  _AUDITTEAM._serialized_start=14380
+  _AUDITTEAM._serialized_end=14471
+  _AUDITTEAMUSER._serialized_start=14473
+  _AUDITTEAMUSER._serialized_end=14532
+  _SHAREDFOLDERRECORD._serialized_start=14535
+  _SHAREDFOLDERRECORD._serialized_end=14694
+  _SHAREADMINRECORD._serialized_start=14696
+  _SHAREADMINRECORD._serialized_end=14773
+  _SHAREDFOLDERUSER._serialized_start=14775
+  _SHAREDFOLDERUSER._serialized_end=14845
+  _SHAREDFOLDERTEAM._serialized_start=14847
+  _SHAREDFOLDERTEAM._serialized_end=14908
+  _GETCOMPLIANCEREPORTREQUEST._serialized_start=14910
+  _GETCOMPLIANCEREPORTREQUEST._serialized_end=14957
+  _GETCOMPLIANCEREPORTRESPONSE._serialized_start=14959
+  _GETCOMPLIANCEREPORTRESPONSE._serialized_end=15009
+  _COMPLIANCEREPORTCRITERIAREQUEST._serialized_start=15011
+  _COMPLIANCEREPORTCRITERIAREQUEST._serialized_end=15065
+  _SAVECOMPLIANCEREPORTCRITERIARESPONSE._serialized_start=15067
+  _SAVECOMPLIANCEREPORTCRITERIARESPONSE._serialized_end=15126
+  _LINKEDRECORD._serialized_start=15128
+  _LINKEDRECORD._serialized_end=15180
+  _GETSHARINGADMINSREQUEST._serialized_start=15182
+  _GETSHARINGADMINSREQUEST._serialized_end=15269
+  _USERPROFILEEXT._serialized_start=15272
+  _USERPROFILEEXT._serialized_end=15496
+  _GETSHARINGADMINSRESPONSE._serialized_start=15498
+  _GETSHARINGADMINSRESPONSE._serialized_end=15577
+  _TEAMSENTERPRISEUSERSADDREQUEST._serialized_start=15579
+  _TEAMSENTERPRISEUSERSADDREQUEST._serialized_end=15674
+  _TEAMSENTERPRISEUSERSADDTEAMREQUEST._serialized_start=15676
+  _TEAMSENTERPRISEUSERSADDTEAMREQUEST._serialized_end=15792
+  _TEAMSENTERPRISEUSERSADDUSERREQUEST._serialized_start=15795
+  _TEAMSENTERPRISEUSERSADDUSERREQUEST._serialized_end=15966
+  _TYPEDKEY._serialized_start=15968
+  _TYPEDKEY._serialized_end=16038
+  _TEAMSENTERPRISEUSERSADDRESPONSE._serialized_start=16040
+  _TEAMSENTERPRISEUSERSADDRESPONSE._serialized_end=16155
+  _TEAMSENTERPRISEUSERSADDTEAMRESPONSE._serialized_start=16158
+  _TEAMSENTERPRISEUSERSADDTEAMRESPONSE._serialized_end=16354
+  _TEAMSENTERPRISEUSERSADDUSERRESPONSE._serialized_start=16357
+  _TEAMSENTERPRISEUSERSADDUSERRESPONSE._serialized_end=16516
+  _DOMAINALIAS._serialized_start=16518
+  _DOMAINALIAS._serialized_end=16595
+  _DOMAINALIASREQUEST._serialized_start=16597
+  _DOMAINALIASREQUEST._serialized_end=16663
+  _DOMAINALIASRESPONSE._serialized_start=16665
+  _DOMAINALIASRESPONSE._serialized_end=16732
+  _ENTERPRISEUSERSPROVISIONREQUEST._serialized_start=16734
+  _ENTERPRISEUSERSPROVISIONREQUEST._serialized_end=16843
+  _ENTERPRISEUSERSPROVISION._serialized_start=16846
+  _ENTERPRISEUSERSPROVISION._serialized_end=17284
+  _ENTERPRISEUSERSPROVISIONRESPONSE._serialized_start=17286
+  _ENTERPRISEUSERSPROVISIONRESPONSE._serialized_end=17381
+  _ENTERPRISEUSERSPROVISIONRESULT._serialized_start=17383
+  _ENTERPRISEUSERSPROVISIONRESULT._serialized_end=17496
+  _ENTERPRISEUSERSADDREQUEST._serialized_start=17498
+  _ENTERPRISEUSERSADDREQUEST._serialized_end=17595
+  _ENTERPRISEUSERSADD._serialized_start=17598
+  _ENTERPRISEUSERSADD._serialized_end=17866
+  _ENTERPRISEUSERSADDRESPONSE._serialized_start=17869
+  _ENTERPRISEUSERSADDRESPONSE._serialized_end=18024
+  _ENTERPRISEUSERSADDRESULT._serialized_start=18027
+  _ENTERPRISEUSERSADDRESULT._serialized_end=18177
+  _UPDATEMSPPERMITSREQUEST._serialized_start=18180
+  _UPDATEMSPPERMITSREQUEST._serialized_end=18365
+  _DELETEENTERPRISEUSERSREQUEST._serialized_start=18367
+  _DELETEENTERPRISEUSERSREQUEST._serialized_end=18424
+  _DELETEENTERPRISEUSERSTATUS._serialized_start=18426
+  _DELETEENTERPRISEUSERSTATUS._serialized_end=18537
+  _DELETEENTERPRISEUSERSRESPONSE._serialized_start=18539
+  _DELETEENTERPRISEUSERSRESPONSE._serialized_end=18632
+  _CLEARSECURITYDATAREQUEST._serialized_start=18634
+  _CLEARSECURITYDATAREQUEST._serialized_end=18753
 # @@protoc_insertion_point(module_scope)

@@ -17,8 +17,8 @@ import itertools
 import json
 import logging
 import re
-from typing import Dict, Any, List, Optional, Iterable, Tuple, Set
-from colorama import init, Fore, Back, Style
+from typing import Dict, Any, List, Optional, Iterable, Tuple
+from colorama import Fore, Back, Style
 
 from .base import Command, GroupCommand, RecordMixin, FolderMixin
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3, record_types
@@ -26,7 +26,7 @@ from ..breachwatch import BreachWatch
 from ..error import CommandError
 from ..record import get_totp_code
 from ..params import KeeperParams
-from ..proto import enterprise_pb2, record_pb2
+from ..proto import record_pb2
 from ..subfolder import try_resolve_path, get_folder_path, find_folders, find_all_folders, BaseFolderNode, get_folder_uids
 from ..team import Team
 from . import record_edit, base, record_totp, record_file_report
@@ -1101,30 +1101,31 @@ class TrashUnshareCommand(Command, TrashMixin):
 
         record_shares = api.get_record_shares(params, to_restore, is_share_admin=True)
         if record_shares:
-            remove_shares = []
+            remove_shares = []   # type: List[record_pb2.SharedRecord]
             for record_share in record_shares:
                 if 'shares' in record_share:
                     shares = record_share['shares']
                     if 'user_permissions' in shares:
                         for user_permission in shares['user_permissions']:
                             if user_permission.get('owner') is False:
-                                remove_shares.append({
-                                    'to_username': user_permission['username'],
-                                    'record_uid': record_share['record_uid'],
-                                })
+                                rs_rq = record_pb2.SharedRecord()
+                                rs_rq.toUsername = user_permission['username']
+                                rs_rq.recordUid = utils.base64_url_decode(record_share['record_uid'])
+                                remove_shares.append(rs_rq)
+
             while len(remove_shares) > 0:
-                chunk = remove_shares[:95]
-                remove_shares = remove_shares[95:]
-                rq = {
-                    'command': 'record_share_update',
-                    'remove_shares': chunk,
-                }
-                rs = api.communicate(params, rq)
-                if 'remove_statuses' in rs:
-                    for rm_status in rs['remove_statuses']:
-                        if rm_status.get('status') != 'success':
-                            logging.info('Remove share \"%s\" from record UID \"%s\" error: %s',
-                                         rm_status['username'], rm_status['record_uid'], rm_status['message'])
+                chunk = remove_shares[:900]
+                remove_shares = remove_shares[900:]
+                rsu_rq = record_pb2.RecordShareUpdateRequest()
+                rsu_rq.removeSharedRecord.extend(chunk)
+
+                rsu_rs = api.communicate_rest(params, rsu_rq, 'vault/records_share_update',
+                                              rs_type=record_pb2.RecordShareUpdateResponse)
+                for srs in rsu_rs.removeSharedRecordStatus:
+                    if srs.status.lower() != 'success':
+                        record_uid = utils.base64_url_encode(srs.recordUid)
+                        logging.info('Remove share \"%s\" from record UID \"%s\" error: %s',
+                                     srs.username, record_uid, srs.message)
 
             TrashMixin.last_revision = 0
 

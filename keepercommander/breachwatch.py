@@ -16,7 +16,7 @@ from typing import Iterator, Tuple, Optional, List, Callable, Dict, Iterable, Un
 
 from .constants import KEEPER_PUBLIC_HOSTS
 from . import api, crypto, utils, rest_api, vault
-from .proto import breachwatch_pb2, client_pb2, APIRequest_pb2
+from .proto import breachwatch_pb2, client_pb2, APIRequest_pb2, enterprise_pb2
 from .error import KeeperApiError
 from .params import KeeperParams
 
@@ -179,7 +179,11 @@ class BreachWatch(object):
                 # truncate domain string if needed to avoid reaching RSA encryption data size limitation
                 rec_sd['domain'] = domain[:200]
             sec_data.uid = utils.base64_url_decode(rec_uid)
-            sec_data.data = crypto.encrypt_rsa(json.dumps(rec_sd).encode('utf-8'), params.enterprise_rsa_key)
+            data = json.dumps(rec_sd).encode('utf-8')
+            if params.forbid_rsa:
+                sec_data.data = crypto.encrypt_ec(data, params.enterprise_ec_key)
+            else:
+                sec_data.data = crypto.encrypt_rsa(data, params.enterprise_rsa_key)
             return sec_data
 
         # Action not allowed for non-enterprise users
@@ -211,6 +215,8 @@ class BreachWatch(object):
         update_rq = APIRequest_pb2.SecurityDataRequest()
         rec_sec_data = calculate_security_data()
         update_rq.recordSecurityData.append(rec_sec_data)
+        if params.forbid_rsa:
+            update_rq.encryptionType = enterprise_pb2.KT_ENCRYPTED_BY_PUBLIC_KEY_ECC
         api.communicate_rest(params, update_rq, 'enterprise/update_security_data')
 
     @staticmethod
