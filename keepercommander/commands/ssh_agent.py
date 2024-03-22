@@ -207,7 +207,7 @@ def try_extract_private_key(params, record_or_uid):
     # check notes field
     if not private_key:
         if isinstance(record, (vault.PasswordRecord, vault.TypedRecord)):
-            if 444 < len(record.notes) < 4000:
+            if 444 <= len(record.notes) < 4000:
                 header, _, _ = record.notes.partition('\n')
                 if is_private_key(header):
                     private_key = record.notes
@@ -217,14 +217,14 @@ def try_extract_private_key(params, record_or_uid):
         if isinstance(record, vault.TypedRecord):
             try_values = (x.get_default_value() for x in itertools.chain(record.fields, record.custom) if x.type in ('text', 'multiline', 'secret', 'note'))
             for value in (x for x in try_values if x):
-                if isinstance(value, str) and 444 < len(value) < 4000:
+                if isinstance(value, str) and 444 <= len(value) < 4000:
                     header, _, _ = value.partition('\n')
                     if is_private_key(header):
                         private_key = value
                         break
         elif isinstance(record, vault.PasswordRecord):
             for value in (x.value for x in record.custom if x.value):
-                if isinstance(value, str) and 444 < len(value) < 4000:
+                if isinstance(value, str) and 444 <= len(value) < 4000:
                     header, _, _ = value.partition('\n')
                     if is_private_key(header):
                         private_key = value
@@ -244,7 +244,7 @@ def try_extract_private_key(params, record_or_uid):
                         if file_record.name and file_record.name != file_record.title:
                             names.append(file_record.name)
                         if any(True for x in names if is_private_key_name(x)):
-                            if 444 < file_record.size < 4000:
+                            if 444 <= file_record.size < 4000:
                                 key_file_uids.append(file_uid)
                 if len(key_file_uids) == 1:
                     download_rq = next(attachment.prepare_attachment_download(params, key_file_uids[0]), None)
@@ -258,7 +258,7 @@ def try_extract_private_key(params, record_or_uid):
                     if atta.name and atta.title != atta.name:
                         names.append(atta.name)
                     if any(True for x in names if is_private_key_name(x)):
-                        if 444 < atta.size < 4000:
+                        if 444 <= atta.size < 4000:
                             key_attachment_ids.append(atta.id)
             if len(key_attachment_ids) == 1:
                 download_rq = next(attachment.prepare_attachment_download(params, record.record_uid, key_attachment_ids[0]), None)
@@ -504,7 +504,7 @@ class SshAgentContext(logging.Handler):
                             hash_algorithm = hashes.SHA512()
                             signature_method = 'rsa-sha2-512'
                         elif flags & SSH_AGENT_RSA_SHA2_256:
-                            hash_algorithm = hashes.SHA512()
+                            hash_algorithm = hashes.SHA256()
                             signature_method = 'rsa-sha2-256'
                         else:
                             hash_algorithm = hashes.SHA1()
