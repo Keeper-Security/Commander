@@ -604,7 +604,8 @@ class ComplianceSummaryReportCommand(BaseComplianceReportCommand):
             num_owned = len(u.records)
             vault_recs = sox_data.get_vault_records(u.user_uid)
             num_total = len(vault_recs)
-            return u.email, num_total, num_owned, num_active, num_deleted
+            email = managed_user_email_lookup.get(u.user_uid) or u.email
+            return email, num_total, num_owned, num_active, num_deleted
 
         filter_by_node = node != root_node
         from keepercommander.commands.enterprise import EnterpriseInfoCommand
@@ -618,7 +619,8 @@ class ComplianceSummaryReportCommand(BaseComplianceReportCommand):
         }
         cmd_rs = partial(cmd.execute, params, **cmd_kwargs)()
         managed_users = json.loads(cmd_rs)
-        managed_user_ids = {mu.get('user_id') for mu in managed_users}
+        managed_user_email_lookup = {mu.get('user_id'): mu.get('email') for mu in managed_users}
+        managed_user_ids = set(managed_user_email_lookup.keys())
         empty_vault_user_ids = {user_id for user_id in managed_user_ids if user_id not in sox_data.get_users()}
         empty_vault_users = [mu for mu in managed_users if mu.get('user_id') in empty_vault_user_ids]
         sox_users = sox_data.get_users().values()
