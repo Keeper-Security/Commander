@@ -174,7 +174,7 @@ def get_folder_uids(params, name):  # type: (KeeperParams, str or None) -> Set[O
         if rs is not None:
             folders, pattern = rs
             if len(pattern) == 0:
-                uids.update([folder.uid for folder in folders])
+                uids.update([folder.uid or '' for folder in folders])
     return uids
 
 
