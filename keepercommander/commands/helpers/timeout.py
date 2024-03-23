@@ -22,13 +22,24 @@ def parse_timeout(timeout_input):
         all_units = TIMEOUT_ALLOWED_UNITS
         tdelta_kwargs = {}
         for v, input_unit in findall(r'(\d+)\s*([a-zA-Z]+)\s*', timeout_input):
-            key_match = [t for t in all_units if t.startswith(input_unit)]
+            input_unit = input_unit.lower()
+            key_match = [t[0] for t in all_units if input_unit == t[0] or input_unit == t[1]]
             if len(key_match) == 0:
+                supported_units = ', '.join((f'{x[0]}/{x[1]}' for x in TIMEOUT_ALLOWED_UNITS))
                 raise ValueError(
-                    f'{input_unit} is not allowed as a unit for the timeout value. '
-                    f'Valid units for the timeout value are {TIMEOUT_ALLOWED_UNITS}.'
+                    f'{input_unit} is not allowed as a unit for the timeout value.\n'
+                    f'Valid units are "{supported_units}".'
                 )
             tdelta_kwargs[key_match[0]] = int(v)
+        days = tdelta_kwargs.get('days') or 0
+        if 'years' in tdelta_kwargs:
+            years = tdelta_kwargs.pop('years')
+            days += years * 365
+        if 'months' in tdelta_kwargs:
+            months = tdelta_kwargs.pop('months')
+            days += months * 30
+        if days > 0:
+            tdelta_kwargs['days'] = days
     return timedelta(**tdelta_kwargs)
 
 

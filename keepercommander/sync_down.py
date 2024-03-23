@@ -228,8 +228,10 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                     'can_share': rmd.canShare,
                     'record_key': utils.base64_url_encode(rmd.recordKey),
                     'record_key_type': rmd.recordKeyType,
-                    'owner_account_uid': utils.base64_url_encode(rmd.ownerAccountUid or params.account_uid_bytes)
+                    'owner_account_uid': utils.base64_url_encode(rmd.ownerAccountUid or params.account_uid_bytes),
                 }  # type: dict
+                if rmd.expiration > 0:
+                    meta_data['expiration'] = rmd.expiration
                 record_uid = meta_data['record_uid']
                 params.meta_data_cache[record_uid] = meta_data
                 params.record_owner_cache[record_uid] = RecordOwner(meta_data['owner'], meta_data['owner_account_uid'])
@@ -375,6 +377,8 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                         sf['users'].append(sf_user)
                     sf_user['manage_records'] = sfu.manageRecords
                     sf_user['manage_users'] = sfu.manageUsers
+                    if sfu.expiration > 0:
+                        sf_user['expiration'] = sfu.expiration
 
         if len(response.sharedFolderTeams) > 0:
             for sft in response.sharedFolderTeams:
@@ -393,6 +397,8 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                     sf_team['name'] = sft.name if hasattr(sft, 'name') else ''
                     sf_team['manage_records'] = sft.manageRecords
                     sf_team['manage_users'] = sft.manageUsers
+                    if sft.expiration > 0:
+                        sf_team['expiration'] = sft.expiration
 
         if len(response.sharedFolderRecords) > 0:
             def assign_shared_folder_record(sfr, sf_record):

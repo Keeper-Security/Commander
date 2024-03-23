@@ -1241,23 +1241,28 @@ def get_record_shares(params, record_uids, is_share_admin=False):
                 rec['shares']['user_permissions'] = []
                 rec['shares']['shared_folder_permissions'] = []
                 for up in info.userPermission:
-                    rec['shares']['user_permissions'].append({
+                    oup = {
                         'username': up.username,
                         'owner': up.owner,
                         'share_admin': up.shareAdmin,
                         'shareable': up.sharable,
                         'editable': up.editable,
-                        'awaiting_approval': up.awaitingApproval,
-                        'expiration': up.expiration,
-                    })
+                    }
+                    if up.awaitingApproval:
+                        oup['awaiting_approval'] = up.awaitingApproval
+                    if up.expiration > 0:
+                        oup['expiration'] = up.expiration
+                    rec['shares']['user_permissions'].append(oup)
                 for sp in info.sharedFolderPermission:
-                    rec['shares']['shared_folder_permissions'].append({
+                    osp = {
                         'shared_folder_uid': utils.base64_url_encode(sp.sharedFolderUid),
                         'reshareable': sp.resharable,
                         'editable': sp.editable,
                         'revision': sp.revision,
-                        'expiration': sp.expiration,
-                    })
+                    }
+                    if sp.expiration > 0:
+                        osp['expiration'] = sp.expiration
+                    rec['shares']['shared_folder_permissions'].append(osp)
 
                 if record_uid not in params.record_cache:
                     result.append(rec)
