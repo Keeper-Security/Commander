@@ -8,8 +8,8 @@
 # Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-from typing import List, Optional
 
+import datetime
 
 class SharedFolder:
     """Defines a Keeper Shared Folder"""
@@ -67,18 +67,27 @@ class SharedFolder:
             print('{0:>25s}:'.format('Record Permissions'))
             for r in self.records:
                 print('{0:>25s}: {1}'.format(r['record_uid'], SharedFolder.record_permission_to_string(r)))
+                expiration = SharedFolder.expiration_to_string(r)
+                if expiration:
+                    print('{0:>25s}  {1}'.format('', expiration))
 
         if len(self.users) > 0:
             print('')
             print('{0:>25s}:'.format('User Permissions'))
             for u in self.users:
                 print('{0:>25s}: {1}'.format(u['username'], SharedFolder.user_permission_to_string(u)))
+                expiration = SharedFolder.expiration_to_string(u)
+                if expiration:
+                    print('{0:>25s}  {1}'.format('', expiration))
 
         if len(self.teams) > 0:
             print('')
             print('{0:>25s}:'.format('Team Permissions'))
             for t in self.teams:
                 print('{0:>25s}: {1}'.format(t['name'], SharedFolder.user_permission_to_string(t)))
+                expiration = SharedFolder.expiration_to_string(t)
+                if expiration:
+                    print('{0:>25s}  {1}'.format('', expiration))
 
         if self.share_admins:
             print('')
@@ -113,6 +122,13 @@ class SharedFolder:
             if can_edit:
                 return 'Can Edit'
             return 'Can Share'
+
+    @staticmethod
+    def expiration_to_string(permission):
+        if isinstance(permission, dict):
+            expires = permission.get('expiration')
+            if isinstance(expires, (int, float)) and expires > 0:
+                return 'Expires: ' + str(datetime.datetime.fromtimestamp(expires // 1000))
 
     def to_string(self):
         target = self.shared_folder_uid + str(self.users) + str(self.teams)

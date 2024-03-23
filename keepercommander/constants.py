@@ -74,7 +74,13 @@ ROLE_PRIVILEGES = [
 TIMEOUT_DEFAULT = timedelta(0)
 TIMEOUT_MIN = timedelta(minutes=1)
 TIMEOUT_DEFAULT_UNIT = 'minutes'
-TIMEOUT_ALLOWED_UNITS = ('days', 'hours', 'minutes')
+TIMEOUT_ALLOWED_UNITS = (
+    ('years', 'y'),
+    ('months', 'mo'),
+    ('days', 'd'),
+    ('hours', 'h'),
+    ('minutes', 'mi')
+)
 
 EMAIL_PATTERN = r"(^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$)"
 

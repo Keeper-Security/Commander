@@ -88,6 +88,7 @@ class SharePermissions:
         self.can_edit = False
         self.can_share = False
         self.can_view = True
+        self.expiration = 0
         self.folder_path = ''
         self.types = set()
         self.bits = 0
@@ -132,6 +133,9 @@ class SharePermissions:
         sp.can_edit = perms.get('editable') or perms.get('manage_records') or sp.is_admin
         sp.can_share = perms.get('shareable') or perms.get('manage_users') or sp.is_admin
         sp.can_view = perms.get('view', True)
+        exp = perms.get('expiration')
+        if isinstance(exp, int) and exp > 0:
+            sp.expiration = exp
         return sp
 
     def apply_restrictions(self, *restrictions):
@@ -185,6 +189,13 @@ class SharedRecord:
         existing.can_share = existing.can_share or new_perms.can_share
         existing.can_edit = existing.can_edit or new_perms.can_edit
         existing.update_types(new_perms.types)
+        if existing.expiration > 0:
+            if new_perms.expiration > 0:
+                if new_perms.expiration > existing.expiration:
+                    existing.expiration = new_perms.expiration
+            else:
+                existing.expiration = 0
+
         self.permissions[share_target] = existing
         return existing
 

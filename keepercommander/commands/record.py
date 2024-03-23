@@ -531,6 +531,9 @@ class RecordGetUidCommand(Command):
                                                      ' 3' if r.get('sharable') else
                                                      '') + r.get('username'))
                             for no, uo in enumerate(perm):
+                                username = uo['username']
+                                if username == params.user:
+                                    username += ' (you)'
                                 flags = ''
                                 if uo.get('owner'):
                                     flags = 'Owner'
@@ -547,9 +550,13 @@ class RecordGetUidCommand(Command):
                                         flags = flags + 'Share'
                                 if not flags:
                                     flags = 'Read Only'
-                                print('{0:>21s} {1:<26s} ({2}) {3}'.format(
-                                    'Shared Users:' if no == 0 else '', uo['username'], flags,
-                                    'self' if uo['username'] == params.user else ''))
+                                expires = uo.get('expiration')
+                                if isinstance(expires, (int, float)) and expires > 0:
+                                    expires = 'Expires: ' + str(datetime.datetime.fromtimestamp(expires // 1000))
+                                else:
+                                    expires = ''
+                                print('{0:>21s} {1:<32s} ({2}) {3}'.format(
+                                    'Shared Users:' if no == 0 else '', username, flags, expires))
 
                         if 'shared_folder_permissions' in rec['shares']:
                             for no, sfo in enumerate(rec['shares']['shared_folder_permissions']):
@@ -564,6 +571,11 @@ class RecordGetUidCommand(Command):
                                     flags += 'Share'
                                 if not flags:
                                     flags = 'Read Only'
+                                expires = sfo.get('expiration')
+                                if isinstance(expires, (int, float)) and expires > 0:
+                                    expires = 'Expires: ' + str(datetime.datetime.fromtimestamp(expires // 1000))
+                                else:
+                                    expires = ''
                                 sf_uid = sfo['shared_folder_uid']
                                 folder_paths = []
                                 for f_uid in find_folders(params, uid):
@@ -580,8 +592,8 @@ class RecordGetUidCommand(Command):
                                     if sf_uid in params.shared_folder_cache:
                                         folder_paths.append(params.shared_folder_cache[sf_uid]['name_unencrypted'])
                                 for path in folder_paths:
-                                    print('{0:>21s} {1:<26s} ({2})'.format(
-                                        'Shared Folders:' if no == 0 else '', path, flags))
+                                    print('{0:>21s} {1:<32s} ({2}) {3}'.format(
+                                        'Shared Folders:' if no == 0 else '', path, flags, expires))
 
                     if admins:
                         for no, admin in enumerate(admins):
