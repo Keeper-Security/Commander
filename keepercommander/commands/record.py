@@ -1679,8 +1679,12 @@ class RecordRemoveCommand(Command):
         for name in record_names:
             if name in params.record_cache:
                 record_uid = name
-                for folder in find_all_folders(params, record_uid):
-                    records_to_delete.append((folder, record_uid))
+                folders = list(find_all_folders(params, record_uid))
+                if len(folders) > 0:
+                    for folder in folders:
+                        records_to_delete.append((folder, record_uid))
+                else:
+                    records_to_delete.append((params.root_folder, record_uid))
             else:
                 orig_len = len(records_to_delete)
                 rs = try_resolve_path(params, name, find_all_matches=True)
