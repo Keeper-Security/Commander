@@ -230,7 +230,7 @@ class WebRTCConnection:
         router_response = router_send_action_to_gateway(
             params=self.params,
             gateway_action=GatewayActionWebRTCSession(inputs={"recordUid": self.record_uid, "data": encrypted_data}),
-            message_type=pam_pb2.CMT_GENERAL,
+            message_type=pam_pb2.CMT_CONNECT,
             is_streaming=False,
             destination_gateway_uid_str=self.gateway_uid,
             gateway_timeout=30000
