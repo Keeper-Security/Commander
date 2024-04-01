@@ -259,6 +259,8 @@ class SyncDownCommand(Command):
                     del params.config['skip_records']
 
         api.sync_down(params, record_types=force is True)
+        from keepercommander.loginv3 import LoginV3Flow
+        LoginV3Flow.populateAccountSummary(params)
 
         accepted = False
         if len(params.pending_share_requests) > 0:
