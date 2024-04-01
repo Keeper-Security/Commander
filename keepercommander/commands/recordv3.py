@@ -1032,9 +1032,8 @@ class RecordRecordType(Command):
         enterprise_rt_id_max = enterprise_rt_id_min + num_rts_per_scope
         is_enterprise_rt = enterprise_rt_id_min < rtid <= enterprise_rt_id_max
         real_type_id = rtid % num_rts_per_scope
-        is_custom_rt = real_type_id > 1000
 
-        if not is_enterprise_rt or not is_custom_rt:
+        if not is_enterprise_rt:
             logging.error('Only custom record types can be modified or removed')
             return
 
