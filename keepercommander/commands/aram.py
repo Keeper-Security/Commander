@@ -1895,7 +1895,7 @@ class ActionReportCommand(EnterpriseCommand):
                 rq = report_rq(query_filter, req_limit, cols, report_type='span')
                 rs = api.communicate(params, rq)
                 events = rs['audit_event_overview_report_rows']
-                to_exclude = {event.get(username_field) for event in events}
+                to_exclude = {event.get(username_field, '').lower() for event in events}
                 excluded.update(to_exclude.intersection(candidate_usernames))
                 end = int(events[-1]['last_created']) if events else 0
                 done = (len(events) < req_limit
