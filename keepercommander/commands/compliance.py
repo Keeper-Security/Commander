@@ -614,11 +614,11 @@ class ComplianceSummaryReportCommand(BaseComplianceReportCommand):
             'users': True,
             'quiet': True,
             'format': 'json',
-            'node': str(node) if filter_by_node else None,
-            'pattern': 'active'
+            'node': str(node) if filter_by_node else None
         }
         cmd_rs = partial(cmd.execute, params, **cmd_kwargs)()
         managed_users = json.loads(cmd_rs)
+        managed_users = [mu for mu in managed_users if mu.get('status', '').lower() != 'invited']
         managed_user_email_lookup = {mu.get('user_id'): mu.get('email') for mu in managed_users}
         managed_user_ids = set(managed_user_email_lookup.keys())
         empty_vault_user_ids = {user_id for user_id in managed_user_ids if user_id not in sox_data.get_users()}
