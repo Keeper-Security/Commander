@@ -1273,7 +1273,7 @@ def get_record_shares(params, record_uids, is_share_admin=False):
         return result
 
 
-def query_enterprise(params, force=False, tree_key=None):
+def query_enterprise(params, force=False, tree_key=None, raise_err=False):
     try:
         if force is True and params.enterprise:
             params.enterprise = None
@@ -1286,6 +1286,8 @@ def query_enterprise(params, force=False, tree_key=None):
             params.enterprise = None
         else:
             logging.warning(e, exc_info=True)
+        if raise_err:
+            raise e
 
 
 def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
