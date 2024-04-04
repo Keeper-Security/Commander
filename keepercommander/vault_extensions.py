@@ -107,7 +107,7 @@ def get_record_description(record):   # type: (vault.KeeperRecord) -> Optional[s
                 if field:
                     comps.append(field.get_default_value())
                 else:
-                    field = next((x for x in record.fields if x.type == 'host'), None)
+                    field = next((x for x in record.fields if x.type.lower() in {'host', 'pamhostname'}), None)
                     if field:
                         host = field.get_default_value()
                         if isinstance(host, dict):
