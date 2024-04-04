@@ -676,8 +676,8 @@ class RecordMixin:
                 return record.link
 
         elif isinstance(record, vault.TypedRecord):
-            if field_name in {'hostname', 'port'}:
-                field = record.get_typed_field('host')
+            if field_name in {'hostname', 'port', 'host'}:
+                field = record.get_typed_field('host') or record.get_typed_field('pamHostname')
             else:
                 field = record.get_typed_field(field_name)
             if field:
