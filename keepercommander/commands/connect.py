@@ -231,10 +231,11 @@ class ConnectSshCommand(BaseConnectCommand):
         return ssh_parser
 
     def execute(self, params, **kwargs):
+        ssh_record_types = ['serverCredentials', 'sshKeys', 'pamMachine']
         record_name = kwargs['record'] if 'record' in kwargs else None
         if not record_name:
             ls = RecordListCommand()
-            return ls.execute(params, record_type=['serverCredentials', 'sshKeys'], verbose=True, **kwargs)
+            return ls.execute(params, record_type=ssh_record_types, verbose=True, **kwargs)
 
         record = None     # type: Optional[KeeperRecord]
         if record_name in params.record_cache:
@@ -255,7 +256,7 @@ class ConnectSshCommand(BaseConnectCommand):
 
         if record is None:
             ls = RecordListCommand()
-            result = ls.execute(params, record_type=['serverCredentials', 'sshKeys'], format='json', verbose=True)
+            result = ls.execute(params, record_type=ssh_record_types, format='json', verbose=True)
             if result:
                 try:
                     recs = json.loads(result)
