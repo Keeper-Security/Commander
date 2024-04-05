@@ -1,7 +1,6 @@
 import sys
 import unittest
 from unittest import mock
-from unittest.mock import call
 
 if sys.version_info >= (3, 8):
     import asyncio
@@ -9,13 +8,15 @@ if sys.version_info >= (3, 8):
     import socket
 
     from aiortc import RTCDataChannel
+    from cryptography.utils import int_to_bytes
     from datetime import datetime
     from keepercommander import utils
     from keepercommander.commands.tunnel.port_forward.endpoint import (TunnelEntrance, ControlMessage,
                                                                        CONTROL_MESSAGE_NO_LENGTH, CONNECTION_NO_LENGTH,
                                                                        ConnectionNotFoundException,
                                                                        TERMINATOR, DATA_LENGTH, WebRTCConnection,
-                                                                       ConnectionInfo)
+                                                                       ConnectionInfo, CloseConnectionReasons,
+                                                                       TIME_STAMP_LENGTH)
     from test_pam_tunnel import new_private_key
 
     # Only define the class if Python version is 3.8 or higher
@@ -32,11 +33,12 @@ if sys.version_info >= (3, 8):
             self.kill_server_event = asyncio.Event()
             self.tunnel_symmetric_key = utils.generate_aes_key()
             self.pc = mock.MagicMock(sepc=WebRTCConnection)
+            self.pc.endpoint_name = self.endpoint_name
             self.pc.data_channel.readyState = 'open'
             self.pc.data_channel.bufferedAmount = 0
             self.incoming_queue = mock.MagicMock(sepc=asyncio.Queue())
             self.print_ready_event = asyncio.Event()
-            self.pte = TunnelEntrance(self.host, self.port, self.endpoint_name, self.pc,
+            self.pte = TunnelEntrance(self.host, self.port, self.pc,
                                       self.print_ready_event, self.logger,  self.connect_task, self.kill_server_event)
 
         async def set_queue_side_effect(self):
@@ -44,7 +46,9 @@ if sys.version_info >= (3, 8):
 
             async def mock_incoming_queue_get():
                 # First yield
-                yield b'\x00\x00\x00\x01' + int.to_bytes(len(data), DATA_LENGTH, byteorder='big') + data + TERMINATOR
+                yield (b'\x00\x00\x00\x01' +
+                       int.to_bytes(int(datetime.now().timestamp() * 1000), TIME_STAMP_LENGTH, byteorder='big') +
+                       int.to_bytes(len(data), DATA_LENGTH, byteorder='big') + data + TERMINATOR)
                 # Second yield
                 yield None
 
@@ -52,7 +56,7 @@ if sys.version_info >= (3, 8):
             self.pte.pc.web_rtc_queue.get.side_effect = mock_incoming_queue_get().__anext__
 
         async def asyncTearDown(self):
-            await self.pte.stop_server()  # ensure the server is stopped after test
+            await self.pte.stop_server(CloseConnectionReasons.Normal)  # ensure the server is stopped after test
 
         async def test_send_control_message(self):
             # Initialize self.pte.tls_writer with a mock object
@@ -71,13 +75,19 @@ if sys.version_info >= (3, 8):
                 # Prepare the expected data that should be passed to write method
                 expected_data = int.to_bytes(0, CONNECTION_NO_LENGTH, byteorder='big')
                 length = CONTROL_MESSAGE_NO_LENGTH + len(optional_data)
-                expected_data += int.to_bytes(length , DATA_LENGTH, byteorder='big')
+                expected_data += int.to_bytes(length, DATA_LENGTH, byteorder='big')
                 expected_data += int.to_bytes(control_message, CONTROL_MESSAGE_NO_LENGTH, byteorder='big')
                 expected_data += optional_data + TERMINATOR
 
                 # Assertions
+                calls = []
+                for c in mock_send_message.call_args_list:
+                    # remove timestamp from the call
+                    c_without_timestamp = c[0][0][:CONNECTION_NO_LENGTH]
+                    c_without_timestamp += c[0][0][CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH:]
+                    calls.append(c_without_timestamp)
 
-                self.assertTrue(call(expected_data) in mock_send_message.call_args_list)
+                self.assertTrue(expected_data in calls)
 
         async def test_send_control_message_with_error(self):
             # Initialize self.pte.tls_writer with a mock object
@@ -95,27 +105,27 @@ if sys.version_info >= (3, 8):
             await self.pte.send_control_message(control_message, optional_data)
 
             # Prepare the expected error log message
-            expected_error_message = (f"Endpoint {self.pte.endpoint_name}: Error sending message: Mocked Exception")
+            expected_error_message = (f"Endpoint {self.pte.pc.endpoint_name}: Error sending message: Mocked Exception")
 
             # Assertions
             self.pte.logger.error.assert_called_with(expected_error_message)
 
         async def test_forward_data_to_local_normal(self):
-            await self.set_queue_side_effect()
-            connection = (None, mock.MagicMock(spec=asyncio.StreamWriter))
             self.pte.connections[1] = ConnectionInfo(mock.AsyncMock(), mock.AsyncMock(), 0, None, None, datetime.now())
             self.pte.logger = mock.MagicMock()
             self.pte.kill_server_event = mock.MagicMock(spec=asyncio.Event)
             self.pte.stop_server = mock.AsyncMock()
-            self.pte.kill_server_event.is_set.side_effect = [False, False, False, True, True]
             self.pte.pc.closed = False
-            with mock.patch.object(self.pte, 'stop_server', new_callable=mock.AsyncMock) as mock_close:
+            with mock.patch.object(self.pte, 'stop_server', new_callable=mock.AsyncMock) as mock_close, \
+                    mock.patch.object(self.pte.connections[1].writer, 'write', new_callable=mock.AsyncMock) as mock_write, \
+                    mock.patch.object(self.pte.connections[1].writer, 'drain', new_callable=mock.AsyncMock) as mock_drain:
                 mock_close.side_effect = mock.MagicMock(spec=asyncio.Task)
+                self.pte.kill_server_event.is_set.side_effect = [False, False, False, False, True, True]
+                await self.set_queue_side_effect()
                 await self.pte.forward_data_to_local()
 
-            self.assertTrue(len(self.pte.connections) == 2)
-            self.pte.connections[1].writer.write.assert_called_with(b'some_data')
-            self.pte.connections[1].writer.drain.assert_called_once()
+                mock_write.assert_called_with(b'some_data')
+                mock_drain.assert_called_once()
 
         async def test_forward_data_to_local_error(self):
             await self.set_queue_side_effect()
@@ -135,7 +145,7 @@ if sys.version_info >= (3, 8):
             with mock.patch.object(self.pte, 'close_connection', new_callable=mock.AsyncMock) as mock_close:
                 await self.pte.process_control_message(ControlMessage.CloseConnection,
                                                        int.to_bytes(1, byteorder='big', length=CONNECTION_NO_LENGTH))
-                mock_close.assert_called_with(1)
+                mock_close.assert_called_with(1, CloseConnectionReasons.Normal)
 
         async def test_process_pong_message(self):
             self.pte.logger = mock.MagicMock()
@@ -241,6 +251,7 @@ if sys.version_info >= (3, 8):
             self.pte.kill_server_event.is_set.side_effect = [False, False, True]
             self.pte.pc = mock.MagicMock(spec=WebRTCConnection)
             self.pte.pc.data_channel = mock.MagicMock(spec=RTCDataChannel)
+            self.pte.pc.endpoint_name = 'test_endpoint'
             self.pte.pc.data_channel.readyState = 'open'
             self.pte.pc.data_channel.bufferedAmount = 0
 
@@ -248,7 +259,15 @@ if sys.version_info >= (3, 8):
             task = asyncio.create_task(self.pte.forward_data_to_tunnel(1))
             await asyncio.sleep(.01)  # Give some time for the task to run
             task.cancel()  # Cancel the task to stop it from running indefinitely
-            self.assertTrue(call(b'\x00\x00\x00\x01\x00\x00\x00\x0bhello world;') in self.pte.pc.send_message.call_args_list)
+            args_list = self.pte.pc.send_message.call_args_list
+            self.assertTrue(len(args_list) == 2)
+            second_call = args_list[1][0][0]
+            # remove uncontrollable timestamp from the first call
+            # CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + CONTROL_MESSAGE_NO_LENGTH + DATA]
+            second_call_timestamp_removed = second_call[:CONNECTION_NO_LENGTH]
+            second_call_timestamp_removed += second_call[CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH:]
+
+            self.assertTrue(b'\x00\x00\x00\x01\x00\x00\x00\x0bhello world;' == second_call_timestamp_removed)
 
         # Test Connection Not Found
         async def test_forward_data_to_tunnel_no_connection(self):
@@ -276,28 +295,43 @@ if sys.version_info >= (3, 8):
 
                 # Assert that send_control_message was called with ControlMessage.Ping three times
                 # and then with ControlMessage.CloseConnection
+                buffer = int.to_bytes(1, CONNECTION_NO_LENGTH, byteorder='big')
+                buffer += int_to_bytes(CloseConnectionReasons.Normal.value)
                 expected_calls = [
-                    mock.call(ControlMessage.CloseConnection, int.to_bytes(1, CONNECTION_NO_LENGTH, byteorder='big'))
+                    mock.call(ControlMessage.CloseConnection, buffer)
                 ]
                 mock_send_control_message.assert_has_calls(expected_calls)
 
         # Test Generic Exception
         async def test_forward_data_to_tunnel_generic_exception(self):
-            async def read_side_effect(*args, **kwargs):
-                raise Exception("Some generic exception")
-
-            mock_reader = mock.AsyncMock(spec=asyncio.StreamReader)
-            mock_reader.read.side_effect = read_side_effect
-            mock_writer = mock.AsyncMock(spec=asyncio.StreamWriter)
-            self.pte.connections[1] = ConnectionInfo(mock.AsyncMock(), mock.AsyncMock(), 0, None, None, datetime.now())
             # Mock send_control_message method
             with mock.patch.object(self.pte, 'send_control_message',
                                    new_callable=mock.AsyncMock) as mock_send_control_message:
+                async def read_side_effect(*args, **kwargs):
+                    raise Exception("Some generic exception")
+                mock_reader = mock.AsyncMock(spec=asyncio.StreamReader)
+                mock_reader.read.side_effect = read_side_effect
+                mock_writer = mock.AsyncMock(spec=asyncio.StreamWriter)
+                self.pte.connections[1] = ConnectionInfo(mock_reader, mock_writer, 0, None, None, datetime.now())
                 await self.pte.forward_data_to_tunnel(1)
 
-                # Assert that send_control_message was called with ControlMessage.Ping
-                mock_send_control_message.assert_called_with(ControlMessage.CloseConnection,
-                                                             int.to_bytes(1, CONNECTION_NO_LENGTH, byteorder='big'))
+                # Assert that send_control_message was called with ControlMessage.ClosesConnection
+                call_args = mock_send_control_message.call_args_list
+                calls = []
+                for c in call_args:
+                    calls.append((c[0][0], c[0][1]))
+
+                buffer = int.to_bytes(1, CONNECTION_NO_LENGTH, byteorder='big')
+                buffer += int_to_bytes(CloseConnectionReasons.Normal.value)
+
+                buffer2 = int.to_bytes(0, CONNECTION_NO_LENGTH, byteorder='big')
+                buffer2 += int_to_bytes(CloseConnectionReasons.Normal.value)
+
+                expected_calls = [(ControlMessage.CloseConnection, buffer),
+                                  (ControlMessage.CloseConnection, buffer),
+                                  (ControlMessage.CloseConnection, buffer2)]
+
+                self.assertTrue(calls == expected_calls)
 
         # Test handle_connection
         async def test_handle_connection(self):
@@ -326,13 +360,31 @@ if sys.version_info >= (3, 8):
 
         # Test stop_server
         async def test_stop_server(self):
-            self.pte.connections = {1: ConnectionInfo(mock.AsyncMock(), mock.AsyncMock(), 0, None, None, datetime.now())}
+            # Setup connection with AsyncMocks for reader and writer
+            self.pte.connections = {
+                0: ConnectionInfo(mock.AsyncMock(), mock.AsyncMock(), 0, None, None, datetime.now()),
+                1: ConnectionInfo(mock.AsyncMock(), mock.AsyncMock(), 0, None, None, datetime.now())}
             self.pte.kill_server_event = mock.MagicMock(spec=asyncio.Event)
-            with mock.patch.object(self.pte.connections[1].writer, 'close', new_callable=mock.AsyncMock) as mock_close, \
-                 mock.patch.object(self.pte.connections[1].writer, 'wait_closed', new_callable=mock.AsyncMock) as mock_wait_closed:
-                await self.pte.stop_server()
-                mock_close.assert_called()
-                mock_wait_closed.assert_called()
+            self.pte.server = mock.MagicMock(spec=asyncio.AbstractServer)
+
+            # Setup: Patching writer's close and wait_closed methods
+            with mock.patch.object(self.pte.connections[1].writer, 'close', new_callable=mock.Mock) as mock_close, \
+                    mock.patch.object(self.pte.connections[1].writer, 'wait_closed',
+                                      new_callable=mock.AsyncMock) as mock_wait_closed, \
+                    mock.patch.object(self.pte.server, 'wait_closed',
+                                      new_callable=mock.AsyncMock) as mock_server_wait_closed:
+
+                # Replace send_control_message with an AsyncMock
+                self.pte.send_control_message = mock.AsyncMock()
+                self.pte.closing = False
+                # Execute
+                await self.pte.stop_server(CloseConnectionReasons.Normal)
+                await asyncio.sleep(.01)  # Give some time for the task to run
+
+                # Assert
+                mock_close.assert_called_once()
+                mock_wait_closed.assert_called_once()
+                mock_server_wait_closed.assert_called()
             self.assertTrue(self.pte.connections == {})
             self.assertTrue(self.pte.server is None)
             self.assertTrue(self.pte.kill_server_event.is_set())
@@ -342,20 +394,19 @@ if sys.version_info >= (3, 8):
             self.pte.connections = {1: ConnectionInfo(mock.AsyncMock(), mock.AsyncMock(), 0, None, None, datetime.now())}
             self.pte.kill_server_event = mock.MagicMock(spec=asyncio.Event)
             with mock.patch.object(self.pte.connections[1].writer, 'close', side_effect=Exception("Test Exception")):
-                await self.pte.close_connection(1)
+                await self.pte.close_connection(1, CloseConnectionReasons.Normal)
             self.assertTrue(self.pte.connections == {})
             self.assertTrue(self.pte.server is None)
-
 
         # Test close_connection
         async def test_close_connection(self):
             self.pte.connections[1] = ConnectionInfo(mock.AsyncMock(), mock.AsyncMock(), 0, None, None, datetime.now())
-            await self.pte.close_connection(1)
+            await self.pte.close_connection(1, CloseConnectionReasons.ConnectionFailed)
             self.assertNotIn(1, self.pte.connections.keys())
 
         # Test close_connection with Connection Not Found
         async def test_close_connection_not_found(self):
-            await self.pte.close_connection(9999)  # 9999 is not in self.connections
+            await self.pte.close_connection(9999, CloseConnectionReasons.ConnectionFailed)  # 9999 is not in self.connections
 
             # Check if logger.info was called
-            self.pte.logger.info.assert_called_with("Endpoint TestEndpoint: Connection 9999 not found")
+            self.pte.logger.debug.assert_called_with("Endpoint TestEndpoint: Connection 9999 not found")
