@@ -56,7 +56,7 @@ audit_report_parser.add_argument('--format', dest='format', action='store', choi
 audit_report_parser.add_argument('--output', dest='output', action='store',
                                  help='output file name. (ignored for table format)')
 audit_report_parser.add_argument('--report-type', dest='report_type', action='store', choices=['raw', 'dim', 'hour', 'day', 'week', 'month', 'span'],
-                                 help='report type')
+                                 help='report type. (Default value: raw)', default='raw')
 audit_report_parser.add_argument('--report-format', dest='report_format', action='store', choices=['message', 'fields'],
                                  help='output format (raw reports only)')
 audit_report_parser.add_argument('--columns', dest='columns', action='append',
@@ -93,6 +93,9 @@ help_text = 'allow retrieval of additional record-detail data if not in cache'
 audit_report_parser.add_argument('--max-record-details', dest='max_record_details', action='store_true', help=help_text)
 # Ignored / superfluous flag (kept for backward-compatibility)
 audit_report_parser.add_argument('--minimal', action='store_true', help=argparse.SUPPRESS)
+search_help = 'limit results to rows that contain the specified string'
+audit_report_parser.add_argument('pattern', nargs='?', type=str, help=search_help)
+
 audit_report_parser.error = raise_parse_exception
 audit_report_parser.exit = suppress_exit
 
@@ -1282,6 +1285,13 @@ class AuditReportCommand(Command):
             has_aram = any((True for x in licenses[0].get('add_ons', [])
                             if x.get('name') == 'enterprise_audit_and_reporting'))
 
+        def filter_rows(rows, search_pattern):
+            if not search_pattern:
+                return rows
+            else:
+                return [r for r in rows if any(1 for f in r if f and str(f).lower().find(search_pattern) >= 0)]
+
+        pattern = (kwargs.get('pattern') or '').lower()
         report_type = kwargs.get('report_type', 'raw')
         if report_type == 'dim':
             columns = kwargs['columns']
@@ -1308,6 +1318,7 @@ class AuditReportCommand(Command):
                             table.append([row.get(x) for x in fields])
                         else:
                             table.append([row])
+                    table = filter_rows(table, pattern)
                     return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
             return
@@ -1556,6 +1567,7 @@ class AuditReportCommand(Command):
                             else:
                                 break
                     rs = api.communicate(params, rq)
+            table = filter_rows(table, pattern)
             return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
         else:
             if aggregates:
@@ -1578,6 +1590,7 @@ class AuditReportCommand(Command):
                     else:
                         row.append('')
                 table.append(row)
+            table = filter_rows(table, pattern)
             return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
     @staticmethod
