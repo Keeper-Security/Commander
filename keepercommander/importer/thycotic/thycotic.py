@@ -31,7 +31,7 @@ from typing import Tuple, Optional, Iterable, Union, Dict, Callable, Any, List
 from ..importer import (BaseImporter, BaseDownloadMembership, Record, SharedFolder, Folder, Attachment, Permission,
                         RecordField, BytesAttachment, Team, BaseDownloadRecordType, RecordType, RecordTypeField)
 from ...params import KeeperParams
-from ... import record_types, vault
+from ... import record_types, vault, api
 
 
 class ThycoticMixin:
@@ -214,6 +214,8 @@ class ThycoticMixin:
 class ThycoticImporter(BaseImporter, ThycoticMixin):
     def __init__(self):
         super().__init__()
+        self._last_keep_alive = int(datetime.datetime.utcnow().timestamp())
+        self._keep_alive_period = 30 * 60
 
     def support_folder_filter(self):
         return True
@@ -232,8 +234,17 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
     def request_totp():
         return input('Enter TOTP code: '.rjust(25))
 
+    def _send_keep_alive_if_needed(self, params):   # type: (KeeperParams) -> None
+        now = int(datetime.datetime.utcnow().timestamp())
+        if (now - self._last_keep_alive) > self._keep_alive_period:
+            self._last_keep_alive = now
+            try:
+                api.send_keepalive(params)
+            except:
+                pass
+
     def do_import(self, filename, **kwargs):
-        # type: (BaseImporter, str, ...) -> Iterable[Union[Record, SharedFolder]]
+        # type: (ThycoticImporter, str, ...) -> Iterable[Union[Record, SharedFolder]]
         loaded_record_types = {}
         params = kwargs.get('params')
         if isinstance(params, KeeperParams):
@@ -304,6 +315,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 pass
             print(f'Loaded {len(totp_codes)} code(s)', flush=True)
 
+        self._send_keep_alive_if_needed()
         folders = ThycoticImporter.get_folders(auth, skip_permissions=True)
         filter_folder = kwargs.get('filter_folder')
         if filter_folder:
@@ -334,6 +346,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         else:
             secrets_ids = [x['id'] for x in auth.thycotic_search(f'/v1/secrets/lookup')]
 
+        self._send_keep_alive_if_needed()
         print(f'Loading {len(secrets_ids)} Records ', flush=True, end='')
         secrets = []
         for secret_id in secrets_ids:
@@ -343,7 +356,10 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             secrets.append(secret)
             if len(secrets) % 10 == 9:
                 print('.', flush=True, end='')
+            if len(secrets) % 100 == 99:
+                self._send_keep_alive_if_needed()
 
+        self._send_keep_alive_if_needed()
         for secret in secrets:
             record = Record()
             record.title = secret.get('name', '')
