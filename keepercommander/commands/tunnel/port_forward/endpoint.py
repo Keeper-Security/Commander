@@ -36,10 +36,12 @@ MESSAGE_MAX = 5
 
 # Protocol constants
 CONTROL_MESSAGE_NO_LENGTH = 2
+TIME_STAMP_LENGTH = 8
 CONNECTION_NO_LENGTH = DATA_LENGTH = 4
 TERMINATOR = b';'
-PROTOCOL_LENGTH = CONNECTION_NO_LENGTH + DATA_LENGTH + CONTROL_MESSAGE_NO_LENGTH + len(TERMINATOR)
+PROTOCOL_LENGTH = CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + CONTROL_MESSAGE_NO_LENGTH + len(TERMINATOR)
 KRELAY_URL = 'KRELAY_URL'
+ALT_KRELAY_URL = 'KRELAY_SERVER'
 
 # WebRTC constants
 # 16 MiB max https://viblast.com/blog/2015/2/25/webrtc-bufferedamount/, so we will use 14.4 MiB or 90% of the max,
@@ -48,6 +50,20 @@ BUFFER_THRESHOLD = 134217728 * .90
 # 16 Kbytes max https://viblast.com/blog/2015/2/5/webrtc-data-channel-message-size/,
 # so we will use the max minus bytes for the protocol
 BUFFER_TRUNCATION_THRESHOLD = 16000 - PROTOCOL_LENGTH
+
+
+class CloseConnectionReasons(enum.IntEnum):
+    Normal = 0
+    Error = 1
+    Timeout = 2
+    ServerRefuse = 4
+    Client = 5
+    Unknown = 6
+    InvalidInstruction = 7
+    GuacdRefuse = 8
+    ConnectionLost = 9
+    ConnectionFailed = 10
+    TunnelClosed = 11
 
 
 class ConnectionNotFoundException(Exception):
@@ -61,6 +77,19 @@ class ControlMessage(enum.IntEnum):
     CloseConnection = 102
     ConnectionOpened = 103
     SendEOF = 104
+
+
+def make_control_message(message_no, data=None):
+    data = data if data is not None else b''
+    buffer = int.to_bytes(0, CONNECTION_NO_LENGTH, byteorder='big')
+    # Add timestamp
+    timestamp_ms = int(datetime.now().timestamp() * 1000)
+    buffer += int.to_bytes(timestamp_ms, TIME_STAMP_LENGTH, byteorder='big')
+    length = CONTROL_MESSAGE_NO_LENGTH + len(data)
+    buffer += int.to_bytes(length, DATA_LENGTH, byteorder='big')
+    buffer += int.to_bytes(message_no, CONTROL_MESSAGE_NO_LENGTH, byteorder='big')
+    buffer += data + TERMINATOR
+    return buffer
 
 
 def generate_random_bytes(pass_length=RANDOM_LENGTH):  # type: (int) -> bytes
@@ -157,7 +186,7 @@ def tunnel_decrypt(symmetric_key: AESGCM, encrypted_data: str):
 
 
 class WebRTCConnection:
-    def __init__(self, endpoint_name: str, params: KeeperParams, record_uid, gateway_uid, symmetric_key,
+    def __init__(self, params: KeeperParams, record_uid, gateway_uid, symmetric_key,
                  print_ready_event: asyncio.Event, kill_server_event: asyncio.Event,
                  logger: Optional[logging.Logger] = None, server='keepersecurity.com'):
 
@@ -167,7 +196,7 @@ class WebRTCConnection:
         self.data_channel = None
         self.print_ready_event = print_ready_event
         self.logger = logger
-        self.endpoint_name = endpoint_name
+        self.endpoint_name = "Starting..."
         self.params = params
         self.record_uid = record_uid
         self.gateway_uid = gateway_uid
@@ -175,9 +204,14 @@ class WebRTCConnection:
         self.kill_server_event = kill_server_event
         # Using Keeper's STUN and TURN servers
         self.relay_url = 'krelay.' + server
+        self.time_diff = datetime.now() - datetime.now()
         krelay_url = os.getenv(KRELAY_URL)
         if krelay_url:
             self.relay_url = krelay_url
+        else:
+            alt_krelay_url = os.getenv(ALT_KRELAY_URL)
+            if alt_krelay_url:
+                self.relay_url = alt_krelay_url
         self.logger.debug(f'Using relay server: {self.relay_url}')
         try:
             self.peer_ice_config()
@@ -205,32 +239,45 @@ class WebRTCConnection:
             return
         except Exception as e:
             raise Exception(f'Error making WebRTC offer: {e}')
-        data = {"offer": bytes_to_base64(offer), 'kind': kind, 'conversationType': 'tunnel'}
+        data = {"offer": bytes_to_base64(offer)}
         string_data = json.dumps(data)
         bytes_data = string_to_bytes(string_data)
         encrypted_data = tunnel_encrypt(self.symmetric_key, bytes_data)
         self.logger.debug("-->. SEND START MESSAGE OVER REST TO GATEWAY")
         '''
             'inputs': {
-                'recordUid': record_uid,                        <-- this is the record UID of the PAM resource record 
-                                                                    with Network information (REQUIRED)
-                                                                
+                'recordUid': record_uid,            <-- the PAM resource record UID with Network information (REQUIRED)
+                'conversationType': [
+                    'tunnel', 'vnc', 'rdp', 'ssh', 'telnet', 'kubernetes', 
+                    'mysql', 'postgresql', 'sql-server', 'http']       <-- What type of conversation is this (REQUIRED)
+                'kind': ['start', 'disconnect'],                                     <-- What command to run (REQUIRED)
+                'conversations': [List of conversations to disconnect],                <-- (Only for kind = disconnect)
+
                 'data': {                                       <-- All data is encrypted with symmetric key (REQUIRED)
-                    'conversationType': ['tunnel', 'guacd']     <-- What type of conversation is this
-                    'kind': ['start', 'disconnect'],            <-- What command to run (REQUIRED)
                     'offer': encrypted_WebRTC_sdp_offer,        <-- WebRTC SDP offer, base64 encoded
-                    'allow_control': True,                      <-- only for guacd, False = readonly session
-                    'guacamole_client_id: guacamole_client_id,  <-- only for guacd, an existing guacd session
-                    'userRecordUid': userRecordUid,             <-- only for guacd, User record UID to connect with
-                    'conversations': []                         <-- only for disconnect, list of conversations to close
                 }
             }
         '''
+        # TODO: remove when reporting is deployed to krouter prod!!!
+        dev_router = os.getenv("USE_REPORTING_COMPATABILITY_ROUTER")
+        if dev_router:
+            gateway_message_type = pam_pb2.CMT_CONNECT
+            self.logger.warning("#" * 30 + f"Sending CMT_CONNECT message type. Sergey, this is good..." + "#" * 30)
+        else:
+            gateway_message_type = pam_pb2.CMT_GENERAL
+
         # TODO create objects for WebRTC inputs
         router_response = router_send_action_to_gateway(
             params=self.params,
-            gateway_action=GatewayActionWebRTCSession(inputs={"recordUid": self.record_uid, "data": encrypted_data}),
-            message_type=pam_pb2.CMT_GENERAL,
+            gateway_action=GatewayActionWebRTCSession(
+                inputs={
+                    "recordUid": self.record_uid,
+                    'kind': kind,
+                    'conversationType': 'tunnel',
+                    "data": encrypted_data
+                }
+            ),
+            message_type=gateway_message_type,
             is_streaming=False,
             destination_gateway_uid_str=self.gateway_uid,
             gateway_timeout=30000
@@ -241,6 +288,7 @@ class WebRTCConnection:
         gateway_response = router_response.get('response', {})
         if not gateway_response:
             raise Exception(f"Error getting response from the Gateway: {router_response}")
+        self.endpoint_name = gateway_response.get('conversationId', )
         try:
             payload = json.loads(gateway_response.get('payload', None))
             if not payload:
@@ -277,6 +325,10 @@ class WebRTCConnection:
 
     def peer_ice_config(self):
         response = router_get_relay_access_creds(params=self.params, expire_sec=60000000)
+        if response is None:
+            raise Exception("Error getting relay access credentials")
+        if hasattr(response, "time"):
+            self.time_diff = datetime.now() - datetime.fromtimestamp(response.time)
         stun_url = f"stun:{self.relay_url}:3478"
         # Create an RTCIceServer instance for the STUN server
         stun_server = RTCIceServer(urls=stun_url)
@@ -310,16 +362,9 @@ class WebRTCConnection:
 
     def on_data_channel_open(self):
         self.print_ready_event.set()
-
-        self.logger.debug("Data channel opened")
-        data = b''
-        buffer = int.to_bytes(0, CONNECTION_NO_LENGTH, byteorder='big')
-        length = CONTROL_MESSAGE_NO_LENGTH + len(data)
-        buffer += int.to_bytes(length, DATA_LENGTH, byteorder='big')
-        buffer += int.to_bytes(ControlMessage.Ping, CONTROL_MESSAGE_NO_LENGTH, byteorder='big')
-        buffer += data + TERMINATOR
+        buffer = make_control_message(ControlMessage.Ping, b'')
         self.send_message(buffer)
-        self.logger.error(f'Endpoint {self.endpoint_name}: Data channel opened')
+        self.logger.debug(f'Endpoint {self.endpoint_name}: Data channel opened')
 
     def on_data_channel_message(self, message):
         self.web_rtc_queue.put_nowait(message)
@@ -450,6 +495,12 @@ class ConnectionInfo:
         self.ping_time = ping_time
         self.to_tunnel_task = to_tunnel_task
         self.start_time = start_time
+        self.transfer_latency_sum = 0
+        self.transfer_latency_count = 0
+        self.receive_latency_sum = 0
+        self.receive_latency_count = 0
+        self.transfer_size = 0
+        self.receive_size = 0
 
 
 class TunnelEntrance:
@@ -464,7 +515,6 @@ class TunnelEntrance:
     def __init__(self,
                  host,  # type: str
                  port,  # type: int
-                 endpoint_name,  # type: str
                  pc,  # type: WebRTCConnection
                  print_ready_event,  # type: asyncio.Event
                  logger=None,  # type: logging.Logger
@@ -477,12 +527,7 @@ class TunnelEntrance:
         self.host = host
         self.server = None
         self.connection_no = 1
-        self.endpoint_name = endpoint_name
-        self.connections: Dict[int, ConnectionInfo] = {
-            0: ConnectionInfo(
-                None, None, 0, None, None, datetime.now()
-            )
-        }
+        self.connections: Dict[int, ConnectionInfo] = {0: ConnectionInfo(None, None, 0, None, None, datetime.now())}
         self._port = port
         self.logger = logger
         self.is_connected = True
@@ -514,43 +559,88 @@ class TunnelEntrance:
                 await asyncio.sleep(0)
 
             except Exception as e:
-                self.logger.error(f'Endpoint {self.endpoint_name}: Error sending message: {e}')
+                self.logger.error(f'Endpoint {self.pc.endpoint_name}: Error sending message: {e}')
                 await asyncio.sleep(0.1)
         else:
             if self.print_ready_event.is_set():
-                self.logger.error(f'Endpoint {self.endpoint_name}: Data channel is not open. Data not sent.')
+                self.logger.error(f'Endpoint {self.pc.endpoint_name}: Data channel is not open. Data not sent.')
             if self.connection_no > 1:
                 self.kill_server_event.set()
 
     async def send_control_message(self, message_no, data=None):  # type: (ControlMessage, Optional[bytes]) -> None
         """
         Packet structure
-         Control Message Packets [CONNECTION_NO_LENGTH + DATA_LENGTH + CONTROL_MESSAGE_NO_LENGTH + DATA]
+         Control Message Packets
+               [CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + CONTROL_MESSAGE_NO_LENGTH + DATA]
         """
-        data = data if data is not None else b''
-        buffer = int.to_bytes(0, CONNECTION_NO_LENGTH, byteorder='big')
-        length = CONTROL_MESSAGE_NO_LENGTH + len(data)
-        buffer += int.to_bytes(length, DATA_LENGTH, byteorder='big')
-        buffer += int.to_bytes(message_no, CONTROL_MESSAGE_NO_LENGTH, byteorder='big')
-        buffer += data + TERMINATOR
+        buffer = make_control_message(message_no, data)
         try:
-            self.logger.debug(f'Endpoint {self.endpoint_name}: Sending Control command {message_no} len: {len(buffer)}'
+            self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Sending Control command {message_no} len: {len(buffer)}'
                               f' to tunnel.')
+            self.connections[0].transfer_size += len(buffer)
             await self.send_to_web_rtc(buffer)
         except Exception as e:
-            self.logger.error(f"Endpoint {self.endpoint_name}: Error while sending control message: {e}")
+            self.logger.error(f"Endpoint {self.pc.endpoint_name}: Error while sending control message: {e}")
+
+    def update_stats(self, connection_no, data_size, timestamp):
+        """
+        Update the transfer stats for the connection
+        :param connection_no:
+        :param data_size:
+        :param timestamp:
+        :return:
+        """
+        c = self.connections.get(connection_no)
+        if c:
+            dt = datetime.fromtimestamp(timestamp/1000)
+            c.receive_size += data_size
+            td = datetime.now() + self.pc.time_diff - dt
+            # Convert timedelta to total milliseconds
+            td_milliseconds = (td.days * 24 * 60 * 60 + td.seconds) * 1000 + td.microseconds / 1000
+            c.receive_latency_sum += td_milliseconds
+            c.receive_latency_count += 1
+
+    def report_stats(self, connection_no: int):
+        """
+        Report the stats for the connection
+        :return:
+        """
+        con = self.connections.get(connection_no)
+        if con:
+            average_receive_latency = "Not Available"
+            if con.receive_latency_count > 0:
+                average_receive_latency = con.receive_latency_sum / con.receive_latency_count
+
+            average_transfer_latency = "Not Available"
+            if con.transfer_latency_count > 0:
+                average_transfer_latency = con.transfer_latency_sum / con.transfer_latency_count
+            self.logger.info(f"Endpoint {self.pc.endpoint_name}: Connection {connection_no} Stats:"
+                             f"\n\tTransferred {con.transfer_size} bytes"
+                             f"\n\tTransfer Latency Average: {average_transfer_latency} ms"
+                             f"\n\tReceive Latency Average: {average_receive_latency} ms"
+                             f"\n\tReceived {con.receive_size} bytes")
 
     async def process_control_message(self, message_no, data):  # type: (ControlMessage, Optional[bytes]) -> None
         if message_no == ControlMessage.CloseConnection:
-            self.logger.debug(f'Endpoint {self.endpoint_name}: Received close connection request')
+            self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Received close connection request')
             if data and len(data) > 0:
-                target_connection_no = int.from_bytes(data, byteorder='big')
+
+                target_connection_no = int.from_bytes(data[:CONNECTION_NO_LENGTH], byteorder='big')
+                reason = CloseConnectionReasons.Unknown
+                if len(data) >= CONNECTION_NO_LENGTH:
+                    reason_int = int.from_bytes(data[CONNECTION_NO_LENGTH:], byteorder='big')
+                    reason = CloseConnectionReasons(reason_int)
+                    self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Closing Connection {target_connection_no}' +
+                                      (f'Reason: {reason}' if reason else ''))
+                else:
+                    self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Closing Connection {target_connection_no}')
+
                 if target_connection_no == 0:
                     self.kill_server_event.set()
                 else:
-                    self.logger.debug(f'Endpoint {self.endpoint_name}: Closing connection '
+                    self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Closing connection '
                                       f'{target_connection_no}')
-                    await self.close_connection(target_connection_no)
+                    await self.close_connection(target_connection_no, reason)
         elif message_no == ControlMessage.Pong:
             self._ping_attempt = 0
             self.is_connected = True
@@ -558,96 +648,115 @@ class TunnelEntrance:
                 con_no = bytes_to_int(data)
                 if con_no in self.connections:
                     self.connections[con_no].message_counter = 0
-                    self.logger.debug(f'Endpoint {self.endpoint_name}: Received pong request')
+                    self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Received pong request')
                     if con_no != 0:
-                        self.logger.debug(f'Endpoint {self.endpoint_name}: Received ACK for {con_no}')
+                        self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Received ACK for {con_no}')
                     if self.connections[con_no].ping_time is not None:
                         time_now = time.perf_counter()
                         # from the time the ping was sent to the time the pong was received
                         latency = time_now - self.connections[con_no].ping_time
-                        self.logger.debug(f'Endpoint {self.endpoint_name}: Round trip latency: {latency} ms')
+
+                        if self.connections[con_no].receive_latency_count > 0:
+                            receive_latency_average = (self.connections[con_no].receive_latency_sum /
+                                                       self.connections[con_no].receive_latency_count)
+                            t_latency = self._round_trip_latency[-1] - receive_latency_average
+                            self.connections[con_no].transfer_latency_sum += t_latency
+                            self.connections[con_no].transfer_latency_count += 1
+                        self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Round trip latency: {latency} ms')
                         self.connections[con_no].ping_time = None
             else:
-                self.logger.debug(f'Endpoint {self.endpoint_name}: Received pong request')
+                self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Received pong request')
                 if self.connections[0].ping_time is not None:
                     time_now = time.perf_counter()
                     # from the time the ping was sent to the time the pong was received
                     latency = time_now - self.connections[0].ping_time
-                    self.logger.debug(f'Endpoint {self.endpoint_name}: Round trip latency: {latency} ms')
+                    self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Round trip latency: {latency} ms')
                     self.connections[0].ping_time = None
 
         elif message_no == ControlMessage.Ping:
             if len(data) >= 0:
                 con_no = bytes_to_int(data)
                 if con_no in self.connections:
-
-                    if con_no == 0:
-                        self.logger.debug(f'Endpoint {self.endpoint_name}: Received ping request')
-                    else:
-                        self.logger.debug(f'Endpoint {self.endpoint_name}: Received Ping for {con_no}')
                     await self.send_control_message(ControlMessage.Pong, int_to_bytes(con_no))
+                    if con_no == 0:
+                        self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Received ping request')
+                    else:
+                        if self.logger.level == logging.DEBUG:
+                            self.report_stats(0)
+                        self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Received Ping for {con_no}')
+                    if self.logger.level == logging.DEBUG:
+                        # print the stats
+                        self.report_stats(con_no)
                 else:
-                    self.logger.error(f'Endpoint {self.endpoint_name}: Connection {con_no} not found')
+                    self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Connection {con_no} not found')
             else:
-                self.logger.error(f'Endpoint {self.endpoint_name}: Connection not found')
+                self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Connection not found')
         elif message_no == ControlMessage.ConnectionOpened:
             if len(data) >= CONNECTION_NO_LENGTH:
                 if len(data) > CONNECTION_NO_LENGTH:
-                    self.logger.debug(f"Endpoint {self.endpoint_name}: Received invalid open connection message"
+                    self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Received invalid open connection message"
                                       f" ({len(data)} bytes)")
                 connection_no = int.from_bytes(data[:CONNECTION_NO_LENGTH], byteorder='big')
-                self.logger.debug(f"Endpoint {self.endpoint_name}: Starting reader for connection "
+                self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Starting reader for connection "
                                   f"{connection_no}")
                 try:
                     self.connections[connection_no].to_tunnel_task = asyncio.create_task(
                         self.forward_data_to_tunnel(connection_no))  # From current connection to WebRTC connection
                     self.logger.debug(
-                        f"Endpoint {self.endpoint_name}: Started reader for connection {connection_no}")
+                        f"Endpoint {self.pc.endpoint_name}: Started reader for connection {connection_no}")
                 except ConnectionNotFoundException as e:
-                    self.logger.error(f"Endpoint {self.endpoint_name}: Connection {connection_no} not found: {e}")
+                    self.logger.debug(f"Endpoint {self.vendpoint_name}: Connection {connection_no} not found: {e}")
                 except Exception as e:
-                    self.logger.error(f"Endpoint {self.endpoint_name}: Error in forwarding data task: {e}")
+                    self.logger.error(f"Endpoint {self.pc.endpoint_name}: Error in forwarding data task: {e}")
             else:
-                self.logger.error(f"Endpoint {self.endpoint_name}: Invalid open connection message")
+                self.logger.error(f"Endpoint {self.pc.endpoint_name}: Invalid open connection message")
         elif message_no == ControlMessage.SendEOF:
             if len(data) >= CONNECTION_NO_LENGTH:
                 con_no = int.from_bytes(data[:CONNECTION_NO_LENGTH], byteorder='big')
                 if con_no in self.connections:
-                    self.logger.debug(f'Endpoint {self.endpoint_name}: Sending EOF to {con_no}')
+                    self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Sending EOF to {con_no}')
                     self.connections[con_no].writer.write_eof()
                 else:
-                    self.logger.error(f'Endpoint {self.endpoint_name}: EOF for Connection {con_no} not found')
+                    self.logger.debug(f'Endpoint {self.pc.endpoint_name}: EOF for Connection {con_no} not found')
         else:
-            self.logger.warning(f'Endpoint {self.endpoint_name} Unknown tunnel control message: {message_no}')
+            self.logger.warning(f'Endpoint {self.pc.endpoint_name} Unknown tunnel control message: {message_no}')
 
     async def forward_data_to_local(self):
         """
         Forward data from WebRTC connection to the appropriate local connection based on connection_no.
         Packet structure
-         Control Packets [CONNECTION_NO_LENGTH + DATA_LENGTH + CONTROL_MESSAGE_NO_LENGTH + DATA]
-         Data Packets [CONNECTION_NO_LENGTH + DATA_LENGTH + DATA]
+         Control Packets [CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + CONTROL_MESSAGE_NO_LENGTH + DATA]
+         Data Packets [CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + DATA]
         """
         try:
-            self.logger.debug(f"Endpoint {self.endpoint_name}: Forwarding data to local...")
+            self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Forwarding data to local...")
             buff = b''
             while not self.kill_server_event.is_set():
                 if self.pc.closed:
                     self.kill_server_event.set()
                     break
-                while len(buff) >= CONNECTION_NO_LENGTH + DATA_LENGTH:
+                while len(buff) >= CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH:
                     connection_no = int.from_bytes(buff[:CONNECTION_NO_LENGTH], byteorder='big')
-                    length = int.from_bytes(buff[CONNECTION_NO_LENGTH:CONNECTION_NO_LENGTH + DATA_LENGTH],
-                                            byteorder='big')
-                    if len(buff) >= CONNECTION_NO_LENGTH + DATA_LENGTH + length + len(TERMINATOR):
-                        if buff[CONNECTION_NO_LENGTH + DATA_LENGTH + length:
-                                CONNECTION_NO_LENGTH + DATA_LENGTH + length + len(TERMINATOR)] != TERMINATOR:
-                            self.logger.warning(f'Endpoint {self.endpoint_name}: Invalid terminator')
+                    time_stamp = int.from_bytes(
+                        buff[CONNECTION_NO_LENGTH:CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH], byteorder='big')
+                    length = int.from_bytes(
+                        buff[CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH:
+                             CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH], byteorder='big')
+                    if len(buff) >= CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length + len(TERMINATOR):
+                        if (buff[(CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length):
+                            (CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length + len(TERMINATOR))] !=
+                                TERMINATOR):
+                            self.logger.warning(f'Endpoint {self.pc.endpoint_name}: Invalid terminator')
                             # if we don't have a valid terminator then we don't know where the message ends or begins
                             self.kill_server_event.set()
                             break
-                        self.logger.debug(f'Endpoint {self.endpoint_name}: Buffer data received data')
-                        send_data = buff[CONNECTION_NO_LENGTH + DATA_LENGTH:CONNECTION_NO_LENGTH + DATA_LENGTH + length]
-                        buff = buff[CONNECTION_NO_LENGTH + DATA_LENGTH + length + len(TERMINATOR):]
+                        self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Buffer data received data')
+                        send_data = (buff[CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH:
+                                     CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length])
+                        self.update_stats(connection_no, len(send_data) + CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH +
+                                          DATA_LENGTH, time_stamp)
+                        buff = buff[CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length + len(TERMINATOR):]
+
                         if connection_no == 0:
                             # This is a control message
                             control_m = ControlMessage(int.from_bytes(send_data[:CONTROL_MESSAGE_NO_LENGTH],
@@ -658,27 +767,27 @@ class TunnelEntrance:
                             await self.process_control_message(control_m, send_data)
                         else:
                             if connection_no not in self.connections:
-                                self.logger.error(f"Endpoint {self.endpoint_name}: Connection not found: "
+                                self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Connection not found: "
                                                   f"{connection_no}")
                                 continue
 
                             try:
-                                self.logger.debug(f"Endpoint {self.endpoint_name}: Forwarding data to "
+                                self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Forwarding data to "
                                                   f"local for connection {connection_no} ({len(send_data)})")
                                 self.connections[connection_no].writer.write(send_data)
                                 await self.connections[connection_no].writer.drain()
                                 # Yield control back to the event loop for other tasks to execute
                                 await asyncio.sleep(0)
                             except Exception as ex:
-                                self.logger.error(f"Endpoint {self.endpoint_name}: Error while forwarding "
+                                self.logger.error(f"Endpoint {self.pc.endpoint_name}: Error while forwarding "
                                                   f"data to local: {ex}")
 
                                 # Yield control back to the event loop for other tasks to execute
                                 await asyncio.sleep(0)
                     else:
                         self.logger.debug(
-                            f"Endpoint {self.endpoint_name}: Buffer is too short {len(buff)} need "
-                            f"{CONNECTION_NO_LENGTH + DATA_LENGTH + length + len(TERMINATOR)}")
+                            f"Endpoint {self.pc.endpoint_name}: Buffer is too short {len(buff)} need "
+                            f"{CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length + len(TERMINATOR)}")
                         # Yield control back to the event loop for other tasks to execute
                         await asyncio.sleep(0)
                         break
@@ -691,37 +800,43 @@ class TunnelEntrance:
                         if self.is_connected:
                             self.kill_server_event.set()
                         raise et
-                    self.logger.debug(f'Endpoint {self.endpoint_name}: Tunnel reader timed out')
-                    self.logger.debug(f'Endpoint {self.endpoint_name}: Send ping request')
-                    await self.send_control_message(ControlMessage.Ping, int_to_bytes(0))
-                    self._ping_attempt += 1
+                    self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Tunnel reader timed out')
+                    if self.is_connected and self.pc.is_data_channel_open():
+                        self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Send ping request')
+                        await self.send_control_message(ControlMessage.Ping, int_to_bytes(0))
+
+                        if self.logger.level == logging.DEBUG:
+                            # print the stats
+                            for c in self.connections.keys():
+                                self.report_stats(c)
+                        self._ping_attempt += 1
                     continue
                 self.pc.web_rtc_queue.task_done()
                 if not data or not self.is_connected:
-                    self.logger.info(f"Endpoint {self.endpoint_name}: Exiting forward data to local")
+                    self.logger.info(f"Endpoint {self.pc.endpoint_name}: Exiting forward data to local")
                     break
                 elif len(data) == 0:
                     # Yield control back to the event loop for other tasks to execute
                     await asyncio.sleep(0)
                     continue
                 elif isinstance(data, bytes):
-                    self.logger.debug(f"Endpoint {self.endpoint_name}: Got data from WebRTC connection "
+                    self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Got data from WebRTC connection "
                                       f"{len(data)} bytes")
                     buff += data
                 else:
                     # Yield control back to the event loop for other tasks to execute
                     await asyncio.sleep(0)
 
-            self.logger.debug(f"Endpoint {self.endpoint_name}: Exiting forward data successfully.")
+            self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Exiting forward data successfully.")
         except asyncio.CancelledError:
             pass
 
         except Exception as ex:
-            self.logger.error(f"Endpoint {self.endpoint_name}: Error while forwarding data: {ex}")
+            self.logger.error(f"Endpoint {self.pc.endpoint_name}: Error while forwarding data: {ex}")
 
         finally:
-            self.logger.debug(f"Endpoint {self.endpoint_name}: Closing tunnel")
-            await self.stop_server()
+            self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Closing tunnel")
+            await self.stop_server(CloseConnectionReasons.Normal)
 
     async def start_reader(self):  # type: () -> None
         """
@@ -734,11 +849,11 @@ class TunnelEntrance:
 
             # Send hello world open connection message
             await self.send_control_message(ControlMessage.Ping, int_to_bytes(0))
-            self.logger.debug(f"Endpoint {self.endpoint_name}: Sent ping message to WebRTC connection")
+            self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Sent ping message to WebRTC connection")
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            self.logger.error(f"Endpoint {self.endpoint_name}: Error while establishing WebRTC connection: {e}")
+            self.logger.error(f"Endpoint {self.pc.endpoint_name}: Error while establishing WebRTC connection: {e}")
             failed = True
         finally:
             if failed:
@@ -757,10 +872,10 @@ class TunnelEntrance:
                     break
                 try:
                     data = await c.reader.read(BUFFER_TRUNCATION_THRESHOLD)
-                    self.logger.debug(f"Endpoint {self.endpoint_name}: Forwarding {len(data)} "
+                    self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Forwarding {len(data)} "
                                       f"bytes to tunnel for connection {con_no}")
                     if not data:
-                        self.logger.debug(f"Endpoint {self.endpoint_name}: Connection {con_no} no data")
+                        self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Connection {con_no} no data")
                         break
                     if isinstance(data, bytes):
                         if c.reader.at_eof() and len(data) == 0:
@@ -774,11 +889,15 @@ class TunnelEntrance:
                         else:
                             self.eof_sent = False
                             buffer = int.to_bytes(con_no, CONNECTION_NO_LENGTH, byteorder='big')
+                            # Add timestamp
+                            timestamp_ms = int(datetime.now().timestamp() * 1000)
+                            buffer += int.to_bytes(timestamp_ms, TIME_STAMP_LENGTH, byteorder='big')
                             buffer += int.to_bytes(len(data), DATA_LENGTH, byteorder='big') + data + TERMINATOR
+                            self.connections[con_no].transfer_size += len(buffer)
                             await self.send_to_web_rtc(buffer)
 
                             self.logger.debug(
-                                f'Endpoint {self.endpoint_name}: buffer size: {self.pc.data_channel.bufferedAmount}' +
+                                f'Endpoint {self.pc.endpoint_name}: buffer size: {self.pc.data_channel.bufferedAmount}' +
                                 f', time since start: {datetime.now() - c.start_time}')
 
                             c.message_counter += 1
@@ -799,19 +918,20 @@ class TunnelEntrance:
                         # Yield control back to the event loop for other tasks to execute
                         await asyncio.sleep(0)
                 except Exception as e:
-                    self.logger.debug(f"Endpoint {self.endpoint_name}: Connection '{con_no}' read failed: {e}")
+                    self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Connection '{con_no}' read failed: {e}")
                     break
         except Exception as e:
-            self.logger.error(f"Endpoint {self.endpoint_name}: Error while forwarding data in connection "
+            self.logger.error(f"Endpoint {self.pc.endpoint_name}: Error while forwarding data in connection "
                               f"{con_no}: {e}")
 
         if con_no not in self.connections:
             raise ConnectionNotFoundException(f"Connection {con_no} not found")
 
         # Send close connection message with con_no
-        await self.send_control_message(ControlMessage.CloseConnection, int.to_bytes(con_no, CONNECTION_NO_LENGTH,
-                                                                                     byteorder='big'))
-        await self.close_connection(con_no)
+        buff = int.to_bytes(con_no, CONNECTION_NO_LENGTH, byteorder='big')
+        buff += int_to_bytes(CloseConnectionReasons.Normal.value)
+        await self.send_control_message(ControlMessage.CloseConnection, buff)
+        await self.close_connection(con_no, CloseConnectionReasons.Normal)
 
     async def handle_connection(self, reader, writer):  # type: (asyncio.StreamReader, asyncio.StreamWriter) -> None
         """
@@ -820,7 +940,7 @@ class TunnelEntrance:
         connection_no = self.connection_no
         self.connection_no += 1
         self.connections[connection_no] = ConnectionInfo(reader, writer, 0, None, None, datetime.now())
-        self.logger.debug(f"Endpoint {self.endpoint_name}: Created local connection {connection_no}")
+        self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Created local connection {connection_no}")
 
         # Send open connection message with con_no. this is required to be sent to start the connection
         await self.send_control_message(ControlMessage.OpenConnection,
@@ -833,7 +953,7 @@ class TunnelEntrance:
         if self.server:
             return
         if not self._port:
-            self.logger.error(f"Endpoint {self.endpoint_name}: No open ports found for local server")
+            self.logger.error(f"Endpoint {self.pc.endpoint_name}: No open ports found for local server")
             self.kill_server_event.set()
             return
 
@@ -843,11 +963,11 @@ class TunnelEntrance:
             async with self.server:
                 await self.server.serve_forever()
         except ConnectionRefusedError as er:
-            self.logger.error(f"Endpoint {self.endpoint_name}: Connection Refused while starting server: {er}")
+            self.logger.error(f"Endpoint {self.pc.endpoint_name}: Connection Refused while starting server: {er}")
         except OSError as er:
-            self.logger.error(f"Endpoint {self.endpoint_name}: OS Error while starting server: {er}")
+            self.logger.error(f"Endpoint {self.pc.endpoint_name}: OS Error while starting server: {er}")
         except Exception as e:
-            self.logger.error(f"Endpoint {self.endpoint_name}: Error while starting server: {e}")
+            self.logger.error(f"Endpoint {self.pc.endpoint_name}: Error while starting server: {e}")
         finally:
             if self.server is not None:
                 self.server.close()
@@ -855,20 +975,26 @@ class TunnelEntrance:
                     await asyncio.wait_for(self.server.wait_closed(), timeout=5.0)
                 except asyncio.TimeoutError:
                     self.logger.warning(
-                        f"Endpoint {self.endpoint_name}: Timed out while trying to close server")
+                        f"Endpoint {self.pc.endpoint_name}: Timed out while trying to close server")
             self.kill_server_event.set()
             return
 
-    async def stop_server(self):
+    async def stop_server(self, reason: CloseConnectionReasons):
         if self.closing:
             return
-        try:
-            await self.send_control_message(ControlMessage.CloseConnection, int_to_bytes(0))
-        except Exception as ex:
-            self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception sending Close connection {ex}')
 
-        for c in list(self.connections):
-            await self.close_connection(c)
+        self.closing = True
+        if len(self.connections) > 1:
+            for i in range(1, len(self.connections)):
+                await self.close_connection(i, reason)
+
+        try:
+            buffer = int.to_bytes(0, CONNECTION_NO_LENGTH)
+            buffer += int_to_bytes(reason.value)
+            await self.send_control_message(ControlMessage.CloseConnection, buffer)
+            await self.close_connection(0, reason)
+        except Exception as ex:
+            self.logger.warning(f'Endpoint {self.pc.endpoint_name}: hit exception sending Close connection {ex}')
 
         if self.kill_server_event is not None:
             if not self.kill_server_event.is_set():
@@ -877,42 +1003,45 @@ class TunnelEntrance:
             # close aiortc data channel
             await self.pc.close_webrtc_connection()
         except Exception as ex:
-            self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception closing data channel {ex}')
+            self.logger.warning(f'Endpoint {self.pc.endpoint_name}: hit exception closing data channel {ex}')
 
         try:
             self.server.close()
             await asyncio.wait_for(self.server.wait_closed(), timeout=5.0)
+            self.server = None
         except asyncio.TimeoutError:
             self.logger.warning(
-                f"Endpoint {self.endpoint_name}: Timed out while trying to close server")
+                f"Endpoint {self.pc.endpoint_name}: Timed out while trying to close server")
         except Exception as ex:
-            self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception closing server {ex}')
+            self.logger.warning(f'Endpoint {self.pc.endpoint_name}: hit exception closing server {ex}')
 
         try:
             if self.connect_task is not None:
                 self.connect_task.cancel()
         finally:
-            self.closing = True
-            self.logger.info(f"Endpoint {self.endpoint_name}: Tunnel stopped")
+            self.logger.info(f"Endpoint {self.pc.endpoint_name}: Tunnel stopped")
 
-    async def close_connection(self, connection_no):
+    async def close_connection(self, connection_no, reason: CloseConnectionReasons):
+        # print the stats
+        self.report_stats(connection_no)
         try:
-            await self.send_control_message(ControlMessage.CloseConnection,
-                                            int.to_bytes(connection_no, CONNECTION_NO_LENGTH, byteorder='big'))
+            buffer = int.to_bytes(connection_no, CONNECTION_NO_LENGTH, byteorder='big')
+            buffer += int_to_bytes(reason.value)
+            await self.send_control_message(ControlMessage.CloseConnection, buffer)
         except Exception as ex:
-            self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception sending Close connection {ex}')
+            self.logger.warning(f'Endpoint {self.pc.endpoint_name}: hit exception sending Close connection {ex}')
 
-        if connection_no in self.connections and connection_no != 0:
+        if connection_no in self.connections.keys() and connection_no != 0:
             try:
                 self.connections[connection_no].writer.close()
                 # Wait for it to actually close.
                 await asyncio.wait_for(self.connections[connection_no].writer.wait_closed(), timeout=5.0)
             except asyncio.TimeoutError:
                 self.logger.warning(
-                    f"Endpoint {self.endpoint_name}: Timed out while trying to close connection "
+                    f"Endpoint {self.pc.endpoint_name}: Timed out while trying to close connection "
                     f"{connection_no}")
             except Exception as ex:
-                self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception closing connection {ex}')
+                self.logger.warning(f'Endpoint {self.pc.endpoint_name}: hit exception closing connection {ex}')
 
             try:
                 # clean up reader
@@ -920,18 +1049,24 @@ class TunnelEntrance:
                     self.connections[connection_no].reader.feed_eof()
                     self.connections[connection_no].reader = None
             except Exception as ex:
-                self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception closing reader {ex}')
+                self.logger.warning(f'Endpoint {self.pc.endpoint_name}: hit exception closing reader {ex}')
 
             if connection_no in self.connections:
                 try:
                     if self.connections[connection_no].to_tunnel_task is not None:
                         self.connections[connection_no].to_tunnel_task.cancel()
                 except Exception as ex:
-                    self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception canceling tasks {ex}')
+                    self.logger.warning(f'Endpoint {self.pc.endpoint_name}: hit exception canceling tasks {ex}')
                 try:
                     del self.connections[connection_no]
                 except Exception as ex:
-                    self.logger.warning(f'Endpoint {self.endpoint_name}: hit exception deleting connection {ex}')
-            self.logger.info(f"Endpoint {self.endpoint_name}: Closed connection {connection_no}")
+                    self.logger.warning(f'Endpoint {self.pc.endpoint_name}: hit exception deleting connection {ex}')
+            self.logger.info(f"Endpoint {self.pc.endpoint_name}: Closed connection {connection_no}")
+        elif connection_no == 0:
+            self.logger.info(f"Endpoint {self.pc.endpoint_name}: Closed control connection")
+            try:
+                del self.connections[connection_no]
+            except Exception as ex:
+                self.logger.warning(f'Endpoint {self.pc.endpoint_name}: hit exception deleting connection {ex}')
         else:
-            self.logger.info(f"Endpoint {self.endpoint_name}: Connection {connection_no} not found")
+            self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Connection {connection_no} not found")
