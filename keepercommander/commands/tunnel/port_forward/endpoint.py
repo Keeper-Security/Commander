@@ -36,6 +36,7 @@ MESSAGE_MAX = 5
 
 # Protocol constants
 CONTROL_MESSAGE_NO_LENGTH = 2
+CLOSE_CONNECTION_REASON_LENGTH = 1
 TIME_STAMP_LENGTH = 8
 CONNECTION_NO_LENGTH = DATA_LENGTH = 4
 TERMINATOR = b';'
@@ -990,7 +991,7 @@ class TunnelEntrance:
 
         try:
             buffer = int.to_bytes(0, CONNECTION_NO_LENGTH)
-            buffer += int_to_bytes(reason.value)
+            buffer += int.to_bytes(reason.value, CLOSE_CONNECTION_REASON_LENGTH, byteorder='big')
             await self.send_control_message(ControlMessage.CloseConnection, buffer)
             await self.close_connection(0, reason)
         except Exception as ex:
