@@ -1581,7 +1581,11 @@ class PAMTunnelListCommand(Command):
             entrance = thread.get('entrance')
             #
             # row.append(f"{thread.get('name', '')}")
-            row.append(f"{bcolors.OKBLUE}{thread.get('convo_id', '')}{bcolors.ENDC}")
+            if entrance is not None:
+                row.append(f"{bcolors.OKBLUE}{entrance.pc.endpoint_name}{bcolors.ENDC}")
+            else:
+                row.append(f"{bcolors.WARNING}Connecting..{bcolors.ENDC}")
+
             row.append(f"{thread.get('host', '')}")
 
             if entrance is not None and entrance.print_ready_event.is_set():
