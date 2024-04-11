@@ -235,13 +235,14 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         return input('Enter TOTP code: '.rjust(25))
 
     def _send_keep_alive_if_needed(self, params):   # type: (KeeperParams) -> None
-        now = int(datetime.datetime.utcnow().timestamp())
-        if (now - self._last_keep_alive) > self._keep_alive_period:
-            self._last_keep_alive = now
-            try:
-                api.send_keepalive(params)
-            except:
-                pass
+        if isinstance(params, KeeperParams):
+            now = int(datetime.datetime.utcnow().timestamp())
+            if (now - self._last_keep_alive) > self._keep_alive_period:
+                self._last_keep_alive = now
+                try:
+                    api.send_keepalive(params)
+                except:
+                    pass
 
     def do_import(self, filename, **kwargs):
         # type: (ThycoticImporter, str, ...) -> Iterable[Union[Record, SharedFolder]]
@@ -315,7 +316,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 pass
             print(f'Loaded {len(totp_codes)} code(s)', flush=True)
 
-        self._send_keep_alive_if_needed()
+        self._send_keep_alive_if_needed(params)
         folders = ThycoticImporter.get_folders(auth, skip_permissions=True)
         filter_folder = kwargs.get('filter_folder')
         if filter_folder:
@@ -346,7 +347,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         else:
             secrets_ids = [x['id'] for x in auth.thycotic_search(f'/v1/secrets/lookup')]
 
-        self._send_keep_alive_if_needed()
+        self._send_keep_alive_if_needed(params)
         print(f'Loading {len(secrets_ids)} Records ', flush=True, end='')
         secrets = []
         for secret_id in secrets_ids:
@@ -357,9 +358,9 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             if len(secrets) % 10 == 9:
                 print('.', flush=True, end='')
             if len(secrets) % 100 == 99:
-                self._send_keep_alive_if_needed()
+                self._send_keep_alive_if_needed(params)
 
-        self._send_keep_alive_if_needed()
+        self._send_keep_alive_if_needed(params)
         for secret in secrets:
             record = Record()
             record.title = secret.get('name', '')
