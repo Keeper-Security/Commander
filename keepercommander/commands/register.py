@@ -715,12 +715,11 @@ class ShareRecordCommand(Command):
                 if rs is not None:
                     folder, name = rs
                     if name:
-                        if folder.uid in params.subfolder_record_cache:
-                            for uid in params.subfolder_record_cache[folder.uid]:
-                                r = api.get_record(params, uid)
-                                if r.title.lower() == name.lower():
-                                    record_uid = uid
-                                    break
+                        for uid in params.subfolder_record_cache.get(folder.uid or ''):
+                            r = api.get_record(params, uid)
+                            if r.title.lower() == name.lower():
+                                record_uid = uid
+                                break
                     else:
                         if isinstance(folder, (SharedFolderNode, SharedFolderFolderNode)):
                             folder_uid = folder.uid
@@ -880,14 +879,14 @@ class ShareRecordCommand(Command):
                             ro.transfer = True
                             transfer_ruids.add(record_uid)
                         else:
-                            ro.editable = True if can_edit else current['editable']
-                            ro.shareable = True if can_share else current['sharable']
+                            ro.editable = True if can_edit else current.get('editable')
+                            ro.shareable = True if can_share else current.get('shareable')
                         rq.updateSharedRecord.append(ro)
                 else:
                     if can_share or can_edit:
                         current = existing_shares[email]
-                        ro.editable = False if can_edit else current['editable']
-                        ro.shareable = False if can_share else current['sharable']
+                        ro.editable = False if can_edit else current.get('editable')
+                        ro.shareable = False if can_share else current.get('shareable')
                         rq.updateSharedRecord.append(ro)
                     else:
                         rq.removeSharedRecord.append(ro)
