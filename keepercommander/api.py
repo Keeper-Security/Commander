@@ -1446,7 +1446,7 @@ def load_records_in_shared_folder(params, shared_folder_uid, record_uids=None):
                         'username': up.username,
                         'owner': up.owner,
                         'share_admin': up.shareAdmin,
-                        'sharable': up.sharable,
+                        'shareable': up.sharable,
                         'editable': up.editable,
                         'awaiting_approval': up.awaitingApproval,
                         'expiration': up.expiration,

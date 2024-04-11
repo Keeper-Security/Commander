@@ -528,7 +528,7 @@ class RecordGetUidCommand(Command):
                             perm = rec['shares']['user_permissions'].copy()
                             perm.sort(key=lambda r: (' 1' if r.get('owner') else
                                                      ' 2' if r.get('editable') else
-                                                     ' 3' if r.get('sharable') else
+                                                     ' 3' if r.get('shareable') else
                                                      '') + r.get('username'))
                             for no, uo in enumerate(perm):
                                 username = uo['username']
@@ -542,7 +542,7 @@ class RecordGetUidCommand(Command):
                                 else:
                                     if uo.get('editable'):
                                         flags = 'Can Edit'
-                                    if uo.get('sharable'):
+                                    if uo.get('shareable'):
                                         if flags:
                                             flags = flags + ' & '
                                         else:
@@ -980,7 +980,7 @@ class TrashGetCommand(Command, TrashMixin):
                     perm = rec['shares']['user_permissions'].copy()
                     perm.sort(key=lambda r: (' 1' if r.get('owner') else
                                              ' 2' if r.get('editable') else
-                                             ' 3' if r.get('sharable') else
+                                             ' 3' if r.get('shareable') else
                                              '') + r.get('username'))
                     no = 0
                     for uo in perm:
@@ -989,7 +989,7 @@ class TrashGetCommand(Command, TrashMixin):
                             continue
                         if uo.get('editable'):
                             flags = 'Can Edit'
-                        if uo.get('sharable'):
+                        if uo.get('shareable'):
                             if flags:
                                 flags = flags + ' & '
                             else:
