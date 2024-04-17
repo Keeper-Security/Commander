@@ -44,7 +44,7 @@ from .pam.router_helper import router_send_action_to_gateway, print_router_respo
 from .record_edit import RecordEditMixin
 from .tunnel.port_forward.endpoint import establish_symmetric_key, WebRTCConnection, TunnelEntrance, READ_TIMEOUT, \
     find_open_port, CloseConnectionReasons
-from .. import api, utils, vault_extensions, vault, record_management, attachment, record_facades
+from .. import api, utils, vault_extensions, crypto, vault, record_management, attachment, record_facades
 from ..display import bcolors
 from ..error import CommandError
 from ..params import KeeperParams, LAST_RECORD_UID
@@ -163,43 +163,76 @@ class PAMCmdListJobs(Command):
 class PAMCreateRecordRotationCommand(Command):
     parser = argparse.ArgumentParser(prog='pam rotation new')
     parser.add_argument('--record',       '-r',  required=True, dest='record_uid', action='store', help='Record UID that will be rotated manually or via schedule')
-    parser.add_argument('--config',       '-c',  required=True, dest='config_uid', action='store', help='UID of the PAM Configuration.')
+    parser.add_argument('--config',       '-c', dest='config_uid', action='store', help='UID of the PAM Configuration.')
     parser.add_argument('--resource',     '-rs',  required=False, dest='resource_uid', action='store', help='UID of the resource recourd.')
-    parser.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data', action='append', help='Json of the scheduler. Example: -sj \'{"type": "WEEKLY", "utcTime": "15:44", "weekday": "SUNDAY", "intervalCount": 1}\'')
-    parser.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data', action='append', help='Cron tab string of the scheduler. Example: to run job daily at 5:56PM UTC enter following cron -sc "0 56 17 * * ?"')
+    schedule_group = parser.add_mutually_exclusive_group()
+    schedule_group.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data', action='append', help='Json of the scheduler. Example: -sj \'{"type": "WEEKLY", "utcTime": "15:44", "weekday": "SUNDAY", "intervalCount": 1}\'')
+    schedule_group.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data', action='append', help='Cron tab string of the scheduler. Example: to run job daily at 5:56PM UTC enter following cron -sc "0 56 17 * * ?"')
+    schedule_group.add_argument('--on-demand', '-sm', required=False, dest='on_demand', action='store_true', help='Schedule On Demand')
     parser.add_argument('--complexity',   '-x',  required=False, dest='pwd_complexity', action='store', help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,5,5')
+    state_group = parser.add_mutually_exclusive_group()
+    state_group.add_argument('--enable', dest='enable', action='store_true', help='Enable rotation')
+    state_group.add_argument('--disable', dest='disable', action='store_true', help='Disable rotation')
 
     def get_parser(self):
         return PAMCreateRecordRotationCommand.parser
 
     def execute(self, params, **kwargs):
-
         record_uid = kwargs.get('record_uid')
+
+        # Check if record uid is available to this user
+        record = vault.KeeperRecord.load(params, record_uid)
+        if not record:
+            raise CommandError('', f'Record "{record_uid}" is not available.')
+
+        if isinstance(record, vault.TypedRecord):
+            valid_record_types = {'pamDatabase', 'pamDirectory', 'pamMachine', 'pamUser'}
+            if record.record_type not in valid_record_types:
+                rts = ', '.join(valid_record_types)
+                raise CommandError('', f'Record "{record_uid}" cannot be rotated. Valid record types: {rts}')
+        else:
+            raise CommandError('', f'Record "{record_uid}" cannot be rotated.')
+
         config_uid = kwargs.get('config_uid')
+
+        current_record_rotation = params.record_rotation_cache.get(record_uid)
+        if not config_uid:
+            if current_record_rotation:
+                config_uid = current_record_rotation.get('configuration_uid')
+            else:
+                raise CommandError('', 'the following argument is required: --config/-c')
+
         resource_uid = kwargs.get('resource_uid')
         pwd_complexity = kwargs.get("pwd_complexity")
 
         schedule_json_data = kwargs.get('schedule_json_data')
-        schedule_cron_data = kwargs.get('schedule_cron_data') # See this page for more details: http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html#examples
+        schedule_cron_data = kwargs.get('schedule_cron_data')    # See this page for more details: http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html#examples
+        schedule_on_demand = kwargs.get('on_demand') is True
 
-        # Check if record uid is available to this user
-        record_to_rotate = params.record_cache.get(record_uid)
-        if not record_to_rotate:
-            print(f'{bcolors.FAIL}Record [{record_uid}] is not available.{bcolors.ENDC}')
-            return
-
-        if schedule_json_data and schedule_cron_data:
-            print(f'{bcolors.WARNING}Only one type of the schedule is allowed, JSON or Cron.{bcolors.ENDC}')
-            return
-
-        if schedule_json_data:
+        schedule_data = ''
+        if isinstance(schedule_json_data, list):
             schedule_data = [json.loads(x) for x in schedule_json_data]
-        else:
-            schedule_data = schedule_cron_data
+        elif isinstance(schedule_cron_data, list):
+            schedule_data = [{
+                'type': 'CRON',
+                'cron': x
+            } for x in schedule_cron_data]
+        elif schedule_on_demand is True:
+            schedule_data = ''
+        elif current_record_rotation:
+            try:
+                current_schedule = current_record_rotation.get('schedule')
+                if current_schedule:
+                    schedule_data = json.loads(current_schedule)
+            except:
+                pass
 
         # 2. Load password complexity rules
         if not pwd_complexity:
-            pwd_complexity_rule_list_encrypted = b''
+            if current_record_rotation:
+                pwd_complexity_rule_list_encrypted = utils.base64_url_decode(current_record_rotation['pwd_complexity'])
+            else:
+                pwd_complexity_rule_list_encrypted = b''
         else:
             pwd_complexity_list = [s.strip() for s in pwd_complexity.split(',')]
             if len(pwd_complexity_list) != 5 or not all(n.isnumeric() for n in pwd_complexity_list):
@@ -216,7 +249,7 @@ class PAMCreateRecordRotationCommand(Command):
                 'special': int(pwd_complexity_list[4])
             }
 
-            pwd_complexity_rule_list_encrypted = router_helper.encrypt_pwd_complexity(rule_list_dict, record_to_rotate.get('record_key_unencrypted'))
+            pwd_complexity_rule_list_encrypted = router_helper.encrypt_pwd_complexity(rule_list_dict, record.record_key)
 
 
         # 3. Resource record check
@@ -242,17 +275,24 @@ class PAMCreateRecordRotationCommand(Command):
             # Means that there is only one resource
             resource_uid = resources[0]
 
-        record_rotation_revision = params.record_rotation_cache.get(record_uid)
+        disabled = current_record_rotation.get('disabled') if current_record_rotation else False
+        if kwargs.get('enable') is True:
+            disabled = False
+        elif kwargs.get('disable') is True:
+            disabled = True
 
         # 4. Construct Request object
         rq = router_pb2.RouterRecordRotationRequest()
+        if current_record_rotation:
+            rq.revision = current_record_rotation.get('revision')
         rq.recordUid = url_safe_str_to_bytes(record_uid)
-        rq.revision = record_rotation_revision.get('revision') if record_rotation_revision else 0
         rq.configurationUid = url_safe_str_to_bytes(config_uid)
         rq.resourceUid = url_safe_str_to_bytes(resource_uid)
         rq.schedule = json.dumps(schedule_data) if schedule_data else ''
         rq.pwdComplexity = pwd_complexity_rule_list_encrypted
-        rs = router_set_record_rotation_information(params, rq)
+        rq.disabled = disabled
+
+        router_set_record_rotation_information(params, rq)
 
         params.sync_data = True
 
@@ -278,9 +318,11 @@ class PAMListRecordRotationCommand(Command):
         is_verbose = kwargs.get('is_verbose')
 
         rq = pam_pb2.PAMGenericUidsRequest()
-
         schedules_proto = router_get_rotation_schedules(params, rq)
-        schedules = list(schedules_proto.schedules)
+        if schedules_proto:
+            schedules = list(schedules_proto.schedules)
+        else:
+            schedules = []
 
         enterprise_all_controllers = list(gateway_helper.get_all_gateways(params))
         enterprise_controllers_connected_resp = router_get_connected_gateways(params)
