@@ -5,6 +5,7 @@ import os
 import requests
 from keeper_secrets_manager_core.utils import bytes_to_base64, url_safe_str_to_bytes
 from requests import ConnectionError
+from urllib.parse import urlparse
 
 import google
 
@@ -21,16 +22,15 @@ VERIFY_SSL = True
 
 
 def get_router_url(params: KeeperParams):
-
     krouter_env_var_name = "KROUTER_URL"
-
     if os.getenv(krouter_env_var_name):
         krouter_server_url = os.getenv(krouter_env_var_name)
         logging.debug(f"Getting Krouter url from ENV Variable '{krouter_env_var_name}'='{krouter_server_url}'")
     else:
-        base_server = params.server.lower()
-        if base_server.startswith('govcloud.'):
-            base_server = base_server.replace('govcloud.', '')
+        base_server_url = params.rest_context.server_base
+        base_server = urlparse(base_server_url).netloc
+        if base_server.lower().startswith('govcloud.'):
+            base_server = base_server[len('govcloud.'):]
 
         krouter_server_url = 'https://connect.' + base_server  # https://connect.dev.keepersecurity.com
 
@@ -80,40 +80,19 @@ def router_set_record_rotation_information(params, proto_request):
 
 
 def router_get_rotation_schedules(params, proto_request):
-    rs = _post_request_to_router(params, 'get_rotation_schedules', rq_proto=proto_request)
+    return _post_request_to_router(params, 'get_rotation_schedules', rq_proto=proto_request, rs_type=pam_pb2.PAMRotationSchedulesResponse)
 
-    if type(rs) == bytes:
-        rsr = pam_pb2.PAMRotationSchedulesResponse()
-        rsr.ParseFromString(rs)
-        if logging.getLogger().level <= logging.DEBUG:
-            js = google.protobuf.json_format.MessageToJson(rsr)
-            logging.debug('>>> [GW RS] %s: %s', 'get_rotation_schedules', js)
-
-        return rsr
-
-    return None
 
 def router_get_relay_access_creds(params, expire_sec=None):
     query_params = {
         'expire-sec': expire_sec
     }
+    return _post_request_to_router(params, 'relay_access_creds', query_params=query_params, rs_type=pam_pb2.RelayAccessCreds)
 
-    rs = _post_request_to_router(params, 'relay_access_creds', query_params=query_params)
 
-    if type(rs) == bytes:
-        rac = pam_pb2.RelayAccessCreds()
-        rac.ParseFromString(rs)
-        if logging.getLogger().level <= logging.DEBUG:
-            js = google.protobuf.json_format.MessageToJson(rac)
-            logging.debug('>>> [GW RS] %s: %s', 'get_relay_access_creds', js)
-
-        return rac
-
-    return None
-
-def _post_request_to_router(params, path, rq_proto=None, method='post', raw_without_status_check_response=False, query_params=None):
-    path = 'api/user/' + path
+def _post_request_to_router(params, path, rq_proto=None, rs_type=None, method='post', raw_without_status_check_response=False, query_params=None):
     krouter_host = get_router_url(params)
+    path = '/api/user/' + path
 
     transmission_key = utils.generate_aes_key()
     server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
@@ -130,11 +109,12 @@ def _post_request_to_router(params, path, rq_proto=None, method='post', raw_with
             js = google.protobuf.json_format.MessageToJson(rq_proto)
             logging.debug('>>> [GW RQ] %s: %s', path, js)
         encrypted_payload = crypto.encrypt_aes_v2(rq_proto.SerializeToString(), transmission_key)
+
     encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
 
     try:
         rs = requests.request(method,
-                              krouter_host + "/" + path,
+                              krouter_host + path,
                               params=query_params,
                               verify=VERIFY_SSL,
                               headers={
@@ -158,9 +138,7 @@ def _post_request_to_router(params, path, rq_proto=None, method='post', raw_with
             return rs.json()
 
         rs_body = rs.content
-
-        if type(rs_body) == bytes:
-
+        if isinstance(rs_body, bytes):
             router_response = router_pb2.RouterResponse()
             router_response.ParseFromString(rs_body)
 
@@ -173,6 +151,17 @@ def _post_request_to_router(params, path, rq_proto=None, method='post', raw_with
                 payload_decrypted = crypto.decrypt_aes_v2(payload_encrypted, transmission_key)
             else:
                 payload_decrypted = None
+
+            if rs_type:
+                if payload_decrypted:
+                    rs_proto = rs_type()
+                    rs_proto.ParseFromString(payload_decrypted)
+                    if logging.getLogger().level <= logging.DEBUG:
+                        js = google.protobuf.json_format.MessageToJson(rs_proto)
+                        logging.debug('>>> [GW RS] %s: %s', 'get_rotation_schedules', js)
+                    return rs_proto
+                else:
+                    return None
 
             return payload_decrypted
 
