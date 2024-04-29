@@ -257,16 +257,20 @@ class ShareFolderCommand(Command):
             try:
                 rq = record_pb2.AmIShareAdmin()
                 for name in obj_names:
-                    uid = utils.base64_url_decode(name)
-                    if isinstance(uid, bytes) and len(uid) == 16:
-                        osa = record_pb2.IsObjectShareAdmin()
-                        osa.uid = uid
-                        osa.objectType = obj_type
-                        rq.isObjectShareAdmin.append(osa)
-                rs = api.communicate_rest(params, rq, 'vault/am_i_share_admin', rs_type=record_pb2.AmIShareAdmin)
-                sa_obj_uids = {sa_obj.uid for sa_obj in rs.isObjectShareAdmin if sa_obj.isAdmin}
-                sa_obj_uids = {utils.base64_url_encode(uid) for uid in sa_obj_uids}
-                return sa_obj_uids
+                    try:
+                        uid = utils.base64_url_decode(name)
+                        if isinstance(uid, bytes) and len(uid) == 16:
+                            osa = record_pb2.IsObjectShareAdmin()
+                            osa.uid = uid
+                            osa.objectType = obj_type
+                            rq.isObjectShareAdmin.append(osa)
+                    except:
+                        pass
+                if len(rq.isObjectShareAdmin) > 0:
+                    rs = api.communicate_rest(params, rq, 'vault/am_i_share_admin', rs_type=record_pb2.AmIShareAdmin)
+                    sa_obj_uids = {sa_obj.uid for sa_obj in rs.isObjectShareAdmin if sa_obj.isAdmin}
+                    sa_obj_uids = {utils.base64_url_encode(uid) for uid in sa_obj_uids}
+                    return sa_obj_uids
             except Error as e:
                 print(f'get_share_admin: msg = {e.message}')
                 return None
