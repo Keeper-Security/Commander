@@ -881,13 +881,13 @@ class ShareRecordCommand(Command):
                             transfer_ruids.add(record_uid)
                         else:
                             ro.editable = True if can_edit else current['editable']
-                            ro.shareable = True if can_share else current['sharable']
+                            ro.shareable = True if can_share else current['shareable']
                         rq.updateSharedRecord.append(ro)
                 else:
                     if can_share or can_edit:
                         current = existing_shares[email]
                         ro.editable = False if can_edit else current['editable']
-                        ro.shareable = False if can_share else current['sharable']
+                        ro.shareable = False if can_share else current['shareable']
                         rq.updateSharedRecord.append(ro)
                     else:
                         rq.removeSharedRecord.append(ro)
