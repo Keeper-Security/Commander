@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import uuid
+import urllib.parse
 from typing import Dict
 from xml.sax.saxutils import escape
 
@@ -86,6 +87,10 @@ class KeepassImporter(BaseFileImporter):
                     if len(entries) > 0:
                         folder = KeepassImporter.get_folder(group)
                         for entry in entries:
+                            totp_secret = ''
+                            totp_issuer = ''
+                            totp_period = 0
+                            totp_digits = 0
                             record = Record()
                             fol = Folder()
                             fol.path = folder
@@ -121,9 +126,37 @@ class KeepassImporter(BaseFileImporter):
                                 else:
                                     field_type = ''
                                     field_label = key
+                                if field_label in ('TOTPSecret', 'TOTPPeriod', 'TOTPDigits', 'TOTPIssuer', 'ModifyTOTPSettings', 'ViewTOTPSettings'):
+                                    if field_label == 'TOTPSecret':
+                                        totp_secret = value
+                                    elif field_label == 'TOTPIssuer':
+                                        totp_issuer = value
+                                    elif field_label == 'TOTPPeriod':
+                                        try:
+                                            totp_period = int(value)
+                                        except:
+                                            pass
+                                    elif field_label == 'TOTPDigits':
+                                        try:
+                                            totp_digits = int(value)
+                                        except:
+                                            pass
+                                else:
+                                    field = RecordField()
+                                    field.type = field_type
+                                    field.label = field_label
+                                    field.value = KeepassImporter.import_field(field_type, value)
+                                    record.fields.append(field)
+                            if totp_secret:
+                                value = f'otpauth://totp/?secret={totp_secret}'
+                                if totp_issuer:
+                                    value += f'&issuer={urllib.parse.quote_plus(totp_issuer)}'
+                                if totp_period > 0:
+                                    value += f'&period={totp_period}'
+                                if totp_digits > 0:
+                                    value += f'&digits={totp_digits}'
                                 field = RecordField()
-                                field.type = field_type
-                                field.label = field_label
+                                field.type = 'oneTimeCode'
                                 field.value = KeepassImporter.import_field(field_type, value)
                                 record.fields.append(field)
 
