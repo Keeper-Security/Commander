@@ -50,6 +50,7 @@ FieldTypes = {x[0]: x for x in (
     FieldType('script', {'fileRef': '', 'command': '', 'recordRef': [], }, 'Post rotation script'),
     FieldType('recordRef', '', 'reference to other record'),
     FieldType('appFiller', {'macroSequence': '', 'applicationTitle': '', 'contentFilter': ''}, 'Native Application Filler'),
+    FieldType('pamResources', {'controllerUid': '', 'folderUid': '', 'resourceRef': []}, 'PAM resources'),
 )}   # type: Dict[str, FieldType]
 
 

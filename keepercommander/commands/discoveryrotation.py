@@ -164,7 +164,7 @@ class PAMCreateRecordRotationCommand(Command):
     parser = argparse.ArgumentParser(prog='pam rotation new')
     parser.add_argument('--record',       '-r',  required=True, dest='record_uid', action='store', help='Record UID that will be rotated manually or via schedule')
     parser.add_argument('--config',       '-c', dest='config_uid', action='store', help='UID of the PAM Configuration.')
-    parser.add_argument('--resource',     '-rs',  required=False, dest='resource_uid', action='store', help='UID of the resource recourd.')
+    parser.add_argument('--resource',     '-rs',  required=False, dest='resource_uid', action='store', help='UID of the resource record.')
     schedule_group = parser.add_mutually_exclusive_group()
     schedule_group.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data', action='append', help='Json of the scheduler. Example: -sj \'{"type": "WEEKLY", "utcTime": "15:44", "weekday": "SUNDAY", "intervalCount": 1}\'')
     schedule_group.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data', action='append', help='Cron tab string of the scheduler. Example: to run job daily at 5:56PM UTC enter following cron -sc "0 56 17 * * ?"')
@@ -228,28 +228,29 @@ class PAMCreateRecordRotationCommand(Command):
                 pass
 
         # 2. Load password complexity rules
-        if not pwd_complexity:
+        if pwd_complexity is None:
             if current_record_rotation:
                 pwd_complexity_rule_list_encrypted = utils.base64_url_decode(current_record_rotation['pwd_complexity'])
             else:
                 pwd_complexity_rule_list_encrypted = b''
         else:
-            pwd_complexity_list = [s.strip() for s in pwd_complexity.split(',')]
-            if len(pwd_complexity_list) != 5 or not all(n.isnumeric() for n in pwd_complexity_list):
-                logging.warning(
-                    'Invalid rules to generate password. Format is "length, upper, lower, digits, symbols". Ex: 32,5,5,5,5'
-                )
-                return
-
-            rule_list_dict = {
-                'length': int(pwd_complexity_list[0]),
-                'caps': int(pwd_complexity_list[1]),
-                'lowercase': int(pwd_complexity_list[2]),
-                'digits': int(pwd_complexity_list[3]),
-                'special': int(pwd_complexity_list[4])
-            }
-
-            pwd_complexity_rule_list_encrypted = router_helper.encrypt_pwd_complexity(rule_list_dict, record.record_key)
+            if pwd_complexity:
+                pwd_complexity_list = [s.strip() for s in pwd_complexity.split(',')]
+                if len(pwd_complexity_list) != 5 or not all(n.isnumeric() for n in pwd_complexity_list):
+                    logging.warning(
+                        'Invalid rules to generate password. Format is "length, upper, lower, digits, symbols". Ex: 32,5,5,5,5'
+                    )
+                    return
+                rule_list_dict = {
+                    'length': int(pwd_complexity_list[0]),
+                    'caps': int(pwd_complexity_list[1]),
+                    'lowercase': int(pwd_complexity_list[2]),
+                    'digits': int(pwd_complexity_list[3]),
+                    'special': int(pwd_complexity_list[4])
+                }
+                pwd_complexity_rule_list_encrypted = router_helper.encrypt_pwd_complexity(rule_list_dict, record.record_key)
+            else:
+                pwd_complexity_rule_list_encrypted = b''
 
 
         # 3. Resource record check
@@ -1061,14 +1062,42 @@ class PAMRouterGetRotationInfo(Command):
         if rri_status_name == 'RRS_ONLINE':
 
             print(f'Rotation Status: {bcolors.OKBLUE}Ready to rotate ({rri_status_name}){bcolors.ENDC}')
-            print(f'PAM Config UID: {bcolors.OKBLUE}{utils.base64_url_encode(rri.configurationUid)}{bcolors.ENDC}')
+            configuration_uid = utils.base64_url_encode(rri.configurationUid)
+            print(f'PAM Config UID: {bcolors.OKBLUE}{configuration_uid}{bcolors.ENDC}')
             print(f'Node ID: {bcolors.OKBLUE}{rri.nodeId}{bcolors.ENDC}')
 
             print(f"Gateway Name where the rotation will be performed: {bcolors.OKBLUE}{(rri.controllerName if rri.controllerName else '-')}{bcolors.ENDC}")
             print(f"Gateway Uid: {bcolors.OKBLUE}{(utils.base64_url_encode(rri.controllerUid) if rri.controllerUid else '-') } {bcolors.ENDC}")
+            if rri.resourceUid:
+                resource_id = utils.base64_url_encode(rri.resourceUid)
+                resource_ok = False
+                if resource_id in params.record_cache:
+                    configuration = vault.KeeperRecord.load(params, configuration_uid)
+                    if isinstance(configuration, vault.TypedRecord):
+                        field = configuration.get_typed_field('pamResources')
+                        if field and isinstance(field.value, list) and len(field.value) == 1:
+                            rv = field.value[0]
+                            if isinstance(rv, dict):
+                                resources = rv.get('resourceRef')
+                                if isinstance(resources, list):
+                                    resource_ok = resource_id in resources
+                print(f"Admin Resource Uid: {bcolors.OKBLUE if resource_ok else bcolors.FAIL}{resource_id}{bcolors.ENDC}")
+
             # print(f"Router Cookie: {bcolors.OKBLUE}{(rri.cookie if rri.cookie else '-')}{bcolors.ENDC}")
             # print(f"scriptName: {bcolors.OKGREEN}{rri.scriptName}{bcolors.ENDC}")
-            print(f"Password Complexity: {bcolors.OKGREEN}{rri.pwdComplexity if rri.pwdComplexity else '[not set]'}{bcolors.ENDC}")
+            if rri.pwdComplexity:
+                print(f"Password Complexity: {bcolors.OKGREEN}{rri.pwdComplexity}{bcolors.ENDC}")
+                try:
+                    record = params.record_cache.get(record_uid)
+                    if record:
+                        complexity = crypto.decrypt_aes_v2(utils.base64_url_decode(rri.pwdComplexity), record['record_key_unencrypted'])
+                        c = json.loads(complexity.decode())
+                        print(f"Password Complexity Data: {bcolors.OKBLUE}Length: {c.get('length')}; Lowercase: {c.get('lowercase')}; Uppercase: {c.get('caps')}; Digits: {c.get('digits')}; Symbols: {c.get('special')} {bcolors.ENDC}")
+                except:
+                    pass
+            else:
+                print(f"Password Complexity: {bcolors.OKGREEN}[not set]{bcolors.ENDC}")
+
             print(f"Is Rotation Disabled: {bcolors.OKGREEN}{rri.disabled}{bcolors.ENDC}")
             print(f"\nCommand to manually rotate: {bcolors.OKGREEN}pam action rotate -r {record_uid}{bcolors.ENDC}")
         else:
@@ -1402,6 +1431,18 @@ class PAMGatewayActionRotateCommand(Command):
         # Find record by record uid
         ri = record_rotation_get(params, utils.base64_url_decode(record.record_uid))
         ri_pwd_complexity_encrypted = ri.pwdComplexity
+        if not ri_pwd_complexity_encrypted:
+            rule_list_dict = {
+                'length': 20,
+                'caps': 1,
+                'lowercase': 1,
+                'digits': 1,
+                'special': 1,
+            }
+            ri_pwd_complexity_encrypted = utils.base64_url_encode(router_helper.encrypt_pwd_complexity(rule_list_dict, record.record_key))
+        # else:
+        #     rule_list_json = crypto.decrypt_aes_v2(utils.base64_url_decode(ri_pwd_complexity_encrypted), record.record_key)
+        #     complexity = json.loads(rule_list_json.decode())
 
         ri_rotation_setting_uid = utils.base64_url_encode(ri.configurationUid)  # Configuration on the UI is "Rotation Setting"
         resource_uid = utils.base64_url_encode(ri.resourceUid)
