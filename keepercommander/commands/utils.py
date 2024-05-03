@@ -35,7 +35,7 @@ from .helpers.timeout import (
 )
 from .helpers.whoami import get_hostname, get_environment, get_data_center
 from .ksm import KSMCommand, ksm_parser
-from .. import __version__
+from .. import __version__, vault
 from .. import api, rest_api, loginv3, crypto, utils, constants
 from ..breachwatch import BreachWatch
 from ..display import bcolors
@@ -1300,20 +1300,25 @@ class SyncSecurityDataCommand(Command):
     def execute(self, params, **kwargs):
         def get_security_data(record, pw_obj):     # type: (KeeperRecord, Dict or None) -> APIRequest_pb2.SecurityData
             sd = APIRequest_pb2.SecurityData()
-            status = pw_obj and pw_obj.get('status')
             password = BreachWatch.extract_password(record)
-            strength = utils.password_score(password)
-            sd_data = {'strength': strength}
-            login_url = BreachWatch.extract_url(record)
-            parse_results = urllib.parse.urlparse(login_url)
-            domain = parse_results.hostname or parse_results.path
-            if pw_obj:
-                sd_data['bw_result'] = client_pb2.BWStatus.Value(status) if status else client_pb2.BWStatus.GOOD
-            if domain:
-                # truncate domain string if needed to avoid reaching RSA encryption data size limitation
-                sd_data['domain'] = domain[:200]
+            # Send empty security data for this record if password was removed -- this removes the old security data
+            sd_data = None
+            if password:
+                strength = utils.password_score(password)
+                sd_data = {'strength': strength}
+                login_url = BreachWatch.extract_url(record)
+                parse_results = urllib.parse.urlparse(login_url)
+                domain = parse_results.hostname or parse_results.path
+                update_bw_result = bw_enabled and bool(pw_obj)
+                if update_bw_result:
+                    status = pw_obj.get('status')
+                    sd_data['bw_result'] = client_pb2.BWStatus.Value(status) if status else client_pb2.BWStatus.GOOD
+                if domain:
+                    # truncate domain string if needed to avoid reaching RSA encryption data size limitation
+                    sd_data['domain'] = domain[:200]
+            if sd_data:
+                sd.data = crypto.encrypt_rsa(json.dumps(sd_data).encode('utf-8'), params.enterprise_rsa_key)
             sd.uid = utils.base64_url_decode(record.record_uid)
-            sd.data = crypto.encrypt_rsa(json.dumps(sd_data).encode('utf-8'), params.enterprise_rsa_key)
             return sd
 
         def update_security_data(record_sds):   # type: (List[APIRequest_pb2.SecurityData]) -> None
@@ -1346,23 +1351,41 @@ class SyncSecurityDataCommand(Command):
         force_update = kwargs.get('force', False)
         update_limit = 1000
         api.sync_down(params)
+        sd_objs = params.breach_watch_security_data or {}
+        sd_rec_uids = set(sd_objs.keys())
         pw_recs = list(BreachWatch.get_records(params, lambda r, s: r.record_uid in get_record_uids(), owned=True))
+        pw_rec_uids = {r.record_uid for r, _ in pw_recs}
+        owned_rec_uids = {r for r, ro in params.record_owner_cache.items() if ro.owner}
+        no_pw_rec_uids = owned_rec_uids - pw_rec_uids
+        ex_pw_rec_uids = no_pw_rec_uids & sd_rec_uids
+        ex_pw_recs = [(vault.KeeperRecord.load(params, r), None) for r in ex_pw_rec_uids]
+        to_update = [*pw_recs, *ex_pw_recs]
+
+        bw_enabled = bool(params.breach_watch)
+
+        def has_stale_security_data(record):
+            record_security_data = sd_objs.get(record.record_uid, {})
+            sd_revision = record_security_data.get('revision', 0)
+            if bw_enabled:
+                bw_recs = params.breach_watch_records or {}
+                bw_revision = bw_recs.get(record.record_uid, {}).get('revision', 0)
+                return sd_revision < bw_revision
+            else:
+                return sd_revision < record.revision
 
         # Limit security-data updates to records modified AFTER its most recent security-data update
         if not force_update:
-            rec_objs = params.breach_watch_records or params.record_cache
-            sd_objs = params.breach_watch_security_data
-            pw_recs = [(r, s) for r, s in pw_recs if sd_objs.get(r.record_uid, {}).get('revision', 0) < rec_objs.get(r.record_uid, {}).get('revision', 0)]
+            to_update = [(r, p) for r, p in to_update if has_stale_security_data(r)]
 
-        sds = [get_security_data(r, s) for r, s in pw_recs] if pw_recs else []
+        sds = [get_security_data(r, s) for r, s in to_update] if to_update else []
         while sds:
             update_security_data(sds[:update_limit])
             sds = sds[update_limit:]
-        if pw_recs:
+        if to_update:
             BreachWatch.save_reused_pw_count(params)
             api.sync_down(params)
         if not kwargs.get('quiet'):
-            if pw_recs:
-                logging.info(f'Updated security data for [{len(pw_recs)}] record(s)')
+            if to_update:
+                logging.info(f'Updated security data for [{len(to_update)}] record(s)')
             elif not kwargs.get('suppress_no_op'):
                 logging.info('No records requiring security-data updates found')

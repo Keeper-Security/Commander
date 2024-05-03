@@ -28,7 +28,7 @@ compliance_parser.add_argument('--format', dest='format', action='store', choice
 compliance_parser.add_argument('--output', dest='output', action='store',
                                help='path to resulting output file (ignored for "table" format)')
 
-default_report_parser = argparse.ArgumentParser(prog='compliance report', description='Run a SOX compliance report.',
+default_report_parser = argparse.ArgumentParser(prog='compliance report', description='Run a compliance report.',
                                                 parents=[compliance_parser])
 username_opt_help = 'user(s) whose records are to be included in report (set option once per user)'
 default_report_parser.add_argument('--username', '-u', action='append', help=username_opt_help)
@@ -68,7 +68,7 @@ access_report_parser.add_argument('--report-type', action='store', choices=ACCES
 aging_help = 'include record-aging data (last modified, created, and last password rotation dates)'
 access_report_parser.add_argument('--aging', action='store_true',  help=aging_help)
 
-summary_report_desc = 'Run a summary SOX compliance report'
+summary_report_desc = 'Run a summary compliance report'
 summary_report_parser = argparse.ArgumentParser(prog='compliance summary-report', description=summary_report_desc,
                                                 parents=[compliance_parser])
 sf_report_desc = 'Run an enterprise-wide shared-folder report'
@@ -84,7 +84,7 @@ def register_commands(commands):
 def register_command_info(aliases, command_info):
     aliases['cr'] = ('compliance', 'report')
     aliases['compliance-report'] = ('compliance', 'report')
-    command_info['compliance'] = 'SOX Compliance Reporting'
+    command_info['compliance'] = 'Compliance Reporting'
 
 
 def get_email(sdata, user_uid):    # type: (SoxData, int) -> str
@@ -98,7 +98,7 @@ def get_team_usernames(sdata, team):  # type: (SoxData, sox_types.Team) -> List[
 class ComplianceCommand(GroupCommand):
     def __init__(self):
         super(ComplianceCommand, self).__init__()
-        self.register_command('report', ComplianceReportCommand(), 'Run default SOX compliance report')
+        self.register_command('report', ComplianceReportCommand(), 'Run default compliance report')
         self.register_command('team-report', ComplianceTeamReportCommand(), team_report_desc, 'tr')
         self.register_command('record-access-report', ComplianceRecordAccessReportCommand(), access_report_desc, 'rar')
         self.register_command('summary-report', ComplianceSummaryReportCommand(), summary_report_desc, 'stats')

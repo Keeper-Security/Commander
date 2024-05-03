@@ -30,7 +30,7 @@ report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_tr
 node_filter_help = 'name(s) or UID(s) of node(s) to filter results of the report by'
 report_parser.add_argument('-n', '--node', action='append', help=node_filter_help)
 report_parser.add_argument('-b', '--breachwatch', dest='breachwatch', action='store_true',
-                           help='display BreachWatch report')
+                           help='display BreachWatch report. Ignored if BreachWatch is not active.')
 save_help = 'save updated security audit reports'
 report_parser.add_argument('-s', '--save', action='store_true', help=save_help)
 report_parser.add_argument('-su', '--show-updated', action='store_true', help='show updated data')
@@ -107,6 +107,9 @@ class SecurityAuditReportCommand(EnterpriseCommand):
     def get_enterprise_private_rsa_key(self, params, enterprise_priv_key):
         if not self.enterprise_private_rsa_key:
             tree_key = params.enterprise['unencrypted_tree_key']
+            if not enterprise_priv_key:
+                key = params.enterprise.get('keys', {}).get('rsa_encrypted_private_key', '')
+                enterprise_priv_key = utils.base64_url_decode(key)
             key = crypto.decrypt_aes_v2(enterprise_priv_key, tree_key)
             key = crypto.load_rsa_private_key(key)
             self.enterprise_private_rsa_key = key
@@ -158,6 +161,11 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         if kwargs.get('syntax_help'):
             logging.info(security_audit_report_description)
             return
+
+        if kwargs.get('breachwatch') and not params.breach_watch:
+            msg = ('Ignoring "--breachwatch" option because BreachWatch is not active. '
+                   'Please visit the Web Vault at https://keepersecurity.com/vault')
+            logging.warning(msg)
 
         def get_node_id(name_or_id):
             nodes = params.enterprise.get('nodes') or []
@@ -261,7 +269,8 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         if save_report:
             self.save_updated_security_reports(params, updated_security_reports)
 
-        fields = ('email', 'name', 'at_risk', 'passed', 'ignored') if kwargs.get('breachwatch') else \
+        show_breachwatch = kwargs.get('breachwatch') and params.breach_watch
+        fields = ('email', 'name', 'at_risk', 'passed', 'ignored') if show_breachwatch else \
             ('email', 'name', 'weak', 'medium', 'strong', 'reused', 'unique', 'securityScore', 'twoFactorChannel',
              'node')
         field_descriptions = fields
@@ -270,7 +279,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         if fmt == 'table':
             field_descriptions = (field_to_title(x) for x in fields)
 
-        report_title = f'Security Audit Report{" (BreachWatch)" if kwargs.get("breachwatch") else ""}'
+        report_title = f'Security Audit Report{" (BreachWatch)" if show_breachwatch else ""}'
         table = []
         for raw in rows:
             row = []
