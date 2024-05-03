@@ -149,11 +149,12 @@ def compare_records(record1, record2):
 
     if record1.title != record2.title:
         status = status | RecordChangeStatus.Title
+    if BreachWatch.extract_password(record1) != BreachWatch.extract_password(record2):
+        status = status | RecordChangeStatus.Password
+
     if isinstance(record1, vault.PasswordRecord) and isinstance(record2, vault.PasswordRecord):
         if record1.login != record2.login:
             status = status | RecordChangeStatus.Username
-        if record1.password != record2.password:
-            status = status | RecordChangeStatus.Password
         if record1.link != record2.link:
             status = status | RecordChangeStatus.URL
     elif isinstance(record1, vault.TypedRecord) and isinstance(record2, vault.TypedRecord):
@@ -168,15 +169,6 @@ def compare_records(record1, record2):
                     status = status | RecordChangeStatus.Username
             else:
                 status = status | RecordChangeStatus.Username
-
-        r_password = record1.get_typed_field('password')
-        e_password = record2.get_typed_field('password')
-        if r_password or e_password:
-            if r_password and e_password:
-                if r_password.get_external_value() or '' != e_password.get_external_value() or '':
-                    status = status | RecordChangeStatus.Password
-            else:
-                status = status | RecordChangeStatus.Password
 
         r_url = record1.get_typed_field('url')
         e_url = record2.get_typed_field('url')

@@ -250,6 +250,7 @@ class RecordEditCommand(Command, RecordUtils):
         record = api.get_record(params, record_uid)
 
         changed = False
+        password_changed = False
         if kwargs.get('title') is not None:
             title = kwargs['title']
             if title:
@@ -261,12 +262,14 @@ class RecordEditCommand(Command, RecordUtils):
             record.login = kwargs['login']
             changed = True
         if kwargs.get('password') is not None:
+            last_password = record.unmasked_password or record.password
             record.password = kwargs['password']
+            password_changed = record.password != last_password
             changed = True
         else:
             if kwargs.get('generate'):
                 record.password = generator.generate(16)
-                changed = True
+                changed = password_changed = True
         if kwargs.get('url') is not None:
             record.login_url = kwargs['url']
             changed = True
@@ -326,5 +329,6 @@ class RecordEditCommand(Command, RecordUtils):
 
         if changed:
             api.update_record(params, record)
-            BreachWatch.scan_and_update_security_data(params, record_uid, params.breach_watch)
+            if password_changed:
+                BreachWatch.scan_and_update_security_data(params, record_uid, params.breach_watch)
             params.sync_data = True
