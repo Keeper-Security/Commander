@@ -436,9 +436,6 @@ class LastPassImporter(BaseImporter):
             'accountNumber': notes.pop('Account Number', ''),
         }
         record.fields.append(bank)
-        bank_name = notes.pop('Bank Name', '')
-        if bank_name:
-            record.title = bank_name
 
     def populate_passport(self, record, notes): # type: (Record, dict) -> None
         record.type = 'passport'
