@@ -102,8 +102,8 @@ SUPPORTED_NODE_COLUMNS = ['parent_node', 'user_count', 'users', 'team_count', 't
                           'provisioning']
 SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count',
                           'roles', 'alias', '2fa_enabled']
-SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users', 'queued_user_count', 'queued_users']
-SUPPORTED_ROLE_COLUMNS = ['visible_below', 'default_role', 'admin', 'node', 'user_count', 'users']
+SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users', 'queued_user_count', 'queued_users', 'role_count', 'roles']
+SUPPORTED_ROLE_COLUMNS = ['visible_below', 'default_role', 'admin', 'node', 'user_count', 'users', 'team_count', 'teams']
 
 enterprise_data_parser = argparse.ArgumentParser(prog='enterprise-down',
                                                  description='Download & decrypt enterprise data.')
@@ -435,6 +435,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     'restrict_view': team['restrict_view'],
                     'users': [],
                     'queued_users': [],
+                    'roles': [],
                 }
                 if node_id in nodes:
                     nodes[node_id]['teams'].append(team_id)
@@ -469,7 +470,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 elif tu['team_uid'] in teams:
                     teams[tu['team_uid']]['queued_users'].extend(tu['users'])
 
-        roles = {}
+        roles = {}    # type: Dict[int, dict]
         if 'roles' in params.enterprise:
             for role in params.enterprise['roles']:
                 node_id = role['node_id']
@@ -483,7 +484,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     'visible_below': role['visible_below'],
                     'new_user_inherit': role['new_user_inherit'],
                     'is_admin': False,
-                    'users': []
+                    'users': [],
+                    'teams': [],
                 }
                 if node_id in nodes:
                     nodes[node_id]['roles'].append(role_id)
@@ -493,6 +495,15 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 role_id = ru['role_id']
                 if role_id in roles:
                     roles[role_id]['users'].append(ru['enterprise_user_id'])
+
+        if 'role_teams' in params.enterprise:
+            for rt in params.enterprise['role_teams']:
+                role_id = rt['role_id']
+                team_uid = rt['team_uid']
+                if role_id in roles:
+                    roles[role_id]['teams'].append(team_uid)
+                if team_uid in teams:
+                    teams[team_uid]['roles'].append(role_id)
 
         if 'managed_nodes' in params.enterprise:
             for mn in params.enterprise['managed_nodes']:
@@ -715,10 +726,30 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     if len(wc) > 0:
                         logging.warning('\n\nSupported user columns: %s\n', ', '.join(supported_columns))
 
+                user_roles = {}    # type: Dict[int, Set[int]]
+                team_roles = {}    # type: Dict[str, Set[int]]
+                for role_id, r in roles.items():
+                    if 'users' in r:
+                        for enterprise_user_id in r['users']:
+                            if enterprise_user_id not in user_roles:
+                                user_roles[enterprise_user_id] = set()
+                            user_roles[enterprise_user_id].add(role_id)
+                    if 'teams' in r:
+                        for team_uid in r['teams']:
+                            if team_uid not in team_roles:
+                                team_roles[team_uid] = set()
+                            team_roles[team_uid].add(role_id)
+                user_teams = {}    # type: Dict[int, Set[str]]
+                for team_uid, t in teams.items():
+                    if 'users' in t:
+                        for enterprise_user_id in t['users']:
+                            if enterprise_user_id not in user_teams:
+                                user_teams[enterprise_user_id] = set()
+                            user_teams[enterprise_user_id].add(team_uid)
+
                 displayed_columns = [x for x in supported_columns if x in columns]
                 rows = []
                 for u in users.values():
-
                     user_status_dict = get_user_status_dict(u)
 
                     user_id = u['id']
@@ -738,11 +769,19 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         elif column == 'teams':
                             team_names = [t["name"] for t in teams.values() if t['users'] and user_id in t['users']]
                             row.append(team_names)
-                        elif column == 'role_count':
-                            row.append(len([1 for r in roles.values() if r['users'] and user_id in r['users']]))
-                        elif column == 'roles':
-                            role_names = [r['name'] for r in roles.values() if r['users'] and user_id in r['users']]
-                            row.append(role_names)
+                        elif column == 'role_count' or column == 'roles':
+                            role_ids = set()
+                            if user_id in user_roles:
+                                role_ids.update(user_roles[user_id])
+                            if user_id in user_teams:
+                                for team_uid in user_teams[user_id]:
+                                    if team_uid in team_roles:
+                                        role_ids.update(team_roles[team_uid])
+                            if column == 'role_count':
+                                row.append(len(role_ids))
+                            else:
+                                role_names = [roles[role_id]['name'] for role_id in role_ids if role_id in roles]
+                                row.append(role_names)
                         elif column == 'alias':
                             row.append([x['username'] for x in params.enterprise.get('user_aliases', [])
                                         if x['enterprise_user_id'] == user_id and x['username'] != email])
@@ -790,6 +829,11 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                             row.append(len(t['queued_users']))
                         elif column == 'queued_users':
                             row.append([user_email(x) for x in t['queued_users']])
+                        elif column == 'role_count':
+                            row.append(len(t['roles']))
+                        elif column == 'roles':
+                            role_names = [roles[role_id]['name'] for role_id in t['roles'] if role_id in roles]
+                            row.append(role_names)
                     if pattern:
                         if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
                             continue
@@ -839,17 +883,22 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     row = [r['id'], r['name']]
                     for column in displayed_columns:
                         if column == 'visible_below':
-                            row.append('Y' if r['visible_below'] else '')
+                            row.append(r['visible_below'])
                         elif column == 'default_role':
-                            row.append('Y' if r['new_user_inherit'] else '')
+                            row.append(r['new_user_inherit'])
                         elif column == 'admin':
-                            row.append('Y' if r['is_admin'] else '')
+                            row.append(r['is_admin'])
                         elif column == 'node':
                             row.append(self.get_node_path(params, r['node_id']))
                         elif column == 'user_count':
                             row.append(len(r['users']))
                         elif column == 'users':
                             row.append([user_email(x) for x in r['users']])
+                        elif column == 'team_count':
+                            row.append(len(r['teams']))
+                        elif column == 'teams':
+                            team_names = [teams[team_uid]['name'] for team_uid in r['teams'] if team_uid in teams]
+                            row.append(team_names)
                     if pattern:
                         if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
                             continue
