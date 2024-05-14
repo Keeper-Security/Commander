@@ -322,7 +322,7 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
                 csv_writer.writerow(headers[starting_column:])
             for row in data:
                 for i in range(len(row)):
-                    if type(row[i]) == list:
+                    if isinstance(row[i], list):
                         row[i] = '\n'.join(row[i])
                 csv_writer.writerow(row[starting_column:])
             if isinstance(fd, io.StringIO):

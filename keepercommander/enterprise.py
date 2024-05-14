@@ -338,6 +338,7 @@ class _EnterpriseEntity(_EnterpriseDataParser):
             for keeper_entity_id_name, link in self._links:
                 link.cascade_delete(params, keeper_entity_id_name, deleted_entities)
 
+
 class _CascadeDeleteLink:
     @abc.abstractmethod
     def cascade_delete(self, params, keeper_entity_id, deleted_entities):   # type: (KeeperParams, str, Set) -> None
