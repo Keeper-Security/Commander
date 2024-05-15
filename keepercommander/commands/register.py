@@ -358,15 +358,16 @@ class ShareFolderCommand(Command):
             return
 
         rq_groups = []
-        sf_users = set(as_users)
-        sf_teams = set(as_teams)
-        sf_records = set(record_uids)
 
         def prep_rq(recs, users, curr_sf):
             return self.prepare_request(params, kwargs, curr_sf, users, sf_teams, recs, default_record=default_record,
                                         default_account=default_account, share_expiration=share_expiration)
 
         for sf_uid in shared_folder_uids:
+            sf_users = as_users.copy()
+            sf_teams = as_teams.copy()
+            sf_records = record_uids.copy()
+
             if sf_uid in params.shared_folder_cache:
                 sh_fol = params.shared_folder_cache[sf_uid]
                 if all_users or all_records:
