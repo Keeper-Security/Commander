@@ -3152,7 +3152,9 @@ class UserReportCommand(EnterpriseCommand):
 
         self.users.clear()
         kw_euid = 'enterprise_user_id'
-        enterprise_users = json.loads(EnterpriseInfoCommand().execute(params, users=True, format='json', quiet=True))
+        ei_cmd = EnterpriseInfoCommand()
+        cmd_output = ei_cmd.execute(params, users=True, columns='roles,teams', format='json', quiet=True)
+        enterprise_users = json.loads(cmd_output)
 
         def get_user_info(user):
             u = {
@@ -3166,25 +3168,12 @@ class UserReportCommand(EnterpriseCommand):
             if 'account_share_expiration' in user:
                 u['account_share_expiration'] = user['account_share_expiration']
             return u
-        euids = {u.get('user_id') for u in enterprise_users}
+
+        self.user_teams = {u.get('user_id'): u.get('teams') for u in enterprise_users}
+        self.user_roles = {u.get('user_id'): u.get('roles') for u in enterprise_users}
+        euids = list(self.user_roles.keys())
         users_cache_filtered = {u.get(kw_euid): u for u in params.enterprise.get('users', []) if u.get(kw_euid) in euids}
         self.users = {k: get_user_info(u) for k, u in users_cache_filtered.items()}
-
-        self.user_roles.clear()
-        if 'role_users' in params.enterprise:
-            for ru in params.enterprise['role_users']:
-                if ru['enterprise_user_id'] not in self.user_roles:
-                    self.user_roles[ru['enterprise_user_id']] = []
-                if ru['role_id'] in self.roles:
-                    self.user_roles[ru['enterprise_user_id']].append(self.roles[ru['role_id']])
-
-        self.user_teams = {}
-        if 'team_users' in params.enterprise:
-            for tu in params.enterprise['team_users']:
-                if tu['enterprise_user_id'] not in self.user_teams:
-                    self.user_teams[tu['enterprise_user_id']] = []
-                if tu['team_uid'] in self.teams:
-                    self.user_teams[tu['enterprise_user_id']].append(self.teams[tu['team_uid']])
 
         limit = API_EVENT_SUMMARY_ROW_LIMIT
         look_back_days = kwargs.get('days', 365)
