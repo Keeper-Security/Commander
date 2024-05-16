@@ -1883,16 +1883,6 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 for i in range(len(aliases)):
                     print('{0:>16s}: {1}'.format('Email Alias' if i == 0 else '', aliases[i]))
 
-        if 'role_users' in params.enterprise:
-            role_ids = [x['role_id'] for x in params.enterprise['role_users'] if x['enterprise_user_id'] == user['enterprise_user_id']]
-            if len(role_ids) > 0:
-                role_nodes = {}
-                for r in params.enterprise['roles']:
-                    role_nodes[r['role_id']] = r
-                for i in range(len(role_ids)):
-                    role_node = role_nodes[role_ids[i]]
-                    print('{0:>16s}: {1:<22s} {2}'.format('Role' if i == 0 else '', role_node['data']['displayname'], role_node['role_id'] if is_verbose else ''))
-
         team_nodes = {}
         if 'teams' in params.enterprise:
             for t in params.enterprise['teams']:
@@ -1902,8 +1892,7 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 team_nodes[t['team_uid']] = t
 
         if 'team_users' in params.enterprise:
-            user_id = user['enterprise_user_id']
-            ts = [t for t in params.enterprise['team_users'] if t['enterprise_user_id'] == user_id]
+            ts = [t for t in params.enterprise['team_users'] if t['enterprise_user_id'] == enterprise_user_id]
             ts.sort(key=lambda x: team_nodes[x['team_uid']]['name'])
             for i, tu in enumerate(ts):
                 team_node = team_nodes[tu['team_uid']]
@@ -1924,6 +1913,34 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 if team_node:
                     print('{0:>16s}: {1:<24s}{2}'.format('Queued Team' if i == 0 else '', team_node['name'],
                                                          f' [{team_node["team_uid"]}]' if is_verbose else ''))
+
+        user_teams = set()    # type: Set[str]
+        user_team_roles = {}  # type: Dict[int, str]
+        if 'team_users' in params.enterprise:
+            user_teams.update((x['team_uid'] for x in params.enterprise['team_users'] if x['enterprise_user_id'] == enterprise_user_id))
+        if len(user_teams) > 0 and 'role_teams' in params.enterprise:
+            team_lookup = {x['team_uid']: x['name'] for x in params.enterprise['teams']}
+            for x in params.enterprise['role_teams']:
+                team_uid = x['team_uid']
+                if team_uid not in user_teams:
+                    continue
+                user_team_roles[x['role_id']] = team_lookup.get(team_uid,team_uid)
+        if 'role_users' in params.enterprise:
+            role_ids = [x['role_id'] for x in params.enterprise['role_users'] if x['enterprise_user_id'] == user['enterprise_user_id']]
+            for role_id in role_ids:
+                user_team_roles.pop(role_id, None)
+            role_ids.extend(user_team_roles.keys())
+            if len(role_ids) > 0:
+                role_nodes = {}
+                for r in params.enterprise['roles']:
+                    role_nodes[r['role_id']] = r
+                for i in range(len(role_ids)):
+                    role_id = role_ids[i]
+                    role_node = role_nodes[role_id]
+                    role_info = role_node['data']['displayname']
+                    if role_id in user_team_roles:
+                        role_info += f' [{user_team_roles[role_id]}]'
+                    print('{0:>16s}: {1:<22s} {2}'.format('Role' if i == 0 else '', role_info, role_id if is_verbose else ''))
 
         share_admins = self.get_share_administrators(params, user)
         if share_admins:
