@@ -1569,9 +1569,16 @@ class FolderTransformCommand(Command):
                         uo.manageUsers = folder_pb2.BOOLEAN_TRUE if ushare.get(MU_KEY) else folder_pb2.BOOLEAN_FALSE
                         uo.manageRecords = folder_pb2.BOOLEAN_TRUE if ushare.get(MR_KEY) else folder_pb2.BOOLEAN_FALSE
                         keys = params.key_cache.get(email)
-                        if keys and keys.rsa:
-                            rsa_key = crypto.load_rsa_public_key(keys.rsa)
-                            uo.sharedFolderKey = crypto.encrypt_rsa(sf_key, rsa_key)
+                        if keys:
+                            if params.forbid_rsa and keys.ec:
+                                ec_key = crypto.load_ec_public_key(keys.ec)
+                                uo.typedSharedFolderKey.encryptedKey = crypto.encrypt_ec(sf_key, ec_key)
+                                uo.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key_ecc
+                            elif not params.forbid_rsa and keys.rsa:
+                                rsa_key = crypto.load_rsa_public_key(keys.rsa)
+                                uo.typedSharedFolderKey.encryptedKey = crypto.encrypt_rsa(sf_key, rsa_key)
+                                uo.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key
+
                         req_user_list = req.sharedFolderAddUser
                         req_user_list.append(uo)
 
@@ -1593,10 +1600,20 @@ class FolderTransformCommand(Command):
                         elif team_uid in params.key_cache:
                             team_keys = params.key_cache[team_uid]
                             if team_keys.aes:
-                                to.sharedFolderKey = crypto.encrypt_aes_v1(sf_key, team_keys.aes)
-                            elif team_keys.rsa:
+                                if params.forbid_rsa:
+                                    to.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v2(sf_key, team_keys.aes)
+                                    to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key_gcm
+                                else:
+                                    to.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v1(sf_key, team_keys.aes)
+                                    to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key
+                            elif params.forbid_rsa and team_keys.ec:
+                                ec_key = crypto.load_ec_public_key(team_keys.ec)
+                                to.typedSharedFolderKey.encryptedKey = crypto.encrypt_ec(sf_key, ec_key)
+                                to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key_ecc
+                            elif not params.forbid_rsa and team_keys.rsa:
                                 rsa_key = crypto.load_rsa_public_key(team_keys.rsa)
-                                to.sharedFolderKey = crypto.encrypt_rsa(sf_key, rsa_key)
+                                to.typedSharedFolderKey.encryptedKey = crypto.encrypt_rsa(sf_key, rsa_key)
+                                to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key
                             else:
                                 continue
                         req.sharedFolderAddTeam.append(to)

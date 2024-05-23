@@ -43,8 +43,22 @@ if len(sf_rs['shared_folders']) == 0:
     raise ValueError(f'Shared folder UID "{shared_folder_uid}" not found')
 
 shared_folder_info = sf_rs['shared_folders'][0]
+
+if 'shared_folder_key' not in shared_folder_info:
+    raise Exception('User is not a member of shared folder.')
+
 shared_folder_key = utils.base64_url_decode(shared_folder_info['shared_folder_key'])
-shared_folder_key = crypto.decrypt_aes_v1(shared_folder_key, my_params.data_key)
+key_type = shared_folder_info['key_type']
+if key_type == 1:
+    shared_folder_key = crypto.decrypt_aes_v1(shared_folder_key, my_params.data_key)
+elif key_type == 2:
+    shared_folder_key = crypto.decrypt_rsa(shared_folder_key, my_params.rsa_key2)
+elif key_type == 3:
+    shared_folder_key = crypto.decrypt_aes_v2(shared_folder_key, my_params.data_key)
+elif key_type == 4:
+    shared_folder_key = crypto.decrypt_ec(shared_folder_key, my_params.ecc_key)
+else:
+    raise Exception('Unsupported key type')
 
 existing_users = set()
 if isinstance(shared_folder_info.get('users'), list):
@@ -93,10 +107,17 @@ for user in users_to_add:
     if isinstance(manage_records, bool):
         arq.manageRecords = folder_pb2.BOOLEAN_TRUE if manage_records else folder_pb2.BOOLEAN_FALSE
     public_keys = my_params.key_cache.get(user)
-    if public_keys and public_keys.rsa:
-        user_rsa_key = crypto.load_rsa_public_key(public_keys.rsa)
-        arq.sharedFolderKey = crypto.encrypt_rsa(shared_folder_key, user_rsa_key)
-        rq.sharedFolderAddUser.append(arq)
+    if public_keys:
+        if public_keys.ec:
+            user_ec_key = crypto.load_ec_public_key(public_keys.ec)
+            arq.typedSharedFolderKey.encryptedKey = crypto.encrypt_ec(shared_folder_key, user_ec_key)
+            arq.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key_ecc
+            rq.sharedFolderAddUser.append(arq)
+        elif not my_params.forbid_rsa and public_keys.rsa:
+            user_rsa_key = crypto.load_rsa_public_key(public_keys.rsa)
+            arq.typedSharedFolderKey.encryptedKey = crypto.encrypt_rsa(shared_folder_key, user_rsa_key)
+            arq.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key
+            rq.sharedFolderAddUser.append(arq)
     else:
         logging.warning('Add user "%s": User public key is not available', user)
 

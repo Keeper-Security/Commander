@@ -39,7 +39,7 @@ from ..display import bcolors
 from .helpers import audit_report
 from .enterprise_common import EnterpriseCommand
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title
-from .. import api, vault, record_management
+from .. import api, crypto, vault, record_management
 from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
@@ -1979,10 +1979,11 @@ class ActionReportCommand(EnterpriseCommand):
                 if dryrun:
                     cmd_status = 'dry run'
                 else:
-                    pub_key = self.get_public_key(params, target)
-                    if pub_key:
+                    api.load_user_public_keys(params, [target], False)
+                    target_pub_keys = params.key_cache.get(target)
+                    if target_pub_keys:
                         for email in [u.get('username') for u in from_users]:
-                            result = EnterpriseTransferUserCommand.transfer_user_account(params, email, target, pub_key)
+                            result = EnterpriseTransferUserCommand.transfer_user_account(params, email, target, target_pub_keys)
                             if result:
                                 affected += 1
 
