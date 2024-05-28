@@ -1,10 +1,9 @@
 import argparse
 import logging
-import os
 import sys
 
+from keepercommander import api, utils, crypto
 from keepercommander.__main__ import get_params_from_config
-from keepercommander import api, utils, crypto, error
 from keepercommander.proto import folder_pb2
 
 parser = argparse.ArgumentParser(description='Add user to shared folder')
@@ -44,7 +43,16 @@ if len(sf_rs['shared_folders']) == 0:
 
 shared_folder_info = sf_rs['shared_folders'][0]
 shared_folder_key = utils.base64_url_decode(shared_folder_info['shared_folder_key'])
-shared_folder_key = crypto.decrypt_aes_v1(shared_folder_key, my_params.data_key)
+key_type = shared_folder_info["key_type"]
+if key_type == 1:
+    shared_folder_key = crypto.decrypt_aes_v1(shared_folder_key, my_params.data_key)
+elif key_type == 2:
+    shared_folder_key = crypto.decrypt_rsa(shared_folder_key, my_params.rsa_key2)
+elif key_type == 3:
+    shared_folder_key = crypto.decrypt_aes_v2(shared_folder_key, my_params.data_key)
+elif key_type == 4:
+    shared_folder_key = crypto.decrypt_ec(shared_folder_key, my_params.data_key)
+
 
 existing_users = set()
 if isinstance(shared_folder_info.get('users'), list):
