@@ -752,6 +752,8 @@ class LoginCommand(Command):
                 BreachWatchScanCommand().execute(params, suppress_no_op=True)
             if params.enterprise_ec_key:
                 SyncSecurityDataCommand().execute(params, record='@all', suppress_no_op=True)
+            if params.is_enterprise_admin:
+                api.query_enterprise(params, True)
 
 
 class CheckEnforcementsCommand(Command):

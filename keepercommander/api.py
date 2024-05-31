@@ -658,17 +658,11 @@ def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version
 def communicate(params, request):
     # type: (KeeperParams, dict) -> dict
 
-    def authorize_request(rq):
-        rq['client_time'] = current_milli_time()
-        rq['locale'] = LOCALE
-        rq['device_id'] = 'Commander'
-        rq['session_token'] = params.session_token
-        rq['username'] = params.user.lower()
-
-    if not params.session_token:
-        login(params)
-
-    authorize_request(request)
+    request['client_time'] = current_milli_time()
+    request['locale'] = LOCALE
+    request['device_id'] = 'Commander'
+    request['session_token'] = params.session_token
+    request['username'] = params.user.lower()
     try:
         response_json = run_command(params, request)
         if response_json['result'] != 'success':

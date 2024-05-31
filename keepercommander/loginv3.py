@@ -361,7 +361,6 @@ class LoginV3Flow:
 
     @staticmethod
     def populateAccountSummary(params: KeeperParams):
-
         acct_summary = LoginV3API.accountSummary(params)
 
         if acct_summary.clientKey:
@@ -401,6 +400,8 @@ class LoginV3Flow:
                         if params.logout_timer == 0 or logout_timer < params.logout_timer:
                             params.logout_timer = logout_timer
 
+        params.is_enterprise_admin = acct_summary_dict_snake_case.get('is_enterprise_admin') is True
+
         # settings
         params.settings = acct_summary_dict_snake_case['settings']
 
@@ -414,10 +415,6 @@ class LoginV3Flow:
 
         # license
         params.license = acct_summary_dict_snake_case['license']
-
-        if acct_summary_dict_snake_case.get('is_enterprise_admin'):
-            api.query_enterprise(params)
-
         params.sync_data = True
         params.prepare_commands = True
 

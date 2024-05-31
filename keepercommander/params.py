@@ -137,6 +137,7 @@ class KeeperParams:
         self.enforcements = None
         self.enterprise = None
         self.automators = None
+        self.is_enterprise_admin = False
         self.enterprise_loader = None
         self.enterprise_id = 0
         self.msp_tree_key = None
@@ -203,6 +204,7 @@ class KeeperParams:
         self.license = None
         self.settings = None
         self.enforcements = None
+        self.is_enterprise_admin = False
         self.enterprise = None
         self.automators = None
         self.enterprise_loader = None
