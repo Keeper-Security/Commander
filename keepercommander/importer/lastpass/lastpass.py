@@ -671,6 +671,11 @@ class LastPassAddress(object):
         if 'Address 1' in notes:
             address.street1 = notes.pop('Address 1', '')
             address.street2 = notes.pop('Address 2', '')
+            street3 = notes.pop('Address 3', '')
+            if street3:
+                address.street2 += f' {street3}'
+                address.street2 = address.street2.strip()
+
         elif 'Address' in notes:
             s1, sep, s2 = notes.pop('Address', '').partition(',')
             address.street1 = s1.strip()

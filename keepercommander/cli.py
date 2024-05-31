@@ -55,6 +55,7 @@ command_info['server'] = 'Sets or displays current Keeper region.'
 
 logging.getLogger('asyncio').setLevel(logging.WARNING)
 
+
 def display_command_help(show_enterprise=False, show_shell=False):
     headers = ['Category', 'Command', 'Alias', '', 'Description']
     alias_lookup = {x[1]: x[0] for x in aliases.items()}
