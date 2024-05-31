@@ -59,6 +59,8 @@ class KeeperJsonMixin:
                 else:
                     field_type = ''
                     field_name = name
+                if len(field_name) >= 2 and field_name[-2] == ':' and field_name[-1].isdigit():
+                    field_name = field_name[:-2]
 
                 is_multiple = False
                 if field_type:
