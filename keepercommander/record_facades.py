@@ -87,6 +87,40 @@ def string_setter(name):   # type: (str) -> Callable[[Any, str], None]
                 field.value.clear()
     return setter
 
+def boolean_getter(name):   # type: (str) -> Callable[[TypedRecordFacade], bool]
+    def getter(obj):
+        field = getattr(obj, name)
+        if isinstance(field, TypedField):
+            value = field.value[0] if len(field.value) > 0 else None
+            if value is None:
+                return None
+            elif isinstance(value, bool) is True:
+                return value
+
+            if str(value).lower() in ['true', 'yes', '1', 'on']:
+                return True
+            elif str(value).lower() in ['false', 'no', '0', 'off']:
+                return False
+            return None
+    return getter
+
+def boolean_setter(name):   # type: (str) -> Callable[[Any, str], None]
+    def setter(obj, value):
+        field = getattr(obj, name)
+        if isinstance(field, TypedField):
+            if value is not None:
+                if isinstance(value, bool) is not True:
+                    if str(value).lower() in ['true', 'yes', '1', 'on']:
+                        value = True
+                    elif str(value).lower() in ['false', 'no', '0', 'off']:
+                        value = False
+                if len(field.value) > 0:
+                    field.value[0] = value
+                else:
+                    field.value.append(value)
+            else:
+                field.value.clear()
+    return setter
 
 def string_element_getter(name, element_name):   # type: (str, str) -> Callable[[Any], str]
     def getter(obj):
