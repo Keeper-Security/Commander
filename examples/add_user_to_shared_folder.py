@@ -7,6 +7,7 @@ from keepercommander.__main__ import get_params_from_config
 from keepercommander.proto import folder_pb2
 
 parser = argparse.ArgumentParser(description='Add user to shared folder')
+parser.add_argument('--config', dest='config', action='store', help='Config file to use')
 parser.add_argument('--debug', action='store_true', help='Enables debug logging')
 parser.add_argument('-p', '--manage-records', dest='manage_records', action='store', choices=['on', 'off'],
                     help='account permission: can manage records.')
@@ -19,7 +20,7 @@ opts, flags = parser.parse_known_args(sys.argv[1:])
 
 logging.basicConfig(level=logging.DEBUG if opts.debug is True else logging.WARNING, format='%(message)s')
 
-my_params = get_params_from_config('')
+my_params = get_params_from_config(opts.config or '')
 
 api.login(my_params)
 if not my_params.session_token:
