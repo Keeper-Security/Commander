@@ -118,7 +118,7 @@ class EnterpriseCommand(Command):
                             if key_type == 1:
                                 team_key = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
                             elif key_type == 2:
-                                team_key = crypto.decrypt_rsa(encrypted_key, params.rsa_key)
+                                team_key = crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
                             elif key_type == 3:
                                 team_key = crypto.decrypt_aes_v2(encrypted_key, params.data_key)
                         except Exception as e:

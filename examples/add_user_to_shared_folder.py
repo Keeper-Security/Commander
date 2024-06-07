@@ -106,7 +106,7 @@ if not shared_folder_key:
         elif key_type == 3:
             shared_folder_key = crypto.decrypt_aes_v2(encrypted_key, my_params.data_key)
         elif key_type == 4:
-            shared_folder_key = crypto.decrypt_ec(encrypted_key, my_params.data_key)
+            shared_folder_key = crypto.decrypt_ec(encrypted_key, my_params.ecc_key)
 
 if not shared_folder_key:
     raise ValueError(f'Key cannot be resolved: shared folder UID "{shared_folder_uid}"')
