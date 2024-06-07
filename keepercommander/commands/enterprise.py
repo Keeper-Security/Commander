@@ -2566,19 +2566,20 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             action = next((a for a in 'add|update|remove'.split('|') if command.endswith(a)), None)
                             node_names = [x for x in params.enterprise['nodes'] if x['node_id'] == rq['managed_node_id']]
                             node_name = (node_names[0]['data'].get('displayname') or params.enterprise['enterprise_name']) if len(node_names) > 0 else ''
-                            result = rs.get('result')
+                            success = rs.get('result') == 'success'
+                            logging_fn = logging.info if success else logging.warning
                             cascade = rq.get('cascade_node_management')
                             affected_nodes = 'node and sub-nodes' if action == 'add' and cascade \
                                 else 'sub-nodes' if action == 'update' \
                                 else 'node'
                             action_result = 'grant' if action == 'add' or (cascade and action == 'update') \
                                 else 'revoke'
-                            if result:
+                            if success:
                                 action_result = (action_result + ('d' if action_result.endswith('e') else 'ed')).capitalize()
                             else:
                                 action_result = f'Failed to {action_result}: {rs.get("message")}'
                             msg = f'{action_result} admin privileges for "{role_name}" role on "{node_name}" {affected_nodes}'
-                            logging.info(msg)
+                            logging_fn(msg)
                         elif command in {'managed_node_privilege_add', 'managed_node_privilege_remove'}:
                             node_names = [x for x in params.enterprise['nodes'] if x['node_id'] == rq['managed_node_id']]
                             node_name = (node_names[0]['data'].get('displayname') or params.enterprise['enterprise_name']) if len(node_names) > 0 else ''
