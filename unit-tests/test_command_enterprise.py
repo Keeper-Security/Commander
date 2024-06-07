@@ -1,6 +1,7 @@
 import logging
 import json
 from datetime import datetime, timedelta
+from typing import Optional
 from unittest import TestCase, mock
 
 from data_enterprise import EnterpriseEnvironment, get_enterprise_data, enterprise_allocate_ids
@@ -339,7 +340,8 @@ class TestEnterprise(TestCase):
         }
 
     @staticmethod
-    def query_enterprise(params):   # type: (KeeperParams) -> None
+    def query_enterprise(params, force=False, tree_key=None):
+        # type: (KeeperParams, Optional[bool], Optional[bytes]) -> None
         params.enterprise = get_enterprise_data(params)
         if params.enterprise:
             encrypted_tree_key = utils.base64_url_decode(params.enterprise['tree_key'])
