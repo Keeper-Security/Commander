@@ -1982,6 +1982,11 @@ class EnterpriseRoleCommand(EnterpriseCommand):
         else:
             logging.warning(f'Could not load value in "{filepath}": No such file exists')
 
+    @staticmethod
+    def is_node_managed_by_role(params, node_id, role_id):  # type: (KeeperParams, int, int) -> bool
+        managed_nodes = params.enterprise.get('managed_nodes')
+        return any(True for x in managed_nodes if x.get('managed_node_id') == node_id and x.get('role_id') == role_id)
+
     def execute(self, params, **kwargs):
         if kwargs.get('add') and kwargs.get('remove'):
             raise CommandError('enterprise-role', "'add' and 'delete' parameters are mutually exclusive.")
@@ -2332,25 +2337,30 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     role_id = role['role_id']
                     for node_id in node_changes:
                         is_add, node_name = node_changes[node_id]
+                        is_update = is_add and self.is_node_managed_by_role(params, node_id, role_id)
+                        action = 'remove' if not is_add \
+                            else 'update' if is_update \
+                            else 'add'
                         rq = {
-                            "command": "role_managed_node_add" if is_add else "role_managed_node_remove",
+                            "command": f'role_managed_node_{action}',
                             "role_id": role_id,
                             "managed_node_id": node_id
                         }
                         if is_add:
                             rq['cascade_node_management'] = (kwargs.get('cascade') == 'on') or False
-                            rq['tree_keys'] = []
-                            if 'role_users' in params.enterprise:
-                                for user_id in [x['enterprise_user_id'] for x in params.enterprise['role_users'] if x['role_id'] == role_id]:
-                                    emails = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] == user_id]
-                                    if emails:
-                                        public_key = self.get_public_key(params, emails[0])
-                                        encrypted_tree_key = crypto.encrypt_rsa(params.enterprise['unencrypted_tree_key'], public_key)
-                                        if public_key:
-                                            rq['tree_keys'].append({
-                                                "enterprise_user_id": user_id,
-                                                "tree_key": utils.base64_url_encode(encrypted_tree_key)
-                                            })
+                            if not is_update:
+                                rq['tree_keys'] = []
+                                if 'role_users' in params.enterprise:
+                                    for user_id in [x['enterprise_user_id'] for x in params.enterprise['role_users'] if x['role_id'] == role_id]:
+                                        emails = [x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] == user_id]
+                                        if emails:
+                                            public_key = self.get_public_key(params, emails[0])
+                                            encrypted_tree_key = crypto.encrypt_rsa(params.enterprise['unencrypted_tree_key'], public_key)
+                                            if public_key:
+                                                rq['tree_keys'].append({
+                                                    "enterprise_user_id": user_id,
+                                                    "tree_key": utils.base64_url_encode(encrypted_tree_key)
+                                                })
                         request_batch.append(rq)
 
             elif kwargs.get('add_privilege') or kwargs.get('remove_privilege'):
@@ -2552,15 +2562,23 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                 logging.info('\'%s\' role %s %s', role_name, 'assigned to' if command == 'role_user_add' else 'removed from', user_name)
                             else:
                                 logging.warning('\'%s\' role failed to %s %s: %s', role_name, 'assign' if command == 'role_user_add' else 'remove', user_name, rs['message'])
-                        elif command in {'role_managed_node_add', 'role_managed_node_remove'}:
+                        elif command.startswith('role_managed_node'):
+                            action = next((a for a in 'add|update|remove'.split('|') if command.endswith(a)), None)
                             node_names = [x for x in params.enterprise['nodes'] if x['node_id'] == rq['managed_node_id']]
                             node_name = (node_names[0]['data'].get('displayname') or params.enterprise['enterprise_name']) if len(node_names) > 0 else ''
-                            if rs['result'] == 'success':
-                                logging.info('\'%s\' role is %s managing node \'%s\'',
-                                             role_name, 'assigned to' if command == 'role_managed_node_add' else 'removed from', node_name)
+                            result = rs.get('result')
+                            cascade = rq.get('cascade_node_management')
+                            affected_nodes = 'node and sub-nodes' if action == 'add' and cascade \
+                                else 'sub-nodes' if action == 'update' \
+                                else 'node'
+                            action_result = 'grant' if action == 'add' or (cascade and action == 'update') \
+                                else 'revoke'
+                            if result:
+                                action_result = (action_result + ('d' if action_result.endswith('e') else 'ed')).capitalize()
                             else:
-                                logging.warning('\'%s\' role failed to %s managing node \'%s\': %s',
-                                                role_name, 'assign' if command == 'role_managed_node_add' else 'remove', node_name, rs['message'])
+                                action_result = f'Failed to {action_result}: {rs.get("message")}'
+                            msg = f'{action_result} admin privileges for "{role_name}" role on "{node_name}" {affected_nodes}'
+                            logging.info(msg)
                         elif command in {'managed_node_privilege_add', 'managed_node_privilege_remove'}:
                             node_names = [x for x in params.enterprise['nodes'] if x['node_id'] == rq['managed_node_id']]
                             node_name = (node_names[0]['data'].get('displayname') or params.enterprise['enterprise_name']) if len(node_names) > 0 else ''
@@ -2597,7 +2615,8 @@ class EnterpriseRoleCommand(EnterpriseCommand):
         if request_batch or len(non_batch_update_msgs) > 0:
             for update_msg in non_batch_update_msgs:
                 logging.info(update_msg)
-            api.query_enterprise(params)
+            do_full_sync = request_batch and any(rq for rq in request_batch if rq.get('command').endswith('_add'))
+            api.query_enterprise(params, force=do_full_sync)
         else:
             if kwargs.get('format') == 'json':
                 json_roles = []
