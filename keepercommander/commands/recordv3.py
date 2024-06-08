@@ -18,8 +18,13 @@ import tempfile
 from pathlib import Path
 
 import requests
-from Cryptodome.Cipher import AES
-from keepercommander.breachwatch import BreachWatch
+
+from cryptography.hazmat.primitives.ciphers import Cipher
+from cryptography.hazmat.primitives.ciphers.algorithms import AES
+from cryptography.hazmat.primitives.ciphers.modes import GCM
+
+
+from ..breachwatch import BreachWatch
 
 from . import recordv2 as recordv2
 from .base import suppress_exit, raise_parse_exception, dump_report_data, Command
@@ -366,14 +371,17 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
                     with open(file['full_path'], mode='rb') as src:
                         iv = os.urandom(12)
                         dst.write(iv)
-                        cipher = AES.new(key=file['record_key'], mode=AES.MODE_GCM, nonce=iv)
+
+                        cipher = Cipher(AES(file['record_key']), GCM(iv))
+                        encryptor = cipher.encryptor()
+                        # cipher = AES.new(key=file['record_key'], mode=AES.MODE_GCM, nonce=iv)
                         byte_data = src.read(BUFFER_SIZE)
                         while len(byte_data) != 0:
-                            encrypted_data = cipher.encrypt(byte_data)
+                            encrypted_data = encryptor.update(byte_data)
                             dst.write(encrypted_data)
                             byte_data = src.read(BUFFER_SIZE)
-
-                        tag = cipher.digest()
+                        dst.write(encryptor.finalize())
+                        tag = encryptor.tag
                         dst.write(tag)
                         dst_size = src.tell()
                     dst.seek(0)

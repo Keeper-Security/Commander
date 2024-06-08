@@ -29,7 +29,7 @@ class TestRegister(TestCase):
 
         self.record_share_mock = mock.patch('keepercommander.api.get_record_shares').start()
 
-        def not_shared(params, record_uids, is_share_admin):
+        def not_shared(params, record_uids, skip_check=False):
             pass
         self.record_share_mock.side_effect = not_shared
 
@@ -41,7 +41,7 @@ class TestRegister(TestCase):
         cmd.execute(params, email=['user2@keepersecurity.com'], action='owner', can_share=False, can_edit=True, record=record_uid)
         self.assertEqual(len(TestRegister.expected_commands), 0)
 
-        def shared(params, record_uids, is_share_admin):
+        def shared(params, record_uids, skip_check=False):
             return [{
                 'shares': {
                     'user_permissions': [

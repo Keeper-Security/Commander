@@ -185,14 +185,12 @@ class EnterprisePushCommand(EnterpriseCommand):
             user_key = params.key_cache.get(email)
             if user_key is None:
                 continue
-            if user_key.ec:
+            user_ec_key = None
+            user_rsa_key = None
+            if params.forbid_rsa and user_key.ec:
                 user_ec_key = crypto.load_ec_public_key(user_key.ec)
-            else:
-                user_ec_key = None
-            if user_key.rsa:
+            elif not params.forbid_rsa and user_key.rsa:
                 user_rsa_key = crypto.load_rsa_public_key(user_key.rsa)
-            else:
-                user_rsa_key = None
             if user_ec_key is None and user_rsa_key is None:
                 logging.warning('User \"%s\" public key cannot be loaded. Skipping', email)
                 continue

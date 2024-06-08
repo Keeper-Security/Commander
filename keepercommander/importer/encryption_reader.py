@@ -1,24 +1,34 @@
 import os
 from io import RawIOBase, BufferedReader, IOBase, BytesIO
 
-from Cryptodome.Cipher import AES
+from cryptography.hazmat.primitives.ciphers import Cipher
+from cryptography.hazmat.primitives.ciphers.algorithms import AES
+from cryptography.hazmat.primitives.ciphers.modes import GCM
 
+from .. import crypto
 
 CHUNK_SIZE = 8 * 1024
 
 
-def encode_aes_from_stream(stream, encryption_key, aes_mode=AES.MODE_GCM, chunk_size=CHUNK_SIZE):
+def encode_aes_from_stream(stream, encryption_key, chunk_size=CHUNK_SIZE):
     """Encrypts using AES from file in chunks"""
-    iv = os.urandom(12)
-    yield iv
-    cipher = AES.new(key=encryption_key, mode=aes_mode, nonce=iv)
+    nonce = crypto.get_random_bytes(12)
+    yield nonce
+
+    cipher = Cipher(AES(encryption_key), GCM(nonce))
+    encrypter = cipher.encryptor()
+    # cipher = AES.new(key=encryption_key, mode=aes_mode, nonce=iv)
     chunk = stream.read(CHUNK_SIZE)
     while chunk:
-        yield cipher.encrypt(chunk)
+        yield encrypter.update(chunk)
+        # yield cipher.encrypt(chunk)
         chunk = stream.read(CHUNK_SIZE)
-    yield cipher.digest()
+
+    yield encrypter.finalize() + encrypter.tag
+    # yield cipher.digest()
 
 
+# TODO refactor to use standard methods
 class EncryptionReader(RawIOBase):
     """A RawIOBase reader that encrypts the input stream"""
 

@@ -15,11 +15,10 @@ from typing import Any, List, Dict, Optional
 
 import google
 
-from . import api, utils, crypto
+from . import api, utils, crypto, convert_keys
 from .display import bcolors
 from .params import KeeperParams, RecordOwner
 from .proto import SyncDown_pb2, record_pb2, client_pb2, breachwatch_pb2
-from .proto.SyncDown_pb2 import BreachWatchRecord, BreachWatchSecurityData
 from .subfolder import RootFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, BaseFolderNode
 
 
@@ -67,8 +66,8 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
 
     params.available_team_cache = None
 
-    resp_bw_recs = []       # type: List[BreachWatchRecord]
-    resp_sec_data_recs = []     # type: List[BreachWatchSecurityData]
+    resp_bw_recs = []            # type: List[SyncDown_pb2.BreachWatchRecord]
+    resp_sec_data_recs = []      # type: List[SyncDown_pb2.BreachWatchSecurityData]
     request = SyncDown_pb2.SyncDownRequest()
     revision = params.revision
     full_sync = False
@@ -275,10 +274,13 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                 team['name'] = t.name
                 team['team_key'] = utils.base64_url_encode(t.teamKey)
                 team['team_key_type'] = t.teamKeyType
-                team['team_private_key'] = utils.base64_url_encode(t.teamPrivateKey)
                 team['restrict_edit'] = t.restrictEdit
                 team['restrict_share'] = t.restrictShare
                 team['restrict_view'] = t.restrictView
+                if len(t.teamEccPrivateKey) > 0:
+                    team['team_ec_private_key'] = utils.base64_url_encode(t.teamEccPrivateKey)
+                if len(t.teamPrivateKey) > 0:
+                    team['team_private_key'] = utils.base64_url_encode(t.teamPrivateKey)
 
             for t in response.teams:
                 team_uid = utils.base64_url_encode(t.teamUid)
@@ -644,14 +646,16 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             else:
                 record_key_encrypted = utils.base64_url_decode(meta_data['record_key'])
                 key_type = meta_data['record_key_type']
-                if key_type == 1:                        # AES256CBC
+                if key_type == record_pb2.ENCRYPTED_BY_DATA_KEY:
                     record_key = crypto.decrypt_aes_v1(record_key_encrypted, params.data_key)
-                elif meta_data['record_key_type'] == 2:  # RSA
+                elif key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY:
                     record_key = crypto.decrypt_rsa(record_key_encrypted, params.rsa_key2)
-                elif key_type == 3:                      # AES256GCM
+                elif key_type == record_pb2.ENCRYPTED_BY_DATA_KEY_GCM:
                     record_key = crypto.decrypt_aes_v2(record_key_encrypted, params.data_key)
-                elif meta_data['record_key_type'] == 4:  # EC
+                elif key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY_ECC:
                     record_key = crypto.decrypt_ec(record_key_encrypted, params.ecc_key)
+                else:
+                    raise Exception('Unsupported key type')
         except Exception as e:
             logging.debug('Record %s meta data decryption error: %s', record_uid, e)
 
@@ -670,31 +674,58 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             try:
                 encrypted_team_key = utils.base64_url_decode(team['team_key'])
                 key_type = team['team_key_type']
-                if key_type == 2:
-                    team_key = crypto.decrypt_rsa(encrypted_team_key, params.rsa_key2)
-                else:
+                if key_type == record_pb2.ENCRYPTED_BY_DATA_KEY:
                     team_key = crypto.decrypt_aes_v1(encrypted_team_key, params.data_key)
+                elif key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY:
+                    team_key = crypto.decrypt_rsa(encrypted_team_key, params.rsa_key2)
+                elif key_type == record_pb2.ENCRYPTED_BY_DATA_KEY_GCM:
+                    team_key = crypto.decrypt_aes_v2(encrypted_team_key, params.data_key)
+                elif key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY_ECC:
+                    team_key = crypto.decrypt_ec(encrypted_team_key, params.ecc_key)
+                else:
+                    raise Exception('Unsupported key type')
                 team['team_key_unencrypted'] = team_key
-                encrypted_team_private_key = utils.base64_url_decode(team['team_private_key'])
-                team['team_private_key_unencrypted'] = \
-                    crypto.decrypt_aes_v1(encrypted_team_private_key, team_key)
+                if 'team_private_key' in team:
+                    encrypted_team_private_key = utils.base64_url_decode(team['team_private_key'])
+                    team['team_private_key_unencrypted'] = crypto.decrypt_aes_v1(encrypted_team_private_key, team_key)
+                if 'team_ec_private_key' in team:
+                    encrypted_team_private_key = utils.base64_url_decode(team['team_ec_private_key'])
+                    team['team_ec_private_key_unencrypted'] = crypto.decrypt_aes_v2(encrypted_team_private_key, team_key)
             except Exception as e:
                 logging.warning('Could not decrypt team %s key: %s', team_uid, e)
         if 'team_key_unencrypted' in team:
+            team_key = team['team_key_unencrypted']
+            team_uid = team['team_uid']
             if 'shared_folder_keys' in team:
                 for sf_key in team['shared_folder_keys']:
+                    shared_folder_uid = sf_key['shared_folder_uid']
                     if 'shared_folder_key_unencrypted' not in sf_key:
                         encrypted_sf_key = utils.base64_url_decode(sf_key['shared_folder_key'])
                         try:
-                            if sf_key['key_type'] == 2:
-                                team_private_key = team['team_private_key_unencrypted']
-                                team_pk = crypto.load_rsa_private_key(team_private_key)
-                                decrypted_sf_key = crypto.decrypt_rsa(encrypted_sf_key, team_pk)
+                            key_type = sf_key['key_type']
+                            decrypted_sf_key = None
+                            if key_type == record_pb2.ENCRYPTED_BY_DATA_KEY:
+                                decrypted_sf_key = crypto.decrypt_aes_v1(encrypted_sf_key, team_key)
+                            elif key_type == record_pb2.ENCRYPTED_BY_DATA_KEY:
+                                if 'team_private_key_unencrypted' in team:
+                                    team_private_key = team['team_private_key_unencrypted']
+                                    team_pk = crypto.load_rsa_private_key(team_private_key)
+                                    decrypted_sf_key = crypto.decrypt_rsa(encrypted_sf_key, team_pk)
+                            elif key_type == record_pb2.ENCRYPTED_BY_DATA_KEY_GCM:
+                                decrypted_sf_key = crypto.decrypt_aes_v2(encrypted_sf_key, team_key)
+                            elif key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY_ECC:
+                                if 'team_ec_private_key_unencrypted' in team:
+                                    team_private_key = team['team_ec_private_key_unencrypted']
+                                    team_pk = crypto.load_ec_private_key(team_private_key)
+                                    decrypted_sf_key = crypto.decrypt_ec(encrypted_sf_key, team_pk)
                             else:
-                                decrypted_sf_key = crypto.decrypt_aes_v1(encrypted_sf_key, team['team_key_unencrypted'])
-                            sf_key['shared_folder_key_unencrypted'] = decrypted_sf_key
+                                raise Exception('Unsupported key type')
+                            if decrypted_sf_key:
+                                sf_key['shared_folder_key_unencrypted'] = decrypted_sf_key
+                            else:
+                                logging.debug('Cannot decrypt team\' shared folder key: team_uid=%s, shared_folder_uid=%s', team_uid, shared_folder_uid)
                         except Exception as e:
-                            logging.debug('Decryption error: %s', e)
+                            logging.debug('Decryption error: team_uid=%s, shared_folder_uid=%s: %s', team_uid, shared_folder_uid, e)
         else:
             to_delete.add(team_uid)
 
@@ -709,8 +740,14 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             try:
                 encrypted_sf_key = utils.base64_url_decode(shared_folder['shared_folder_key'])
                 key_type = shared_folder['key_type']
-                if key_type == 2:
+                if key_type == record_pb2.ENCRYPTED_BY_DATA_KEY:
+                    sf_key = crypto.decrypt_aes_v1(encrypted_sf_key, params.data_key)
+                elif key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY:
                     sf_key = crypto.decrypt_rsa(encrypted_sf_key, params.rsa_key2)
+                elif key_type == record_pb2.ENCRYPTED_BY_DATA_KEY_GCM:
+                    sf_key = crypto.decrypt_aes_v2(encrypted_sf_key, params.data_key)
+                elif key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY_ECC:
+                    sf_key = crypto.decrypt_ec(encrypted_sf_key, params.ecc_key)
                 else:
                     sf_key = crypto.decrypt_aes_v1(encrypted_sf_key, params.data_key)
                 shared_folder['shared_folder_key_unencrypted'] = sf_key
@@ -877,8 +914,15 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             if 'folder_key_unencrypted' not in sf:
                 try:
                     encrypted_key = utils.base64_url_decode(sf['user_folder_key'])
-                    if sf['key_type'] == 2:
+                    key_type = sf['key_type']
+                    if key_type == record_pb2.ENCRYPTED_BY_DATA_KEY:
+                        sf['folder_key_unencrypted'] = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
+                    elif key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY:
                         sf['folder_key_unencrypted'] = crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
+                    elif key_type == record_pb2.ENCRYPTED_BY_DATA_KEY_GCM:
+                        sf['folder_key_unencrypted'] = crypto.decrypt_aes_v2(encrypted_key, params.data_key)
+                    elif key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY_ECC:
+                        sf['folder_key_unencrypted'] = crypto.decrypt_ec(encrypted_key, params.ecc_key)
                     else:
                         sf['folder_key_unencrypted'] = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
                 except Exception as e:
@@ -948,6 +992,8 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                 params.record_type_cache[type_id] = rt.content
 
     if full_sync:
+        convert_keys.change_key_types(params)
+
         if params.breach_watch:
             weak_count = 0
             for _ in params.breach_watch.get_records_by_status(params, ['WEAK', 'BREACHED']):

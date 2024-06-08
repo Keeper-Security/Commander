@@ -1,7 +1,10 @@
 from base64 import b64decode
 from io import RawIOBase, BufferedReader, TextIOWrapper
+from typing import Optional
 
-from Cryptodome.Cipher import AES
+from cryptography.hazmat.primitives.ciphers import Cipher
+from cryptography.hazmat.primitives.ciphers.algorithms import AES
+from cryptography.hazmat.primitives.ciphers.modes import ECB, CBC
 
 
 # Chunk size must be a multiple of 256
@@ -18,26 +21,32 @@ def decode_aes256_base64_from_stream(stream, encryption_key, chunk_size=CHUNK_SI
     if not first_chunk:
         return
 
+    cypher = None   # type: Optional[Cipher]
     # LastPass AES-256/CBC/base64 encryted string starts with an "!".
     # Next 24 bytes are the base64 encoded IV for the cipher.
     # Then comes the "|".
     # And the rest is the base64 encoded encrypted payload.
     if first_chunk[0] == b'!'[0]:
         iv = b64decode(first_chunk[1:25])
-        aes = AES.new(encryption_key, AES.MODE_CBC, iv)
+        cypher = Cipher(AES(encryption_key), CBC(iv))
+        # aes = AES.new(encryption_key, AES.MODE_CBC, iv)
         chunk = b64decode(first_chunk[26:] + stream.read(26))
         if not chunk:
             return
     else:
-        aes = AES.new(encryption_key, AES.MODE_ECB)
+        cypher = Cipher(AES(encryption_key), ECB())
+        # aes = AES.new(encryption_key, AES.MODE_ECB)
         chunk = b64decode(first_chunk)
 
-    d = aes.decrypt(chunk)
+    decryptor = cypher.decryptor()
+    d = decryptor.update(chunk)
+    # d = aes.decrypt(chunk)
     chunk = b64decode(stream.read(chunk_size))
 
     while chunk:
         yield b64decode(d)
-        d = aes.decrypt(chunk)
+        d = decryptor.update(chunk)
+        # d = aes.decrypt(chunk)
         chunk = b64decode(stream.read(chunk_size))
 
     yield b64decode(d[:-d[-1]])

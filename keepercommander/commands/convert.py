@@ -196,14 +196,6 @@ class ConvertCommand(Command):
 
             print('\n'.join(f' {k}  {v}' for k, v in record_names.items()))
         else:
-            rq = {
-                'command': 'sync_down',
-                'revision': 0,
-                'include': ['non_shared_data', 'explicit']
-            }
-            rs = api.communicate(params, rq)
-            nsd = {x['record_uid']: x['data'] for x in rs.get('non_shared_data', [])}
-
             records = []
             for record_uid in record_uids:
                 convert_result = ConvertCommand.convert_to_record_type_data(record_uid, params, type_info)
@@ -250,15 +242,6 @@ class ConvertCommand(Command):
                         rf.link_key = crypto.encrypt_aes_v2(file_key, record_key)
                         rc.record_file.append(rf)
                 rc.data = crypto.encrypt_aes_v2(api.get_record_data_json_bytes(v3_data), record_key)
-
-                # Non shared data
-                if record_uid in nsd:
-                    try:
-                        non_shared_data = utils.base64_url_decode(nsd[record_uid])
-                        non_shared_data = crypto.decrypt_aes_v1(non_shared_data, params.data_key)
-                        rc.non_shared_data = crypto.encrypt_aes_v2(non_shared_data, params.data_key)
-                    except Exception as e:
-                        logging.debug('Non shared data conversion failed for record %s: ', record_uid, e)
 
                 # Get share folder of the record so that we can convert the Record Folder Key
                 shared_folders = find_parent_top_folder(params, record_uid)

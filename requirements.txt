@@ -3,7 +3,6 @@ asciitree
 bcrypt
 colorama
 prompt_toolkit
-pycryptodomex
 pyperclip
 PySocks
 tabulate

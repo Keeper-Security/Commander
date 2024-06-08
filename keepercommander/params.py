@@ -106,7 +106,6 @@ class KeeperParams:
         self.iterations = 0
         self.data_key = None
         self.client_key = None
-        self.rsa_key = None
         self.rsa_key2 = None
         self.ecc_key = None
         self.enterprise_ec_key = None
@@ -165,6 +164,7 @@ class KeeperParams:
         self.ws = None
         self.tunnel_threads = {}
         self.tunnel_threads_queue = {} # add ability to tail tunnel process
+        self.forbid_rsa = False
 
     def clear_session(self):
         self.auth_verifier = None
@@ -176,7 +176,6 @@ class KeeperParams:
         self.iterations = 0
         self.data_key = None
         self.client_key = None
-        self.rsa_key = None
         self.rsa_key2 = None
         self.ecc_key = None
         self.enterprise_ec_key = None
@@ -228,6 +227,7 @@ class KeeperParams:
             self.ssh_agent = None
         self.tunnel_threads.clear()
         self.tunnel_threads_queue = {}
+        self.forbid_rsa = False
 
     def __get_rest_context(self):   # type: () -> RestApiContext
         return self.__rest_context

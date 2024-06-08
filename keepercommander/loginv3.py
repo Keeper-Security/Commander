@@ -31,10 +31,7 @@ from .display import bcolors
 from .error import KeeperApiError
 from .humps import decamelize
 from .params import KeeperParams
-from .proto import APIRequest_pb2 as proto, AccountSummary_pb2 as proto_as
-from .proto import breachwatch_pb2 as breachwatch_proto
-from .proto import ssocloud_pb2 as ssocloud
-from .proto.enterprise_pb2 import LoginToMcRequest, LoginToMcResponse, DomainPasswordRulesRequest
+from .proto import APIRequest_pb2, AccountSummary_pb2, ssocloud_pb2, breachwatch_pb2, enterprise_pb2
 
 permissions_error_msg = "Grant Commander SDK permissions to access Keeper by navigating to Admin Console -> Admin -> " \
                         "Roles -> [Select User's Role] -> Enforcement Policies -> Platform Restrictions -> Click on " \
@@ -66,9 +63,9 @@ class LoginV3Flow:
 
         while True:
 
-            is_cloud = resp.loginState == proto.REQUIRES_DEVICE_ENCRYPTED_DATA_KEY
+            is_cloud = resp.loginState == APIRequest_pb2.REQUIRES_DEVICE_ENCRYPTED_DATA_KEY
 
-            if resp.loginState == proto.DEVICE_APPROVAL_REQUIRED:  # client goes to “standard device approval”.
+            if resp.loginState == APIRequest_pb2.DEVICE_APPROVAL_REQUIRED:  # client goes to “standard device approval”.
                 print("\nDevice Approval Required")
 
                 verDevResp = LoginV3Flow.verifyDevice(
@@ -80,14 +77,14 @@ class LoginV3Flow:
                 if verDevResp:
                     resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken)
 
-                    if resp.loginState != proto.DEVICE_APPROVAL_REQUIRED:
+                    if resp.loginState != APIRequest_pb2.DEVICE_APPROVAL_REQUIRED:
                         print(bcolors.OKGREEN + "\nDevice was approved" + bcolors.ENDC + "\n")
 
                     else:
                         print(bcolors.BOLD + "\nWaiting for device approval." + bcolors.ENDC)
                         print("Check email, SMS message or push notification on the approved device.\n")
 
-            elif resp.loginState == proto.REQUIRES_2FA:
+            elif resp.loginState == APIRequest_pb2.REQUIRES_2FA:
 
                 encryptedLoginToken = LoginV3Flow.handleTwoFactor(params, resp.encryptedLoginToken, resp)
 
@@ -98,7 +95,7 @@ class LoginV3Flow:
 
                     resp = LoginV3API.resume_login(params, encryptedLoginToken, encryptedDeviceToken, loginType=login_type)
 
-            elif resp.loginState == proto.REQUIRES_USERNAME:
+            elif resp.loginState == APIRequest_pb2.REQUIRES_USERNAME:
 
                 if not params.user:
                     params.user = getpass.getpass(prompt='User(Email): ', stream=None)
@@ -113,8 +110,8 @@ class LoginV3Flow:
 
                 # raise Exception('Username is required.')
 
-            elif resp.loginState == proto.REDIRECT_ONSITE_SSO  or resp.loginState == proto.REDIRECT_CLOUD_SSO:
-                encryptedLoginToken = LoginV3Flow.handleSsoRedirect(params, resp.loginState == proto.REDIRECT_CLOUD_SSO, resp.url, resp.encryptedLoginToken)
+            elif resp.loginState == APIRequest_pb2.REDIRECT_ONSITE_SSO  or resp.loginState == APIRequest_pb2.REDIRECT_CLOUD_SSO:
+                encryptedLoginToken = LoginV3Flow.handleSsoRedirect(params, resp.loginState == APIRequest_pb2.REDIRECT_CLOUD_SSO, resp.url, resp.encryptedLoginToken)
                 if encryptedLoginToken:
                     resp = LoginV3API.resume_login(params, encryptedLoginToken, encryptedDeviceToken, loginMethod='AFTER_SSO')
                 else:
@@ -123,23 +120,23 @@ class LoginV3Flow:
                     is_alternate_login = True
                     resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType='ALTERNATE')
 
-            elif resp.loginState == proto.REQUIRES_DEVICE_ENCRYPTED_DATA_KEY:
+            elif resp.loginState == APIRequest_pb2.REQUIRES_DEVICE_ENCRYPTED_DATA_KEY:
                 encryptedLoginToken = resp.encryptedLoginToken
                 LoginV3Flow.handleSsoRequestDataKey(params, resp.encryptedLoginToken, encryptedDeviceToken)
                 resp = LoginV3API.resume_login(params, encryptedLoginToken, encryptedDeviceToken)
 
-            elif resp.loginState == proto.REQUIRES_ACCOUNT_CREATION:
+            elif resp.loginState == APIRequest_pb2.REQUIRES_ACCOUNT_CREATION:
                 # if isSSOAccount:
                 #     return createNewSso
                 raise Exception('This account need to be created.' % rest_api.CLIENT_VERSION)
 
-            elif resp.loginState == proto.REGION_REDIRECT:
+            elif resp.loginState == APIRequest_pb2.REGION_REDIRECT:
                 params.server = resp.stateSpecificValue
                 logging.info('Redirecting to region: %s', params.server)
                 LoginV3API.register_device_in_region(params, encryptedDeviceToken)
                 resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken)
 
-            elif resp.loginState == proto.REQUIRES_AUTH_HASH:
+            elif resp.loginState == APIRequest_pb2.REQUIRES_AUTH_HASH:
                 if len(resp.salt) > 0:
                     salt = api.get_correct_salt(resp.salt)
 
@@ -186,26 +183,26 @@ class LoginV3Flow:
                     clone_code_bytes = utils.base64_url_decode(params.clone_code) if params.clone_code else None
                     resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes)
 
-            elif resp.loginState == proto.DEVICE_ACCOUNT_LOCKED:
+            elif resp.loginState == APIRequest_pb2.DEVICE_ACCOUNT_LOCKED:
                 params.clear_session()
                 raise Exception('\n*** Device for this account is locked ***\n')
-            elif resp.loginState == proto.DEVICE_LOCKED:
+            elif resp.loginState == APIRequest_pb2.DEVICE_LOCKED:
                 params.clear_session()
                 raise Exception('\n*** This device is locked ***\n')
-            elif resp.loginState == proto.ACCOUNT_LOCKED:
+            elif resp.loginState == APIRequest_pb2.ACCOUNT_LOCKED:
                 raise Exception('\n*** User account `' + params.user + '` is LOCKED ***\n')
-            elif resp.loginState == proto.LICENSE_EXPIRED:
+            elif resp.loginState == APIRequest_pb2.LICENSE_EXPIRED:
                 raise Exception('\n*** Your Keeper license has expired ***\n')
-            elif resp.loginState == proto.UPGRADE:
+            elif resp.loginState == APIRequest_pb2.UPGRADE:
                 raise Exception('Application or device is out of date and requires an update.')
-            elif resp.loginState == proto.LOGGED_IN:
+            elif resp.loginState == APIRequest_pb2.LOGGED_IN:
                 LoginV3Flow.post_login_processing(params, resp)
                 return
             else:
                 raise Exception("UNKNOWN LOGIN STATE [%s]" % resp.loginState)
 
     @staticmethod
-    def post_login_processing(params: KeeperParams, resp: proto.LoginResponse):
+    def post_login_processing(params: KeeperParams, resp: APIRequest_pb2.LoginResponse):
         """Processing after login
 
         Returns True if authentication is successful and False otherwise.
@@ -222,37 +219,10 @@ class LoginV3Flow:
 
         LoginV3Flow.populateAccountSummary(params)
 
-        if resp.sessionTokenType != proto.NO_RESTRICTION:
-            # This is not a happy-path login.  Let the user know what's wrong.
-            if resp.sessionTokenType in (proto.PURCHASE, proto.RESTRICT):
-                params.session_token = None
-                msg = (
-                    'Your Keeper account has expired. Please open the Keeper app to renew or visit the Web '
-                    'Vault at https://keepersecurity.com/vault'
-                )
-                raise Exception(msg)
-            elif resp.sessionTokenType == proto.ACCOUNT_RECOVERY:
-                print('Your Master Password has expired, you are required to change it before you can login.\n')
-                if LoginV3Flow.change_master_password(params):
-                    return False
-                else:
-                    params.clear_session()
-                    raise Exception('Change password failed')
-            elif resp.sessionTokenType == proto.SHARE_ACCOUNT:
-                logging.info('Account transfer required')
-                accepted = api.accept_account_transfer_consent(params)
-                if accepted:
-                    return False
-                else:
-                    params.clear_session()
-                    raise Exception('Account transfer logout')
-            else:
-                raise Exception('Please log into the web Vault to update your account settings.')
-
         if params.license and 'account_type' in params.license:
             if params.license['account_type'] == 2:
                 try:
-                    rs = api.communicate_rest(params, None, 'enterprise/get_enterprise_public_key', rs_type=breachwatch_proto.EnterprisePublicKeyResponse)
+                    rs = api.communicate_rest(params, None, 'enterprise/get_enterprise_public_key', rs_type=breachwatch_pb2.EnterprisePublicKeyResponse)
                     if rs.enterpriseECCPublicKey:
                         params.enterprise_ec_key = crypto.load_ec_public_key(rs.enterpriseECCPublicKey)
                     if rs.enterprisePublicKey:
@@ -267,16 +237,43 @@ class LoginV3Flow:
                 if bw_audit:
                     params.breach_watch.send_audit_events = True
 
+        if resp.sessionTokenType != APIRequest_pb2.NO_RESTRICTION:
+            # This is not a happy-path login.  Let the user know what's wrong.
+            if resp.sessionTokenType in (APIRequest_pb2.PURCHASE, APIRequest_pb2.RESTRICT):
+                params.session_token = None
+                msg = (
+                    'Your Keeper account has expired. Please open the Keeper app to renew or visit the Web '
+                    'Vault at https://keepersecurity.com/vault'
+                )
+                raise Exception(msg)
+            elif resp.sessionTokenType == APIRequest_pb2.ACCOUNT_RECOVERY:
+                print('Your Master Password has expired, you are required to change it before you can login.\n')
+                if LoginV3Flow.change_master_password(params):
+                    return False
+                else:
+                    params.clear_session()
+                    raise Exception('Change password failed')
+            elif resp.sessionTokenType == APIRequest_pb2.SHARE_ACCOUNT:
+                logging.info('Account transfer required')
+                accepted = api.accept_account_transfer_consent(params)
+                if accepted:
+                    return False
+                else:
+                    params.clear_session()
+                    raise Exception('Account transfer logout')
+            else:
+                raise Exception('Please log into the web Vault to update your account settings.')
+
         logging.info(bcolors.OKGREEN + "Successfully authenticated with " + login_type_message + "" + bcolors.ENDC)
         return True
 
     @staticmethod
-    def get_data_key(params: KeeperParams, resp: proto.LoginResponse):
+    def get_data_key(params: KeeperParams, resp: APIRequest_pb2.LoginResponse):
         """Get decrypted data key and store in params.data_key
 
         Returns login_type_message which is one of ("Persistent Login", "Password", "Master Password").
         """
-        if resp.encryptedDataKeyType == proto.BY_DEVICE_PUBLIC_KEY:
+        if resp.encryptedDataKeyType == APIRequest_pb2.BY_DEVICE_PUBLIC_KEY:
             private_key = crypto.load_ec_private_key(utils.base64_url_decode(params.device_private_key))
             decrypted_data_key = crypto.decrypt_ec(resp.encryptedDataKey, private_key)
             if params.sso_login_info:
@@ -284,18 +281,18 @@ class LoginV3Flow:
             else:
                 login_type_message = bcolors.UNDERLINE + "Persistent Login"
 
-        elif resp.encryptedDataKeyType == proto.BY_PASSWORD:
+        elif resp.encryptedDataKeyType == APIRequest_pb2.BY_PASSWORD:
             decrypted_data_key = \
                 utils.decrypt_encryption_params(resp.encryptedDataKey, params.password)
             login_type_message = bcolors.UNDERLINE + "Password"
 
-        elif resp.encryptedDataKeyType == proto.BY_ALTERNATE:
+        elif resp.encryptedDataKeyType == APIRequest_pb2.BY_ALTERNATE:
             decryption_key = crypto.derive_keyhash_v2('data_key', params.password, params.salt, params.iterations)
             decrypted_data_key = crypto.decrypt_aes_v2(resp.encryptedDataKey, decryption_key)
             login_type_message = bcolors.UNDERLINE + "Master Password"
 
-        elif resp.encryptedDataKeyType == proto.NO_KEY \
-                or resp.encryptedDataKeyType == proto.BY_BIO:
+        elif resp.encryptedDataKeyType == APIRequest_pb2.NO_KEY \
+                or resp.encryptedDataKeyType == APIRequest_pb2.BY_BIO:
             raise Exception("Data Key type %s decryption not implemented" % resp.encryptedDataKeyType)
         else:
             raise Exception("Data Key type %s decryption not implemented" % resp.encryptedDataKeyType)
@@ -304,14 +301,14 @@ class LoginV3Flow:
         return login_type_message
 
     @staticmethod
-    def get_default_password_rules(params):  # type: (KeeperParams) -> (List[proto.PasswordRules], int)
-        rq = DomainPasswordRulesRequest()
+    def get_default_password_rules(params):  # type: (KeeperParams) -> (List[APIRequest_pb2.PasswordRules], int)
+        rq = enterprise_pb2.DomainPasswordRulesRequest()
         rq.username = params.user
         rs = api.communicate_rest(params, rq, 'authentication/get_domain_password_rules',
-                                  rs_type=proto.NewUserMinimumParams)
+                                  rs_type=APIRequest_pb2.NewUserMinimumParams)
         rules = []
         for regexp, description in zip(rs.passwordMatchRegex, rs.passwordMatchDescription):
-            rule = proto.PasswordRules()
+            rule = APIRequest_pb2.PasswordRules()
             rule.match = True
             rule.pattern = regexp
             rule.description = description
@@ -321,7 +318,7 @@ class LoginV3Flow:
 
     @staticmethod
     def change_master_password(params, password_rules=None, min_iterations=None):
-        # type: (KeeperParams, Optional[List[proto.PasswordRules]], Optional[int]) -> bool
+        # type: (KeeperParams, Optional[List[APIRequest_pb2.PasswordRules]], Optional[int]) -> bool
         """Change the master password when expired
 
         Return True if the master password is successfully changed and False otherwise.
@@ -377,7 +374,6 @@ class LoginV3Flow:
         if 'keys_info' in acct_summary_dict_snake_case:
             keys = acct_summary_dict_snake_case['keys_info']
             if 'encrypted_private_key' in keys:
-                params.rsa_key = api.decrypt_rsa_key(keys['encrypted_private_key'], params.data_key)
                 encrypted_private_key = utils.base64_url_decode(keys['encrypted_private_key'])
                 decrypted_private_key = crypto.decrypt_aes_v1(encrypted_private_key, params.data_key)
                 params.rsa_key2 = crypto.load_rsa_private_key(decrypted_private_key)
@@ -385,6 +381,14 @@ class LoginV3Flow:
                 encrypted_ecc_key = utils.base64_url_decode(keys['encrypted_ecc_private_key'])
                 decrypted_ecc_key = crypto.decrypt_aes_v2(encrypted_ecc_key, params.data_key)
                 params.ecc_key = crypto.load_ec_private_key(decrypted_ecc_key)
+            else:
+                private_ec_key, public_ec_key = crypto.generate_ec_key()
+                pk_data = crypto.unload_ec_private_key(private_ec_key)
+                pk_data = crypto.encrypt_aes_v2(pk_data, params.data_key)
+                key_set_rq = APIRequest_pb2.SetEccKeyPairRequest()
+                key_set_rq.encryptedPrivateKey = pk_data
+                key_set_rq.publicKey = crypto.unload_ec_public_key(public_ec_key)
+                api.communicate_rest(params, key_set_rq, 'vault/set_ecc_key_pair')
 
         if not params.session_token:
             if 'session_token' in acct_summary_dict_snake_case:
@@ -414,6 +418,7 @@ class LoginV3Flow:
         #         print("ddd")
 
         # license
+        params.forbid_rsa = acct_summary_dict_snake_case.get('forbid_key_type2') is True
         params.license = acct_summary_dict_snake_case['license']
         params.sync_data = True
         params.prepare_commands = True
@@ -469,7 +474,7 @@ class LoginV3Flow:
         elif selection.startswith("2fa_code="):
             code = selection.replace("2fa_code=", "")
 
-            rs = LoginV3API.twoFactorValidateMessage(params, encryptedLoginToken, code, proto.TWO_FA_EXP_IMMEDIATELY)
+            rs = LoginV3API.twoFactorValidateMessage(params, encryptedLoginToken, code, APIRequest_pb2.TWO_FA_EXP_IMMEDIATELY)
 
             if type(rs) == bytes:
                 logging.info("Successfully verified 2FA code.")
@@ -482,7 +487,7 @@ class LoginV3Flow:
             rs = LoginV3API.twoFactorSend2FAPushMessage(
                 params,
                 encryptedLoginToken,
-                pushType=proto.TWO_FA_PUSH_KEEPER)
+                pushType=APIRequest_pb2.TWO_FA_PUSH_KEEPER)
 
             if type(rs) == bytes:
                 logging.info('Successfully made a push notification to the approved device.\nPress <Enter> when approved.')
@@ -509,19 +514,19 @@ class LoginV3Flow:
                 return
             try:
                 if answer == '1':
-                    rq = proto.TwoFactorSendPushRequest()
-                    rq.pushType = proto.TWO_FA_PUSH_KEEPER
+                    rq = APIRequest_pb2.TwoFactorSendPushRequest()
+                    rq.pushType = APIRequest_pb2.TWO_FA_PUSH_KEEPER
                     rq.encryptedLoginToken = login_token
 
                     api.communicate_rest(params, rq, "authentication/2fa_send_push")
                 elif answer == '2':
-                    rq = proto.DeviceVerificationRequest()
+                    rq = APIRequest_pb2.DeviceVerificationRequest()
                     rq.username = params.user
                     rq.clientVersion = rest_api.CLIENT_VERSION
                     rq.encryptedDeviceToken = device_token
 
-                    rs = api.communicate_rest(params, rq, "authentication/request_device_admin_approval", rs_type=proto.DeviceVerificationResponse)
-                    if rs.deviceStatus == proto.DEVICE_OK:
+                    rs = api.communicate_rest(params, rq, "authentication/request_device_admin_approval", rs_type=APIRequest_pb2.DeviceVerificationResponse)
+                    if rs.deviceStatus == APIRequest_pb2.DEVICE_OK:
                         return
                 elif answer:
                     logging.info(f'Action \"{answer}\" is not supported.')
@@ -534,7 +539,7 @@ class LoginV3Flow:
         sp_url_builder = urlparse(sso_url)
         sp_url_query = parse_qsl(sp_url_builder.query, keep_blank_values=True)
         if is_cloud:
-            sso_rq = ssocloud.SsoCloudRequest()
+            sso_rq = ssocloud_pb2.SsoCloudRequest()
             sso_rq.messageSessionUid = crypto.get_random_bytes(16)
             sso_rq.clientVersion = rest_api.CLIENT_VERSION
             sso_rq.dest = 'commander'
@@ -543,10 +548,10 @@ class LoginV3Flow:
             sso_rq.detached = True
 
             transmission_key = utils.generate_aes_key()
-            rq_payload = proto.ApiRequestPayload()
+            rq_payload = APIRequest_pb2.ApiRequestPayload()
             rq_payload.apiVersion = 3
             rq_payload.payload = sso_rq.SerializeToString()
-            api_rq = proto.ApiRequest()
+            api_rq = APIRequest_pb2.ApiRequest()
             api_rq.locale = params.rest_context.locale or 'en_US'
 
             server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
@@ -620,7 +625,7 @@ class LoginV3Flow:
                 try:
                     if is_cloud:
                         rs_bytes = crypto.decrypt_aes_v2(utils.base64_url_decode(token), transmission_key)
-                        sso_rs = ssocloud.SsoCloudResponse()
+                        sso_rs = ssocloud_pb2.SsoCloudResponse()
                         sso_rs.ParseFromString(rs_bytes)
                         params.user = sso_rs.email
                         params.sso_login_info = {
@@ -660,35 +665,35 @@ class LoginV3Flow:
 
     @staticmethod
     def two_factor_channel_to_desc(channel):
-        if channel == proto.TWO_FA_CT_TOTP:
+        if channel == APIRequest_pb2.TWO_FA_CT_TOTP:
             return 'TOTP (Google and Microsoft Authenticator)'
-        if channel == proto.TWO_FA_CT_SMS:
+        if channel == APIRequest_pb2.TWO_FA_CT_SMS:
             return 'Send SMS Code'
-        if channel == proto.TWO_FA_CT_DUO:
+        if channel == APIRequest_pb2.TWO_FA_CT_DUO:
             return 'DUO'
-        if channel == proto.TWO_FA_CT_RSA:
+        if channel == APIRequest_pb2.TWO_FA_CT_RSA:
             return 'RSA SecurID'
-        if channel == proto.TWO_FA_CT_U2F:
+        if channel == APIRequest_pb2.TWO_FA_CT_U2F:
             return 'U2F (FIDO Security Key)'
-        if channel == proto.TWO_FA_CT_WEBAUTHN:
+        if channel == APIRequest_pb2.TWO_FA_CT_WEBAUTHN:
             return 'WebAuthN (FIDO2 Security Key)'
-        if channel == proto.TWO_FA_CT_DNA:
+        if channel == APIRequest_pb2.TWO_FA_CT_DNA:
             return 'Keeper DNA (Watch)'
-        if channel == proto.TWO_FA_CT_BACKUP:
+        if channel == APIRequest_pb2.TWO_FA_CT_BACKUP:
             return 'Backup Codes'
 
     @staticmethod
     def handleTwoFactor(params: KeeperParams, encryptedLoginToken, login_resp):
         print("This account requires 2FA Authentication")
 
-        supported_channels = {proto.TWO_FA_CODE_TOTP, proto.TWO_FA_CT_SMS, proto.TWO_FA_CT_DUO, proto.TWO_FA_CT_RSA,
-                              proto.TWO_FA_CT_U2F, proto.TWO_FA_CT_WEBAUTHN, proto.TWO_FA_CT_DNA,
-                              proto.TWO_FA_CT_BACKUP}
+        supported_channels = {APIRequest_pb2.TWO_FA_CODE_TOTP, APIRequest_pb2.TWO_FA_CT_SMS, APIRequest_pb2.TWO_FA_CT_DUO, APIRequest_pb2.TWO_FA_CT_RSA,
+                              APIRequest_pb2.TWO_FA_CT_U2F, APIRequest_pb2.TWO_FA_CT_WEBAUTHN, APIRequest_pb2.TWO_FA_CT_DNA,
+                              APIRequest_pb2.TWO_FA_CT_BACKUP}
         channels = [x for x in login_resp.channels if x.channelType in supported_channels]
 
         if len(channels) == 0:
-            backup_code_channel = proto.TwoFactorChannelInfo()
-            backup_code_channel.channelType = proto.TWO_FA_CT_BACKUP
+            backup_code_channel = APIRequest_pb2.TwoFactorChannelInfo()
+            backup_code_channel.channelType = APIRequest_pb2.TWO_FA_CT_BACKUP
             channels.append(backup_code_channel)
 
         for i in range(len(channels)):
@@ -713,16 +718,16 @@ class LoginV3Flow:
 
         mfa_prompt = False
 
-        if channel.channelType == proto.TWO_FA_CODE_NONE:
+        if channel.channelType == APIRequest_pb2.TWO_FA_CODE_NONE:
             pass
 
-        elif channel.channelType == proto.TWO_FA_CT_SMS:
+        elif channel.channelType == APIRequest_pb2.TWO_FA_CT_SMS:
             rs = LoginV3API.twoFactorSend2FAPushMessage(
                 params,
                 encryptedLoginToken,
-                pushType=proto.TWO_FA_PUSH_SMS,
+                pushType=APIRequest_pb2.TWO_FA_PUSH_SMS,
                 channel_uid=channel.channel_uid,
-                expireIn=proto.TWO_FA_EXP_IMMEDIATELY
+                expireIn=APIRequest_pb2.TWO_FA_EXP_IMMEDIATELY
             )
 
             if type(rs) == bytes:
@@ -732,16 +737,16 @@ class LoginV3Flow:
                 logging.error("Was unable to send SMS.")
                 raise KeeperApiError(rs['error'], rs['message'])
 
-        elif channel.channelType in {proto.TWO_FA_CT_U2F, proto.TWO_FA_CT_WEBAUTHN}:
+        elif channel.channelType in {APIRequest_pb2.TWO_FA_CT_U2F, APIRequest_pb2.TWO_FA_CT_WEBAUTHN}:
             try:
                 from .yubikey.yubikey import yubikey_authenticate
                 challenge = json.loads(channel.challenge)
                 response = yubikey_authenticate(challenge)
 
                 if response:
-                    if channel.channelType == proto.TWO_FA_CT_U2F:
+                    if channel.channelType == APIRequest_pb2.TWO_FA_CT_U2F:
                         signature = response
-                        key_value_type = proto.TWO_FA_RESP_U2F
+                        key_value_type = APIRequest_pb2.TWO_FA_RESP_U2F
                     else:
                         credential_id = response.credential_id
                         signature = {
@@ -755,17 +760,17 @@ class LoginV3Flow:
                             "type": "public-key",
                             "clientExtensionResults": response.extension_results or {}
                         }
-                        key_value_type = proto.TWO_FA_RESP_WEBAUTHN
+                        key_value_type = APIRequest_pb2.TWO_FA_RESP_WEBAUTHN
 
                     rs = LoginV3API.twoFactorValidateMessage(params, encryptedLoginToken, json.dumps(signature),
-                                                             proto.TWO_FA_EXP_IMMEDIATELY, key_value_type,
+                                                             APIRequest_pb2.TWO_FA_EXP_IMMEDIATELY, key_value_type,
                                                              channel_uid=channel.channel_uid)
 
                     if type(rs) == bytes:
 
                         print(bcolors.OKGREEN + "Verified 2FA Code." + bcolors.ENDC)
 
-                        two_fa_validation_rs = proto.TwoFactorValidateResponse()
+                        two_fa_validation_rs = APIRequest_pb2.TwoFactorValidateResponse()
                         two_fa_validation_rs.ParseFromString(rs)
 
                         return two_fa_validation_rs.encryptedLoginToken
@@ -779,8 +784,8 @@ class LoginV3Flow:
             except Exception as e:
                 logging.error(e)
 
-        elif channel.channelType in {proto.TWO_FA_CT_TOTP, proto.TWO_FA_CT_DUO, proto.TWO_FA_CT_RSA,
-                                     proto.TWO_FA_CT_DNA, proto.TWO_FA_CT_BACKUP}:
+        elif channel.channelType in {APIRequest_pb2.TWO_FA_CT_TOTP, APIRequest_pb2.TWO_FA_CT_DUO, APIRequest_pb2.TWO_FA_CT_RSA,
+                                     APIRequest_pb2.TWO_FA_CT_DNA, APIRequest_pb2.TWO_FA_CT_BACKUP}:
             mfa_prompt = True
         else:
             raise NotImplementedError(f"Unhandled channel type {channel.channelType}")
@@ -788,23 +793,23 @@ class LoginV3Flow:
         if mfa_prompt:
             config_expiration = params.config.get('mfa_duration') or 'login'
             mfa_expiration = \
-                proto.TWO_FA_EXP_IMMEDIATELY if config_expiration == 'login' else \
-                    proto.TWO_FA_EXP_NEVER if config_expiration == 'forever' else \
-                        proto.TWO_FA_EXP_12_HOURS if config_expiration == '12_hours' else \
-                            proto.TWO_FA_EXP_24_HOURS if config_expiration == '24_hours' else \
-                                proto.TWO_FA_EXP_30_DAYS
+                APIRequest_pb2.TWO_FA_EXP_IMMEDIATELY if config_expiration == 'login' else \
+                    APIRequest_pb2.TWO_FA_EXP_NEVER if config_expiration == 'forever' else \
+                        APIRequest_pb2.TWO_FA_EXP_12_HOURS if config_expiration == '12_hours' else \
+                            APIRequest_pb2.TWO_FA_EXP_24_HOURS if config_expiration == '24_hours' else \
+                                APIRequest_pb2.TWO_FA_EXP_30_DAYS
 
             if mfa_expiration > channel.maxExpiration:
                 mfa_expiration = channel.maxExpiration
 
             allowed_expirations = ['login']     # type: List[str]
-            if channel.maxExpiration >= proto.TWO_FA_EXP_12_HOURS:
+            if channel.maxExpiration >= APIRequest_pb2.TWO_FA_EXP_12_HOURS:
                 allowed_expirations.append('12_hours')
-            if channel.maxExpiration >= proto.TWO_FA_EXP_24_HOURS:
+            if channel.maxExpiration >= APIRequest_pb2.TWO_FA_EXP_24_HOURS:
                 allowed_expirations.append('24_hours')
-            if channel.maxExpiration >= proto.TWO_FA_EXP_30_DAYS:
+            if channel.maxExpiration >= APIRequest_pb2.TWO_FA_EXP_30_DAYS:
                 allowed_expirations.append('30_days')
-            if channel.maxExpiration >= proto.TWO_FA_EXP_NEVER:
+            if channel.maxExpiration >= APIRequest_pb2.TWO_FA_EXP_NEVER:
                 allowed_expirations.append('forever')
 
             otp_code = ''
@@ -814,10 +819,10 @@ class LoginV3Flow:
                 if show_duration:
                     show_duration = False
                     prompt_exp = '\n2FA Code Duration: {0}.\nTo change duration: 2fa_duration={1}'.format(
-                        'Require Every Login' if mfa_expiration == proto.TWO_FA_EXP_IMMEDIATELY else
-                        'Save on this Device Forever' if mfa_expiration == proto.TWO_FA_EXP_NEVER else
-                        'Ask Every 12 hours' if mfa_expiration == proto.TWO_FA_EXP_12_HOURS else
-                        'Ask Every 24 hours' if mfa_expiration == proto.TWO_FA_EXP_24_HOURS else
+                        'Require Every Login' if mfa_expiration == APIRequest_pb2.TWO_FA_EXP_IMMEDIATELY else
+                        'Save on this Device Forever' if mfa_expiration == APIRequest_pb2.TWO_FA_EXP_NEVER else
+                        'Ask Every 12 hours' if mfa_expiration == APIRequest_pb2.TWO_FA_EXP_12_HOURS else
+                        'Ask Every 24 hours' if mfa_expiration == APIRequest_pb2.TWO_FA_EXP_24_HOURS else
                         'Ask Every 30 days',
                         "|".join(allowed_expirations))
                     print(prompt_exp)
@@ -836,19 +841,19 @@ class LoginV3Flow:
 
                 if answer == 'login':
                     show_duration = True
-                    mfa_expiration = proto.TWO_FA_EXP_IMMEDIATELY
+                    mfa_expiration = APIRequest_pb2.TWO_FA_EXP_IMMEDIATELY
                 elif answer == '12_hours':
                     show_duration = True
-                    mfa_expiration = proto.TWO_FA_EXP_12_HOURS
+                    mfa_expiration = APIRequest_pb2.TWO_FA_EXP_12_HOURS
                 elif answer == '24_hours':
                     show_duration = True
-                    mfa_expiration = proto.TWO_FA_EXP_24_HOURS
+                    mfa_expiration = APIRequest_pb2.TWO_FA_EXP_24_HOURS
                 elif answer == '30_days':
                     show_duration = True
-                    mfa_expiration = proto.TWO_FA_EXP_30_DAYS
+                    mfa_expiration = APIRequest_pb2.TWO_FA_EXP_30_DAYS
                 elif answer == 'forever':
                     show_duration = True
-                    mfa_expiration = proto.TWO_FA_EXP_NEVER
+                    mfa_expiration = APIRequest_pb2.TWO_FA_EXP_NEVER
                 else:
                     otp_code = answer
 
@@ -864,7 +869,7 @@ class LoginV3Flow:
 
                 logging.info(bcolors.OKGREEN + "Successfully verified 2FA Code." + bcolors.ENDC)
 
-                two_fa_validation_rs = proto.TwoFactorValidateResponse()
+                two_fa_validation_rs = APIRequest_pb2.TwoFactorValidateResponse()
                 two_fa_validation_rs.ParseFromString(rs)
 
                 return two_fa_validation_rs.encryptedLoginToken
@@ -877,7 +882,7 @@ class LoginV3API:
 
     @staticmethod
     def rest_request(params: KeeperParams, api_endpoint: str, rq):
-        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload = APIRequest_pb2.ApiRequestPayload()
         api_request_payload.payload = rq.SerializeToString()
 
         rs = rest_api.execute_rest(params.rest_context, api_endpoint, api_request_payload)
@@ -899,18 +904,18 @@ class LoginV3API:
         if not params.device_token:
             private, public = crypto.generate_ec_key()
 
-            rq = proto.DeviceRegistrationRequest()
+            rq = APIRequest_pb2.DeviceRegistrationRequest()
             rq.clientVersion = rest_api.CLIENT_VERSION
             rq.deviceName = CommonHelperMethods.get_device_name()
             rq.devicePublicKey = crypto.unload_ec_public_key(public)
 
-            api_request_payload = proto.ApiRequestPayload()
+            api_request_payload = APIRequest_pb2.ApiRequestPayload()
             api_request_payload.payload = rq.SerializeToString()
 
             rs = rest_api.execute_rest(params.rest_context, 'authentication/register_device', api_request_payload)
 
             if type(rs) == bytes:
-                register_device_rs = proto.Device()
+                register_device_rs = APIRequest_pb2.Device()
                 register_device_rs.ParseFromString(rs)
 
                 # A globally unique device id for each device encrypted by the device token key
@@ -927,7 +932,7 @@ class LoginV3API:
                                          encrypted_device_token: bytes,
                                          verification_channel: str,
                                          message_session_uid: bytes = None):
-        rq = proto.DeviceVerificationRequest()
+        rq = APIRequest_pb2.DeviceVerificationRequest()
 
         rq.username = params.user.lower()
         rq.encryptedDeviceToken = encrypted_device_token
@@ -935,7 +940,7 @@ class LoginV3API:
         rq.clientVersion = rest_api.CLIENT_VERSION
         rq.messageSessionUid = CommonHelperMethods.url_safe_str_to_bytes(message_session_uid or "")
 
-        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload = APIRequest_pb2.ApiRequestPayload()
         api_request_payload.payload = rq.SerializeToString()
 
         return rest_api.execute_rest(params.rest_context, 'authentication/request_device_verification', api_request_payload)
@@ -943,7 +948,7 @@ class LoginV3API:
     @staticmethod
     def validateDeviceVerificationCodeMessage(params: KeeperParams, verificationCode: str, message_session_uid=None):
 
-        rq = proto.ValidateDeviceVerificationCodeRequest()
+        rq = APIRequest_pb2.ValidateDeviceVerificationCodeRequest()
 
         rq.username = params.user.lower()
         rq.clientVersion = rest_api.CLIENT_VERSION
@@ -951,30 +956,30 @@ class LoginV3API:
         rq.verificationCode = verificationCode
         rq.messageSessionUid = CommonHelperMethods.url_safe_str_to_bytes(message_session_uid or "")
 
-        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload = APIRequest_pb2.ApiRequestPayload()
         api_request_payload.payload = rq.SerializeToString()
 
         return rest_api.execute_rest(params.rest_context, 'authentication/validate_device_verification_code', api_request_payload)
 
     @staticmethod
     def resume_login(params: KeeperParams, encryptedLoginToken, encryptedDeviceToken, cloneCode = None, loginType = 'NORMAL', loginMethod='EXISTING_ACCOUNT'):
-        rq = proto.StartLoginRequest()
+        rq = APIRequest_pb2.StartLoginRequest()
         rq.clientVersion = rest_api.CLIENT_VERSION
         rq.encryptedLoginToken = encryptedLoginToken
         rq.encryptedDeviceToken = encryptedDeviceToken
         rq.username = params.user.lower()
-        rq.loginType = proto.LoginType.Value(loginType)
+        rq.loginType = APIRequest_pb2.LoginType.Value(loginType)
         if cloneCode:
-            rq.loginMethod = proto.LoginMethod.Value(loginMethod)
+            rq.loginMethod = APIRequest_pb2.LoginMethod.Value(loginMethod)
             rq.cloneCode = cloneCode
 
-        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload = APIRequest_pb2.ApiRequestPayload()
         api_request_payload.payload = rq.SerializeToString()
 
         rs = rest_api.execute_rest(params.rest_context, 'authentication/start_login', api_request_payload)
 
         if type(rs) == bytes:
-            login_resp = proto.LoginResponse()
+            login_resp = APIRequest_pb2.LoginResponse()
             login_resp.ParseFromString(rs)
             return login_resp
 
@@ -994,25 +999,25 @@ class LoginV3API:
 
     @staticmethod
     def startLoginMessage(params, encryptedDeviceToken, cloneCode = None, loginType = 'NORMAL'):
-        # type: (KeeperParams, bytes, Optional[bytes], str) -> proto.LoginResponse
-        rq = proto.StartLoginRequest()
+        # type: (KeeperParams, bytes, Optional[bytes], str) -> APIRequest_pb2.LoginResponse
+        rq = APIRequest_pb2.StartLoginRequest()
         rq.clientVersion = rest_api.CLIENT_VERSION
         rq.username = params.user.lower()
         rq.encryptedDeviceToken = encryptedDeviceToken
-        rq.loginType = proto.LoginType.Value(loginType)
-        rq.loginMethod = proto.LoginMethod.Value('EXISTING_ACCOUNT')
+        rq.loginType = APIRequest_pb2.LoginType.Value(loginType)
+        rq.loginMethod = APIRequest_pb2.LoginMethod.Value('EXISTING_ACCOUNT')
 
         if cloneCode:
             rq.cloneCode = cloneCode
             rq.username = ''
 
-        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload = APIRequest_pb2.ApiRequestPayload()
         api_request_payload.payload = rq.SerializeToString()
 
         rs = rest_api.execute_rest(params.rest_context, 'authentication/start_login', api_request_payload)
 
         if type(rs) == bytes:
-            login_resp = proto.LoginResponse()
+            login_resp = APIRequest_pb2.LoginResponse()
             login_resp.ParseFromString(rs)
 
             if not hasattr(login_resp, 'loginState'):
@@ -1049,7 +1054,7 @@ class LoginV3API:
     def handle_account_recovery(params, encrypted_login_token_bytes):
         logging.info('')
         logging.info('Password Recovery')
-        rq = proto.MasterPasswordRecoveryVerificationRequest()
+        rq = APIRequest_pb2.MasterPasswordRecoveryVerificationRequest()
         rq.encryptedLoginToken = encrypted_login_token_bytes
         try:
             api.communicate_rest(params, rq, 'authentication/master_password_recovery_verification_v2')
@@ -1062,22 +1067,22 @@ class LoginV3API:
         if not verification_code:
             return
 
-        rq = proto.GetSecurityQuestionV3Request()
+        rq = APIRequest_pb2.GetSecurityQuestionV3Request()
         rq.encryptedLoginToken = encrypted_login_token_bytes
         rq.verificationCode = verification_code
         rs = api.communicate_rest(params, rq, 'authentication/account_recovery_verify_code',
-                                  rs_type=proto.AccountRecoveryVerifyCodeResponse)
+                                  rs_type=APIRequest_pb2.AccountRecoveryVerifyCodeResponse)
 
         backup_type = rs.backupKeyType
 
-        if backup_type == proto.BKT_SEC_ANSWER:
+        if backup_type == APIRequest_pb2.BKT_SEC_ANSWER:
             print(f'Security Question: {rs.securityQuestion}')
             answer = getpass.getpass(prompt='Answer: ', stream=None)
             if not answer:
                 return
             recovery_phrase = answer.lower()
             auth_hash = crypto.derive_keyhash_v1(recovery_phrase, rs.salt, rs.iterations)
-        elif backup_type == proto.BKT_PASSPHRASE_HASH:
+        elif backup_type == APIRequest_pb2.BKT_PASSPHRASE_HASH:
             p = PassphrasePrompt()
             print('Please enter your Recovery Phrase ')
             if os.isatty(0):
@@ -1098,12 +1103,12 @@ class LoginV3API:
             logging.info('Unsupported account recovery type')
             return
 
-        rq = proto.GetDataKeyBackupV3Request()
+        rq = APIRequest_pb2.GetDataKeyBackupV3Request()
         rq.encryptedLoginToken = encrypted_login_token_bytes
         rq.verificationCode = verification_code
         rq.securityAnswerHash = auth_hash
-        rs = api.communicate_rest(params, rq, 'authentication/get_data_key_backup_v3', rs_type=proto.GetDataKeyBackupV3Response)
-        if backup_type == proto.BKT_SEC_ANSWER:
+        rs = api.communicate_rest(params, rq, 'authentication/get_data_key_backup_v3', rs_type=APIRequest_pb2.GetDataKeyBackupV3Response)
+        if backup_type == APIRequest_pb2.BKT_SEC_ANSWER:
             params.data_key = utils.decrypt_encryption_params(rs.dataKeyBackup, recovery_phrase)
         else:
             encryption_key = crypto.generate_hkdf_key('recovery_key_aes_gcm_256', recovery_phrase)
@@ -1117,19 +1122,19 @@ class LoginV3API:
     @staticmethod
     def validateAuthHashMessage(params: KeeperParams, encrypted_login_token_bytes):
 
-        rq = proto.ValidateAuthHashRequest()
-        rq.passwordMethod = proto.PasswordMethod.Value("ENTERED")
+        rq = APIRequest_pb2.ValidateAuthHashRequest()
+        rq.passwordMethod = APIRequest_pb2.PasswordMethod.Value("ENTERED")
 
         rq.authResponse = params.auth_verifier
         rq.encryptedLoginToken = encrypted_login_token_bytes
 
-        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload = APIRequest_pb2.ApiRequestPayload()
         api_request_payload.payload = rq.SerializeToString()
 
         rs = rest_api.execute_rest(params.rest_context, 'authentication/validate_auth_hash', api_request_payload)
 
         if type(rs) == bytes:
-            login_resp = proto.LoginResponse()
+            login_resp = APIRequest_pb2.LoginResponse()
             login_resp.ParseFromString(rs)
             return login_resp
         else:
@@ -1140,7 +1145,7 @@ class LoginV3API:
     def twoFactorValidateMessage(params, encryptedLoginToken, otp_code, tfa_expire_in,
                                  twoFactorValueType=None, channel_uid=None):
 
-        rq = proto.TwoFactorValidateRequest()
+        rq = APIRequest_pb2.TwoFactorValidateRequest()
         rq.encryptedLoginToken = encryptedLoginToken
         rq.value = otp_code
 
@@ -1151,7 +1156,7 @@ class LoginV3API:
 
         rq.expireIn = tfa_expire_in
 
-        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload = APIRequest_pb2.ApiRequestPayload()
         api_request_payload.payload = rq.SerializeToString()
 
         rs = rest_api.execute_rest(params.rest_context, 'authentication/2fa_validate', api_request_payload)
@@ -1165,7 +1170,7 @@ class LoginV3API:
                                     channel_uid=None,
                                     expireIn=None):
 
-        rq = proto.TwoFactorSendPushRequest()
+        rq = APIRequest_pb2.TwoFactorSendPushRequest()
 
         rq.encryptedLoginToken = encryptedLoginToken
         if channel_uid:
@@ -1177,7 +1182,7 @@ class LoginV3API:
         if pushType:
             rq.pushType = pushType
 
-        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload = APIRequest_pb2.ApiRequestPayload()
         api_request_payload.payload = rq.SerializeToString()
 
         return rest_api.execute_rest(params.rest_context, 'authentication/2fa_send_push', api_request_payload)
@@ -1185,9 +1190,9 @@ class LoginV3API:
     @staticmethod
     def rename_device(params: KeeperParams, new_name):
 
-        rq = proto.DeviceUpdateRequest()
+        rq = APIRequest_pb2.DeviceUpdateRequest()
         rq.clientVersion = rest_api.CLIENT_VERSION
-        # rq.deviceStatus = proto.DEVICE_OK
+        # rq.deviceStatus = APIRequest_pb2.DEVICE_OK
         rq.deviceName = new_name
         rq.encryptedDeviceToken = LoginV3API.get_device_id(params)
 
@@ -1213,7 +1218,7 @@ class LoginV3API:
     @staticmethod
     def register_encrypted_data_key_for_device(params: KeeperParams):
         device_key = crypto.load_ec_private_key(utils.base64_url_decode(params.device_private_key))
-        rq = proto.RegisterDeviceDataKeyRequest()
+        rq = APIRequest_pb2.RegisterDeviceDataKeyRequest()
         rq.encryptedDeviceToken = utils.base64_url_decode(params.device_token)
         rq.encryptedDeviceDataKey = crypto.encrypt_ec(params.data_key, device_key.public_key())
         try:
@@ -1227,13 +1232,13 @@ class LoginV3API:
 
     @staticmethod
     def register_device_in_region(params, encrypted_device_token):  # type: (KeeperParams, bytes) -> None
-        rq = proto.RegisterDeviceInRegionRequest()
+        rq = APIRequest_pb2.RegisterDeviceInRegionRequest()
         rq.encryptedDeviceToken = encrypted_device_token
         rq.clientVersion = rest_api.CLIENT_VERSION
         rq.deviceName = CommonHelperMethods.get_device_name()
         device_key = crypto.load_ec_private_key(utils.base64_url_decode(params.device_private_key))
         rq.devicePublicKey = crypto.unload_ec_public_key(device_key.public_key())
-        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload = APIRequest_pb2.ApiRequestPayload()
         api_request_payload.payload = rq.SerializeToString()
         rs = rest_api.execute_rest(params.rest_context, 'authentication/register_device_in_region', api_request_payload)
         if isinstance(rs, dict):
@@ -1250,7 +1255,7 @@ class LoginV3API:
         #   - persistent_login
         #   - ip_disable_auto_approve
 
-        rq = proto.UserSettingRequest()
+        rq = APIRequest_pb2.UserSettingRequest()
         rq.setting = name
         rq.value = value
 
@@ -1263,19 +1268,19 @@ class LoginV3API:
 
     @staticmethod
     def accountSummary(params: KeeperParams):
-        rq = proto_as.AccountSummaryRequest()
+        rq = AccountSummary_pb2.AccountSummaryRequest()
         rq.summaryVersion = 1
-        return api.communicate_rest(params, rq, 'login/account_summary', rs_type=proto_as.AccountSummaryElements)
+        return api.communicate_rest(params, rq, 'login/account_summary', rs_type=AccountSummary_pb2.AccountSummaryElements)
 
     @staticmethod
     def loginToMc(rest_context, session_token, mc_id):
 
         endpoint = 'authentication/login_to_mc'
 
-        rq = LoginToMcRequest()
+        rq = enterprise_pb2.LoginToMcRequest()
         rq.mcEnterpriseId = mc_id
 
-        api_request_payload = proto.ApiRequestPayload()
+        api_request_payload = APIRequest_pb2.ApiRequestPayload()
         # api_request_payload.payload = rq.SerializeToString()
 
         api_request_payload.encryptedSessionToken = base64.urlsafe_b64decode(session_token + '==')
@@ -1288,7 +1293,7 @@ class LoginV3API:
 
         if type(rs) == bytes:
 
-            login_to_mc_rs = LoginToMcResponse()
+            login_to_mc_rs = enterprise_pb2.LoginToMcResponse()
             login_to_mc_rs.ParseFromString(rs)
 
             return login_to_mc_rs

@@ -22,7 +22,6 @@ from datetime import datetime
 from typing import Optional, Tuple, Iterable, List, Dict, Any
 
 import google
-from Cryptodome.PublicKey import RSA
 
 from . import constants, rest_api, loginv3, utils, crypto, vault
 from .display import bcolors
@@ -71,7 +70,7 @@ def login(params, new_login=False):
         loginv3.LoginV3Flow.login(params, new_device=True)
 
 
-def accept_account_transfer_consent(params):
+def accept_account_transfer_consent(params):     # type: (KeeperParams) -> bool
     share_account_by = params.get_share_account_timestamp()
     print(constants.ACCOUNT_TRANSFER_MSG.format(share_account_by.strftime('%a, %b %d %Y')))
 
@@ -80,19 +79,43 @@ def accept_account_transfer_consent(params):
     answer = input('Do you accept Account Transfer policy? {}: '.format(input_options))
     answer = answer.lower()
     if answer.lower() == 'accept':
-        for role in params.settings['share_account_to']:
-            encoded_public = utils.base64_url_decode(role['public_key'])
-            public_key = crypto.load_rsa_public_key(encoded_public)
-            transfer_key = crypto.encrypt_rsa(params.data_key, public_key)
-            request = {
-                'command': 'share_account',
-                'to_role_id': role['role_id'],
-                'transfer_key': utils.base64_url_encode(transfer_key)
-            }
-            communicate(params, request)
-        return True
+        ok = True
+        requests = []
+        if 'share_account_to' in params.settings:
+            for role in params.settings['share_account_to']:
+                request = {
+                    'command': 'share_account',
+                    'to_role_id': role['role_id'],
+                }
+                if not params.forbid_rsa and 'public_key' in role:
+                    encoded_public = utils.base64_url_decode(role['public_key'])
+                    public_key = crypto.load_rsa_public_key(encoded_public)
+                    transfer_key = crypto.encrypt_rsa(params.data_key, public_key)
+                    request['transfer_key'] = utils.base64_url_encode(transfer_key)
+
+                requests.append(request)
+        responses = execute_batch(params, requests)
+        if isinstance(responses, list):
+            for response in responses:
+                if response['result_code'] != 'success':
+                    logging.warning('Account Transfer policy acceptance error: %s',
+                                    response.get('message') or response['result_code'])
+                    ok = False
+        if ok and params.forbid_rsa and params.enterprise_ec_key:
+            try:
+                share_data_key_with_enterprise(params)
+            except Exception as e:
+                logging.warning('Account Transfer policy acceptance error: %s', e)
+                ok = False
+        return ok
     else:
         return False
+
+
+def share_data_key_with_enterprise(params):     # type: (KeeperParams) -> None
+    rq = enterprise_pb2.EnterpriseUserDataKey()
+    rq.userEncryptedDataKey = crypto.encrypt_ec(params.data_key, params.enterprise_ec_key)
+    communicate_rest(params, rq, 'enterprise/set_enterprise_user_data_key')
 
 
 def get_record_data_json_bytes(data):    # type: (dict) -> bytes
@@ -120,26 +143,6 @@ def pad_aes_gcm(json):
             result = result + pad if isinstance(result, str) else b''.join([result, pad.encode('UTF-8')])
 
     return result
-
-
-def decrypt_rsa_key(encrypted_private_key, data_key):
-    """ Decrypt the RSA private key
-    PKCS1 formatted private key, which is described by the ASN.1 type:
-    RSAPrivateKey ::= SEQUENCE {
-          version           Version,
-          modulus           INTEGER,  -- n
-          publicExponent    INTEGER,  -- e
-          privateExponent   INTEGER,  -- d
-          prime1            INTEGER,  -- p
-          prime2            INTEGER,  -- q
-          exponent1         INTEGER,  -- d mod (p-1)
-          exponent2         INTEGER,  -- d mod (q-1)
-          coefficient       INTEGER,  -- (inverse of q) mod p
-          otherPrimeInfos   OtherPrimeInfos OPTIONAL
-    }
-    """
-    decoded_data = utils.base64_url_decode(encrypted_private_key)
-    return RSA.importKey(crypto.decrypt_aes_v1(decoded_data, data_key))
 
 
 def get_record(params, record_uid):
@@ -341,14 +344,22 @@ def load_team_keys(params, team_uids):          # type: (KeeperParams, List[str]
                     try:
                         aes = b''
                         rsa = b''
+                        ec = b''
                         encrypted_key = utils.base64_url_decode(tk['key'])
-                        if tk['type'] == 1:
+                        key_type = tk['type']
+                        if key_type == 1:
                             aes = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
-                        elif tk['type'] == 2:
-                            aes = crypto.decrypt_rsa(tk['key'], params.rsa_key2)
-                        elif tk['type'] == 3:
+                        elif key_type == 2:
+                            aes = crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
+                        elif key_type == 3:
+                            aes = crypto.decrypt_aes_v2(encrypted_key, params.data_key)
+                        elif key_type == 4:
+                            aes = crypto.decrypt_ec(encrypted_key, params.ecc_key)
+                        elif key_type == -1:
+                            ec = encrypted_key
+                        elif key_type == -3:
                             rsa = encrypted_key
-                        params.key_cache[team_uid] = PublicKeys(rsa=rsa, aes=aes)
+                        params.key_cache[team_uid] = PublicKeys(rsa=rsa, aes=aes, ec=ec)
                     except Exception as e:
                         logging.debug(e)
 
@@ -1208,13 +1219,13 @@ def enumerate_record_access_paths(params, record_uid):
                                 }
 
 
-def get_record_shares(params, record_uids, is_share_admin=False):
+def get_record_shares(params, record_uids, skip_check=False):
     # type: (KeeperParams, Iterable[str], bool) -> List[dict]
     def need_share_info(uid):
         if uid in params.record_cache:
             r = params.record_cache[uid]
             return 'shares' not in r
-        return is_share_admin
+        return skip_check
 
     result = []
     unique = set(record_uids)
@@ -1301,7 +1312,6 @@ def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
     mc_params.enterprise_id = mc_id
     mc_params.session_token = params.session_token
     mc_params.data_key = params.data_key
-    mc_params.rsa_key = params.rsa_key
     mc_params.rsa_key2 = params.rsa_key2
     mc_params.ecc_key = params.ecc_key
 

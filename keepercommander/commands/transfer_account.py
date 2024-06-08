@@ -14,10 +14,10 @@ import os
 import json
 import logging
 
-from typing import Optional
+from typing import Optional, Dict
 
 from .. import api, crypto, utils
-from ..params import KeeperParams
+from ..params import KeeperParams, PublicKeys
 from .base import suppress_exit, raise_parse_exception, user_choice
 from .enterprise_common import EnterpriseCommand
 from ..display import bcolors
@@ -186,17 +186,20 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
             logging.info('Locking active users.')
             api.execute_batch(params, lock_rq)
 
-        public_keys = {}
-        for target_user in list(transfer_map.keys()):
-            target_public_key = self.get_public_key(params, target_user)
-            if target_public_key:
-                public_keys[target_user] = target_public_key
+        public_keys = {}    # type: Dict[str, PublicKeys]
+        target_users = list(transfer_map.keys())
+        api.load_user_public_keys(params, target_users, False)
+        for target_user in target_users:
+            if target_user in params.key_cache:
+                public_keys[target_user] = params.key_cache[target_user]
             else:
                 logging.warning('Failed to get user \"%s\" public key', target_user)
                 del transfer_map[target_user]
 
         for target_user in transfer_map:
             target_public_key = public_keys[target_user]
+            if not target_public_key:
+                continue
             for email in transfer_map[target_user]:
                 logging.info('Transferring %s account to %s ...', email, target_user)
                 self.transfer_user_account(params, email, target_user, target_public_key)
@@ -206,7 +209,12 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
 
     @staticmethod
     def transfer_user_account(params, username, target_user, target_public_key):
-        # type: (KeeperParams, str, str, any) -> bool
+        # type: (KeeperParams, str, str, PublicKeys) -> bool
+        ec_public_key = crypto.load_ec_public_key(target_public_key.ec) if target_public_key.ec and params.forbid_rsa else None
+        rsa_public_key = crypto.load_rsa_public_key(target_public_key.rsa) if target_public_key.rsa and not params.forbid_rsa else None
+        if not ec_public_key and not rsa_public_key:
+            raise Exception(f'Cannot user target user public key')
+
         rq = {
             'command': 'pre_account_transfer',
             'target_username': username,
@@ -214,31 +222,55 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
         try:
             rs = api.communicate(params, rq)
             tree_key = params.enterprise['unencrypted_tree_key']
-            role_key = None
-            if 'role_key' in rs:
-                role_key = utils.base64_url_decode(rs['role_key'])
-                role_key = crypto.decrypt_rsa(role_key, params.rsa_key2)
-            elif 'role_key_id' in rs:
-                role_key_id = rs['role_key_id']
-                if 'role_keys2' in params.enterprise:
-                    key2 = next((x for x in params.enterprise['role_keys2'] if x['role_id'] == role_key_id), None)
-                    if key2:
-                        role_key = utils.base64_url_decode(key2['role_key'])
-                        role_key = crypto.decrypt_aes_v2(role_key, tree_key)
-            if not role_key:
-                raise Exception('Cannot resolve Account Transfer role key')
-            role_private_key = utils.base64_url_decode(rs['role_private_key']) if 'role_private_key' in rs else None
-            role_private_key = crypto.decrypt_aes_v1(role_private_key, role_key)
-            role_private_key = crypto.load_rsa_private_key(role_private_key)
-            transfer_key = utils.base64_url_decode(rs['transfer_key'])
-            transfer_key = crypto.decrypt_rsa(transfer_key, role_private_key)
+
+            user_data_key = None
+            if 'transfer_key2' in rs:
+                transfer_key = utils.base64_url_decode(rs['transfer_key2'])
+                transfer_key_type = rs['transfer_key2_type_id']
+                if transfer_key_type == 1:
+                    user_data_key = crypto.decrypt_aes_v1(transfer_key, tree_key)
+                elif transfer_key_type == 2:
+                    private_key_bytes = utils.base64_url_decode(params.enterprise['keys']['rsa_encrypted_private_key'])
+                    private_key_bytes = crypto.decrypt_aes_v2(private_key_bytes, tree_key)
+                    private_key = crypto.load_rsa_private_key(private_key_bytes)
+                    user_data_key = crypto.decrypt_rsa(transfer_key, private_key)
+                elif transfer_key_type == 3:
+                    user_data_key = crypto.decrypt_aes_v2(transfer_key, tree_key)
+                elif transfer_key_type == 4:
+                    private_key_bytes = utils.base64_url_decode(params.enterprise['keys']['ecc_encrypted_private_key'])
+                    private_key_bytes = crypto.decrypt_aes_v2(private_key_bytes, tree_key)
+                    private_key = crypto.load_ec_private_key(private_key_bytes)
+                    user_data_key = crypto.decrypt_ec(transfer_key, private_key)
+
+            if not user_data_key:
+                role_key = None
+                if 'role_key' in rs:
+                    role_key = utils.base64_url_decode(rs['role_key'])
+                    role_key = crypto.decrypt_rsa(role_key, params.rsa_key2)
+                elif 'role_key_id' in rs:
+                    role_key_id = rs['role_key_id']
+                    if 'role_keys2' in params.enterprise:
+                        key2 = next((x for x in params.enterprise['role_keys2'] if x['role_id'] == role_key_id), None)
+                        if key2:
+                            role_key = utils.base64_url_decode(key2['role_key'])
+                            role_key = crypto.decrypt_aes_v2(role_key, tree_key)
+
+                role_private_key = utils.base64_url_decode(rs['role_private_key']) if 'role_private_key' in rs else None
+                role_private_key = crypto.decrypt_aes_v1(role_private_key, role_key)
+                role_private_key = crypto.load_rsa_private_key(role_private_key)
+                transfer_key = utils.base64_url_decode(rs['transfer_key'])
+                # transfer_key_type = rs.get('transfer_key_type_id')
+                user_data_key = crypto.decrypt_rsa(transfer_key, role_private_key)
+            if not user_data_key:
+                raise Exception('Cannot resolve Account Transfer key')
+
             user_rsa_private_key = utils.base64_url_decode(rs['user_private_key']) if 'user_private_key' in rs else None
             if user_rsa_private_key:
-                user_rsa_private_key = crypto.decrypt_aes_v1(user_rsa_private_key, transfer_key)
+                user_rsa_private_key = crypto.decrypt_aes_v1(user_rsa_private_key, user_data_key)
                 user_rsa_private_key = crypto.load_rsa_private_key(user_rsa_private_key)
             user_ecc_private_key = utils.base64_url_decode(rs['user_ecc_private_key']) if 'user_ecc_private_key' in rs else None
             if user_ecc_private_key:
-                user_ecc_private_key = crypto.decrypt_aes_v2(user_ecc_private_key, transfer_key)
+                user_ecc_private_key = crypto.decrypt_aes_v2(user_ecc_private_key, user_data_key)
                 user_ecc_private_key = crypto.load_ec_private_key(user_ecc_private_key)
 
             rqt = {
@@ -246,6 +278,9 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                 'from_user': username,
                 'to_user': target_user
             }
+            if ec_public_key:
+                rqt['key_type'] = 'encrypted_by_public_key_ecc'
+
             if 'record_keys' in rs:
                 rqt['record_keys'] = []
                 rqt['corrupted_record_keys'] = []
@@ -255,21 +290,28 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                         record_key = utils.base64_url_decode(rk['record_key'])
                         record_key_type = rk.get('record_key_type', 1)
                         if record_key_type == 1:
-                            record_key = crypto.decrypt_aes_v1(record_key, transfer_key)
+                            record_key = crypto.decrypt_aes_v1(record_key, user_data_key)
                         elif record_key_type == 2:
                             record_key = crypto.decrypt_rsa(record_key, user_rsa_private_key)
                         elif record_key_type == 3:
-                            record_key = crypto.decrypt_aes_v2(record_key, transfer_key)
+                            record_key = crypto.decrypt_aes_v2(record_key, user_data_key)
                         elif record_key_type == 4:
                             record_key = crypto.decrypt_ec(record_key, user_ecc_private_key)
                         elif record_key_type == 0:
-                            record_key = transfer_key
+                            record_key = user_data_key
                         else:
                             raise Exception(f'Unsupported record key type')
 
+                        if ec_public_key:
+                            encrypted_record_key = crypto.encrypt_ec(record_key, ec_public_key)
+                            record_key_type = 'encrypted_by_public_key_ecc'
+                        else:
+                            encrypted_record_key = crypto.encrypt_rsa(record_key, rsa_public_key)
+                            record_key_type = 'encrypted_by_public_key'
                         rqt['record_keys'].append({
                             'record_uid': record_uid,
-                            'record_key': utils.base64_url_encode(crypto.encrypt_rsa(record_key, target_public_key))
+                            'record_key': utils.base64_url_encode(encrypted_record_key),
+                            'record_key_type': record_key_type
                         })
                     except Exception as e:
                         logging.debug('Corrupted record key: %s: %s', record_uid, e)
@@ -284,19 +326,26 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                         shared_folder_key = utils.base64_url_decode(sfk['shared_folder_key'])
                         shared_folder_key_type = sfk.get('shared_folder_key_type', 1)
                         if shared_folder_key_type == 1:
-                            shared_folder_key = crypto.decrypt_aes_v1(shared_folder_key, transfer_key)
+                            shared_folder_key = crypto.decrypt_aes_v1(shared_folder_key, user_data_key)
                         elif shared_folder_key_type == 2:
                             shared_folder_key = crypto.decrypt_rsa(shared_folder_key, user_rsa_private_key)
                         elif shared_folder_key_type == 3:
-                            shared_folder_key = crypto.decrypt_aes_v2(shared_folder_key, transfer_key)
+                            shared_folder_key = crypto.decrypt_aes_v2(shared_folder_key, user_data_key)
                         elif shared_folder_key_type == 4:
                             shared_folder_key = crypto.decrypt_ec(shared_folder_key, user_ecc_private_key)
                         else:
                             raise Exception(f'Unsupported shared folder key type')
 
+                        if ec_public_key:
+                            encrypted_shared_folder_key = crypto.encrypt_ec(shared_folder_key, ec_public_key)
+                            shared_folder_key_type = 'encrypted_by_public_key_ecc'
+                        else:
+                            encrypted_shared_folder_key = crypto.encrypt_rsa(shared_folder_key, rsa_public_key)
+                            shared_folder_key_type = 'encrypted_by_public_key'
                         rqt['shared_folder_keys'].append({
                             'shared_folder_uid': shared_folder_uid,
-                            'shared_folder_key': utils.base64_url_encode(crypto.encrypt_rsa(shared_folder_key, target_public_key)),
+                            'shared_folder_key': utils.base64_url_encode(encrypted_shared_folder_key),
+                            'shared_folder_key_type': shared_folder_key_type,
                         })
                     except Exception as e:
                         logging.debug('Corrupted shared folder key: %s: %s', shared_folder_uid, e)
@@ -311,18 +360,26 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                         team_key = utils.base64_url_decode(tk['team_key'])
                         team_key_type = tk.get('team_key_type', 1)
                         if team_key_type == 1:
-                            team_key = crypto.decrypt_aes_v1(team_key, transfer_key)
+                            team_key = crypto.decrypt_aes_v1(team_key, user_data_key)
                         elif team_key_type == 2:
                             team_key = crypto.decrypt_rsa(team_key, user_rsa_private_key)
                         elif team_key_type == 3:
-                            team_key = crypto.decrypt_aes_v2(team_key, transfer_key)
+                            team_key = crypto.decrypt_aes_v2(team_key, user_data_key)
                         elif team_key_type == 4:
                             team_key = crypto.decrypt_ec(team_key, user_ecc_private_key)
                         else:
                             raise Exception(f'Unsupported team key type')
+
+                        if ec_public_key:
+                            encrypted_team_key = crypto.encrypt_ec(team_key, ec_public_key)
+                            team_key_type = 'encrypted_by_public_key_ecc'
+                        else:
+                            encrypted_team_key = crypto.encrypt_rsa(team_key, rsa_public_key)
+                            team_key_type = 'encrypted_by_public_key'
                         rqt['team_keys'].append({
                             'team_uid': team_uid,
-                            'team_key': utils.base64_url_encode(crypto.encrypt_rsa(team_key, target_public_key)),
+                            'team_key': utils.base64_url_encode(encrypted_team_key),
+                            'team_key_type': team_key_type,
                         })
                     except Exception as e:
                         logging.debug('Corrupted team key: %s: %s', team_uid, e)
@@ -332,13 +389,15 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                 rqt['user_folder_keys'] = []
                 rqt['corrupted_user_folder_keys'] = []
                 folder_key = utils.generate_aes_key()
-                folder_data = json.dumps({
-                    'name': f'Transfer from {username}'
-                }).encode('utf-8')
+                folder_data = json.dumps({ 'name': f'Transfer from {username}' }).encode('utf-8')
                 folder_data = crypto.encrypt_aes_v1(folder_data, folder_key)
+                if ec_public_key:
+                    encrypted_folder_key = crypto.encrypt_ec(folder_key, ec_public_key)
+                else:
+                    encrypted_folder_key = crypto.encrypt_rsa(folder_key, rsa_public_key)
                 rqt['user_folder_transfer'] = {
                     'transfer_folder_uid': utils.generate_uid(),
-                    'transfer_folder_key': utils.base64_url_encode(crypto.encrypt_rsa(folder_key, target_public_key)),
+                    'transfer_folder_key': utils.base64_url_encode(encrypted_folder_key),
                     'transfer_folder_data': utils.base64_url_encode(folder_data)
                 }
                 for ufk in rs['user_folder_keys']:
@@ -347,18 +406,26 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                         user_folder_key = utils.base64_url_decode(ufk['user_folder_key'])
                         user_folder_key_type = ufk.get('user_folder_key_type', 1)
                         if user_folder_key_type == 1:
-                            user_folder_key = crypto.decrypt_aes_v1(user_folder_key, transfer_key)
+                            user_folder_key = crypto.decrypt_aes_v1(user_folder_key, user_data_key)
                         elif user_folder_key_type == 2:
                             user_folder_key = crypto.decrypt_rsa(user_folder_key, user_rsa_private_key)
                         elif user_folder_key_type == 3:
-                            user_folder_key = crypto.decrypt_aes_v2(user_folder_key, transfer_key)
+                            user_folder_key = crypto.decrypt_aes_v2(user_folder_key, user_data_key)
                         elif user_folder_key_type == 4:
                             user_folder_key = crypto.decrypt_ec(user_folder_key, user_ecc_private_key)
                         else:
                             raise Exception(f'Unsupported user folder key type')
+
+                        if ec_public_key:
+                            encrypted_user_folder_key = crypto.encrypt_ec(user_folder_key, ec_public_key)
+                            user_folder_key_type = 'encrypted_by_public_key_ecc'
+                        else:
+                            encrypted_user_folder_key = crypto.encrypt_rsa(user_folder_key, rsa_public_key)
+                            user_folder_key_type = 'encrypted_by_public_key'
                         rqt['user_folder_keys'].append({
                             'user_folder_uid': user_folder_uid,
-                            'user_folder_key': utils.base64_url_encode(crypto.encrypt_rsa(user_folder_key, target_public_key)),
+                            'user_folder_key': utils.base64_url_encode(encrypted_user_folder_key),
+                            'user_folder_key_type': user_folder_key_type,
                         })
                     except Exception as e:
                         logging.debug('Corrupted user folder key: %s: %s', user_folder_uid, e)

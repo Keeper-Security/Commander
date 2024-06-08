@@ -15,12 +15,10 @@ import os
 import secrets
 import string
 from secrets import choice
-from typing import Optional, List, Iterator
+from typing import Optional, List, Iterator, Any
 from collections import namedtuple
 
 from . import crypto
-
-from Cryptodome.Random.random import shuffle
 
 DEFAULT_PASSWORD_LENGTH = 32
 PW_SPECIAL_CHARACTERS = '!@#$%()+;<>=?[]{}^.,'
@@ -51,6 +49,13 @@ def get_password_strength(password):  # type: (str) -> PasswordStrength
 def generate(length=64):
     generator = KeeperPasswordGenerator(length=length)
     return generator.generate()
+
+
+def shuffle(x):     # type: (List[Any]) -> None:
+    # See http://en.wikipedia.org/wiki/Fisher-Yates_shuffle
+    for i in range(len(x)-1, 0, -1):    # iterate from len(x)-1 down to 1
+        j = secrets.randbelow(i+1)      # choose random j such that 0 <= j <= i
+        x[i], x[j] = x[j], x[i]         # exchange x[i] and x[j]
 
 
 class PasswordGenerator(abc.ABC):

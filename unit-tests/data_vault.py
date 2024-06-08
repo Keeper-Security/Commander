@@ -4,9 +4,6 @@ import os
 from typing import List, Union, Optional, Dict
 from unittest import mock
 
-from Cryptodome.Cipher import AES
-from Cryptodome.PublicKey import RSA
-
 from keepercommander import api, params, shared_folder, team, crypto, utils, vault, vault_extensions, record_facades
 from keepercommander.proto import record_pb2, SyncDown_pb2
 
@@ -36,9 +33,10 @@ _ENCRYPTED_DATA_KEY = base64.urlsafe_b64encode(_dk).decode('utf-8').strip()
 _V1_DERIVED_KEY = crypto.derive_keyhash_v1(_USER_PASSWORD, _USER_SALT, _USER_ITERATIONS)
 _enc_iter = int.to_bytes(_USER_ITERATIONS, length=3, byteorder='big', signed=False)
 _enc_iv = os.urandom(16)
-_cipher = AES.new(_V1_DERIVED_KEY, AES.MODE_CBC, _enc_iv)
-_enc_dk = b'\x01' + _enc_iter + _USER_SALT + _enc_iv + _cipher.encrypt(_USER_DATA_KEY + _USER_DATA_KEY)
+_enc_dk = b'\x01' + _enc_iter + _USER_SALT + _enc_iv + crypto.encrypt_aes_v1(_USER_DATA_KEY + _USER_DATA_KEY, _V1_DERIVED_KEY, _enc_iv, use_padding=False)
 _ENCRYPTION_PARAMS = base64.urlsafe_b64encode(_enc_dk).decode('utf-8').strip('=')
+
+_ec_private_key, _ec_public_key = crypto.generate_ec_key()
 
 
 class VaultEnvironment:
@@ -49,6 +47,7 @@ class VaultEnvironment:
         self.salt = _USER_SALT
         self.data_key = _USER_DATA_KEY
         self.public_key = _public_key
+        self.ec_public_key = _ec_public_key
         self.encoded_public_key = utils.base64_url_encode(_IMPORTED_PUBLIC_KEY)
         self.session_token = _SESSION_TOKEN
         self.one_time_token = _2FA_ONE_TIME_TOKEN
@@ -74,7 +73,6 @@ def get_connected_params():
     p.account_uid_bytes = utils.base64_url_decode(_USER_ACCOUNT_UID)
 
     p.auth_verifier = utils.base64_url_encode(utils.create_auth_verifier(_USER_PASSWORD, _USER_SALT, _USER_ITERATIONS))
-    p.rsa_key = RSA.importKey(_DER_PRIVATE_KEY)
     p.rsa_key2 = crypto.load_rsa_private_key(_DER_PRIVATE_KEY)
     p.session_token = _SESSION_TOKEN
     return p
@@ -268,6 +266,7 @@ def register_team(team, key_type, sfs=None):     # type: (team.Team, int, dict) 
             sfk = SyncDown_pb2.SharedFolderKey()
             sfk.sharedFolderUid = utils.base64_url_decode(shared_folder_uid)
             sfk.sharedFolderKey = crypto.encrypt_aes_v1(shared_folder_key, team_key)
+            sfk.keyType = record_pb2.ENCRYPTED_BY_DATA_KEY
             t.sharedFolderKeys.append(sfk)
 
             sft = SyncDown_pb2.SharedFolderTeam()
@@ -355,5 +354,6 @@ def generate_data():
     uf.revision = 4
     uf.data = crypto.encrypt_aes_v1(json.dumps({'name': 'User Folder 1'}).encode('utf-8'), folder_key)
     _USER_FOLDERS.append(uf)
+
 
 generate_data()
