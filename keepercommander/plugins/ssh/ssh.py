@@ -9,7 +9,11 @@
 # Copyright 2022 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-"""Change a password over ssh."""
+
+"""Commander Plugin for SSH
+   Dependencies:
+       pip install paramiko paramiko_expect
+"""
 
 import logging
 import socket

@@ -9,6 +9,11 @@
 # Contact: ops@keepersecurity.com
 #
 
+"""Commander Plugin for SFTP
+   Dependencies:
+       pip install paramiko
+"""
+
 import logging
 import stat
 
@@ -21,6 +26,7 @@ from ...commands.base import RecordMixin
 from .. import rsync
 
 logging.getLogger("paramiko").setLevel(logging.WARNING)
+
 
 class SFtpPlugin(rsync.RSyncPluginBase):
     def __init__(self):
