@@ -1,22 +1,17 @@
-wheel
+setuptools
 asciitree
 bcrypt
 colorama
-cryptography>=39.0.1
-paramiko
-paramiko_expect
 prompt_toolkit
-protobuf>=3.19.0
 pycryptodomex
-pykeepass
 pyperclip
-pysocks
-pytest
-requests; python_version<'3.7'
-requests>=2.30.0; python_version>='3.7'
+PySocks
 tabulate
-pyqrcode
-keeper-secrets-manager-core>=16.6.0
 websockets
 fido2
+requests; python_version<'3.7'
+requests>=2.30.0; python_version>='3.7'
+cryptography>=39.0.1
+protobuf>=3.19.0
+keeper-secrets-manager-core>=16.6.0
 aiortc; python_version>='3.8'

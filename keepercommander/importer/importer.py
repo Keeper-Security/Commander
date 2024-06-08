@@ -38,18 +38,24 @@ def replace_email_domain(email, old_domain, new_domain):
 
 def importer_for_format(input_format):
     full_name = 'keepercommander.importer.' + input_format
-    module = importlib.import_module(full_name)
-    if hasattr(module, 'Importer'):
-        return module.Importer
-    raise Exception('Cannot resolve importer for format {}'.format(input_format))
+    try:
+        module = importlib.import_module(full_name)
+        if hasattr(module, 'Importer'):
+            return module.Importer
+        raise Exception('Cannot resolve importer for format {}'.format(input_format))
+    except ModuleNotFoundError as e:
+        raise CommandError('', f'The required module is not installed:\n\tpip install {e.name}')
 
 
 def exporter_for_format(output_format):
     full_name = 'keepercommander.importer.' + output_format
-    module = importlib.import_module(full_name)
-    if hasattr(module, 'Exporter'):
-        return module.Exporter
-    raise Exception('Cannot resolve exporter for format {}'.format(output_format))
+    try:
+        module = importlib.import_module(full_name)
+        if hasattr(module, 'Exporter'):
+            return module.Exporter
+        raise Exception('Cannot resolve exporter for format {}'.format(output_format))
+    except ModuleNotFoundError as e:
+        raise CommandError('', f'The required module is not installed:\n\tpip install {e.name}')
 
 
 def strip_path_delimiter(name, delimiter=PathDelimiter):

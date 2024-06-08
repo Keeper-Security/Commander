@@ -54,9 +54,8 @@ def load_plugin(module_name):
         try:
             logging.debug('Importing %s', str(full_name))
             imported_plugins[module_name] = importlib.import_module(full_name)
-        except Exception as e:
-            logging.error(e.args[0])
-            logging.error('Unable to load module %s', full_name)
+        except ModuleNotFoundError as e:
+            logging.error('The required module is not installed:\n\tpip install %s', e.name)
 
     if module_name in imported_plugins:
         return imported_plugins[module_name]

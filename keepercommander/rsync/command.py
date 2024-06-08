@@ -96,7 +96,11 @@ class RSyncCommand(Command, RecordMixin):
         elif arg_plugin_name:
             plugin_name = arg_plugin_name
 
-        plugin_module = self.load_plugin(plugin_name)
+        try:
+            plugin_module = self.load_plugin(plugin_name)
+        except ModuleNotFoundError as e:
+            raise CommandError('rsync', f'The required module is not installed:\n\tpip install {e.name}')
+
         if not hasattr(plugin_module, 'RSyncPlugin'):
             raise CommandError('rsync', f'Invalid RSync Plugin \"{plugin_name}\"')
         plugin = plugin_module.RSyncPlugin()    # type: rsync.RSyncPluginBase
