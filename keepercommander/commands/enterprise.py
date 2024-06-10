@@ -2569,6 +2569,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             success = rs.get('result') == 'success'
                             logging_fn = logging.info if success else logging.warning
                             cascade = rq.get('cascade_node_management')
+                            server_msg = ''
                             affected_nodes = 'node and sub-nodes' if action == 'add' and cascade \
                                 else 'sub-nodes' if action == 'update' \
                                 else 'node'
@@ -2577,8 +2578,10 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             if success:
                                 action_result = (action_result + ('d' if action_result.endswith('e') else 'ed')).capitalize()
                             else:
-                                action_result = f'Failed to {action_result}: {rs.get("message")}'
-                            msg = f'{action_result} admin privileges for "{role_name}" role on "{node_name}" {affected_nodes}'
+                                server_msg = f'\nReason: {rs.get("message")}'
+                                action_result = f'Failed to {action_result}'
+                            msg = f'{action_result} admin privileges for "{role_name}" role on "{node_name}" {affected_nodes}.'
+                            msg += server_msg
                             logging_fn(msg)
                         elif command in {'managed_node_privilege_add', 'managed_node_privilege_remove'}:
                             node_names = [x for x in params.enterprise['nodes'] if x['node_id'] == rq['managed_node_id']]
