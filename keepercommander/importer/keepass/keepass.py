@@ -107,6 +107,8 @@ class KeepassImporter(BaseFileImporter):
                                 record.login_url = entry.url
                             if entry.notes:
                                 record.notes = entry.notes
+                            if entry.otp:
+                                record.fields.append(RecordField('oneTimeCode', '', entry.otp))
                             if hasattr(entry, 'ctime'):
                                 ctime = entry.ctime
                                 if isinstance(ctime, datetime.datetime):
@@ -127,6 +129,10 @@ class KeepassImporter(BaseFileImporter):
                                     field_type = ''
                                     field_label = key
                                 if field_label in ('TOTPSecret', 'TOTPPeriod', 'TOTPDigits', 'TOTPIssuer', 'ModifyTOTPSettings', 'ViewTOTPSettings'):
+                                    # Ignore TOTP custom fields (set via previous Keeper -> KDBX export implementation)
+                                    # if the entry's "otp" field contains the corresponding URI
+                                    if entry.otp:
+                                        continue
                                     if field_label == 'TOTPSecret':
                                         totp_secret = value
                                     elif field_label == 'TOTPIssuer':
@@ -318,6 +324,9 @@ class KeepassExporter(BaseExporter, XmlUtils):
                     if r.fields:
                         custom_names = {}   # type: Dict[str, int]
                         for cf in r.fields:
+                            if cf.type == 'oneTimeCode':
+                                entry.otp = cf.value
+                                continue
                             if cf.type and cf.label:
                                 title = f'${cf.type}:{cf.label}'
                             elif cf.type:
