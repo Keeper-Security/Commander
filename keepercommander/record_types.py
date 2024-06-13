@@ -44,7 +44,7 @@ FieldTypes = {x[0]: x for x in (
 
     FieldType('checkbox', False, 'on/off checkbox'),
     FieldType('dropdown', '', 'list of text choices'),
-    FieldType('schedule', {'type': '', 'utcTime': '', 'month': '', }, 'schedule information'),
+    FieldType('schedule', {'type': '', 'time': '', 'month': ''}, 'schedule information'),
     FieldType('passkey', {'privateKey': {}, 'credentialId': '', 'signCount': 0, 'userId': '', 'relyingParty': '',
                           'username': '', 'createdDate': 0}, 'passwordless login passkey'),
     FieldType('script', {'fileRef': '', 'command': '', 'recordRef': [], }, 'Post rotation script'),
