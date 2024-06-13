@@ -474,10 +474,10 @@ class TypedField(object):
             day = '*'
             month = '*'
             week_day = '*'
-            utc_time = value.get('utcTime') or ''
+            utc_time = value.get('time') or ''
             if utc_time:
                 comps = utc_time.split(':')
-                if len(comps) == 2:
+                if len(comps) >= 2:
                     if comps[0].isnumeric():
                         h = int(comps[0])
                         if 0 <= h <= 23:
@@ -692,12 +692,12 @@ class TypedField(object):
                 hour = int(comps[1]) if comps[1].isnumeric() else 0
                 if hour < 0 or hour > 23:
                     hour = 0
-                utc_time = f'{hour:02}:{minute:02}'
+                time = f'{hour:02}:{minute:02}:00'
                 if comps[3] == '*' and comps[4] == '*':  # daily
                     if comps[2].isnumeric():
                         schedule = {
                             'type': 'MONTHLY_BY_DAY',
-                            'utcTime': utc_time,
+                            'time': time,
                             'monthDay': int(comps[2])
                         }
                     else:
@@ -708,7 +708,7 @@ class TypedField(object):
                                 interval = int(intr)
                         schedule = {
                             'type': 'DAILY',
-                            'utcTime': utc_time,
+                            'time': time,
                             'intervalCount': interval
                         }
                 elif comps[4] != '*':  # day of week
@@ -718,7 +718,7 @@ class TypedField(object):
                             wd = 1
                         schedule = {
                             'type': 'WEEKLY',
-                            'utcTime': utc_time,
+                            'time': time,
                             'weekday': constants.week_days[wd]
                         }
                     else:
@@ -732,7 +732,7 @@ class TypedField(object):
                                 occ = 0
                             schedule = {
                                 'type': 'MONTHLY_BY_WEEKDAY',
-                                'utcTime': utc_time,
+                                'time': time,
                                 'weekday': constants.week_days[wd],
                                 'occurrence': constants.occurrences[occ]
                             }
@@ -746,10 +746,11 @@ class TypedField(object):
                         mm = 0
                     schedule = {
                         'type': 'YEARLY',
-                        'utcTime': utc_time,
+                        'time': time,
                         'month': constants.months[mm],
                         'monthday': int(comps[3])
                     }
+                schedule['tz'] = 'Etc/UTC'
                 return schedule
 
     @staticmethod
