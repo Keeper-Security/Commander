@@ -229,7 +229,7 @@ def enforcement_list():  # type: () -> List[Tuple[str, str, str]]
 
 ENFORCEMENTS = {e[0].lower(): e[2].lower() for e in [*_ENFORCEMENTS, *_COMPOUND_ENFORCEMENTS]}
 
-week_days = ('SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY','THURSDAY', 'FRIDAY', 'SATURDAY')
+week_days = ('SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY')
 occurrences = ('FIRST', 'SECOND', 'THIRD', 'FOURTH', 'LAST')
 months = ('JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER',
           'NOVEMBER', 'DECEMBER')
