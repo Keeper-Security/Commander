@@ -469,12 +469,26 @@ class TypedField(object):
     def export_schedule_field(value):   # type: (dict) -> Optional[str]
         if isinstance(value, dict):
             schedule_type = value.get('type')
+            if schedule_type == 'RUN_ONCE':
+                return ''
+
+            if schedule_type == 'CRON':
+                cron = value.get('cron')
+                if isinstance(cron, str):
+                    comps = [x for x in cron.split(' ') if x]
+                    if len(comps) >= 6:
+                        comps = comps[1:6]
+                        return ' '.join(comps)
+                return ''
+
             hour = '0'
             minute = '0'
             day = '*'
             month = '*'
             week_day = '*'
-            utc_time = value.get('time') or ''
+            utc_time = value.get('time')
+            if not utc_time:
+                utc_time = value.get('utcTime')
             if utc_time:
                 comps = utc_time.split(':')
                 if len(comps) >= 2:
@@ -500,6 +514,16 @@ class TypedField(object):
             elif schedule_type == 'MONTHLY_BY_WEEKDAY':
                 wd = constants.get_cron_week_day(value.get('weekday')) or 1
                 occ = constants.get_cron_occurrence(value.get('occurrence'))
+                if occ == 'FIRST':
+                    occ = 1
+                elif occ == 'SECOND':
+                    occ = 2
+                elif occ == 'THIRD':
+                    occ = 3
+                elif occ == 'FOURTH':
+                    occ = 4
+                else:
+                    occ = 1
                 week_day = f'{wd}#{occ}'
             elif schedule_type == 'YEARLY':
                 month = constants.get_cron_month(value.get('month')) or 1
@@ -689,68 +713,90 @@ class TypedField(object):
                 minute = int(comps[0]) if comps[0].isnumeric() else 0
                 if minute < 0 or minute > 59:
                     minute = 0
-                hour = int(comps[1]) if comps[1].isnumeric() else 0
+                hour = 0
+                if comps[1].isnumeric():
+                    hour = int(comps[1])
+                else:
+                    hrs = comps[1].replace('-', ',').split(',')
+                    if len(hrs) > 0 and hrs[0].isnumeric():
+                        hour = int(hrs[0])
                 if hour < 0 or hour > 23:
                     hour = 0
                 time = f'{hour:02}:{minute:02}:00'
-                if comps[3] == '*' and comps[4] == '*':  # daily
+                intervalCount = 1
+
+                if comps[3] in ('*', '?') and comps[4] in ('*', '?'):  # daily
                     if comps[2].isnumeric():
                         schedule = {
                             'type': 'MONTHLY_BY_DAY',
-                            'time': time,
                             'monthDay': int(comps[2])
                         }
-                    else:
-                        interval = 1
+                    elif comps[2].startswith('*'):
+                        schedule = {
+                            'type': 'DAILY',
+                        }
                         if comps[2].startswith('*/'):
                             intr = comps[2][2:]
                             if intr.isnumeric():
-                                interval = int(intr)
-                        schedule = {
-                            'type': 'DAILY',
-                            'time': time,
-                            'intervalCount': interval
-                        }
-                elif comps[4] != '*':  # day of week
+                                schedule['occurrences'] = int(intr)
+                elif comps[4] not in ('*', '?'):  # day of week
                     if comps[4].isnumeric():
                         wd = int(comps[4])
                         if wd < 0 or wd > len(constants.week_days):
                             wd = 1
                         schedule = {
                             'type': 'WEEKLY',
-                            'time': time,
                             'weekday': constants.week_days[wd]
                         }
+                    elif comps[4].startswith('*/'):
+                        schedule = {
+                            'type': 'DAILY',
+                        }
+                        intr = comps[4][2:]
+                        if intr.isnumeric():
+                            schedule['occurrences'] = int(intr)
                     else:
-                        wd_comps = comps[4].split('#')
+                        wd_comps = comps[4].replace('%', '#').split('#')
                         if len(wd_comps) == 2 and wd_comps[0].isnumeric() and wd_comps[1].isnumeric():
                             wd = int(wd_comps[0])
                             if wd < 0 or wd > len(constants.week_days):
                                 wd = 1
-                            occ = int(wd_comps[1])
+                            occ = int(wd_comps[1]) - 1
                             if occ < 0 or occ >= len(constants.occurrences):
                                 occ = 0
+                            occurrence = constants.occurrences[occ]
                             schedule = {
                                 'type': 'MONTHLY_BY_WEEKDAY',
-                                'time': time,
                                 'weekday': constants.week_days[wd],
-                                'occurrence': constants.occurrences[occ]
+                                'occurrence': occurrence,
                             }
-                elif comps[2].isnumeric() and comps[3].isnumeric():  # day of year
-                    mm = int(comps[4])
+                elif comps[3].isnumeric():  # day of month
+                    mm = int(comps[3])
                     if mm > 0:
                         mm -= 1
                         if mm >= len(constants.months):
                             mm = len(constants.months) - 1
                     else:
                         mm = 0
+
+                    dd = 1
+                    if comps[2].isnumeric():
+                        dd = int(comps[2])
+
                     schedule = {
                         'type': 'YEARLY',
-                        'time': time,
                         'month': constants.months[mm],
-                        'monthday': int(comps[3])
+                        'monthDay': dd,
                     }
+                else:
+                    schedule = {
+                        'type': 'RUN_ONCE',
+                    }
+                    time = '2000-01-01T00:00:00'
+
                 schedule['tz'] = 'Etc/UTC'
+                schedule['time'] = time
+                schedule['intervalCount'] = intervalCount
                 return schedule
 
     @staticmethod

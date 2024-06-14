@@ -158,3 +158,33 @@ class TestImporterUtils(TestCase):
         self.assertIsNotNone(str_value)
         dict_value1 = vault.TypedField.import_account_field(str_value)
         self.assertEqual(dict_value, dict_value1)
+
+    def test_schedule_parser(self):
+        sc = vault.TypedField.import_schedule_field('1 1 * * *')
+        self.assertEqual(sc.get('type'), 'DAILY')
+
+        sc = vault.TypedField.import_schedule_field('1 1 */5 * *')
+        self.assertEqual(sc.get('type'), 'DAILY')
+        self.assertEqual(sc.get('occurrences'), 5)
+
+        sc = vault.TypedField.import_schedule_field('1 1 5 * *')
+        self.assertEqual(sc.get('type'), 'MONTHLY_BY_DAY')
+        self.assertEqual(sc.get('monthDay'), 5)
+
+        sc = vault.TypedField.import_schedule_field('1 1 20 5 ?')
+        self.assertEqual(sc.get('type'), 'YEARLY')
+        self.assertEqual(sc.get('monthDay'), 20)
+        self.assertEqual(sc.get('month'), 'MAY')
+
+        sc = vault.TypedField.import_schedule_field('1 1 * * */3')
+        self.assertEqual(sc.get('type'), 'DAILY')
+        self.assertEqual(sc.get('occurrences'), 3)
+
+        sc = vault.TypedField.import_schedule_field('1 1 * * 3')
+        self.assertEqual(sc.get('type'), 'WEEKLY')
+        self.assertEqual(sc.get('weekday'), 'WEDNESDAY')
+
+        sc = vault.TypedField.import_schedule_field('1 1 * * 3#2')
+        self.assertEqual(sc.get('type'), 'MONTHLY_BY_WEEKDAY')
+        self.assertEqual(sc.get('weekday'), 'WEDNESDAY')
+        self.assertEqual(sc.get('occurrence'), 'SECOND')

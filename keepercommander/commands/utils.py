@@ -250,17 +250,18 @@ class SyncDownCommand(Command):
         return sync_down_parser
 
     def execute(self, params, **kwargs):
-        force = kwargs.get('force')
-        if force is True:
+        force = kwargs.get('force') is True
+        if force:
             params.revision = 0
             params.sync_down_token = b''
             if params.config:
                 if 'skip_records' in params.config:
                     del params.config['skip_records']
 
-        api.sync_down(params, record_types=force is True)
-        from keepercommander.loginv3 import LoginV3Flow
-        LoginV3Flow.populateAccountSummary(params)
+        api.sync_down(params, record_types=force)
+        if force:
+            from keepercommander.loginv3 import LoginV3Flow
+            LoginV3Flow.populateAccountSummary(params)
 
         accepted = False
         if len(params.pending_share_requests) > 0:
