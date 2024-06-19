@@ -21,7 +21,7 @@ from .base import GroupCommand, Command, dump_report_data
 from ..breachwatch import BreachWatch
 from ..params import KeeperParams
 from ..error import CommandError
-from ..proto import client_pb2 as client_proto, breachwatch_pb2 as breachwatch_proto
+from ..proto import breachwatch_pb2, client_pb2
 
 
 breachwatch_list_parser = argparse.ArgumentParser(prog='breachwatch-list')
@@ -170,16 +170,16 @@ class BreachWatchScanCommand(Command):
                                 if euid:
                                     euid_to_delete.append(base64.b64decode(euid))
                 if record_password in scans:
-                    bwrq = breachwatch_proto.BreachWatchRecordRequest()
+                    bwrq = breachwatch_pb2.BreachWatchRecordRequest()
                     bwrq.recordUid = utils.base64_url_decode(record_uid)
-                    bwrq.breachWatchInfoType = breachwatch_proto.RECORD
+                    bwrq.breachWatchInfoType = breachwatch_pb2.RECORD
                     bwrq.updateUserWhoScanned = True
                     hash_status = scans[record_password]
-                    bw_password = client_proto.BWPassword()
+                    bw_password = client_pb2.BWPassword()
                     bw_password.value = record_password
-                    bw_password.status = client_proto.WEAK if hash_status.breachDetected else client_proto.GOOD
+                    bw_password.status = client_pb2.WEAK if hash_status.breachDetected else client_pb2.GOOD
                     bw_password.euid = hash_status.euid
-                    bw_data = client_proto.BreachWatchData()
+                    bw_data = client_pb2.BreachWatchData()
                     bw_data.passwords.append(bw_password)
                     data = bw_data.SerializeToString()
                     try:
@@ -191,10 +191,10 @@ class BreachWatchScanCommand(Command):
             while bw_requests:
                 chunk = bw_requests[0:999]
                 bw_requests = bw_requests[999:]
-                rq = breachwatch_proto.BreachWatchUpdateRequest()
+                rq = breachwatch_pb2.BreachWatchUpdateRequest()
                 rq.breachWatchRecordRequest.extend(chunk)
                 api.communicate_rest(params, rq, 'breachwatch/update_record_data',
-                                     rs_type=breachwatch_proto.BreachWatchUpdateResponse)
+                                     rs_type=breachwatch_pb2.BreachWatchUpdateResponse)
                 params.sync_data = True
             if euid_to_delete:
                 params.breach_watch.delete_euids(params, euid_to_delete)
@@ -237,19 +237,19 @@ class BreachWatchIgnoreCommand(Command):
             if record.record_uid not in record_uids:
                 continue
             record_uids.remove(record.record_uid)
-            bwrq = breachwatch_proto.BreachWatchRecordRequest()
+            bwrq = breachwatch_pb2.BreachWatchRecordRequest()
             bwrq.recordUid = utils.base64_url_decode(record.record_uid)
-            bwrq.breachWatchInfoType = breachwatch_proto.RECORD
+            bwrq.breachWatchInfoType = breachwatch_pb2.RECORD
             bwrq.updateUserWhoScanned = False
 
-            bw_password = client_proto.BWPassword()
+            bw_password = client_pb2.BWPassword()
             bw_password.value = password.get('value')
             bw_password.resolved = utils.current_milli_time()
-            bw_password.status = client_proto.IGNORE
+            bw_password.status = client_pb2.IGNORE
             euid = password.get('euid')
             if euid:
                 bw_password.euid = base64.b64decode(euid)
-            bw_data = client_proto.BreachWatchData()
+            bw_data = client_pb2.BreachWatchData()
             bw_data.passwords.append(bw_password)
             data = bw_data.SerializeToString()
             try:
@@ -271,10 +271,10 @@ class BreachWatchIgnoreCommand(Command):
             while bw_requests:
                 chunk = bw_requests[0:999]
                 bw_requests = bw_requests[999:]
-                rq = breachwatch_proto.BreachWatchUpdateRequest()
+                rq = breachwatch_pb2.BreachWatchUpdateRequest()
                 rq.breachWatchRecordRequest.extend(chunk)
                 rs = api.communicate_rest(params, rq, 'breachwatch/update_record_data',
-                                          rs_type=breachwatch_proto.BreachWatchUpdateResponse)
+                                          rs_type=breachwatch_pb2.BreachWatchUpdateResponse)
                 for status in rs.breachWatchRecordStatus:
                     logging.info(f'{utils.base64_url_encode(status.recordUid)}: {status.status} {status.reason}')
 

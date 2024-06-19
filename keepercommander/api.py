@@ -64,11 +64,12 @@ def login(params, new_login=False):
     # type: (KeeperParams, bool) -> None
 
     logging.info('Logging in to Keeper Commander')
+    flow = loginv3.LoginV3Flow()
     try:
-        loginv3.LoginV3Flow.login(params, new_login=new_login)
+        flow.login(params, new_login=new_login)
     except loginv3.InvalidDeviceToken:
         logging.warning('Registering new device')
-        loginv3.LoginV3Flow.login(params, new_device=True)
+        flow.login(params, new_device=True)
 
 
 def accept_account_transfer_consent(params):
@@ -636,7 +637,7 @@ def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version
         api_request_payload.apiVersion = payload_version
 
     rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)
-    if type(rs) == bytes:
+    if isinstance(rs, bytes):
         TTK.update_time_of_last_activity()
         if rs_type:
             proto_rs = rs_type()
@@ -647,7 +648,7 @@ def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version
             return proto_rs
         else:
             return rs
-    elif type(rs) == dict:
+    elif isinstance(rs, dict):
         kae = KeeperApiError(rs['error'], rs['message'])
         if kae.result_code == 'session_token_expired':
             params.session_token = None
