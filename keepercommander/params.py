@@ -102,8 +102,6 @@ class KeeperParams:
         self.commands = []
         self.plugins = []
         self.session_token = None
-        self.salt = None
-        self.iterations = 0
         self.data_key = None
         self.client_key = None
         self.rsa_key = None
@@ -165,6 +163,10 @@ class KeeperParams:
         self.ws = None
         self.tunnel_threads = {}
         self.tunnel_threads_queue = {} # add ability to tail tunnel process
+        # TODO check if it can be deleted
+        self.salt = None
+        self.iterations = 0
+
 
     def clear_session(self):
         self.auth_verifier = None
