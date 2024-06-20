@@ -24,7 +24,10 @@ VALID_URL_SCHEME_CHARS = '+-.:'
 
 
 def generate_uid():             # type: () -> str
-    return base64_url_encode(crypto.get_random_bytes(16))
+    b = crypto.get_random_bytes(16)
+    if (b[0] & 0xf8) == 0xf8:
+        b = bytes([b[0] & 0x7f]) + b[1:]
+    return base64_url_encode(b)
 
 
 def generate_aes_key():         # type: () -> bytes
