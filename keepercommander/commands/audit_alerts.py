@@ -13,6 +13,7 @@ import argparse
 import datetime
 import json
 import logging
+import os.path
 import secrets
 from typing import Optional, List, Tuple, Union
 
@@ -46,6 +47,9 @@ alert_recipient_edit_options.add_argument(
 alert_recipient_edit_options.add_argument(
     '--webhook', dest='webhook', metavar='URL', action='store',
     help='Webhook URL. See https://docs.keeper.io/enterprise-guide/webhooks')
+alert_recipient_edit_options.add_argument(
+    '--http-body', dest='http_body', metavar='HTTP_BODY', action='store',
+    help='Webhook HTTP Body')
 alert_recipient_edit_options.add_argument(
     '--cert-errors', dest='cert_errors', action='store', choices=['ignore', 'enforce'],
     help='Webhook SSL Certificate errors')
@@ -97,6 +101,9 @@ alert_edit_options.add_argument(
 alert_edit_options.add_argument(
     '--shared-folder-uid', dest='shared_folder_uid', action='append', metavar='SHARED_FOLDER_UID',
     help='Shared Folder UID. Can be repeated.')
+alert_edit_options.add_argument(
+    '--active', dest='active', action='store', metavar='ACTIVE', choices=['on', 'off'],
+    help='Enable or disable alert')
 
 
 alert_add_parser = argparse.ArgumentParser(prog='audit-alert add', parents=[alert_edit_options])
@@ -462,8 +469,11 @@ class AuditAlertView(EnterpriseCommand, AuditSettingMixin):
                 if 'webhook' in r:
                     wh = r['webhook']
                     recipients.append(['Webhook URL', wh.get('url')])
-                    recipients.append(['Certificate Errors', 'Ignore' if wh.get('allowUnverifiedCertificate') else 'Enforce'])
+                    http_body = wh.get('template')
+                    if http_body:
+                        recipients.append(['HTTP Body', http_body])
                     recipients.append(['Webhook Token', wh.get('token')])
+                    recipients.append(['Certificate Errors', 'Ignore' if wh.get('allowUnverifiedCertificate') else 'Enforce'])
                 email = r.get('email')
                 if email:
                     recipients.append(['Email To', email])
@@ -620,6 +630,23 @@ class AuditAlertRecipients(EnterpriseCommand, AuditSettingMixin):
                     }
                 else:
                     recipient['webhook']['url'] = webhook
+        http_body = options.get('http_body')
+        if http_body is not None:
+            if 'webhook' in recipient:
+                webhook = recipient['webhook']
+                if http_body:
+                    if http_body[0] == '@':
+                        file_name = http_body[1:]
+                        file_name = os.path.expanduser(file_name)
+                        if os.path.isfile(file_name):
+                            with open(file_name, 'rt') as tf:
+                                webhook_body = tf.read()
+                        else:
+                            raise CommandError('', f'File \"{file_name}\" not found')
+                    webhook['template'] = webhook_body
+                elif 'template' in webhook:
+                    webhook['template'] = None
+
         cert_errors = options.get('cert_errors')
         if cert_errors is not None:
             if 'webhook' in recipient:
@@ -708,6 +735,23 @@ class AuditAlertEdit(EnterpriseCommand, AuditSettingMixin):
             'settings': alert,
         }
         api.communicate(params, rq)
+
+        active = kwargs.get('active')
+        if isinstance(active, str):
+            alert_id = alert.get('id')
+            ctx = AuditSettingMixin.get_alert_context(alert_id) or {'id': alert_id}
+            current_active = 'off' if ctx.get('disabled') is True else 'on'
+            if active != current_active:
+                rq = {
+                    'command': 'put_enterprise_setting',
+                    'type': 'AuditAlertContext',
+                    'settings': {
+                        'id': alert_id,
+                        'disabled': active == 'off'
+                    }
+                }
+                api.communicate(params, rq)
+
         self.invalidate_alerts()
         command = AuditAlertView()
         command.execute(params, target=kwargs.get('target'))
