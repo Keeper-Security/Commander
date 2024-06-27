@@ -28,6 +28,7 @@ from ..importer import path_components, PathDelimiter, BaseFileImporter, BaseExp
     Record, Folder, SharedFolder, BytesAttachment, RecordField
 from ... import utils
 from ...display import bcolors
+from ...utils import parse_totp_uri
 
 _REFERENCE = r'\{REF:([TUPAN])@([IT]):([^\}]+)\}'
 
@@ -326,6 +327,12 @@ class KeepassExporter(BaseExporter, XmlUtils):
                         for cf in r.fields:
                             if cf.type == 'oneTimeCode':
                                 entry.otp = cf.value
+                                # Set custom fields for Pleasant Password TOTP compatibility
+                                totp_props = parse_totp_uri(cf.value)
+                                for key in ['secret', 'period', 'issuer', 'digits']:
+                                    val = totp_props.get(key)
+                                    val and entry.set_custom_property(f'TOTP{key.capitalize()}', str(val))
+
                                 continue
                             if cf.type and cf.label:
                                 title = f'${cf.type}:{cf.label}'
