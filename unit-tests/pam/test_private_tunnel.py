@@ -30,7 +30,6 @@ if sys.version_info >= (3, 8):
 
             self.private_key, self.private_key_str = new_private_key()
             self.logger = mock.MagicMock(spec=logging)
-            self.kill_server_event = asyncio.Event()
             self.tunnel_symmetric_key = utils.generate_aes_key()
             self.pc = mock.MagicMock(sepc=WebRTCConnection)
             self.pc.endpoint_name = self.endpoint_name
@@ -162,7 +161,7 @@ if sys.version_info >= (3, 8):
                 self.pte.logger = mock.MagicMock()
                 await self.pte.process_control_message(ControlMessage.Ping, b'')
                 self.pte.logger.debug.assert_called_with('Endpoint TestEndpoint: Received ping request')
-                mock_send.assert_called_with(ControlMessage.Pong, b'\x00')
+                mock_send.assert_called_with(ControlMessage.Pong, b'\x00\x00\x00\x00')
 
         async def test_start_server(self):
             with mock.patch('asyncio.start_server', new_callable=mock.AsyncMock) as mock_open_connection, \

@@ -29,6 +29,9 @@ def get_router_url(params: KeeperParams):
     else:
         base_server_url = params.rest_context.server_base
         base_server = urlparse(base_server_url).netloc
+        str_base_server = base_server
+        if isinstance(base_server, bytes):
+            base_server = base_server.decode('utf-8')
         if base_server.lower().startswith('govcloud.'):
             base_server = base_server[len('govcloud.'):]
 
@@ -73,8 +76,11 @@ def router_get_connected_gateways(params):  # type: (KeeperParams) -> pam_pb2.PA
 #     return None
 
 
-def router_set_record_rotation_information(params, proto_request):
-    rs = _post_request_to_router(params, 'set_record_rotation', proto_request)
+def router_set_record_rotation_information(params, proto_request, transmission_key=None,
+                                           encrypted_transmission_key=None, encrypted_session_token=None):
+    rs = _post_request_to_router(params, 'set_record_rotation', proto_request, transmission_key=transmission_key,
+                                 encrypted_transmission_key=encrypted_transmission_key,
+                                 encrypted_session_token=encrypted_session_token)
 
     return rs
 
@@ -90,17 +96,21 @@ def router_get_relay_access_creds(params, expire_sec=None):
     return _post_request_to_router(params, 'relay_access_creds', query_params=query_params, rs_type=pam_pb2.RelayAccessCreds)
 
 
-def _post_request_to_router(params, path, rq_proto=None, rs_type=None, method='post', raw_without_status_check_response=False, query_params=None):
+def _post_request_to_router(params, path, rq_proto=None, rs_type=None, method='post',
+                            raw_without_status_check_response=False, query_params=None, transmission_key=None,
+                            encrypted_transmission_key=None, encrypted_session_token=None):
     krouter_host = get_router_url(params)
     path = '/api/user/' + path
 
-    transmission_key = utils.generate_aes_key()
-    server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
+    if not transmission_key:
+        transmission_key = utils.generate_aes_key()
+    if not encrypted_transmission_key:
+        server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
 
-    if params.rest_context.server_key_id < 7:
-        encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
-    else:
-        encrypted_transmission_key = crypto.encrypt_ec(transmission_key, server_public_key)
+        if params.rest_context.server_key_id < 7:
+            encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
+        else:
+            encrypted_transmission_key = crypto.encrypt_ec(transmission_key, server_public_key)
 
     encrypted_payload = b''
 
@@ -110,7 +120,8 @@ def _post_request_to_router(params, path, rq_proto=None, rs_type=None, method='p
             logging.debug('>>> [GW RQ] %s: %s', path, js)
         encrypted_payload = crypto.encrypt_aes_v2(rq_proto.SerializeToString(), transmission_key)
 
-    encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
+    if not encrypted_session_token:
+        encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
 
     try:
         rs = requests.request(method,
@@ -206,7 +217,9 @@ def request_cookie_jar_to_str(cookie_jar):
     return ';'.join(found)
 
 
-def router_send_action_to_gateway(params, gateway_action: GatewayAction, message_type, is_streaming, destination_gateway_uid_str=None, gateway_timeout=15000):
+def router_send_action_to_gateway(params, gateway_action: GatewayAction, message_type, is_streaming,
+                                  destination_gateway_uid_str=None, gateway_timeout=15000, transmission_key=None,
+                                  encrypted_transmission_key=None, encrypted_session_token=None):
     # Default time out how long the response from the Gateway should be
     krouter_host = get_router_url(params)
 
@@ -251,24 +264,26 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
             destination_gateway_uid_bytes = gateway_helper.find_connected_gateways(router_enterprise_controllers_connected, gateway_action.gateway_destination)
             destination_gateway_uid_str = utils.base64_url_encode(destination_gateway_uid_bytes)
 
-    msg_id = gateway_action.conversationId if gateway_action.conversationId else GatewayAction.generate_conversation_id()
-    msg_id_bytes = msg_id.encode('utf-8')
+    msg_id = gateway_action.conversationId if gateway_action.conversationId else GatewayAction.generate_conversation_id('true')
 
     rq = router_pb2.RouterControllerMessage()
-    rq.messageUid = msg_id_bytes
+    rq.messageUid = msg_id
     rq.controllerUid = destination_gateway_uid_bytes
     rq.messageType = message_type
     rq.streamResponse = is_streaming
     rq.payload = gateway_action.toJSON().encode('utf-8')
     rq.timeout = gateway_timeout
 
-    transmission_key = utils.generate_aes_key()
+    if not transmission_key:
+        transmission_key = utils.generate_aes_key()
 
     response = router_send_message_to_gateway(
         params=params,
         transmission_key=transmission_key,
         rq_proto=rq,
-        destination_gateway_uid_str=destination_gateway_uid_str)
+        destination_gateway_uid_str=destination_gateway_uid_str,
+        encrypted_transmission_key=encrypted_transmission_key,
+        encrypted_session_token=encrypted_session_token)
 
     rs_body = response.content
 
@@ -317,22 +332,25 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
 
 
 def router_send_message_to_gateway(params, transmission_key, rq_proto, destination_gateway_uid_str,
-                                   destination_gateway_cookies=None):
+                                   destination_gateway_cookies=None, encrypted_transmission_key=None,
+                                   encrypted_session_token=None):
 
     krouter_host = get_router_url(params)
 
-    server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
+    if not encrypted_transmission_key:
+        server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
 
-    if params.rest_context.server_key_id < 7:
-        encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
-    else:
-        encrypted_transmission_key = crypto.encrypt_ec(transmission_key, server_public_key)
+        if params.rest_context.server_key_id < 7:
+            encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
+        else:
+            encrypted_transmission_key = crypto.encrypt_ec(transmission_key, server_public_key)
 
     encrypted_payload = b''
 
     if rq_proto:
         encrypted_payload = crypto.encrypt_aes_v2(rq_proto.SerializeToString(), transmission_key)
-    encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
+    if not encrypted_session_token:
+        encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
 
     if not destination_gateway_cookies:
         destination_gateway_cookies = get_controller_cookie(params, destination_gateway_uid_str)
@@ -357,6 +375,46 @@ def router_send_message_to_gateway(params, transmission_key, rq_proto, destinati
         raise Exception(str(rs.status_code) + ': error: ' + rs.reason + ', message: ' + rs.text)
 
     return rs
+
+
+def get_dag_leafs(params, encrypted_session_token, encrypted_transmission_key, record_id):
+    """
+    POST a stringified JSON object to /api/dag/get_leafs on the KRouter
+    The object is:
+    {
+      vertex: string,
+      graphId: number
+    }
+    """
+    krouter_host = get_router_url(params)
+    path = '/api/user/get_leafs'
+
+    payload = {
+        'vertex': record_id,
+        'graphId': 0
+    }
+
+    try:
+        rs = requests.request('post',
+                              krouter_host + path,
+                              verify=VERIFY_SSL,
+                              headers={
+                                  'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
+                                  'Authorization': f'KeeperUser {bytes_to_base64(encrypted_session_token)}'
+                              },
+                              data=json.dumps(payload).encode('utf-8')
+                              )
+    except ConnectionError as e:
+        raise KeeperApiError(-1, f"KRouter is not reachable on '{krouter_host}'. Error: ${e}")
+    except Exception as ex:
+        raise ex
+
+    if rs.status_code == 200:
+        logging.debug("Found right host")
+        return rs.json()
+    else:
+        logging.warning("Looks like there is no such controller connected to the router.")
+        return None
 
 
 def print_router_response(router_response, response_type, original_conversation_id=None, is_verbose=False):
