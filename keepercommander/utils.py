@@ -14,7 +14,7 @@ import json
 import math
 import re
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs, unquote
 
 from . import crypto
 from .constants import EMAIL_PATTERN
@@ -320,3 +320,41 @@ def size_to_str(size):  # type: (int) -> str
         return f'{size:.2f} Mb'
     size = size / 1024
     return f'{size:,.2f} Gb'
+
+def parse_totp_uri(uri):    # type: (str) -> Dict[str, Union[str, int, None]]
+    def parse_int(val):
+        return val and int(val)
+
+    def decode_uri_component(component):  # type: (str) -> str
+        return unquote(component or '').strip()
+
+    result = dict()
+
+    if not uri:
+        return result
+
+    parsed = urlparse(uri)
+    if parsed.scheme == 'otpauth':
+        label = re.sub(r'^/+', '', parsed.path or '')
+        parts = re.split(r':|%3A', label)
+        parts = [part for part in parts if part]
+        account_name = len(parts) and parts.pop()
+        issuer = len(parts) and parts.pop()
+
+        parsed = parse_qs(parsed.query)
+
+        issuers = parsed.get('issuer')
+        secrets = parsed.get('secret')
+        algorithms = parsed.get('algorithm')
+        digits_vals = parsed.get('digits')
+        periods = parsed.get('period')
+        result = {
+            'issuer': decode_uri_component(issuers and next(iter(issuers)) or issuer),
+            'account': decode_uri_component(account_name),
+            'secret': secrets and next(iter(secrets)),
+            'algorithm': algorithms and next(iter(algorithms)) or 'SHA1',
+            'digits': parse_int(digits_vals and next(iter(digits_vals))) or 6,
+            'period': parse_int(periods and next(iter(periods))) or 30
+        }
+
+    return result
