@@ -262,6 +262,11 @@ class ConsoleLoginUi(login_steps.LoginUi):
     def on_sso_redirect(self, step):
         try:
             wb = webbrowser.get()
+            wrappers = set('xdg-open|gvfs-open|gnome-open|x-www-browser|www-browser'.split('|'))
+            browsers = set(webbrowser._browsers if hasattr(webbrowser, '_browsers') else {})
+            standalones = browsers - wrappers
+            if browsers and not standalones:     # show browser-launch option only if effectively supported
+                wb = None
         except:
             wb = None
 
