@@ -706,7 +706,6 @@ class AuditAlertAdd(EnterpriseCommand, AuditSettingMixin):
             },
             'filter': {}
         }
-
         self.apply_alert_options(params, alert, **kwargs)
 
         rq = {
@@ -715,6 +714,20 @@ class AuditAlertAdd(EnterpriseCommand, AuditSettingMixin):
             'settings': alert,
         }
         api.communicate(params, rq)
+
+        active = kwargs.get('active')
+        if isinstance(active, str):
+            if active == 'off':
+                rq = {
+                    'command': 'put_enterprise_setting',
+                    'type': 'AuditAlertContext',
+                    'settings': {
+                        'id': alert_id,
+                        'disabled': True
+                    }
+                }
+                api.communicate(params, rq)
+
         self.invalidate_alerts()
         command = AuditAlertView()
         command.execute(params, target=str(alert_id))
@@ -726,7 +739,6 @@ class AuditAlertEdit(EnterpriseCommand, AuditSettingMixin):
 
     def execute(self, params, **kwargs):
         alert = AuditSettingMixin.get_alert_configuration(params, kwargs.get('target'))
-
         self.apply_alert_options(params, alert, **kwargs)
 
         rq = {
