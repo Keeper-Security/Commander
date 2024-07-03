@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+from json import JSONDecodeError
 from typing import Dict, List, Optional, Any
 
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
@@ -173,6 +174,26 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             node = next(iter(matches)) if matches else {}
             return node.get('node_id')
 
+        def report_errors(emails):
+            title = 'Security Audit Report - Problems Found\nSecurity data could not be parsed for the following vaults:'
+            output_fmt = kwargs.get('format', 'table')
+            headers = ['vault_owner', 'error_message']
+            if output_fmt == 'table':
+                headers = [field_to_title(x) for x in headers]
+            vault_errors = []
+            for username, errors in vault_errors_lookup.items():
+                vault_errors.append([username, errors])
+
+            # Place errors not associated w/ a specific vault at the top
+            vault_errors.sort(key=lambda error_row: error_row[0] != 'Enterprise')
+            return dump_report_data(vault_errors, headers, fmt=output_fmt, filename=kwargs.get('output'), title=title)
+
+        vault_errors_lookup = dict()
+        def update_vault_errors(username, error):
+            errors = vault_errors_lookup.get(username) or []
+            errors.append(error)
+            vault_errors_lookup[username] = errors
+
         nodes = kwargs.get('node') or []
         node_ids = [get_node_id(n) for n in nodes]
         node_ids = [n for n in node_ids if n]
@@ -192,7 +213,12 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             to_page = security_report_data_rs.toPage
             complete = security_report_data_rs.complete
             from_page = to_page + 1
-            rsa_key = self.get_enterprise_private_rsa_key(params, security_report_data_rs.enterprisePrivateKey)
+            try:
+                rsa_key = self.get_enterprise_private_rsa_key(params, security_report_data_rs.enterprisePrivateKey)
+            except:
+                update_vault_errors('Enterprise', 'Invalid enterprise private key')
+                continue
+
             for sr in security_report_data_rs.securityReport:
                 user_info = self.resolve_user_info(params, sr.enterpriseUserId)
                 node_id = user_info.get('node_id', 0)
@@ -221,13 +247,23 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 master_pw_strength = 1
 
                 if sr.encryptedReportData:
-                    sri = crypto.decrypt_aes_v2(sr.encryptedReportData, tree_key)
-                    data = json.loads(sri)
+                    try:
+                        sri = crypto.decrypt_aes_v2(sr.encryptedReportData, tree_key)
+                        data = json.loads(sri)
+                    except Exception as ex:
+                        update_vault_errors(email, ex)
+                        continue
                 else:
                     data = {dk: 0 for dk in self.score_data_keys}
 
                 if show_updated:
-                    data = self.get_updated_security_report_row(sr, rsa_key, data)
+                    try:
+                        data = self.get_updated_security_report_row(sr, rsa_key, data)
+                    except Exception as e:
+                        reason = f"Invalid JSON: {e.doc}" if isinstance(e, JSONDecodeError) else e
+                        update_vault_errors(email, reason)
+                        continue
+
 
                 if save_report:
                     updated_sr = APIRequest_pb2.SecurityReport()
@@ -266,6 +302,9 @@ class SecurityAuditReportCommand(EnterpriseCommand):
 
                 rows.append(row)
 
+        if vault_errors_lookup.keys():
+            return report_errors(vault_errors_lookup)
+
         if save_report:
             self.save_updated_security_reports(params, updated_security_reports)
 
@@ -292,15 +331,13 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         # type: (APIRequest_pb2.SecurityReport, RSAPrivateKey, Dict[str, int]) -> Dict[str, int]
         def apply_incremental_data(old_report_data, incremental_dataset, key):
             # type: (Dict[str, int], List[APIRequest_pb2.SecurityReportIncrementalData], RSAPrivateKey) -> Dict[str, int]
+
             def decrypt_security_data(sec_data, k):  # type: (bytes, RSAPrivateKey) -> Dict[str, int] or None
+                decrypted = None
                 if sec_data:
-                    decrypted = None
-                    try:
-                        decrypted = crypto.decrypt_rsa(sec_data, k)
-                    finally:
-                        return json.loads(decrypted.decode()) if decrypted else None
-                else:
-                    return None
+                    decrypted = crypto.decrypt_rsa(sec_data, k)
+                    decrypted = json.loads(decrypted.decode())
+                return decrypted
 
             def decrypt_incremental_data(inc_data):
                 # type: (APIRequest_pb2.SecurityReportIncrementalData) -> Dict[str, Dict[str, int] or None]

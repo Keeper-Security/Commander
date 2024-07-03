@@ -601,11 +601,11 @@ class RecordEditMixin:
                         else:
                             if isinstance(value, dict) and isinstance(record_field.value[0], dict):
                                 record_field.value[0].update(value)
+                                noneKeys = [k for k,v in record_field.value[0].items() if v is None]
+                                for k in noneKeys:
+                                    del record_field.value[0][k]
                             else:
                                 record_field.value[0] = value
-                            noneKeys = [k for k,v in record_field.value[0].items() if v is None]
-                            for k in noneKeys:
-                                del record_field.value[0][k]
             else:
                 if is_field:
                     record_field.value.clear()
