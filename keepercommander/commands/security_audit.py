@@ -174,7 +174,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             node = next(iter(matches)) if matches else {}
             return node.get('node_id')
 
-        def report_errors(emails):
+        def report_errors():
             title = 'Security Audit Report - Problems Found\nSecurity data could not be parsed for the following vaults:'
             output_fmt = kwargs.get('format', 'table')
             headers = ['vault_owner', 'error_message']
@@ -303,7 +303,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 rows.append(row)
 
         if vault_errors_lookup.keys():
-            return report_errors(vault_errors_lookup)
+            return report_errors()
 
         if save_report:
             self.save_updated_security_reports(params, updated_security_reports)
