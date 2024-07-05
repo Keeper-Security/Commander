@@ -112,6 +112,7 @@ class LoginV3Flow:
                     channels.append(backup_code_channel)
 
                 encrypted_login_token = None   # type: Optional[bytes]
+                encryptedLoginToken = resp.encryptedLoginToken
                 should_cancel = False
 
                 class TwoFactorApproval(login_steps.LoginStepTwoFactor):
