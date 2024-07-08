@@ -42,7 +42,6 @@ from ..sox.sox_types import Record
 from ..subfolder import BaseFolderNode, SharedFolderNode, SharedFolderFolderNode, try_resolve_path, get_folder_path, \
     get_folder_uids, get_contained_record_uids
 from ..loginv3 import LoginV3API
-from ..utils import confirm
 
 
 def register_commands(commands):
@@ -1935,7 +1934,7 @@ class FindDuplicateCommand(Command):
                 indices = (idx + 1 for idx in range(len(dupe_info)))
                 prompt_report = prompt_title + '\n' + tabulate(dupe_info, col_headers, showindex=indices)
                 prompt_msg = prompt_report + '\n\nDo you wish to proceed?'
-                return confirm(prompt_msg)
+                return utils.confirm(prompt_msg)
 
             if kwargs.get('force') or confirm_removal(col_headers):
                 logging_fn(f'Deleting {len(dupe_uids)} records...')

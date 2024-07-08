@@ -215,8 +215,6 @@ def do_command(params, command_line):
 
     else:
         cmd, args = command_and_args_from_cmd(command_line)
-        params, args = check_if_running_as_mc(params, args)
-
         if cmd:
             orig_cmd = cmd
             if cmd in aliases and cmd not in commands and cmd not in enterprise_commands and cmd not in msp_commands:
@@ -239,6 +237,9 @@ def do_command(params, command_line):
                         except KeyboardInterrupt:
                             logging.info('Canceled')
                             return
+
+                    if cmd in enterprise_commands or cmd in msp_commands:
+                        params, args = check_if_running_as_mc(params, args)
 
                     if cmd in enterprise_commands and not params.enterprise:
                         if is_executing_as_msp_admin():
