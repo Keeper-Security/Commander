@@ -45,7 +45,6 @@ from ..display import bcolors
 from ..error import KeeperApiError, CommandError
 from ..params import KeeperParams
 from ..proto import record_pb2, folder_pb2
-from ..recordv3 import RecordV3
 from ..rest_api import CLIENT_VERSION  # pylint: disable=no-name-in-module
 from ..subfolder import BaseFolderNode, SharedFolderFolderNode, find_folders, try_resolve_path
 from ..constants import EMAIL_PATTERN
@@ -929,16 +928,19 @@ def _import(params, file_format, filename, **kwargs):
 
             if import_record.type and import_record.fields:
                 for field in import_record.fields:
-                    if field.type in RecordV3.field_values:
-                        type_value = RecordV3.field_values[field.type].get('value')
-                        if type_value is None:
-                            continue
-                        field_type = type(type_value)
-                        if isinstance(field.value, list):
-                            field.value = [x for x in field.value if isinstance(x, field_type)]
-                        else:
-                            if not isinstance(field.value, field_type):
-                                field.value = copy.deepcopy(type_value)
+                    if field.type in record_types.RecordFields:
+                        rf = record_types.RecordFields[field.type]
+                        if rf.type in record_types.FieldTypes:
+                            ft = record_types.FieldTypes[rf.type]
+                            type_value = ft.value
+                            if type_value is None:
+                                continue
+                            field_type = type(type_value)
+                            if isinstance(field.value, list):
+                                field.value = [x for x in field.value if isinstance(x, field_type)]
+                            else:
+                                if not isinstance(field.value, field_type):
+                                    field.value = copy.deepcopy(type_value)
 
             if existing_record:
                 version = existing_record.get('version', 0)
@@ -1917,6 +1919,8 @@ def _create_field_v3(schema, value):  # type: (RecordSchemaField, any) -> dict
     if value:
         if not isinstance(value, list):
             value = [value]
+    elif value is False:
+        value = [False]
     else:
         value = []
     value = [x for x in value if x is not None]
