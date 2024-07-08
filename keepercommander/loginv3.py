@@ -64,8 +64,6 @@ class LoginV3Flow:
         is_alternate_login = False
 
         while True:
-            is_cloud = resp.loginState == APIRequest_pb2.REQUIRES_DEVICE_ENCRYPTED_DATA_KEY
-
             if resp.loginState == APIRequest_pb2.DEVICE_APPROVAL_REQUIRED:  # client goes to “standard device approval”.
                 should_cancel = False
                 should_resume = False
@@ -112,7 +110,6 @@ class LoginV3Flow:
                     channels.append(backup_code_channel)
 
                 encrypted_login_token = None   # type: Optional[bytes]
-                encryptedLoginToken = resp.encryptedLoginToken
                 should_cancel = False
 
                 class TwoFactorApproval(login_steps.LoginStepTwoFactor):
@@ -124,7 +121,7 @@ class LoginV3Flow:
 
                     def send_push(self, channel_uid, action):
                         LoginV3API.twoFactorSend2FAPushMessage(
-                            params, encryptedLoginToken, pushType=tfa_action_sdk_to_keeper(action),
+                            params, resp.encryptedLoginToken, pushType=tfa_action_sdk_to_keeper(action),
                             channel_uid=channel_uid, expireIn=APIRequest_pb2.TWO_FA_EXP_IMMEDIATELY)
 
                     def send_code(self, channel_uid: bytes, code: str) -> None:
