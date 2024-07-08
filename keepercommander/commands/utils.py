@@ -27,7 +27,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from google.protobuf.json_format import MessageToDict
 
 from keepercommander.commands.breachwatch import BreachWatchScanCommand
-from . import aliases, commands, enterprise_commands, msp_commands
+from . import aliases, commands, enterprise_commands, msp_commands, msp
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, GroupCommand, as_boolean
 from .helpers.record import get_record_uids as get_ruids
 from .helpers.timeout import (
@@ -42,7 +42,7 @@ from ..display import bcolors
 from ..error import CommandError
 from ..generator import KeeperPasswordGenerator, DicewarePasswordGenerator, CryptoPassphraseGenerator
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
-from ..proto import ssocloud_pb2 as ssocloud, enterprise_pb2, APIRequest_pb2, client_pb2
+from ..proto import ssocloud_pb2, enterprise_pb2, APIRequest_pb2, client_pb2
 from ..utils import password_score
 from ..vault import KeeperRecord
 from ..versioning import is_binary_app, is_up_to_date_version
@@ -718,6 +718,10 @@ class LoginCommand(Command):
         return False
 
     def execute(self, params, **kwargs):
+        if msp.current_mc_id:
+            msp.current_mc_id = None
+            msp.mc_params_dict.clear()
+
         new_login = kwargs.get('new_login', True)
         if new_login:
             params.clear_session()
@@ -828,6 +832,10 @@ class LogoutCommand(Command):
         return False
 
     def execute(self, params, **kwargs):
+        if msp.current_mc_id:
+            msp.current_mc_id = None
+            msp.mc_params_dict.clear()
+
         if params.session_token:
             try:
                 api.communicate_rest(params, None, 'vault/logout_v3')
@@ -848,7 +856,7 @@ class LogoutCommand(Command):
             sp_url_query = urllib.parse.parse_qsl(sp_url_builder.query)
             session_id = params.sso_login_info.get('idp_session_id') or ''
             if params.sso_login_info.get('is_cloud'):
-                sso_rq = ssocloud.SsoCloudRequest()
+                sso_rq = ssocloud_pb2.SsoCloudRequest()
                 sso_rq.clientVersion = rest_api.CLIENT_VERSION
                 sso_rq.embedded = True
                 sso_rq.username = params.user.lower()

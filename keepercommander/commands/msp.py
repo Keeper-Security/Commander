@@ -263,7 +263,7 @@ class SwitchToMspCommand(EnterpriseCommand):
         return switch_to_msp_parser
 
     def execute(self, params, **kwargs):
-        global current_mc_id
+        global current_mc_id, msp_params
         if current_mc_id is None:
             raise CommandError('switch-to-msp', "Already MSP")
 
