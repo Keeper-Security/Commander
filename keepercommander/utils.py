@@ -321,6 +321,7 @@ def size_to_str(size):  # type: (int) -> str
     size = size / 1024
     return f'{size:,.2f} Gb'
 
+
 def parse_totp_uri(uri):    # type: (str) -> Dict[str, Union[str, int, None]]
     def parse_int(val):
         return val and int(val)

@@ -32,7 +32,7 @@ from .commands import (
     register_commands, register_enterprise_commands, register_msp_commands,
     aliases, commands, command_info, enterprise_commands, msp_commands
 )
-from .commands.base import dump_report_data, CliCommand
+from .commands.base import dump_report_data, CliCommand, GroupCommand
 from .commands import msp
 from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS
 from .error import CommandError, Error
@@ -110,6 +110,19 @@ def check_if_running_as_mc(params, args):
             msp.msp_params = None
 
     return params, args
+
+
+def is_enterprise_command(name, command, args):   # type: (str, CliCommand, str) -> bool
+    if name in enterprise_commands:
+        return True
+    elif isinstance(command, GroupCommand):
+        args = args.split(' ')
+        verb = next(iter(args), None)
+        subcommand = command.subcommands.get(verb)
+        from keepercommander.commands.enterprise_common import EnterpriseCommand
+        return isinstance(subcommand, EnterpriseCommand)
+    else:
+        return False
 
 
 def command_and_args_from_cmd(command_line):
@@ -238,10 +251,10 @@ def do_command(params, command_line):
                             logging.info('Canceled')
                             return
 
-                    if cmd in enterprise_commands or cmd in msp_commands:
+                    if is_enterprise_command(cmd, command, args) or cmd in msp_commands:
                         params, args = check_if_running_as_mc(params, args)
 
-                    if cmd in enterprise_commands and not params.enterprise:
+                    if is_enterprise_command(cmd, command, args) and not params.enterprise:
                         if is_executing_as_msp_admin():
                             logging.debug("OK to execute command: %s", cmd)
                         else:
