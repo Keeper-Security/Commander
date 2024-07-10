@@ -15,6 +15,7 @@ import getpass
 import logging
 from typing import Optional, Any, Dict
 
+from .enterprise_common import EnterpriseCommand
 from .security_audit import SecurityAuditReportCommand
 from .. import api, crypto, utils, vault, vault_extensions
 from .base import GroupCommand, Command, dump_report_data
@@ -73,7 +74,7 @@ class BreachWatchCommand(GroupCommand):
         self.default_verb = 'list'
 
     def validate(self, params):  # type: (KeeperParams) -> None
-        if not params.breach_watch:
+        if not params.breach_watch and not params.msp_tree_key:
             raise CommandError('breachwatch',
                                'BreachWatch is not active. Please visit the Web Vault at https://keepersecurity.com/vault')
 
@@ -279,10 +280,11 @@ class BreachWatchIgnoreCommand(Command):
                     logging.info(f'{utils.base64_url_encode(status.recordUid)}: {status.status} {status.reason}')
 
 
-class BreachWatchReportCommand(Command):
+class BreachWatchReportCommand(EnterpriseCommand):
     def get_parser(self):
         return breachwatch_report_parser
 
     def execute(self, params, **kwargs):
+        BreachWatch.validate_reporting('breachwatch report', params)
         cmd = SecurityAuditReportCommand()
         return cmd.execute(params, **{'breachwatch':True, **kwargs})

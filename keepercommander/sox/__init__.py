@@ -6,6 +6,7 @@ import sys
 from typing import Dict, Tuple
 
 from .. import api, crypto, utils
+from ..commands.helpers.enterprise import user_has_privilege, is_addon_enabled
 from ..error import CommandError, Error
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
@@ -18,40 +19,22 @@ API_SOX_REQUEST_USER_LIMIT = 1000
 
 
 def validate_data_access(params, cmd=''):
-    if not is_compliance_reporting_enabled(params):
-        msg = 'Compliance reports add-on required to perform this action. ' \
-              'Please contact your administrator to enable this feature.'
-        raise CommandError(cmd, msg)
+    privilege = 'run_compliance_reports'
+    addon = 'compliance_report'
+    msg_no_priv = 'You do not have the required privilege to run a Compliance Report.'
+    msg_no_addon = ('Compliance reports add-on is required to perform this action. '
+                    'Please contact your administrator to enable this feature.')
+    error_msg = msg_no_priv if not user_has_privilege(params, privilege) \
+        else msg_no_addon if not is_addon_enabled(params, addon) \
+        else None
+    if error_msg:
+        raise CommandError(cmd, error_msg)
 
 
 def is_compliance_reporting_enabled(params):
-    enterprise = params.enterprise
-    if not enterprise:
-        return False
-    e_licenses = enterprise.get('licenses')
-    if not isinstance(e_licenses, list):
-        return False
-    if len(e_licenses) == 0:
-        return False
-    if e_licenses[0].get('lic_status') == 'business_trial':
-        return True
-    addon = next((a for l in e_licenses for a in l.get('add_ons', [])
-                  if a.get('name') == 'compliance_report' and (a.get('enabled') or a.get('included_in_product'))), None)
-    if addon is None:
-        return False
-
-    if not params.msp_tree_key:
-        role_privilege = 'run_compliance_reports'
-        username = params.user
-        users = enterprise.get('users')
-        e_user_id = next(iter([u.get('enterprise_user_id') for u in users if u.get('username') == username]))
-        role_users = enterprise.get('role_users')
-        r_ids = [ru.get('role_id') for ru in role_users if ru.get('enterprise_user_id') == e_user_id]
-        r_privileges = enterprise.get('role_privileges')
-        p_key = 'privilege'
-        return any([rp for rp in r_privileges if rp.get('role_id') in r_ids and rp.get(p_key) == role_privilege])
-    else:
-        return True
+    privilege = 'run_compliance_reports'
+    addon = 'compliance_report'
+    return user_has_privilege(params, privilege) and is_addon_enabled(params, addon)
 
 
 def encrypt_data(params, data): # type: (KeeperParams, str) -> bytes
