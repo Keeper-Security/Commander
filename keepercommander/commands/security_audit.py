@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Any
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
 from keepercommander import api, crypto, utils
+from keepercommander.breachwatch import BreachWatch
 from keepercommander.commands.base import GroupCommand, raise_parse_exception, suppress_exit, field_to_title, \
     dump_report_data
 from keepercommander.commands.enterprise_common import EnterpriseCommand
@@ -163,10 +164,9 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             logging.info(security_audit_report_description)
             return
 
-        if kwargs.get('breachwatch') and not params.breach_watch:
-            msg = ('Ignoring "--breachwatch" option because BreachWatch is not active. '
-                   'Please visit the Web Vault at https://keepersecurity.com/vault')
-            logging.warning(msg)
+        show_breachwatch = kwargs.get('breachwatch')
+        if show_breachwatch:
+            BreachWatch.validate_reporting('security-audit-report', params)
 
         def get_node_id(name_or_id):
             nodes = params.enterprise.get('nodes') or []
@@ -308,7 +308,6 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         if save_report:
             self.save_updated_security_reports(params, updated_security_reports)
 
-        show_breachwatch = kwargs.get('breachwatch') and params.breach_watch
         fields = ('email', 'name', 'at_risk', 'passed', 'ignored') if show_breachwatch else \
             ('email', 'name', 'weak', 'medium', 'strong', 'reused', 'unique', 'securityScore', 'twoFactorChannel',
              'node')

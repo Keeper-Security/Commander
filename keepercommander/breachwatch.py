@@ -14,10 +14,11 @@ import logging
 from urllib.parse import urlparse, urlunparse
 from typing import Iterator, Tuple, Optional, List, Callable, Dict, Iterable, Union
 
+from .commands.helpers.enterprise import user_has_privilege, is_addon_enabled
 from .constants import KEEPER_PUBLIC_HOSTS
 from . import api, crypto, utils, rest_api, vault
 from .proto import breachwatch_pb2, client_pb2, APIRequest_pb2
-from .error import KeeperApiError
+from .error import KeeperApiError, CommandError
 from .params import KeeperParams
 from .vault import KeeperRecord
 
@@ -418,3 +419,17 @@ class BreachWatch(object):
         if set_reused_pws:
             BreachWatch.save_reused_pw_count(params)
         api.sync_down(params)
+
+    @staticmethod
+    def validate_reporting(cmd, params):
+        msg_no_priv = 'You do not have the required privilege to run a BreachWatch report'
+        msg_no_addon = ('BreachWatch is not enabled for this enterprise. '
+                        'Please visit https://www.keepersecurity.com/breachwatch.html for more information.')
+
+        privilege = 'run_reports'
+        addon = 'enterprise_breach_watch'
+        error_msg = msg_no_priv if not user_has_privilege(params, privilege) \
+            else msg_no_addon if not is_addon_enabled(params, addon) \
+            else None
+        if error_msg:
+            raise CommandError(cmd, error_msg)
