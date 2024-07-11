@@ -42,6 +42,7 @@ report_parser.add_argument('--format', dest='format', action='store', choices=['
                            help='output format.')
 report_parser.add_argument('--output', dest='output', action='store',
                            help='output file name. (ignored for table format)')
+report_parser.add_argument('--debug', action='store_true', help=argparse.SUPPRESS)
 report_parser.error = raise_parse_exception
 report_parser.exit = suppress_exit
 
@@ -105,6 +106,17 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             'at_risk_records',
             'ignored_records'
         )
+        self.debug_report_builder = None
+        self.error_report_builder = None
+
+    def get_error_report_builder(self):
+        if not self.error_report_builder:
+            self.error_report_builder = self.ErrorReportBuilder()
+        return self.error_report_builder
+
+    def clear_ancillary_report_data(self):
+        self.error_report_builder = None
+        self.debug_report_builder = None
 
     def get_enterprise_private_rsa_key(self, params, enterprise_priv_key):
         if not self.enterprise_private_rsa_key:
@@ -174,25 +186,9 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             node = next(iter(matches)) if matches else {}
             return node.get('node_id')
 
-        def report_errors():
-            title = 'Security Audit Report - Problems Found\nSecurity data could not be parsed for the following vaults:'
-            output_fmt = kwargs.get('format', 'table')
-            headers = ['vault_owner', 'error_message']
-            if output_fmt == 'table':
-                headers = [field_to_title(x) for x in headers]
-            vault_errors = []
-            for username, errors in vault_errors_lookup.items():
-                vault_errors.append([username, errors])
-
-            # Place errors not associated w/ a specific vault at the top
-            vault_errors.sort(key=lambda error_row: error_row[0] != 'Enterprise')
-            return dump_report_data(vault_errors, headers, fmt=output_fmt, filename=kwargs.get('output'), title=title)
-
-        vault_errors_lookup = dict()
-        def update_vault_errors(username, error):
-            errors = vault_errors_lookup.get(username) or []
-            errors.append(error)
-            vault_errors_lookup[username] = errors
+        self.clear_ancillary_report_data()
+        debug_mode = kwargs.get('debug')
+        self.debug_report_builder = debug_mode and self.DebugReportBuilder()
 
         nodes = kwargs.get('node') or []
         node_ids = [get_node_id(n) for n in nodes]
@@ -216,7 +212,8 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             try:
                 rsa_key = self.get_enterprise_private_rsa_key(params, security_report_data_rs.enterprisePrivateKey)
             except:
-                update_vault_errors('Enterprise', 'Invalid enterprise private key')
+                self.get_error_report_builder().set_current_email('Enterprise')
+                self.get_error_report_builder().update_report_data('Invalid enterprise private key')
                 continue
 
             for sr in security_report_data_rs.securityReport:
@@ -246,24 +243,31 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 }
                 master_pw_strength = 1
 
+                self.get_error_report_builder().set_current_email(email)
                 if sr.encryptedReportData:
                     try:
                         sri = crypto.decrypt_aes_v2(sr.encryptedReportData, tree_key)
+                    except Exception as e:
+                        msg = f'Decryption fail (old summary report). Reason: {e}'
+                        self.get_error_report_builder().update_report_data(msg)
+                        continue
+
+                    try:
                         data = json.loads(sri)
-                    except Exception as ex:
-                        update_vault_errors(email, ex)
+                    except:
+                        msg = f'Invalid JSON (old summary report): {sri}'
+                        self.get_error_report_builder().update_report_data(msg)
                         continue
                 else:
                     data = {dk: 0 for dk in self.score_data_keys}
 
-                if show_updated:
-                    try:
-                        data = self.get_updated_security_report_row(sr, rsa_key, data)
-                    except Exception as e:
-                        reason = f"Invalid JSON: {e.doc}" if isinstance(e, JSONDecodeError) else e
-                        update_vault_errors(email, reason)
-                        continue
+                if show_updated or debug_mode:
+                    debug_mode and self.debug_report_builder.set_current_email(email)
+                    data = self.get_updated_security_report_row(sr, rsa_key, data)
 
+                # Skip summary-score calculation if errors encountered or debug/incremental-data-reporting is enabled
+                if debug_mode or self.get_error_report_builder().has_errors_to_report():
+                    continue
 
                 if save_report:
                     updated_sr = APIRequest_pb2.SecurityReport()
@@ -302,8 +306,14 @@ class SecurityAuditReportCommand(EnterpriseCommand):
 
                 rows.append(row)
 
-        if vault_errors_lookup.keys():
-            return report_errors()
+        fmt = kwargs.get('format', 'table')
+        out = kwargs.get('output')
+
+        # Prioritize error-reports (created if any errors are encountered while parsing security score data) over others
+        if self.get_error_report_builder().has_errors_to_report():
+            return self.get_error_report_builder().get_report(out, fmt)
+        elif debug_mode:
+            return self.debug_report_builder.get_report(out, fmt)
 
         if save_report:
             self.save_updated_security_reports(params, updated_security_reports)
@@ -313,7 +323,6 @@ class SecurityAuditReportCommand(EnterpriseCommand):
              'node')
         field_descriptions = fields
 
-        fmt = kwargs.get('format', 'table')
         if fmt == 'table':
             field_descriptions = (field_to_title(x) for x in fields)
 
@@ -324,18 +333,29 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             for f in fields:
                 row.append(raw[f])
             table.append(row)
-        return dump_report_data(table, field_descriptions, fmt=fmt, filename=kwargs.get('output'), title=report_title)
+        return dump_report_data(table, field_descriptions, fmt=fmt, filename=out, title=report_title)
 
     def get_updated_security_report_row(self, sr, rsa_key, last_saved_data):
         # type: (APIRequest_pb2.SecurityReport, RSAPrivateKey, Dict[str, int]) -> Dict[str, int]
         def apply_incremental_data(old_report_data, incremental_dataset, key):
             # type: (Dict[str, int], List[APIRequest_pb2.SecurityReportIncrementalData], RSAPrivateKey) -> Dict[str, int]
-
             def decrypt_security_data(sec_data, k):  # type: (bytes, RSAPrivateKey) -> Dict[str, int] or None
                 decrypted = None
                 if sec_data:
-                    decrypted = crypto.decrypt_rsa(sec_data, k)
-                    decrypted = json.loads(decrypted.decode())
+                    try:
+                        decrypted = crypto.decrypt_rsa(sec_data, k)
+                    except Exception as e:
+                        error = f'Decrypt fail (incremental data): {e}'
+                        self.get_error_report_builder().update_report_data(error)
+                        return decrypted
+
+                    try:
+                        decrypted = json.loads(decrypted.decode())
+                    except Exception as e:
+                        reason = f"Invalid JSON: {e.doc}" if isinstance(e, JSONDecodeError) else e
+                        error = f'Load fail (incremental data). {reason}'
+                        self.get_error_report_builder().update_report_data(error)
+
                 return decrypted
 
             def decrypt_incremental_data(inc_data):
@@ -344,6 +364,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                     'old': decrypt_security_data(inc_data.oldSecurityData, key),
                     'curr': decrypt_security_data(inc_data.currentSecurityData, key)
                 }
+                self.debug_report_builder and self.debug_report_builder.update_report_data(decrypted)
                 return decrypted
 
             def decrypt_incremental_dataset(inc_dataset):
@@ -384,7 +405,9 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             report_data = {**old_report_data}
             if incremental_dataset:
                 incremental_dataset = decrypt_incremental_dataset(incremental_dataset)
-                report_data = update_scores(report_data, incremental_dataset)
+                # Skip score-aggregation if only errors or incremental data are to be included in the report
+                if not self.get_error_report_builder().has_errors_to_report() and not self.debug_report_builder:
+                    report_data = update_scores(report_data, incremental_dataset)
             return report_data
 
         result = apply_incremental_data(last_saved_data, sr.securityReportIncrementalData, rsa_key)
@@ -413,6 +436,55 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             return 'At Risk'
 
         return field.capitalize()
+
+    class AncillaryReportBuilder:
+        def __init__(self):
+            self.report_data = dict()  # type: Dict[str, List[Any]]
+            self.current_email = ''
+
+        def set_current_email(self, value):
+            self.current_email = value
+
+        def update_report_data(self, data):
+            current_email_data = self.report_data.get(self.current_email, [])
+            self.report_data[self.current_email] = [*current_email_data, data]
+
+        def get_report(self, out, fmt='table'):
+            pass
+
+    class ErrorReportBuilder(AncillaryReportBuilder):
+        def has_errors_to_report(self):
+            return bool(self.report_data.values())
+
+        def get_report(self, out, fmt='table'):
+            title = 'Security Audit Report - Problems Found\nSecurity data could not be parsed for the following vaults:'
+            headers = ['vault_owner', 'error_message']
+            if fmt == 'table':
+                headers = [field_to_title(x) for x in headers]
+
+            vault_errors_table = [[username, errors] for username, errors in self.report_data.items()]
+
+            # Place errors not associated w/ a specific vault at the top
+            vault_errors_table.sort(key=lambda error_row: error_row[0] != 'Enterprise')
+            return dump_report_data(vault_errors_table, headers, fmt=fmt, filename=out, title=title)
+
+    class DebugReportBuilder(AncillaryReportBuilder):
+        def get_report(self, out, fmt='table'):
+            def tabulate_debug_data():
+                table = []
+                for email, inc_dataset in self.report_data.items():
+                    if not inc_dataset:
+                        continue
+                    row = [email, [x.get('old') for x in inc_dataset], [x.get('curr') for x in inc_dataset]]
+                    table.append(row)
+                return table
+
+            title = 'Security Audit Report: Debugging Info'
+            headers = ['vault_owner', 'old_incremental_data', 'current_incremental_data']
+            if fmt == 'table':
+                headers = [field_to_title(x) for x in headers]
+            debug_data = tabulate_debug_data()
+            return dump_report_data(debug_data, headers, fmt=fmt, filename=out, title=title)
 
 
 class SecurityAuditSyncCommand(EnterpriseCommand):
