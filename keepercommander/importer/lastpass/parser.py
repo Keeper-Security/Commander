@@ -70,7 +70,12 @@ def parse_ACCT(chunk, encryption_key, shared_folder):
         group = decode_aes256_plain_auto(read_item(io), encryption_key).decode('utf-8', 'ignore')
     except:
         pass
-    url = decode_hex(read_item(io))
+    url_enc = read_item(io)
+    if url_enc:
+        if url_enc[0] == ord('!'):
+            url = decode_aes256_plain_auto(url_enc, encryption_key)
+        else:
+            url = decode_hex(url_enc)
     notes = decode_aes256_plain_auto(read_item(io), encryption_key)
     # fav, ?
     skip_item(io, 2)
