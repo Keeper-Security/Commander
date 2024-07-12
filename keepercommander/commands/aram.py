@@ -131,8 +131,11 @@ aging_report_parser.add_argument('--format', dest='format', action='store', choi
                                  default='table', help='output format.')
 aging_report_parser.add_argument('--output', dest='output', action='store',
                                  help='output file name. (ignored for table format)')
-aging_report_parser.add_argument('--period', dest='period', action='store',
-                                 help='Period the password has not been modified')
+temporal_group = aging_report_parser.add_mutually_exclusive_group()
+period_opt_help = 'Period the password has not been modified. Not valid with --cutoff-date flag'
+cutoff_opt_help = 'Date since which the password has not been modified. Not valid with --period flag'
+temporal_group.add_argument('--period', action='store', help=period_opt_help)
+temporal_group.add_argument('--cutoff-date', action='store', help=cutoff_opt_help)
 aging_report_parser.add_argument('--username', dest='username', action='store',
                                  help='Report expired passwords for user')
 aging_report_parser.add_argument('--exclude-deleted', action='store_true', help='Exclude deleted records from report')
@@ -1660,18 +1663,18 @@ class AgingReportCommand(Command):
         return aging_report_parser
 
     def execute(self, params, **kwargs):
-        def get_floor(period):  # type: (str) -> Union[datetime.datetime, None]
-            dt = datetime.datetime.now()
-            if not period:
+        def get_floor(duration):  # type: (str) -> Union[datetime.datetime, None]
+            now_dt = datetime.datetime.now()
+            if not duration:
                 logging.info('\n\nThe default password aging period is 3 months\n'
                              'To change this value pass --period=[PERIOD] parameter\n'
                              '[PERIOD] example: 10d for 10 days; 3m for 3 months; 1y for 1 year\n\n')
-                period = '3m'
-            co = period[-1]
+                duration = '3m'
+            co = duration[-1]
             try:
-                va = abs(int(period[:-1]))
+                va = abs(int(duration[:-1]))
             except:
-                logging.warning(f'Invalid period: {period}')
+                logging.warning(f'Invalid period: {duration}')
                 return None
 
             if co != 'd':
@@ -1680,9 +1683,20 @@ class AgingReportCommand(Command):
                 elif co == 'y':
                     va *= 365
                 else:
-                    logging.warning(f'Invalid period: {period}')
+                    logging.warning(f'Invalid period: {duration}')
                     return None
-            return dt - datetime.timedelta(days=va)
+            return now_dt - datetime.timedelta(days=va)
+
+        def parse_date(date_str):
+            fmts = ['%Y-%m-%d', '%Y.%m.%d', '%Y/%m/%d', '%m-%d-%Y', '%m.%d.%Y', '%m/%d/%Y']
+            for fmt in fmts:
+                try:
+                    return datetime.datetime.strptime(date_str, fmt)
+                except ValueError:
+                    pass
+            fmts_str = '\n'.join(fmts)
+            msg = 'Unrecognized date format: must be one of the following\n' + fmts_str
+            raise CommandError('aging-report', msg)
 
         enterprise_id = next(((x['node_id'] >> 32) for x in params.enterprise['nodes']), 0)
         if kwargs.get('delete') is True:
@@ -1694,9 +1708,16 @@ class AgingReportCommand(Command):
                 logging.info('Local encrypted storage does not exist.')
             return
 
-        dt = get_floor(kwargs.get('period'))
-        if dt is None:
+        cutoff_date = kwargs.get('cutoff_date')
+        period = kwargs.get('period')
+        if cutoff_date is not None:
+            cutoff_date = parse_date(cutoff_date)
+            dt = cutoff_date
+        elif period is not None:
+            dt = get_floor(period)
+        else:
             return
+
         period_min_ts = int(dt.timestamp())
 
         rebuild = kwargs.get('rebuild')
