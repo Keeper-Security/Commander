@@ -102,14 +102,18 @@ class Vault(object):
             elif i.id == b'PRIK':
                 rsa_private_key = parser.parse_PRIK(i, encryption_key)
             elif i.id == b'SHAR':
-                # After SHAR chunk all the folliwing accounts are enrypted with a new key
+                # After SHAR chunk all the following accounts are encrypted with a new key
                 share = parser.parse_SHAR(i, encryption_key, rsa_private_key)
-                key = share['encryption_key']
-                shareid = share['id'].decode('utf-8')
-                share_name = share['name'].decode('utf-8')
-                share_name = share_name.strip()
-                shared_folder = LastpassSharedFolder(shareid, share['name'].decode('utf-8'))
-                self.shared_folders.append(shared_folder)
+                if share:
+                    key = share['encryption_key']
+                    shareid = share['id'].decode('utf-8')
+                    share_name = share['name'].decode('utf-8', 'ignore')
+                    share_name = share_name.strip()
+                    shared_folder = LastpassSharedFolder(shareid, share_name)
+                    self.shared_folders.append(shared_folder)
+                else:
+                    shared_folder = None
+                    key = encryption_key
             elif i.id == b'ATTA':
                 attachment = parser.parse_ATTA(i, accounts)
                 if attachment:

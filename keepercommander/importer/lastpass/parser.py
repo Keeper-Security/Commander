@@ -1,6 +1,7 @@
 # coding: utf-8
 import binascii
 import codecs
+import logging
 import re
 import struct
 from base64 import b64decode
@@ -147,19 +148,21 @@ def parse_SHAR(chunk, encryption_key, rsa_key):   # type: (Any, bytes, bytes) ->
     # where it's only AES encrypted with the regular encryption key.
     # When the key is blank, then there's a RSA encrypted key, which has to
     # be decrypted first before use.
-    if key:
-        try:
-            key = decode_hex(decode_aes256_plain_auto(key, encryption_key))
-        except:
-            key = ''
-    if not key:
-        key = decode_hex(decode_rsa_plain_oaep(encrypted_key, rsa_key))
+    try:
+        if key:
+            try:
+                key = decode_hex(decode_aes256_plain_auto(key, encryption_key))
+            except:
+                key = ''
+        if not key:
+            key = decode_hex(decode_rsa_plain_oaep(encrypted_key, rsa_key))
 
-    name = decode_aes256_base64_auto(encrypted_name, key)
+        name = decode_aes256_base64_auto(encrypted_name, key)
 
-    # TODO: Return an object, not a dict
-    return {'id': id, 'name': name, 'encryption_key': key}
-
+        # TODO: Return an object, not a dict
+        return {'id': id, 'name': name, 'encryption_key': key}
+    except Exception as e:
+        logging.warning('Shared folder decryption error: %s', e)
 
 def parse_ATTA(chunk, accounts):
     attachment = None
