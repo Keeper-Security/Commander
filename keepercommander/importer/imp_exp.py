@@ -909,7 +909,6 @@ def _import(params, file_format, filename, **kwargs):
                     if 1000000000 < ts < 2000000000:
                         dt = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
                         modification_time = dt.astimezone().strftime('%x %X')
-
                 table.append([record_folder, import_record.title, import_record.login, import_record.login_url,
                               modification_time, existing_record.get('record_uid') if existing_record else ''])
                 continue
@@ -1073,7 +1072,7 @@ def _import(params, file_format, filename, **kwargs):
                         audit_uids.append(import_record.uid)
 
         if dry_run:
-            base.dump_report_data(table, header)
+            base.dump_report_data(table, header, column_width=40)
             return
 
         for v3_add_rq in records_v3_to_add:
