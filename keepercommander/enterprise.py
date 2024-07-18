@@ -472,16 +472,27 @@ class _EnterpriseUserEntity(_EnterpriseEntity):
         data = {}
         encrypted_data = keeper_entity.get('encrypted_data')
         if encrypted_data:
-            if keeper_entity.get('key_type') == 'no_key':
-                data['displayname'] = encrypted_data
-            else:
-                try:
+            try:
+                if keeper_entity.get('key_type') == 'no_key':
+                    data['displayname'] = encrypted_data
+                else:
                     encrypted_data = utils.base64_url_decode(keeper_entity['encrypted_data'])
-                    data_json = crypto.decrypt_aes_v1(encrypted_data, self.enterprise.tree_key)
+                    if keeper_entity.get('key_type') == 'encrypted_by_data_key':
+                        data_json = crypto.decrypt_aes_v1(encrypted_data, self.enterprise.tree_key)
+                    elif keeper_entity['key_type'] == 'encrypted_by_public_key':
+                        rsa_key = crypto.load_rsa_private_key(self.enterprise.rsa_key)
+                        data_json = crypto.decrypt_rsa(encrypted_data, rsa_key)
+                    elif keeper_entity.get('key_type') == 'encrypted_by_data_key_gcm':
+                        data_json = crypto.decrypt_aes_v2(encrypted_data, self.enterprise.tree_key)
+                    elif keeper_entity['key_type'] == 'encrypted_by_public_key_ecc':
+                        ec_key = crypto.load_ec_private_key(self.enterprise.ec_key)
+                        data_json = crypto.decrypt_ec(encrypted_data, ec_key)
+                    else:
+                        raise Exception(f'unsupported key type: {proto_entity.keyType}')
                     data_json = self.fix_data(data_json)
                     data.update(json.loads(data_json.decode('utf-8')))
-                except Exception as e:
-                    logging.warning('Decrypt User data error: %s', e)
+            except Exception as e:
+                logging.warning('Decrypt User data error: %s', e)
         elif 'full_name' in keeper_entity:
             data['displayname'] = keeper_entity['full_name']
         keeper_entity['data'] = data
@@ -530,18 +541,32 @@ class _EnterpriseRoleEntity(_EnterpriseEntity):
         _set_or_remove(keeper_entity, 'encrypted_data', proto_entity.encryptedData)
         _set_or_remove(keeper_entity, 'visible_below', proto_entity.visibleBelow)
         _set_or_remove(keeper_entity, 'new_user_inherit', proto_entity.newUserInherit)
-        _set_or_remove(keeper_entity, 'key_type', proto_entity.keyType)
+        _set_or_remove(keeper_entity, 'key_type', proto_entity.keyType.lower())
         _set_or_remove(keeper_entity, 'role_type', proto_entity.roleType)
         data = {}
         encrypted_data = keeper_entity.get('encrypted_data')
         if encrypted_data:
             try:
-                encrypted_data = utils.base64_url_decode(keeper_entity['encrypted_data'])
-                data_json = crypto.decrypt_aes_v1(encrypted_data, self.enterprise.tree_key)
-                data_json = self.fix_data(data_json)
-                data.update(json.loads(data_json.decode('utf-8')))
-                if proto_entity.roleType == "pool_manager":
-                    data['displayname'] = 'MSP Subscription Manager'
+                if keeper_entity.get('key_type') == 'no_key':
+                    data['displayname'] = encrypted_data
+                else:
+                    encrypted_data = utils.base64_url_decode(keeper_entity['encrypted_data'])
+                    if keeper_entity.get('key_type') == 'encrypted_by_data_key':
+                        data_json = crypto.decrypt_aes_v1(encrypted_data, self.enterprise.tree_key)
+                    elif keeper_entity.get('key_type') == 'encrypted_by_public_key':
+                        rsa_key = crypto.load_rsa_private_key(self.enterprise.rsa_key)
+                        data_json = crypto.decrypt_rsa(encrypted_data, rsa_key)
+                    elif keeper_entity.get('key_type') == 'encrypted_by_data_key_gcm':
+                        data_json = crypto.decrypt_aes_v2(encrypted_data, self.enterprise.tree_key)
+                    elif keeper_entity.get('key_type') == 'encrypted_by_public_key_ecc':
+                        ec_key = crypto.load_ec_private_key(self.enterprise.ec_key)
+                        data_json = crypto.decrypt_ec(encrypted_data, ec_key)
+                    else:
+                        raise Exception(f'unsupported key type: {proto_entity.keyType}')
+                    data_json = self.fix_data(data_json)
+                    data.update(json.loads(data_json.decode('utf-8')))
+                    if proto_entity.roleType == "pool_manager":
+                        data['displayname'] = 'MSP Subscription Manager'
             except Exception as e:
                 logging.warning('Decrypt encryption data error: %s', e)
         keeper_entity['data'] = data
