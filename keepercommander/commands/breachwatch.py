@@ -287,4 +287,4 @@ class BreachWatchReportCommand(EnterpriseCommand):
     def execute(self, params, **kwargs):
         BreachWatch.validate_reporting('breachwatch report', params)
         cmd = SecurityAuditReportCommand()
-        return cmd.execute(params, **{'breachwatch':True, **kwargs})
+        return cmd.execute(params, **{'breachwatch': True, 'save': True, **kwargs})
