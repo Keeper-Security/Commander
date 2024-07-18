@@ -59,6 +59,9 @@ type_group.add_argument('--hard', action='store_true', help=hard_sync_help)
 
 sync_email_help = 'email of target vault\'s owner. Accepts multiple values. Supports the following pseudo-users: @all'
 sync_parser.add_argument('email', type=str, nargs='+', help=sync_email_help)
+sync_verbose_help = 'run and show the latest security-audit report immediately after sync'
+sync_parser.add_argument('-v', '--verbose', action='store_true', help=sync_verbose_help)
+sync_parser.add_argument('-f', '--force', action='store_true', help='do sync non-interactively')
 sync_parser.error = raise_parse_exception
 sync_parser.exit = suppress_exit
 
@@ -343,7 +346,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 decrypted = None
                 if sec_data:
                     try:
-                        decrypted = crypto.decrypt_rsa(sec_data, k)
+                        decrypted = crypto.decrypt_rsa(sec_data, k, pad_plaintext=True)
                     except Exception as e:
                         error = f'Decrypt fail (incremental data): {e}'
                         self.get_error_report_builder().update_report_data(error)
@@ -529,11 +532,12 @@ class SecurityAuditSyncCommand(EnterpriseCommand):
                                  f' scores.'
                 confirm_txt = f'{hard_sync_desc}\n\n{confirm_txt}'
             prompt_txt = f'{prompt_title}{sync_targets}\n\n{confirm_txt}'
-            if confirm(prompt_txt):
+            if kwargs.get('force') or confirm(prompt_txt):
                 api.communicate_rest(params, rq, 'enterprise/clear_security_data')
                 # Re-calculate and save new security scores
-                sar_cmd = SecurityAuditReportCommand()
-                return sar_cmd.execute(params, save=True)
+                if kwargs.get('verbose'):
+                    sar_cmd = SecurityAuditReportCommand()
+                    return sar_cmd.execute(params, save=True)
             else:
                 logging.info(f'Security-data ({sync_type}) sync aborted')
 

@@ -128,7 +128,13 @@ def encrypt_rsa(data, rsa_key):
     return rsa_key.encrypt(data, PKCS1v15())
 
 
-def decrypt_rsa(data, rsa_key):
+def decrypt_rsa(data, rsa_key, pad_plaintext=False):
+    size_diff = (rsa_key.key_size >> 3) - len(data)
+    if pad_plaintext and size_diff:
+        pad_bytes = bytes(size_diff)
+        pad_bytearray = bytearray([b for b in pad_bytes])
+        data_bytearray = bytearray([b for b in data])
+        data = bytes(pad_bytearray + data_bytearray)
     return rsa_key.decrypt(data, PKCS1v15())
 
 
