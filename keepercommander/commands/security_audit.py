@@ -346,7 +346,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 decrypted = None
                 if sec_data:
                     try:
-                        decrypted = crypto.decrypt_rsa(sec_data, k, pad_plaintext=True)
+                        decrypted = crypto.decrypt_rsa(sec_data, k, apply_padding=True)
                     except Exception as e:
                         error = f'Decrypt fail (incremental data): {e}'
                         self.get_error_report_builder().update_report_data(error)
