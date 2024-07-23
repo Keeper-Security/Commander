@@ -84,6 +84,8 @@ class KeeperJsonMixin:
         if 'schema' in j_record:
             record.schema = []
             for s in j_record['schema']:
+                if s.endswith(':1'):
+                    s = s[:-2]
                 pos = s.find(':')
                 if pos > 0:
                     schema_ref = s[0:pos].strip()

@@ -2135,8 +2135,6 @@ def prepare_record_add_or_update(update_flag, params, records):
     for import_record in record_to_import:
         if not import_record.type:
             continue
-        if import_record.schema:
-            continue
         record_type = import_record.type
         if record_type in record_types:
             fields = record_types[record_type].get('fields') or []
