@@ -3,7 +3,7 @@ import json
 import logging
 from json import JSONDecodeError
 from typing import Dict, List, Optional, Any
-from charset_normalizer import detect
+from charset_normalizer import detect, from_bytes
 
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
@@ -356,10 +356,16 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                     try:
                         decoded = decrypted_bytes.decode()
                     except UnicodeDecodeError as ude:
-                        detected_encoding = detect(decrypted_bytes).get('encoding')
-                        error = f'Failed to decode incremental data, (possible) encoding: {detected_encoding}'
+                        error = f'Failed to decode incremental data: {decrypted_bytes}'
                         self.get_error_report_builder().update_report_data(error)
-                        self.get_error_report_builder().update_report_data(decrypted_bytes)
+                        try:
+                            detected_encoding = detect(decrypted_bytes).get('encoding')
+                            decoded_guess = from_bytes(decrypted_bytes).best().output()
+                            detected_encoding_msg = f'Using detected encoding ({detected_encoding}), decoded = {decoded_guess}'
+                            self.get_error_report_builder().update_report_data(detected_encoding_msg)
+                        except:
+                            pass
+
                         return
                     except Exception as e:
                         error = f'Decode fail: {e}'
