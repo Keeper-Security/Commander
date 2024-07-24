@@ -136,6 +136,10 @@ def register_enterprise_commands(commands, aliases, command_info):
     from .msp import switch_to_msp_parser, SwitchToMspCommand
     commands[switch_to_msp_parser.prog] = SwitchToMspCommand()
     command_info[switch_to_msp_parser.prog] = switch_to_msp_parser.description
+    from .risk_management import RiskManagementReportCommand
+    commands['risk-management'] = RiskManagementReportCommand()
+    command_info['risk-management'] = 'Risk Management Reports'
+    aliases['rmd'] = 'risk-management'
 
 
 def register_msp_commands(commands, aliases, command_info):
