@@ -1710,14 +1710,7 @@ class AgingReportCommand(Command):
 
         cutoff_date = kwargs.get('cutoff_date')
         period = kwargs.get('period')
-        if cutoff_date is not None:
-            cutoff_date = parse_date(cutoff_date)
-            dt = cutoff_date
-        elif period is not None:
-            dt = get_floor(period)
-        else:
-            return
-
+        dt = parse_date(cutoff_date) if cutoff_date else get_floor(period)
         period_min_ts = int(dt.timestamp())
 
         rebuild = kwargs.get('rebuild')
