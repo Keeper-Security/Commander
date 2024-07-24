@@ -346,14 +346,25 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 decrypted = None
                 if sec_data:
                     try:
-                        decrypted = crypto.decrypt_rsa(sec_data, k, apply_padding=True)
+                        decrypted_bytes = crypto.decrypt_rsa(sec_data, k, apply_padding=True)
                     except Exception as e:
                         error = f'Decrypt fail (incremental data): {e}'
                         self.get_error_report_builder().update_report_data(error)
-                        return decrypted
+                        return
 
                     try:
-                        decrypted = json.loads(decrypted.decode())
+                        decoded = decrypted_bytes.decode()
+                    except UnicodeDecodeError as ude:
+                        error = f'Decode fail: {decrypted_bytes}'
+                        self.get_error_report_builder().update_report_data(error)
+                        return
+                    except Exception as e:
+                        error = f'Decode fail: {e}'
+                        self.get_error_report_builder().update_report_data(error)
+                        return
+
+                    try:
+                        decrypted = json.loads(decoded)
                     except Exception as e:
                         reason = f"Invalid JSON: {e.doc}" if isinstance(e, JSONDecodeError) else e
                         error = f'Load fail (incremental data). {reason}'
