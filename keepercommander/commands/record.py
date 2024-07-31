@@ -18,18 +18,20 @@ import json
 import logging
 import re
 from typing import Dict, Any, List, Optional, Iterable, Tuple, Set
-from colorama import init, Fore, Back, Style
 
+from colorama import Fore, Back, Style
+
+from . import record_edit, base, record_totp, record_file_report
 from .base import Command, GroupCommand, RecordMixin, FolderMixin
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3, record_types
 from ..breachwatch import BreachWatch
 from ..error import CommandError
-from ..record import get_totp_code
 from ..params import KeeperParams
-from ..proto import enterprise_pb2, record_pb2
-from ..subfolder import try_resolve_path, get_folder_path, find_folders, find_all_folders, BaseFolderNode, get_folder_uids
+from ..proto import record_pb2, folder_pb2
+from ..record import get_totp_code
+from ..subfolder import try_resolve_path, get_folder_path, find_folders, find_all_folders, BaseFolderNode, \
+    get_folder_uids
 from ..team import Team
-from . import record_edit, base, record_totp, record_file_report
 
 
 def register_commands(commands):
@@ -764,6 +766,7 @@ trash_list_parser.add_argument('--format', dest='format', action='store', choice
 trash_list_parser.add_argument('--output', dest='output', action='store',
                                help='output file name. (ignored for table format)')
 trash_list_parser.add_argument('--reload', dest='reload', action='store_true', help='reload deleted records')
+trash_list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help="verbose output")
 trash_list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 
 
@@ -792,10 +795,121 @@ class TrashMixin:
     last_revision = 0
     deleted_record_cache = {}
     orphaned_record_cache = {}
+    deleted_shared_folder_cache = {}
 
     @staticmethod
     def _ensure_deleted_records_loaded(params, reload=False):   # type: (KeeperParams, bool) -> None
         if params.revision != TrashMixin.last_revision or reload:
+            # 1
+            folder_rs = api.communicate_rest(params, None, 'vault/get_deleted_shared_folders_and_records',
+                                             rs_type=folder_pb2.GetDeletedSharedFoldersAndRecordsResponse)
+            users = {utils.base64_url_encode(x.accountUid): x.username for x in folder_rs.usernames}  # type: Dict[str, str]
+
+            folder_keys = {}   # type: Dict[str, Tuple[bytes, str]]
+            for shared_folder_uid, sf in params.shared_folder_cache.items():
+                if 'shared_folder_key_unencrypted' in sf:
+                    folder_keys[shared_folder_uid] = (sf['shared_folder_key_unencrypted'], shared_folder_uid)
+            folders = {}  # type: Dict[str, Dict[str, Any]]
+            for sf in folder_rs.sharedFolders:
+                shared_folder_uid = utils.base64_url_encode(sf.sharedFolderUid)
+                folder_uid = utils.base64_url_encode(sf.folderUid)
+                try:
+                    folder_key = None
+                    if sf.folderKeyType == record_pb2.ENCRYPTED_BY_DATA_KEY:
+                        folder_key = crypto.decrypt_aes_v1(sf.sharedFolderKey, params.data_key)
+                    elif sf.folderKeyType == record_pb2.ENCRYPTED_BY_PUBLIC_KEY:
+                        folder_key = crypto.decrypt_rsa(sf.sharedFolderKey, params.rsa_key2)
+                    elif sf.folderKeyType == record_pb2.ENCRYPTED_BY_DATA_KEY_GCM:
+                        folder_key = crypto.decrypt_aes_v2(sf.sharedFolderKey, params.data_key)
+                    elif sf.folderKeyType == record_pb2.ENCRYPTED_BY_PUBLIC_KEY_ECC:
+                        folder_key = crypto.decrypt_ec(sf.sharedFolderKey, params.ecc_key)
+                    elif sf.folderKeyType in (record_pb2.ENCRYPTED_BY_ROOT_KEY_CBC, record_pb2.ENCRYPTED_BY_ROOT_KEY_GCM):
+                        if shared_folder_uid in folder_keys:
+                            shared_folder_key, _ = folder_keys.get(shared_folder_uid)
+                            if sf.folderKeyType == record_pb2.ENCRYPTED_BY_ROOT_KEY_CBC:
+                                folder_key = crypto.decrypt_aes_v1(sf.sharedFolderKey, shared_folder_key)
+                            elif sf.folderKeyType == record_pb2.ENCRYPTED_BY_ROOT_KEY_GCM:
+                                folder_key = crypto.decrypt_aes_v2(sf.sharedFolderKey, shared_folder_key)
+                            else:
+                                continue
+                        else:
+                            continue
+                    folder_keys[folder_uid] = (folder_key, shared_folder_uid)
+                    decrypted_data = crypto.decrypt_aes_v1(sf.data, folder_key)
+                except Exception as e:
+                    logging.debug('Shared folder key decryption: %s', e)
+                    continue
+
+                folder_dict = {
+                    'shared_folder_uid': shared_folder_uid,
+                    'folder_uid': folder_uid,
+                    'data': utils.base64_url_encode(sf.data),
+                    'data_unencrypted': decrypted_data,
+                    'folder_key_unencrypted': folder_key,
+                    'date_deleted': sf.dateDeleted,
+                }
+                if len(sf.parentUid) > 0:
+                    folder_dict['parent_uid'] = utils.base64_url_encode(sf.parentUid)
+                folders[folder_uid] = folder_dict
+
+            record_keys = {}    # type: Dict[str, Tuple[bytes, str, int]]
+            for rk in folder_rs.sharedFolderRecords:
+                folder_uid = utils.base64_url_encode(rk.folderUid)
+                if folder_uid not in folder_keys:
+                    continue
+                _, shared_folder_uid = folder_keys.get(folder_uid)
+                if shared_folder_uid not in folder_keys:
+                    continue
+                folder_key, _ = folder_keys.get(shared_folder_uid)
+                record_uid = utils.base64_url_encode(rk.recordUid)
+                try:
+                    if len(rk.sharedRecordKey) == 60:
+                        record_key = crypto.decrypt_aes_v2(rk.sharedRecordKey, folder_key)
+                    else:
+                        record_key = crypto.decrypt_aes_v1(rk.sharedRecordKey, folder_key)
+                    record_keys[record_uid] = (record_key, folder_uid, rk.dateDeleted)
+                except Exception as e:
+                    logging.debug('Record "%s" key decryption: %s', record_uid, e)
+                    continue
+
+            records = {}    # type: Dict[str, Dict[str, Any]]
+            for r in folder_rs.deletedRecordData:
+                record_uid = utils.base64_url_encode(r.recordUid)
+                if record_uid not in record_keys:
+                    continue
+                record_key, folder_uid, time_deleted = record_keys[record_uid]
+
+                try:
+                    if r.version < 3:
+                        decrypted_data = crypto.decrypt_aes_v1(r.data, record_key)
+                    else:
+                        decrypted_data = crypto.decrypt_aes_v2(r.data, record_key)
+                except Exception as e:
+                    logging.debug('Record "%s" decryption: %s', record_uid, e)
+                    continue
+
+                record_dict = {
+                    'record_uid': record_uid,
+                    'folder_uid': folder_uid,
+                    'revision': r.revision,
+                    'version': r.version,
+                    'owner': users.get(utils.base64_url_encode(r.ownerUid)),
+                    'client_modified_time': r.clientModifiedTime,
+                    'date_deleted': time_deleted,
+                    'data': utils.base64_url_encode(r.data),
+                    'data_unencrypted': decrypted_data,
+                    'record_key_unencrypted': record_key,
+                }
+                records[record_uid] = record_dict
+
+            cache = TrashMixin.deleted_shared_folder_cache
+            cache.clear()
+            if len(folders) > 0:
+                cache['folders'] = folders
+            if len(records) > 0:
+                cache['records'] = records
+
+            # 2
             rq = {
                 'command': 'get_deleted_records',
                 'client_time': utils.current_milli_time()
@@ -852,6 +966,11 @@ class TrashMixin:
         TrashMixin._ensure_deleted_records_loaded(params, reload)
         return TrashMixin.orphaned_record_cache
 
+    @staticmethod
+    def get_shared_folders(params, reload=False):    # type: (KeeperParams, bool) -> Dict[str, Any]
+        TrashMixin._ensure_deleted_records_loaded(params, reload)
+        return TrashMixin.deleted_shared_folder_cache
+
 
 class TrashCommand(GroupCommand):
     def __init__(self):
@@ -871,7 +990,10 @@ class TrashListCommand(Command, TrashMixin):
     def execute(self, params, **kwargs):
         deleted_records = self.get_deleted_records(params, kwargs.get('reload', False))
         orphaned_records = self.get_orphaned_records(params)
-        if len(deleted_records) == 0 and len(orphaned_records) == 0:
+        shared_folders = self.get_shared_folders(params)
+        verbose = kwargs.get('verbose') is True
+
+        if len(deleted_records) == 0 and len(orphaned_records) == 0 and len(shared_folders) == 0:
             logging.info('Trash is empty')
             return
 
@@ -884,8 +1006,8 @@ class TrashListCommand(Command, TrashMixin):
         if pattern:
             title_pattern = re.compile(fnmatch.translate(pattern), re.IGNORECASE)
 
-        table = []
-        headers = ['Record UID', 'Title', 'Type', 'Status']
+        record_table = []
+        headers = ['Folder UID', 'Record UID', 'Name', 'Record Type', 'Deleted At', 'Status']
 
         for shared in (False, True):
             for rec in (orphaned_records if shared else deleted_records).values():
@@ -899,20 +1021,65 @@ class TrashListCommand(Command, TrashMixin):
                     else:
                         continue
 
+                date_deleted = None
                 if shared:
-                    status = 'Shared'
+                    status = 'Share'
                 else:
-                    date_deleted = rec.get('date_deleted', 0)
-                    if date_deleted:
-                        status = f'Deleted at {datetime.datetime.fromtimestamp(int(date_deleted / 1000))}'
-                    else:
-                        status = 'Deleted'
-                table.append([record.record_uid, record.title, record.record_type, status])
+                    status = 'Record'
+                    dd = rec.get('date_deleted', 0)
+                    if dd:
+                        date_deleted = datetime.datetime.fromtimestamp(int(dd / 1000))
+                record_table.append(['', record.record_uid, record.title, record.record_type, date_deleted, status])
 
-        table.sort(key=lambda x: x[1].casefold())
+        record_table.sort(key=lambda x: x[2].casefold())
+        folder_table = []
 
-        return base.dump_report_data(table, headers, fmt=kwargs.get('format'),
-                                filename=kwargs.get('output'), row_number=True)
+        if shared_folders and len(shared_folders) > 0:
+            folders = shared_folders.get('folders')    # type: Dict[str, dict]
+            records = shared_folders.get('records')    # type: Dict[str, dict]
+            if verbose:
+                for rec in records.values():
+                    folder_uid = rec.get('folder_uid')
+                    record_uid = rec.get('record_uid')
+                    record = vault.KeeperRecord.load(params, rec)
+                    if not record:
+                        continue
+
+                    date_deleted = None
+                    dd = rec.get('date_deleted', 0)
+                    if dd:
+                        date_deleted = datetime.datetime.fromtimestamp(int(dd / 1000))
+                    folder_table.append([folder_uid, record_uid, record.title, record.record_type, date_deleted, 'Folder'])
+            else:
+                rec_in_fol = {}    # type: Dict[str, int]
+                for rec in records.values():
+                    folder_uid = rec.get('folder_uid')
+                    if folder_uid not in rec_in_fol:
+                        rec_in_fol[folder_uid] = 0
+                    rec_in_fol[folder_uid] = rec_in_fol[folder_uid] + 1
+
+                for fol in folders.values():
+                    folder_uid = fol.get('folder_uid')
+                    date_deleted = None
+                    dd = fol.get('date_deleted', 0)
+                    if dd:
+                        date_deleted = datetime.datetime.fromtimestamp(int(dd / 1000))
+                    rec_count = rec_in_fol.get(folder_uid)
+                    rc = None
+                    if isinstance(rec_count, int) and rec_count > 0:
+                        rc = f'{rec_count} record(s)'
+                    try:
+                        data = json.loads(fol.get('data_unencrypted'))
+                        folder_name = data.get('name') or folder_uid
+                    except Exception as e:
+                        logging.debug('Load folder data: %s', e)
+                        folder_name = folder_uid
+                    folder_table.append([folder_uid, rc, folder_name, '', date_deleted, 'Folder'])
+
+        folder_table.sort(key=lambda x: x[2].casefold())
+
+        return base.dump_report_data(record_table + folder_table, headers, fmt=kwargs.get('format'),
+                                     filename=kwargs.get('output'), row_number=True)
 
 
 class TrashGetCommand(Command, TrashMixin):
@@ -1010,7 +1177,10 @@ class TrashRestoreCommand(Command, TrashMixin):
     def execute(self, params, **kwargs):
         deleted_records = self.get_deleted_records(params)
         orphaned_records = self.get_orphaned_records(params)
-        if len(deleted_records) == 0 and len(orphaned_records) == 0:
+        shared_folders = self.get_shared_folders(params)
+        deleted_shared_records = shared_folders.get('records') or {}
+        deleted_shared_folders = shared_folders.get('folders') or {}
+        if len(deleted_records) == 0 and len(orphaned_records) == 0 and len(deleted_shared_records) == 0 and len(deleted_shared_folders) == 0:
             logging.info('Trash is empty')
             return
 
@@ -1021,34 +1191,79 @@ class TrashRestoreCommand(Command, TrashMixin):
             logging.info('records parameter is empty.')
             return
 
-        to_restore = set()
+        records_to_restore = set()   # type: Set[str]
+        folders_to_restore = set()   # type: Set[str]
+        folder_records_to_restore = {}  # type: Dict[str, List[str]]
         for rec in records:
             if rec in deleted_records:
-                to_restore.add(rec)
+                records_to_restore.add(rec)
             elif rec in orphaned_records:
-                to_restore.add(rec)
+                records_to_restore.add(rec)
+            elif rec in deleted_shared_records:
+                dsr = deleted_shared_records.get(rec)
+                folder_uid = dsr.get('folder_uid')
+                record_uid = dsr.get('record_uid')
+                if folder_uid and record_uid:
+                    if folder_uid not in folder_records_to_restore:
+                        folder_records_to_restore[folder_uid] = []
+                    folder_records_to_restore[folder_uid].append(record_uid)
+            elif rec in deleted_shared_folders:
+                folders_to_restore.add(rec)
             else:
                 title_pattern = re.compile(fnmatch.translate(rec), re.IGNORECASE)
                 for record_uid, del_rec in itertools.chain(deleted_records.items(), orphaned_records.items()):
-                    if record_uid in to_restore:
+                    if record_uid in records_to_restore:
                         continue
                     record = vault.KeeperRecord.load(params, del_rec)
                     if title_pattern.match(record.title):
-                        to_restore.add(record_uid)
+                        records_to_restore.add(record_uid)
+                for record_uid, sh_rec in deleted_shared_records.items():
+                    if record_uid in folder_records_to_restore:
+                        continue
+                    record = vault.KeeperRecord.load(params, sh_rec)
+                    if title_pattern.match(record.title):
+                        folder_uid = sh_rec.get('folder_uid')
+                        if folder_uid not in folder_records_to_restore:
+                            folder_records_to_restore[folder_uid] = []
+                        folder_records_to_restore[folder_uid].append(record_uid)
+                for folder_uid, sh_fol in deleted_shared_folders.items():
+                    if folder_uid in folders_to_restore:
+                        continue
+                    try:
+                        data = json.loads(sh_fol.get('data_unencrypted'))
+                        folder_name = data.get('name') or folder_uid
+                        if title_pattern.match(folder_name):
+                            folders_to_restore.add(folder_uid)
+                    except Exception:
+                        pass
 
-        if len(to_restore) == 0:
+        for folder_uid in folders_to_restore:
+            if folder_uid in folder_records_to_restore:
+                del folder_records_to_restore[folder_uid]
+
+        record_count = len(records_to_restore)
+        for drf in folder_records_to_restore.values():
+            record_count += len(drf)
+        folder_count = len(folders_to_restore)
+        if record_count == 0 and folder_count == 0:
             logging.info('There are no records to restore')
             return
 
         if not kwargs.get('force'):
-            answer = base.user_choice(f'Do you want to restore {len(to_restore)} record(s)?', 'yn', default='n')
+            to_do = []
+            if record_count > 0:
+                to_do.append(f'{record_count} record(s)')
+            if folder_count > 0:
+                to_do.append(f'{folder_count} folder(s)')
+            question = f'Do you want to restore {" and ".join(to_do)}?'
+            answer = base.user_choice(question, 'yn', default='n')
             if answer.lower() == 'y':
                 answer = 'yes'
             if answer.lower() != 'yes':
                 return
 
         batch = []
-        for record_uid in to_restore:
+        for record_uid in records_to_restore:
             rec = deleted_records[record_uid] if record_uid in deleted_records else orphaned_records[record_uid]
             rq = {
                 'command': 'undelete_record',
@@ -1059,9 +1274,38 @@ class TrashRestoreCommand(Command, TrashMixin):
             batch.append(rq)
 
         api.execute_batch(params, batch)
+
+        shared_folder_rqs = []
+        for folder_uid in folders_to_restore:
+            sfrq = folder_pb2.RestoreSharedObject()
+            sfrq.folderUid = utils.base64_url_decode(folder_uid)
+            shared_folder_rqs.append(sfrq)
+
+        shared_folder_record_rqs = []
+        for folder_uid, record_uids in folder_records_to_restore.items():
+            sfrq = folder_pb2.RestoreSharedObject()
+            sfrq.folderUid = utils.base64_url_decode(folder_uid)
+            sfrq.recordUids.extend((utils.base64_url_decode(x) for x in record_uids))
+            shared_folder_record_rqs.append(sfrq)
+
+        while len(shared_folder_rqs) > 0 or len(shared_folder_record_rqs) > 0:
+            rq = folder_pb2.RestoreDeletedSharedFoldersAndRecordsRequest()
+            left = 1000
+            if len(shared_folder_rqs) > 0:
+                chunk = shared_folder_rqs[:left]
+                shared_folder_rqs = shared_folder_rqs[left:]
+                left -= len(chunk)
+                rq.folders.extend(chunk)
+            if len(shared_folder_record_rqs) > 0 and left > 100:
+                chunk = shared_folder_record_rqs[:left]
+                shared_folder_record_rqs = shared_folder_record_rqs[left:]
+                left -= len(chunk)
+                rq.records.extend(chunk)
+            api.communicate_rest(params, rq, 'vault/restore_deleted_shared_folders_and_records')
+
         api.sync_down(params)
         TrashMixin.last_revision = 0
-        for record_uid in to_restore:
+        for record_uid in records_to_restore:
             BreachWatch.scan_and_update_security_data(params, record_uid, params.breach_watch,
                                                       force_update=False, set_reused_pws=False)
             params.queue_audit_event('record_restored', record_uid=record_uid)
