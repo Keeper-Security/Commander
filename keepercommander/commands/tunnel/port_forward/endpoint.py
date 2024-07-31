@@ -6,31 +6,35 @@ import os
 import secrets
 import socket
 import string
+import struct
 import time
 from datetime import datetime
 from typing import Optional, Dict
 
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.utils import int_to_bytes
-from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes, bytes_to_string, string_to_bytes, \
-    bytes_to_int
+from keeper_dag import DAG, EdgeType
+from keeper_dag.connection.commander import Connection
+from keeper_dag.types import RefType
+from keeper_dag.vertex import DAGVertex
+from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes, bytes_to_string, string_to_bytes
 
+from keepercommander import crypto, utils, rest_api
 from keepercommander.commands.pam.pam_dto import GatewayActionWebRTCSession
-from keepercommander.commands.pam.router_helper import router_get_relay_access_creds, router_send_action_to_gateway
+from keepercommander.commands.pam.router_helper import router_get_relay_access_creds, router_send_action_to_gateway, \
+    get_dag_leafs
 from keepercommander.display import bcolors
 from keepercommander.error import CommandError
 from keepercommander.params import KeeperParams
 from keepercommander.proto import pam_pb2
+from keepercommander.vault import PasswordRecord
 
 logging.getLogger('aiortc').setLevel(logging.WARNING)
 logging.getLogger('aioice').setLevel(logging.WARNING)
 
 READ_TIMEOUT = 10
 NONCE_LENGTH = 12
+MAIN_NONCE_LENGTH = 16
 SYMMETRIC_KEY_LENGTH = RANDOM_LENGTH = 32
 MESSAGE_MAX = 5
 
@@ -38,13 +42,14 @@ MESSAGE_MAX = 5
 CONTROL_MESSAGE_NO_LENGTH = 2
 CLOSE_CONNECTION_REASON_LENGTH = 1
 TIME_STAMP_LENGTH = 8
-CONNECTION_NO_LENGTH = DATA_LENGTH = 4
+CONNECTION_NO_LENGTH = DATA_LENGTH = PORT_LENGTH = 4
 TERMINATOR = b';'
 PROTOCOL_LENGTH = CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + CONTROL_MESSAGE_NO_LENGTH + len(TERMINATOR)
 KRELAY_URL = 'KRELAY_URL'
 ALT_KRELAY_URL = 'KRELAY_SERVER'
+GATEWAY_TIMEOUT = int(os.getenv('GATEWAY_TIMEOUT')) if os.getenv('GATEWAY_TIMEOUT') else 30000
 
-# WebRTC constants
+# WebRTC constant values
 # 16 MiB max https://viblast.com/blog/2015/2/25/webrtc-bufferedamount/, so we will use 14.4 MiB or 90% of the max,
 # because in some cases if the max is reached the channel will close
 BUFFER_THRESHOLD = 134217728 * .90
@@ -65,6 +70,7 @@ class CloseConnectionReasons(enum.IntEnum):
     ConnectionLost = 9
     ConnectionFailed = 10
     TunnelClosed = 11
+    AdminClosed = 12
 
 
 class ConnectionNotFoundException(Exception):
@@ -151,45 +157,428 @@ def is_port_open(host: str, port: int) -> bool:
             return False
 
 
-def establish_symmetric_key(private_key, client_public_key):
-    # Perform ECDH key agreement
-    shared_secret = private_key.exchange(ec.ECDH(), client_public_key)
-
-    # Derive a symmetric key using HKDF
-    symmetric_key = HKDF(
-        algorithm=hashes.SHA256(),
-        length=SYMMETRIC_KEY_LENGTH,
-        salt=None,
-        info=b'encrypt network traffic',
-    ).derive(shared_secret)
-    return AESGCM(symmetric_key)
-
-
 def tunnel_encrypt(symmetric_key: AESGCM, data: bytes):
     """ Encrypts data using the symmetric key """
+    # Compress the data
     nonce = os.urandom(NONCE_LENGTH)  # 12-byte nonce for AES-GCM
-    d = nonce + symmetric_key.encrypt(nonce, data, None)
-    return bytes_to_base64(d)
+    encrypted_data = symmetric_key.encrypt(nonce, data, None)
+    return bytes_to_base64(nonce + encrypted_data)
 
 
 def tunnel_decrypt(symmetric_key: AESGCM, encrypted_data: str):
     """ Decrypts data using the symmetric key """
-    data_bytes = base64_to_bytes(encrypted_data)
-    if len(data_bytes) <= NONCE_LENGTH:
+
+    mixed_data = base64_to_bytes(encrypted_data)
+    # Data may be compressed and base64 encoded
+
+    if len(mixed_data) <= NONCE_LENGTH:
         return None
-    nonce = data_bytes[:NONCE_LENGTH]
-    data = data_bytes[NONCE_LENGTH:]
+    nonce = mixed_data[:NONCE_LENGTH]
+    encrypted_data = mixed_data[NONCE_LENGTH:]
+
     try:
-        return symmetric_key.decrypt(nonce, data, None)
+       return symmetric_key.decrypt(nonce, encrypted_data, None)
     except Exception as e:
         logging.error(f'Error decrypting data: {e}')
         return None
 
 
+def get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid):
+    # try to get config from dag
+    try:
+        rs = get_dag_leafs(params, encrypted_session_token, encrypted_transmission_key, record_uid)
+        # response: "[{\"type\":\"rec\",\"value\":\"Jagbt2dxrft_91FovB5dwg\",\"name\":null}]"
+        if not rs:
+            return None
+        else:
+            return rs[0].get('value', '')
+    except Exception as e:
+        print(f"{bcolors.FAIL}Error getting configuration: {e}{bcolors.ENDC}")
+    return None
+
+
+def get_keeper_tokens(params):
+    transmission_key = generate_random_bytes(32)
+    server_public_key = rest_api.SERVER_PUBLIC_KEYS[params.rest_context.server_key_id]
+
+    if params.rest_context.server_key_id < 7:
+        encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
+    else:
+        encrypted_transmission_key = crypto.encrypt_ec(transmission_key, server_public_key)
+    encrypted_session_token = crypto.encrypt_aes_v2(
+        utils.base64_url_decode(params.session_token), transmission_key)
+
+    return encrypted_session_token, encrypted_transmission_key, transmission_key
+
+
+class TunnelDAG:
+    def __init__(self, params, encrypted_session_token, encrypted_transmission_key, record_uid: str, is_config=False):
+        config_uid = None
+        if not is_config:
+            config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
+        if not config_uid:
+            config_uid = record_uid
+        self.record = PasswordRecord()
+        self.record.record_uid = config_uid
+        self.record.record_key = generate_random_bytes(32)
+        self.encrypted_session_token = encrypted_session_token
+        self.encrypted_transmission_key = encrypted_transmission_key
+        self.conn = Connection(params=params, encrypted_transmission_key=self.encrypted_transmission_key,
+                               encrypted_session_token=self.encrypted_session_token
+                               )
+        self.linking_dag = DAG(conn=self.conn, record=self.record, graph_id=0)
+        try:
+            self.linking_dag.load()
+        except Exception as e:
+            logging.debug(f"Error loading config: {e}")
+
+    def get_vertex_content(self, vertex):
+        return_content = None
+        if vertex is None:
+            return return_content
+        try:
+            return_content = vertex.content_as_dict
+        except Exception as e:
+            return_content = None
+        return return_content
+
+    def resource_belongs_to_config(self, resource_uid):
+        if not self.linking_dag.has_graph:
+            return False
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
+        return resource_vertex and config_vertex.has(resource_vertex, EdgeType.LINK)
+
+    def user_belongs_to_config(self, user_uid):
+        if not self.linking_dag.has_graph:
+            return False
+        user_vertex = self.linking_dag.get_vertex(user_uid)
+        config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
+        res_content = False
+        if user_vertex and config_vertex and config_vertex.has(user_vertex, EdgeType.ACL):
+            acl_edge = user_vertex.get_edge(config_vertex, EdgeType.ACL)
+            _content = acl_edge.content_as_dict
+            res_content = _content.get('belongs_to', False) if _content else False
+        return res_content
+
+    def check_tunneling_enabled_config(self, enable_connections=None, enable_tunneling=None,
+                                       enable_rotation=None, enable_session_recording=None,
+                                       enable_typescript_recording=None):
+        if not self.linking_dag.has_graph:
+            return False
+        config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
+        content = self.get_vertex_content(config_vertex)
+        if content is None or 'meta' not in content or 'allowedSettings' not in content['meta']:
+            return False
+
+        allowed_settings = content['meta']['allowedSettings']
+        if enable_connections and not allowed_settings.get("connections"):
+            return False
+        if enable_tunneling and not allowed_settings.get("portForwards"):
+            return False
+        if enable_rotation and not allowed_settings.get("rotation"):
+            return False
+        if allowed_settings.get("connections") and allowed_settings["connections"]:
+            if enable_session_recording and not allowed_settings.get("sessionRecording"):
+                return False
+            if enable_typescript_recording and not allowed_settings.get("typescriptRecording"):
+                return False
+        return True
+
+    def edit_tunneling_config(self, connections=None, tunneling=None, rotation=None, session_recording=None,
+                              typescript_recording=None):
+        config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
+        if config_vertex is None:
+            config_vertex = self.linking_dag.add_vertex(uid=self.record.record_uid, vertex_type=RefType.PAM_NETWORK)
+
+        if config_vertex.vertex_type != RefType.PAM_NETWORK:
+            config_vertex.vertex_type = RefType.PAM_NETWORK
+        content = self.get_vertex_content(config_vertex)
+        if content and content.get('allowedSettings'):
+            allowed_settings = dict(content['allowedSettings'])
+            del content['allowedSettings']
+            content = {'meta': {'allowedSettings': allowed_settings}}
+
+        if content is None:
+            content = {'meta': {'allowedSettings': {}}}
+        if 'meta' not in content:
+            content['meta'] = {'allowedSettings': {}}
+        if 'allowedSettings' not in content['meta']:
+            content['meta']['allowedSettings'] = {}
+
+        allowed_settings = content['meta']['allowedSettings']
+        dirty = False
+
+        if connections is not None and connections != allowed_settings.get("connections", False):
+            allowed_settings["connections"] = connections
+            dirty = True
+        if tunneling is not None and tunneling != allowed_settings.get("portForwards", False):
+            allowed_settings["portForwards"] = tunneling
+            dirty = True
+        # We default rotation to True
+        if rotation is not None and rotation != allowed_settings.get("rotation", True):
+            allowed_settings["rotation"] = rotation
+            dirty = True
+        if session_recording is not None and session_recording != allowed_settings.get("sessionRecording", False):
+            allowed_settings["sessionRecording"] = session_recording
+            dirty = True
+        if (typescript_recording is not None and
+                typescript_recording != allowed_settings.get("typescriptRecording", False)):
+            allowed_settings["typescriptRecording"] = typescript_recording
+            dirty = True
+
+        if dirty:
+            config_vertex.add_data(content=content, path="allowedSettings", needs_encryption=False)
+            self.linking_dag.save()
+
+    def get_all_owners(self, uid):
+        owners = []
+        if self.linking_dag.has_graph:
+            vertex = self.linking_dag.get_vertex(uid)
+            if vertex:
+                owners = [owner.uid for owner in vertex.belongs_to_vertices()]
+        return owners
+
+    def user_belongs_to_resource(self, user_uid, resource_uid):
+        user_vertex = self.linking_dag.get_vertex(user_uid)
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        res_content = False
+        if user_vertex and resource_vertex and resource_vertex.has(user_vertex, EdgeType.ACL):
+            acl_edge = user_vertex.get_edge(resource_vertex, EdgeType.ACL)
+            _content = acl_edge.content_as_dict
+            res_content = _content.get('belongs_to', False) if _content else False
+        return res_content
+
+    def get_resource_uid(self, user_uid):
+        if not self.linking_dag.has_graph:
+            return None
+        resources = self.get_all_owners(user_uid)
+        if len(resources) > 0:
+            for resource in resources:
+                if self.user_belongs_to_resource(user_uid, resource):
+                    return resource
+        return None
+
+    def link_resource_to_config(self, resource_uid):
+        config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
+        if config_vertex is None:
+            config_vertex = self.linking_dag.add_vertex(uid=self.record.record_uid)
+
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        if resource_vertex is None:
+            resource_vertex = self.linking_dag.add_vertex(uid=resource_uid)
+
+        if not config_vertex.has(resource_vertex, EdgeType.LINK):
+            resource_vertex.belongs_to(config_vertex, EdgeType.LINK)
+            self.linking_dag.save()
+
+    def link_user_to_config(self, user_uid):
+        config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
+        if config_vertex is None:
+            config_vertex = self.linking_dag.add_vertex(uid=self.record.record_uid)
+        self.link_user(user_uid, config_vertex, belongs_to=True)
+
+    def link_user_to_resource(self, user_uid, resource_uid, is_admin=None, belongs_to=None):
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        if resource_vertex is None or not self.resource_belongs_to_config(resource_uid):
+            print(f"{bcolors.FAIL}Resource {resource_uid} does not belong to the configuration{bcolors.ENDC}")
+            return False
+        self.link_user(user_uid, resource_vertex, is_admin, belongs_to)
+
+    def link_user(self, user_uid, source_vertex: DAGVertex, is_admin=None, belongs_to=None):
+
+        user_vertex = self.linking_dag.get_vertex(user_uid)
+        if user_vertex is None:
+            user_vertex = self.linking_dag.add_vertex(uid=user_uid, vertex_type=RefType.PAM_USER)
+
+        content = {}
+        dirty = False
+        if belongs_to is not None:
+            content["belongs_to"] = bool(belongs_to)
+        if is_admin is not None:
+            content["is_admin"] = bool(is_admin)
+
+        if user_vertex.vertex_type != RefType.PAM_USER:
+            user_vertex.vertex_type = RefType.PAM_USER
+
+        if source_vertex.has(user_vertex, EdgeType.ACL):
+            acl_edge = user_vertex.get_edge(source_vertex, EdgeType.ACL)
+            existing_content = acl_edge.content_as_dict
+            for key in existing_content:
+                if key not in content:
+                    content[key] = existing_content[key]
+            if content != existing_content:
+                dirty = True
+
+            if dirty:
+                user_vertex.belongs_to(source_vertex, EdgeType.ACL, content=content)
+                # user_vertex.add_data(content=content, needs_encryption=False)
+                self.linking_dag.save()
+        else:
+            user_vertex.belongs_to(source_vertex, EdgeType.ACL, content=content)
+            self.linking_dag.save()
+
+    def get_all_admins(self):
+        if not self.linking_dag.has_graph:
+            return []
+        config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
+        if config_vertex is None:
+            return []
+        admins = []
+        for user_vertex in config_vertex.has_vertices(EdgeType.ACL):
+            acl_edge = user_vertex.get_edge(config_vertex, EdgeType.ACL)
+            if acl_edge:
+                content = acl_edge.content_as_dict
+                if content.get('is_admin'):
+                    admins.append(user_vertex.uid)
+        return admins
+
+    def check_if_resource_has_admin(self, resource_uid):
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        if resource_vertex is None:
+            return False
+        for user_vertex in resource_vertex.has_vertices(EdgeType.ACL):
+            acl_edge = user_vertex.get_edge(resource_vertex, EdgeType.ACL)
+            if acl_edge:
+                content = acl_edge.content_as_dict
+                if content.get('is_admin'):
+                    return user_vertex.uid
+        return False
+
+    def check_if_resource_allowed(self, resource_uid, setting):
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        content = self.get_vertex_content(resource_vertex)
+        return content.get('meta', {}).get('allowedSettings', {}).get(setting, False) if content else False
+
+    def set_resource_allowed(self, resource_uid, tunneling=None, connections=None, rotation=None,
+                             session_recording=None, typescript_recording=None,
+                             allowed_settings_name='allowedSettings', is_config=False):
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        if resource_vertex is None:
+            resource_vertex = self.linking_dag.add_vertex(uid=resource_uid, vertex_type=RefType.PAM_MACHINE)
+
+        if resource_vertex.vertex_type != RefType.PAM_MACHINE:
+            resource_vertex.vertex_type = RefType.PAM_MACHINE
+        if is_config:
+            resource_vertex.vertex_type = RefType.PAM_NETWORK
+        dirty = False
+        content = self.get_vertex_content(resource_vertex)
+        if content is None:
+            content = {'meta': {allowed_settings_name: {}}}
+            dirty = True
+        if 'meta' not in content:
+            content['meta'] = {allowed_settings_name: {}}
+            dirty = True
+        if allowed_settings_name not in content['meta']:
+            content['meta'][allowed_settings_name] = {}
+            dirty = True
+
+        settings = content['meta'][allowed_settings_name]
+        if tunneling is not None and tunneling != settings.get("portForwards", False):
+            settings["portForwards"] = tunneling
+            dirty = True
+        if connections is not None and connections != settings.get("connections", False):
+            settings["connections"] = connections
+            dirty = True
+        # We default rotation to True
+        if rotation is not None and rotation != settings.get("rotation", True):
+            settings["rotation"] = rotation
+            dirty = True
+
+        if settings.get("connections") and settings["connections"]:
+            if session_recording is not None and session_recording != settings.get("sessionRecording", False):
+                settings["sessionRecording"] = session_recording
+                dirty = True
+            if typescript_recording is not None and typescript_recording != settings.get("typescriptRecording", False):
+                settings["typescriptRecording"] = typescript_recording
+                dirty = True
+        if dirty:
+            resource_vertex.add_data(content=content, path=allowed_settings_name, needs_encryption=False)
+            self.linking_dag.save()
+
+    def is_tunneling_config_set_up(self, resource_uid):
+        if not self.linking_dag.has_graph:
+            return False
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
+        return resource_vertex and config_vertex and config_vertex in resource_vertex.belongs_to_vertices()
+
+    def remove_from_dag(self, uid):
+        if not self.linking_dag.has_graph:
+            return True
+
+        vertex = self.linking_dag.get_vertex(uid)
+        if vertex is None:
+            return True
+
+        vertex.delete()
+        self.linking_dag.save(confirm=True)
+
+    def print_tunneling_config(self, record_uid, pam_settings=None, config_uid=None):
+        self.linking_dag.load()
+        vertex = self.linking_dag.get_vertex(record_uid)
+        content = self.get_vertex_content(vertex)
+        if content and content.get('meta') and content['meta'].get('allowedSettings'):
+            allowed_settings = content['meta']['allowedSettings']
+            print(f"{bcolors.OKGREEN}Settings configured for {record_uid}{bcolors.ENDC}")
+            connections = f"{bcolors.OKBLUE}Enabled" if allowed_settings.get('connections') else \
+                f"{bcolors.WARNING}Disabled"
+            port_forwarding = f"{bcolors.OKBLUE}Enabled" if allowed_settings.get('portForwards') else \
+                f"{bcolors.WARNING}Disabled"
+            rotation = f"{bcolors.WARNING}Disabled" if (allowed_settings.get('rotation') and not allowed_settings['rotation']) else f"{bcolors.OKBLUE}Enabled"
+            print(f"{bcolors.OKGREEN}\tConnections: {connections}{bcolors.ENDC}")
+            if allowed_settings.get('connections'):
+                if allowed_settings.get('sessionRecording'):
+                    print(f"{bcolors.OKGREEN}\t\tSession Recording: {bcolors.OKBLUE}Enabled{bcolors.ENDC}")
+                else:
+                    print(f"{bcolors.OKGREEN}\t\tSession Recording: {bcolors.WARNING}Disabled{bcolors.ENDC}")
+                if allowed_settings.get('typescriptRecording'):
+                    print(f"{bcolors.OKGREEN}\t\tTypescript Recording: {bcolors.OKBLUE}Enabled{bcolors.ENDC}")
+                else:
+                    print(f"{bcolors.OKGREEN}\t\tTypescript Recording: {bcolors.WARNING}Disabled{bcolors.ENDC}")
+            print(f"{bcolors.OKGREEN}\tTunneling: {port_forwarding}{bcolors.ENDC}")
+            print(f"{bcolors.OKGREEN}\tRotation: {rotation}{bcolors.ENDC}")
+            admin_uid = self.check_if_resource_has_admin(record_uid)
+            if admin_uid:
+                print(f"{bcolors.OKGREEN}\tAdmin: {bcolors.OKBLUE}{admin_uid}{bcolors.ENDC}")
+            if pam_settings is not None or config_uid is not None:
+                config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
+                config_content = self.get_vertex_content(config_vertex)
+                config_id = config_uid if config_uid else pam_settings.value[0].get('configUid')
+                print(f"{bcolors.OKGREEN}Configuration: {config_id} {bcolors.ENDC}")
+                if config_content and config_content.get('meta') and config_content['meta'].get('allowedSettings'):
+                    config_allowed_settings = config_content['meta']['allowedSettings']
+                    config_connections = f"{bcolors.OKBLUE}Enabled" if config_allowed_settings.get('connections') else \
+                        f"{bcolors.WARNING}Disabled"
+                    config_port_forwarding = f"{bcolors.OKBLUE}Enabled" if (
+                        config_allowed_settings.get('portForwards')) else \
+                        f"{bcolors.WARNING}Disabled"
+                    config_rotation = f"{bcolors.WARNING}Disabled" if (config_allowed_settings.get('rotation') and
+                                                                       not config_allowed_settings['rotation']) else \
+                        f"{bcolors.OKBLUE}Enabled"
+                    print(f"{bcolors.OKGREEN}\tConnections: {config_connections}{bcolors.ENDC}")
+
+                    if config_allowed_settings.get('connections') and config_allowed_settings['connections']:
+                        if config_allowed_settings.get('sessionRecording'):
+                            print(f"{bcolors.OKGREEN}\t\tSession Recording: {bcolors.OKBLUE}Enabled{bcolors.ENDC}")
+                        else:
+                            print(f"{bcolors.OKGREEN}\t\tSession Recording: {bcolors.WARNING}Disabled{bcolors.ENDC}")
+                        if config_allowed_settings.get('typescriptRecording'):
+                            print(f"{bcolors.OKGREEN}\t\tTypescript Recording: {bcolors.OKBLUE}Enabled{bcolors.ENDC}")
+                        else:
+                            print(f"{bcolors.OKGREEN}\t\tTypescript Recording: {bcolors.WARNING}Disabled{bcolors.ENDC}")
+                    print(f"{bcolors.OKGREEN}\tTunneling: {config_port_forwarding}{bcolors.ENDC}")
+                    print(f"{bcolors.OKGREEN}\tRotation: {config_rotation}{bcolors.ENDC}")
+
+
 class WebRTCConnection:
-    def __init__(self, params: KeeperParams, record_uid, gateway_uid, symmetric_key,
+    def __init__(self, params: KeeperParams, record_uid, symmetric_key,
                  print_ready_event: asyncio.Event, kill_server_event: asyncio.Event,
                  logger: Optional[logging.Logger] = None, server='keepersecurity.com'):
+
+        self.retry_count = 0
+        self.max_retries = 5  # Maximum number of retries
+        self.retry_delay = 2  # Initial delay in seconds
 
         self._pc = None
         self.web_rtc_queue = asyncio.Queue()
@@ -200,7 +589,6 @@ class WebRTCConnection:
         self.endpoint_name = "Starting..."
         self.params = params
         self.record_uid = record_uid
-        self.gateway_uid = gateway_uid
         self.symmetric_key = symmetric_key
         self.kill_server_event = kill_server_event
         # Using Keeper's STUN and TURN servers
@@ -221,7 +609,25 @@ class WebRTCConnection:
         except Exception as e:
             raise Exception(f'Error setting up WebRTC connection: {e}')
 
-    async def signal_channel(self, kind: str):
+    async def attempt_reconnect(self):
+        # backoff retry logic
+        if self.retry_count < self.max_retries:
+            await asyncio.sleep(self.retry_delay)  # Wait before retrying
+            await self.ice_restart()
+            self.retry_count += 1
+            self.retry_delay *= 2  # Double the delay for the next retry if needed
+        else:
+            self.logger.error('Maximum reconnection attempts reached, stopping retries.')
+            await self.close_webrtc_connection()
+
+    async def ice_restart(self):
+        self.peer_ice_config(ice_restart=True)
+        self.setup_data_channel()
+        self.setup_event_handlers()
+        new_nonce = bytes_to_base64(generate_random_bytes(MAIN_NONCE_LENGTH))
+        await self.signal_channel('reconnect', base64_nonce=bytes_to_base64(new_nonce))
+
+    async def signal_channel(self, kind: str, base64_nonce: str):
 
         # make webRTC sdp offer
         try:
@@ -253,35 +659,27 @@ class WebRTCConnection:
                     'mysql', 'postgresql', 'sql-server', 'http']       <-- What type of conversation is this (REQUIRED)
                 'kind': ['start', 'disconnect'],                                     <-- What command to run (REQUIRED)
                 'conversations': [List of conversations to disconnect],                <-- (Only for kind = disconnect)
+                'base64Nonce': base64Nonce,                     <-- Random nonce to prevent replay attacks (REQUIRED)
 
                 'data': {                                       <-- All data is encrypted with symmetric key (REQUIRED)
                     'offer': encrypted_WebRTC_sdp_offer,        <-- WebRTC SDP offer, base64 encoded
                 }
             }
         '''
-        # TODO: remove when reporting is deployed to krouter prod!!!
-        dev_router = os.getenv("USE_REPORTING_COMPATABILITY_ROUTER")
-        if dev_router:
-            gateway_message_type = pam_pb2.CMT_CONNECT
-            self.logger.warning("#" * 30 + f"Sending CMT_CONNECT message type. Sergey, this is good..." + "#" * 30)
-        else:
-            gateway_message_type = pam_pb2.CMT_GENERAL
-
-        # TODO create objects for WebRTC inputs
         router_response = router_send_action_to_gateway(
             params=self.params,
             gateway_action=GatewayActionWebRTCSession(
                 inputs={
                     "recordUid": self.record_uid,
                     'kind': kind,
+                    'base64Nonce': base64_nonce,
                     'conversationType': 'tunnel',
-                    "data": encrypted_data
+                    "data": encrypted_data,
                 }
             ),
-            message_type=gateway_message_type,
+            message_type=pam_pb2.CMT_CONNECT,
             is_streaming=False,
-            destination_gateway_uid_str=self.gateway_uid,
-            gateway_timeout=30000
+            gateway_timeout=GATEWAY_TIMEOUT
         )
         if not router_response:
             self.kill_server_event.set()
@@ -310,8 +708,9 @@ class WebRTCConnection:
         except Exception as e:
             raise Exception(f'Error decrypting WebRTC answer from data: {data}\nError: {e}')
         try:
-            str_data = bytes_to_string(data).replace("'", '"')
-            data = json.loads(str_data)
+            if isinstance(data, bytes):
+                data = bytes_to_string(data).replace("'", '"')
+            data = json.loads(data)
         except Exception as e:
             raise Exception(f'Error loading WebRTC answer from data: {data}\nError: {e}')
         if not data.get('answer'):
@@ -324,7 +723,10 @@ class WebRTCConnection:
 
         self.logger.debug("starting private tunnel")
 
-    def peer_ice_config(self):
+    def peer_ice_config(self, ice_restart=False):
+        if ice_restart and self._pc:
+            asyncio.create_task(self._pc.close())
+            self._pc = None
         response = router_get_relay_access_creds(params=self.params, expire_sec=60000000)
         if response is None:
             raise Exception("Error getting relay access credentials")
@@ -380,7 +782,9 @@ class WebRTCConnection:
         if self._pc.connectionState == "connected":
             # Connection is established, you can now send/receive data
             pass
-        elif self._pc.connectionState in ["disconnected", "failed", "closed"]:
+        elif self._pc.connectionState in "disconnected failed".split():
+            asyncio.create_task(self.attempt_reconnect())
+        elif self._pc.connectionState == "closed":
             # Handle disconnection or failure here
             asyncio.get_event_loop().create_task(self.close_webrtc_connection())
             pass
@@ -520,12 +924,16 @@ class TunnelEntrance:
                  print_ready_event,  # type: asyncio.Event
                  logger=None,  # type: logging.Logger
                  connect_task=None,  # type: asyncio.Task
-                 kill_server_event=None  # type: asyncio.Event
+                 kill_server_event=None,  # type: asyncio.Event
+                 target_host=None,  # type: Optional[str]
+                 target_port=None  # type: Optional[int]
                  ):  # type: (...) -> None
         self.closing = False
         self.to_local_task = None
         self._ping_attempt = 0
         self.host = host
+        self.target_host = target_host
+        self.target_port = target_port
         self.server = None
         self.connection_no = 1
         self.connections: Dict[int, ConnectionInfo] = {0: ConnectionInfo(None, None, 0, None, None, datetime.now())}
@@ -545,23 +953,24 @@ class TunnelEntrance:
 
     async def send_to_web_rtc(self, data):
         if self.pc.is_data_channel_open():
-            try:
-                sleep_count = 0
-                while (self.pc.data_channel is not None and
-                       self.pc.data_channel.bufferedAmount >= BUFFER_THRESHOLD and
-                       not self.kill_server_event.is_set() and
-                       self.pc.is_data_channel_open()):
-                    self.logger.debug(f"{bcolors.WARNING}Buffered amount is too high ({sleep_count * 100}) "
-                                      f"{self.pc.data_channel.bufferedAmount}{bcolors.ENDC}")
-                    await asyncio.sleep(sleep_count)
-                    sleep_count += .01
-                self.pc.send_message(data)
-                # Yield control back to the event loop for other tasks to execute
-                await asyncio.sleep(0)
+            sleep_count = 0
+            while (self.pc.data_channel is not None and
+                   self.pc.data_channel.bufferedAmount >= BUFFER_THRESHOLD and
+                   not self.kill_server_event.is_set() and
+                   self.pc.is_data_channel_open()):
+                self.logger.debug(f"{bcolors.WARNING}Buffered amount is too high ({sleep_count * 100}) "
+                                  f"{self.pc.data_channel.bufferedAmount}{bcolors.ENDC}")
+                await asyncio.sleep(sleep_count)
+                sleep_count += .01
 
+            try:
+                self.pc.send_message(data)
             except Exception as e:
                 self.logger.error(f'Endpoint {self.pc.endpoint_name}: Error sending message: {e}')
                 await asyncio.sleep(0.1)
+            # Yield control back to the event loop for other tasks to execute
+            await asyncio.sleep(0)
+
         else:
             if self.print_ready_event.is_set():
                 self.logger.error(f'Endpoint {self.pc.endpoint_name}: Data channel is not open. Data not sent.')
@@ -576,8 +985,8 @@ class TunnelEntrance:
         """
         buffer = make_control_message(message_no, data)
         try:
-            self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Sending Control command {message_no} len: {len(buffer)}'
-                              f' to tunnel.')
+            self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Sending Control command {message_no} '
+                              f'len: {len(buffer)} to tunnel.')
             self.connections[0].transfer_size += len(buffer)
             await self.send_to_web_rtc(buffer)
         except Exception as e:
@@ -624,19 +1033,18 @@ class TunnelEntrance:
     async def process_control_message(self, message_no, data):  # type: (ControlMessage, Optional[bytes]) -> None
         if message_no == ControlMessage.CloseConnection:
             self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Received close connection request')
-            if data and len(data) > 0:
-
+            if data and len(data) >= CONNECTION_NO_LENGTH:
                 target_connection_no = int.from_bytes(data[:CONNECTION_NO_LENGTH], byteorder='big')
                 reason = CloseConnectionReasons.Unknown
-                if len(data) >= CONNECTION_NO_LENGTH:
+                if len(data) > CONNECTION_NO_LENGTH:
                     reason_int = int.from_bytes(data[CONNECTION_NO_LENGTH:], byteorder='big')
                     reason = CloseConnectionReasons(reason_int)
                     self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Closing Connection {target_connection_no}' +
                                       (f'Reason: {reason}' if reason else ''))
                 else:
                     self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Closing Connection {target_connection_no}')
-
                 if target_connection_no == 0:
+                    self.logger.info(f'Endpoint {self.pc.endpoint_name}: Received close Tunnel connection request.')
                     self.kill_server_event.set()
                 else:
                     self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Closing connection '
@@ -645,8 +1053,8 @@ class TunnelEntrance:
         elif message_no == ControlMessage.Pong:
             self._ping_attempt = 0
             self.is_connected = True
-            if len(data) >= 0:
-                con_no = bytes_to_int(data)
+            if len(data) >= CONNECTION_NO_LENGTH:
+                con_no = int.from_bytes(data[:CONNECTION_NO_LENGTH], byteorder='big')
                 if con_no in self.connections:
                     self.connections[con_no].message_counter = 0
                     self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Received pong request')
@@ -675,38 +1083,49 @@ class TunnelEntrance:
                     self.connections[0].ping_time = None
 
         elif message_no == ControlMessage.Ping:
-            if len(data) >= 0:
-                con_no = bytes_to_int(data)
+            if len(data) >= CONNECTION_NO_LENGTH:
+                con_no = int.from_bytes(data[:CONNECTION_NO_LENGTH], byteorder='big')
                 if con_no in self.connections:
-                    await self.send_control_message(ControlMessage.Pong, int_to_bytes(con_no))
-                    if con_no == 0:
-                        self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Received ping request')
-                    else:
-                        if self.logger.level == logging.DEBUG:
-                            self.report_stats(0)
-                        self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Received Ping for {con_no}')
+                    await self.send_control_message(ControlMessage.Pong, int.to_bytes(con_no, CONNECTION_NO_LENGTH,
+                                                                                      byteorder='big'))
+                    if len(data[:CONNECTION_NO_LENGTH]) >= TIME_STAMP_LENGTH:
+                        self.connections[con_no].transfer_latency_sum += int.from_bytes(data[CONNECTION_NO_LENGTH:
+                                                                                             CONNECTION_NO_LENGTH +
+                                                                                             TIME_STAMP_LENGTH],
+                                                                                        byteorder='big')
+                        self.connections[con_no].transfer_latency_count += 1
+
+                    self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Received Ping for {con_no}')
+                    if con_no != 0 and self.logger.level == logging.DEBUG:
+                        self.report_stats(0)
                     if self.logger.level == logging.DEBUG:
                         # print the stats
                         self.report_stats(con_no)
                 else:
-                    self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Connection {con_no} not found')
+                    self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Connection {con_no} for Ping not found')
             else:
-                self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Connection not found')
+                self.logger.debug(f'Endpoint {self.endpoint_name}: Received Ping request')
+                await self.send_control_message(ControlMessage.Pong, int.to_bytes(0, CONNECTION_NO_LENGTH,
+                                                                                  byteorder='big'))
         elif message_no == ControlMessage.ConnectionOpened:
-            if len(data) >= CONNECTION_NO_LENGTH:
-                if len(data) > CONNECTION_NO_LENGTH:
-                    self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Received invalid open connection message"
-                                      f" ({len(data)} bytes)")
+            if len(data) > CONNECTION_NO_LENGTH:
                 connection_no = int.from_bytes(data[:CONNECTION_NO_LENGTH], byteorder='big')
                 self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Starting reader for connection "
                                   f"{connection_no}")
+                # If it is a socks connection then we need to signal the client that the connection is open
+                if isinstance(self, SOCKS5Server):
+                    self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Socks Connection {connection_no} opened')
+                    # Send a success response back to the client
+                    response = b'\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00'
+                    self.connections[connection_no].writer.write(response)
+                    await self.connections[connection_no].writer.drain()
                 try:
                     self.connections[connection_no].to_tunnel_task = asyncio.create_task(
                         self.forward_data_to_tunnel(connection_no))  # From current connection to WebRTC connection
                     self.logger.debug(
                         f"Endpoint {self.pc.endpoint_name}: Started reader for connection {connection_no}")
                 except ConnectionNotFoundException as e:
-                    self.logger.debug(f"Endpoint {self.vendpoint_name}: Connection {connection_no} not found: {e}")
+                    self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Connection {connection_no} not found: {e}")
                 except Exception as e:
                     self.logger.error(f"Endpoint {self.pc.endpoint_name}: Error in forwarding data task: {e}")
             else:
@@ -729,115 +1148,114 @@ class TunnelEntrance:
          Control Packets [CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + CONTROL_MESSAGE_NO_LENGTH + DATA]
          Data Packets [CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + DATA]
         """
-        try:
-            self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Forwarding data to local...")
-            buff = b''
-            while not self.kill_server_event.is_set():
-                if self.pc.closed:
-                    self.kill_server_event.set()
-                    break
-                while len(buff) >= CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH:
-                    connection_no = int.from_bytes(buff[:CONNECTION_NO_LENGTH], byteorder='big')
-                    time_stamp = int.from_bytes(
-                        buff[CONNECTION_NO_LENGTH:CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH], byteorder='big')
-                    length = int.from_bytes(
-                        buff[CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH:
-                             CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH], byteorder='big')
-                    if len(buff) >= CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length + len(TERMINATOR):
-                        if (buff[(CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length):
-                            (CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length + len(TERMINATOR))] !=
-                                TERMINATOR):
-                            self.logger.warning(f'Endpoint {self.pc.endpoint_name}: Invalid terminator')
-                            # if we don't have a valid terminator then we don't know where the message ends or begins
-                            self.kill_server_event.set()
-                            break
-                        self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Buffer data received data')
-                        send_data = (buff[CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH:
-                                     CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length])
-                        self.update_stats(connection_no, len(send_data) + CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH +
-                                          DATA_LENGTH, time_stamp)
-                        buff = buff[CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length + len(TERMINATOR):]
-
-                        if connection_no == 0:
-                            # This is a control message
-                            control_m = ControlMessage(int.from_bytes(send_data[:CONTROL_MESSAGE_NO_LENGTH],
-                                                                      byteorder='big'))
-
-                            send_data = send_data[CONTROL_MESSAGE_NO_LENGTH:]
-
-                            await self.process_control_message(control_m, send_data)
-                        else:
-                            if connection_no not in self.connections:
-                                self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Connection not found: "
-                                                  f"{connection_no}")
-                                continue
-
-                            try:
-                                self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Forwarding data to "
-                                                  f"local for connection {connection_no} ({len(send_data)})")
-                                self.connections[connection_no].writer.write(send_data)
-                                await self.connections[connection_no].writer.drain()
-                                # Yield control back to the event loop for other tasks to execute
-                                await asyncio.sleep(0)
-                            except Exception as ex:
-                                self.logger.error(f"Endpoint {self.pc.endpoint_name}: Error while forwarding "
-                                                  f"data to local: {ex}")
-
-                                # Yield control back to the event loop for other tasks to execute
-                                await asyncio.sleep(0)
-                    else:
-                        self.logger.debug(
-                            f"Endpoint {self.pc.endpoint_name}: Buffer is too short {len(buff)} need "
-                            f"{CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length + len(TERMINATOR)}")
-                        # Yield control back to the event loop for other tasks to execute
-                        await asyncio.sleep(0)
+        self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Forwarding data to local...")
+        buff = b''
+        while not self.kill_server_event.is_set():
+            if self.pc.closed:
+                self.kill_server_event.set()
+                break
+            while len(buff) >= CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH:
+                connection_no = int.from_bytes(buff[:CONNECTION_NO_LENGTH], byteorder='big')
+                time_stamp = int.from_bytes(
+                    buff[CONNECTION_NO_LENGTH:CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH], byteorder='big')
+                length = int.from_bytes(
+                    buff[CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH:
+                         CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH], byteorder='big')
+                if len(buff) >= CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length + len(TERMINATOR):
+                    if (buff[(CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length):
+                        (CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length + len(TERMINATOR))] !=
+                            TERMINATOR):
+                        self.logger.warning(f'Endpoint {self.pc.endpoint_name}: Invalid terminator')
+                        # if we don't have a valid terminator then we don't know where the message ends or begins
+                        self.kill_server_event.set()
                         break
-                if self.kill_server_event.is_set():
-                    break
-                try:
-                    data = await asyncio.wait_for(self.pc.web_rtc_queue.get(), READ_TIMEOUT)
-                except asyncio.TimeoutError as et:
-                    if self._ping_attempt > 3:
-                        if self.is_connected:
-                            self.kill_server_event.set()
-                        raise et
-                    self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Tunnel reader timed out')
-                    if self.is_connected and self.pc.is_data_channel_open():
-                        self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Send ping request')
-                        await self.send_control_message(ControlMessage.Ping, int_to_bytes(0))
+                    self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Buffer data received data')
+                    send_data = (buff[CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH:
+                                 CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length])
+                    self.update_stats(connection_no, len(send_data) + CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH +
+                                      DATA_LENGTH, time_stamp)
+                    buff = buff[CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length + len(TERMINATOR):]
 
-                        if self.logger.level == logging.DEBUG:
-                            # print the stats
-                            for c in self.connections.keys():
-                                self.report_stats(c)
-                        self._ping_attempt += 1
-                    continue
-                self.pc.web_rtc_queue.task_done()
-                if not data or not self.is_connected:
-                    self.logger.info(f"Endpoint {self.pc.endpoint_name}: Exiting forward data to local")
-                    break
-                elif len(data) == 0:
-                    # Yield control back to the event loop for other tasks to execute
-                    await asyncio.sleep(0)
-                    continue
-                elif isinstance(data, bytes):
-                    self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Got data from WebRTC connection "
-                                      f"{len(data)} bytes")
-                    buff += data
+                    if connection_no == 0:
+                        # This is a control message
+                        control_m = ControlMessage(int.from_bytes(send_data[:CONTROL_MESSAGE_NO_LENGTH],
+                                                                  byteorder='big'))
+
+                        send_data = send_data[CONTROL_MESSAGE_NO_LENGTH:]
+
+                        await self.process_control_message(control_m, send_data)
+                    else:
+                        if connection_no not in self.connections:
+                            self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Connection not found: "
+                                              f"{connection_no}")
+                            continue
+
+                        try:
+                            self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Forwarding data to "
+                                              f"local for connection {connection_no} ({len(send_data)})")
+                            self.connections[connection_no].writer.write(send_data)
+                            await self.connections[connection_no].writer.drain()
+                            # Yield control back to the event loop for other tasks to execute
+                            await asyncio.sleep(0)
+                        except Exception as ex:
+                            self.logger.error(f"Endpoint {self.pc.endpoint_name}: Error while forwarding "
+                                              f"data to local: {ex}")
+
+                            # Yield control back to the event loop for other tasks to execute
+                            await asyncio.sleep(0)
                 else:
+                    self.logger.debug(
+                        f"Endpoint {self.pc.endpoint_name}: Buffer is too short {len(buff)} need "
+                        f"{CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + length + len(TERMINATOR)}")
                     # Yield control back to the event loop for other tasks to execute
                     await asyncio.sleep(0)
+                    break
+            if self.kill_server_event.is_set():
+                break
+            try:
+                data = await asyncio.wait_for(self.pc.web_rtc_queue.get(), READ_TIMEOUT)
+            except asyncio.TimeoutError as et:
+                if self._ping_attempt > 3:
+                    if self.is_connected:
+                        self.kill_server_event.set()
+                    raise et
+                self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Tunnel reader timed out')
+                if self.is_connected and self.pc.is_data_channel_open():
+                    self.logger.debug(f'Endpoint {self.pc.endpoint_name}: Send ping request')
 
-            self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Exiting forward data successfully.")
-        except asyncio.CancelledError:
-            pass
+                    buffer = int.to_bytes(0, CONNECTION_NO_LENGTH, byteorder='big')
+                    if self.connections[0].receive_latency_count > 0:
+                        receive_latency_average = int(self.connections[0].receive_latency_sum /
+                                                      self.connections[0].receive_latency_count)
+                        buffer += int.to_bytes(receive_latency_average, TIME_STAMP_LENGTH, byteorder='big')
+                    await self.send_control_message(ControlMessage.Ping, buffer)
 
-        except Exception as ex:
-            self.logger.error(f"Endpoint {self.pc.endpoint_name}: Error while forwarding data: {ex}")
+                    if self.logger.level == logging.DEBUG:
+                        # print the stats
+                        for c in self.connections.keys():
+                            self.report_stats(c)
+                    self._ping_attempt += 1
+                continue
+            self.pc.web_rtc_queue.task_done()
+            if not data or not self.is_connected:
+                self.logger.info(f"Endpoint {self.pc.endpoint_name}: Exiting forward data to local")
+                break
+            elif len(data) == 0:
+                # Yield control back to the event loop for other tasks to execute
+                await asyncio.sleep(0)
+                continue
+            elif isinstance(data, bytes):
+                self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Got data from WebRTC connection "
+                                  f"{len(data)} bytes")
+                buff += data
+            else:
+                # Yield control back to the event loop for other tasks to execute
+                await asyncio.sleep(0)
 
-        finally:
-            self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Closing tunnel")
-            await self.stop_server(CloseConnectionReasons.Normal)
+        self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Exiting forward data successfully.")
+
+        self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Closing tunnel")
+        await self.stop_server(CloseConnectionReasons.Normal)
 
     async def start_reader(self):  # type: () -> None
         """
@@ -849,7 +1267,7 @@ class TunnelEntrance:
             self.to_local_task = asyncio.create_task(self.forward_data_to_local())
 
             # Send hello world open connection message
-            await self.send_control_message(ControlMessage.Ping, int_to_bytes(0))
+            await self.send_control_message(ControlMessage.Ping, int.to_bytes(0, CONNECTION_NO_LENGTH, byteorder='big'))
             self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Sent ping message to WebRTC connection")
         except asyncio.CancelledError:
             pass
@@ -866,71 +1284,75 @@ class TunnelEntrance:
         """
         Forward data from the given connection to the WebRTC connection
         """
-        try:
-            while not self.kill_server_event.is_set():
-                c = self.connections.get(con_no)
-                if c is None or not self.is_connected:
-                    break
-                try:
-                    data = await c.reader.read(BUFFER_TRUNCATION_THRESHOLD)
-                    self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Forwarding {len(data)} "
-                                      f"bytes to tunnel for connection {con_no}")
-                    if not data:
-                        self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Connection {con_no} no data")
-                        break
-                    if isinstance(data, bytes):
-                        if c.reader.at_eof() and len(data) == 0:
-                            if not self.eof_sent:
-                                await self.send_control_message(ControlMessage.SendEOF,
-                                                                int_to_bytes(con_no, CONNECTION_NO_LENGTH))
-                                self.eof_sent = True
-                            # Yield control back to the event loop for other tasks to execute
-                            await asyncio.sleep(0)
-                            continue
-                        else:
-                            self.eof_sent = False
-                            buffer = int.to_bytes(con_no, CONNECTION_NO_LENGTH, byteorder='big')
-                            # Add timestamp
-                            timestamp_ms = int(datetime.now().timestamp() * 1000)
-                            buffer += int.to_bytes(timestamp_ms, TIME_STAMP_LENGTH, byteorder='big')
-                            buffer += int.to_bytes(len(data), DATA_LENGTH, byteorder='big') + data + TERMINATOR
-                            self.connections[con_no].transfer_size += len(buffer)
-                            await self.send_to_web_rtc(buffer)
+        while not self.kill_server_event.is_set():
+            c = self.connections.get(con_no)
+            if c is None or not self.is_connected:
+                break
+            try:
+                data = await c.reader.read(BUFFER_TRUNCATION_THRESHOLD)
+            except Exception as e:
+                self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Connection '{con_no}' read failed: {e}")
+                break
+            self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Forwarding {len(data)} "
+                              f"bytes to tunnel for connection {con_no}")
+            if not data:
+                self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Connection {con_no} no data")
+                break
+            if isinstance(data, bytes):
+                if c.reader.at_eof() and len(data) == 0:
+                    if not self.eof_sent:
+                        await self.send_control_message(ControlMessage.SendEOF,
+                                                        int.to_bytes(con_no, CONNECTION_NO_LENGTH,
+                                                                     byteorder='big'))
+                        self.eof_sent = True
+                    # Yield control back to the event loop for other tasks to execute
+                    await asyncio.sleep(0)
+                    continue
+                else:
+                    self.eof_sent = False
+                    buffer = int.to_bytes(con_no, CONNECTION_NO_LENGTH, byteorder='big')
+                    # Add timestamp
+                    timestamp_ms = int(datetime.now().timestamp() * 1000)
+                    buffer += int.to_bytes(timestamp_ms, TIME_STAMP_LENGTH, byteorder='big')
+                    buffer += int.to_bytes(len(data), DATA_LENGTH, byteorder='big') + data + TERMINATOR
+                    self.connections[con_no].transfer_size += len(buffer)
+                    await self.send_to_web_rtc(buffer)
 
-                            self.logger.debug(
-                                f'Endpoint {self.pc.endpoint_name}: buffer size: {self.pc.data_channel.bufferedAmount}' +
-                                f', time since start: {datetime.now() - c.start_time}')
+                    self.logger.debug(
+                        f'Endpoint {self.pc.endpoint_name}: buffer size: {self.pc.data_channel.bufferedAmount}'
+                        f', time since start: {datetime.now() - c.start_time}')
 
-                            c.message_counter += 1
-                            if (c.message_counter >= MESSAGE_MAX and
-                                    self.pc.data_channel.bufferedAmount > BUFFER_TRUNCATION_THRESHOLD):
-                                c.ping_time = time.perf_counter()
-                                await self.send_control_message(ControlMessage.Ping, int_to_bytes(con_no))
-                                self._ping_attempt += 1
-                                wait_count = 0
-                                while c.message_counter >= MESSAGE_MAX:
-                                    await asyncio.sleep(wait_count)
-                                    wait_count += .1
-                            elif (c.message_counter >= MESSAGE_MAX and
-                                  self.pc.data_channel.bufferedAmount <= BUFFER_TRUNCATION_THRESHOLD):
-                                c.message_counter = 0
+                    c.message_counter += 1
+                    if (c.message_counter >= MESSAGE_MAX and
+                            self.pc.data_channel.bufferedAmount > BUFFER_TRUNCATION_THRESHOLD):
+                        c.ping_time = time.perf_counter()
 
-                    else:
-                        # Yield control back to the event loop for other tasks to execute
-                        await asyncio.sleep(0)
-                except Exception as e:
-                    self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Connection '{con_no}' read failed: {e}")
-                    break
-        except Exception as e:
-            self.logger.error(f"Endpoint {self.pc.endpoint_name}: Error while forwarding data in connection "
-                              f"{con_no}: {e}")
+                        ping_buffer = int.to_bytes(con_no, CONNECTION_NO_LENGTH, byteorder='big')
+                        if self.connections[0].receive_latency_count > 0:
+                            receive_latency_average = int(self.connections[0].receive_latency_sum /
+                                                          self.connections[0].receive_latency_count)
+                            ping_buffer += int.to_bytes(receive_latency_average, TIME_STAMP_LENGTH,
+                                                        byteorder='big')
+                        await self.send_control_message(ControlMessage.Ping, ping_buffer)
+                        self._ping_attempt += 1
+                        wait_count = 0
+                        while c.message_counter >= MESSAGE_MAX:
+                            await asyncio.sleep(wait_count)
+                            wait_count += .1
+                    elif (c.message_counter >= MESSAGE_MAX and
+                          self.pc.data_channel.bufferedAmount <= BUFFER_TRUNCATION_THRESHOLD):
+                        c.message_counter = 0
+
+            else:
+                # Yield control back to the event loop for other tasks to execute
+                await asyncio.sleep(0)
 
         if con_no not in self.connections:
             raise ConnectionNotFoundException(f"Connection {con_no} not found")
 
         # Send close connection message with con_no
         buff = int.to_bytes(con_no, CONNECTION_NO_LENGTH, byteorder='big')
-        buff += int_to_bytes(CloseConnectionReasons.Normal.value)
+        buff += int.to_bytes(CloseConnectionReasons.Normal.value, CLOSE_CONNECTION_REASON_LENGTH, byteorder='big')
         await self.send_control_message(ControlMessage.CloseConnection, buff)
         await self.close_connection(con_no, CloseConnectionReasons.Normal)
 
@@ -1027,7 +1449,7 @@ class TunnelEntrance:
         self.report_stats(connection_no)
         try:
             buffer = int.to_bytes(connection_no, CONNECTION_NO_LENGTH, byteorder='big')
-            buffer += int_to_bytes(reason.value)
+            buffer += int.to_bytes(reason.value, CLOSE_CONNECTION_REASON_LENGTH, byteorder='big')
             await self.send_control_message(ControlMessage.CloseConnection, buffer)
         except Exception as ex:
             self.logger.warning(f'Endpoint {self.pc.endpoint_name}: hit exception sending Close connection {ex}')
@@ -1071,3 +1493,188 @@ class TunnelEntrance:
                 self.logger.warning(f'Endpoint {self.pc.endpoint_name}: hit exception deleting connection {ex}')
         else:
             self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Connection {connection_no} not found")
+
+
+class SOCKS5Server(TunnelEntrance):
+    def __init__(self,
+                 host,  # type: str
+                 port,  # type: int
+                 pc,  # type: WebRTCConnection
+                 print_ready_event,  # type: asyncio.Event
+                 logger=None,  # type: logging.Logger
+                 connect_task=None,  # type: asyncio.Task
+                 kill_server_event=None,  # type: asyncio.Event
+                 target_host=None,  # type: Optional[str]
+                 target_port=None  # type: Optional[int]
+                 ):  # type: (...) -> None
+        super().__init__(host, port, pc, print_ready_event, logger, connect_task, kill_server_event, target_host,
+                         target_port)
+        # Credentials for authentication
+        # self.valid_username = os.getenv('SOCKS5_USERNAME', 'defaultuser')
+        # self.valid_password = os.getenv('SOCKS5_PASSWORD', 'defaultpass')
+        # if self.valid_username == 'defaultuser' or self.valid_password == 'defaultpass':
+        #     self.logger.warning("Default SOCKS5 credentials are being used. "
+        #                    "Please set SOCKS5_USERNAME and SOCKS5_PASSWORD environment variables.")
+
+    # async def username_password_authenticate(self, reader, writer):
+    #     # Username/Password Authentication (RFC 1929)
+    #     try:
+    #         auth_version_bytes = await reader.readexactly(1)
+    #         auth_version = ord(auth_version_bytes)
+    #         if auth_version != 1:  # Should be 0x01 for username/password auth
+    #             return False
+    #
+    #         username_length_bytes = await reader.readexactly(1)
+    #         username_length = ord(username_length_bytes)
+    #         username = await reader.readexactly(username_length)
+    #         username = username.decode()
+    #
+    #         password_length_bytes = await reader.readexactly(1)
+    #         password_length = ord(password_length_bytes)
+    #         password = await reader.readexactly(password_length)
+    #         password = password.decode()
+    #     except asyncio.IncompleteReadError:
+    #         # Handle the case where the client disconnects or sends incomplete data
+    #         return False
+    #
+    #     # Verify username and password
+    #     if username == self.valid_username and password == self.valid_password:
+    #         writer.write(b'\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00')  # Authentication succeeded
+    #         await writer.drain()
+    #         return True
+    #     else:
+    #         writer.write(b'\x01\x01\x00\x01\x00\x00\x00\x00\x00\x00')  # Authentication failed
+    #         await writer.drain()
+    #         return False
+
+    async def handle_connection(self, reader, writer):  # type: (asyncio.StreamReader, asyncio.StreamWriter) -> None
+        """
+        This is called when a client connects to the local port starting a new session.
+        This extends the base handle_connection method to handle SOCKS5 connections.
+        """
+        async def quick_close(reason: bytes):
+            writer.write(reason)  # Network unreachable
+            writer.close()
+            await writer.wait_closed()
+
+        connection_no = self.connection_no
+        self.connection_no += 1
+        self.connections[connection_no] = ConnectionInfo(reader, writer, 0, None, None, datetime.now())
+
+        # Only allow connections from localhost
+        client_host, client_port = writer.get_extra_info('peername')
+        if client_host != '127.0.0.1':
+            self.logger.warning(f"Connection from {client_host}:{client_port} rejected")
+            await quick_close(b'\x05\x02\x00\x01\x00\x00\x00\x00\x00\x00')  # Connection not allowed
+            return
+
+        # Initial greeting and authentication method negotiation
+        # SOCKS5, 2 authentication methods, No Auth and Username/Password
+        # supported_methods = [0x00, 0x02]
+        supported_methods = [0x00]
+        # Wait for the client's authentication method request
+        client_greeting = await reader.read(2)
+        socks_version, n_methods = client_greeting
+
+        if socks_version not in [0x05, 0x04]:  # SOCKS5 or SOCKS4
+            self.logger.error("Invalid SOCKS version")
+            await quick_close(b'\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00')  # Unsupported version
+            return
+
+        method_ids = await reader.readexactly(n_methods)
+        # Decide which method to use (prefer No Auth if available)
+        if 0x00 in method_ids and 0x00 in supported_methods:
+            selected_method = 0x00  # No Authentication Required
+        # elif 0x02 in method_ids and 0x02 in supported_methods:
+        #     selected_method = 0x02  # Username/Password
+        else:
+            selected_method = 0xff  # No acceptable methods
+
+        # Send the selected method back to the client
+        writer.write(struct.pack("!BB", socks_version, selected_method))
+        await writer.drain()
+
+        # Proceed based on the selected method
+        if selected_method == 0x00:
+            # No further authentication needed
+            pass
+        # elif selected_method == 0x02:
+        #     # Perform username/password authentication
+        #     auth_success = await self.username_password_authenticate(reader, writer)
+        #     if not auth_success:
+        #         self.logger.error("Authentication failed")
+        #         writer.close()
+        #         await writer.wait_closed()
+        #         return
+        else:
+            # No acceptable method found, close the connection
+            self.logger.error("No acceptable authentication method found")
+            await quick_close(b'\x05\xFF\x00\x01\x00\x00\x00\x00\x00\x00')  # No acceptable methods
+            return
+
+        # Read the connection request
+        data = await reader.read(4)
+        if len(data) != 4:
+            self.logger.error("Invalid connection request")
+            await quick_close(b'\x05\x02\x00\x01\x00\x00\x00\x00\x00\x00')  # Command not supported
+            return
+
+        version, cmd, reserved, address_type = struct.unpack('!BBBB', data)
+
+        if cmd != 1:  # 1 for CONNECT
+            self.logger.error("Unsupported command")
+            await quick_close(b'\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00')  # Command not supported
+            return
+
+        # # Pseudo-code for handling a BIND command
+        # if cmd == 2:  # BIND
+        #     # bind_address and bind_port are from the client request
+        #     external_socket = await bind_and_listen(bind_address, bind_port)
+        #     server_reply_address, server_reply_port = external_socket.getsockname()
+        #     # Send server's chosen address and port back to the client
+        #     send_bind_reply_to_client(server_reply_address, server_reply_port)
+        #     # Wait for an external connection
+        #     external_conn, external_addr = await external_socket.accept()
+        #     # Notify client of the external connection details
+        #     notify_client_of_external_connection(external_addr)
+        #     # Proceed to relay data between client and external connection
+
+        # # Pseudo-code for handling a UDP ASSOCIATE command
+        # if cmd == 3:  # UDP ASSOCIATE
+        #     # client's address and port are what?
+        #     udp_socket = await allocate_udp_port()
+        #     socks_server_udp_address, socks_server_udp_port = udp_socket.getsockname()
+        #     # Send SOCKS server's UDP address and port back to the client
+        #     send_udp_associate_reply_to_client(socks_server_udp_address, socks_server_udp_port)
+        #     # Listen for UDP datagrams from the client and relay them accordingly
+        #     while True:
+        #         data, addr = await udp_socket.recvfrom()
+        #         if is_datagram_for_client(data):
+        #             relay_datagram_to_final_destination(data, addr)
+        #         else:
+        #             relay_datagram_to_client(data, addr)
+
+        if address_type == 1:  # IPv4
+            address = await reader.readexactly(4)
+            tunnel_host = '.'.join(str(byte) for byte in address)
+        elif address_type == 3:  # Domain name
+            domain_length = ord(await reader.readexactly(1))
+            tunnel_host = await reader.readexactly(domain_length)
+            tunnel_host = tunnel_host.decode()
+        elif address_type == 4:  # IPv6
+            address = await reader.readexactly(16)
+            tunnel_host = ':'.join(str(byte) for byte in address)
+        else:
+            self.logger.error("Unsupported address type")
+            await quick_close(b'\x05\x08\x00\x01\x00\x00\x00\x00\x00\x00')  # Address type not supported
+            return
+
+        tunnel_port = int.from_bytes(await reader.readexactly(2), 'big')
+
+        # Send open connection message with con_no. this is required to be sent to start the connection
+        data = int.to_bytes(connection_no, CONNECTION_NO_LENGTH, byteorder='big')
+        tunnel_host_bytes = tunnel_host.encode()
+        data += int.to_bytes(len(tunnel_host_bytes), CONNECTION_NO_LENGTH, byteorder='big')
+        data += tunnel_host_bytes
+        data += int.to_bytes(tunnel_port, PORT_LENGTH, byteorder='big')
+        await self.send_control_message(ControlMessage.OpenConnection, data)
