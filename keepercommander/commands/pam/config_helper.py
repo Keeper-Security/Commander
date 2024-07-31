@@ -200,3 +200,16 @@ def record_rotation_get(params, record_uid_bytes):  # type: (KeeperParams, bytes
     return rotation_info_rs
 
 
+def configuration_controller_get(params, config_uid_bytes: bytes):
+    """
+    Get the Controller UID that has access to the configuration UID
+    Retrieves a keeper.pam_controller record, from given configuration_uid provided in request.
+    controller_uid is the UID of the user who has access to the configuration url_safe_str_to_bytes(config_uid)
+    """
+    rq = pam_pb2.PAMGenericUidRequest()
+    rq.uid = config_uid_bytes
+
+    config_info_rs = api.communicate_rest(params, rq, 'pam/get_configuration_controller',
+                                          rs_type=pam_pb2.PAMController)
+
+    return config_info_rs
