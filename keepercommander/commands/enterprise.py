@@ -2084,7 +2084,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                         logging.warning('Enforcement %s is skipped. Expected format:  KEY:[VALUE]', enforcement)
                         continue
                     key = tokens[0].strip().lower()
-                    enforcement_type = constants.ENFORCEMENTS.get(key)
+                    enforcement_type = constants.ENFORCEMENTS.get(key, '').strip()
                     if not enforcement_type:
                         logging.warning('Enforcement \"%s\" does not exist', key)
                         continue
