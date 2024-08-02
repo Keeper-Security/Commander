@@ -174,7 +174,7 @@ enterprise_user_parser.exit = suppress_exit
 
 
 enterprise_role_parser = argparse.ArgumentParser(prog='enterprise-role', description='Manage an enterprise role(s).')
-#enterprise_role_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
+enterprise_role_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_role_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_role_parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'],
                                     default='table', help='output format.')
@@ -2072,7 +2072,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
 
                 if add_user or remove_user:
                     request_batch += self.get_role_users_change_batch(
-                        params, matched_roles, add_user, remove_user
+                        params, matched_roles, add_user, remove_user, kwargs.get('force')
                     )
 
             elif kwargs.get('enforcements'):
