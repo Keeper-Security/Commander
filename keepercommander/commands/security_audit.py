@@ -1,9 +1,9 @@
 import argparse
+import base64
 import json
 import logging
 from json import JSONDecodeError
 from typing import Dict, List, Optional, Any
-from charset_normalizer import detect, from_bytes
 
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
@@ -43,6 +43,10 @@ report_parser.add_argument('--format', dest='format', action='store', choices=['
                            help='output format.')
 report_parser.add_argument('--output', dest='output', action='store',
                            help='output file name. (ignored for table format)')
+attempt_fix_help = ('do a "hard" sync for vaults with invalid security-data. Associated security scores are reset and '
+                    'will be inaccurate until affected vaults can re-calculate and update their security-data')
+report_parser.add_argument('--attempt-fix', action='store_true', help=attempt_fix_help)
+report_parser.add_argument('-f', '--force', action='store_true', help='skip confirmation prompts (non-interactive mode)')
 report_parser.add_argument('--debug', action='store_true', help=argparse.SUPPRESS)
 report_parser.error = raise_parse_exception
 report_parser.exit = suppress_exit
@@ -63,6 +67,11 @@ sync_parser.add_argument('email', type=str, nargs='+', help=sync_email_help)
 sync_verbose_help = 'run and show the latest security-audit report immediately after sync'
 sync_parser.add_argument('-v', '--verbose', action='store_true', help=sync_verbose_help)
 sync_parser.add_argument('-f', '--force', action='store_true', help='do sync non-interactively')
+sync_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'], default='table',
+                           help='output format. Valid only with --verbose.')
+sync_parser.add_argument('--output', dest='output', action='store',
+                           help='output file name. Ignore for table format, valid only with --verbose')
+
 sync_parser.error = raise_parse_exception
 sync_parser.exit = suppress_exit
 
@@ -180,6 +189,8 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             logging.info(security_audit_report_description)
             return
 
+        self.enterprise_private_rsa_key = None
+
         show_breachwatch = kwargs.get('breachwatch')
         if show_breachwatch:
             BreachWatch.validate_reporting('security-audit-report', params)
@@ -193,12 +204,14 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         self.clear_ancillary_report_data()
         debug_mode = kwargs.get('debug')
         self.debug_report_builder = debug_mode and self.DebugReportBuilder()
+        force = kwargs.get('force')
+        attempt_fix = kwargs.get('attempt_fix')
 
         nodes = kwargs.get('node') or []
         node_ids = [get_node_id(n) for n in nodes]
         node_ids = [n for n in node_ids if n]
         score_type = kwargs.get('score_type', 'default')
-        save_report = kwargs.get('save')
+        save_report = kwargs.get('save') or attempt_fix
         show_updated = save_report or kwargs.get('show_updated')
         updated_security_reports = []
         tree_key = (params.enterprise or {}).get('unencrypted_tree_key')
@@ -315,7 +328,9 @@ class SecurityAuditReportCommand(EnterpriseCommand):
 
         # Prioritize error-reports (created if any errors are encountered while parsing security score data) over others
         if self.get_error_report_builder().has_errors_to_report():
-            return self.get_error_report_builder().get_report(out, fmt)
+            error_report_builder = self.get_error_report_builder()
+            return error_report_builder.sync_problem_vaults(params, out, fmt=fmt, force=force) if attempt_fix \
+                else error_report_builder.get_report(out, fmt)
         elif debug_mode:
             return self.debug_report_builder.get_report(out, fmt)
 
@@ -355,17 +370,11 @@ class SecurityAuditReportCommand(EnterpriseCommand):
 
                     try:
                         decoded = decrypted_bytes.decode()
-                    except UnicodeDecodeError as ude:
-                        error = f'Failed to decode incremental data: {decrypted_bytes}'
+                    except UnicodeDecodeError:
+                        error = f'Decode fail, incremental data (base 64):'
                         self.get_error_report_builder().update_report_data(error)
-                        try:
-                            detected_encoding = detect(decrypted_bytes).get('encoding')
-                            decoded_guess = from_bytes(decrypted_bytes).best().output()
-                            detected_encoding_msg = f'Using detected encoding ({detected_encoding}), decoded = {decoded_guess}'
-                            self.get_error_report_builder().update_report_data(detected_encoding_msg)
-                        except:
-                            pass
-
+                        decoded_b64 = base64.b64encode(decrypted_bytes).decode('ascii')
+                        self.get_error_report_builder().update_report_data(decoded_b64)
                         return
                     except Exception as e:
                         error = f'Decode fail: {e}'
@@ -374,9 +383,11 @@ class SecurityAuditReportCommand(EnterpriseCommand):
 
                     try:
                         decrypted = json.loads(decoded)
+                    except JSONDecodeError as jde:
+                        error = f'Invalid JSON: {decoded}'
+                        self.get_error_report_builder().update_report_data(error)
                     except Exception as e:
-                        reason = f"Invalid JSON: {e.doc}" if isinstance(e, JSONDecodeError) else e
-                        error = f'Load fail (incremental data). {reason}'
+                        error = f'Load fail (incremental data). {e}'
                         self.get_error_report_builder().update_report_data(error)
 
                 return decrypted
@@ -491,6 +502,24 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             vault_errors_table.sort(key=lambda error_row: error_row[0] != 'Enterprise')
             return dump_report_data(vault_errors_table, headers, fmt=fmt, filename=out, title=title)
 
+        def sync_problem_vaults(self, params, out, fmt='table', force=False):
+            owners = [x for x in self.report_data.keys() if '@' in x]
+            confirm_txt = (f'{len(owners)} vault(s) with invalid security-data found.'
+                           f'\nDo you wish to try to repair these data?')
+            if force or confirm(confirm_txt):
+                sync_command = SecurityAuditSyncCommand()
+                cmd_kwargs = {
+                    'email': owners,
+                    'hard': True,
+                    'force': True,
+                    'verbose': True,
+                    'output': out,
+                    'format': fmt
+                }
+                return sync_command.execute(params, **cmd_kwargs)
+            else:
+                return self.get_report(out, fmt)
+
     class DebugReportBuilder(AncillaryReportBuilder):
         def get_report(self, out, fmt='table'):
             def tabulate_debug_data():
@@ -523,21 +552,28 @@ class SecurityAuditSyncCommand(EnterpriseCommand):
                        'hard': enterprise_pb2.FORCE_CLIENT_RESEND_SECURITY_DATA}
         sync_type = next((st for st in type_lookup if kwargs.get(st)), 'soft')
         emails = kwargs.get('email')
-        uuid_lookup = {u.get('username'): u.get('enterprise_user_id') for u in params.enterprise.get('users', [])}
-        rq = enterprise_pb2.ClearSecurityDataRequest()
-        rq.type = type_lookup.get(sync_type, enterprise_pb2.RECALCULATE_SUMMARY_REPORT)
+        userid_lookup = {u.get('username'): u.get('enterprise_user_id') for u in params.enterprise.get('users', [])}
         sync_all = '@all' in emails
-        if sync_all:
-            rq.allUsers = True
-        else:
-            for e in emails:
-                if e in uuid_lookup:
-                    rq.enterpriseUserId.append(uuid_lookup.get(e))
-                else:
-                    logging.error(f'Skipping unrecognized email {e}')
-            if len(rq.enterpriseUserId) == 0:
-                logging.error('No vaults to sync. Aborting...')
-                return
+        userids = [userid_lookup.get(email) for email in emails if userid_lookup.get(email)]
+
+        if not userids and not sync_all:
+            logging.error('No vaults to sync. Aborting...')
+            return
+
+        def do_sync(target_ids, target_all=False):
+            CHUNK_SIZE = 999
+            while True:
+                rq = enterprise_pb2.ClearSecurityDataRequest()  # type: enterprise_pb2.ClearSecurityDataRequest
+                rq.type = type_lookup.get(sync_type, enterprise_pb2.RECALCULATE_SUMMARY_REPORT)
+                rq.allUsers = target_all
+                if not target_all:
+                    chunk = [id for id in target_ids[:CHUNK_SIZE] if id]
+                    target_ids = target_ids[CHUNK_SIZE:]
+                    rq.enterpriseUserId.extend(chunk)
+
+                api.communicate_rest(params, rq, 'enterprise/clear_security_data')
+                if target_all or not target_ids:
+                    break
 
         def confirm_sync():
             sync_targets = ['ALL USERS'] if sync_all else emails.copy()
@@ -553,11 +589,13 @@ class SecurityAuditSyncCommand(EnterpriseCommand):
                 confirm_txt = f'{hard_sync_desc}\n\n{confirm_txt}'
             prompt_txt = f'{prompt_title}{sync_targets}\n\n{confirm_txt}'
             if kwargs.get('force') or confirm(prompt_txt):
-                api.communicate_rest(params, rq, 'enterprise/clear_security_data')
+                do_sync(userids, sync_all)
                 # Re-calculate and save new security scores
                 if kwargs.get('verbose'):
                     sar_cmd = SecurityAuditReportCommand()
-                    return sar_cmd.execute(params, save=True)
+                    fmt = kwargs.get('format', 'table')
+                    out = kwargs.get('output')
+                    return sar_cmd.execute(params, save=True, format=fmt, output=out)
             else:
                 logging.info(f'Security-data ({sync_type}) sync aborted')
 
