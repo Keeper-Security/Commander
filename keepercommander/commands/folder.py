@@ -30,6 +30,7 @@ from prompt_toolkit.formatted_text import FormattedText
 
 from . import base
 from .base import user_choice, dump_report_data, suppress_exit, raise_parse_exception, Command, GroupCommand, RecordMixin
+from .register import ShareFolderCommand
 from .. import api, display, vault, vault_extensions, crypto, utils
 from ..error import CommandError, KeeperApiError, Error
 from ..params import KeeperParams
@@ -1495,6 +1496,12 @@ class FolderTransformCommand(Command):
 
         def remove_trees(roots):    # type: (Iterable[BaseFolderNode]) -> None
             if roots:
+                # Remove share-folder permissions prior to removal
+                sf_subfolders = [get_shared_folders(root) for root in roots]
+                sf_cmd = ShareFolderCommand()
+                for sfs in sf_subfolders:
+                    for sf in sfs:
+                        sf_cmd.execute(params, action='remove', user=['@existing'], folder=sf.get('shared_folder_uid'))
                 rmdir_cmd = FolderRemoveCommand()
                 rmdir_cmd.execute(params, pattern=[root.uid for root in roots], force=True, quiet=True)
                 api.sync_down(params)
