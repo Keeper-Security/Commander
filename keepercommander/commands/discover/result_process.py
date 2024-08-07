@@ -20,7 +20,7 @@ from typing import Optional, List, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ...params import KeeperParams
-    from ...vault import TypedRecord
+    from ...vault import TypedRecord, KeeperRecord
     from keeper_dag.vertex import DAGVertex
     from discovery_common.record_link import RecordLink
 
@@ -443,6 +443,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     break
 
                 elif command == "i":
+
+                    print(f"{pad}{bcolors.OKBLUE}Creating an ignore rule for record.{bcolors.ENDC}")
                     return PromptResult(
                         action=PromptActionEnum.IGNORE,
                         acl=acl,
@@ -450,7 +452,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     )
 
                 elif command == "s":
-                    print(f"{pad}{bcolors.OKBLUE}Skipping record{bcolors.ENDC}")
+                    print(f"{pad}{bcolors.OKBLUE}Skipping record.{bcolors.ENDC}")
 
                     return PromptResult(
                         action=PromptActionEnum.SKIP,
@@ -654,7 +656,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         shared_folders = gateway_context.get_shared_folders(params)
         if len(shared_folders) == 0:
             while True:
-                yn = input(f"Create a PAM User record from {record.title}? [Y/N]>").lower()
+                yn = input(f"Create a PAM User record from {record.title}? [Y/N]> ").lower()
                 if yn == "":
                     continue
                 elif yn[0] == "n":
@@ -669,7 +671,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             while True:
                 afq = input(f"({_b('A')})dd user to {folder_name}, "
                             f"Add user to ({_b('F')})older, "
-                            f"({_b('Q')})uit >").lower()
+                            f"({_b('Q')})uit > ").lower()
                 if afq == "":
                     continue
                 if afq[0] == "a":
@@ -1068,6 +1070,17 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
         return directory_info
 
+    @staticmethod
+    def remove_job(params: KeeperParams, configuration_record: KeeperRecord, job_id: str):
+
+        try:
+            jobs = Jobs(record=configuration_record, params=params)
+            jobs.cancel(job_id)
+            print(f"{bcolors.OKGREEN}No items left to process. Removing completed discovery job.{bcolors.ENDC}")
+        except Exception as err:
+            logging.error(err)
+            print(f"{bcolors.FAIL}No items left to process. Failed to remove discovery job.{bcolors.ENDC}")
+
     def execute(self, params: KeeperParams, **kwargs):
 
         if not hasattr(params, 'pam_controllers'):
@@ -1178,11 +1191,15 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                               f"failure{'s' if results.failure_count != 1 else ''}.{bcolors.ENDC}")
                         for fail in results.failure:
                             print(f" * {fail.title}: {fail.error}")
+
+                    if process.no_items_left is True:
+                        self.remove_job(params=params, configuration_record=configuration_record, job_id=job_id)
                 else:
                     print(f"{bcolors.FAIL}No records have been added.{bcolors.ENDC}")
 
             except NoDiscoveryDataException:
                 print(f"{bcolors.OKGREEN}All items have been added for this discovery job.{bcolors.ENDC}")
+                self.remove_job(params=params, configuration_record=configuration_record, job_id=job_id)
 
             except Exception as err:
                 print(f"{bcolors.FAIL}Could not process discovery: {err}{bcolors.ENDC}")
