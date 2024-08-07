@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from ...params import KeeperParams
 
 
-
 class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
     parser = argparse.ArgumentParser(prog='dr-pam-command-debug')
 
@@ -72,11 +71,14 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
 
         infra = Infrastructure(record=gateway_context.configuration, params=params, logger=logging,
                                debug_level=debug_level)
+        infra.load(sync_point=0)
 
         try:
             configuration = infra.get_root.has_vertices()[0]
         except (Exception,):
-            print(f"{bcolors.FAIL}Could not find the configuration in the infrastructure graph.{bcolors.ENDC}")
+            print(f"{bcolors.FAIL}Could not find the configuration in the infrastructure graph. "
+                  f"Has discovery been run for this gateway?{bcolors.ENDC}")
+
             return
 
         line_start = {
@@ -104,15 +106,20 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
             ls = line_start.get(indent, "  ")
             cf = color_func.get(indent, self._p)
 
-            current_content = DiscoveryObject.get_discovery_object(current_vertex)
-            if current_content.record_uid is None:
-                text += f"{pad}{ls}{current_content.title} does not have a record."
+            if current_vertex.corrupt is False:
+                current_content = DiscoveryObject.get_discovery_object(current_vertex)
+                if current_content.record_uid is None:
+                    text += f"{pad}{ls}{current_content.title} does not have a record."
+                else:
+                    record = vault.KeeperRecord.load(params, current_content.record_uid)  # type: Optional[TypedRecord]
+                    if record is not None:
+                        text += f"{pad}{ls}" + cf(f"{record.title}; {record.record_uid}")
+                    else:
+                        text += f"{pad}{ls}" + cf(f"{current_content.title}; " +
+                                                  self._f("have record uid, record does not exists, "
+                                                          "might have to sync."))
             else:
-                record = vault.KeeperRecord.load(params, current_content.record_uid)  # type: Optional[TypedRecord]
-                text += f"{pad}{ls}" + cf(f"{record.title}; {record.record_uid}")
-
-            if current_vertex.active is False:
-                text += " " + self._f("Inactive")
+                text += f"{pad}{current_vertex.uid} " + self._f("(Corrupt)")
 
             print(text)
 
