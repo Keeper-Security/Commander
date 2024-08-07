@@ -933,7 +933,8 @@ class LoginV3API:
             rq.valueType = twoFactorValueType
         if channel_uid:
             rq.channel_uid = channel_uid
-        rq.expireIn = tfa_expire_in
+        if tfa_expire_in:
+            rq.expireIn = tfa_expire_in
 
         rs = api.communicate_rest(params, rq, 'authentication/2fa_validate',
                                   rs_type=APIRequest_pb2.TwoFactorValidateResponse)
