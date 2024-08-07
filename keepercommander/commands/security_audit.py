@@ -245,6 +245,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 row = {
                     'name': user,
                     'email': email,
+                    'sync_pending': None,
                     'node': node_path,
                     'total': 0,
                     'weak': 0,
@@ -283,10 +284,10 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                     data = self.get_updated_security_report_row(sr, rsa_key, data)
 
                 # Skip summary-score calculation if errors encountered or debug/incremental-data-reporting is enabled
-                if debug_mode or self.get_error_report_builder().has_errors_to_report():
+                if debug_mode or self.get_error_report_builder().has_errors_to_report() and not attempt_fix:
                     continue
 
-                if save_report:
+                if save_report and not self.get_error_report_builder().has_errors_to_report():
                     updated_sr = APIRequest_pb2.SecurityReport()
                     updated_sr.revision = security_report_data_rs.asOfRevision
                     updated_sr.enterpriseUserId = sr.enterpriseUserId
@@ -313,6 +314,13 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 strong = row.get('strong')
                 total = row.get('total')
                 unique = row.get('unique')
+                if unique < 0 < total and attempt_fix:
+                    self.get_error_report_builder().update_report_data('Missing security-data')
+                    continue
+
+                if total == 0 and row.get('reused') != 0:
+                    row['sync_pending'] = True
+
                 score = self.get_strong_by_total(total, strong) if score_type == 'strong_passwords' \
                     else self.get_security_score(total, strong, unique, twofa_on, master_pw_strength)
 
@@ -329,16 +337,24 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         # Prioritize error-reports (created if any errors are encountered while parsing security score data) over others
         if self.get_error_report_builder().has_errors_to_report():
             error_report_builder = self.get_error_report_builder()
-            return error_report_builder.sync_problem_vaults(params, out, fmt=fmt, force=force) if attempt_fix \
+            fix_instructions = ('\nNote: To resolve the issues found above, re-run this command with the'
+                                ' --attempt-fix switch, i.e., run\n\tsar --attempt-fix')
+            result = error_report_builder.sync_problem_vaults(params, out, fmt=fmt, force=force) if attempt_fix \
                 else error_report_builder.get_report(out, fmt)
+            if not attempt_fix:
+                if result is None:
+                    logging.error(fix_instructions)
+                else:
+                    result += fix_instructions
+            return result
         elif debug_mode:
             return self.debug_report_builder.get_report(out, fmt)
 
         if save_report:
             self.save_updated_security_reports(params, updated_security_reports)
 
-        fields = ('email', 'name', 'at_risk', 'passed', 'ignored') if show_breachwatch else \
-            ('email', 'name', 'weak', 'medium', 'strong', 'reused', 'unique', 'securityScore', 'twoFactorChannel',
+        fields = ('email', 'name', 'sync_pending', 'at_risk', 'passed', 'ignored') if show_breachwatch else \
+            ('email', 'name', 'sync_pending', 'weak', 'medium', 'strong', 'reused', 'unique', 'securityScore', 'twoFactorChannel',
              'node')
         field_descriptions = fields
 
@@ -430,6 +446,9 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                     return apply_score_deltas(u_sec_data, deltas)
 
                 for inc_data in inc_dataset:
+                    if any(d for d in inc_data.values() if d is not None and d.get('strength') is None):
+                        self.get_error_report_builder().update_report_data('Invalid data: "strength" is undefined')
+                        break
                     existing_data_keys = [k for k, d in inc_data.items() if d]
                     for k in existing_data_keys:
                         user_sec_data = update(user_sec_data, inc_data.get(k), -1 if k == 'old' else 1)
@@ -439,8 +458,8 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             report_data = {**old_report_data}
             if incremental_dataset:
                 incremental_dataset = decrypt_incremental_dataset(incremental_dataset)
-                # Skip score-aggregation if only errors or incremental data are to be included in the report
-                if not self.get_error_report_builder().has_errors_to_report() and not self.debug_report_builder:
+                # Skip score-aggregation if only incremental data are to be included in the report
+                if not self.debug_report_builder:
                     report_data = update_scores(report_data, incremental_dataset)
             return report_data
 
