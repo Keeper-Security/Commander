@@ -267,7 +267,7 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
     msg_id = gateway_action.conversationId if gateway_action.conversationId else GatewayAction.generate_conversation_id('true')
 
     rq = router_pb2.RouterControllerMessage()
-    rq.messageUid = utils.base64_url_decode(msg_id)
+    rq.messageUid = utils.base64_url_decode(msg_id) if isinstance(msg_id, str) else msg_id
     rq.controllerUid = destination_gateway_uid_bytes
     rq.messageType = message_type
     rq.streamResponse = is_streaming

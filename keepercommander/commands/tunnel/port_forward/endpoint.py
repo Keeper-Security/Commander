@@ -1108,7 +1108,7 @@ class TunnelEntrance:
                 await self.send_control_message(ControlMessage.Pong, int.to_bytes(0, CONNECTION_NO_LENGTH,
                                                                                   byteorder='big'))
         elif message_no == ControlMessage.ConnectionOpened:
-            if len(data) > CONNECTION_NO_LENGTH:
+            if len(data) >= CONNECTION_NO_LENGTH:
                 connection_no = int.from_bytes(data[:CONNECTION_NO_LENGTH], byteorder='big')
                 self.logger.debug(f"Endpoint {self.pc.endpoint_name}: Starting reader for connection "
                                   f"{connection_no}")
