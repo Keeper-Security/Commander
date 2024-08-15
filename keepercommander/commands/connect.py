@@ -231,7 +231,7 @@ class ConnectSshCommand(BaseConnectCommand):
         return ssh_parser
 
     def execute(self, params, **kwargs):
-        ssh_record_types = ['serverCredentials', 'sshKeys', 'pamMachine']
+        ssh_record_types = ['serverCredentials', 'sshKeys', 'pamMachine', 'pamUser']
         record_name = kwargs['record'] if 'record' in kwargs else None
         if not record_name:
             ls = RecordListCommand()
