@@ -1,7 +1,7 @@
 from __future__ import annotations
 import argparse
 import logging
-
+import json
 from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from .job_status import PAMGatewayActionDiscoverJobStatusCommand
 from ..pam.router_helper import router_send_action_to_gateway, print_router_response, router_get_connected_gateways
@@ -12,6 +12,7 @@ from ... import vault
 from ...proto import pam_pb2
 from ...display import bcolors
 from discovery_common.jobs import Jobs
+from discovery_common.types import CredentialBase
 from typing import List, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -40,6 +41,10 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
                         action='store_true', help='Skip discovering directories.')
     parser.add_argument('--skip-cloud-users', required=False, dest='skip_cloud_users',
                         action='store_true', help='Skip discovering cloud users.')
+    parser.add_argument('--cred', required=False, dest='credentials',
+                        action='append', help='List resource credentials.')
+    parser.add_argument('--cred_file', required=False, dest='credential_file',
+                        action='store', help='A file containing ')
 
     def get_parser(self):
         return PAMGatewayActionDiscoverJobStartCommand.parser
@@ -126,6 +131,54 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
                     print(f"{bcolors.FAIL}Not starting a discovery job.{bcolors.ENDC}")
                     return
 
+        # Get the credentials passed in via the command line
+        credentials = []
+        for cred in kwargs.get('cred', []):
+            parts = cred.split("|")
+            c = CredentialBase()
+            for item in parts:
+                kv = item.split("=")
+                if len(kv) != 2:
+                    print(f"{bcolors.FAIL}A '--cred' is invalid. It does not have a value.{bcolors.ENDC}")
+                    return
+                if hasattr(c, kv[0]) is False:
+                    print(f"{bcolors.FAIL}A '--cred' is invalid. The key '{kv[0]}' is invalid.{bcolors.ENDC}")
+                    return
+                if hasattr(c, kv[1]) == "":
+                    print(f"{bcolors.FAIL}A '--cred' is invalid. The value is blank.{bcolors.ENDC}")
+                    return
+                setattr(c, kv[0], kv[1])
+            credentials.append(c.model_dump())
+
+        # Get the credentials passed in via a credential file.
+        credential_files = kwargs.get('credential_file')
+        if credential_files is not None:
+            with open(credential_files, "r") as fh:
+                try:
+                    creds = json.load(fh)
+                except FileNotFoundError:
+                    print(f"{bcolors.FAIL}Could not find the file {credential_files}{bcolors.ENDC}")
+                    return
+                except json.JSONDecoder:
+                    print(f"{bcolors.FAIL}The file {credential_files} is not valid JSON.{bcolors.ENDC}")
+                    return
+                except Exception as err:
+                    print(f"{bcolors.FAIL}The JSON file {credential_files} could not be imported: {err}{bcolors.ENDC}")
+                    return
+
+                if isinstance(creds, list) is False:
+                    print(f"{bcolors.FAIL}Credential file is invalid. Structure is not an array.{bcolors.ENDC}")
+                    return
+                num = 1
+                for obj in creds:
+                    c = CredentialBase()
+                    for key in obj:
+                        if hasattr(c, key) is False:
+                            print(f"{bcolors.FAIL}Object {num} has the invalid key {key}.{bcolors.ENDC}")
+                            return
+                        setattr(c, key, obj[key])
+                    credentials.append(c.model_dump())
+
         action_inputs = GatewayActionDiscoverJobStartInputs(
             configuration_uid=gateway_context.configuration_uid,
             resource_uid=kwargs.get('resource_uid'),
@@ -146,7 +199,8 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
             skip_machines=kwargs.get('skip_machines', False),
             skip_databases=kwargs.get('skip_databases', False),
             skip_directories=kwargs.get('skip_directories', False),
-            skip_cloud_users=kwargs.get('skip_cloud_users', False)
+            skip_cloud_users=kwargs.get('skip_cloud_users', False),
+            credentials=credentials
         )
 
         conversation_id = GatewayAction.generate_conversation_id()

@@ -65,7 +65,6 @@ class PAMGatewayActionDiscoverJobRemoveCommand(PAMGatewayActionDiscoverCommandBa
                         raise Exception(f"Discovery job was not removed: {error}")
                 except Exception as err:
                     logging.debug(f"gateway return error removing discovery job: {err}")
-                    return
 
                 jobs.cancel(job_id)
 
