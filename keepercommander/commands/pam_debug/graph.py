@@ -1,12 +1,10 @@
 from __future__ import annotations
+from . import get_connection
 import argparse
 import logging
-import os
-
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ...display import bcolors
 from ... import vault
-from ...utils import value_to_boolean
 from discovery_common.infrastructure import Infrastructure
 from discovery_common.record_link import RecordLink
 from discovery_common.user_service import UserService
@@ -67,7 +65,8 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
     def get_parser(self):
         return PAMDebugGraphCommand.parser
 
-    def _do_text_list_infra(self, params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0):
+    def _do_text_list_infra(self, params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0,
+                            indent: int = 0):
 
         infra = Infrastructure(record=gateway_context.configuration, params=params, logger=logging,
                                debug_level=debug_level)
@@ -90,7 +89,8 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         color_func = {
             0: self._h,
             1: self._gr,
-            2: self._p
+            2: self._p,
+            3: self._b
         }
 
         def _handle(current_vertex: DAGVertex, indent: int = 0, last_record_type: Optional[str] = None):
@@ -106,7 +106,9 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
             ls = line_start.get(indent, "  ")
             cf = color_func.get(indent, self._p)
 
-            if current_vertex.corrupt is False:
+            if current_vertex.active is False:
+                text += f"{pad}{current_vertex.uid} " + self._f("(Inactive)")
+            elif current_vertex.corrupt is False:
                 current_content = DiscoveryObject.get_discovery_object(current_vertex)
                 if current_content.record_uid is None:
                     text += f"{pad}{ls}{current_content.title} does not have a record."
@@ -138,12 +140,17 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                     _handle(vertex, indent=indent+1)
 
         print("")
-        _handle(configuration)
+        _handle(configuration, indent=indent)
         print("")
 
-    def _do_text_list_rl(self, params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0):
+    def _do_text_list_rl(self, params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0,
+                         indent: int = 0):
         
         print("")
+
+        pad = ""
+        if indent > 0:
+            pad = "".ljust(4 * indent, ' ')
 
         record_link = RecordLink(record=gateway_context.configuration, params=params, logger=logging,
                                  debug_level=debug_level)
@@ -154,7 +161,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
             print(self._f("Configuration record does not exists."))
             return
         
-        print(self._h(f"{record.record_type}, {record.title}, {record.record_uid}"))
+        print(self._h(f"{pad}{record.record_type}, {record.title}, {record.record_uid}"))
 
         def _group(configuration_vertex: DAGVertex) -> dict:
 
@@ -184,27 +191,27 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         
         for record_type in [PAM_USER, PAM_DIRECTORY, PAM_MACHINE, PAM_DATABASE]:
             if len(group[record_type]) > 0:
-                print("  " + self._b(self._n(record_type)))
+                print(f"{pad}  " + self._b(self._n(record_type)))
                 for item in group[record_type]:
                     vertex = item.get("v")  # type: DAGVertex
                     record = item.get("r")  # type: TypedRecord
                     text = self._gr(f"{record.title}; {record.record_uid}")
                     if vertex.active is False:
                         text += " " + self._f("Inactive")
-                    print(f"    * {text}")
+                    print(f"{pad}    * {text}")
 
                     # These are cloud users
                     if record_type == PAM_USER:
                         acl = record_link.get_acl(vertex.uid, configuration.uid)
                         if acl is None:
-                            print(f"      {self._f('missing ACL')}")
+                            print(f"{pad}      {self._f('missing ACL')}")
                         else:
                             if acl.is_admin is True:
-                                print(f"        . is the {self._b('Admin')}")
+                                print(f"{pad}        . is the {self._b('Admin')}")
                             if acl.belongs_to is True:
-                                print(f"      . belongs to this resource")
+                                print(f"{pad}      . belongs to this resource")
                             else:
-                                print(f"      . looks like directory user")
+                                print(f"{pad}      . looks like directory user")
                         continue
 
                     children = vertex.has_vertices()
@@ -217,22 +224,22 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                                     bad.append(self._f(f"- Record UID {child.uid} does not exists."))
                                 continue
                             else:
-                                print(f"      - {child_record.title}; {child_record.record_uid}")
+                                print(f"{pad}      - {child_record.title}; {child_record.record_uid}")
                                 acl = record_link.get_acl(child.uid, vertex.uid)
                                 if acl is None:
-                                    print(f"        {self._f('missing ACL')}")
+                                    print(f"{pad}        {self._f('missing ACL')}")
                                 else:
                                     if acl.is_admin is True:
-                                        print(f"        . is the {self._b('Admin')}")
+                                        print(f"{pad}        . is the {self._b('Admin')}")
                                     if acl.belongs_to is True:
-                                        print(f"        . belongs to this resource")
+                                        print(f"{pad}        . belongs to this resource")
                                     else:
-                                        print(f"        . looks like directory user")
+                                        print(f"{pad}        . looks like directory user")
                         for i in bad:
-                            print("      " + i)
+                            print("{pad}      " + i)
 
-    @staticmethod
-    def _do_text_list_service(params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0):
+    def _do_text_list_service(self, params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0,
+                              indent: int = 0):
 
         user_service = UserService(record=gateway_context.configuration, params=params, logger=logging,
                                    debug_level=debug_level)
@@ -259,20 +266,22 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
             acl_text = ""
             acl = user_service.get_acl(parent_vertex, current_vertex)
             if acl is not None:
+                acl_text = self._f("None")
                 acl_parts = []
                 if acl.is_service is True:
-                    acl_parts.append("Service")
+                    acl_parts.append(self._bl("Service"))
                 if acl.is_task is True:
-                    acl_parts.append("Task")
+                    acl_parts.append(self._bl("Task"))
                 if len(acl_parts) > 0:
                     acl_text = ", ".join(acl_parts)
+                acl_text = f"- {acl_text}"
 
             print(f"{pad}{record.record_type}, {record.title}, {record.record_uid}{acl_text}")
 
             for vertex in current_vertex.has_vertices():
                 _handle(current_vertex=vertex, parent_vertex=current_vertex, indent=indent+1)
 
-        _handle(current_vertex=configuration, parent_vertex=None)
+        _handle(current_vertex=configuration, parent_vertex=None, indent=indent)
 
     def _do_render_infra(self, params: KeeperParams, gateway_context: GatewayContext, filepath: str, graph_format: str,
                          debug_level: int = 0):
@@ -324,7 +333,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                            graph_format: str, debug_level: int = 0):
 
         service = UserService(record=gateway_context.configuration, params=params, logger=logging,
-                               debug_level=debug_level)
+                              debug_level=debug_level)
 
         print("")
         dot_instance = service.to_dot(
@@ -343,19 +352,12 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                 raise err
         print("")
 
-    @staticmethod
-    def get_connection(params: KeeperParams) -> Connection:
-        if value_to_boolean(os.environ.get("USE_LOCAL_DAG", False)) is False:
-            return CommanderConnection(params=params)
-        else:
-            return LocalConnection()
-
     def _do_raw_text_list(self, params: KeeperParams, gateway_context: GatewayContext, graph_id: int = 0,
                           debug_level: int = 0):
 
         logging.debug(f"loading graph id {graph_id}, for record uid {gateway_context.configuration.record_uid}")
 
-        conn = self.get_connection(params=params)
+        conn = get_connection(params=params)
         dag = DAG(conn=conn, record=gateway_context.configuration, graph_id=graph_id, fail_on_corrupt=False,
                   logger=logging, debug_level=debug_level)
         dag.load(sync_point=0)
@@ -428,7 +430,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
     def _do_raw_render_graph(self, params: KeeperParams, gateway_context: GatewayContext, filepath: str,
                              graph_format: str, graph_id: int = 0, debug_level: int = 0):
 
-        conn = self.get_connection(params=params)
+        conn = get_connection(params=params)
         dag = DAG(conn=conn, record=gateway_context.configuration, graph_id=graph_id, fail_on_corrupt=False,
                   logger=logging, debug_level=debug_level)
         dag.load(sync_point=0)
@@ -444,6 +446,14 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                 raise err
 
         print("")
+
+    def do_list(self, params: KeeperParams, gateway_context: GatewayContext, graph_type: str, debug_level: int = 0,
+                indent: int = 0):
+        list_func = getattr(self, f"_do_text_list_{graph_type}")
+        list_func(params=params,
+                  gateway_context=gateway_context,
+                  debug_level=debug_level,
+                  indent=indent)
 
     def execute(self, params: KeeperParams, **kwargs):
 
@@ -476,10 +486,12 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                                           debug_level=debug_level)
         else:
             if do_text_list is True:
-                list_func = getattr(self, f"_do_text_list_{graph_type}")
-                list_func(params=params,
-                          gateway_context=gateway_context,
-                          debug_level=debug_level)
+                self.do_list(
+                    params=params,
+                    gateway_context=gateway_context,
+                    graph_type=graph_type,
+                    debug_level=debug_level
+                )
             if do_render is True:
                 filepath = kwargs.get("filepath")
                 graph_format = kwargs.get("format")

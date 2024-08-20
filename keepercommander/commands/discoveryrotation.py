@@ -75,6 +75,7 @@ from .pam_debug.graph import PAMDebugGraphCommand
 from .pam_debug.info import PAMDebugInfoCommand
 from .pam_debug.verify import PAMDebugVerifyCommand
 from .pam_debug.version import PAMDebugVersionCommand
+from .pam_debug.gateway import PAMDebugGatewayCommand
 
 
 def register_commands(commands):
@@ -186,7 +187,8 @@ class PAMDebugCommand(GroupCommand):
     def __init__(self):
         super(PAMDebugCommand, self).__init__()
         self.register_command('info', PAMDebugInfoCommand(), 'Debug a record', 'i')
-        self.register_command('graph', PAMDebugGraphCommand(), 'Render graphs', 'g')
+        self.register_command('gateway', PAMDebugGatewayCommand(), 'Debug a getway', 'g')
+        self.register_command('graph', PAMDebugGraphCommand(), 'Render graphs', 'r')
         self.register_command('verify', PAMDebugVerifyCommand(), 'Verify graphs', 'v')
         self.register_command('alter', PAMDebugAlterCommand(), 'Alter graph information', 'a')
         self.register_command('acl', PAMDebugACLCommand(), 'Control ACL of PAM Users', 'c')
