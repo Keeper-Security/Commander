@@ -24,7 +24,7 @@ from .session import Session
 http = requests
 headers = {'user-agent': 'lastpass-python/{}'.format(__version__)}
 https_host = 'https://lastpass.com'
-query_string = 'mobile=1&b64=1&hash=0.0&hasplugin=3.0.23&requestsrc=android'
+query_string = 'mobile=1&requestsrc=cli&hasplugin=3.0.23'
 
 
 def login(username, password, multifactor_password=None, client_id=None, **kwargs):
@@ -47,9 +47,13 @@ def fetch(session, web_client=http, **kwargs):
                               proxies=kwargs.get('proxies'), verify=kwargs.get('certificate_check'))
 
     if response.status_code != requests.codes.ok:
-        raise NetworkError()
+        try:
+            message = response.text
+            raise NetworkError(f'{response.reason}: {message}')
+        except:
+            raise NetworkError(response.reason)
 
-    return blob.Blob(decode_blob(response.content), session.key_iteration_count)
+    return blob.Blob(response.content, session.key_iteration_count)
 
 
 def stream_attachment(session, attach_info, web_client=http, **kwargs):
