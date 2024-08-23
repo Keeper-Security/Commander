@@ -1854,7 +1854,7 @@ class FindDuplicateCommand(Command):
 
             sox_data = sox.get_compliance_data(params, node_id, enterprise_id, rebuild=refresh_data,
                                                min_updated=update_floor_ts)
-            records = sox_data.get_records().values()
+            records = [r for r in sox_data.get_records().values() if not r.in_trash]
             recs_by_hash = {}
 
             for sd_rec in records:
