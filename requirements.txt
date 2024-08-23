@@ -17,7 +17,7 @@ aiortc; python_version>='3.8'
 pydantic>=2.6.4
 
 # python3 setup.py wheel --whlsrc ~/src/keeper-dag --libdir $PWD/libs --reqfiles $PWD/requirements.txt
-./libs/keeper_dag-1.0.10-py3-none-any.whl
+./libs/keeper_dag-1.0.13-py3-none-any.whl
 
 # python3 setup.py wheel --whlsrc ~/src/discovery-common --libdir $PWD/libs --reqfiles $PWD/requirements.txt
-./libs/discovery_common-1.0.10-py3-none-any.whl
+./libs/discovery_common-1.0.14-py3-none-any.whl
