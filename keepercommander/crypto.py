@@ -128,7 +128,7 @@ def encrypt_rsa(data, rsa_key):
     return rsa_key.encrypt(data, PKCS1v15())
 
 
-def decrypt_rsa(data, rsa_key, apply_padding=False):
+def decrypt_rsa(data, rsa_key, apply_padding=True):
     size_diff = (rsa_key.key_size + 7 >> 3) - len(data)
     if apply_padding and size_diff > 0:
         pad_bytes = bytes(size_diff)
