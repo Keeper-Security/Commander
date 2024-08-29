@@ -755,10 +755,13 @@ class LoginCommand(Command):
             SyncDownCommand().execute(params, force=True)
             if params.is_enterprise_admin:
                 api.query_enterprise(params, True)
-            if params.breach_watch:
-                BreachWatchScanCommand().execute(params, suppress_no_op=True)
-            if params.enterprise_ec_key:
-                SyncSecurityDataCommand().execute(params, record='@all', suppress_no_op=True)
+            try:
+                if params.breach_watch:
+                    BreachWatchScanCommand().execute(params, suppress_no_op=True)
+                if params.enterprise_ec_key:
+                    SyncSecurityDataCommand().execute(params, record='@all', suppress_no_op=True)
+            except Exception as e:
+                logging.warning(f'A problem was encountered while updating BreachWatch/security data: {e}')
 
 
 class CheckEnforcementsCommand(Command):
