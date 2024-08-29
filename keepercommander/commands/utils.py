@@ -753,12 +753,12 @@ class LoginCommand(Command):
 
         if params.session_token:
             SyncDownCommand().execute(params, force=True)
+            if params.is_enterprise_admin:
+                api.query_enterprise(params, True)
             if params.breach_watch:
                 BreachWatchScanCommand().execute(params, suppress_no_op=True)
             if params.enterprise_ec_key:
                 SyncSecurityDataCommand().execute(params, record='@all', suppress_no_op=True)
-            if params.is_enterprise_admin:
-                api.query_enterprise(params, True)
 
 
 class CheckEnforcementsCommand(Command):
@@ -1308,7 +1308,7 @@ class SyncSecurityDataCommand(Command):
     def get_parser(self):
         return sync_security_data_parser
 
-    def execute(self, params, **kwargs):
+    def execute(self, params, **kwargs):    # type: (KeeperParams, Dict[str, Any]) -> None
         def get_security_data(record, pw_obj):     # type: (KeeperRecord, Dict or None) -> APIRequest_pb2.SecurityData
             sd = APIRequest_pb2.SecurityData()
             password = BreachWatch.extract_password(record)
@@ -1328,7 +1328,12 @@ class SyncSecurityDataCommand(Command):
                     # truncate domain string if needed to avoid reaching RSA encryption data size limitation
                     sd_data['domain'] = domain[:200]
             if sd_data:
-                sd.data = crypto.encrypt_rsa(json.dumps(sd_data).encode('utf-8'), params.enterprise_rsa_key)
+                try:
+                    sd.data = crypto.encrypt_rsa(json.dumps(sd_data).encode('utf-8'), params.enterprise_rsa_key)
+                except Exception as e:
+                    logging.error(f'Error: {e}')
+                    logging.error(f'Enterprise RSA key length = {params.enterprise_rsa_key.key_size}')
+                    return
             sd.uid = utils.base64_url_decode(record.record_uid)
             return sd
 
@@ -1389,6 +1394,8 @@ class SyncSecurityDataCommand(Command):
             to_update = [(r, p) for r, p in to_update if has_stale_security_data(r)]
 
         sds = [get_security_data(r, s) for r, s in to_update] if to_update else []
+        # Remove empty security-data update requests (resulting from failed RSA encryption)
+        sds = [sd for sd in sds if sd]
         while sds:
             update_security_data(sds[:update_limit])
             sds = sds[update_limit:]
