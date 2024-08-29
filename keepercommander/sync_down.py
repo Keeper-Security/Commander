@@ -224,8 +224,8 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                 meta_data = {
                     'record_uid': utils.base64_url_encode(rmd.recordUid),
                     'owner': rmd.owner,
-                    'can_edit': True if rmd.owner else rmd.canEdit,
-                    'can_share': True if rmd.owner else rmd.canShare,
+                    'can_edit': rmd.canEdit,
+                    'can_share': rmd.canShare,
                     'record_key': utils.base64_url_encode(rmd.recordKey),
                     'record_key_type': rmd.recordKeyType,
                     'owner_account_uid': utils.base64_url_encode(rmd.ownerAccountUid or params.account_uid_bytes),
@@ -403,9 +403,9 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
         if len(response.sharedFolderRecords) > 0:
             def assign_shared_folder_record(sfr, sf_record):
                 sf_record['record_key'] = utils.base64_url_encode(sfr.recordKey)
+                sf_record['can_share'] = sfr.canShare
+                sf_record['can_edit'] = sfr.canEdit
                 sf_record['owner'] = sfr.owner
-                sf_record['can_share'] = True if sfr.owner else sfr.canShare
-                sf_record['can_edit'] = True if sfr.owner else sfr.canEdit
                 sf_record['owner_account_uid'] = utils.base64_url_encode(sfr.ownerAccountUid or params.account_uid_bytes)
                 if sfr.expiration > 0:
                     sf_record['expiration'] = sfr.expiration

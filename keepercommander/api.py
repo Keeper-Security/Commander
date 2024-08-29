@@ -1168,11 +1168,10 @@ def enumerate_record_access_paths(params, record_uid):
 
     if record_uid in params.meta_data_cache:
         rmd = params.meta_data_cache[record_uid]
-        is_owner = rmd.get('owner') is True
         yield {
             'record_uid': record_uid,
-            'can_edit': True if is_owner else rmd.get('can_edit') or False,
-            'can_share': True if is_owner else rmd.get('can_share') or False,
+            'can_edit': rmd.get('can_edit') or False,
+            'can_share': rmd.get('can_share') or False,
             'can_view': True
         }
 
@@ -1182,9 +1181,8 @@ def enumerate_record_access_paths(params, record_uid):
             sfrs = [x for x in sf['records'] if x['record_uid'] == record_uid]
             if len(sfrs) > 0:
                 sfr = sfrs[0]
-                is_owner = sfr.get('owner') is True
-                can_edit = True if is_owner else sfr['can_edit']
-                can_share = True if is_owner else sfr['can_share']
+                can_edit = sfr['can_edit']
+                can_share = sfr['can_share']
                 if 'key_type' in sf:
                     yield {
                         'record_uid': record_uid,
