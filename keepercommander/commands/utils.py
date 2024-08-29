@@ -1308,7 +1308,7 @@ class SyncSecurityDataCommand(Command):
     def get_parser(self):
         return sync_security_data_parser
 
-    def execute(self, params, **kwargs):    # type: (KeeperParams, Dict[str, Any]) -> None
+    def execute(self, params, **kwargs):
         def get_security_data(record, pw_obj):     # type: (KeeperRecord, Dict or None) -> APIRequest_pb2.SecurityData
             sd = APIRequest_pb2.SecurityData()
             password = BreachWatch.extract_password(record)
