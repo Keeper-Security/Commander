@@ -1181,8 +1181,13 @@ def enumerate_record_access_paths(params, record_uid):
             sfrs = [x for x in sf['records'] if x['record_uid'] == record_uid]
             if len(sfrs) > 0:
                 sfr = sfrs[0]
-                can_edit = sfr['can_edit']
-                can_share = sfr['can_share']
+                is_owner = sfr.get('owner') is True
+                if is_owner:
+                    can_edit = True
+                    can_share = True
+                else:
+                    can_edit = sfr['can_edit']
+                    can_share = sfr['can_share']
                 if 'key_type' in sf:
                     yield {
                         'record_uid': record_uid,
