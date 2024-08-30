@@ -24,6 +24,14 @@ def _f(text):
     return f"{bcolors.FAIL}{text}{bcolors.ENDC}"
 
 
+def _g(text):
+    return f"{bcolors.OKGREEN}{text}{bcolors.ENDC}"
+
+
+def _b(text):
+    return f"{bcolors.OKBLUE}{text}{bcolors.ENDC}"
+
+
 class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBase):
     parser = argparse.ArgumentParser(prog='dr-discover-status-command')
     parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
@@ -64,18 +72,23 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
               f"{''.ljust(19, '=')} "
               f"{''.ljust(19, '=')}")
 
-        found_completed = False
+        completed_jobs = []
+        running_jobs = []
+        failed_jobs = []
 
         for job in jobs:
             color = ""
+            job_id = job['job_id']
             if job['status'] == "COMPLETE":
                 color = bcolors.OKGREEN
-                found_completed = True
+                completed_jobs.append(job_id)
             elif job['status'] == "RUNNING":
                 color = bcolors.OKBLUE
+                running_jobs.append(job_id)
             elif job['status'] == "FAILED":
+                failed_jobs.append(job_id)
                 color = bcolors.FAIL
-            print(f"{color}{job['job_id']} "
+            print(f"{color}{job_id} "
                   f"{job['gateway'].ljust(max_gateway_name, ' ')} "
                   f"{job['gateway_uid']} "
                   f"{job['status'].ljust(12, ' ')} "
@@ -85,11 +98,46 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                   f"{(job.get('duration') or 'NA').ljust(19, ' ')} "
                   f"{bcolors.ENDC}")
 
-        if found_completed is True:
+        if len(completed_jobs) > 0:
             print("")
-            print(f"To process a completed Discovery job, use the command "
-                  f"'{bcolors.OKGREEN}pam action discover process -j <Job ID>{bcolors.ENDC}'.")
+            if len(completed_jobs) == 1:
+                print(f"There is one {_g('COMPLETED')} job. To process, use the following command.")
+            else:
+                print(f"There are {len(completed_jobs)} {_g('COMPLETED')} jobs. "
+                      "To process, use one of the the following command.")
+            for job_id in completed_jobs:
+                print(_g(f"  pam action discover process -j {job_id}"))
+
+        if len(running_jobs) > 0:
             print("")
+            if len(running_jobs) == 1:
+                print(f"There is one {_b('RUNNING')} job. "
+                      "If there is a problem, use the following command to cancel/remove the job.")
+            else:
+                print(f"There are {len(running_jobs)} {_b('RUNNING')} jobs. "
+                      "If there is a problem, use one of the following commands to cancel/remove the job.")
+            for job_id in running_jobs:
+                print(_b(f"  pam action discover remove -j {job_id}"))
+
+        if len(failed_jobs) > 0:
+            print("")
+            if len(failed_jobs) == 1:
+                print(f"There is one {_f('FAILED')} job. "
+                      "If there is a problem, use the following command to get more information.")
+            else:
+                print(f"There are {len(failed_jobs)} {_f('FAILED')} jobs. "
+                      "If there is a problem, use one of the following commands to get more information.")
+            for job_id in failed_jobs:
+                print(_f(f"  pam action discover status -j {job_id}"))
+            print("")
+            if len(failed_jobs) == 1:
+                print(f"To remove the job, use the following command.")
+            else:
+                print(f"To remove the {_f('FAILED')} job, use one of the following commands.")
+            for job_id in failed_jobs:
+                print(_f(f"  pam action discover remove -j {job_id}"))
+
+        print("")
 
     @staticmethod
     def print_job_detail(params, gateway_context, jobs, job_id):
@@ -191,6 +239,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
 
         # For each configuration/ gateway, we are going to get all jobs.
         # We are going to query the gateway for any updated status.
+        gateway_context = None
         for configuration_record in configuration_records:
 
             gateway_context = GatewayContext.from_configuration_uid(params, configuration_record.record_uid)
@@ -221,6 +270,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                 if job_item.end_ts is not None:
                     job["end_ts_str"] = job_item.end_ts_str
                     job["status"] = "COMPLETE"
+
                 job["duration"] = job_item.duration_sec_str
 
                 job["gateway"] = gateway_context.gateway_name
@@ -243,11 +293,11 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
             return
 
         if len(all_jobs) == 0:
-            print(f"{ bcolors.FAIL}There are no discovery jobs. Use 'pam action discover start' to start a "
+            print(f"{bcolors.FAIL}There are no discovery jobs. Use 'pam action discover start' to start a "
                   f"discovery job.{bcolors.ENDC}")
             return
 
-        if job_id is not None:
+        if job_id is not None and gateway_context is not None:
             self.print_job_detail(params, gateway_context, all_jobs, job_id)
         else:
             self.print_job_table(all_jobs, max_gateway_name)

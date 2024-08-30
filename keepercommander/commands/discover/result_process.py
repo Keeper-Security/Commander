@@ -59,6 +59,19 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                         help='Discovery job to process.')
     parser.add_argument('--add-all', required=False, dest='add_all', action='store_true',
                         help='Add record when prompted.')
+    parser.add_argument('--debug-dag-level', required=False, dest='debug_level', action='store',
+                        help='DAG debug level. Default is 0', type=int, default=0)
+
+    EDITABLE = [
+        "login",
+        "password",
+        "distinguishedName",
+        "alternativeIPs",
+        "database",
+        "privatePEMKey",
+        "connectDatabase",
+        "operatingSystem"
+    ]
 
     def get_parser(self):
         return PAMGatewayActionDiscoverResultProcessCommand.parser
@@ -149,6 +162,12 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
         return keys
 
+    @staticmethod
+    def _record_lookup(record_uid: str,  context: Optional[Any] = None):
+
+        params = context.get("params")
+        return vault.TypedRecord.load(params, record_uid)  # type: Optional[TypedRecord]
+
     def _build_record_cache(self, params: KeeperParams, gateway_context: GatewayContext) -> dict:
 
         """
@@ -214,18 +233,57 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     new_value = {}
                     for field in field_input_format:
                         new_value[field.get('key')] = input(f"{pad}Enter {field_input_format.get('prompt')} value> ")
-                elif type_hint == "multiline":
-                    new_value = input(f"{pad}Enter {edit_label} value> ")
+                elif type_hint == "csv":
+                    new_value = input(f"{pad}Enter {edit_label} values, separate with a comma > ")
                     new_values = map(str.strip, new_value.split(','))
                     new_value = "\n".join(new_values)
+                elif type_hint == "multiline":
+                    print(_b(f"{pad}Enter multilines of text or a path, on the first line, "
+                             "to a file that contains the value."))
+                    print(_b(f"{pad}To end, type 'END' at the start of a new line. You can paste text."))
+                    new_value = ""
+                    first_line = True
+                    while True:
+                        line = input(_b(f"> ")).rstrip()
+                        if line == "END":
+                            break
+
+                        # If this is the first line, check if line is a path to a file.
+                        if first_line is True:
+                            try:
+                                test_file = line.strip()
+                                logging.debug(f"is first line, check for file path for '{test_file}'")
+                                if os.path.exists(test_file) is True:
+                                    with open(test_file, "r") as fh:
+                                        new_value = fh.read()
+                                        fh.close()
+                                        break
+                                else:
+                                    logging.debug(f"first line is not a file path")
+                            except Exception as err:
+                                logging.debug(f"exception checking if file: {err}")
+                        first_line = False
+                        new_value += line + "\n"
+                elif type_hint == "choice":
+
+                    values = self.FIELD_MAPPING[edit_label].get("values")
+                    text_values = [_b(x) for x in values]
+                    new_value = input(f"{pad}Enter one of the follow values: {', '.join(text_values)}> ")
+                    new_value = new_value.strip().lower()
+                    if new_value not in values:
+                        print(f"{pad}{_f('The value ' + new_value + ' is not one of the values allowed.')}")
+                        return False
             else:
-                new_value = input(f"{pad}Enter new value> ")
+                new_value = input(f"{pad}Enter new value, or path to a file that contains the value > ")
 
                 # Is the value a path to a file, i.e., a private key file.
-                if os.path.exists(new_value) is True:
-                    with open(new_value, "r") as fh:
-                        new_value = fh.read()
-                        fh.close()
+                try:
+                    if os.path.exists(new_value) is True:
+                        with open(new_value, "r") as fh:
+                            new_value = fh.read()
+                            fh.close()
+                except (Exception,):
+                    pass
 
             for edit_field in content.fields:
                 if edit_field.label == edit_label:
@@ -233,8 +291,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
         # Else, the label they entered cannot be edited.
         else:
-            print(
-                f"{pad}{_f('The field is not editable.')}")
+            print(f"{pad}{_f('The field is not editable.')}")
             return False
 
         return True
@@ -269,12 +326,14 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         editable = []
         for field in content.fields:
             has_editable = False
-            if field.label in ["login", "password", "distinguishedName", "alternativeIPs", "database",
-                               "privatePEMKey", "connectDatabase"]:
+            if field.label in PAMGatewayActionDiscoverResultProcessCommand.EDITABLE:
                 editable.append(field.label)
                 has_editable = True
             value = field.value
-            if len(value) > 0:
+
+            # If there is a value, and it's not just [], also make sure the
+            if len(value) > 0 and value[0] is not None:
+                # PAM records will have only 1 item in the value array.
                 value = value[0]
                 if field.label in self.FIELD_MAPPING:
                     type_hint = self.FIELD_MAPPING[field.label].get("type")
@@ -284,8 +343,12 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                         for format_field in field_input_format:
                             formatted_value.append(f"{format_field.get('label')}: "
                                                    f"{value.get(format_field.get('key'))}")
-                    elif type_hint == "multiline":
+                    elif type_hint == "csv":
                         formatted_value.append(", ".join(value.split("\n")))
+                    elif type_hint == "multiline":
+                        formatted_value.append(value)
+                    elif type_hint == "choice":
+                        formatted_value.append(value)
                     value = ", ".join(formatted_value)
             else:
                 if has_editable is True:
@@ -348,7 +411,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
         params = context.get("params")
         gateway_context = context.get("gateway_context")
-        dry_run = context.get("dry_run")
+        dry_run = context.get("dry_run", False)
         auto_add = context.get("auto_add")
 
         # If auto add is True, there are sometime we don't want to add the object.
@@ -393,18 +456,22 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 count_prompt = ""
                 if item_count > 0:
                     count_prompt = f"{bcolors.HEADER}[{item_count - items_left + 1}/{item_count}]{bcolors.ENDC}"
-                edit_add_prompt = f"{count_prompt} ({_b('E')})dit, ({_b('A')})dd, "
-                if dry_run is True:
-                    edit_add_prompt = ""
+                edit_add_prompt = f"{count_prompt} "
+                if len(editable) > 0:
+                    edit_add_prompt += f"({_b('E')})dit, "
+
                 shared_folders = gateway_context.get_shared_folders(params)
-                if len(shared_folders) > 1 and dry_run is False:
-                    folder_name = next((x['name']
-                                        for x in shared_folders
-                                        if x['uid'] == shared_folder_uid),
-                                       None)
-                    edit_add_prompt = f"{count_prompt} ({_b('E')})dit, "\
-                                      f"({_b('A')})dd to {folder_name}, "\
-                                      f"Add to ({_b('F')})older, "
+                if dry_run is False:
+                    if len(shared_folders) > 1:
+                        folder_name = next((x['name']
+                                            for x in shared_folders
+                                            if x['uid'] == shared_folder_uid),
+                                           None)
+                        edit_add_prompt += f"({_b('A')})dd to {folder_name}, "\
+                                           f"Add to ({_b('F')})older, "
+                    else:
+                        if dry_run is False:
+                            edit_add_prompt += f"({_b('A')})dd, "
                 prompt = f"{edit_add_prompt}({_b('S')})kip, ({_b('I')})gnore, ({_b('Q')})uit"
 
                 command = "a"
@@ -420,15 +487,29 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
                     content.shared_folder_uid = shared_folder_uid
 
+                    # This happens when the record is a pamUser and parent resource record does not have an
+                    #   administrator.
+                    # It's like the reverse of creating an admin after adding the resource.
+                    # It would make this user the admin for the parent resource.
+                    # This condition would be really rare, since to get the users, the resource would have to have an
+                    #  admin user.
                     if content.record_type == "pamUser" and resource_has_admin is False:
+
+                        print(_b(f"{parent_content.description} does not have an administrator."))
+                        if (hasattr(parent_content.item, "admin_reason") and
+                                parent_content.item.admin_reason is not None):
+                            print("")
+                            print(parent_content.item.admin_reason)
+                            print("")
+
                         while True:
-                            yn = input(f"{parent_content.description} does not have an administrator. "
-                                       "Do you want to make this user the administrator? [Y/N]> ").lower()
+
+                            yn = input("Do you want to make this user the administrator? [Y/N]> ").lower()
                             if yn == "":
                                 continue
                             if yn[0] == "n":
                                 break
-                            if yn[1] == "y":
+                            if yn[0] == "y":
                                 acl.is_admin = True
                                 break
 
@@ -614,8 +695,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     continue
 
     @staticmethod
-    def _handle_admin_record_from_record(record: TypedRecord, content: DiscoveryObject, indent: int = 0,
-                                         context: Optional[Any] = None) -> Optional[PromptResult]:
+    def _handle_admin_record_from_record(record: TypedRecord, content: DiscoveryObject, context: Optional[Any] = None) \
+            -> Optional[PromptResult]:
 
         params = context.get("param")  # type: KeeperParams
         gateway_context = context.get("gateway_context")  # type: GatewayContext
@@ -669,9 +750,15 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                                 if x['uid'] == gateway_context.default_shared_folder_uid),
                                None)
             while True:
-                afq = input(f"({_b('A')})dd user to {folder_name}, "
-                            f"Add user to ({_b('F')})older, "
-                            f"({_b('Q')})uit > ").lower()
+                shared_folders = gateway_context.get_shared_folders(params)
+                if len(shared_folders) > 1:
+                    afq = input(f"({_b('A')})dd user to {folder_name}, "
+                                f"Add user to ({_b('F')})older, "
+                                f"({_b('Q')})uit > ").lower()
+                else:
+                    afq = input(f"({_b('A')})dd user, "
+                                f"({_b('Q')})uit > ").lower()
+
                 if afq == "":
                     continue
                 if afq[0] == "a":
@@ -706,6 +793,10 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         while True:
 
             print(f"{bcolors.BOLD}{parent_content.description} does not have an administrator user.{bcolors.ENDC}")
+            if hasattr(parent_content.item, "admin_reason") is True and parent_content.item.admin_reason is not None:
+                print("")
+                print(parent_content.item.admin_reason)
+            print("")
 
             action = input("Would you like to "
                            f"({_b('A')})dd new administrator user, "
@@ -733,6 +824,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 print(f"{bcolors.OKGREEN}Adding admin record to save queue.{bcolors.ENDC}")
                 return prompt_result
             elif action[0] == 'f':
+                print("")
                 record = self._find_user_record(params, context=context)
                 if record is not None:
                     admin_prompt_result = self._handle_admin_record_from_record(
@@ -1091,6 +1183,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
         # Right now, keep dry_run False. We might add it back in.
         dry_run = kwargs.get("dry_run", False)
+        debug_level = kwargs.get("debug_level", 0)
 
         configuration_records = list(vault_extensions.find_records(params, "pam.*Configuration"))
         for configuration_record in configuration_records:
@@ -1107,7 +1200,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             # Get the current job.
             # There can only be one active job.
             # This will give us the sync point for the delta
-            jobs = Jobs(record=configuration_record, params=params)
+            jobs = Jobs(record=configuration_record, params=params, logger=logging, debug_level=debug_level)
             job_item = jobs.current_job
             if job_item is None:
                 continue
@@ -1127,7 +1220,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 record=configuration_record,
                 job_id=job_item.job_id,
                 params=params,
-                logger=logging
+                logger=logging,
+                debug_level=debug_level,
             )
 
             if dry_run is True:
@@ -1145,6 +1239,10 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
             try:
                 results = process.run(
+
+                    # This method can get a record using the record UID
+                    record_lookup_func=self._record_lookup,
+
                     # Prompt user the about adding records
                     prompt_func=self._prompt,
 

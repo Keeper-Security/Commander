@@ -194,7 +194,14 @@ class PAMGatewayActionDiscoverCommandBase(Command):
             ]
         },
         "alternativeIPs": {
+            "type": "csv",
+        },
+        "privatePEMKey": {
             "type": "multiline",
+        },
+        "operatingSystem": {
+            "type": "choice",
+            "values": ["linux", "macos", "windows"]
         }
     }
 
