@@ -137,7 +137,7 @@ class PAMRotationCommand(GroupCommand):
 
     def __init__(self):
         super(PAMRotationCommand, self).__init__()
-        self.register_command('set',  PAMCreateRecordRotationCommand(), 'Sets Record Rotation configuration', 'new')
+        self.register_command('edit',  PAMCreateRecordRotationCommand(), 'Edits Record Rotation configuration', 'new')
         self.register_command('list', PAMListRecordRotationCommand(), 'List Record Rotation configuration', 'l')
         self.register_command('info', PAMRouterGetRotationInfo(), 'Get Rotation Info', 'i')
         self.register_command('script', PAMRouterScriptCommand(), 'Add, delete, or edit script field')
@@ -223,18 +223,19 @@ class PAMCmdListJobs(Command):
 
 
 class PAMCreateRecordRotationCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam rotation set')
+    parser = argparse.ArgumentParser(prog='pam rotation edit')
     record_group = parser.add_mutually_exclusive_group(required=True)
-    record_group.add_argument('--record', dest='record_name', action='store',
+    record_group.add_argument('--record', '-rec', dest='record_name', action='store',
                               help='Record UID, name, or pattern to be rotated manually or via schedule')
-    record_group.add_argument('--folder', dest='folder_name', action='store',
-                              help='Folder UID or name that holds records to be rotated manually or via schedule')
+    record_group.add_argument('--folder', '-fd', dest='folder_name', action='store',
+                              help='Used for bulk rotation setup. The folder UID or name that holds records to be '
+                                   'configured')
     parser.add_argument('--force', '-f', dest='force', action='store_true', help='Do not ask for confirmation')
     parser.add_argument('--config', '-c', required=False, dest='config_uid', action='store',
                         help='UID of the configuration record.')
     parser.add_argument('--iam-aad-config', '-iac', dest='iam_aad_config_uid', action='store',
                         help='UID of a PAM Configuration. Used for an IAM or Azure AD user in place of --resource.')
-    parser.add_argument('--resource', dest='resource_uid', action='store', help='UID of the resource record.')
+    parser.add_argument('--resource', '-rs', dest='resource_uid', action='store', help='UID of the resource record.')
     schedule_group = parser.add_mutually_exclusive_group()
     schedule_group.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data',
                                 action='append', help='Json of the scheduler. Example: -sj \'{"type": "WEEKLY", '
@@ -242,15 +243,15 @@ class PAMCreateRecordRotationCommand(Command):
     schedule_group.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data',
                                 action='append', help='Cron tab string of the scheduler. Example: to run job daily at '
                                                       '5:56PM UTC enter following cron -sc "56 17 * * *"')
-    schedule_group.add_argument('--on-demand', '-sm', required=False, dest='on_demand',
+    schedule_group.add_argument('--on-demand', '-od', required=False, dest='on_demand',
                                 action='store_true', help='Schedule On Demand')
     parser.add_argument('--complexity',   '-x',  required=False, dest='pwd_complexity', action='store',
                         help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,5,5')
     parser.add_argument('--admin-user', '-a', required=False, dest='admin', action='store',
                         help='UID for the PAMUser record to use as the Admin when rotating')
     state_group = parser.add_mutually_exclusive_group()
-    state_group.add_argument('--enable', dest='enable', action='store_true', help='Enable rotation')
-    state_group.add_argument('--disable', dest='disable', action='store_true', help='Disable rotation')
+    state_group.add_argument('--enable', '-e', dest='enable', action='store_true', help='Enable rotation')
+    state_group.add_argument('--disable', '-d', dest='disable', action='store_true', help='Disable rotation')
 
     def get_parser(self):
         return PAMCreateRecordRotationCommand.parser
@@ -387,151 +388,77 @@ class PAMCreateRecordRotationCommand(Command):
 
         r_requests = []   # type: List[router_pb2.RouterRecordRotationRequest]
 
-        # Go through for each resource record first
-        for record in pam_records:
-            if record.record_type not in ['pamMachine', 'pamDatabase', 'pamDirectory', 'pamRemoteBrowser']:
-                continue
-
-            # Add DAG for configuration
-            config_tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key,
-                                       config_uid, is_config=True)
-            if not config_tmp_dag.linking_dag.has_graph:
+        def config_resource(_dag, target_record, target_config_uid):
+            if not _dag.linking_dag.has_graph:
                 # Add DAG for resource
-                config_tmp_dag.edit_tunneling_config(rotation=True)
-            if not config_tmp_dag.resource_belongs_to_config(record.record_uid):
+                if target_config_uid:
+                    _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_config_uid)
+                    _dag.edit_tunneling_config(rotation=True)
+                else:
+                    raise CommandError('', f'{bcolors.FAIL}Resource "{target_record.record_uid}" is not associated '
+                                           f'with any configuration. '
+                                           f'{bcolors.OKBLUE}pam rotation edit -rs {target_record.record_uid} '
+                                           f'--config CONFIG_UID{bcolors.ENDC}')
+            if not _dag.resource_belongs_to_config(target_record.record_uid):
                 # Change DAG to this new configuration.
-                resource_tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key,
-                                             record.record_uid)
-                if resource_tmp_dag.linking_dag.has_graph:
-                    resource_tmp_dag.remove_from_dag(record.record_uid)
-                config_tmp_dag.link_resource_to_config(record.record_uid)
+                resource_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key,
+                                             target_record.record_uid)
+                if resource_dag.linking_dag.has_graph:
+                    resource_dag.remove_from_dag(target_record.record_uid)
+                _dag.link_resource_to_config(target_record.record_uid)
 
             admin = kwargs.get('admin')
-            if admin:
-                config_tmp_dag.link_user_to_resource(admin, record.record_uid, is_admin=True)
+            if admin and target_record.record_type != 'pamRemoteBrowser':
+                _dag.link_user_to_resource(admin, target_record.record_uid, is_admin=True)
 
             _rotation_enabled = True if kwargs.get('enable') else False if kwargs.get('disable') else None
 
             if _rotation_enabled is not None:
-                config_tmp_dag.set_resource_allowed(record.record_uid, rotation=_rotation_enabled,
+                _dag.set_resource_allowed(target_record, rotation=_rotation_enabled,
                                                     allowed_settings_name="rotation")
 
-            config_tmp_dag.print_tunneling_config(record.record_uid, config_uid=config_uid)
-            continue
+            _dag.print_tunneling_config(target_record .record_uid, config_uid=target_config_uid)
 
-        iam_aad_config_uid = kwargs.get('iam_aad_config_uid')
-        if iam_aad_config_uid:
-            if iam_aad_config_uid not in pam_configurations:
-                raise CommandError('', f'Record uid {iam_aad_config_uid} is not a PAM Configuration record.')
+        def config_iam_aad_user(_dag, target_record, target_iam_aad_config_uid):
+            if _dag and not _dag.linking_dag.has_graph:
+                _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_iam_aad_config_uid)
+                if not _dag or not _dag.linking_dag.has_graph:
+                    _dag.edit_tunneling_config(rotation=True)
+            # with IAM users the user is at the level the resource is usually at,
+            if not _dag.user_belongs_to_config(target_record.record_uid):
+                old_resource_uid = _dag.get_resource_uid(target_record.record_uid)
+                if old_resource_uid is not None:
+                    print(
+                        f'{bcolors.WARNING}User "{target_record.record_uid}" is associated with another resource: '
+                        f'{old_resource_uid}. '
+                        f'Now moving it to {target_iam_aad_config_uid} and it will no longer be rotated on {old_resource_uid}.'
+                        f'{bcolors.ENDC}')
+                    _dag.link_user_to_resource(target_record.record_uid, old_resource_uid, belongs_to=False)
+                _dag.link_user_to_config(target_record.record_uid)
 
-        # Go through for each PAMUser record
-        for record in pam_records:
-            if record.record_type != 'pamUser':
-                continue
-            tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record.record_uid)
-            admin_record_uids = tmp_dag.get_all_admins()
-            if folder_name and record.record_uid in admin_record_uids:
-                # If iterating through a folder, skip admin records
-                skipped_records.append([record.record_uid, record.title, 'Admin Credential',
-                                        'This record is used as Admin credentials on a PAM Configuration. Skipped'])
-                continue
 
-            if resource_uid and iam_aad_config_uid:
-                raise CommandError('', f'Cannot use both --resource and --iam-aad-config_uid at once.'
-                                       f' --resource is used to configure users found on a resource.'
-                                       f' --iam-aad-config-uid is used to configure AWS IAM or Azure AD users')
-
-            if isinstance(resource_uid, str) and len(resource_uid) > 0:
-                tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, resource_uid)
-                if not tmp_dag or not tmp_dag.linking_dag.has_graph:
-                    raise CommandError('', f'{bcolors.FAIL}Resource "{resource_uid}" is not associated '
-                                           f'with any configuration. '
-                                           f'{bcolors.OKBLUE}pam rotation set {resource_uid} '
-                                           f'--config CONFIG_UID{bcolors.ENDC}')
-
-                if not tmp_dag.check_if_resource_has_admin(resource_uid):
-                    raise CommandError('', f'PAM Resource "{resource_uid}'" does not have "
-                                           "admin credentials. Please link an admin credential to this resource. "
-                                           f"{bcolors.OKBLUE}pam rotation set {resource_uid} "
-                                           f"--admin-user ADMIN_UID{bcolors.ENDC}")
-            current_record_rotation = params.record_rotation_cache.get(record.record_uid)
-
-            if iam_aad_config_uid:
-                if tmp_dag and not tmp_dag.linking_dag.has_graph:
-                    tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, iam_aad_config_uid)
-                    if not tmp_dag or not tmp_dag.linking_dag.has_graph:
-                        tmp_dag.edit_tunneling_config(rotation=True)
-                # with IAM users the user is at the level the resource is usually at,
-                # so we check it as if it was a resource
-                resource_uid = iam_aad_config_uid
-                if not tmp_dag.user_belongs_to_config(record.record_uid):
-                    old_resource_uid = tmp_dag.get_resource_uid(record.record_uid)
-                    if old_resource_uid is not None:
-                        print(
-                            f'{bcolors.WARNING}User "{record.record_uid}" is associated with another resource: '
-                            f'{old_resource_uid}. '
-                            f'Now moving it to {iam_aad_config_uid} and it will no longer be rotated on {old_resource_uid}.'
-                            f'{bcolors.ENDC}')
-                        tmp_dag.link_user_to_resource(record.record_uid, old_resource_uid, belongs_to=False)
-                    tmp_dag.link_user_to_config(record.record_uid)
-
-            else:
-                if not tmp_dag or not tmp_dag.linking_dag.has_graph:
-                    tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, resource_uid)
-                    if not tmp_dag.linking_dag.has_graph:
-                        raise CommandError('', f'{bcolors.FAIL}Resource "{resource_uid}" is not associated '
-                                               f'with any configuration.'
-                                               f'{bcolors.OKBLUE}pam rotation set {resource_uid} '
-                                               f'--config CONFIG_UID{bcolors.ENDC}')
-                if not resource_uid:
-                    # Get the resource configuration from DAG
-                    resource_uids = tmp_dag.get_all_owners(record.record_uid)
-                    if len(resource_uids) > 1:
-                        raise CommandError('', f'{bcolors.FAIL}Record "{record.record_uid}" is '
-                                               f'associated with multiple resources so you must supply '
-                                               f'{bcolors.OKBLUE}"--resource/-rs RESOURCE_UID".{bcolors.ENDC}')
-                    elif len(resource_uids) == 0:
-                        raise CommandError('',
-                                           f'{bcolors.FAIL}Record "{record.record_uid}" is not associated with'
-                                           f' any resource. Please use {bcolors.OKBLUE}"pam rotation user '
-                                           f'{record.record_uid} --resource RESOURCE_UID" {bcolors.FAIL}to associate '
-                                           f'it.{bcolors.ENDC}')
-                    resource_uid = resource_uids[0]
-
-                if not tmp_dag.resource_belongs_to_config(resource_uid):
-                    raise CommandError('',
-                                       f'{bcolors.FAIL}Resource "{resource_uid}" is not associated with the '
-                                       f'configuration of the user "{record.record_uid}". To associated the resources '
-                                       f'to this config run {bcolors.OKBLUE}"pam rotation resource {resource_uid} '
-                                       f'--config {tmp_dag.record.record_uid}"{bcolors.ENDC}')
-                if not tmp_dag.user_belongs_to_resource(record.record_uid, resource_uid):
-                    old_resource_uid = tmp_dag.get_resource_uid(record.record_uid)
-                    if old_resource_uid is not None and old_resource_uid != resource_uid:
-                        print(
-                            f'{bcolors.WARNING}User "{record.record_uid}" is associated with another resource: '
-                            f'{old_resource_uid}. '
-                            f'Now moving it to {resource_uid} and it will no longer be rotated on {old_resource_uid}.'
-                            f'{bcolors.ENDC}')
-                        tmp_dag.link_user_to_resource(record.record_uid, old_resource_uid, belongs_to=False)
-                    tmp_dag.link_user_to_resource(record.record_uid, resource_uid, belongs_to=True)
+            current_record_rotation = params.record_rotation_cache.get(target_record.record_uid)
 
             # 1. PAM Configuration UID
-            record_config_uid = tmp_dag.record.record_uid
+            record_config_uid = _dag.record.record_uid
             record_pam_config = pam_config
             if not record_config_uid:
                 if current_record_rotation:
                     record_config_uid = current_record_rotation.get('configuration_uid')
                     pc = vault.KeeperRecord.load(params, record_config_uid)
                     if pc is None:
-                        skipped_records.append([record.record_uid, record.title, 'PAM Configuration was deleted', 'Specify a configuration UID parameter [--config]'])
-                        continue
+                        skipped_records.append([target_record.record_uid, target_record.title, 'PAM Configuration was deleted',
+                                                'Specify a configuration UID parameter [--config]'])
+                        return
                     if not isinstance(pc, vault.TypedRecord) or pc.version != 6:
-                        skipped_records.append([record.record_uid, record.title, 'PAM Configuration is invalid', 'Specify a configuration UID parameter [--config]'])
-                        continue
+                        skipped_records.append([target_record.record_uid, target_record.title, 'PAM Configuration is invalid',
+                                                'Specify a configuration UID parameter [--config]'])
+                        return
                     record_pam_config = pc
                 else:
-                    skipped_records.append([record.record_uid, record.title, 'No current PAM Configuration', 'Specify a configuration UID parameter [--config]'])
-                    continue
+                    skipped_records.append([target_record.record_uid, target_record.title, 'No current PAM Configuration',
+                                            'Specify a configuration UID parameter [--config]'])
+                    return
 
             # 2. Schedule
             record_schedule_data = schedule_data
@@ -557,12 +484,13 @@ class PAMCreateRecordRotationCommand(Command):
                     pwd_complexity_rule_list_encrypted = b''
             else:
                 if len(pwd_complexity_rule_list) > 0:
-                    pwd_complexity_rule_list_encrypted = router_helper.encrypt_pwd_complexity(pwd_complexity_rule_list, record.record_key)
+                    pwd_complexity_rule_list_encrypted = router_helper.encrypt_pwd_complexity(pwd_complexity_rule_list,
+                                                                                              record.record_key)
                 else:
                     pwd_complexity_rule_list_encrypted = b''
 
             # 4. Resource record
-            record_resource_uid = resource_uid
+            record_resource_uid = iam_aad_config_uid
             if record_resource_uid is None:
                 if current_record_rotation:
                     record_resource_uid = current_record_rotation.get('resourceUid')
@@ -576,16 +504,17 @@ class PAMCreateRecordRotationCommand(Command):
                             if len(resource_uids) == 1:
                                 record_resource_uid = resource_uids[0]
                             else:
-                                skipped_records.append([record.record_uid, record.title, f'PAM Configuration: {len(resource_uids)} admin resources',
+                                skipped_records.append([target_record.record_uid, target_record.title,
+                                                        f'PAM Configuration: {len(resource_uids)} admin resources',
                                                         'Specify both configuration UID and resource UID  [--config, --resource]'])
-                                continue
+                                return
 
             disabled = False
             # 5. Enable rotation
             if kwargs.get('enable'):
-                tmp_dag.set_resource_allowed(resource_uid, rotation=True, is_config=bool(iam_aad_config_uid))
+                _dag.set_resource_allowed(iam_aad_config_uid, rotation=True, is_config=bool(target_iam_aad_config_uid))
             elif kwargs.get('disable'):
-                tmp_dag.set_resource_allowed(resource_uid, rotation=False, is_config=bool(iam_aad_config_uid))
+                _dag.set_resource_allowed(iam_aad_config_uid, rotation=False, is_config=bool(target_iam_aad_config_uid))
                 disabled = True
 
             schedule = 'On-Demand'
@@ -595,24 +524,219 @@ class PAMCreateRecordRotationCommand(Command):
             complexity = ''
             if pwd_complexity_rule_list_encrypted:
                 try:
-                    decrypted_complexity = crypto.decrypt_aes_v2(pwd_complexity_rule_list_encrypted, record.record_key)
+                    decrypted_complexity = crypto.decrypt_aes_v2(pwd_complexity_rule_list_encrypted, target_record.record_key)
                     c = json.loads(decrypted_complexity.decode())
                     complexity = f"{c.get('length', 0)},{c.get('caps', 0)},{c.get('lowercase', 0)},{c.get('digits', 0)},{c.get('special', 0)}"
                 except:
                     pass
-            valid_records.append([record.record_uid, record.title, not disabled, record_config_uid, record_resource_uid, schedule, complexity])
+            valid_records.append(
+                [target_record.record_uid, target_record.title, not disabled, record_config_uid, record_resource_uid, schedule,
+                 complexity])
 
             # 6. Construct Request object
             rq = router_pb2.RouterRecordRotationRequest()
             if current_record_rotation:
                 rq.revision = current_record_rotation.get('revision', 0)
-            rq.recordUid = utils.base64_url_decode(record.record_uid)
+            rq.recordUid = utils.base64_url_decode(target_record.record_uid)
             rq.configurationUid = utils.base64_url_decode(record_config_uid)
             rq.resourceUid = utils.base64_url_decode(record_resource_uid) if record_resource_uid else b''
             rq.schedule = json.dumps(record_schedule_data) if record_schedule_data else ''
             rq.pwdComplexity = pwd_complexity_rule_list_encrypted
             rq.disabled = disabled
             r_requests.append(rq)
+
+        def config_user(_dag, target_record, target_resource_uid, target_config_uid=None):
+
+            if _dag and _dag.linking_dag:
+                admin_record_uids = _dag.get_all_admins()
+                if folder_name and target_record.record_uid in admin_record_uids:
+                    # If iterating through a folder, skip admin records
+                    skipped_records.append([target_record.record_uid, target_record.title, 'Admin Credential',
+                                            'This record is used as Admin credentials on a PAM Configuration. Skipped'])
+                    return
+
+            if isinstance(target_resource_uid, str) and len(target_resource_uid) > 0:
+                _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_resource_uid)
+                if not _dag or not _dag.linking_dag.has_graph:
+                    if target_config_uid and target_resource_uid:
+                        config_resource(_dag, target_record, target_config_uid)
+                    if not _dag or not _dag.linking_dag.has_graph:
+                        raise CommandError('', f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated '
+                                               f'with any configuration. '
+                                               f'{bcolors.OKBLUE}pam rotation edit -rs {target_resource_uid} '
+                                               f'--config CONFIG_UID{bcolors.ENDC}')
+
+                if not _dag.check_if_resource_has_admin(target_resource_uid):
+                    raise CommandError('', f'PAM Resource "{target_resource_uid}'" does not have "
+                                           "admin credentials. Please link an admin credential to this resource. "
+                                           f"{bcolors.OKBLUE}pam rotation edit -rs {target_resource_uid} "
+                                           f"--admin-user ADMIN_UID{bcolors.ENDC}")
+            current_record_rotation = params.record_rotation_cache.get(target_record.record_uid)
+
+            if not _dag or not _dag.linking_dag.has_graph:
+                _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_resource_uid)
+                if not _dag.linking_dag.has_graph:
+                    raise CommandError('', f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated '
+                                           f'with any configuration.'
+                                           f'{bcolors.OKBLUE}pam rotation edit -rs {target_resource_uid} '
+                                           f'--config CONFIG_UID{bcolors.ENDC}')
+            if not target_resource_uid:
+                # Get the resource configuration from DAG
+                resource_uids = _dag.get_all_owners(target_record.record_uid)
+                if len(resource_uids) > 1:
+                    raise CommandError('', f'{bcolors.FAIL}Record "{target_record.record_uid}" is '
+                                           f'associated with multiple resources so you must supply '
+                                           f'{bcolors.OKBLUE}"--resource/-rs RESOURCE_UID".{bcolors.ENDC}')
+                elif len(resource_uids) == 0:
+                    raise CommandError('',
+                                       f'{bcolors.FAIL}Record "{target_record.record_uid}" is not associated with'
+                                       f' any resource. Please use {bcolors.OKBLUE}"pam rotation user '
+                                       f'{target_record.record_uid} --resource RESOURCE_UID" {bcolors.FAIL}to associate '
+                                       f'it.{bcolors.ENDC}')
+                target_resource_uid = resource_uids[0]
+
+            if not _dag.resource_belongs_to_config(target_resource_uid):
+                raise CommandError('',
+                                   f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated with the '
+                                   f'configuration of the user "{target_record.record_uid}". To associated the resources '
+                                   f'to this config run {bcolors.OKBLUE}"pam rotation resource {target_resource_uid} '
+                                   f'--config {_dag.record.record_uid}"{bcolors.ENDC}')
+            if not _dag.user_belongs_to_resource(target_record.record_uid, target_resource_uid):
+                old_resource_uid = _dag.get_resource_uid(target_record.record_uid)
+                if old_resource_uid is not None and old_resource_uid != target_resource_uid:
+                    print(
+                        f'{bcolors.WARNING}User "{target_record.record_uid}" is associated with another resource: '
+                        f'{old_resource_uid}. '
+                        f'Now moving it to {target_resource_uid} and it will no longer be rotated on {old_resource_uid}.'
+                        f'{bcolors.ENDC}')
+                    _dag.link_user_to_resource(target_record.record_uid, old_resource_uid, belongs_to=False)
+                _dag.link_user_to_resource(target_record.record_uid, target_resource_uid, belongs_to=True)
+
+            # 1. PAM Configuration UID
+            record_config_uid = _dag.record.record_uid
+            record_pam_config = pam_config
+            if not record_config_uid:
+                if current_record_rotation:
+                    record_config_uid = current_record_rotation.get('configuration_uid')
+                    pc = vault.KeeperRecord.load(params, record_config_uid)
+                    if pc is None:
+                        skipped_records.append([target_record.record_uid, target_record.title, 'PAM Configuration was deleted',
+                                                'Specify a configuration UID parameter [--config]'])
+                        return
+                    if not isinstance(pc, vault.TypedRecord) or pc.version != 6:
+                        skipped_records.append([target_record.record_uid, target_record.title, 'PAM Configuration is invalid',
+                                                'Specify a configuration UID parameter [--config]'])
+                        return
+                    record_pam_config = pc
+                else:
+                    skipped_records.append([target_record.record_uid, target_record.title, 'No current PAM Configuration',
+                                            'Specify a configuration UID parameter [--config]'])
+                    return
+
+            # 2. Schedule
+            record_schedule_data = schedule_data
+            if record_schedule_data is None:
+                if current_record_rotation:
+                    try:
+                        current_schedule = current_record_rotation.get('schedule')
+                        if current_schedule:
+                            record_schedule_data = json.loads(current_schedule)
+                    except:
+                        pass
+                else:
+                    schedule_field = record_pam_config.get_typed_field('schedule', 'defaultRotationSchedule')
+                    if schedule_field and isinstance(schedule_field.value, list) and len(schedule_field.value) > 0:
+                        if isinstance(schedule_field.value[0], dict):
+                            record_schedule_data = [schedule_field.value[0]]
+
+            # 3. Password complexity
+            if pwd_complexity_rule_list is None:
+                if current_record_rotation:
+                    pwd_complexity_rule_list_encrypted = utils.base64_url_decode(current_record_rotation['pwd_complexity'])
+                else:
+                    pwd_complexity_rule_list_encrypted = b''
+            else:
+                if len(pwd_complexity_rule_list) > 0:
+                    pwd_complexity_rule_list_encrypted = router_helper.encrypt_pwd_complexity(pwd_complexity_rule_list,
+                                                                                              record.record_key)
+                else:
+                    pwd_complexity_rule_list_encrypted = b''
+
+            # 4. Resource record
+            record_resource_uid = target_resource_uid
+            if record_resource_uid is None:
+                if current_record_rotation:
+                    record_resource_uid = current_record_rotation.get('resourceUid')
+            if record_resource_uid is None:
+                resource_field = record_pam_config.get_typed_field('pamResources')
+                if resource_field and isinstance(resource_field.value, list) and len(resource_field.value) > 0:
+                    resources = resource_field.value[0]
+                    if isinstance(resources, dict):
+                        resource_uids = resources.get('resourceRef')
+                        if isinstance(resource_uids, list) and len(resource_uids) > 0:
+                            if len(resource_uids) == 1:
+                                record_resource_uid = resource_uids[0]
+                            else:
+                                skipped_records.append([target_record.record_uid, target_record.title,
+                                                        f'PAM Configuration: {len(resource_uids)} admin resources',
+                                                        'Specify both configuration UID and resource UID  [--config, --resource]'])
+                                return
+
+            disabled = False
+            # 5. Enable rotation
+            if kwargs.get('enable'):
+                _dag.set_resource_allowed(target_resource_uid, rotation=True)
+            elif kwargs.get('disable'):
+                _dag.set_resource_allowed(target_resource_uid, rotation=False)
+                disabled = True
+
+            schedule = 'On-Demand'
+            if isinstance(record_schedule_data, list) and len(record_schedule_data) > 0:
+                if isinstance(record_schedule_data[0], dict):
+                    schedule = record_schedule_data[0].get('type')
+            complexity = ''
+            if pwd_complexity_rule_list_encrypted:
+                try:
+                    decrypted_complexity = crypto.decrypt_aes_v2(pwd_complexity_rule_list_encrypted, target_record.record_key)
+                    c = json.loads(decrypted_complexity.decode())
+                    complexity = f"{c.get('length', 0)},{c.get('caps', 0)},{c.get('lowercase', 0)},{c.get('digits', 0)},{c.get('special', 0)}"
+                except:
+                    pass
+            valid_records.append(
+                [target_record.record_uid, target_record.title, not disabled, record_config_uid, record_resource_uid, schedule,
+                 complexity])
+
+            # 6. Construct Request object
+            rq = router_pb2.RouterRecordRotationRequest()
+            if current_record_rotation:
+                rq.revision = current_record_rotation.get('revision', 0)
+            rq.recordUid = utils.base64_url_decode(target_record.record_uid)
+            rq.configurationUid = utils.base64_url_decode(record_config_uid)
+            rq.resourceUid = utils.base64_url_decode(record_resource_uid) if record_resource_uid else b''
+            rq.schedule = json.dumps(record_schedule_data) if record_schedule_data else ''
+            rq.pwdComplexity = pwd_complexity_rule_list_encrypted
+            rq.disabled = disabled
+            r_requests.append(rq)
+
+        for _record in pam_records:
+            tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, _record.record_uid)
+            if _record.record_type in ['pamMachine', 'pamDatabase', 'pamDirectory', 'pamRemoteBrowser']:
+                config_resource(tmp_dag, _record, config_uid)
+            elif _record.record_type == 'pamUser':
+                iam_aad_config_uid = kwargs.get('iam_aad_config_uid')
+
+                if iam_aad_config_uid and iam_aad_config_uid not in pam_configurations:
+                    raise CommandError('', f'Record uid {iam_aad_config_uid} is not a PAM Configuration record.')
+
+                if resource_uid and iam_aad_config_uid:
+                    raise CommandError('', f'Cannot use both --resource and --iam-aad-config_uid at once.'
+                                           f' --resource is used to configure users found on a resource.'
+                                           f' --iam-aad-config-uid is used to configure AWS IAM or Azure AD users')
+
+                if iam_aad_config_uid:
+                    config_iam_aad_user(tmp_dag, _record, iam_aad_config_uid)
+                else:
+                    config_user(tmp_dag, _record, resource_uid, config_uid)
 
         force = kwargs.get('force') is True
 
@@ -1016,14 +1140,12 @@ class PAMConfigurationListCommand(Command):
 
 common_parser = argparse.ArgumentParser(add_help=False)
 common_parser.add_argument('--environment', '-env', dest='config_type', action='store',
-                           choices=['network', 'aws', 'azure'], help='PAM Configuration Type', )
+                           choices=['local', 'aws', 'azure'], help='PAM Configuration Type', )
 common_parser.add_argument('--title', '-t', dest='title', action='store', help='Title of the PAM Configuration')
 common_parser.add_argument('--gateway', '-g', dest='gateway', action='store', help='Gateway UID or Name')
 common_parser.add_argument('--shared-folder', '-sf', dest='shared_folder', action='store',
                            help='Share Folder where this PAM Configuration is stored. Should be one of the folders to '
                                 'which the gateway has access to.')
-common_parser.add_argument('--resource-record', '-rr', dest='resource_records', action='append',
-                           help='Resource Record UID')
 common_parser.add_argument('--schedule', '-sc', dest='default_schedule', action='store', help='Default Schedule: Use CRON syntax')
 common_parser.add_argument('--port-mapping', '-pm', dest='port_mapping', action='append', help='Port Mapping')
 network_group = common_parser.add_argument_group('network', 'Local network configuration')
@@ -1115,9 +1237,8 @@ class PamConfigurationEditMixin(RecordEditMixin):
             if not shared_folder_uid:
                 raise CommandError('pam config edit', 'Shared Folder not found')
 
-        rr = kwargs.get('resource_records')
         rrr = kwargs.get('remove_records')
-        if rr or rrr:
+        if rrr:
             pam_record_lookup = {}
             rti = PamConfigurationEditMixin.get_pam_record_types(params)
             for r in vault_extensions.find_records(params, record_type=rti):
@@ -1137,15 +1258,6 @@ class PamConfigurationEditMixin(RecordEditMixin):
                         record_uids.remove(r_l)
                         continue
                     logging.warning(f'Failed to find PAM record: {r}')
-            if isinstance(rr, list):
-                for r in rr:
-                    if r in pam_record_lookup:
-                        record_uids.add(r)
-                        continue
-                    r_l = r.lower()
-                    if r_l in pam_record_lookup:
-                        record_uids.add(r_l)
-                    self.warnings.append(f'Failed to find PAM record: {r}')
 
             value['resourceRef'] = list(record_uids)
 
@@ -1210,9 +1322,7 @@ class PamConfigurationEditMixin(RecordEditMixin):
                 if len(field.value) == 0:
                     if field.type == 'schedule':
                         field.value = [{
-                            'type': 'RUN_ONCE',
-                            'time': '2000-01-01T00:00:00',
-                            'tz': 'Etc/UTC',
+                            'type': 'ON_DEMAND'
                         }]
                     else:
                         self.warnings.append(f'Empty required field: "{field.get_field_name()}"')
@@ -1250,8 +1360,11 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
             record_type = 'pamAwsConfiguration'
         elif config_type == 'azure':
             record_type = 'pamAzureConfiguration'
-        else:
+        elif config_type == 'local':
             record_type = 'pamNetworkConfiguration'
+        else:
+            raise CommandError('pam-config-new', f'--environment {config_type} is not supported'
+                                                 f' supported options are aws, azure, or local')
 
         title = kwargs.get('title')
         if not title:
@@ -1319,10 +1432,9 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
 
 class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
     parser = argparse.ArgumentParser(prog='pam config edit', parents=[common_parser])
+    parser.add_argument('uid', type=str, action='store', help='The Config UID to edit')
     parser.add_argument('--remove-resource-record', '-rrr', dest='remove_records', action='append',
                         help='Resource Record UID to remove')
-    parser.add_argument('--config', '-c', required=True, dest='config', action='store',
-                        help='PAM Configuration UID or Title')
     parser.add_argument('--enable-rotation', '-er', required=False, action='store_true',help='Enable rotation')
     parser.add_argument('--disable-rotation', '-dr', required=False, action='store_true', help='Disable rotation')
     parser.add_argument('--enable-tunneling', '-et', required=False, dest='enable_tunneling', action='store_true',
@@ -1352,7 +1464,10 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
         self.warnings.clear()
 
         configuration = None
-        config_name = kwargs.get('config')
+
+        config_name = kwargs.get('uid')
+        if not config_name:
+            raise CommandError('pam config edit', 'PAM Configuration UID or Title is required')
         if config_name in params.record_cache:
             configuration = vault.KeeperRecord.load(params, config_name)
         else:
@@ -1374,7 +1489,7 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
                 record_type = 'pamAwsConfiguration'
             elif config_type == 'azure':
                 record_type = 'pamAzureConfiguration'
-            elif config_type == 'network':
+            elif config_type == 'local':
                 record_type = 'pamNetworkConfiguration'
             else:
                 record_type = configuration.record_type
@@ -1449,15 +1564,17 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
 
 class PAMConfigurationRemoveCommand(Command):
     parser = argparse.ArgumentParser(prog='pam config remove')
-    parser.add_argument('--config', '-c', required=True, dest='pam_config', action='store',
-                        help='PAM Configuration UID. To view all rotation settings with their UIDs, '
-                             'use command `pam config list`')
+    parser.add_argument('uid', type=str, action='store',
+                        help='PAM Configuration UID. To view all rotation settings with their UIDs, use command '
+                             '`pam config list`')
 
     def get_parser(self):
         return PAMConfigurationRemoveCommand.parser
 
     def execute(self, params, **kwargs):
-        pam_config_name = kwargs.get('pam_config')
+        pam_config_name = kwargs.get('uid')
+        if not pam_config_name:
+            raise CommandError('pam config edit', 'PAM Configuration UID is required')
         pam_config_uid = None
         for config in vault_extensions.find_records(params, record_version=6):
             if config.record_uid == pam_config_name:
@@ -2347,7 +2464,7 @@ class PAMTunnelEditCommand(Command):
                                                      'the port from the record will be used.')
     pam_cmd_parser.add_argument('--disable-connections', '-dc', required=False, dest='disable_connections',
                                 action='store_true', help='Disable connections on the record')
-    pam_cmd_parser.add_argument('--disable-tunneling', '-dp', required=False, dest='disable_tunneling',
+    pam_cmd_parser.add_argument('--disable-tunneling', '-dt', required=False, dest='disable_tunneling',
                                 action='store_true', help='Disable tunneling on the record')
     pam_cmd_parser.add_argument('--remove-tunneling-override-port', '-rtop', required=False,
                                 dest='remove_tunneling_override_port', action='store_true',
@@ -2387,12 +2504,12 @@ class PAMTunnelEditCommand(Command):
             raise CommandError('pam-config-edit', 'Cannot enable and disable the same feature at the same time')
 
         # First check if enabled is true then check if disabled is true. if not then set it to None
-        _connections = kwargs.get('enable_connections') or kwargs.get('disable_connections') or None
-        _tunneling = kwargs.get('enable_tunneling') or kwargs.get('disable_tunneling') or None
-        _rotation = kwargs.get('enable_rotation') or kwargs.get('disable_rotation') or None
-        _recording = kwargs.get('enable_connections_recording') or kwargs.get('disable_connections_recording') or None
-        _typescript_recording = (kwargs.get('enable_typescripts_recording') or
-                                 kwargs.get('disable_typescripts_recording') or None)
+        _connections = True if kwargs.get('enable_connections') else False if kwargs.get('disable_connections') else None
+        _tunneling = True if kwargs.get('enable_tunneling') else False if  kwargs.get('disable_tunneling') else None
+        _rotation = True if kwargs.get('enable_rotation') else False if  kwargs.get('disable_rotation') else None
+        _recording = True if kwargs.get('enable_connections_recording') else False if  kwargs.get('disable_connections_recording') else None
+        _typescript_recording = (True if kwargs.get('enable_typescripts_recording') else False if
+                                 kwargs.get('disable_typescripts_recording') else None)
         _remove_tunneling_override_port = kwargs.get('remove_tunneling_override_port')
         _remove_connections_override_port = kwargs.get('remove_connections_override_port')
 
@@ -2435,7 +2552,7 @@ class PAMTunnelEditCommand(Command):
             # Generate a 256-bit (32-byte) random seed
             seed = os.urandom(32)
             dirty = False
-            if not traffic_encryption_key:
+            if not traffic_encryption_key.value:
                 base64_seed = bytes_to_base64(seed)
                 record_seed = vault.TypedField.new_field('trafficEncryptionSeed', base64_seed, "")
                 record.custom.append(record_seed)
@@ -2525,16 +2642,14 @@ class PAMTunnelEditCommand(Command):
             if record.record_type == "pamRemoteBrowser":
                 allowed_settings_name = "pamRemoteBrowserSettings"
 
-            # Recordings need to be checked at the end
-            if tmp_dag.check_tunneling_enabled_config(enable_connections=True):
-                if _recording is not None and tmp_dag.check_tunneling_enabled_config(
-                        enable_session_recording=_recording) != _recording:
-                    pam_settings.value[0]['connection']['sessionRecording'] = _recording
-                    dirty = True
-                if _typescript_recording is not None and tmp_dag.check_tunneling_enabled_config(
-                        enable_typescript_recording=_typescript_recording) != _typescript_recording:
-                    pam_settings.value[0]['connection']['typescriptRecording'] = _typescript_recording
-                    dirty = True
+            if _recording is not None and tmp_dag.check_if_resource_allowed(record_uid, "sessionRecording") != _recording:
+                dirty = True
+            if _typescript_recording is not None and tmp_dag.check_if_resource_allowed(record_uid, "typescriptRecording") != _typescript_recording:
+                dirty = True
+            if _connections is not None and tmp_dag.check_if_resource_allowed(record_uid, "connections") != _connections:
+                dirty = True
+            if _tunneling is not None and tmp_dag.check_if_resource_allowed(record_uid, "portForwards") != _tunneling:
+                dirty = True
 
             if dirty:
                 tmp_dag.set_resource_allowed(resource_uid=record_uid, tunneling=_tunneling,
