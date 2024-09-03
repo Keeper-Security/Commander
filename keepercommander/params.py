@@ -262,7 +262,13 @@ class KeeperParams:
     rest_context = property(__get_rest_context)
 
     def get_share_account_timestamp(self):
-        if self.settings and 'share_account_to' in self.settings and 'must_perform_account_share_by' in self.settings:
-            return datetime.fromtimestamp(int(self.settings['must_perform_account_share_by']) // 1000)
-        else:
-            return None
+        if isinstance(self.settings, dict):
+            share_account_to = self.settings.get('share_account_to')
+            must_perform_account_share_by = self.settings.get('must_perform_account_share_by')
+            if isinstance(share_account_to, list) and len(share_account_to) > 0 and must_perform_account_share_by:
+                if isinstance(must_perform_account_share_by, str):
+                    if must_perform_account_share_by.isnumeric():
+                        must_perform_account_share_by = int(must_perform_account_share_by)
+                if isinstance(must_perform_account_share_by, int) and must_perform_account_share_by > 0:
+                    return datetime.fromtimestamp(must_perform_account_share_by // 1000)
+        return None
