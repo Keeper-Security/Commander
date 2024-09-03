@@ -76,15 +76,16 @@ class BreachWatch(object):
         results = {}      # type: Dict[str, breachwatch_pb2.HashStatus]
         bw_hashes = {}    # type: Dict[bytes, str]
         for password in passwords:
-            score = utils.password_score(password)
-            bw_hash = utils.breach_watch_hash(password)
-            if score >= 40:
-                bw_hashes[bw_hash] = password
-            else:
-                status = breachwatch_pb2.HashStatus()
-                status.hash1 = bw_hash
-                status.breachDetected = True
-                results[password] = status
+            if isinstance(password, str) and len(password) > 0:
+                score = utils.password_score(password)
+                bw_hash = utils.breach_watch_hash(password)
+                if score >= 40:
+                    bw_hashes[bw_hash] = password
+                else:
+                    status = breachwatch_pb2.HashStatus()
+                    status.hash1 = bw_hash
+                    status.breachDetected = True
+                    results[password] = status
         if len(bw_hashes) > 0:
             logging.info('Breachwatch: %d passwords to scan', len(bw_hashes))
             hashes = []     # type: List[breachwatch_pb2.HashCheck]
@@ -103,7 +104,9 @@ class BreachWatch(object):
 
                 rs = self._execute_status(rq)
                 for status in rs.hashStatus:
-                    results[bw_hashes[status.hash1]] = status
+                    password = bw_hashes.get(status.hash1)
+                    if isinstance(password, str) and len(password) > 0:
+                        results[password] = status
 
         for password in results:
             yield password, results[password]

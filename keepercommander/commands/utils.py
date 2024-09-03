@@ -762,6 +762,7 @@ class LoginCommand(Command):
                     SyncSecurityDataCommand().execute(params, record='@all', suppress_no_op=True)
             except Exception as e:
                 logging.warning(f'A problem was encountered while updating BreachWatch/security data: {e}')
+                logging.debug(e, exc_info=True)
 
 
 class CheckEnforcementsCommand(Command):
