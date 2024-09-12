@@ -45,8 +45,7 @@ TIME_STAMP_LENGTH = 8
 CONNECTION_NO_LENGTH = DATA_LENGTH = PORT_LENGTH = 4
 TERMINATOR = b';'
 PROTOCOL_LENGTH = CONNECTION_NO_LENGTH + TIME_STAMP_LENGTH + DATA_LENGTH + CONTROL_MESSAGE_NO_LENGTH + len(TERMINATOR)
-KRELAY_URL = 'KRELAY_URL'
-ALT_KRELAY_URL = 'KRELAY_SERVER'
+KRELAY_URL = 'KRELAY_SERVER'
 GATEWAY_TIMEOUT = int(os.getenv('GATEWAY_TIMEOUT')) if os.getenv('GATEWAY_TIMEOUT') else 30000
 
 # WebRTC constant values
@@ -239,6 +238,7 @@ class TunnelDAG:
         try:
             return_content = vertex.content_as_dict
         except Exception as e:
+            logging.debug(f"Error getting vertex content: {e}")
             return_content = None
         return return_content
 
@@ -268,10 +268,10 @@ class TunnelDAG:
             return False
         config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
         content = self.get_vertex_content(config_vertex)
-        if content is None or 'meta' not in content or 'allowedSettings' not in content['meta']:
+        if content is None or not content.get('allowedSettings'):
             return False
 
-        allowed_settings = content['meta']['allowedSettings']
+        allowed_settings = content['allowedSettings']
         if enable_connections and not allowed_settings.get("connections"):
             return False
         if enable_tunneling and not allowed_settings.get("portForwards"):
@@ -297,16 +297,14 @@ class TunnelDAG:
         if content and content.get('allowedSettings'):
             allowed_settings = dict(content['allowedSettings'])
             del content['allowedSettings']
-            content = {'meta': {'allowedSettings': allowed_settings}}
+            content = {'allowedSettings': allowed_settings}
 
         if content is None:
-            content = {'meta': {'allowedSettings': {}}}
-        if 'meta' not in content:
-            content['meta'] = {'allowedSettings': {}}
-        if 'allowedSettings' not in content['meta']:
-            content['meta']['allowedSettings'] = {}
+            content = {'allowedSettings': {}}
+        if 'allowedSettings' not in content:
+            content['allowedSettings'] = {}
 
-        allowed_settings = content['meta']['allowedSettings']
+        allowed_settings = content['allowedSettings']
         dirty = False
 
         if connections is not None and connections != allowed_settings.get("connections", False):
@@ -328,7 +326,7 @@ class TunnelDAG:
             dirty = True
 
         if dirty:
-            config_vertex.add_data(content=content, path="allowedSettings", needs_encryption=False)
+            config_vertex.add_data(content=content, path='meta', needs_encryption=False)
             self.linking_dag.save()
 
     def get_all_owners(self, uid):
@@ -376,7 +374,7 @@ class TunnelDAG:
         config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
         if config_vertex is None:
             config_vertex = self.linking_dag.add_vertex(uid=self.record.record_uid)
-        self.link_user(user_uid, config_vertex, belongs_to=True)
+        self.link_user(user_uid, config_vertex, belongs_to=True, is_iam_user=True)
 
     def link_user_to_resource(self, user_uid, resource_uid, is_admin=None, belongs_to=None):
         resource_vertex = self.linking_dag.get_vertex(resource_uid)
@@ -385,7 +383,7 @@ class TunnelDAG:
             return False
         self.link_user(user_uid, resource_vertex, is_admin, belongs_to)
 
-    def link_user(self, user_uid, source_vertex: DAGVertex, is_admin=None, belongs_to=None):
+    def link_user(self, user_uid, source_vertex: DAGVertex, is_admin=None, belongs_to=None, is_iam_user=None):
 
         user_vertex = self.linking_dag.get_vertex(user_uid)
         if user_vertex is None:
@@ -397,6 +395,8 @@ class TunnelDAG:
             content["belongs_to"] = bool(belongs_to)
         if is_admin is not None:
             content["is_admin"] = bool(is_admin)
+        if is_iam_user is not None:
+            content["is_iam_user"] = bool(is_iam_user)
 
         if user_vertex.vertex_type != RefType.PAM_USER:
             user_vertex.vertex_type = RefType.PAM_USER
@@ -448,32 +448,36 @@ class TunnelDAG:
     def check_if_resource_allowed(self, resource_uid, setting):
         resource_vertex = self.linking_dag.get_vertex(resource_uid)
         content = self.get_vertex_content(resource_vertex)
-        return content.get('meta', {}).get('allowedSettings', {}).get(setting, False) if content else False
+        return content.get('allowedSettings', {}).get(setting, False) if content else False
 
     def set_resource_allowed(self, resource_uid, tunneling=None, connections=None, rotation=None,
                              session_recording=None, typescript_recording=None,
-                             allowed_settings_name='allowedSettings', is_config=False):
+                             allowed_settings_name='allowedSettings', is_config=False,
+                             v_type: RefType=str(RefType.PAM_MACHINE)):
+        v_type =  RefType(v_type)
+        allowed_ref_types = [RefType.PAM_MACHINE, RefType.PAM_DATABASE, RefType.PAM_DIRECTORY, RefType.PAM_BROWSER]
+        if v_type not in allowed_ref_types:
+            # default to machine
+            v_type = RefType.PAM_MACHINE
+
         resource_vertex = self.linking_dag.get_vertex(resource_uid)
         if resource_vertex is None:
-            resource_vertex = self.linking_dag.add_vertex(uid=resource_uid, vertex_type=RefType.PAM_MACHINE)
+            resource_vertex = self.linking_dag.add_vertex(uid=resource_uid, vertex_type=v_type)
 
-        if resource_vertex.vertex_type != RefType.PAM_MACHINE:
-            resource_vertex.vertex_type = RefType.PAM_MACHINE
+        if resource_vertex.vertex_type not in allowed_ref_types:
+            resource_vertex.vertex_type = v_type
         if is_config:
             resource_vertex.vertex_type = RefType.PAM_NETWORK
         dirty = False
         content = self.get_vertex_content(resource_vertex)
         if content is None:
-            content = {'meta': {allowed_settings_name: {}}}
+            content = {allowed_settings_name: {}}
             dirty = True
-        if 'meta' not in content:
-            content['meta'] = {allowed_settings_name: {}}
-            dirty = True
-        if allowed_settings_name not in content['meta']:
-            content['meta'][allowed_settings_name] = {}
+        if allowed_settings_name not in content:
+            content[allowed_settings_name] = {}
             dirty = True
 
-        settings = content['meta'][allowed_settings_name]
+        settings = content[allowed_settings_name]
         if tunneling is not None and tunneling != settings.get("portForwards", False):
             settings["portForwards"] = tunneling
             dirty = True
@@ -484,16 +488,15 @@ class TunnelDAG:
         if rotation is not None and rotation != settings.get("rotation", True):
             settings["rotation"] = rotation
             dirty = True
+        if session_recording is not None and session_recording != settings.get("sessionRecording", False):
+            settings["sessionRecording"] = session_recording
+            dirty = True
+        if typescript_recording is not None and typescript_recording != settings.get("typescriptRecording", False):
+            settings["typescriptRecording"] = typescript_recording
+            dirty = True
 
-        if settings.get("connections") and settings["connections"]:
-            if session_recording is not None and session_recording != settings.get("sessionRecording", False):
-                settings["sessionRecording"] = session_recording
-                dirty = True
-            if typescript_recording is not None and typescript_recording != settings.get("typescriptRecording", False):
-                settings["typescriptRecording"] = typescript_recording
-                dirty = True
         if dirty:
-            resource_vertex.add_data(content=content, path=allowed_settings_name, needs_encryption=False)
+            resource_vertex.add_data(content=content, path='meta', needs_encryption=False)
             self.linking_dag.save()
 
     def is_tunneling_config_set_up(self, resource_uid):
@@ -518,8 +521,8 @@ class TunnelDAG:
         self.linking_dag.load()
         vertex = self.linking_dag.get_vertex(record_uid)
         content = self.get_vertex_content(vertex)
-        if content and content.get('meta') and content['meta'].get('allowedSettings'):
-            allowed_settings = content['meta']['allowedSettings']
+        if content and content.get('allowedSettings'):
+            allowed_settings = content['allowedSettings']
             print(f"{bcolors.OKGREEN}Settings configured for {record_uid}{bcolors.ENDC}")
             connections = f"{bcolors.OKBLUE}Enabled" if allowed_settings.get('connections') else \
                 f"{bcolors.WARNING}Disabled"
@@ -546,8 +549,8 @@ class TunnelDAG:
                 config_content = self.get_vertex_content(config_vertex)
                 config_id = config_uid if config_uid else pam_settings.value[0].get('configUid')
                 print(f"{bcolors.OKGREEN}Configuration: {config_id} {bcolors.ENDC}")
-                if config_content and config_content.get('meta') and config_content['meta'].get('allowedSettings'):
-                    config_allowed_settings = config_content['meta']['allowedSettings']
+                if config_content and config_content.get('allowedSettings'):
+                    config_allowed_settings = config_content['allowedSettings']
                     config_connections = f"{bcolors.OKBLUE}Enabled" if config_allowed_settings.get('connections') else \
                         f"{bcolors.WARNING}Disabled"
                     config_port_forwarding = f"{bcolors.OKBLUE}Enabled" if (
@@ -597,10 +600,6 @@ class WebRTCConnection:
         krelay_url = os.getenv(KRELAY_URL)
         if krelay_url:
             self.relay_url = krelay_url
-        else:
-            alt_krelay_url = os.getenv(ALT_KRELAY_URL)
-            if alt_krelay_url:
-                self.relay_url = alt_krelay_url
         self.logger.debug(f'Using relay server: {self.relay_url}')
         try:
             self.peer_ice_config()
@@ -624,8 +623,7 @@ class WebRTCConnection:
         self.peer_ice_config(ice_restart=True)
         self.setup_data_channel()
         self.setup_event_handlers()
-        new_nonce = bytes_to_base64(generate_random_bytes(MAIN_NONCE_LENGTH))
-        await self.signal_channel('reconnect', base64_nonce=bytes_to_base64(new_nonce))
+        await self.signal_channel('reconnect', base64_nonce=bytes_to_base64(generate_random_bytes(MAIN_NONCE_LENGTH)))
 
     async def signal_channel(self, kind: str, base64_nonce: str):
 
@@ -730,17 +728,17 @@ class WebRTCConnection:
         response = router_get_relay_access_creds(params=self.params, expire_sec=60000000)
         if response is None:
             raise Exception("Error getting relay access credentials")
-        if hasattr(response, "time"):
-            self.time_diff = datetime.now() - datetime.fromtimestamp(response.time)
+        if hasattr(response, "serverTime"):
+            self.time_diff = datetime.now() - datetime.fromtimestamp(response.time/1000)
         stun_url = f"stun:{self.relay_url}:3478"
         # Create an RTCIceServer instance for the STUN server
         stun_server = RTCIceServer(urls=stun_url)
         # Define the TURN server URL and credentials
-        turn_url = f"turn:{self.relay_url}"
+        turn_url_udp = f"turn:{self.relay_url}:3478"
         # Create an RTCIceServer instance for the TURN server with credentials
-        turn_server = RTCIceServer(urls=turn_url, username=response.username, credential=response.password)
+        turn_server_udp = RTCIceServer(urls=turn_url_udp, username=response.username, credential=response.password)
         # Create a new RTCConfiguration with both STUN and TURN servers
-        config = RTCConfiguration(iceServers=[stun_server, turn_server])
+        config = RTCConfiguration(iceServers=[stun_server, turn_server_udp])
 
         self._pc = RTCPeerConnection(config)
 
@@ -1004,7 +1002,7 @@ class TunnelEntrance:
         if c:
             dt = datetime.fromtimestamp(timestamp/1000)
             c.receive_size += data_size
-            td = datetime.now() + self.pc.time_diff - dt
+            td = datetime.now() - self.pc.time_diff - dt
             # Convert timedelta to total milliseconds
             td_milliseconds = (td.days * 24 * 60 * 60 + td.seconds) * 1000 + td.microseconds / 1000
             c.receive_latency_sum += td_milliseconds
