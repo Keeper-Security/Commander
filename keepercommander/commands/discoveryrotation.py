@@ -399,12 +399,11 @@ class PAMCreateRecordRotationCommand(Command):
                                            f'with any configuration. '
                                            f'{bcolors.OKBLUE}pam rotation edit -rs {target_record.record_uid} '
                                            f'--config CONFIG_UID{bcolors.ENDC}')
+            resource_dag = None
             if not _dag.resource_belongs_to_config(target_record.record_uid):
                 # Change DAG to this new configuration.
                 resource_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key,
                                              target_record.record_uid)
-                if resource_dag.linking_dag.has_graph:
-                    resource_dag.remove_from_dag(target_record.record_uid)
                 _dag.link_resource_to_config(target_record.record_uid)
 
             admin = kwargs.get('admin')
@@ -417,6 +416,10 @@ class PAMCreateRecordRotationCommand(Command):
                 _dag.set_resource_allowed(target_record, rotation=_rotation_enabled,
                                                     allowed_settings_name="rotation")
 
+            if resource_dag.linking_dag.has_graph:
+                # TODO: Make sure this doesn't remove everything from the new dag too
+                resource_dag.remove_from_dag(target_record.record_uid)
+
             _dag.print_tunneling_config(target_record .record_uid, config_uid=target_config_uid)
 
         def config_iam_aad_user(_dag, target_record, target_iam_aad_config_uid):
@@ -424,6 +427,10 @@ class PAMCreateRecordRotationCommand(Command):
                 _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_iam_aad_config_uid)
                 if not _dag or not _dag.linking_dag.has_graph:
                     _dag.edit_tunneling_config(rotation=True)
+            old_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_record.record_uid)
+            if old_dag.linking_dag.has_graph and old_dag.record.record_uid != target_iam_aad_config_uid:
+                old_dag.remove_from_dag(target_record.record_uid)
+
             # with IAM users the user is at the level the resource is usually at,
             if not _dag.user_belongs_to_config(target_record.record_uid):
                 old_resource_uid = _dag.get_resource_uid(target_record.record_uid)
@@ -433,6 +440,8 @@ class PAMCreateRecordRotationCommand(Command):
                         f'{old_resource_uid}. '
                         f'Now moving it to {target_iam_aad_config_uid} and it will no longer be rotated on {old_resource_uid}.'
                         f'{bcolors.ENDC}')
+                    if old_resource_uid == _dag.record.record_uid:
+                        _dag.unlink_user_from_resource(target_record.record_uid)
                     _dag.link_user_to_resource(target_record.record_uid, old_resource_uid, belongs_to=False)
                 _dag.link_user_to_config(target_record.record_uid)
 
