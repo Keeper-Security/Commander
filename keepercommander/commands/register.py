@@ -654,6 +654,7 @@ class ShareRecordCommand(Command):
         if not emails:
             raise CommandError('share-record', '\'email\' parameter is missing')
 
+        dry_run = kwargs.get('dry_run') is True
         action = kwargs.get('action') or 'grant'
 
         if action == 'cancel':
@@ -776,7 +777,7 @@ class ShareRecordCommand(Command):
             raise CommandError('share-record', 'You can transfer ownership to a single account only')
 
         all_users = set((x.casefold() for x in emails))
-        if action in ('grant', 'owner'):
+        if not dry_run and action in ('grant', 'owner'):
             invited = api.load_user_public_keys(params, list(all_users), send_invites=True)
             if invited:
                 for email in invited:
@@ -876,8 +877,7 @@ class ShareRecordCommand(Command):
                                     ro.timerNotificationType = record_pb2.NOTIFY_OWNER
                                 elif share_expiration < 0:
                                     ro.expiration = -1
-                        rq.addSharedRecord.append(ro)
-                    else:
+                    elif email in existing_shares:
                         current = existing_shares[email]
                         if action == 'owner':
                             ro.transfer = True
@@ -885,17 +885,18 @@ class ShareRecordCommand(Command):
                         else:
                             ro.editable = True if can_edit else current.get('editable')
                             ro.shareable = True if can_share else current.get('shareable')
-                        rq.updateSharedRecord.append(ro)
+                    rq.updateSharedRecord.append(ro)
                 else:
                     if can_share or can_edit:
-                        current = existing_shares[email]
-                        ro.editable = False if can_edit else current.get('editable')
-                        ro.shareable = False if can_share else current.get('shareable')
+                        if email in existing_shares:
+                            current = existing_shares[email]
+                            ro.editable = False if can_edit else current.get('editable')
+                            ro.shareable = False if can_share else current.get('shareable')
                         rq.updateSharedRecord.append(ro)
                     else:
                         rq.removeSharedRecord.append(ro)
 
-        if kwargs.get('dry_run'):
+        if dry_run:
             headers = ['Username', 'Record UID', 'Title', 'Share Action', 'Expiration']
             table = []
             for attr in ['addSharedRecord', 'updateSharedRecord', 'removeSharedRecord']:
