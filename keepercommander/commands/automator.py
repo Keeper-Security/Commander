@@ -321,6 +321,8 @@ class AutomatorEditCommand(EnterpriseCommand, AutomatorMixin):
         if url:
             if not url.startswith('http'):
                 url = 'https://' + url
+            if url.endswith('/'):
+                url = url.rstrip('/')
             rq.url = url
         skills = kwargs.get('skill')
         if skills:
