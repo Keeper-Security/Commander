@@ -84,8 +84,6 @@ def store_config_properties(params):
         return
     if not isinstance(params.config, dict):
         params.config = {}
-    if not params.config_filename:
-        params.config_filename = 'config.json'
 
     # commit changes from params to config
     for name in PROTECTED_PROPERTIES + EDITABLE_PROPERTIES:
@@ -115,8 +113,14 @@ def store_config_properties(params):
         if isinstance(encrypted_data, bytes):
             config_json[ENCRYPTED_DATA] = utils.base64_url_encode(encrypted_data)
 
-    with open(params.config_filename, 'w') as fd:
-        json.dump(config_json, fd, ensure_ascii=False, indent=2)
+    if params.config_filename:
+        try:
+            with open(params.config_filename, 'w') as fd:
+                json.dump(config_json, fd, ensure_ascii=False, indent=2)
+        except Exception as error:
+            logging.debug(error, exc_info=True)
+            logging.error(f'Failed to write configuration to {params.config_filename}. '
+                          'Type "debug" to toggle verbose logging.', error)
 
 
 def load_config_properties(params):
