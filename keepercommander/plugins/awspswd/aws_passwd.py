@@ -22,9 +22,10 @@ from ..aws_common import AWSRotator, AWS_INVALID_CLIENT_MSG
 
 
 class Rotator(AWSRotator):
-    def __init__(self, login, password=None, aws_profile=None, **kwargs):
+    def __init__(self, login, password=None, aws_profile=None, aws_assume_role=None, **kwargs):
         self.login = login
         self.password = password
+        self.aws_assume_role = aws_assume_role
         super().__init__(aws_profile)
 
     def revert(self, record, new_password):
@@ -51,6 +52,10 @@ class Rotator(AWSRotator):
 
         if not self.set_iam_session():
             return False
+        if self.aws_assume_role:
+            self.assume_role(self.aws_assume_role)
+        self.iam = self.session.client('iam')
+
         try:
             update_response = self.iam.update_login_profile(UserName=self.login, Password=new_password)
         except ClientError as e:
