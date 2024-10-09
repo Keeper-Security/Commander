@@ -31,13 +31,15 @@ AWS_CREDS_FILE_KEY_SECRET_OPTION = 'aws_secret_access_key'
 AWS_CREDS_FILE_BACKUP_EXTENSION = '.keeper.bak'
 AWS_NEW_KEY_ID_FIELD = 'cmdr:aws_key_id'
 AWS_NEW_SECRET_FIELD = 'cmdr:aws_key_secret'
+AWS_ASSUME_ROLE_FIELD = 'cmdr:aws_assume_role'
 
 
 class Rotator(AWSRotator):
-    def __init__(self, login, aws_key_id, aws_key_secret=None, aws_profile=None, aws_sync_profile=None, **kwargs):
+    def __init__(self, login, aws_key_id, aws_key_secret=None, aws_assume_role=None, aws_profile=None, aws_sync_profile=None, **kwargs):
         self.login = login
         self.aws_key_id = aws_key_id
         self.aws_key_secret = aws_key_secret
+        self.aws_assume_role = aws_assume_role
         self.aws_sync_profile = aws_sync_profile
         super().__init__(aws_profile)
 
@@ -145,6 +147,11 @@ class Rotator(AWSRotator):
         """Rotate an AWS access key"""
         if not self.set_iam_session():
             return False
+
+        if self.aws_assume_role:
+            self.assume_role(self.aws_assume_role)
+
+        self.iam = self.session.client('iam')
 
         try:
             list_response = self.iam.list_access_keys(UserName=self.login)
