@@ -313,10 +313,13 @@ class ConnectSshCommand(BaseConnectCommand):
 
         self.run_at_the_end.clear()
 
+        command = ['ssh']
         options = self.get_extra_options(params, record, 'ssh')
-        self.command = f'ssh{options} {login}@{host_name}'
+        if options:
+            command.append(shlex.split(options.strip(), posix=False))
+        command.append(f'{login}@{host_name}')
         if port:
-            self.command += f' -p {port}'
+            command.extend(['-p', port])
 
         pk = try_extract_private_key(params, record)
         if pk:
@@ -328,14 +331,14 @@ class ConnectSshCommand(BaseConnectCommand):
             password = BaseConnectCommand.get_record_field(record, 'password')
             if password:
                 if shutil.which('sshpass'):
-                    self.command = 'sshpass -e ' + self.command
+                    command = ['sshpass', '-e'] + command
                     os.putenv('SSHPASS', password)
 
                     def clear_env():
                         os.putenv('SSHPASS', '')
                     self.run_at_the_end.append(clear_env)
                 else:
-                    self.command += ' -o PubkeyAuthentication=no'
+                    command.extend(['-o', 'PubkeyAuthentication=no'])
                     try:
                         import pyperclip
                         pyperclip.copy(password)
@@ -350,10 +353,12 @@ class ConnectSshCommand(BaseConnectCommand):
                         logging.debug(e)
                         logging.info('Failed to copy password to clipboard')
 
-        command = kwargs.get('command')
-        if isinstance(command, list) and len(command) > 0:
-            self.command += ' -- ' + ' '.join(command)
+        cmd = kwargs.get('command')
+        if isinstance(cmd, list) and len(cmd) > 0:
+            command.append('--')
+            command.extend(cmd)
 
+        self.command = shlex.join(command)
         logging.info('Connecting to "%s" ...', record.title)
         self.execute_shell()
 
@@ -383,11 +388,13 @@ class ConnectMysqlCommand(BaseConnectCommand):
 
         self.run_at_the_end.clear()
 
+        command = ['mysql']
         options = self.get_extra_options(params, record, 'mysql')
-        self.command = f'mysql{options}'
-        self.command += f' --host {host_name} --user {login}'
+        if options:
+            command.append(options.strip())
+        command.extend(['--host', host_name, '--user', login])
         if port:
-            self.command += f' --port {port}'
+            command.extend(['--port', port])
 
         password = BaseConnectCommand.get_record_field(record, 'password')
         if password:
@@ -399,8 +406,9 @@ class ConnectMysqlCommand(BaseConnectCommand):
 
         query = kwargs.get('query')
         if isinstance(query, list) and len(query) > 0:
-            self.command += ' --execute \"' + ' '.join(query) + '\"'
+            command.extend(['--execute', shlex.join(query)])
 
+        self.command = shlex.join(command)
         logging.info('Connecting to "%s" ...', record.title)
         self.execute_shell()
 
@@ -434,10 +442,13 @@ class ConnectPostgresCommand(BaseConnectCommand):
             database = 'template1'
             logging.info(f'\nConnecting to the default database: {database}\n')
 
-        self.command = f'{postgresql} {self.extra_parameters} -h {host_name}'
+        command = [postgresql]    # type: List[str]
+        if self.extra_parameters:
+            command.extend(self.extra_parameters)
+        command.extend(['-h', host_name])
         if port:
-            self.command += f' -p {port}'
-        self.command += f' -U {login} -w {database}'
+            command.extend(['-p', port])
+        command.extend(['-U', login, '-w', database])
         self.run_at_the_end.clear()
 
         password = BaseConnectCommand.get_record_field(record, 'password')
@@ -448,6 +459,7 @@ class ConnectPostgresCommand(BaseConnectCommand):
                 os.putenv('PGPASSWORD', '')
             self.run_at_the_end.append(clear_env)
 
+        self.command = shlex.join(command)
         logging.info('Connecting to "%s" ...', record.title)
         self.execute_shell()
 
@@ -477,18 +489,20 @@ class ConnectRdpCommand(BaseConnectCommand):
 
         password = BaseConnectCommand.get_record_field(record, 'password')
         if password:
-            command = f'cmdkey /generic:{host_name} /user:{login} /pass:{password}'
-            subprocess.run(shlex.split(command), stdout=subprocess.DEVNULL)
+            command = ['cmdkey', f'/generic:{host_name}', f'/user:{login}', f'/pass:{password}']
+            subprocess.run(command, stdout=subprocess.DEVNULL)
             # os.system(f'cmdkey /generic:{host_name} /user:{login} /pass:{password} > NUL')
 
             def clear_password():
-                subprocess.run(shlex.split(f'cmdkey /delete:{host_name}'), stdout=subprocess.DEVNULL)
+                subprocess.run(['cmdkey', f'/delete:{host_name}'], stdout=subprocess.DEVNULL)
                 # os.system(f'cmdkey /delete:{host_name} > NUL')
             self.run_at_the_end.append(clear_password)
 
-        self.command = f'mstsc /v:{host_name}'
+        options = f'/v:{host_name}'
         if port:
-            self.command += ':' + port
+            options += ':' + port
+        command = ['mstsc', options]
+        self.command = shlex.join(command)
 
         logging.info('Connecting to "%s" ...', record.title)
         self.execute_shell()
@@ -758,17 +772,19 @@ class ConnectCommand(BaseConnectCommand):
 
             command = ConnectCommand.get_custom_field(record, f'connect:{endpoint}')
             if command:
-                self.command = ConnectCommand.get_command_string(params, record, command, temp_files, endpoint=endpoint)
-                if self.command:
+                cmd = ConnectCommand.get_command_string(params, record, command, temp_files, endpoint=endpoint)
+                if cmd:
                     self.run_at_the_end.extend(
                         ConnectCommand.add_ssh_keys(params, endpoint, record, temp_files))
                     self.run_at_the_end.extend(
                         ConnectCommand.add_environment_variables(params, endpoint, record, temp_files))
 
+                    command = shlex.split(cmd, posix=False)
                     parameters = kwargs.get('parameters')
                     if isinstance(parameters, list) and len(parameters) > 0:
-                        self.command += ' ' + ' '.join(parameters)
+                        command.extend(parameters)
 
+                    self.command = shlex.join(command)
                     logging.info('Connecting to "%s" ...', record.title)
                     self.execute_shell()
 
