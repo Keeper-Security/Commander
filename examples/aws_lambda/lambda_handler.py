@@ -120,6 +120,10 @@ def get_params():
     private_key = os.environ.get('KEEPER_PRIVATE_KEY')
     token = os.environ.get('KEEPER_DEVICE_TOKEN')
     my_params = KeeperParams()
+
+    # Force password-login (needed for SSO + Master Password accounts)
+    my_params.config = {'sso_master_password': True}
+
     my_params.user = user
     my_params.password = pw
     my_params.server = server
