@@ -843,6 +843,15 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             print("")
 
     @staticmethod
+    def _display_auto_add_results(bulk_add_records: List[BulkRecordAdd]):
+
+        add_count = len(bulk_add_records)
+        if add_count > 0:
+            print("")
+            print(f"{bcolors.OKGREEN}From the rules, automatically queued {add_count} "
+                  f"record{'' if add_count == 1 else 's'} to be added.{bcolors.ENDC}")
+
+    @staticmethod
     def _prompt_confirm_add(bulk_add_records: List[BulkRecordAdd]):
 
         """
@@ -1264,6 +1273,9 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
                     # A function to get directory users
                     directory_info_func=self._get_directory_info,
+
+                    # Pass method that will display auto added records.
+                    auto_add_result_func=self._display_auto_add_results,
 
                     # Provides a cache of the record key to record UID.
                     record_cache=record_cache,
