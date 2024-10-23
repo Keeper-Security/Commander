@@ -49,7 +49,7 @@ class GatewayContext:
                        None)
 
         if gateway is None:
-            print(f'{bcolors.FAIL}Gateway [{gateway_uid}] was not found.{bcolors.ENDC}')
+            # print(f'{bcolors.FAIL}Gateway [{gateway_uid}] was not found.{bcolors.ENDC}')
             return
 
         application_id = utils.base64_url_encode(gateway.applicationUid)

@@ -43,8 +43,8 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
                         action='store_true', help='Skip discovering cloud users.')
     parser.add_argument('--cred', required=False, dest='credentials',
                         action='append', help='List resource credentials.')
-    parser.add_argument('--cred_file', required=False, dest='credential_file',
-                        action='store', help='A file containing ')
+    parser.add_argument('--cred-file', required=False, dest='credential_file',
+                        action='store', help='A JSON file containing list of credentials.')
 
     def get_parser(self):
         return PAMGatewayActionDiscoverJobStartCommand.parser
@@ -105,6 +105,7 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
 
         jobs = Jobs(record=gateway_context.configuration, params=params)
         current_job_item = jobs.current_job
+        removed_prior_job = None
         if current_job_item is not None:
             if current_job_item.is_running is True:
                 print("")
@@ -122,10 +123,11 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
             status.execute(params=params)
             print("")
 
-            yn = input("Do you wish to remove the active discovery job and run a new one [Y/N]>").lower()
+            yn = input("Do you wish to remove the active discovery job and run a new one [Y/N]> ").lower()
             while True:
                 if yn[0] == "y":
                     jobs.cancel(current_job_item.job_id)
+                    removed_prior_job = current_job_item.job_id
                     break
                 elif yn[0] == "n":
                     print(f"{bcolors.FAIL}Not starting a discovery job.{bcolors.ENDC}")
@@ -221,8 +223,10 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
 
         if "has been queued" in data.get("Response", ""):
 
-            print("")
-            print("The discovery job is currently running.")
+            if removed_prior_job is None:
+                print("The discovery job is currently running.")
+            else:
+                print(f"Active discovery job {removed_prior_job} has been removed and new discovery job is running.")
             print(f"To check the status, use the command '{bcolors.OKGREEN}pam action discover status{bcolors.ENDC}'.")
             print(f"To stop and remove the current job, use the command "
                   f"'{bcolors.OKGREEN}pam action discover remove -j <Job ID>'.")
