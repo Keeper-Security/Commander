@@ -1,7 +1,5 @@
 from __future__ import annotations
 import argparse
-import json
-import importlib
 from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ... import vault_extensions
 from ...display import bcolors

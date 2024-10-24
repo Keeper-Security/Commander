@@ -48,8 +48,8 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                         default="keeper_graph", help='Base name for the graph file.')
     parser.add_argument('--format', required=False, choices=['raw', 'dot', 'twopi', 'patchwork'],
                         dest='format', default="dot", action='store', help='The format of the graph.')
-    parser.add_argument('--debug-dag-level', required=False, dest='debug_level', action='store',
-                        help='DAG debug level. Default is 0', type=int, default=0)
+    parser.add_argument('--debug-gs-level', required=False, dest='debug_level', action='store',
+                        help='GraphSync debug level. Default is 0', type=int, default=0)
 
     mapping = {
         PAM_USER: {"order": 1, "sort": "_sort_name", "item": DiscoveryUser, "key": "user"},
@@ -114,13 +114,13 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
             elif current_vertex.corrupt is False:
                 current_content = DiscoveryObject.get_discovery_object(current_vertex)
                 if current_content.record_uid is None:
-                    text += f"{pad}{ls}{current_content.title} does not have a record."
+                    text += f"{pad}{ls}{current_vertex.uid}; {current_content.title} does not have a record."
                 else:
                     record = vault.KeeperRecord.load(params, current_content.record_uid)  # type: Optional[TypedRecord]
                     if record is not None:
-                        text += f"{pad}{ls}" + cf(f"{record.title}; {record.record_uid}")
+                        text += f"{pad}{ls}" + cf(f"{current_vertex.uid}; {record.title}; {record.record_uid}")
                     else:
-                        text += f"{pad}{ls}" + cf(f"{current_content.title}; " +
+                        text += f"{pad}{ls}" + cf(f"{current_vertex.uid}; {current_content.title}; " +
                                                   self._f("have record uid, record does not exists, "
                                                           "might have to sync."))
             else:
@@ -165,6 +165,15 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
             return
         
         print(self._h(f"{pad}{record.record_type}, {record.title}, {record.record_uid}"))
+
+        if configuration.has_data is True:
+            try:
+                data = configuration.content_as_dict
+                print(f"{pad}  . data")
+                for k, v in data.items():
+                    print(f"{pad}    + {k} = {v}")
+            except (Exception,):
+                print(f"{pad}    ! data not JSON")
 
         def _group(configuration_vertex: DAGVertex) -> dict:
 
@@ -217,6 +226,15 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                                 print(f"{pad}      . looks like directory user")
                         continue
 
+                    if vertex.has_data is True:
+                        try:
+                            data = vertex.content_as_dict
+                            print(f"{pad}      . data")
+                            for k, v in data.items():
+                                print(f"{pad}        + {k} = {v}")
+                        except (Exception,):
+                            print(f"{pad}        ! data not JSON")
+
                     children = vertex.has_vertices()
                     if len(children) > 0:
                         bad = []
@@ -238,6 +256,15 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                                         print(f"{pad}        . belongs to this resource")
                                     else:
                                         print(f"{pad}        . looks like directory user")
+
+                                if child.has_data is True:
+                                    try:
+                                        data = child.content_as_dict
+                                        print(f"{pad}        . data")
+                                        for k, v in data.items():
+                                            print(f"{pad}          + {k} = {v}")
+                                    except (Exception,):
+                                        print(f"{pad}          ! data not JSON")
                         for i in bad:
                             print("{pad}      " + i)
 

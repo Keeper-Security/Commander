@@ -24,8 +24,8 @@ class PAMDebugACLCommand(PAMGatewayActionDiscoverCommandBase):
                         help='User UID.')
     parser.add_argument('--parent-uid', '-r', required=True, dest='parent_uid', action='store',
                         help='Resource or Configuration UID.')
-    parser.add_argument('--debug-dag-level', required=False, dest='debug_level', action='store',
-                        help='DAG debug level. Default is 0', type=int, default=0)
+    parser.add_argument('--debug-gs-level', required=False, dest='debug_level', action='store',
+                        help='GraphSync debug level. Default is 0', type=int, default=0)
 
     def get_parser(self):
         return PAMDebugACLCommand.parser
