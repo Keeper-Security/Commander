@@ -282,8 +282,12 @@ def is_pw_weak(pw_score):           # type: (int) -> bool
     return pw_score < 40
 
 
+def is_pw_fair(pw_score):           # type: (int) -> bool
+    return 40 <= pw_score < 60
+
+
 def is_pw_strong(pw_score):         # type: (int) -> bool
-    return pw_score >= 60
+    return pw_score >= 80
 
 
 def is_rec_at_risk(bw_result):      # type (int) -> bool
