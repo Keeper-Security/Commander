@@ -91,6 +91,7 @@ Column Name       Description
   username          user name
   email             e-mail address
   weak              number of records whose password strength is in the weak category
+  fair              number of records whose password strength is in the fair category
   medium            number of records whose password strength is in the medium category
   strong            number of records whose password strength is in the strong category
   reused            number of reused passwords
@@ -106,19 +107,26 @@ Column Name       Description
 
 
 class SecurityAuditReportCommand(EnterpriseCommand):
+    SECURITY_SCORE_KEYS = (
+        'weak_record_passwords',
+        'fair_record_passwords',
+        'medium_record_passwords',
+        'strong_record_passwords',
+        'total_record_passwords',
+        'unique_record_passwords',
+    )
+    BREACHWATCH_SCORE_KEYS = (
+        'passed_records',
+        'at_risk_records',
+        'ignored_records'
+    )
+    SCORE_DATA_KEYS = SECURITY_SCORE_KEYS + BREACHWATCH_SCORE_KEYS
+
     def __init__(self):
         super(SecurityAuditReportCommand, self).__init__()
         self.tree_key = None
         self.user_lookup = None
         self.enterprise_private_rsa_key = None
-        self.score_data_keys = (
-            'weak_record_passwords',
-            'strong_record_passwords',
-            'total_record_passwords',
-            'passed_records',
-            'at_risk_records',
-            'ignored_records'
-        )
         self.debug_report_builder = None
         self.error_report_builder = None
 
@@ -183,6 +191,24 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         twoFactorOnVal = 1 if (twoFactorOn is True) else 0
         score = (strongByTotal + uniqueByTotal + masterPassword + twoFactorOnVal) / 4
         return score
+
+    def flatten_report_data(self, data, num_reused_pws):
+        sec_stats = data.get('securityAuditStats', {})
+        bw_stats = data.get('bwStats', {})
+        total = data.get('total_record_passwords') or sec_stats.get('total_record_passwords', 0)
+        result = {k: data.get(k) or sec_stats.get(k) or bw_stats.get(k, 0) for k in self.SCORE_DATA_KEYS}
+        result['unique_record_passwords'] = total - num_reused_pws
+        # Fill in missing medium password count if report data is in old format
+        if not sec_stats:
+            weak = result.get('weak_record_passwords', 0)
+            strong = result.get('strong_record_passwords', 0)
+            result['medium_record_passwords'] = total - weak - strong
+        return result
+
+    def format_report_data(self, flattened_data):
+        sec_stats = {k: flattened_data.get(k) for k in self.SECURITY_SCORE_KEYS}
+        bw_stats = {k: flattened_data.get(k) for k in self.BREACHWATCH_SCORE_KEYS}
+        return {'securityAuditStats': sec_stats, 'bwStats': bw_stats}
 
     def execute(self, params, **kwargs):
         if kwargs.get('syntax_help'):
@@ -249,6 +275,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                     'node': node_path,
                     'total': 0,
                     'weak': 0,
+                    'fair': 0,
                     'medium': 0,
                     'strong': 0,
                     'reused': sr.numberOfReusedPassword,
@@ -267,17 +294,16 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                         sri = crypto.decrypt_aes_v2(sr.encryptedReportData, tree_key)
                     except Exception as e:
                         msg = f'Decryption fail (old summary report). Reason: {e}'
-                        self.get_error_report_builder().update_report_data(msg)
+                        logging.error(msg)
                         continue
 
                     try:
-                        data = json.loads(sri)
-                    except:
-                        msg = f'Invalid JSON (old summary report): {sri}'
-                        self.get_error_report_builder().update_report_data(msg)
+                        data = self.flatten_report_data(json.loads(sri), sr.numberOfReusedPassword)
+                    except Exception as e:
+                        logging.error(e)
                         continue
                 else:
-                    data = {dk: 0 for dk in self.score_data_keys}
+                    data = {dk: 0 for dk in self.SCORE_DATA_KEYS}
 
                 if show_updated or debug_mode:
                     debug_mode and self.debug_report_builder.set_current_email(email)
@@ -291,25 +317,15 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                     updated_sr = APIRequest_pb2.SecurityReport()
                     updated_sr.revision = security_report_data_rs.asOfRevision
                     updated_sr.enterpriseUserId = sr.enterpriseUserId
-                    report = json.dumps(data).encode('utf-8')
+                    report = json.dumps(self.format_report_data(data)).encode('utf-8')
                     updated_sr.encryptedReportData = crypto.encrypt_aes_v2(report, tree_key)
                     updated_security_reports.append(updated_sr)
 
-                if 'weak_record_passwords' in data:
-                    row['weak'] = data.get('weak_record_passwords') or 0
-                if 'strong_record_passwords' in data:
-                    row['strong'] = data.get('strong_record_passwords') or 0
-                if 'total_record_passwords' in data:
-                    row['total'] = data.get('total_record_passwords') or 0
-                if 'passed_records' in data:
-                    row['passed'] = data.get('passed_records') or 0
-                if 'at_risk_records' in data:
-                    row['at_risk'] = data.get('at_risk_records') or 0
-                if 'ignored_records' in data:
-                    row['ignored'] = data.get('ignored_records') or 0
+                to_row_name = lambda name: name.split('_').pop(0) if name in self.SECURITY_SCORE_KEYS \
+                    else '_'.join(name.split('_')[:-1])
 
-                row['medium'] = row['total'] - row['weak'] - row['strong']
-                row['unique'] = row['total'] - row['reused']
+                for k, v in data.items():
+                    row[to_row_name(k)] = v
 
                 strong = row.get('strong')
                 total = row.get('total')
@@ -354,8 +370,8 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             self.save_updated_security_reports(params, updated_security_reports)
 
         fields = ('email', 'name', 'sync_pending', 'at_risk', 'passed', 'ignored') if show_breachwatch else \
-            ('email', 'name', 'sync_pending', 'weak', 'medium', 'strong', 'reused', 'unique', 'securityScore', 'twoFactorChannel',
-             'node')
+            ('email', 'name', 'sync_pending', 'weak', 'fair', 'medium', 'strong', 'reused', 'unique', 'securityScore',
+             'twoFactorChannel', 'node')
         field_descriptions = fields
 
         if fmt == 'table':
@@ -424,14 +440,21 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             def get_security_score_deltas(rec_sec_data, delta):
                 bw_result = rec_sec_data.get('bw_result')
                 pw_strength = rec_sec_data.get('strength')
-                deltas = dict()
-                deltas['at_risk_records'] = delta if utils.is_rec_at_risk(bw_result) else 0
-                deltas['weak_record_passwords'] = delta if utils.is_pw_weak(pw_strength) else 0
-                deltas['strong_record_passwords'] = delta if utils.is_pw_strong(pw_strength) else 0
-                deltas['passed_records'] = delta if utils.passed_bw_check(bw_result) else 0
-                deltas['ignored_records'] = delta if bw_result == 4 else 0
-                deltas['total_record_passwords'] = delta
-                return deltas
+                sec_deltas = {k: 0 for k in self.SECURITY_SCORE_KEYS}
+                bw_deltas = {k: 0 for k in self.BREACHWATCH_SCORE_KEYS}
+                sec_key = 'strong_record_passwords' if utils.is_pw_strong(pw_strength) \
+                    else 'fair_record_passwords' if utils.is_pw_fair(pw_strength) \
+                    else 'weak_record_passwords' if utils.is_pw_weak(pw_strength) \
+                    else 'medium_record_passwords'
+                sec_deltas[sec_key] = delta
+                sec_deltas['total_record_passwords'] = delta
+
+                bw_key = 'at_risk_records' if utils.is_rec_at_risk(bw_result) \
+                    else 'passed_records' if utils.passed_bw_check(bw_result) \
+                    else 'ignored_records'
+                bw_deltas[bw_key] = delta
+
+                return {**sec_deltas, **bw_deltas}
 
             def apply_score_deltas(sec_data, deltas):
                 new_scores = {k: v + sec_data.get(k, 0) for k, v in deltas.items()}
@@ -464,6 +487,9 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             return report_data
 
         result = apply_incremental_data(last_saved_data, sr.securityReportIncrementalData, rsa_key)
+        # Update unique password count
+        total = result.get('total_record_passwords', 0)
+        result['unique_record_passwords'] = total - sr.numberOfReusedPassword
         return result
 
     @staticmethod
