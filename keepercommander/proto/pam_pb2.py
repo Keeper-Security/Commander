@@ -13,11 +13,11 @@ from google.protobuf import symbol_database as _symbol_database
 _sym_db = _symbol_database.Default()
 
 
-from . import enterprise_pb2 as enterprise__pb2
-from . import record_pb2 as record__pb2
+from . import enterprise_pb2 as enterprise_pb2
+from . import record_pb2 as record_pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\tpam.proto\x12\x03PAM\x1a\x10\x65nterprise.proto\x1a\x0crecord.proto\"\x83\x01\n\x13PAMRotationSchedule\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x18\n\x10\x63onfigurationUid\x18\x02 \x01(\x0c\x12\x15\n\rcontrollerUid\x18\x03 \x01(\x0c\x12\x14\n\x0cscheduleData\x18\x04 \x01(\t\x12\x12\n\nnoSchedule\x18\x05 \x01(\x08\"K\n\x1cPAMRotationSchedulesResponse\x12+\n\tschedules\x18\x01 \x03(\x0b\x32\x18.PAM.PAMRotationSchedule\"\x94\x01\n\x13PAMOnlineController\x12\x15\n\rcontrollerUid\x18\x01 \x01(\x0c\x12\x13\n\x0b\x63onnectedOn\x18\x02 \x01(\x03\x12\x11\n\tipAddress\x18\x03 \x01(\t\x12\x0f\n\x07version\x18\x04 \x01(\t\x12-\n\x0b\x63onnections\x18\x05 \x03(\x0b\x32\x18.PAM.PAMWebRtcConnection\"\x8d\x01\n\x13PAMWebRtcConnection\x12\x15\n\rconnectionUid\x18\x01 \x01(\x0c\x12\'\n\x04type\x18\x02 \x01(\x0e\x32\x19.PAM.WebRtcConnectionType\x12\x11\n\trecordUid\x18\x03 \x01(\x0c\x12\x10\n\x08userName\x18\x04 \x01(\t\x12\x11\n\tstartedOn\x18\x05 \x01(\x03\"Y\n\x14PAMOnlineControllers\x12\x12\n\ndeprecated\x18\x01 \x03(\x0c\x12-\n\x0b\x63ontrollers\x18\x02 \x03(\x0b\x32\x18.PAM.PAMOnlineController\"9\n\x10PAMRotateRequest\x12\x12\n\nrequestUid\x18\x01 \x01(\x0c\x12\x11\n\trecordUid\x18\x02 \x01(\x0c\"A\n\x16PAMControllersResponse\x12\'\n\x0b\x63ontrollers\x18\x01 \x03(\x0b\x32\x12.PAM.PAMController\"=\n\x13PAMRemoveController\x12\x15\n\rcontrollerUid\x18\x01 \x01(\x0c\x12\x0f\n\x07message\x18\x02 \x01(\t\"L\n\x1bPAMRemoveControllerResponse\x12-\n\x0b\x63ontrollers\x18\x01 \x03(\x0b\x32\x18.PAM.PAMRemoveController\"=\n\x10PAMModifyRequest\x12)\n\noperations\x18\x01 \x03(\x0b\x32\x15.PAM.PAMDataOperation\"\x98\x01\n\x10PAMDataOperation\x12,\n\roperationType\x18\x01 \x01(\x0e\x32\x15.PAM.PAMOperationType\x12\x30\n\rconfiguration\x18\x02 \x01(\x0b\x32\x19.PAM.PAMConfigurationData\x12$\n\x07\x65lement\x18\x03 \x01(\x0b\x32\x13.PAM.PAMElementData\"e\n\x14PAMConfigurationData\x12\x18\n\x10\x63onfigurationUid\x18\x01 \x01(\x0c\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x15\n\rcontrollerUid\x18\x03 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\"E\n\x0ePAMElementData\x12\x12\n\nelementUid\x18\x01 \x01(\x0c\x12\x11\n\tparentUid\x18\x02 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x03 \x01(\x0c\"m\n\x19PAMElementOperationResult\x12\x12\n\nelementUid\x18\x01 \x01(\x0c\x12+\n\x06result\x18\x02 \x01(\x0e\x32\x1b.PAM.PAMOperationResultType\x12\x0f\n\x07message\x18\x03 \x01(\t\"B\n\x0fPAMModifyResult\x12/\n\x07results\x18\x01 \x03(\x0b\x32\x1e.PAM.PAMElementOperationResult\"x\n\nPAMElement\x12\x12\n\nelementUid\x18\x01 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\x12\x0f\n\x07\x63reated\x18\x03 \x01(\x03\x12\x14\n\x0clastModified\x18\x04 \x01(\x03\x12!\n\x08\x63hildren\x18\x05 \x03(\x0b\x32\x0f.PAM.PAMElement\"#\n\x14PAMGenericUidRequest\x12\x0b\n\x03uid\x18\x01 \x01(\x0c\"%\n\x15PAMGenericUidsRequest\x12\x0c\n\x04uids\x18\x01 \x03(\x0c\"\xab\x01\n\x10PAMConfiguration\x12\x18\n\x10\x63onfigurationUid\x18\x01 \x01(\x0c\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x15\n\rcontrollerUid\x18\x03 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\x0f\n\x07\x63reated\x18\x05 \x01(\x03\x12\x14\n\x0clastModified\x18\x06 \x01(\x03\x12!\n\x08\x63hildren\x18\x07 \x03(\x0b\x32\x0f.PAM.PAMElement\"B\n\x11PAMConfigurations\x12-\n\x0e\x63onfigurations\x18\x01 \x03(\x0b\x32\x15.PAM.PAMConfiguration\"\xff\x01\n\rPAMController\x12\x15\n\rcontrollerUid\x18\x01 \x01(\x0c\x12\x16\n\x0e\x63ontrollerName\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65viceToken\x18\x03 \x01(\t\x12\x12\n\ndeviceName\x18\x04 \x01(\t\x12\x0e\n\x06nodeId\x18\x05 \x01(\x03\x12\x0f\n\x07\x63reated\x18\x06 \x01(\x03\x12\x14\n\x0clastModified\x18\x07 \x01(\x03\x12\x16\n\x0e\x61pplicationUid\x18\x08 \x01(\x0c\x12\x30\n\rappClientType\x18\t \x01(\x0e\x32\x19.Enterprise.AppClientType\x12\x15\n\risInitialized\x18\n \x01(\x08\"%\n\x12\x43ontrollerResponse\x12\x0f\n\x07payload\x18\x01 \x01(\t\"M\n\x1aPAMConfigurationController\x12\x18\n\x10\x63onfigurationUid\x18\x01 \x01(\x0c\x12\x15\n\rcontrollerUid\x18\x02 \x01(\x0c\"\xa3\x01\n\x17\x43onfigurationAddRequest\x12\x18\n\x10\x63onfigurationUid\x18\x01 \x01(\x0c\x12\x11\n\trecordKey\x18\x02 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x03 \x01(\x0c\x12(\n\x0brecordLinks\x18\x04 \x03(\x0b\x32\x13.Records.RecordLink\x12#\n\x05\x61udit\x18\x05 \x01(\x0b\x32\x14.Records.RecordAudit\"6\n\x10RelayAccessCreds\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x10\n\x08password\x18\x02 \x01(\t*2\n\x14WebRtcConnectionType\x12\x0e\n\nCONNECTION\x10\x00\x12\n\n\x06TUNNEL\x10\x01*@\n\x10PAMOperationType\x12\x07\n\x03\x41\x44\x44\x10\x00\x12\n\n\x06UPDATE\x10\x01\x12\x0b\n\x07REPLACE\x10\x02\x12\n\n\x06\x44\x45LETE\x10\x03*p\n\x16PAMOperationResultType\x12\x0f\n\x0bPOT_SUCCESS\x10\x00\x12\x15\n\x11POT_UNKNOWN_ERROR\x10\x01\x12\x16\n\x12POT_ALREADY_EXISTS\x10\x02\x12\x16\n\x12POT_DOES_NOT_EXIST\x10\x03*Y\n\x15\x43ontrollerMessageType\x12\x0f\n\x0b\x43MT_GENERAL\x10\x00\x12\x0e\n\nCMT_ROTATE\x10\x01\x12\x0e\n\nCMT_STREAM\x10\x02\x12\x0f\n\x0b\x43MT_CONNECT\x10\x03\x42\x1f\n\x18\x63om.keepersecurity.protoB\x03PAMb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\tpam.proto\x12\x03PAM\x1a\x10\x65nterprise.proto\x1a\x0crecord.proto\"\x83\x01\n\x13PAMRotationSchedule\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x18\n\x10\x63onfigurationUid\x18\x02 \x01(\x0c\x12\x15\n\rcontrollerUid\x18\x03 \x01(\x0c\x12\x14\n\x0cscheduleData\x18\x04 \x01(\t\x12\x12\n\nnoSchedule\x18\x05 \x01(\x08\"K\n\x1cPAMRotationSchedulesResponse\x12+\n\tschedules\x18\x01 \x03(\x0b\x32\x18.PAM.PAMRotationSchedule\"\x94\x01\n\x13PAMOnlineController\x12\x15\n\rcontrollerUid\x18\x01 \x01(\x0c\x12\x13\n\x0b\x63onnectedOn\x18\x02 \x01(\x03\x12\x11\n\tipAddress\x18\x03 \x01(\t\x12\x0f\n\x07version\x18\x04 \x01(\t\x12-\n\x0b\x63onnections\x18\x05 \x03(\x0b\x32\x18.PAM.PAMWebRtcConnection\"\xa7\x01\n\x13PAMWebRtcConnection\x12\x15\n\rconnectionUid\x18\x01 \x01(\x0c\x12\'\n\x04type\x18\x02 \x01(\x0e\x32\x19.PAM.WebRtcConnectionType\x12\x11\n\trecordUid\x18\x03 \x01(\x0c\x12\x10\n\x08userName\x18\x04 \x01(\t\x12\x11\n\tstartedOn\x18\x05 \x01(\x03\x12\x18\n\x10\x63onfigurationUid\x18\x06 \x01(\x0c\"Y\n\x14PAMOnlineControllers\x12\x12\n\ndeprecated\x18\x01 \x03(\x0c\x12-\n\x0b\x63ontrollers\x18\x02 \x03(\x0b\x32\x18.PAM.PAMOnlineController\"9\n\x10PAMRotateRequest\x12\x12\n\nrequestUid\x18\x01 \x01(\x0c\x12\x11\n\trecordUid\x18\x02 \x01(\x0c\"A\n\x16PAMControllersResponse\x12\'\n\x0b\x63ontrollers\x18\x01 \x03(\x0b\x32\x12.PAM.PAMController\"=\n\x13PAMRemoveController\x12\x15\n\rcontrollerUid\x18\x01 \x01(\x0c\x12\x0f\n\x07message\x18\x02 \x01(\t\"L\n\x1bPAMRemoveControllerResponse\x12-\n\x0b\x63ontrollers\x18\x01 \x03(\x0b\x32\x18.PAM.PAMRemoveController\"=\n\x10PAMModifyRequest\x12)\n\noperations\x18\x01 \x03(\x0b\x32\x15.PAM.PAMDataOperation\"\x98\x01\n\x10PAMDataOperation\x12,\n\roperationType\x18\x01 \x01(\x0e\x32\x15.PAM.PAMOperationType\x12\x30\n\rconfiguration\x18\x02 \x01(\x0b\x32\x19.PAM.PAMConfigurationData\x12$\n\x07\x65lement\x18\x03 \x01(\x0b\x32\x13.PAM.PAMElementData\"e\n\x14PAMConfigurationData\x12\x18\n\x10\x63onfigurationUid\x18\x01 \x01(\x0c\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x15\n\rcontrollerUid\x18\x03 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\"E\n\x0ePAMElementData\x12\x12\n\nelementUid\x18\x01 \x01(\x0c\x12\x11\n\tparentUid\x18\x02 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x03 \x01(\x0c\"m\n\x19PAMElementOperationResult\x12\x12\n\nelementUid\x18\x01 \x01(\x0c\x12+\n\x06result\x18\x02 \x01(\x0e\x32\x1b.PAM.PAMOperationResultType\x12\x0f\n\x07message\x18\x03 \x01(\t\"B\n\x0fPAMModifyResult\x12/\n\x07results\x18\x01 \x03(\x0b\x32\x1e.PAM.PAMElementOperationResult\"x\n\nPAMElement\x12\x12\n\nelementUid\x18\x01 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\x12\x0f\n\x07\x63reated\x18\x03 \x01(\x03\x12\x14\n\x0clastModified\x18\x04 \x01(\x03\x12!\n\x08\x63hildren\x18\x05 \x03(\x0b\x32\x0f.PAM.PAMElement\"#\n\x14PAMGenericUidRequest\x12\x0b\n\x03uid\x18\x01 \x01(\x0c\"%\n\x15PAMGenericUidsRequest\x12\x0c\n\x04uids\x18\x01 \x03(\x0c\"\xab\x01\n\x10PAMConfiguration\x12\x18\n\x10\x63onfigurationUid\x18\x01 \x01(\x0c\x12\x0e\n\x06nodeId\x18\x02 \x01(\x03\x12\x15\n\rcontrollerUid\x18\x03 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\x12\x0f\n\x07\x63reated\x18\x05 \x01(\x03\x12\x14\n\x0clastModified\x18\x06 \x01(\x03\x12!\n\x08\x63hildren\x18\x07 \x03(\x0b\x32\x0f.PAM.PAMElement\"B\n\x11PAMConfigurations\x12-\n\x0e\x63onfigurations\x18\x01 \x03(\x0b\x32\x15.PAM.PAMConfiguration\"\xff\x01\n\rPAMController\x12\x15\n\rcontrollerUid\x18\x01 \x01(\x0c\x12\x16\n\x0e\x63ontrollerName\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65viceToken\x18\x03 \x01(\t\x12\x12\n\ndeviceName\x18\x04 \x01(\t\x12\x0e\n\x06nodeId\x18\x05 \x01(\x03\x12\x0f\n\x07\x63reated\x18\x06 \x01(\x03\x12\x14\n\x0clastModified\x18\x07 \x01(\x03\x12\x16\n\x0e\x61pplicationUid\x18\x08 \x01(\x0c\x12\x30\n\rappClientType\x18\t \x01(\x0e\x32\x19.Enterprise.AppClientType\x12\x15\n\risInitialized\x18\n \x01(\x08\"%\n\x12\x43ontrollerResponse\x12\x0f\n\x07payload\x18\x01 \x01(\t\"M\n\x1aPAMConfigurationController\x12\x18\n\x10\x63onfigurationUid\x18\x01 \x01(\x0c\x12\x15\n\rcontrollerUid\x18\x02 \x01(\x0c\"\xa3\x01\n\x17\x43onfigurationAddRequest\x12\x18\n\x10\x63onfigurationUid\x18\x01 \x01(\x0c\x12\x11\n\trecordKey\x18\x02 \x01(\x0c\x12\x0c\n\x04\x64\x61ta\x18\x03 \x01(\x0c\x12(\n\x0brecordLinks\x18\x04 \x03(\x0b\x32\x13.Records.RecordLink\x12#\n\x05\x61udit\x18\x05 \x01(\x0b\x32\x14.Records.RecordAudit*\x8e\x01\n\x14WebRtcConnectionType\x12\x0e\n\nCONNECTION\x10\x00\x12\n\n\x06TUNNEL\x10\x01\x12\x07\n\x03SSH\x10\x02\x12\x07\n\x03RDP\x10\x03\x12\x08\n\x04HTTP\x10\x04\x12\x07\n\x03VNC\x10\x05\x12\n\n\x06TELNET\x10\x06\x12\t\n\x05MYSQL\x10\x07\x12\x0e\n\nSQL_SERVER\x10\x08\x12\x0e\n\nPOSTGRESQL\x10\t*@\n\x10PAMOperationType\x12\x07\n\x03\x41\x44\x44\x10\x00\x12\n\n\x06UPDATE\x10\x01\x12\x0b\n\x07REPLACE\x10\x02\x12\n\n\x06\x44\x45LETE\x10\x03*p\n\x16PAMOperationResultType\x12\x0f\n\x0bPOT_SUCCESS\x10\x00\x12\x15\n\x11POT_UNKNOWN_ERROR\x10\x01\x12\x16\n\x12POT_ALREADY_EXISTS\x10\x02\x12\x16\n\x12POT_DOES_NOT_EXIST\x10\x03*\\\n\x15\x43ontrollerMessageType\x12\x0f\n\x0b\x43MT_GENERAL\x10\x00\x12\x0e\n\nCMT_ROTATE\x10\x01\x12\x11\n\rCMT_DISCOVERY\x10\x02\x12\x0f\n\x0b\x43MT_CONNECT\x10\x03\x42\x1f\n\x18\x63om.keepersecurity.protoB\x03PAMb\x06proto3')
 
 _WEBRTCCONNECTIONTYPE = DESCRIPTOR.enum_types_by_name['WebRtcConnectionType']
 WebRtcConnectionType = enum_type_wrapper.EnumTypeWrapper(_WEBRTCCONNECTIONTYPE)
@@ -29,6 +29,14 @@ _CONTROLLERMESSAGETYPE = DESCRIPTOR.enum_types_by_name['ControllerMessageType']
 ControllerMessageType = enum_type_wrapper.EnumTypeWrapper(_CONTROLLERMESSAGETYPE)
 CONNECTION = 0
 TUNNEL = 1
+SSH = 2
+RDP = 3
+HTTP = 4
+VNC = 5
+TELNET = 6
+MYSQL = 7
+SQL_SERVER = 8
+POSTGRESQL = 9
 ADD = 0
 UPDATE = 1
 REPLACE = 2
@@ -39,7 +47,7 @@ POT_ALREADY_EXISTS = 2
 POT_DOES_NOT_EXIST = 3
 CMT_GENERAL = 0
 CMT_ROTATE = 1
-CMT_STREAM = 2
+CMT_DISCOVERY = 2
 CMT_CONNECT = 3
 
 
@@ -67,7 +75,6 @@ _PAMCONTROLLER = DESCRIPTOR.message_types_by_name['PAMController']
 _CONTROLLERRESPONSE = DESCRIPTOR.message_types_by_name['ControllerResponse']
 _PAMCONFIGURATIONCONTROLLER = DESCRIPTOR.message_types_by_name['PAMConfigurationController']
 _CONFIGURATIONADDREQUEST = DESCRIPTOR.message_types_by_name['ConfigurationAddRequest']
-_RELAYACCESSCREDS = DESCRIPTOR.message_types_by_name['RelayAccessCreds']
 PAMRotationSchedule = _reflection.GeneratedProtocolMessageType('PAMRotationSchedule', (_message.Message,), {
   'DESCRIPTOR' : _PAMROTATIONSCHEDULE,
   '__module__' : 'pam_pb2'
@@ -236,25 +243,18 @@ ConfigurationAddRequest = _reflection.GeneratedProtocolMessageType('Configuratio
   })
 _sym_db.RegisterMessage(ConfigurationAddRequest)
 
-RelayAccessCreds = _reflection.GeneratedProtocolMessageType('RelayAccessCreds', (_message.Message,), {
-  'DESCRIPTOR' : _RELAYACCESSCREDS,
-  '__module__' : 'pam_pb2'
-  # @@protoc_insertion_point(class_scope:PAM.RelayAccessCreds)
-  })
-_sym_db.RegisterMessage(RelayAccessCreds)
-
 if _descriptor._USE_C_DESCRIPTORS == False:
 
   DESCRIPTOR._options = None
   DESCRIPTOR._serialized_options = b'\n\030com.keepersecurity.protoB\003PAM'
-  _WEBRTCCONNECTIONTYPE._serialized_start=2523
-  _WEBRTCCONNECTIONTYPE._serialized_end=2573
-  _PAMOPERATIONTYPE._serialized_start=2575
-  _PAMOPERATIONTYPE._serialized_end=2639
-  _PAMOPERATIONRESULTTYPE._serialized_start=2641
-  _PAMOPERATIONRESULTTYPE._serialized_end=2753
-  _CONTROLLERMESSAGETYPE._serialized_start=2755
-  _CONTROLLERMESSAGETYPE._serialized_end=2844
+  _WEBRTCCONNECTIONTYPE._serialized_start=2494
+  _WEBRTCCONNECTIONTYPE._serialized_end=2636
+  _PAMOPERATIONTYPE._serialized_start=2638
+  _PAMOPERATIONTYPE._serialized_end=2702
+  _PAMOPERATIONRESULTTYPE._serialized_start=2704
+  _PAMOPERATIONRESULTTYPE._serialized_end=2816
+  _CONTROLLERMESSAGETYPE._serialized_start=2818
+  _CONTROLLERMESSAGETYPE._serialized_end=2910
   _PAMROTATIONSCHEDULE._serialized_start=51
   _PAMROTATIONSCHEDULE._serialized_end=182
   _PAMROTATIONSCHEDULESRESPONSE._serialized_start=184
@@ -262,47 +262,45 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _PAMONLINECONTROLLER._serialized_start=262
   _PAMONLINECONTROLLER._serialized_end=410
   _PAMWEBRTCCONNECTION._serialized_start=413
-  _PAMWEBRTCCONNECTION._serialized_end=554
-  _PAMONLINECONTROLLERS._serialized_start=556
-  _PAMONLINECONTROLLERS._serialized_end=645
-  _PAMROTATEREQUEST._serialized_start=647
-  _PAMROTATEREQUEST._serialized_end=704
-  _PAMCONTROLLERSRESPONSE._serialized_start=706
-  _PAMCONTROLLERSRESPONSE._serialized_end=771
-  _PAMREMOVECONTROLLER._serialized_start=773
-  _PAMREMOVECONTROLLER._serialized_end=834
-  _PAMREMOVECONTROLLERRESPONSE._serialized_start=836
-  _PAMREMOVECONTROLLERRESPONSE._serialized_end=912
-  _PAMMODIFYREQUEST._serialized_start=914
-  _PAMMODIFYREQUEST._serialized_end=975
-  _PAMDATAOPERATION._serialized_start=978
-  _PAMDATAOPERATION._serialized_end=1130
-  _PAMCONFIGURATIONDATA._serialized_start=1132
-  _PAMCONFIGURATIONDATA._serialized_end=1233
-  _PAMELEMENTDATA._serialized_start=1235
-  _PAMELEMENTDATA._serialized_end=1304
-  _PAMELEMENTOPERATIONRESULT._serialized_start=1306
-  _PAMELEMENTOPERATIONRESULT._serialized_end=1415
-  _PAMMODIFYRESULT._serialized_start=1417
-  _PAMMODIFYRESULT._serialized_end=1483
-  _PAMELEMENT._serialized_start=1485
-  _PAMELEMENT._serialized_end=1605
-  _PAMGENERICUIDREQUEST._serialized_start=1607
-  _PAMGENERICUIDREQUEST._serialized_end=1642
-  _PAMGENERICUIDSREQUEST._serialized_start=1644
-  _PAMGENERICUIDSREQUEST._serialized_end=1681
-  _PAMCONFIGURATION._serialized_start=1684
-  _PAMCONFIGURATION._serialized_end=1855
-  _PAMCONFIGURATIONS._serialized_start=1857
-  _PAMCONFIGURATIONS._serialized_end=1923
-  _PAMCONTROLLER._serialized_start=1926
-  _PAMCONTROLLER._serialized_end=2181
-  _CONTROLLERRESPONSE._serialized_start=2183
-  _CONTROLLERRESPONSE._serialized_end=2220
-  _PAMCONFIGURATIONCONTROLLER._serialized_start=2222
-  _PAMCONFIGURATIONCONTROLLER._serialized_end=2299
-  _CONFIGURATIONADDREQUEST._serialized_start=2302
-  _CONFIGURATIONADDREQUEST._serialized_end=2465
-  _RELAYACCESSCREDS._serialized_start=2467
-  _RELAYACCESSCREDS._serialized_end=2521
+  _PAMWEBRTCCONNECTION._serialized_end=580
+  _PAMONLINECONTROLLERS._serialized_start=582
+  _PAMONLINECONTROLLERS._serialized_end=671
+  _PAMROTATEREQUEST._serialized_start=673
+  _PAMROTATEREQUEST._serialized_end=730
+  _PAMCONTROLLERSRESPONSE._serialized_start=732
+  _PAMCONTROLLERSRESPONSE._serialized_end=797
+  _PAMREMOVECONTROLLER._serialized_start=799
+  _PAMREMOVECONTROLLER._serialized_end=860
+  _PAMREMOVECONTROLLERRESPONSE._serialized_start=862
+  _PAMREMOVECONTROLLERRESPONSE._serialized_end=938
+  _PAMMODIFYREQUEST._serialized_start=940
+  _PAMMODIFYREQUEST._serialized_end=1001
+  _PAMDATAOPERATION._serialized_start=1004
+  _PAMDATAOPERATION._serialized_end=1156
+  _PAMCONFIGURATIONDATA._serialized_start=1158
+  _PAMCONFIGURATIONDATA._serialized_end=1259
+  _PAMELEMENTDATA._serialized_start=1261
+  _PAMELEMENTDATA._serialized_end=1330
+  _PAMELEMENTOPERATIONRESULT._serialized_start=1332
+  _PAMELEMENTOPERATIONRESULT._serialized_end=1441
+  _PAMMODIFYRESULT._serialized_start=1443
+  _PAMMODIFYRESULT._serialized_end=1509
+  _PAMELEMENT._serialized_start=1511
+  _PAMELEMENT._serialized_end=1631
+  _PAMGENERICUIDREQUEST._serialized_start=1633
+  _PAMGENERICUIDREQUEST._serialized_end=1668
+  _PAMGENERICUIDSREQUEST._serialized_start=1670
+  _PAMGENERICUIDSREQUEST._serialized_end=1707
+  _PAMCONFIGURATION._serialized_start=1710
+  _PAMCONFIGURATION._serialized_end=1881
+  _PAMCONFIGURATIONS._serialized_start=1883
+  _PAMCONFIGURATIONS._serialized_end=1949
+  _PAMCONTROLLER._serialized_start=1952
+  _PAMCONTROLLER._serialized_end=2207
+  _CONTROLLERRESPONSE._serialized_start=2209
+  _CONTROLLERRESPONSE._serialized_end=2246
+  _PAMCONFIGURATIONCONTROLLER._serialized_start=2248
+  _PAMCONFIGURATIONCONTROLLER._serialized_end=2325
+  _CONFIGURATIONADDREQUEST._serialized_start=2328
+  _CONFIGURATIONADDREQUEST._serialized_end=2491
 # @@protoc_insertion_point(module_scope)
