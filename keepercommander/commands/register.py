@@ -32,16 +32,16 @@ from .helpers.record import get_record_uids
 from .helpers.timeout import parse_timeout
 from .record import RecordRemoveCommand
 from .utils import SyncDownCommand
-from .. import api, utils, crypto, constants, rest_api
+from .. import api, utils, crypto, constants, rest_api, vault
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError, Error
+from ..loginv3 import LoginV3API
 from ..params import KeeperParams
 from ..proto import APIRequest_pb2, folder_pb2, record_pb2, enterprise_pb2
 from ..shared_record import SharePermissions, get_shared_records, SharedRecord
 from ..sox.sox_types import Record
 from ..subfolder import BaseFolderNode, SharedFolderNode, SharedFolderFolderNode, try_resolve_path, get_folder_path, \
     get_folder_uids, get_contained_record_uids
-from ..loginv3 import LoginV3API
 
 
 def register_commands(commands):
@@ -204,18 +204,20 @@ one_time_share_create_parser = argparse.ArgumentParser(prog='one-time-share-crea
 one_time_share_create_parser.add_argument('--output', dest='output', choices=['clipboard', 'stdout'],
                                           action='store', help='password output destination')
 one_time_share_create_parser.add_argument('--name', dest='share_name', action='store', help='one-time share URL name')
-one_time_share_create_parser.add_argument('-e', '--expire', dest='expire', action='store', metavar='<NUMBER>[(m)inutes|(h)ours|(d)ays]',
+one_time_share_create_parser.add_argument('-e', '--expire', dest='expire', action='store', metavar='<NUMBER>[(mi)nutes|(h)ours|(d)ays]',
                                           help='Time period record share URL is valid.')
-one_time_share_create_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+one_time_share_create_parser.add_argument('record', nargs='+', type=str, action='store', help='record path or UID. Can be repeated')
 
 one_time_share_list_parser = argparse.ArgumentParser(prog='one-time-share-list', description='Displays a list of one-time shares for a records')
+one_time_share_list_parser.add_argument('-R', '--recursive', dest='recursive', action='store_true',
+                                      help='Traverse recursively through subfolders')
 one_time_share_list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output.')
 one_time_share_list_parser.add_argument('-a', '--all', dest='show_all', action='store_true', help='show all one-time shares including expired.')
 one_time_share_list_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
                                         default='table', help='output format.')
 one_time_share_list_parser.add_argument('--output', dest='output', action='store',
                                         help='output file name. (ignored for table format)')
-one_time_share_list_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
+one_time_share_list_parser.add_argument('record', nargs='+', type=str, action='store', help='record/folder path/UID')
 
 one_time_share_remove_parser = argparse.ArgumentParser(prog='one-time-share-remove', description='Removes one-time share URL for a record')
 one_time_share_remove_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
@@ -2104,8 +2106,8 @@ class FindDuplicateCommand(Command):
 class OneTimeShareCommand(GroupCommand):
     def __init__(self):
         super(OneTimeShareCommand, self).__init__()
-        self.register_command('list', OneTimeShareListCommand(), 'Displays a list of one-time shares for a records.')
-        self.register_command('create', OneTimeShareCreateCommand(), 'Creates one-time share URL for a record.')
+        self.register_command('list', OneTimeShareListCommand(), 'Displays a list of one-time shares for record(s)')
+        self.register_command('create', OneTimeShareCreateCommand(), 'Creates one-time share URL for record(s)')
         self.register_command('remove', OneTimeShareRemoveCommand(), 'Removes one-time share URL for a record.')
 
     @staticmethod
@@ -2131,9 +2133,12 @@ class OneTimeShareCommand(GroupCommand):
         return record_uid
 
     @staticmethod
-    def get_external_shares(params, record_uid):
+    def get_external_shares(params, records):
+        if isinstance(records, str):
+            records = [records]
         rq = APIRequest_pb2.GetAppInfoRequest()
-        rq.appRecordUid.append(utils.base64_url_decode(record_uid))
+        for record_uid in records:
+            rq.appRecordUid.append(utils.base64_url_decode(record_uid))
         rs = api.communicate_rest(params, rq, 'vault/get_app_info', rs_type=APIRequest_pb2.GetAppInfoResponse)
         return rs.appInfo
 
@@ -2149,7 +2154,7 @@ class OneTimeShareRemoveCommand(Command):
             return
 
         record_uid = OneTimeShareCommand.resolve_record(params, record_name)
-        applications = OneTimeShareCommand.get_external_shares(params, record_uid)
+        applications = OneTimeShareCommand.get_external_shares(params, [record_uid])
         if len(applications) == 0:
             logging.info('There are no one-time shares for record \"%s\"', record_name)
             return
@@ -2203,18 +2208,66 @@ class OneTimeShareListCommand(Command):
         return one_time_share_list_parser
 
     def execute(self, params, **kwargs):
-        record_name = kwargs['record'] if 'record' in kwargs else None
-        if not record_name:
+        records = kwargs['record'] if 'record' in kwargs else None
+        if not records:
             self.get_parser().print_help()
             return
+        if isinstance(records, str):
+            records = [records]
 
-        record_uid = OneTimeShareCommand.resolve_record(params, record_name)
-        applications = OneTimeShareCommand.get_external_shares(params, record_uid)
+        record_uids = set()
+        recursive = kwargs.get('recursive') is True
+        for name in records:
+            record_uid = None
+            folder_uid = None
+            if name in params.record_cache:
+                record_uid = name
+            elif name in params.folder_cache:
+                folder_uid = name
+            else:
+                rs = try_resolve_path(params, name)
+                if rs is not None:
+                    folder, r_name = rs
+                    if r_name:
+                        f_uid = folder.uid or ''
+                        if f_uid in params.subfolder_record_cache:
+                            for uid in params.subfolder_record_cache[f_uid]:
+                                rec = vault.KeeperRecord.load(params, uid)
+                                if rec.version not in (2, 3):
+                                    continue
+                                if rec.title.lower() == r_name.lower():
+                                    record_uid = uid
+                                    break
+                    else:
+                        folder_uid = folder.uid or ''
+            if record_uid is not None:
+                record_uids.add(record_uid)
+            elif folder_uid is not None:
+                def on_folder(f):   # type: (BaseFolderNode) -> None
+                    f_uid = f.uid or ''
+                    if f_uid in params.subfolder_record_cache:
+                        recs = params.subfolder_record_cache.get(f_uid)
+                        if recs:
+                            record_uids.update(recs)
+
+                if recursive:
+                    FolderMixin.traverse_folder_tree(params, folder_uid, on_folder)
+                else:
+                    folder = params.folder_cache[folder_uid]   # type: BaseFolderNode
+                    on_folder(folder)
+        if len(record_uids) == 0:
+            raise CommandError('one-time-share', 'No records are found')
+
+        r_uids = list(record_uids)
+        if len(r_uids) >= 1000:
+            logging.info('Trimming result to 1000 records')
+            r_uids = r_uids[:999]
+        applications = OneTimeShareCommand.get_external_shares(params, r_uids)
 
         show_all = kwargs.get('show_all', False)
         verbose = kwargs.get('verbose', False)
         now = utils.current_milli_time()
-        fields = ['record_uid', 'name', 'share_link_id', 'generated', 'opened', 'expires']
+        fields = ['record_uid', 'share_link_name', 'share_link_id', 'generated', 'opened', 'expires']
         if show_all:
             fields.append('status')
         table = []
@@ -2226,7 +2279,7 @@ class OneTimeShareListCommand(Command):
                 if not show_all and now > client.accessExpireOn:
                     continue
                 link = {
-                    'record_uid': record_uid,
+                    'record_uid': utils.base64_url_encode(app_info.appRecordUid),
                     'name': client.id,
                     'share_link_id': utils.base64_url_encode(client.clientId),
                     'generated': datetime.datetime.fromtimestamp(client.createdOn / 1000),
@@ -2263,40 +2316,49 @@ class OneTimeShareCreateCommand(Command):
         if period.total_seconds() > 182 * 24 * 60 * 60:
             raise CommandError('one-time-share', 'URL expiration period cannot be greater than 6 months.')
 
-        record_name = kwargs['record'] if 'record' in kwargs else None
-        if not record_name:
+        record_names = kwargs.get('record')
+        if isinstance(record_names, str):
+            record_names = [record_names]
+        if not record_names:
             self.get_parser().print_help()
             return
 
-        record_uid = OneTimeShareCommand.resolve_record(params, record_name)
-        record_key = params.record_cache[record_uid]['record_key_unencrypted']
+        urls = {}    # type: Dict[str, str]
+        for record_name in record_names:
+            record_uid = OneTimeShareCommand.resolve_record(params, record_name)
+            record_key = params.record_cache[record_uid]['record_key_unencrypted']
 
-        client_key = utils.generate_aes_key()
-        client_id = crypto.hmac_sha512(client_key, 'KEEPER_SECRETS_MANAGER_CLIENT_ID'.encode())
-        rq = APIRequest_pb2.AddExternalShareRequest()
-        rq.recordUid = utils.base64_url_decode(record_uid)
-        rq.encryptedRecordKey = crypto.encrypt_aes_v2(record_key, client_key)
-        rq.clientId = client_id
-        rq.accessExpireOn = utils.current_milli_time() + int(period.total_seconds() * 1000)
-        share_name = kwargs.get('share_name')
-        if share_name:
-            rq.id = share_name
+            client_key = utils.generate_aes_key()
+            client_id = crypto.hmac_sha512(client_key, 'KEEPER_SECRETS_MANAGER_CLIENT_ID'.encode())
+            rq = APIRequest_pb2.AddExternalShareRequest()
+            rq.recordUid = utils.base64_url_decode(record_uid)
+            rq.encryptedRecordKey = crypto.encrypt_aes_v2(record_key, client_key)
+            rq.clientId = client_id
+            rq.accessExpireOn = utils.current_milli_time() + int(period.total_seconds() * 1000)
+            share_name = kwargs.get('share_name')
+            if share_name:
+                rq.id = share_name
 
-        api.communicate_rest(params, rq, 'vault/external_share_add', rs_type=APIRequest_pb2.Device)
+            api.communicate_rest(params, rq, 'vault/external_share_add', rs_type=APIRequest_pb2.Device)
+            url = urlunparse(('https', params.server, '/vault/share', None, None, utils.base64_url_encode(client_key)))
+            urls[record_uid] = str(url)
 
-        url = urlunparse(('https', params.server, '/vault/share', None, None, utils.base64_url_encode(client_key)))
         if params.batch_mode:
-            return url
+            return '\n'.join(urls.values())
         else:
             output = kwargs.get('output') or ''
-            if output == 'clipboard':
+            if len(urls) > 1 and not output:
+                output = 'stdout'
+            if output == 'clipboard' and len(urls) == 1:
                 import pyperclip
-                pyperclip.copy(url)
+                pyperclip.copy(next(iter(urls.values())))
                 logging.info('One-Time record share URL is copied to clipboard')
             elif output == 'stdout':
-                print('{0:>10s} : {1}'.format('URL', url))
+                table = [list(x) for x in urls.items()]
+                headers = ['Record UID', 'URL']
+                dump_report_data(table, headers)
             else:
-                return url
+                return '\n'.join(urls.values())
 
 
 class CreateRegularUserCommand(Command):
