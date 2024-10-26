@@ -46,7 +46,7 @@ class PAMGatewayActionDiscoverRuleAddCommand(PAMGatewayActionDiscoverCommandBase
             gateway_action=GatewayActionDiscoverRuleValidate(
                 inputs=action_inputs,
                 conversation_id=conversation_id),
-            message_type=pam_pb2.CMT_GENERAL,
+            message_type=pam_pb2.CMT_DISCOVERY,
             is_streaming=False,
             destination_gateway_uid_str=gateway_context.gateway_uid
         )
