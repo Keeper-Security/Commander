@@ -24,12 +24,9 @@ from typing import Tuple, List, Optional, Dict, Set, Any, Iterable
 from asciitree import LeftAligned, BoxStyle, drawing
 from colorama import Style
 
-from prompt_toolkit.shortcuts import print_formatted_text
-from prompt_toolkit.formatted_text import FormattedText
-
-
 from . import base
-from .base import user_choice, dump_report_data, suppress_exit, raise_parse_exception, Command, GroupCommand, RecordMixin
+from .base import user_choice, dump_report_data, suppress_exit, raise_parse_exception, Command, GroupCommand, \
+    RecordMixin
 from .register import ShareFolderCommand
 from .. import api, display, vault, vault_extensions, crypto, utils
 from ..error import CommandError, KeeperApiError, Error
@@ -37,7 +34,6 @@ from ..params import KeeperParams
 from ..params import LAST_SHARED_FOLDER_UID, LAST_FOLDER_UID
 from ..proto import folder_pb2, record_pb2
 from ..record import Record
-from ..recordv3 import RecordV3
 from ..subfolder import BaseFolderNode, try_resolve_path, find_folders, SharedFolderNode, get_contained_record_uids, \
     get_contained_folder_uids
 
@@ -1576,9 +1572,16 @@ class FolderTransformCommand(Command):
                         uo.manageUsers = folder_pb2.BOOLEAN_TRUE if ushare.get(MU_KEY) else folder_pb2.BOOLEAN_FALSE
                         uo.manageRecords = folder_pb2.BOOLEAN_TRUE if ushare.get(MR_KEY) else folder_pb2.BOOLEAN_FALSE
                         keys = params.key_cache.get(email)
-                        if keys and keys.rsa:
-                            rsa_key = crypto.load_rsa_public_key(keys.rsa)
-                            uo.sharedFolderKey = crypto.encrypt_rsa(sf_key, rsa_key)
+                        if keys:
+                            if params.forbid_rsa and keys.ec:
+                                ec_key = crypto.load_ec_public_key(keys.ec)
+                                uo.typedSharedFolderKey.encryptedKey = crypto.encrypt_ec(sf_key, ec_key)
+                                uo.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key_ecc
+                            elif not params.forbid_rsa and keys.rsa:
+                                rsa_key = crypto.load_rsa_public_key(keys.rsa)
+                                uo.typedSharedFolderKey.encryptedKey = crypto.encrypt_rsa(sf_key, rsa_key)
+                                uo.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key
+
                         req_user_list = req.sharedFolderAddUser
                         req_user_list.append(uo)
 
@@ -1600,10 +1603,20 @@ class FolderTransformCommand(Command):
                         elif team_uid in params.key_cache:
                             team_keys = params.key_cache[team_uid]
                             if team_keys.aes:
-                                to.sharedFolderKey = crypto.encrypt_aes_v1(sf_key, team_keys.aes)
-                            elif team_keys.rsa:
+                                if params.forbid_rsa:
+                                    to.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v2(sf_key, team_keys.aes)
+                                    to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key_gcm
+                                else:
+                                    to.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v1(sf_key, team_keys.aes)
+                                    to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key
+                            elif params.forbid_rsa and team_keys.ec:
+                                ec_key = crypto.load_ec_public_key(team_keys.ec)
+                                to.typedSharedFolderKey.encryptedKey = crypto.encrypt_ec(sf_key, ec_key)
+                                to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key_ecc
+                            elif not params.forbid_rsa and team_keys.rsa:
                                 rsa_key = crypto.load_rsa_public_key(team_keys.rsa)
-                                to.sharedFolderKey = crypto.encrypt_rsa(sf_key, rsa_key)
+                                to.typedSharedFolderKey.encryptedKey = crypto.encrypt_rsa(sf_key, rsa_key)
+                                to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key
                             else:
                                 continue
                         req.sharedFolderAddTeam.append(to)
@@ -1785,7 +1798,7 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
     def tree_node(node):
         node_uid = node.record_uid if isinstance(node, Record) else node.uid or ''
         node_name = node.title if isinstance(node, Record) else node.name
-        node_name = f'{node_name} ({node_uid})'
+        node_name = f'{node_name} ({node_uid})' if verbose else node_name
         share_info = get_share_info(node) if isinstance(node, SharedFolderNode) and shares else ''
         node_name = f'{Style.DIM}{node_name} [Record]{Style.NORMAL}' if isinstance(node, Record) \
             else f'{node_name}{Style.BRIGHT} [SHARED]{Style.NORMAL}{share_info}' if isinstance(node, SharedFolderNode) \
@@ -1817,11 +1830,5 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
         print(title)
     tree_txt = tr(tree)
     tree_txt = re.sub(r'\s+\(\)', '', tree_txt)
-    if not verbose:
-        lines = tree_txt.splitlines()
-        for idx, line in enumerate(lines):
-            line = re.sub(r'\s+\(.+?\)', '', line, count=1)
-            lines[idx] = line
-        tree_txt = '\n'.join(lines)
     print(tree_txt)
     print('')

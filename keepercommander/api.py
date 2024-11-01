@@ -72,7 +72,7 @@ def login(params, new_login=False, login_ui=None):
         flow.login(params, new_device=True)
 
 
-def accept_account_transfer_consent(params):
+def accept_account_transfer_consent(params):     # type: (KeeperParams) -> bool
     share_account_by = params.get_share_account_timestamp()
     print(constants.ACCOUNT_TRANSFER_MSG.format(share_account_by.strftime('%a, %b %d %Y')))
 
@@ -81,19 +81,43 @@ def accept_account_transfer_consent(params):
     answer = input('Do you accept Account Transfer policy? {}: '.format(input_options))
     answer = answer.lower()
     if answer.lower() == 'accept':
-        for role in params.settings['share_account_to']:
-            encoded_public = utils.base64_url_decode(role['public_key'])
-            public_key = crypto.load_rsa_public_key(encoded_public)
-            transfer_key = crypto.encrypt_rsa(params.data_key, public_key)
-            request = {
-                'command': 'share_account',
-                'to_role_id': role['role_id'],
-                'transfer_key': utils.base64_url_encode(transfer_key)
-            }
-            communicate(params, request)
-        return True
+        ok = True
+        requests = []
+        if 'share_account_to' in params.settings:
+            for role in params.settings['share_account_to']:
+                request = {
+                    'command': 'share_account',
+                    'to_role_id': role['role_id'],
+                }
+                if not params.forbid_rsa and 'public_key' in role:
+                    encoded_public = utils.base64_url_decode(role['public_key'])
+                    public_key = crypto.load_rsa_public_key(encoded_public)
+                    transfer_key = crypto.encrypt_rsa(params.data_key, public_key)
+                    request['transfer_key'] = utils.base64_url_encode(transfer_key)
+
+                requests.append(request)
+        responses = execute_batch(params, requests)
+        if isinstance(responses, list):
+            for response in responses:
+                if response['result_code'] != 'success':
+                    logging.warning('Account Transfer policy acceptance error: %s',
+                                    response.get('message') or response['result_code'])
+                    ok = False
+        if ok and params.forbid_rsa and params.enterprise_ec_key:
+            try:
+                share_data_key_with_enterprise(params)
+            except Exception as e:
+                logging.warning('Account Transfer policy acceptance error: %s', e)
+                ok = False
+        return ok
     else:
         return False
+
+
+def share_data_key_with_enterprise(params):     # type: (KeeperParams) -> None
+    rq = enterprise_pb2.EnterpriseUserDataKey()
+    rq.userEncryptedDataKey = crypto.encrypt_ec(params.data_key, params.enterprise_ec_key)
+    communicate_rest(params, rq, 'enterprise/set_enterprise_user_data_key')
 
 
 def get_record_data_json_bytes(data):    # type: (dict) -> bytes
@@ -342,14 +366,22 @@ def load_team_keys(params, team_uids):          # type: (KeeperParams, List[str]
                     try:
                         aes = b''
                         rsa = b''
+                        ec = b''
                         encrypted_key = utils.base64_url_decode(tk['key'])
-                        if tk['type'] == 1:
+                        key_type = tk['type']
+                        if key_type == 1:
                             aes = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
-                        elif tk['type'] == 2:
-                            aes = crypto.decrypt_rsa(tk['key'], params.rsa_key2)
-                        elif tk['type'] == 3:
+                        elif key_type == 2:
+                            aes = crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
+                        elif key_type == 3:
+                            aes = crypto.decrypt_aes_v2(encrypted_key, params.data_key)
+                        elif key_type == 4:
+                            aes = crypto.decrypt_ec(encrypted_key, params.ecc_key)
+                        elif key_type == -1:
+                            ec = encrypted_key
+                        elif key_type == -3:
                             rsa = encrypted_key
-                        params.key_cache[team_uid] = PublicKeys(rsa=rsa, aes=aes)
+                        params.key_cache[team_uid] = PublicKeys(rsa=rsa, aes=aes, ec=ec)
                     except Exception as e:
                         logging.debug(e)
 

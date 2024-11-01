@@ -5,7 +5,7 @@ import logging
 from json import JSONDecodeError
 from typing import Dict, List, Optional, Any
 
-from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+from cryptography.hazmat.primitives.asymmetric import rsa, ec
 
 from keepercommander import api, crypto, utils
 from keepercommander.breachwatch import BreachWatch
@@ -139,17 +139,6 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         self.error_report_builder = None
         self.debug_report_builder = None
 
-    def get_enterprise_private_rsa_key(self, params, enterprise_priv_key):
-        if not self.enterprise_private_rsa_key:
-            tree_key = params.enterprise['unencrypted_tree_key']
-            if not enterprise_priv_key:
-                key = params.enterprise.get('keys', {}).get('rsa_encrypted_private_key', '')
-                enterprise_priv_key = utils.base64_url_decode(key)
-            key = crypto.decrypt_aes_v2(enterprise_priv_key, tree_key)
-            key = crypto.load_rsa_private_key(key)
-            self.enterprise_private_rsa_key = key
-        return self.enterprise_private_rsa_key
-
     def get_parser(self):
         return report_parser
 
@@ -240,10 +229,13 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         save_report = kwargs.get('save') or attempt_fix
         show_updated = save_report or kwargs.get('show_updated')
         updated_security_reports = []
-        tree_key = (params.enterprise or {}).get('unencrypted_tree_key')
+        tree_key = params.enterprise['unencrypted_tree_key']
         from_page = 0
         complete = False
         rows = []
+        rsa_key = None      # type: Optional[rsa.RSAPrivateKey]
+        ec_key = None       # type: Optional[ec.EllipticCurvePrivateKey]
+
         while not complete:
             rq = APIRequest_pb2.SecurityReportRequest()
             rq.fromPage = from_page
@@ -253,7 +245,12 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             complete = security_report_data_rs.complete
             from_page = to_page + 1
             try:
-                rsa_key = self.get_enterprise_private_rsa_key(params, security_report_data_rs.enterprisePrivateKey)
+                if not rsa_key and len(security_report_data_rs.enterprisePrivateKey) > 0:
+                    key_data = crypto.decrypt_aes_v2(security_report_data_rs.enterprisePrivateKey, tree_key)
+                    rsa_key = crypto.load_rsa_private_key(key_data)
+                if not ec_key and len(security_report_data_rs.enterpriseEccPrivateKey) > 0:
+                    key_data = crypto.decrypt_aes_v2(security_report_data_rs.enterpriseEccPrivateKey, tree_key)
+                    ec_key = crypto.load_ec_private_key(key_data)
             except:
                 self.get_error_report_builder().set_current_email('Enterprise')
                 self.get_error_report_builder().update_report_data('Invalid enterprise private key')
@@ -307,7 +304,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
 
                 if show_updated or debug_mode:
                     debug_mode and self.debug_report_builder.set_current_email(email)
-                    data = self.get_updated_security_report_row(sr, rsa_key, data)
+                    data = self.get_updated_security_report_row(sr, rsa_key, ec_key, data)
 
                 # Skip summary-score calculation if errors encountered or debug/incremental-data-reporting is enabled
                 if debug_mode or self.get_error_report_builder().has_errors_to_report() and not attempt_fix:
@@ -386,15 +383,19 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             table.append(row)
         return dump_report_data(table, field_descriptions, fmt=fmt, filename=out, title=report_title)
 
-    def get_updated_security_report_row(self, sr, rsa_key, last_saved_data):
-        # type: (APIRequest_pb2.SecurityReport, RSAPrivateKey, Dict[str, int]) -> Dict[str, int]
-        def apply_incremental_data(old_report_data, incremental_dataset, key):
-            # type: (Dict[str, int], List[APIRequest_pb2.SecurityReportIncrementalData], RSAPrivateKey) -> Dict[str, int]
-            def decrypt_security_data(sec_data, k):  # type: (bytes, RSAPrivateKey) -> Dict[str, int] or None
+    def get_updated_security_report_row(self, sr, rsa_key, ec_key, last_saved_data):
+        # type: (APIRequest_pb2.SecurityReport, rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey, Dict[str, int]) -> Dict[str, int]
+
+        def apply_incremental_data(old_report_data, incremental_dataset):
+            # type: (Dict[str, int], List[APIRequest_pb2.SecurityReportIncrementalData]) -> Dict[str, int]
+            def decrypt_security_data(sec_data, key_type):  # type: (bytes, int) -> Optional[Dict[str, int]]
                 decrypted = None
                 if sec_data:
                     try:
-                        decrypted_bytes = crypto.decrypt_rsa(sec_data, k, apply_padding=True)
+                        if key_type == enterprise_pb2.KT_ENCRYPTED_BY_PUBLIC_KEY_ECC:
+                            decrypted_bytes = crypto.decrypt_ec(sec_data, ec_key)
+                        else:
+                            decrypted_bytes = crypto.decrypt_rsa(sec_data, rsa_key)
                     except Exception as e:
                         error = f'Decrypt fail (incremental data): {e}'
                         self.get_error_report_builder().update_report_data(error)
@@ -425,10 +426,10 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 return decrypted
 
             def decrypt_incremental_data(inc_data):
-                # type: (APIRequest_pb2.SecurityReportIncrementalData) -> Dict[str, Dict[str, int] or None]
+                # type: (APIRequest_pb2.SecurityReportIncrementalData) -> Dict[str, Optional[Dict[str, int]]]
                 decrypted = {
-                    'old': decrypt_security_data(inc_data.oldSecurityData, key),
-                    'curr': decrypt_security_data(inc_data.currentSecurityData, key)
+                    'old': decrypt_security_data(inc_data.oldSecurityData, inc_data.oldDataEncryptionType),
+                    'curr': decrypt_security_data(inc_data.currentSecurityData, inc_data.currentDataEncryptionType)
                 }
                 self.debug_report_builder and self.debug_report_builder.update_report_data(decrypted)
                 return decrypted
@@ -486,7 +487,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                     report_data = update_scores(report_data, incremental_dataset)
             return report_data
 
-        result = apply_incremental_data(last_saved_data, sr.securityReportIncrementalData, rsa_key)
+        result = apply_incremental_data(last_saved_data, sr.securityReportIncrementalData)
         # Update unique password count
         total = result.get('total_record_passwords', 0)
         result['unique_record_passwords'] = total - sr.numberOfReusedPassword

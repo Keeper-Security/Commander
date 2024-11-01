@@ -106,7 +106,7 @@ class TestRegister(TestCase):
                 'role_id': ent_env.role1_id,
                 'public_key': vault_env.encoded_public_key
             }],
-            'must_perform_account_share_by': datetime.datetime.now().timestamp()
+            'must_perform_account_share_by': int(datetime.datetime.now().timestamp())
         }
 
         cmd = utils.CheckEnforcementsCommand()

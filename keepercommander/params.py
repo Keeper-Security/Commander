@@ -7,10 +7,9 @@
 # Keeper Commander 
 # Contact: ops@keepersecurity.com
 #
-import threading
 import warnings
 from datetime import datetime
-from typing import Dict, NamedTuple, Optional, List, Set
+from typing import Dict, NamedTuple, Optional, Set
 from urllib.parse import urlparse, urlunparse
 
 from urllib3.exceptions import InsecureRequestWarning
@@ -163,6 +162,7 @@ class KeeperParams:
         self.ws = None
         self.tunnel_threads = {}
         self.tunnel_threads_queue = {} # add ability to tail tunnel process
+        self.forbid_rsa = False
         # TODO check if it can be deleted
         self.salt = None
         self.iterations = 0
@@ -230,6 +230,7 @@ class KeeperParams:
             self.ssh_agent = None
         self.tunnel_threads.clear()
         self.tunnel_threads_queue = {}
+        self.forbid_rsa = False
 
     def __get_rest_context(self):   # type: () -> RestApiContext
         return self.__rest_context

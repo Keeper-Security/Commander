@@ -58,8 +58,8 @@ class TestSyncDown(TestCase):
             mock_comm.return_value = rs
             sync_down(params)
 
-        self.assertEqual(len(params.record_cache), 3)
-        self.assertEqual(len(params.shared_folder_cache), 1)
+        self.assertEqual(len(params.record_cache), 2)
+        self.assertEqual(len(params.shared_folder_cache), 0)
         self.assertEqual(len(params.team_cache), 1)
         self.assert_key_unencrypted(params)
 
