@@ -36,7 +36,7 @@ from .helpers.timeout import (
 from .helpers.whoami import get_hostname, get_environment, get_data_center
 from .ksm import KSMCommand, ksm_parser
 from .. import __version__, vault
-from .. import api, rest_api, loginv3, crypto, utils, constants
+from .. import api, rest_api, loginv3, crypto, utils, constants, error
 from ..breachwatch import BreachWatch
 from ..display import bcolors
 from ..error import CommandError
@@ -1162,8 +1162,6 @@ class ResetPasswordCommand(Command):
 
     def execute(self, params, **kwargs):
         current_password = kwargs.get('current_password')
-        current_alternates = []    # type: list[dict]
-        current_master = None      # type: Optional[APIRequest_pb2.Salt]
         is_sso_user = params.settings.get('sso_user', False)
         if is_sso_user:
             allow_alternate_passwords = False
@@ -1174,17 +1172,14 @@ class ResetPasswordCommand(Command):
                 logging.warning('You do not have the required privilege to perform this operation.')
                 return
 
-            sync_rq = {
-                'command': 'sync_down',
-                'revision': 0,
-                'include': ['user_auth', 'explicit']
-            }
-            sync_rs = api.communicate(params, sync_rq)
-            if 'user_auth' in sync_rs:
-                current_alternates = [x for x in sync_rs['user_auth'] if x['login_type'] == 'ALTERNATE']
-        else:
-            current_master = api.communicate_rest(params, None, 'authentication/get_salt_and_iterations',
-                                                  rs_type=APIRequest_pb2.Salt)
+        try:
+            current_salt = api.communicate_rest(params, None, 'authentication/get_salt_and_iterations',
+                                                rs_type=APIRequest_pb2.Salt)
+        except error.KeeperApiError as kae:
+            if is_sso_user and kae.result_code == 'doesnt_exist':
+                current_salt = None
+            else:
+                raise kae
 
         is_delete_alternate = kwargs.get('delete_alternate')
         if is_delete_alternate:
@@ -1196,23 +1191,12 @@ class ResetPasswordCommand(Command):
         else:
             if is_sso_user:
                 logging.info('%s SSO Master Password for \"%s\"',
-                             'Changing' if len(current_alternates) > 0 else 'Setting', params.user)
+                             'Changing' if current_salt else 'Setting', params.user)
             else:
                 logging.info('Changing Master Password for \"%s\"', params.user)
 
-        if current_master or len(current_alternates) > 0:
-            if not current_password:
-                current_password = getpass.getpass(prompt='{0:>24}: '.format('Current Password'), stream=None).strip()
-                if not current_password:
-                    return
-            if current_master:
-                current_salt = current_master.salt
-                current_iterations = current_master.iterations
-            else:
-                current_salt = utils.base64_url_decode(current_alternates[0]['salt'])
-                current_iterations = current_alternates[0]['iterations']
-
-            auth_hash = crypto.derive_keyhash_v1(current_password, current_salt, current_iterations)
+        if current_salt:
+            auth_hash = crypto.derive_keyhash_v1(current_password, current_salt.salt, current_salt.iterations)
             rq = APIRequest_pb2.MasterPasswordReentryRequest()
             rq.pbkdf2Password = utils.base64_url_encode(auth_hash)
             rq.action = APIRequest_pb2.UNMASK
@@ -1228,9 +1212,9 @@ class ResetPasswordCommand(Command):
             current_password = ''
 
         if is_delete_alternate:
-            if len(current_alternates) > 0:
+            if current_salt:
                 uid_rq = APIRequest_pb2.UidRequest()
-                uid_rq.uid.extend((utils.base64_url_decode(x['uid']) for x in current_alternates))
+                uid_rq.uid.append(current_salt.uid)
                 api.communicate_rest(params, uid_rq, 'authentication/delete_v2_alternate_password')
                 logging.info('SSO Master Password has been deleted')
             else:
@@ -1276,15 +1260,13 @@ class ResetPasswordCommand(Command):
             score = utils.password_score(new_password)
             logging.info('Password strength: %s', 'WEAK' if score < 40 else 'FAIR' if score < 60 else 'MEDIUM' if score < 80 else 'STRONG')
 
-        iterations = current_master.iterations if current_master else \
-            max((x['iterations'] for x in current_alternates)) \
-            if len(current_alternates) > 0 else constants.PBKDF2_ITERATIONS
+        iterations = current_salt.iterations if current_salt else constants.PBKDF2_ITERATIONS
         iterations = max(iterations, constants.PBKDF2_ITERATIONS)
 
         auth_salt = crypto.get_random_bytes(16)
         if is_sso_user:
             ap_rq = APIRequest_pb2.UserAuthRequest()
-            ap_rq.uid = utils.base64_url_decode(current_alternates[0]['uid']) if len(current_alternates) > 0 else crypto.get_random_bytes(16)
+            ap_rq.uid = current_salt.uid if current_salt else crypto.get_random_bytes(16)
             ap_rq.salt = auth_salt
             ap_rq.iterations = iterations
             ap_rq.authHash = crypto.derive_keyhash_v1(new_password, auth_salt, iterations)
@@ -1292,9 +1274,9 @@ class ResetPasswordCommand(Command):
             ap_rq.encryptedDataKey = crypto.encrypt_aes_v2(params.data_key, key)
             ap_rq.encryptedClientKey = crypto.encrypt_aes_v2(params.client_key, key)
             ap_rq.loginType = APIRequest_pb2.ALTERNATE
-            ap_rq.name = current_alternates[0]['name'] if len(current_alternates) > 0 else 'alternate'
+            ap_rq.name = current_salt.name if current_salt else 'alternate'
             api.communicate_rest(params, ap_rq, 'authentication/set_v2_alternate_password')
-            logging.info(f'SSO Master Password has been {("changed" if len(current_alternates) > 0 else "set")}')
+            logging.info(f'SSO Master Password has been {("changed" if current_salt else "set")}')
         else:
             auth_verifier = utils.create_auth_verifier(new_password, auth_salt, iterations)
             data_salt = crypto.get_random_bytes(16)
@@ -1313,7 +1295,7 @@ class SyncSecurityDataCommand(Command):
         return sync_security_data_parser
 
     def execute(self, params, **kwargs):
-        def get_security_data(record, pw_obj):     # type: (KeeperRecord, Dict or None) -> APIRequest_pb2.SecurityData
+        def get_security_data(record, pw_obj):     # type: (KeeperRecord, Optional[Dict]) -> APIRequest_pb2.SecurityData
             sd = APIRequest_pb2.SecurityData()
             password = BreachWatch.extract_password(record)
             # Send empty security data for this record if password was removed -- this removes the old security data
@@ -1333,20 +1315,22 @@ class SyncSecurityDataCommand(Command):
                     sd_data['domain'] = domain[:200]
             if sd_data:
                 try:
-                    sd.data = crypto.encrypt_rsa(json.dumps(sd_data).encode('utf-8'), params.enterprise_rsa_key)
+                    if params.forbid_rsa:
+                        if params.enterprise_ec_key:
+                            sd.data = crypto.encrypt_ec(json.dumps(sd_data).encode('utf-8'), params.enterprise_ec_key)
+                        else:
+                            raise Exception('Enterprise ECC public key is not available')
+                    else:
+                        if params.enterprise_rsa_key:
+                            sd.data = crypto.encrypt_rsa(json.dumps(sd_data).encode('utf-8'), params.enterprise_rsa_key)
+                        else:
+                            raise Exception('Enterprise RSA public key is not available')
                 except Exception as e:
                     logging.error(f'Error: {e}')
                     logging.error(f'Enterprise RSA key length = {params.enterprise_rsa_key.key_size}')
                     return
             sd.uid = utils.base64_url_decode(record.record_uid)
             return sd
-
-        def update_security_data(record_sds):   # type: (List[APIRequest_pb2.SecurityData]) -> None
-            if record_sds:
-                update_rq = APIRequest_pb2.SecurityDataRequest()
-                for rsd in record_sds:
-                    update_rq.recordSecurityData.append(rsd)
-                api.communicate_rest(params, update_rq, 'enterprise/update_security_data')
 
         def get_record_uids():
             uids = set()
@@ -1401,7 +1385,11 @@ class SyncSecurityDataCommand(Command):
         # Remove empty security-data update requests (resulting from failed RSA encryption)
         sds = [sd for sd in sds if sd]
         while sds:
-            update_security_data(sds[:update_limit])
+            record_sds = sds[:update_limit]
+            update_rq = APIRequest_pb2.SecurityDataRequest()
+            update_rq.recordSecurityData.extend(record_sds)
+            update_rq.encryptionType = enterprise_pb2.KT_ENCRYPTED_BY_PUBLIC_KEY_ECC if params.forbid_rsa else enterprise_pb2.KT_ENCRYPTED_BY_PUBLIC_KEY
+            api.communicate_rest(params, update_rq, 'enterprise/update_security_data')
             sds = sds[update_limit:]
         if to_update:
             BreachWatch.save_reused_pw_count(params)

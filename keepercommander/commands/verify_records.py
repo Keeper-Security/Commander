@@ -14,11 +14,11 @@ import argparse
 import itertools
 import json
 import logging
-from typing import Tuple, List, Optional, Set
+from typing import Tuple, List, Optional, Set, Dict
 
 from .base import user_choice, dump_report_data, Command
 from .. import api, crypto, utils, vault, error
-from ..proto import record_pb2
+from ..proto import record_pb2, folder_pb2
 from ..record import get_totp_code
 
 
@@ -33,10 +33,9 @@ class VerifySharedFoldersCommand(Command):
         return verify_shared_folders_parser
 
     def execute(self, params, **kwargs):
-        shared_folders = None    # type: Optional[Set[str]]
+        shared_folders = set()    # type: Set[str]
         target = kwargs.get('target')
         if isinstance(target, list) and len(target) > 0:
-            shared_folders = set()
             sf_names = {x['name_unencrypted'].lower(): x['shared_folder_uid']
                         for x in params.shared_folder_cache.values()}
             for name in target:
@@ -48,11 +47,15 @@ class VerifySharedFoldersCommand(Command):
                         shared_folders.add(sf_names[sf_name])
                     else:
                         raise error.CommandError('shared_folders', f'Shared folder \"{name}\" not found')
+        else:
+            shared_folders.update(params.shared_folder_cache.keys())
+        if len(shared_folders) == 0:
+            raise error.CommandError('shared_folders', f'No shared folders found')
 
         rq = {
-            'command': 'sync_down',
-            'revision': 0,
-            'include': ['shared_folder', 'sfheaders', 'sfusers', 'sfrecords', 'explicit']
+            'command': 'get_shared_folders',
+            'shared_folders': [{ 'shared_folder_uid': x } for x in shared_folders],
+            'include': ['sfheaders', 'sfusers', 'sfrecords']
         }
         rs = api.communicate(params, rq)
         sf_v3_keys = []     # type: List[Tuple[str, str]]  # (record_uid, shared_folder_uid)
@@ -166,54 +169,66 @@ class VerifySharedFoldersCommand(Command):
 
             if sf_v2_keys:
                 sf_v2_keys.sort(key=lambda x: x[1])
-                rqs = []
-                rq = None
+                rqs = {}    # type: Dict[str, List[folder_pb2.SharedFolderUpdateRecord]]
+                results = []
                 for record_uid, shared_folder_uid in sf_v2_keys:
+                    if shared_folder_uid not in rqs:
+                        rqs[shared_folder_uid] = []
                     record = params.record_cache[record_uid]
                     record_key = record['record_key_unencrypted']
                     shared_folder = params.shared_folder_cache[shared_folder_uid]
                     shared_folder_key = shared_folder['shared_folder_key_unencrypted']
-                    if not rq or rq['shared_folder_uid'] != shared_folder_uid or len(rq['add_records']) > 95:
-                        if rq and len(rq['add_records']) > 0:
-                            rqs.append(rq)
-                        rq = {
-                            'command': 'shared_folder_update',
-                            'pt': 'Commander',
-                            'operation': 'update',
-                            'shared_folder_uid': shared_folder_uid,
-                            'name': shared_folder['name'],
-                            'revision': shared_folder['revision'],
-                            'add_records': []
-                        }
-                    rq['add_records'].append({
-                        'record_uid': record_uid,
-                        'record_key': utils.base64_url_encode(crypto.encrypt_aes_v1(record_key, shared_folder_key)),
-                        'can_edit': False,
-                        'can_share': False,
-                    })
-                if rq:
-                    rqs.append(rq)
+                    sfur = folder_pb2.SharedFolderUpdateRecord()
+                    sfur.recordUid = utils.base64_url_decode(record_uid)
+                    sfur.sharedFolderUid = utils.base64_url_decode(shared_folder_uid)
+                    sfur.encryptedRecordKey = crypto.encrypt_aes_v1(record_key, shared_folder_key)
+                    sfur.canEdit = folder_pb2.BOOLEAN_FALSE
+                    sfur.canShare = folder_pb2.BOOLEAN_TRUE
 
-                rss = api.execute_batch(params, rqs)
-                results = []
-                for i, rs in enumerate(rss):
-                    shared_folder_uid = rqs[i].get('shared_folder_uid')
-                    if rs.get('result') != 'success':
-                        results.append([shared_folder_uid, '', '', rs.get('result_code')])
-                    elif 'add_records' in rs:
-                        if shared_folder_uid:
-                            for status in rs['add_records']:
-                                if status.get('status') != 'success':
-                                    record_uid = status.get('record_uid')
-                                    if record_uid:
-                                        api.get_record_shares(params, [record_uid])
-                                        owner = ''
-                                        rec = params.record_cache.get(record_uid)
-                                        if rec and 'shares' in rec:
-                                            shares = rec['shares']
-                                            if 'user_permissions' in shares:
-                                                owner = next((x.get('username') for x in shares['user_permissions'] if x.get('owner')))
-                                        results.append([shared_folder_uid, record_uid, owner, status.get('status')])
+                sfu_rqs = None     # type: Optional[folder_pb2.SharedFolderUpdateV3RequestV2]
+                left = 0
+                while len(rqs) > 0 or sfu_rqs is not None:
+                    if sfu_rqs is None:
+                        sfu_rqs = folder_pb2.SharedFolderUpdateV3RequestV2()
+                        left = 990
+                    shared_folder_uid = next(iter(rqs.keys()))
+                    sfu_records = rqs.pop(shared_folder_uid)
+                    sfu_rq = folder_pb2.SharedFolderUpdateV3Request()
+                    sfu_rq.sharedFolderUid = utils.base64_url_decode(shared_folder_uid)
+                    sfu_rq.forceUpdate = True
+                    if len(sfu_records) < left:
+                        sfu_rq.sharedFolderAddRecord.extend(sfu_records)
+                        left -= len(sfu_records)
+                        if left > 10:
+                            continue
+                    else:
+                        chunk = sfu_records[:left]
+                        sfu_records = sfu_records[left:]
+                        sfu_rq.sharedFolderAddRecord.extend(chunk)
+                        rqs[shared_folder_uid] = sfu_records
+
+                    try:
+                        sfu_rss = api.communicate_rest(params, sfu_rqs, 'vault/shared_folder_update_v3',
+                                                       rs_type=folder_pb2.SharedFolderUpdateV3ResponseV2, payload_version=1)
+                        for sfu_rs in sfu_rss.sharedFolderUpdateV3Response:
+                            shared_folder_uid = utils.base64_url_encode(sfu_rs.sharedFolderUid)
+                            for sfu_status in sfu_rs.sharedFolderAddRecordStatus:
+                                if sfu_status.status.lower() == 'success':
+                                    continue
+                                record_uid = utils.base64_url_encode(sfu_status.recordUid)
+                                api.get_record_shares(params, [record_uid])
+                                owner = ''
+                                rec = params.record_cache.get(record_uid)
+                                if rec and 'shares' in rec:
+                                    shares = rec['shares']
+                                    if 'user_permissions' in shares:
+                                        owner = next((x.get('username') for x in shares['user_permissions'] if x.get('owner')))
+                                results.append([shared_folder_uid, record_uid, owner, sfu_status.status])
+                    except:
+                        pass
+                    finally:
+                        sfu_rqs = None
+
                 if results:
                     headers = ['Shared Folder UID', 'Record UID', 'Record Owner', 'Error code']
                     dump_report_data(results, headers=headers, title='V2 Record key errors')

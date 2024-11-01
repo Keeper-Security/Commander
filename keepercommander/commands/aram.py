@@ -14,36 +14,34 @@ import argparse
 import base64
 import copy
 import datetime
-import os
-import time
-import json
 import gzip
-import logging
-import platform
-import re
-import sys
-from functools import partial
-
-from typing import Optional, List, Union, Dict, Set, Any, Tuple
-
-import requests
-import socket
-import ssl
 import hashlib
 import hmac
-
+import json
+import logging
+import os
+import platform
+import re
+import socket
+import ssl
+import sys
+import time
+from functools import partial
+from typing import Optional, List, Union, Dict, Set, Any, Tuple
 from urllib.parse import urlparse
 
-from .transfer_account import EnterpriseTransferUserCommand
-from ..display import bcolors
-from .helpers import audit_report
-from .enterprise_common import EnterpriseCommand
+import requests
+
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title
+from .enterprise_common import EnterpriseCommand
+from .helpers import audit_report
+from .transfer_account import EnterpriseTransferUserCommand
 from .. import api, vault, record_management
+from ..constants import EMAIL_PATTERN
+from ..display import bcolors
 from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
-from ..constants import EMAIL_PATTERN
 from ..sox import sox_data, get_prelim_data, is_compliance_reporting_enabled, get_sox_database_name, \
     get_compliance_data, get_node_id
 from ..sox.sox_data import RebuildTask
@@ -713,7 +711,7 @@ class AuditLogAzureLogAnalyticsExport(AuditLogBaseExport):
     def export_events(self, props, events):
         url = "https://{0}.ods.opinsights.azure.com/api/logs?api-version=2016-04-01".format(props['wsid'])
         data = json.dumps(events)
-        dt = datetime.datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S GMT')
+        dt = datetime.datetime.now(datetime.timezone.utc).strftime('%a, %d %b %Y %H:%M:%S GMT')
         shared_key = self.build_shared_key(props['wsid'], props['wskey'], len(data), dt)
         headers = {
             "Authorization": "SharedKey {0}".format(shared_key),
@@ -1170,7 +1168,7 @@ class AuditReportCommand(Command):
             if isinstance(value, str):
                 return value
             if isinstance(value, (int, float)):
-                dt = datetime.datetime.utcfromtimestamp(int(value)).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
+                dt = datetime.datetime.fromtimestamp(int(value), tz=datetime.timezone.utc)
                 rt = kwargs.get('report_type') or ''
                 if rt in {'day', 'week'}:
                     dt = dt.date()
@@ -1180,7 +1178,7 @@ class AuditReportCommand(Command):
                     dt = dt.strftime('%Y-%m-%d @%H:00')
                 return dt
         elif field in {"first_created", "last_created"}:
-            return datetime.datetime.utcfromtimestamp(int(value)).replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
+            return datetime.datetime.fromtimestamp(int(value), tz=datetime.timezone.utc)
         return value
 
     DimensionCache = {}
@@ -1342,7 +1340,7 @@ class AuditReportCommand(Command):
                     rq['timezone'] = tt[0]
             else:
                 now = time.time()
-                utc_offset = datetime.datetime.fromtimestamp(now) - datetime.datetime.utcfromtimestamp(now)
+                utc_offset = datetime.datetime.fromtimestamp(now) - datetime.datetime.fromtimestamp(now, ts=datetime.timezone.utc)
                 hours = (utc_offset.days * 24) + int(utc_offset.seconds / 60 / 60)
                 rq['timezone'] = hours
 
@@ -1993,10 +1991,11 @@ class ActionReportCommand(EnterpriseCommand):
                 if dryrun:
                     cmd_status = 'dry run'
                 else:
-                    pub_key = self.get_public_key(params, target)
-                    if pub_key:
+                    api.load_user_public_keys(params, [target], False)
+                    target_pub_keys = params.key_cache.get(target)
+                    if target_pub_keys:
                         for email in [u.get('username') for u in from_users]:
-                            result = EnterpriseTransferUserCommand.transfer_user_account(params, email, target, pub_key)
+                            result = EnterpriseTransferUserCommand.transfer_user_account(params, email, target, target_pub_keys)
                             if result:
                                 affected += 1
 

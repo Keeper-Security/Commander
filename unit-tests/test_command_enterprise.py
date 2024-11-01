@@ -6,7 +6,7 @@ from unittest import TestCase, mock
 
 from data_enterprise import EnterpriseEnvironment, get_enterprise_data, enterprise_allocate_ids
 from keepercommander import api, crypto, utils, vault
-from keepercommander.params import KeeperParams
+from keepercommander.params import KeeperParams, PublicKeys
 from keepercommander.error import CommandError
 from data_vault import VaultEnvironment, get_connected_params
 from keepercommander.commands import enterprise, aram
@@ -26,6 +26,8 @@ class TestEnterprise(TestCase):
         self.communicate_mock.side_effect = TestEnterprise.communicate_success
         self.query_enterprise_mock = mock.patch('keepercommander.api.query_enterprise').start()
         self.query_enterprise_mock.side_effect = TestEnterprise.query_enterprise
+        self.load_user_public_keys_mock = mock.patch('keepercommander.api.load_user_public_keys').start()
+        self.load_user_public_keys_mock.side_effect = TestEnterprise.load_user_public_keys
 
     def tearDown(self):
         mock.patch.stopall()
@@ -324,10 +326,6 @@ class TestEnterprise(TestCase):
         with self.assertRaises(CommandError):
             cmd.execute(params, user=[ent_env.user2_email])
 
-        def get_public_keys(_params, emails):
-            for email in emails:
-                emails[email] = vault_env.public_key
-
     @staticmethod
     def get_audit_event():
         return {
@@ -336,8 +334,14 @@ class TestEnterprise(TestCase):
             'username': vault_env.user,
             'ip_address': '9.9.9.9',
             'audit_event_type': 'login',
-            'keeper_version': 'c14.0.0.0'
+            'keeper_version': 'c16.0.0'
         }
+
+    @staticmethod
+    def load_user_public_keys(params, emails, send_invites=False):
+        keys = PublicKeys(rsa=crypto.unload_rsa_public_key(vault_env.public_key))
+        for email in emails:
+            params.key_cache[email] = keys
 
     @staticmethod
     def query_enterprise(params, force=False, tree_key=None):

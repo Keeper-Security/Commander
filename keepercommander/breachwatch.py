@@ -17,7 +17,7 @@ from typing import Iterator, Tuple, Optional, List, Callable, Dict, Iterable, Un
 from .commands.helpers.enterprise import user_has_privilege, is_addon_enabled
 from .constants import KEEPER_PUBLIC_HOSTS
 from . import api, crypto, utils, rest_api, vault
-from .proto import breachwatch_pb2, client_pb2, APIRequest_pb2
+from .proto import breachwatch_pb2, client_pb2, APIRequest_pb2, enterprise_pb2
 from .error import KeeperApiError, CommandError
 from .params import KeeperParams
 from .vault import KeeperRecord
@@ -211,7 +211,11 @@ class BreachWatch(object):
             sec_data.uid = utils.base64_url_decode(record.record_uid)
             if record_pw:
                 rec_sd = prepare_security_data()
-                sec_data.data = crypto.encrypt_rsa(json.dumps(rec_sd).encode('utf-8'), params.enterprise_rsa_key)
+                data = json.dumps(rec_sd).encode('utf-8')
+                if params.forbid_rsa:
+                    sec_data.data = crypto.encrypt_ec(data, params.enterprise_ec_key)
+                else:
+                    sec_data.data = crypto.encrypt_rsa(data, params.enterprise_rsa_key)
 
             return sec_data
 
@@ -248,6 +252,7 @@ class BreachWatch(object):
         update_rq = APIRequest_pb2.SecurityDataRequest()
         rec_sec_data = calculate_security_data()
         update_rq.recordSecurityData.append(rec_sec_data)
+        update_rq.encryptionType = enterprise_pb2.KT_ENCRYPTED_BY_PUBLIC_KEY_ECC if params.forbid_rsa else enterprise_pb2.KT_ENCRYPTED_BY_PUBLIC_KEY
         api.communicate_rest(params, update_rq, 'enterprise/update_security_data')
 
     @staticmethod

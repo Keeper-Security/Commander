@@ -12,12 +12,12 @@
 import base64
 import collections
 import logging
-from typing import Any, Dict, Set, List, Optional
+from typing import Dict
 
 from .base import Command, user_choice
 from .. import api, utils, crypto
 from ..error import CommandError
-from ..params import KeeperParams
+from ..params import KeeperParams, PublicKeys
 from ..proto import enterprise_pb2
 
 
@@ -33,106 +33,6 @@ class EnterpriseCommand(Command):
             return Command.execute_args(self, params, args, **kwargs)
         else:
             raise CommandError('', 'This command  is only available for Administrators of Keeper.')
-
-    def get_public_keys(self, params, emails):   # type: (KeeperParams, Dict[str, Any]) -> None
-        missing_keys = []    # type: List[str]
-        for email in list(emails.keys()):
-            email = email.lower()
-            user_key = self.public_keys.get(email)
-            if user_key:
-                emails[email] = user_key
-            else:
-                missing_keys.append(email)
-
-        while len(missing_keys) > 0:
-            chunk = missing_keys[:99]
-            missing_keys = missing_keys[99:]
-            rq = {
-                'command': 'public_keys',
-                'key_owners': chunk
-            }
-            rs = api.communicate(params, rq)
-            for pko in rs['public_keys']:
-                if 'public_key' in pko:
-                    email = pko['key_owner'].lower()
-                    try:
-                        public_key = crypto.load_rsa_public_key(utils.base64_url_decode(pko['public_key']))
-                        self.public_keys[email] = public_key
-                        emails[email] = public_key
-                    except Exception as e:
-                        logging.warning('Cannot load user \"%s\" public key: %s', email, e)
-
-    def get_public_key(self, params, email):
-        # type: (EnterpriseCommand, KeeperParams, str) -> any
-
-        public_key = self.public_keys.get(email.lower())
-        if public_key is None:
-            emails = {
-                email: None
-            }
-            self.get_public_keys(params, emails)
-            public_key = emails[email]
-
-        return public_key
-
-    def get_team_keys(self, params, teams):   # type: (KeeperParams, Dict[str, Optional[bytes]]) -> None
-        missing_uids = list()    # type: List[str]
-        tree_key = params.enterprise['unencrypted_tree_key']
-        for team_uid in list(teams.keys()):
-            team_key = self.team_keys.get(team_uid)
-            if team_key:
-                teams[team_uid] = team_key
-            else:
-                if 'teams' in params.enterprise:
-                    for team in params.enterprise['teams']:
-                        if team['team_uid'] == team_uid:
-                            if 'encrypted_team_key' in team:
-                                enc_team_key = team['encrypted_team_key']  # type: str
-                                if enc_team_key:
-                                    try:
-                                        team_key = crypto.decrypt_aes_v2(utils.base64_url_decode(enc_team_key), tree_key)
-                                    except Exception as e:
-                                        logging.warning('Cannot decrypt team \"%s\" key: %s', team_uid, e)
-                if team_key:
-                    self.team_keys[team_uid] = team_key
-                    teams[team_uid] = team_key
-                else:
-                    missing_uids.append(team_uid)
-
-        while len(missing_uids) > 0:
-            chunk = missing_uids[:99]
-            missing_uids = missing_uids[99:]
-            rq = {
-                'command': 'team_get_keys',
-                'teams': chunk
-            }
-            rs = api.communicate(params, rq)
-            if rs['result'] == 'success':
-                for ko in rs['keys']:
-                    team_key = None
-                    if 'key' in ko:
-                        team_uid = ko['team_uid']
-                        try:
-                            encrypted_key = utils.base64_url_decode(ko['key'])
-                            key_type = ko['type']
-                            if key_type == 1:
-                                team_key = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
-                            elif key_type == 2:
-                                team_key = crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
-                            elif key_type == 3:
-                                team_key = crypto.decrypt_aes_v2(encrypted_key, params.data_key)
-                        except Exception as e:
-                            logging.warning('Cannot decrypt team \"%s\" key: %s', team_uid, e)
-                        if team_key:
-                            self.team_keys[team_uid] = team_key
-                            teams[team_uid] = team_key
-
-    def get_team_key(self, params, team_uid):    # type: (KeeperParams, str) -> Optional[bytes]
-        teams = {
-            team_uid: None
-        }
-        self.get_team_keys(params, teams)
-        return teams.get(team_uid)
 
     def get_role_users_change_batch(self, params, roles, add_user, remove_user, force=False):
         """Get batch of requests for changing enterprise role users"""
@@ -152,7 +52,7 @@ class EnterpriseCommand(Command):
                     else:
                         logging.warning('User %s could be resolved', u)
 
-        user_pkeys = {}
+        user_pkeys = {}    # type: Dict[str, PublicKeys]
         for role in roles:
             role_id = role['role_id']
             for user_id in user_changes:
@@ -187,19 +87,35 @@ class EnterpriseCommand(Command):
                     if user_id not in user_pkeys:
                         answer = 'y' if force else user_choice(
                             'Do you want to grant administrative privileges to {0}'.format(email), 'yn', 'n')
-                        public_key = None
                         if answer == 'y':
-                            public_key = self.get_public_key(params, email)
-                            if public_key is None:
+                            api.load_user_public_keys(params, [email], False)
+                            user_keys = params.key_cache.get(email)
+                            if user_keys:
+                                user_pkeys[user_id] = params.key_cache[email]
+                            else:
                                 logging.warning('Cannot get public key for user %s', email)
-                        user_pkeys[user_id] = public_key
-                    if user_pkeys[user_id]:
-                        encrypted_tree_key = crypto.encrypt_rsa(params.enterprise['unencrypted_tree_key'],
-                                                                user_pkeys[user_id])
-                        rq['tree_key'] = utils.base64_url_encode(encrypted_tree_key)
-                        if role_key:
-                            encrypted_role_key = crypto.encrypt_rsa(role_key, user_pkeys[user_id])
-                            rq['role_admin_key'] = utils.base64_url_encode(encrypted_role_key)
+
+                    public_key = user_pkeys.get(user_id)
+                    if public_key:
+                        tree_key = params.enterprise['unencrypted_tree_key']
+                        if params.forbid_rsa and public_key.ec:
+                            ec_key = crypto.load_ec_public_key(public_key.ec)
+                            encrypted_tree_key = crypto.encrypt_ec(tree_key, ec_key)
+                            rq['tree_key'] = utils.base64_url_encode(encrypted_tree_key)
+                            rq['tree_key_type'] = 'encrypted_by_public_key_ecc'
+                            if role_key:
+                                encrypted_role_key = crypto.encrypt_ec(role_key, ec_key)
+                                rq['role_admin_key'] = utils.base64_url_encode(encrypted_role_key)
+                        elif not params.forbid_rsa and public_key.rsa:
+                            rsa_key = crypto.load_rsa_public_key(public_key.rsa)
+                            encrypted_tree_key = crypto.encrypt_rsa(tree_key, rsa_key)
+                            rq['tree_key'] = utils.base64_url_encode(encrypted_tree_key)
+                            if role_key:
+                                encrypted_role_key = crypto.encrypt_rsa(role_key, rsa_key)
+                                rq['role_admin_key'] = utils.base64_url_encode(encrypted_role_key)
+                        else:
+                            continue
+
                         request_batch.append(rq)
                 else:
                     request_batch.append(rq)
