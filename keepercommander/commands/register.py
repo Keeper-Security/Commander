@@ -467,8 +467,14 @@ class ShareFolderCommand(Command):
                         uo.manageUsers = folder_pb2.BOOLEAN_TRUE if mu or curr_sf.get('default_manage_users') is True else folder_pb2.BOOLEAN_FALSE
                         sf_key = curr_sf.get('shared_folder_key_unencrypted')  # type: Optional[bytes]
                         if sf_key:
-                            rsa_key = crypto.load_rsa_public_key(keys.rsa)
-                            uo.sharedFolderKey = crypto.encrypt_rsa(sf_key, rsa_key)
+                            if params.forbid_rsa and keys.ec:
+                                ec_key = crypto.load_ec_public_key(keys.ec)
+                                uo.typedSharedFolderKey.encryptedKey = crypto.encrypt_ec(sf_key, ec_key)
+                                uo.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key_ecc
+                            elif not params.forbid_rsa and keys.rsa:
+                                rsa_key = crypto.load_rsa_public_key(keys.rsa)
+                                uo.typedSharedFolderKey.encryptedKey = crypto.encrypt_rsa(sf_key, rsa_key)
+                                uo.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key
 
                         rq.sharedFolderAddUser.append(uo)
                     else:
@@ -510,10 +516,20 @@ class ShareFolderCommand(Command):
                             keys = params.key_cache.get(team_uid)
                             if keys:
                                 if keys.aes:
-                                    to.sharedFolderKey = crypto.encrypt_aes_v1(sf_key, keys.aes)
-                                elif keys.rsa:
+                                    if params.forbid_rsa:
+                                        to.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v2(sf_key, params.data_key)
+                                        to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key_gcm
+                                    else:
+                                        to.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v1(sf_key, params.data_key)
+                                        to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key
+                                elif params.forbid_rsa and keys.ec:
+                                    ec_key = crypto.load_ec_public_key(keys.ec)
+                                    to.typedSharedFolderKey.encryptedKey = crypto.encrypt_ec(sf_key, ec_key)
+                                    to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key_ecc
+                                elif not params.forbid_rsa and keys.rsa:
                                     rsa_key = crypto.load_rsa_public_key(keys.rsa)
-                                    to.sharedFolderKey = crypto.encrypt_rsa(sf_key, rsa_key)
+                                    to.typedSharedFolderKey.encryptedKey = crypto.encrypt_rsa(sf_key, rsa_key)
+                                    to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key
                                 else:
                                     continue
                             else:
@@ -859,11 +875,11 @@ class ShareRecordCommand(Command):
                     record_key = rec.get('record_key_unencrypted')
                     if record_key and email not in existing_shares and email in params.key_cache:
                         keys = params.key_cache[email]
-                        if keys.ec:
+                        if params.forbid_rsa and keys.ec:
                             ec_key = crypto.load_ec_public_key(keys.ec)
                             ro.recordKey = crypto.encrypt_ec(record_key, ec_key)
                             ro.useEccKey = True
-                        elif keys.rsa:
+                        elif not params.forbid_rsa and keys.rsa:
                             rsa_key = crypto.load_rsa_public_key(keys.rsa)
                             ro.recordKey = crypto.encrypt_rsa(record_key, rsa_key)
                             ro.useEccKey = False
@@ -1667,23 +1683,40 @@ class RecordPermissionCommand(Command):
                 if not kwargs.get('force') else 'Y'
             if answer.lower() == 'y':
                 table = []
-                while len(direct_shares_update) > 0:
-                    batch = direct_shares_update[:80]
-                    direct_shares_update = direct_shares_update[80:]
-                    rq = {
-                        'command': 'record_share_update',
-                        'pt': 'Commander',
-                        'update_shares': batch
-                    }
 
-                    rs = api.communicate(params, rq)
-                    if 'update_statuses' in rs:
-                        for status in rs['update_statuses']:
-                            code = status['status']
-                            if code != 'success':
-                                record_uid = status['record_uid']
-                                username = status.get('username') or status.get('to_username')
-                                table.append([record_uid, username, code, status.get('message')])
+                def to_share_record_proto(srd):   # type: (dict) -> record_pb2.SharedRecord
+                    srp = record_pb2.SharedRecord()
+                    srp.toUsername = srd['to_username']
+                    srp.recordUid = utils.base64_url_decode(srd['record_uid'])
+                    if 'shared_folder_uid' in srd:
+                        srp.sharedFolderUid = utils.base64_url_decode(srd['shared_folder_uid'])
+                    if 'team_uid' in srd:
+                        srp.teamUid = utils.base64_url_decode(srd['team_uid'])
+                    if 'record_key' in srd:
+                        srp.recordKey = utils.base64_url_decode(srd['record_key'])
+                    if 'use_ecc_key' in srd:
+                        srp.useEccKey = srd['use_ecc_key']
+                    if 'editable' in srd:
+                        srp.editable = srd['editable']
+                    if 'shareable' in srd:
+                        srp.shareable = srd['shareable']
+                    if 'transfer' in srd:
+                        srp.shareable = srd['transfer']
+
+                    return srp
+
+                while len(direct_shares_update) > 0:
+                    rsu_rq = record_pb2.RecordShareUpdateRequest()
+                    rsu_rq.updateSharedRecord.extend((to_share_record_proto(x) for x in direct_shares_update[:900]))
+                    direct_shares_update = direct_shares_update[900:]
+
+                    rsu_rs = api.communicate_rest(params, rsu_rq, 'vault/records_share_update',
+                                                  rs_type=record_pb2.RecordShareUpdateResponse)
+                    for status in rsu_rs.updateSharedRecordStatus:
+                        code = status.status.lower()
+                        if code != 'success':
+                            record_uid = utils.base64_url_encode(status.recordUid)
+                            table.append([record_uid, status.username, code, status.message])
 
                 if len(table) > 0:
                     headers = ['Record UID', 'Email', 'Error Code', 'Message']
@@ -2406,13 +2439,6 @@ class CreateRegularUserCommand(Command):
 
         user_password = password1
         user_data_key = utils.generate_aes_key()
-        rsa_private_key, rsa_public_key = crypto.generate_rsa_key()
-        rsa_private = crypto.unload_rsa_private_key(rsa_private_key)
-        rsa_public = crypto.unload_rsa_public_key(rsa_public_key)
-
-        ec_private_key, ec_public_key = crypto.generate_ec_key()
-        ec_private = crypto.unload_ec_private_key(ec_private_key)
-        ec_public = crypto.unload_ec_public_key(ec_public_key)
 
         user_rq = APIRequest_pb2.CreateUserRequest()
         user_rq.username = email
@@ -2420,10 +2446,19 @@ class CreateRegularUserCommand(Command):
             user_password, crypto.get_random_bytes(16), iterations)
         user_rq.encryptionParams = utils.create_encryption_params(
             user_password, crypto.get_random_bytes(16), iterations, user_data_key)
-        user_rq.rsaPublicKey = rsa_public
-        user_rq.rsaEncryptedPrivateKey = crypto.encrypt_aes_v1(rsa_private, user_data_key)
+        if not params.forbid_rsa:
+            rsa_private_key, rsa_public_key = crypto.generate_rsa_key()
+            rsa_private = crypto.unload_rsa_private_key(rsa_private_key)
+            rsa_public = crypto.unload_rsa_public_key(rsa_public_key)
+            user_rq.rsaPublicKey = rsa_public
+            user_rq.rsaEncryptedPrivateKey = crypto.encrypt_aes_v1(rsa_private, user_data_key)
+
+        ec_private_key, ec_public_key = crypto.generate_ec_key()
+        ec_private = crypto.unload_ec_private_key(ec_private_key)
+        ec_public = crypto.unload_ec_public_key(ec_public_key)
         user_rq.eccPublicKey = ec_public
         user_rq.eccEncryptedPrivateKey = crypto.encrypt_aes_v2(ec_private, user_data_key)
+
         user_rq.encryptedDeviceToken = LoginV3API.get_device_id(params)
         user_rq.encryptedClientKey = crypto.encrypt_aes_v1(utils.generate_aes_key(), user_data_key)
         user_rq.clientVersion = rest_api.CLIENT_VERSION

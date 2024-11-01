@@ -550,16 +550,24 @@ def import_teams(params, teams, full_sync=False):   # type: (KeeperParams, List[
                 user_public_keys = params.key_cache[email]
                 if team_key.aes and user_public_keys.rsa:
                     try:
-                        rsa_key = crypto.load_rsa_public_key(user_public_keys.rsa)
-                        team_key = team_key.aes
-
-                        rqs.append({
+                        rq = {
                             'command': 'team_enterprise_user_add',
                             'team_uid': team_uid,
                             'enterprise_user_id': user_lookup[email],
                             'user_type': 0,
-                            'team_key': utils.base64_url_encode(crypto.encrypt_rsa(team_key, rsa_key))
-                        })
+                        }
+                        team_key = team_key.aes
+                        if params.forbid_rsa and user_public_keys.ec:
+                            ec_key = crypto.load_ec_public_key(user_public_keys.ec)
+                            rq['team_key'] = utils.base64_url_encode(crypto.encrypt_ec(team_key, ec_key))
+                            rq['team_key_type'] = 'encrypted_by_public_key_ecc'
+                        elif not params.forbid_rsa and user_public_keys.rsa:
+                            rsa_key = crypto.load_rsa_public_key(user_public_keys.rsa)
+                            rq['team_key'] = utils.base64_url_encode(crypto.encrypt_rsa(team_key, rsa_key))
+                            rq['team_key_type'] = 'encrypted_by_public_key'
+                        else:
+                            raise Exception('user public key is not available')
+                        rqs.append(rq)
                     except Exception as e:
                         logging.debug('Add user to team error: %s', str(e))
 
@@ -1125,9 +1133,41 @@ def _import(params, file_format, filename, **kwargs):
 
         # adjust shared folder permissions
         shared_update = prepare_record_permission(params, records)
-        if shared_update:
-            api.execute_batch(params, shared_update)
-            sync_down.sync_down(params)
+        left = 0
+        sfu_rqs = None     # type: Optional[folder_pb2.SharedFolderUpdateV3RequestV2]
+        while len(shared_update) > 0 or sfu_rqs is not None:
+            if sfu_rqs is None:
+                sfu_rqs = folder_pb2.SharedFolderUpdateV3RequestV2()
+                left = 990
+            if len(shared_update) > 0:
+                shared_folder_uid = next(iter(shared_update.keys()))
+                record_updates = shared_update.pop(shared_folder_uid)
+                sfu_rq = folder_pb2.SharedFolderUpdateV3Request()
+                sfu_rq.sharedFolderUid = utils.base64_url_decode(shared_folder_uid)
+                sfu_rq.forceUpdate = True
+                if len(record_updates) < left:
+                    sfu_rq.sharedFolderUpdateRecord.extend(record_updates)
+                    sfu_rqs.sharedFoldersUpdateV3.append(sfu_rq)
+                    left -= len(record_updates)
+                    if left > 10:
+                        continue
+                else:
+                    chunk = record_updates[:left]
+                    record_updates = record_updates[left:]
+                    sfu_rq.sharedFolderUpdateRecord.extend(chunk)
+                    sfu_rqs.sharedFolderUpdateV3Request.append(sfu_rq)
+                    shared_update[shared_folder_uid] = record_updates
+                    left = 0
+
+            try:
+                sfu_rss = api.communicate_rest(params, sfu_rqs, 'vault/shared_folder_update_v3', rs_type=folder_pb2.SharedFolderUpdateV3ResponseV2,
+                                               payload_version=1)
+            except Exception as e:
+                logging.debug('Update record permissions error: %s', e)
+            finally:
+                sfu_rqs = None
+
+        sync_down.sync_down(params)
 
         # upload attachments
         v2_atts = []
@@ -2386,10 +2426,20 @@ def prepare_folder_permission(params, folders, full_sync):
                             elif team_uid in params.key_cache:
                                 team_keys = params.key_cache[team_uid]
                                 if team_keys.aes:
-                                    sft.sharedFolderKey = crypto.encrypt_aes_v1(shared_folder_key, team_keys.aes)
-                                elif team_keys.rsa:
+                                    if params.forbid_rsa:
+                                        sft.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v2(shared_folder_key, team_keys.aes)
+                                        sft.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key_gcm
+                                    else:
+                                        sft.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v1(shared_folder_key, team_keys.aes)
+                                        sft.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key
+                                elif params.forbid_rsa and team_keys.ec:
+                                    ec_key = crypto.load_ec_public_key(team_keys.ec)
+                                    sft.typedSharedFolderKey.encryptedKey = crypto.encrypt_ec(shared_folder_key, ec_key)
+                                    sft.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key_ecc
+                                elif not params.forbid_rsa and team_keys.rsa:
                                     rsa_key = crypto.load_rsa_public_key(team_keys.rsa)
-                                    sft.sharedFolderKey = crypto.encrypt_rsa(shared_folder_key, rsa_key)
+                                    sft.typedSharedFolderKey.encryptedKey = crypto.encrypt_rsa(shared_folder_key, rsa_key)
+                                    sft.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key
                                 else:
                                     continue
                             add_teams.append(sft)
@@ -2416,12 +2466,19 @@ def prepare_folder_permission(params, folders, full_sync):
                         else:
                             if username in params.key_cache:
                                 public_keys = params.key_cache[username]
-                                if public_keys.rsa:
+                                if params.forbid_rsa and public_keys.ec:
+                                    ec_key = crypto.load_ec_public_key(public_keys.ec)
+                                    sfu.typedSharedFolderKey.encryptedKey = crypto.encrypt_ec(shared_folder_key, ec_key)
+                                    sfu.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key_ecc
                                     keep_users.add(username)
-
-                                    rsa_key = crypto.load_rsa_public_key(public_keys.rsa)
-                                    sfu.sharedFolderKey = crypto.encrypt_rsa(shared_folder_key, rsa_key)
                                     add_users.append(sfu)
+                                elif not params.forbid_rsa and public_keys.rsa:
+                                    rsa_key = crypto.load_rsa_public_key(public_keys.rsa)
+                                    sfu.typedSharedFolderKey.encryptedKey = crypto.encrypt_rsa(shared_folder_key, rsa_key)
+                                    sfu.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key
+                                    keep_users.add(username)
+                                    add_users.append(sfu)
+
                         continue
                 except Exception as e:
                     logging.debug(e)
@@ -2483,9 +2540,9 @@ def prepare_folder_permission(params, folders, full_sync):
     return folder_permissions
 
 
-def prepare_record_permission(params, records):
+def prepare_record_permission(params, records):   # type: (KeeperParams, List[ImportRecord]) -> Dict[str, List[folder_pb2.SharedFolderUpdateRecord]]
     """Prepare a list of API interactions for changes to record permissions."""
-    shared_update = []
+    shared_update = {}     # type: Dict[str, List[folder_pb2.SharedFolderUpdateRecord]]
     for rec in records:
         if rec.folders and rec.uid:
             if rec.uid in params.record_cache:
@@ -2506,20 +2563,14 @@ def prepare_record_permission(params, records):
                                     for sfr in sf['records']:
                                         if sfr['record_uid'] == rec.uid:
                                             if sfr['can_share'] != fol.can_share or sfr['can_edit'] != fol.can_edit:
-                                                req = {
-                                                    'command': 'shared_folder_update',
-                                                    'pt': 'Commander',
-                                                    'operation': 'update',
-                                                    'shared_folder_uid': sf_uid,
-                                                    'force_update': True,
-                                                    'update_records': [{
-                                                        'record_uid': rec.uid,
-                                                        'shared_folder_uid': sf_uid,
-                                                        'can_edit': fol.can_edit or False,
-                                                        'can_share': fol.can_share or False
-                                                    }]
-                                                }
-                                                shared_update.append(req)
+                                                sfur = folder_pb2.SharedFolderUpdateRecord()
+                                                sfur.recordUid = utils.base64_url_decode(rec.uid)
+                                                sfur.sharedFolderUid = utils.base64_url_decode(sf_uid)
+                                                sfur.canEdit = folder_pb2.BOOLEAN_TRUE if fol.can_edit else folder_pb2.BOOLEAN_FALSE
+                                                sfur.canShare = folder_pb2.BOOLEAN_TRUE if fol.can_share else folder_pb2.BOOLEAN_FALSE
+                                                if sf_uid not in shared_update:
+                                                    shared_update[sf_uid] = []
+                                                shared_update[sf_uid].append(sfur)
                                             break
     return shared_update
 

@@ -165,10 +165,17 @@ for user in users_to_add:
     if isinstance(manage_records, bool):
         arq.manageRecords = folder_pb2.BOOLEAN_TRUE if manage_records else folder_pb2.BOOLEAN_FALSE
     public_keys = my_params.key_cache.get(user)
-    if public_keys and public_keys.rsa:
-        user_rsa_key = crypto.load_rsa_public_key(public_keys.rsa)
-        arq.sharedFolderKey = crypto.encrypt_rsa(shared_folder_key, user_rsa_key)
-        rq.sharedFolderAddUser.append(arq)
+    if public_keys:
+        if public_keys.ec:
+            user_ec_key = crypto.load_ec_public_key(public_keys.ec)
+            arq.typedSharedFolderKey.encryptedKey = crypto.encrypt_ec(shared_folder_key, user_ec_key)
+            arq.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key_ecc
+            rq.sharedFolderAddUser.append(arq)
+        elif not my_params.forbid_rsa and public_keys.rsa:
+            user_rsa_key = crypto.load_rsa_public_key(public_keys.rsa)
+            arq.typedSharedFolderKey.encryptedKey = crypto.encrypt_rsa(shared_folder_key, user_rsa_key)
+            arq.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key
+            rq.sharedFolderAddUser.append(arq)
     else:
         logging.warning('Add user "%s": User public key is not available', user)
 

@@ -27,10 +27,9 @@ class TestRegister(TestCase):
         record_uid = next(iter([x['record_uid'] for x in params.meta_data_cache.values() if x['can_share']]))
         cmd = register.ShareRecordCommand()
 
-        self.record_share_mock = mock.patch('keepercommander.api.get_record_shares').start()
-
         def not_shared(params, record_uids, is_share_admin):
             pass
+        self.record_share_mock = mock.patch('keepercommander.api.get_record_shares').start()
         self.record_share_mock.side_effect = not_shared
 
         TestRegister.expected_commands.extend(['records_share_update'])

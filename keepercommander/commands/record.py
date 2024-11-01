@@ -1122,25 +1122,11 @@ class TrashGetCommand(Command, TrashMixin):
         if is_shared:
             if 'shares' not in rec:
                 rec['shares'] = {}
-                rq = {
-                    'command': 'get_records',
-                    'include': ['shares'],
-                    'records': [{
-                        'record_uid': record_uid
-                    }],
-                    'client_time': api.current_milli_time()
-                }
-                try:
-                    rs = api.communicate(params, rq)
-                    if 'records' in rs:
-                        for r in rs['records']:
-                            if record_uid == r['record_uid']:
-                                if 'user_permissions' in r:
-                                    rec['shares']['user_permissions'] = r['user_permissions']
-                                if 'shared_folder_permissions' in r:
-                                    rec['shares']['shared_folder_permissions'] = r['shared_folder_permissions']
-                except:
-                    pass
+                shares = api.get_record_shares(params, (record_uid,), True)
+                if isinstance(shares, list):
+                    record_shares = next(iter(x.get('shares') for x in shares if x.get('record_uid') == record_uid), None)
+                    if isinstance(record_shares, dict):
+                        rec['shares'] = record_shares
 
             if 'shares' in rec:
                 if 'user_permissions' in rec['shares']:
@@ -1165,7 +1151,7 @@ class TrashGetCommand(Command, TrashMixin):
                         if not flags:
                             flags = 'Read Only'
                         print('{0:>21s}: {1:<26s} ({2}) {3}'.format(
-                            'Shared Users' if no == 0 else '', uo['username'], flags,
+                            'Direct User Shares' if no == 0 else '', uo['username'], flags,
                             'self' if uo['username'] == params.user else ''))
                         no += 1
 
@@ -1355,32 +1341,33 @@ class TrashUnshareCommand(Command, TrashMixin):
             if answer.lower() != 'yes':
                 return
 
-        record_shares = api.get_record_shares(params, to_restore, is_share_admin=True)
+        record_shares = api.get_record_shares(params, to_restore, True)
         if record_shares:
-            remove_shares = []
+            remove_shares = []   # type: List[record_pb2.SharedRecord]
             for record_share in record_shares:
                 if 'shares' in record_share:
                     shares = record_share['shares']
                     if 'user_permissions' in shares:
                         for user_permission in shares['user_permissions']:
                             if user_permission.get('owner') is False:
-                                remove_shares.append({
-                                    'to_username': user_permission['username'],
-                                    'record_uid': record_share['record_uid'],
-                                })
+                                rs_rq = record_pb2.SharedRecord()
+                                rs_rq.toUsername = user_permission['username']
+                                rs_rq.recordUid = utils.base64_url_decode(record_share['record_uid'])
+                                remove_shares.append(rs_rq)
+
             while len(remove_shares) > 0:
-                chunk = remove_shares[:95]
-                remove_shares = remove_shares[95:]
-                rq = {
-                    'command': 'record_share_update',
-                    'remove_shares': chunk,
-                }
-                rs = api.communicate(params, rq)
-                if 'remove_statuses' in rs:
-                    for rm_status in rs['remove_statuses']:
-                        if rm_status.get('status') != 'success':
-                            logging.info('Remove share \"%s\" from record UID \"%s\" error: %s',
-                                         rm_status['username'], rm_status['record_uid'], rm_status['message'])
+                chunk = remove_shares[:900]
+                remove_shares = remove_shares[900:]
+                rsu_rq = record_pb2.RecordShareUpdateRequest()
+                rsu_rq.removeSharedRecord.extend(chunk)
+
+                rsu_rs = api.communicate_rest(params, rsu_rq, 'vault/records_share_update',
+                                              rs_type=record_pb2.RecordShareUpdateResponse)
+                for srs in rsu_rs.removeSharedRecordStatus:
+                    if srs.status.lower() != 'success':
+                        record_uid = utils.base64_url_encode(srs.recordUid)
+                        logging.info('Remove share \"%s\" from record UID \"%s\" error: %s',
+                                     srs.username, record_uid, srs.message)
 
             TrashMixin.last_revision = 0
 

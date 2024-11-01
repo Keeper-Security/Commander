@@ -65,7 +65,9 @@ class TestCrossEnterpriseCommands(TestCase):
 
         self.assertGreater(len(uids), 0, 'cannot resolve team')
         ent1_team_uid = uids[0]
-        team_key = team_cmd.get_team_key(param1, ent1_team_uid)
+        api.load_team_keys(param1, [ent1_team_uid])
+        team_keys = param1.key_cache.get(ent1_team_uid)
+        team_key = team_keys.aes if team_keys else None
         self.assertIsNotNone(team_key)
         rq = {
             "command": "team_enterprise_user_add",

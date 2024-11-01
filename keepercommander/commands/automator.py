@@ -430,7 +430,7 @@ class AutomatorSetupCommand(EnterpriseCommand, AutomatorMixin):
             encrypted_ec_private_key = crypto.encrypt_ec(ec_private_key, automator_public_key)
             rq.encryptedEccEnterprisePrivateKey = encrypted_ec_private_key
 
-        if 'rsa_encrypted_private_key' in keys:
+        if not params.forbid_rsa and 'rsa_encrypted_private_key' in keys:
             encrypted_rsa_private_key = utils.base64_url_decode(keys['rsa_encrypted_private_key'])
             rsa_private_key = crypto.decrypt_aes_v2(encrypted_rsa_private_key, params.enterprise['unencrypted_tree_key'])
             encrypted_rsa_private_key = crypto.encrypt_ec(rsa_private_key, automator_public_key)
