@@ -50,7 +50,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
         pass
 
     @staticmethod
-    def print_job_table(jobs, max_gateway_name):
+    def print_job_table(jobs, max_gateway_name, show_history=False):
 
         print("")
         print(f"{bcolors.HEADER}{'Job ID'.ljust(14, ' ')} "
@@ -98,17 +98,17 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                   f"{(job.get('duration') or 'NA').ljust(19, ' ')} "
                   f"{bcolors.ENDC}")
 
-        if len(completed_jobs) > 0:
+        if len(completed_jobs) > 0 and show_history is False:
             print("")
             if len(completed_jobs) == 1:
                 print(f"There is one {_g('COMPLETED')} job. To process, use the following command.")
             else:
                 print(f"There are {len(completed_jobs)} {_g('COMPLETED')} jobs. "
-                      "To process, use one of the the following command.")
+                      "To process, use one of the the following commands.")
             for job_id in completed_jobs:
                 print(_g(f"  pam action discover process -j {job_id}"))
 
-        if len(running_jobs) > 0:
+        if len(running_jobs) > 0 and show_history is False:
             print("")
             if len(running_jobs) == 1:
                 print(f"There is one {_b('RUNNING')} job. "
@@ -119,7 +119,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
             for job_id in running_jobs:
                 print(_b(f"  pam action discover remove -j {job_id}"))
 
-        if len(failed_jobs) > 0:
+        if len(failed_jobs) > 0 and show_history is False:
             print("")
             if len(failed_jobs) == 1:
                 print(f"There is one {_f('FAILED')} job. "
@@ -180,31 +180,35 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                     job_item = job.get("job_item")   # type: JobItem
 
                     try:
-                        infra.load(sync_point=job_item.sync_point)
+                        infra.load(sync_point=0)
                         print("")
-                        delta = DiscoveryDelta.model_validate(job.get('delta'))
-                        print(f"{_h('Added')} - {len(delta.added)} count")
-                        for item in delta.added:
-                            vertex = infra.dag.get_vertex(item.uid)
-                            discovery_object = DiscoveryObject.get_discovery_object(vertex)
-                            print(f"  * {discovery_object.description}")
+                        delta_json = job.get('delta')
+                        if delta_json is not None:
+                            delta = DiscoveryDelta.model_validate(delta_json)
+                            print(f"{_h('Added')} - {len(delta.added)} count")
+                            for item in delta.added:
+                                vertex = infra.dag.get_vertex(item.uid)
+                                discovery_object = DiscoveryObject.get_discovery_object(vertex)
+                                print(f"  * {discovery_object.description}")
 
-                        print("")
-                        print(f"{_h('Changed')} - {len(delta.changed)} count")
-                        for item in delta.changed:
-                            vertex = infra.dag.get_vertex(item.uid)
-                            discovery_object = DiscoveryObject.get_discovery_object(vertex)
-                            print(f"  * {discovery_object.description}")
-                            if item.changes is None:
-                                print(f"    no changed, may be a object not added in prior discoveries.")
-                            else:
-                                for key, value in item.changes.items():
-                                    print(f"    - {key} = {value}")
+                            print("")
+                            print(f"{_h('Changed')} - {len(delta.changed)} count")
+                            for item in delta.changed:
+                                vertex = infra.dag.get_vertex(item.uid)
+                                discovery_object = DiscoveryObject.get_discovery_object(vertex)
+                                print(f"  * {discovery_object.description}")
+                                if item.changes is None:
+                                    print(f"    no changed, may be a object not added in prior discoveries.")
+                                else:
+                                    for key, value in item.changes.items():
+                                        print(f"    - {key} = {value}")
 
-                        print("")
-                        print(f"{_h('Deleted')} - {len(delta.deleted)} count")
-                        for item in delta.deleted:
-                            print(f"  * discovery vertex {item.uid}")
+                            print("")
+                            print(f"{_h('Deleted')} - {len(delta.deleted)} count")
+                            for item in delta.deleted:
+                                print(f"  * discovery vertex {item.uid}")
+                        else:
+                            print(f"{_f('There are no available delta changes for this job.')}")
 
                     except Exception as err:
                         print(f"{_f('Could not load delta from infrastructure: ' + str(err))}")
@@ -300,4 +304,4 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
         if job_id is not None and gateway_context is not None:
             self.print_job_detail(params, gateway_context, all_jobs, job_id)
         else:
-            self.print_job_table(all_jobs, max_gateway_name)
+            self.print_job_table(all_jobs, max_gateway_name, show_history)
