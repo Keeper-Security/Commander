@@ -8,10 +8,12 @@ from ... import vault
 from discovery_common.infrastructure import Infrastructure
 from discovery_common.record_link import RecordLink
 from discovery_common.user_service import UserService
+from discovery_common.jobs import Jobs
 from discovery_common.constants import (PAM_USER, PAM_DIRECTORY, PAM_MACHINE, PAM_DATABASE, VERTICES_SORT_MAP,
-                                        DIS_INFRA_GRAPH_ID, RECORD_LINK_GRAPH_ID, USER_SERVICE_GRAPH_ID)
+                                        DIS_INFRA_GRAPH_ID, RECORD_LINK_GRAPH_ID, USER_SERVICE_GRAPH_ID,
+                                        DIS_JOBS_GRAPH_ID)
 from discovery_common.types import (DiscoveryObject, DiscoveryUser, DiscoveryDirectory, DiscoveryMachine,
-                                    DiscoveryDatabase)
+                                    DiscoveryDatabase, JobContent)
 from discovery_common.dag_sort import sort_infra_vertices
 from keeper_dag import DAG
 from keeper_dag.connection.commander import Connection as CommanderConnection
@@ -32,7 +34,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
     # The record to base everything on.
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name or UID.')
-    parser.add_argument('--type', '-t', required=True, choices=['infra', 'rl', 'service'],
+    parser.add_argument('--type', '-t', required=True, choices=['infra', 'rl', 'service', 'jobs'],
                         dest='graph_type', action='store', help='Graph type', default='infra')
     parser.add_argument('--raw', required=False, dest='raw', action='store_true',
                         help='Render raw graph. Will render corrupt graphs.')
@@ -59,7 +61,8 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
     graph_id_map = {
         "infra": DIS_INFRA_GRAPH_ID,
         "rl": RECORD_LINK_GRAPH_ID,
-        "service": USER_SERVICE_GRAPH_ID
+        "service": USER_SERVICE_GRAPH_ID,
+        "jobs": DIS_JOBS_GRAPH_ID
     }
 
     def get_parser(self):
@@ -283,6 +286,102 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
 
         _handle(current_vertex=configuration, parent_vertex=None, indent=indent)
 
+    def _do_text_list_jobs(self, params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0,
+                           indent: int = 0):
+
+        infra = Infrastructure(record=gateway_context.configuration, params=params, logger=logging,
+                               debug_level=debug_level, fail_on_corrupt=False)
+        infra.load(sync_point=0)
+
+        pad = ""
+        if indent > 0:
+            pad = "".ljust(2 * indent, ' ') + "* "
+
+        conn = get_connection(params)
+        graph_sync = DAG(conn=conn, record=gateway_context.configuration, logger=logging, debug_level=debug_level,
+                         graph_id=DIS_JOBS_GRAPH_ID)
+        graph_sync.load(0)
+        configuration = graph_sync.get_root
+        vertices = configuration.has_vertices()
+        if len(vertices) == 0:
+            print(self._f(f"The jobs graph has not been initialized. Only has root vertex."))
+            return
+
+        vertex = vertices[0]
+        if vertex.has_data is False:
+            print(self._f(f"The job vertex does not contain any data"))
+            return
+
+        current_json = vertex.content_as_str
+        if current_json is None:
+            print(self._f(f"The current job vertex content is None"))
+            return
+
+        content = JobContent.model_validate_json(current_json)
+        print(f"{pad}{self._b('Active Job ID')}: {content.active_job_id}")
+        print("")
+        print(f"{pad}{self._h('History')}")
+        print("")
+        for job in content.job_history:
+            print(f"{pad}  --------------------------------------")
+            print(f"{pad}  Job Id: {job.job_id}")
+            print(f"{pad}  Started: {job.start_ts_str}")
+            print(f"{pad}  Ended: {job.end_ts_str}")
+            print(f"{pad}  Duration: {job.duration_sec_str}")
+            print(f"{pad}  Infra Sync Point: {job.sync_point}")
+            if job.success is True:
+                print(f"{pad}  Status: {self._gr('Success')}")
+            else:
+                print(f"{pad}  Status: {self._f('Fail')}")
+            if job.error is not None:
+                print(f"{pad}  Error: {self._gr(job.error)}")
+
+            print("")
+
+            if job.delta is None:
+                print(f"{pad}{self._f('The job is missing a delta, never finished discovery.')}")
+            else:
+                if len(job.delta.added) > 0:
+                    print(f"{pad}  {self._h('Added')}")
+                    for added in job.delta.added:
+                        vertex = infra.dag.get_vertex(added.uid)
+                        if vertex is None:
+                            print(f"{pad}  * Vertex {added.uid} does not exists.")
+                        else:
+                            if vertex.active is False:
+                                print(f"{pad}  * Vertex {added.uid} is inactive.")
+                            elif vertex.corrupt is True:
+                                print(f"{pad}  * Vertex {added.uid} is corrupt.")
+                            else:
+                                content = DiscoveryObject.get_discovery_object(vertex)
+                                print(f"{pad}  * {content.description}; Record UID: {content.record_uid}")
+                    print("")
+
+                if len(job.delta.changed) > 0:
+                    print(f"{pad}  {self._h('Changed')}")
+                    for changed in job.delta.changed:
+                        vertex = infra.dag.get_vertex(changed.uid)
+                        if vertex is None:
+                            print(f"{pad}  * Vertex {changed.uid} does not exists.")
+                        else:
+                            if vertex.active is False:
+                                print(f"{pad}  * Vertex {changed.uid} is inactive.")
+                            elif vertex.corrupt is True:
+                                print(f"{pad}  * Vertex {changed.uid} is corrupt.")
+                            else:
+                                content = DiscoveryObject.get_discovery_object(vertex)
+                                print(f"{pad}  * {content.description}; Record UID: {content.record_uid}")
+                                if changed.changes is not None:
+                                    for k, v in changed.changes.items():
+                                        print(f"{pad}    {k} = {v}")
+                    print("")
+
+                if len(job.delta.deleted) > 0:
+                    print(f"{pad}  {self._h('Deleted')}")
+                    for deleted in job.delta.deleted:
+                        print(f"{pad}  * Removed vertex {deleted.uid}.")
+                    print("")
+
     def _do_render_infra(self, params: KeeperParams, gateway_context: GatewayContext, filepath: str, graph_format: str,
                          debug_level: int = 0):
 
@@ -347,6 +446,24 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
             try:
                 dot_instance.render(filepath)
                 print(f"User service/tasks graph rendered to {self._gr(filepath)}")
+            except Exception as err:
+                print(self._f(f"Could not generate graph: {err}"))
+                raise err
+        print("")
+
+    def _do_render_jobs(self, params: KeeperParams, gateway_context: GatewayContext, filepath: str,
+                        graph_format: str, debug_level: int = 0):
+
+        jobs = Jobs(record=gateway_context.configuration, params=params, logger=logging, debug_level=debug_level)
+
+        print("")
+        dot_instance = jobs.dag.to_dot()
+        if graph_format == "raw":
+            print(dot_instance)
+        else:
+            try:
+                dot_instance.render(filepath)
+                print(f"Job graph rendered to {self._gr(filepath)}")
             except Exception as err:
                 print(self._f(f"Could not generate graph: {err}"))
                 raise err
