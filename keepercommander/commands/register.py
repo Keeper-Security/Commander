@@ -903,7 +903,7 @@ class ShareRecordCommand(Command):
                         else:
                             ro.editable = True if can_edit else current.get('editable')
                             ro.shareable = True if can_share else current.get('shareable')
-                    rq.updateSharedRecord.append(ro)
+                    rq.updateSharedRecord.append(ro) if email in existing_shares else rq.addSharedRecord.append(ro)
                 else:
                     if can_share or can_edit:
                         if email in existing_shares:
@@ -978,7 +978,7 @@ class ShareRecordCommand(Command):
                             logging.info('Record \"%s\" access permissions has been %s user \'%s\'', record_uid, verb, email)
                         else:
                             verb = 'grant' if attr == 'addSharedRecordStatus' else 'change' if attr == 'updateSharedRecordStatus' else 'revoke'
-                            logging.info('Failed to %s record \"%s\" access permissions for user \'%s\': %s', record_uid, verb, email, status_rs.message)
+                            logging.info('Failed to %s record \"%s\" access permissions for user \'%s\': %s', verb, record_uid, email, status_rs.message)
         if transfer_ruids:
             from keepercommander.breachwatch import BreachWatch
             BreachWatch.save_reused_pw_count(params)
