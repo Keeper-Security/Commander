@@ -24,4 +24,4 @@ pydantic>=2.6.4
 # pip uninstall discovery-common -y
 # python3 setup.py wheel --whlsrc ~/src/discovery-common --libdir $PWD/libs --reqfiles $PWD/requirements.txt
 # pip install $(ls libs/discovery_common-*)
-./libs/discovery_common-1.0.21-py3-none-any.whl
+./libs/discovery_common-1.0.22-py3-none-any.whl
