@@ -643,7 +643,9 @@ class AuditAlertRecipients(EnterpriseCommand, AuditSettingMixin):
                                 webhook_body = tf.read()
                         else:
                             raise CommandError('', f'File \"{file_name}\" not found')
-                    webhook['template'] = webhook_body
+                        webhook['template'] = webhook_body
+                    else:
+                        webhook['template'] = http_body
                 elif 'template' in webhook:
                     webhook['template'] = None
 
