@@ -286,11 +286,11 @@ class AutomatorCreateCommand(EnterpriseCommand, AutomatorMixin):
             return
         matched_node_id = nodes[0]['node_id']
         self.ensure_loaded(params, False)
-        if params.automators:    # type: list[automator_proto.AutomatorInfo]
-            n = next((True for x in params.automators if x.nodeId == matched_node_id), None)
-            if n:
-                logging.warning('Automator for node \"%s\" already exists', node)
-                return
+        # if params.automators:    # type: list[automator_proto.AutomatorInfo]
+        #     n = next((True for x in params.automators if x.nodeId == matched_node_id), None)
+        #     if n:
+        #         logging.warning('Automator for node \"%s\" already exists', node)
+        #         return
 
         rq = automator_proto.AdminCreateAutomatorRequest()
         rq.nodeId = matched_node_id
