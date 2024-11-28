@@ -10,6 +10,7 @@
 #
 
 import argparse
+import copy
 import datetime
 import json
 import logging
@@ -546,6 +547,7 @@ class AuditAlertRecipients(EnterpriseCommand, AuditSettingMixin):
 
     def execute(self, params, **kwargs):
         alert = AuditSettingMixin.get_alert_configuration(params, kwargs.get('target'))
+        alert = copy.deepcopy(alert)
         action = kwargs.get('action')
         skip_update = False
         if action in ('enable', 'disable'):
