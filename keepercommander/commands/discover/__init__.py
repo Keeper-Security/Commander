@@ -182,7 +182,7 @@ class PAMGatewayActionDiscoverCommandBase(Command):
 
     STORE_LABEL = "discoveryKey"
     FIELD_MAPPING = {
-        "hostnameOrIPAddress": {
+        "pamHostname": {
             "type": "dict",
             "field_input": [
                 {"key": "hostName", "prompt": "Hostname"},
