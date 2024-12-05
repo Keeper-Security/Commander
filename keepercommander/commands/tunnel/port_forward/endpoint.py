@@ -71,6 +71,18 @@ class CloseConnectionReasons(enum.IntEnum):
     TunnelClosed = 11
     AdminClosed = 12
 
+class ConversationType(enum.Enum):
+    TUNNEL = "tunnel"
+    SSH = "ssh"
+    RDP = "rdp"
+    VNC = "vnc"
+    HTTP = "http"
+    KUBERNETES = "kubernetes"
+    TELNET = "telnet"
+    MYSQL = "mysql"
+    SQLSERVER = "sql-server"
+    POSTGRESQL = "postgresql"
+
 
 class ConnectionNotFoundException(Exception):
     pass
@@ -263,7 +275,7 @@ class TunnelDAG:
 
     def check_tunneling_enabled_config(self, enable_connections=None, enable_tunneling=None,
                                        enable_rotation=None, enable_session_recording=None,
-                                       enable_typescript_recording=None):
+                                       enable_typescript_recording=None, remote_browser_isolation=None):
         if not self.linking_dag.has_graph:
             return False
         config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
@@ -283,10 +295,12 @@ class TunnelDAG:
                 return False
             if enable_typescript_recording and not allowed_settings.get("typescriptRecording"):
                 return False
+        if remote_browser_isolation and not allowed_settings.get("remoteBrowserIsolation"):
+            return False
         return True
 
     def edit_tunneling_config(self, connections=None, tunneling=None, rotation=None, session_recording=None,
-                              typescript_recording=None):
+                              typescript_recording=None, remote_browser_isolation=None):
         config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
         if config_vertex is None:
             config_vertex = self.linking_dag.add_vertex(uid=self.record.record_uid, vertex_type=RefType.PAM_NETWORK)
@@ -323,6 +337,10 @@ class TunnelDAG:
         if (typescript_recording is not None and
                 typescript_recording != allowed_settings.get("typescriptRecording", False)):
             allowed_settings["typescriptRecording"] = typescript_recording
+            dirty = True
+
+        if remote_browser_isolation is not None and remote_browser_isolation != allowed_settings.get("remoteBrowserIsolation", False):
+            allowed_settings["remoteBrowserIsolation"] = remote_browser_isolation
             dirty = True
 
         if dirty:
@@ -521,57 +539,66 @@ class TunnelDAG:
         self.linking_dag.load()
         vertex = self.linking_dag.get_vertex(record_uid)
         content = self.get_vertex_content(vertex)
+        config_id = config_uid if config_uid else pam_settings.value[0].get('configUid')
         if content and content.get('allowedSettings'):
             allowed_settings = content['allowedSettings']
             print(f"{bcolors.OKGREEN}Settings configured for {record_uid}{bcolors.ENDC}")
-            connections = f"{bcolors.OKBLUE}Enabled" if allowed_settings.get('connections') else \
-                f"{bcolors.WARNING}Disabled"
+            # connections = f"{bcolors.OKBLUE}Enabled" if allowed_settings.get('connections') else \
+            #     f"{bcolors.WARNING}Disabled"
             port_forwarding = f"{bcolors.OKBLUE}Enabled" if allowed_settings.get('portForwards') else \
                 f"{bcolors.WARNING}Disabled"
             rotation = f"{bcolors.WARNING}Disabled" if (allowed_settings.get('rotation') and not allowed_settings['rotation']) else f"{bcolors.OKBLUE}Enabled"
-            print(f"{bcolors.OKGREEN}\tConnections: {connections}{bcolors.ENDC}")
-            if allowed_settings.get('connections'):
-                if allowed_settings.get('sessionRecording'):
-                    print(f"{bcolors.OKGREEN}\t\tSession Recording: {bcolors.OKBLUE}Enabled{bcolors.ENDC}")
-                else:
-                    print(f"{bcolors.OKGREEN}\t\tSession Recording: {bcolors.WARNING}Disabled{bcolors.ENDC}")
-                if allowed_settings.get('typescriptRecording'):
-                    print(f"{bcolors.OKGREEN}\t\tTypescript Recording: {bcolors.OKBLUE}Enabled{bcolors.ENDC}")
-                else:
-                    print(f"{bcolors.OKGREEN}\t\tTypescript Recording: {bcolors.WARNING}Disabled{bcolors.ENDC}")
-            print(f"{bcolors.OKGREEN}\tTunneling: {port_forwarding}{bcolors.ENDC}")
             print(f"{bcolors.OKGREEN}\tRotation: {rotation}{bcolors.ENDC}")
-            admin_uid = self.check_if_resource_has_admin(record_uid)
-            if admin_uid:
-                print(f"{bcolors.OKGREEN}\tAdmin: {bcolors.OKBLUE}{admin_uid}{bcolors.ENDC}")
-            if pam_settings is not None or config_uid is not None:
+            # print(f"{bcolors.OKGREEN}\tConnections: {connections}{bcolors.ENDC}")
+            # if config_id == record_uid:
+            #     rbi = f"{bcolors.OKBLUE}Enabled" if allowed_settings.get('remoteBrowserIsolation') else \
+            #         f"{bcolors.WARNING}Disabled"
+            #     print(f"{bcolors.OKGREEN}\tRemote Browser Isolation: {rbi}{bcolors.ENDC}")
+            print(f"{bcolors.OKGREEN}\tTunneling: {port_forwarding}{bcolors.ENDC}")
+            # if allowed_settings.get('connections'):
+            #     if allowed_settings.get('sessionRecording'):
+            #         print(f"{bcolors.OKGREEN}\tSession Recording: {bcolors.OKBLUE}Enabled{bcolors.ENDC}")
+            #     else:
+            #         print(f"{bcolors.OKGREEN}\tSession Recording: {bcolors.WARNING}Disabled{bcolors.ENDC}")
+            #     if allowed_settings.get('typescriptRecording'):
+            #         print(f"{bcolors.OKGREEN}\tTypescript Recording: {bcolors.OKBLUE}Enabled{bcolors.ENDC}")
+            #     else:
+            #         print(f"{bcolors.OKGREEN}\tTypescript Recording: {bcolors.WARNING}Disabled{bcolors.ENDC}")
+            # admin_uid = self.check_if_resource_has_admin(record_uid)
+            # if admin_uid:
+            #     print(f"{bcolors.OKGREEN}\tAdmin: {bcolors.OKBLUE}{admin_uid}{bcolors.ENDC}")
+
+            print(f"{bcolors.OKGREEN}Configuration: {config_id} {bcolors.ENDC}")
+            if config_id is not None:
                 config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
                 config_content = self.get_vertex_content(config_vertex)
-                config_id = config_uid if config_uid else pam_settings.value[0].get('configUid')
-                print(f"{bcolors.OKGREEN}Configuration: {config_id} {bcolors.ENDC}")
                 if config_content and config_content.get('allowedSettings'):
                     config_allowed_settings = config_content['allowedSettings']
-                    config_connections = f"{bcolors.OKBLUE}Enabled" if config_allowed_settings.get('connections') else \
-                        f"{bcolors.WARNING}Disabled"
+                    # config_connections = f"{bcolors.OKBLUE}Enabled" if config_allowed_settings.get('connections') else \
+                    #     f"{bcolors.WARNING}Disabled"
+                    #
+                    # config_rbi = f"{bcolors.OKBLUE}Enabled" if config_allowed_settings.get('remoteBrowserIsolation') else \
+                    #     f"{bcolors.WARNING}Disabled"
                     config_port_forwarding = f"{bcolors.OKBLUE}Enabled" if (
                         config_allowed_settings.get('portForwards')) else \
                         f"{bcolors.WARNING}Disabled"
                     config_rotation = f"{bcolors.WARNING}Disabled" if (config_allowed_settings.get('rotation') and
                                                                        not config_allowed_settings['rotation']) else \
                         f"{bcolors.OKBLUE}Enabled"
-                    print(f"{bcolors.OKGREEN}\tConnections: {config_connections}{bcolors.ENDC}")
-
-                    if config_allowed_settings.get('connections') and config_allowed_settings['connections']:
-                        if config_allowed_settings.get('sessionRecording'):
-                            print(f"{bcolors.OKGREEN}\t\tSession Recording: {bcolors.OKBLUE}Enabled{bcolors.ENDC}")
-                        else:
-                            print(f"{bcolors.OKGREEN}\t\tSession Recording: {bcolors.WARNING}Disabled{bcolors.ENDC}")
-                        if config_allowed_settings.get('typescriptRecording'):
-                            print(f"{bcolors.OKGREEN}\t\tTypescript Recording: {bcolors.OKBLUE}Enabled{bcolors.ENDC}")
-                        else:
-                            print(f"{bcolors.OKGREEN}\t\tTypescript Recording: {bcolors.WARNING}Disabled{bcolors.ENDC}")
-                    print(f"{bcolors.OKGREEN}\tTunneling: {config_port_forwarding}{bcolors.ENDC}")
                     print(f"{bcolors.OKGREEN}\tRotation: {config_rotation}{bcolors.ENDC}")
+                    # print(f"{bcolors.OKGREEN}\tConnections: {config_connections}{bcolors.ENDC}")
+                    # print(f"{bcolors.OKGREEN}\tRemote Browser Isolation: {config_rbi}{bcolors.ENDC}")
+                    print(f"{bcolors.OKGREEN}\tTunneling: {config_port_forwarding}{bcolors.ENDC}")
+                    #
+                    # if config_allowed_settings.get('connections') and config_allowed_settings['connections']:
+                    #     if config_allowed_settings.get('sessionRecording'):
+                    #         print(f"{bcolors.OKGREEN}\tSession Recording: {bcolors.OKBLUE}Enabled{bcolors.ENDC}")
+                    #     else:
+                    #         print(f"{bcolors.OKGREEN}\tSession Recording: {bcolors.WARNING}Disabled{bcolors.ENDC}")
+                    #     if config_allowed_settings.get('typescriptRecording'):
+                    #         print(f"{bcolors.OKGREEN}\tTypescript Recording: {bcolors.OKBLUE}Enabled{bcolors.ENDC}")
+                    #     else:
+                    #         print(f"{bcolors.OKGREEN}\tTypescript Recording: {bcolors.WARNING}Disabled{bcolors.ENDC}")
 
 
 class WebRTCConnection:
@@ -729,7 +756,7 @@ class WebRTCConnection:
         if response is None:
             raise Exception("Error getting relay access credentials")
         if hasattr(response, "serverTime"):
-            self.time_diff = datetime.now() - datetime.fromtimestamp(response.time/1000)
+            self.time_diff = datetime.now() - datetime.fromtimestamp(response.serverTime/1000)
         stun_url = f"stun:{self.relay_url}:3478"
         # Create an RTCIceServer instance for the STUN server
         stun_server = RTCIceServer(urls=stun_url)
