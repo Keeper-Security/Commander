@@ -10,4 +10,4 @@
 # Contact: ops@keepersecurity.com
 #
 
-__version__ = '16.11.19'
+__version__ = '16.11.20'
