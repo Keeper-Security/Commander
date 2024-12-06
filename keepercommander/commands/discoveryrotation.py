@@ -2314,13 +2314,18 @@ private_key_str = private_key.private_bytes(
     def execute(self, params, **kwargs):
         # https://pypi.org/project/aiortc/
         # aiortc Requires: Python >=3.8
-        version = [3, 8, 0]
+        from_version = [3, 8, 0]   # including
+        to_version = [3, 13, 0]    # excluding
         major_version = sys.version_info.major
         minor_version = sys.version_info.minor
         micro_version = sys.version_info.micro
 
-        if (major_version, minor_version, micro_version) < (version[0], version[1], version[2]):
-            print(f"{bcolors.FAIL}This code requires Python {version[0]}.{version[1]}.{version[2]} or higher. "
+        if (major_version, minor_version, micro_version) < (from_version[0], from_version[1], from_version[2]):
+            print(f"{bcolors.FAIL}This code requires Python {from_version[0]}.{from_version[1]}.{from_version[2]} or higher. "
+                  f"You are using {major_version}.{minor_version}.{micro_version}.{bcolors.ENDC}")
+            return
+        if (major_version, minor_version, micro_version) >= (tom_version[0], from_version[1], from_version[2]):
+            print(f"{bcolors.FAIL}This code requires Python {from_version[0]}.{from_version[1]}.{from_version[2]} or higher. "
                   f"You are using {major_version}.{minor_version}.{micro_version}.{bcolors.ENDC}")
             return
 
