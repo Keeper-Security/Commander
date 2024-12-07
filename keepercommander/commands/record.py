@@ -1848,27 +1848,35 @@ class ClipboardCommand(Command, RecordMixin):
                         txt = rec.notes
                 else:
                     copy_item = f'Custom Field "{field_name}"'
+                    pre, sep, prop = field_name.rpartition(':')
+                    if sep == ':':
+                        field_name = pre
+                        field_property = prop
+                    else:
+                        field_property = ''
                     if isinstance(rec, vault.PasswordRecord):
                         txt = rec.get_custom_value(field_name)
                     elif isinstance(rec, vault.TypedRecord):
-                        field = rec.get_typed_field(field_name)
+                        field_type, sep, field_label = field_name.partition('.')
+                        rf = record_types.RecordFields.get(field_type)
+                        ft = record_types.FieldTypes.get(rf.type) if rf else None
+                        if ft is None:
+                            field_label = field_name
+                            field_type = 'text'
+                        field = rec.get_typed_field(field_type, field_label)
                         if field:
                             copy_item = f'Field "{field_name}"'
-                        else:
-                            ft, sep, fl = field_name.partition('.')
-                            if not sep:
-                                fl = ft
-                                ft = 'text'
-                            field = rec.get_typed_field(ft, label=fl)
                         if field:
-                            field_value = field.get_default_value(str)
-                            if field_value:
-                                if isinstance(field_value, str):
-                                    txt = field_value
-                                elif isinstance(field_value, int):
-                                    txt = str(field_value)
-                                elif isinstance(field_value, dict):
-                                    txt = json.dumps(field_value)
+                            if ft and field_property and isinstance(ft.value, dict):
+                                f_value = field.get_default_value(dict)
+                                if f_value:
+                                    field_property = next((x for x in ft.value.keys() if x.lower().startswith(field_property.lower())), None)
+                                    if field_property:
+                                        txt = f_value.get(field_property)
+                                    else:
+                                        txt = json.dumps(f_value, indent=2)
+                            else:
+                                txt = '\n'.join(field.get_external_value())
             else:
                 copy_item = 'Password'
                 if isinstance(rec, vault.PasswordRecord):
