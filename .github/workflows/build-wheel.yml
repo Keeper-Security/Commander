@@ -9,10 +9,10 @@ jobs:
 
     steps:
       - name: Setup Commander
-        uses: actions/checkout@v2
-      - uses: actions/setup-python@v2
+        uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
         with:
-          python-version: '3.x'
+          python-version: '3.11'
 
       - name: Build Commander
         run: |
@@ -26,7 +26,7 @@ jobs:
           COMMANDER_VERSION=`python3 -c "import keepercommander.__init__ as init; print(init.__version__);"`
           echo "COMMANDER_VERSION=$COMMANDER_VERSION" >> $GITHUB_ENV
         shell: bash
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v4
         with:
           name: KeeperCommanderWheel
           retention-days: 3
