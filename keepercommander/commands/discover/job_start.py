@@ -27,7 +27,7 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
                         help='UID of the resource record. Set to discover specific resource.')
     parser.add_argument('--lang', required=False, dest='language', action='store', default="en",
                         help='Language')
-    parser.add_argument('--skip-machine-dir-users', required=False, dest='include_machine_dir_users',
+    parser.add_argument('--include-machine-dir-users', required=False, dest='include_machine_dir_users',
                         action='store_false', default=True, help='Include directory users found on the machine.')
     parser.add_argument('--inc-azure-aadds', required=False, dest='include_azure_aadds',
                         action='store_true', help='Include Azure Active Directory Domain Service.')
@@ -109,7 +109,7 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
         if current_job_item is not None:
             if current_job_item.is_running is True:
                 print("")
-                print(f"{bcolors.FAIL}An discovery job is currently running. "
+                print(f"{bcolors.FAIL}A discovery job is currently running. "
                       f"Cannot start another until it is finished.{bcolors.ENDC}")
                 print(f"To check the status, use the command "
                       f"'{bcolors.OKGREEN}pam action discover status{bcolors.ENDC}'.")
@@ -135,22 +135,24 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
 
         # Get the credentials passed in via the command line
         credentials = []
-        for cred in kwargs.get('cred', []):
-            parts = cred.split("|")
-            c = CredentialBase()
-            for item in parts:
-                kv = item.split("=")
-                if len(kv) != 2:
-                    print(f"{bcolors.FAIL}A '--cred' is invalid. It does not have a value.{bcolors.ENDC}")
-                    return
-                if hasattr(c, kv[0]) is False:
-                    print(f"{bcolors.FAIL}A '--cred' is invalid. The key '{kv[0]}' is invalid.{bcolors.ENDC}")
-                    return
-                if hasattr(c, kv[1]) == "":
-                    print(f"{bcolors.FAIL}A '--cred' is invalid. The value is blank.{bcolors.ENDC}")
-                    return
-                setattr(c, kv[0], kv[1])
-            credentials.append(c.model_dump())
+        creds = kwargs.get('credentials')
+        if creds is not None:
+            for cred in creds:
+                parts = cred.split("|")
+                c = CredentialBase()
+                for item in parts:
+                    kv = item.split("=")
+                    if len(kv) != 2:
+                        print(f"{bcolors.FAIL}A '--cred' is invalid. It does not have a value.{bcolors.ENDC}")
+                        return
+                    if hasattr(c, kv[0]) is False:
+                        print(f"{bcolors.FAIL}A '--cred' is invalid. The key '{kv[0]}' is invalid.{bcolors.ENDC}")
+                        return
+                    if hasattr(c, kv[1]) == "":
+                        print(f"{bcolors.FAIL}A '--cred' is invalid. The value is blank.{bcolors.ENDC}")
+                        return
+                    setattr(c, kv[0], kv[1])
+                credentials.append(c.model_dump())
 
         # Get the credentials passed in via a credential file.
         credential_files = kwargs.get('credential_file')

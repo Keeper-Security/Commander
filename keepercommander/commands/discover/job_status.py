@@ -38,8 +38,8 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                         help='Show only discovery jobs from a specific gateway.')
     parser.add_argument('--job-id', '-j', required=False, dest='job_id', action='store',
                         help='Detailed information for a specific discovery job.')
-    parser.add_argument('--file', required=False, dest='json_file', action='store',
-                        help='Save status to JSON file.')
+    # parser.add_argument('--file', required=False, dest='json_file', action='store',
+    #                     help='Save status to JSON file.')
     parser.add_argument('--history', required=False, dest='show_history', action='store_true',
                         help='Show history')
 

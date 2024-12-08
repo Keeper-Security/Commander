@@ -14,7 +14,7 @@ from discovery_common.jobs import Jobs
 from discovery_common.process import Process, QuitException, NoDiscoveryDataException
 from discovery_common.types import (DiscoveryObject, UserAcl, PromptActionEnum, PromptResult,
                                     BulkRecordAdd, BulkRecordConvert, BulkProcessResults, BulkRecordSuccess,
-                                    BulkRecordFail, DirectoryInfo)
+                                    BulkRecordFail, DirectoryInfo, NormalizedRecord, RecordField)
 from pydantic import BaseModel
 from typing import Optional, List, Any, TYPE_CHECKING
 
@@ -57,10 +57,15 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
     parser = argparse.ArgumentParser(prog='dr-discover-command-process')
     parser.add_argument('--job-id', '-j', required=True, dest='job_id', action='store',
                         help='Discovery job to process.')
+
+    # This is not ready yet.
+    # parser.add_argument('--smart-add', required=False, dest='smart_add', action='store_true',
+    #                     help='Automatically add resources with credentials and their users.')
+
     parser.add_argument('--add-all', required=False, dest='add_all', action='store_true',
-                        help='Add record when prompted.')
-    parser.add_argument('--debug-dag-level', required=False, dest='debug_level', action='store',
-                        help='DAG debug level. Default is 0', type=int, default=0)
+                        help='Respond with ADD for all prompts.')
+    parser.add_argument('--debug-gs-level', required=False, dest='debug_level', action='store',
+                        help='GraphSync debug level. Default is 0', type=int, default=0)
 
     EDITABLE = [
         "login",
@@ -163,10 +168,43 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         return keys
 
     @staticmethod
-    def _record_lookup(record_uid: str,  context: Optional[Any] = None):
+    def _record_lookup(record_uid: str,  context: Optional[Any] = None) -> Optional[NormalizedRecord]:
+
+        """
+        Get the record from the Vault, normalize it, and return it.
+
+        Since common code is using this method we want to flatten/abstract the KeeperRecord/TypedRecord.
+        """
 
         params = context.get("params")
-        return vault.TypedRecord.load(params, record_uid)  # type: Optional[TypedRecord]
+        record = vault.TypedRecord.load(params, record_uid)  # type: Optional[TypedRecord]
+        if record is None:
+            return None
+
+        normalized_record = NormalizedRecord(
+            record_uid=record.record_uid,
+            record_type=record.record_type,
+            title=record.title,
+            notes=record.notes
+        )
+        for field in record.fields:
+            normalized_record.fields.append(
+                RecordField(
+                    type=field.type,
+                    label=field.label,
+                    value=field.value,
+                )
+            )
+        if record.custom is not None:
+            for field in record.custom:
+                normalized_record.fields.append(
+                    RecordField(
+                        type=field.type,
+                        label=field.label,
+                        value=field.value,
+                    )
+                )
+        return normalized_record
 
     def _build_record_cache(self, params: KeeperParams, gateway_context: GatewayContext) -> dict:
 
@@ -297,8 +335,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         return True
 
     @staticmethod
-    def _auto_add_preprocess(vertex: DAGVertex, content: DiscoveryObject, parent_vertex: DAGVertex,
-                             acl: Optional[UserAcl] = None) -> Optional[PromptResult]:
+    def _add_all_preprocess(vertex: DAGVertex, content: DiscoveryObject, parent_vertex: DAGVertex,
+                            acl: Optional[UserAcl] = None) -> Optional[PromptResult]:
         """
         This is client side check if we should skip prompting the user.
 
@@ -412,13 +450,13 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         params = context.get("params")
         gateway_context = context.get("gateway_context")
         dry_run = context.get("dry_run", False)
-        auto_add = context.get("auto_add")
+        add_all = context.get("add_all")
 
         # If auto add is True, there are sometime we don't want to add the object.
         # If we get a result, we want to return it.
         # Skip the prompt.
-        if auto_add is True and vertex is not None:
-            result = self._auto_add_preprocess(vertex, content, parent_vertex, acl)
+        if add_all is True and vertex is not None:
+            result = self._add_all_preprocess(vertex, content, parent_vertex, acl)
             if result is not None:
                 return result
 
@@ -475,7 +513,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 prompt = f"{edit_add_prompt}({_b('S')})kip, ({_b('I')})gnore, ({_b('Q')})uit"
 
                 command = "a"
-                if auto_add is False:
+                if add_all is False:
                     command = input(f"{pad}{prompt}> ").lower()
                 if (command == "a" or command == "f") and dry_run is False:
 
@@ -845,6 +883,10 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
     @staticmethod
     def _display_auto_add_results(bulk_add_records: List[BulkRecordAdd]):
 
+        """
+        Display the number of record created from rule engine ADD results and smart add function.
+        """
+
         add_count = len(bulk_add_records)
         if add_count > 0:
             print("")
@@ -944,22 +986,6 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         data = vault_extensions.extract_typed_record_data(record)
         json_data = api.get_record_data_json_bytes(data)
         record_add_protobuf.data = crypto.encrypt_aes_v2(json_data, record.record_key)
-
-        # refs = vault_extensions.extract_typed_record_refs(record)
-        # for ref in refs:
-        #     ref_record_key = None  # type: Optional[bytes]
-        #     if record.linked_keys:
-        #         ref_record_key = record.linked_keys.get(ref)
-        #     if not ref_record_key:
-        #         ref_record = vault.KeeperRecord.load(params, ref)
-        #         if ref_record:
-        #             ref_record_key = ref_record.record_key
-        #
-        #     if ref_record_key:
-        #         link = record_pb2.RecordLink()
-        #         link.record_uid = utils.base64_url_decode(ref)
-        #         link.record_key = crypto.encrypt_aes_v2(ref_record_key, record.record_key)
-        #         add_record.record_links.append(link)
 
         if params.enterprise_ec_key:
             audit_data = vault_extensions.extract_audit_data(record)
@@ -1188,7 +1214,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             router_get_connected_gateways(params)
 
         job_id = kwargs.get("job_id")
-        auto_add = kwargs.get("add_all", False)
+        add_all = kwargs.get("add_all", False)
+        smart_add = kwargs.get("smart_add", False)
 
         # Right now, keep dry_run False. We might add it back in.
         dry_run = kwargs.get("dry_run", False)
@@ -1234,16 +1261,16 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             )
 
             if dry_run is True:
-                if auto_add is True:
+                if add_all is True:
                     logging.debug("dry run has been set, disable auto add.")
-                    auto_add = False
+                    add_all = False
 
                 print(f"{bcolors.HEADER}The DRY RUN flag has been set. The rule engine will not add any records. "
                       f"You will not be prompted to edit or add records.{bcolors.ENDC}")
                 print("")
 
-            if auto_add is True:
-                print(f"{bcolors.HEADER}The AUTO ADD flag has been set. All found items will be added.{bcolors.ENDC}")
+            if add_all is True:
+                print(f"{bcolors.HEADER}The ADD ALL flag has been set. All found items will be added.{bcolors.ENDC}")
                 print("")
 
             try:
@@ -1254,6 +1281,9 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
                     # Prompt user the about adding records
                     prompt_func=self._prompt,
+
+                    # Flag to auto add resources with credential, and all it users.
+                    smart_add=smart_add,
 
                     # Prompt user for an admin for a resource
                     prompt_admin_func=self._prompt_admin,
@@ -1286,7 +1316,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                         "params": params,
                         "gateway_context": gateway_context,
                         "dry_run": dry_run,
-                        "auto_add": auto_add
+                        "add_all": add_all
                     }
                 )
 

@@ -602,13 +602,9 @@ class TunnelDAG:
 
 
 class WebRTCConnection:
-    def __init__(self, params: KeeperParams, record_uid, symmetric_key,
+    def __init__(self, params: KeeperParams, record_uid, gateway_uid, symmetric_key,
                  print_ready_event: asyncio.Event, kill_server_event: asyncio.Event,
                  logger: Optional[logging.Logger] = None, server='keepersecurity.com'):
-
-        self.retry_count = 0
-        self.max_retries = 5  # Maximum number of retries
-        self.retry_delay = 2  # Initial delay in seconds
 
         self._pc = None
         self.web_rtc_queue = asyncio.Queue()
@@ -619,6 +615,7 @@ class WebRTCConnection:
         self.endpoint_name = "Starting..."
         self.params = params
         self.record_uid = record_uid
+        self.gateway_uid = gateway_uid
         self.symmetric_key = symmetric_key
         self.kill_server_event = kill_server_event
         # Using Keeper's STUN and TURN servers

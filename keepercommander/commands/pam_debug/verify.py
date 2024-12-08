@@ -22,8 +22,8 @@ class PAMDebugVerifyCommand(PAMGatewayActionDiscoverCommandBase):
                         help='Gateway name or UID.')
     parser.add_argument('--fix', required=False, dest='fix', action='store_true',
                         help='Fix all problems.')
-    parser.add_argument('--debug-dag-level', required=False, dest='debug_level', action='store',
-                        help='DAG debug level. Default is 0', type=int, default=0)
+    parser.add_argument('--debug-gs-level', required=False, dest='debug_level', action='store',
+                        help='GraphSync debug level. Default is 0', type=int, default=0)
 
     def get_parser(self):
         return PAMDebugVerifyCommand.parser
