@@ -1167,6 +1167,10 @@ def _import(params, file_format, filename, **kwargs):
             finally:
                 sfu_rqs = None
 
+        # legacy records are not returned in incremental sync (import_folders_and_records issue: KA-6012)
+        if len(records_v2_to_add) > 0:
+            params.revision = 0
+            params.sync_down_token = b''
         sync_down.sync_down(params)
 
         # upload attachments
