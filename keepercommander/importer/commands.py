@@ -536,7 +536,7 @@ class DownloadRecordTypeCommand(EnterpriseCommand):
             o = {
                 'record_types': record_types
             }
-            with open(file_name, 'wt') as f:
+            with open(file_name, 'wt', encoding='utf-8') as f:
                 json.dump(o, f, indent=2)
             logging.info('Downloaded %d record types to "%s"', len(record_types), os.path.abspath(file_name))
         else:
@@ -553,7 +553,7 @@ class LoadRecordTypeCommand(EnterpriseCommand):
             logging.warning('Custom record types file "%s" not found', file_name)
             return
 
-        with open(file_name, 'rt') as f:
+        with open(file_name, 'rt', encoding='utf-8') as f:
             j_obj = json.load(f)
 
         if not isinstance(j_obj, dict):

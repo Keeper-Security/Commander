@@ -471,8 +471,6 @@ class LoginV3Flow:
 
         # license
         params.license = acct_summary_dict_snake_case['license']
-        params.sync_data = True
-        params.prepare_commands = True
 
     @staticmethod
     def verifyDevice(params,                 # type: KeeperParams

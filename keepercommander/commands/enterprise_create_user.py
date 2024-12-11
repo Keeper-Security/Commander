@@ -13,18 +13,16 @@ import argparse
 import json
 import logging
 import re
-from typing import Optional
 from urllib.parse import urlunparse
 
-from .base import RecordMixin, raise_parse_exception, suppress_exit, try_resolve_path
+from .base import RecordMixin, FolderMixin, raise_parse_exception, suppress_exit
 from .enterprise import EnterpriseCommand
 from .register import OneTimeShareCreateCommand
 from .. import api, crypto, utils, generator, rest_api, vault, record_management, vault_extensions, constants
 from ..constants import EMAIL_PATTERN
-from ..loginv3 import LoginV3API
-from ..params import KeeperParams
-from ..proto import enterprise_pb2
 from ..error import CommandError
+from ..loginv3 import LoginV3API
+from ..proto import enterprise_pb2
 
 
 def register_commands(commands):
@@ -137,7 +135,7 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
         folder_uid = None
         folder_name = kwargs.get('folder')
         if folder_name:
-            folder_uid = self.resolve_folder(params, folder_name)
+            folder_uid = FolderMixin.resolve_folder(params, folder_name)
 
         keeper_url = urlunparse(('https', params.server, '/vault', None, None, f'email/{email}'))
         record = vault.TypedRecord()
@@ -172,21 +170,6 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
         else:
             logging.info('User \"%s\" credentials are stored to record \"%s\"', login_facade.login, login_facade.title)
             return record.record_uid
-
-    @staticmethod
-    def resolve_folder(params, folder_name):    # type: (KeeperParams, str) -> Optional[str]
-        if not folder_name:
-            return
-
-        if folder_name in params.folder_cache:
-            return folder_name
-        else:
-            rs = try_resolve_path(params, folder_name)
-            if rs is not None:
-                folder, record_name = rs
-                if folder and not record_name:
-                    if folder.uid:
-                        return folder.uid
 
 
 class StoreUserKeysCommand(EnterpriseCommand):

@@ -19,23 +19,23 @@ import os
 import re
 import shutil
 from collections import OrderedDict
-from typing import Tuple, List, Optional, Dict, Set, Any, Iterable
+from typing import Tuple, List, Optional, Dict, Set, Any, Union
 
 from asciitree import LeftAligned, BoxStyle, drawing
 from colorama import Style
 
 from . import base
 from .base import user_choice, dump_report_data, suppress_exit, raise_parse_exception, Command, GroupCommand, \
-    RecordMixin
-from .register import ShareFolderCommand
+    RecordMixin, FolderMixin
+from .utils import SyncDownCommand
 from .. import api, display, vault, vault_extensions, crypto, utils
-from ..error import CommandError, KeeperApiError, Error
+from ..error import CommandError
 from ..params import KeeperParams
 from ..params import LAST_SHARED_FOLDER_UID, LAST_FOLDER_UID
-from ..proto import folder_pb2, record_pb2
+from ..proto import folder_pb2
 from ..record import Record
-from ..subfolder import BaseFolderNode, try_resolve_path, find_folders, SharedFolderNode, get_contained_record_uids, \
-    get_contained_folder_uids
+from ..subfolder import BaseFolderNode, SharedFolderNode, UserFolderNode, SharedFolderFolderNode, try_resolve_path, \
+    find_folders, get_contained_record_uids, get_contained_folder_uids
 
 
 def register_commands(commands):
@@ -161,17 +161,22 @@ shortcut_keep_parser = argparse.ArgumentParser(prog='shortcut-keep')
 shortcut_keep_parser.add_argument('target', nargs='?', help='Full record or folder path')
 shortcut_keep_parser.add_argument('folder', nargs='?', help='Optional. Folder name or UID. Overwrites current folder.')
 
-transform_desc = 'Transform a folder from a shared folder to a personal folder and vice versa'
+transform_desc = 'Move a folder another location'
 transform_parser = argparse.ArgumentParser(prog='transform-folder', description=transform_desc)
 transform_parser.add_argument('folder', nargs='+', help='Folder UID or path/name (accepts multiple values)')
-children_help = 'Apply transformation to target folder\'s children only (target folder will remain unchanged).'
-transform_parser.add_argument('-c', '--children', action='store_true', help=children_help)
-dry_run_help = 'Preview the folder transformation without updating'
-transform_parser.add_argument('-n', '--dry-run', action='store_true', help=dry_run_help)
-transform_parser.add_argument('-f', '--force', action='store_true', help='Skip confirmation prompt and minimize output')
-transform_parser.add_argument('--clear-shares', action='store_true', help='Don\'t apply parent or subfolder share permissions to transformed folder tree')
-transform_parser.error = raise_parse_exception
-transform_parser.exit = suppress_exit
+transform_parser.add_argument('--link', dest='link', action='store_true',
+                              help='Do not delete the source folder(s)')
+transform_parser.add_argument('--dry-run', dest='dry_run', action='store_true',
+                              help='Preview the folder transformation without updating')
+transform_parser.add_argument('-f', '--force', dest='force', action='store_true',
+                              help='Skip confirmation prompt and minimize output')
+transform_target = transform_parser.add_mutually_exclusive_group()
+transform_target.add_argument('--target', dest='target', action='store',
+                              help='Target Folder UID or path/name (root folder if omitted)')
+transform_target.add_argument('--folder-type', dest='folder_type', choices=['personal', 'shared'],
+                              action='store', help='Folder type: Personal or Shared if target folder parameter is omitted')
+# children_help = 'Apply transformation to target folder\'s children only (target folder will remain unchanged).'
+# transform_parser.add_argument('-c', '--children', action='store_true', help=children_help)
 
 
 class FolderListCommand(Command, RecordMixin):
@@ -1248,497 +1253,432 @@ class ArrangeFolderCommand(Command):
             mv_command.execute(params, shared_folder=True, src=f'/{key}*', dst=group_folders[key])
 
 
-class FolderTransformCommand(Command):
+class FolderTransformCommand(Command, RecordMixin):
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return transform_parser
 
-    def execute(self, params, **kwargs):  # type: (KeeperParams, Any) -> Any
-        def get_folder_uid(path):
-            rs = try_resolve_path(params, path)
-            if rs is not None:
-                folder, pattern = rs
-                if len(pattern) == 0:
-                    return folder.uid
-                else:
-                    raise CommandError('transform-folder', f'Folder {path} not found')
-
-        def validate(root_folders):   # type: (Iterable[BaseFolderNode]) -> None
-            SF_UID_KEY = 'shared_folder_uid'
-            shared_folders = []
-            contained_recs = []
-            for folder in root_folders:
-                shared_folders.extend(get_shared_folders(folder))
-                contained_recs.extend(get_contained_records(folder))
-
-            # Check for overlapping trees
-            root_uids = set()
-            contained_folder_uids = set()
-            for rf in root_folders:
-                root_uids.add(rf.uid)
-                contained_folder_uids.update(get_contained_folder_uids(params, rf.uid, children_only=False))
-            if contained_folder_uids.intersection(root_uids):
-                error_msg = 'Transformation of overlapping folder trees in the same command is not allowed.'
-                raise CommandError('transform-folder', error_msg)
-
-            # Check relevant shared folders in each tree: descendants, root, and/or ancestor shared-folders
-            def has_full_sf_privs(sf):   # type: (Dict[str, Any]) -> bool
-                # Check if user has been directly granted full share-permissions for this folder
-                user_permissions = next((ushare for ushare in sf.get('users') if ushare.get('username') == params.user), None)
-                can_manage_records = user_permissions.get('manage_records') if user_permissions else False
-                can_manage_users = user_permissions.get('manage_users') if user_permissions else False
-                if not (can_manage_users and can_manage_records):
-                    # User shares don't grant the user full permissions => check team permissions instead
-                    if not params.team_cache or not sf.get('teams'):
-                        return False
-                    user_team_shares = [tshare for tshare in sf.get('teams') if tshare.get('team_uid') in params.team_cache]
-                    for team_share in user_team_shares:
-                        can_manage_records = team_share.get('manage_records') or can_manage_records
-                        can_manage_users = team_share.get('manage_users') or can_manage_users
-                        if can_manage_users and can_manage_records:
-                            break
-                return can_manage_users and can_manage_records
-
-            f_path_fn = lambda f_uid: get_folder_path(params, f_uid)
-            blockers = []
-            rq = record_pb2.AmIShareAdmin()
-            for sf in shared_folders:
-                if not has_full_sf_privs(sf):
-                    blockers.append(sf)
-                    uid = utils.base64_url_decode(sf.get('shared_folder_uid'))
-                    if isinstance(uid, bytes) and len(uid) == 16:
-                        osa = record_pb2.IsObjectShareAdmin()
-                        osa.uid = uid
-                        osa.objectType = record_pb2.CHECK_SA_ON_SF
-                        rq.isObjectShareAdmin.append(osa)
-            rs = api.communicate_rest(params, rq, 'vault/am_i_share_admin', rs_type=record_pb2.AmIShareAdmin)
-            non_admin_objs = [rs_osa for rs_osa in rs.isObjectShareAdmin if not rs_osa.isAdmin]
-            if any(non_admin_objs):
-                nao_uids = [utils.base64_url_encode(nao.uid) for nao in non_admin_objs]
-                blockers = [sf for sf in blockers if sf.get('shared_folder_uid') in nao_uids]
-                sfs = [f'Folder Path: {f_path_fn(sf.get(SF_UID_KEY))}\tUID: {sf.get(SF_UID_KEY)}' for sf in blockers]
-                sfs = [f'{idx + 1}) ' + sf_info for idx, sf_info in enumerate(sfs)]
-                msg = 'Transform prohibited - You need either 1) share-admin rights or 2) full share privileges ' \
-                      '("Can Manage Users", "Can Manage Records") for all shared-folders ' \
-                      'contained within the specified folder-tree(s)\n'
-                msg += 'Shared Folders With Inadequate Share Privileges or Share-Admin Rights:\n'
-                msg += '======================================================================\n'
-                msg += '\n'.join(sfs)
-                raise CommandError('transform-folder', msg)
-
-        def get_shared_folders(folder):     # type: (BaseFolderNode) -> List[Dict[str, Any]]
-            api.sync_down(params)
-            shared_folders = []
-            # Folder is a shared-folder subfolder, return only the containing shared-folder
-            if folder.type == BaseFolderNode.SharedFolderFolderType:
-                while folder.type is not BaseFolderNode.SharedFolderType:
-                    folder = params.folder_cache.get(folder.parent_uid)
-                shared_folders.append(params.shared_folder_cache.get(folder.uid))
-
-            def on_folder(f):   # type: (BaseFolderNode) -> None
-                if f.type == BaseFolderNode.SharedFolderType:
-                    shared_folders.append(params.shared_folder_cache.get(f.uid))
-
-            base.FolderMixin.traverse_folder_tree(params, folder.uid, on_folder)
-            return shared_folders
-
-        def get_contained_folders(folder):  # type: (BaseFolderNode) -> List[BaseFolderNode]
-            sub_folders = []
-            base.FolderMixin.traverse_folder_tree(params, folder.uid, lambda f: sub_folders.append(f))
-            return [f for f in sub_folders if f.uid != folder.uid]
-
-        def get_contained_records(folder):  # type: (BaseFolderNode) -> List[Tuple[BaseFolderNode, Set[str]]]
-            folder_records = []
-
-            def on_folder(f):   # type: (BaseFolderNode) -> None
-                if f.uid in params.subfolder_record_cache:
-                    contained_recs = params.subfolder_record_cache.get(f.uid)
-                    folder_records.append((f, contained_recs))
-
-            base.FolderMixin.traverse_folder_tree(params, folder.uid, on_folder)
-            return folder_records
-
-        def move_contained_records(folder):
-            rqs = []
-            limit = 1000
-            rq_base = {
-                'command': 'move',
-                'link': True,
+    @staticmethod
+    def rename_source_folders(params, source_folders):   # type: (KeeperParams, List[str]) -> None
+        rename_rqs = []
+        for folder_uid in source_folders:
+            sub_folder = params.subfolder_cache.get(folder_uid)    # type: Dict
+            rq = {
+                'command': 'folder_update',
+                'folder_uid': folder_uid,
+                'folder_type': sub_folder['type'],
             }
-
-            def save_request(req, mv_objs, t_keys):
-                req = {**req, 'move': mv_objs}
-                if t_keys:
-                    req['transition_keys'] = t_keys
-                rqs.append(req)
-
-            def new_mv_request(dst):
-                return {**rq_base, 'to_uid': dst.uid, 'to_type': dst.type}
-
-            for src_folder, r_uids in get_contained_records(folder):
-                # This folder has no records to move, skip to the next one
-                if not r_uids:
+            if sub_folder['type'] == 'user_folder':
+                encryption_key = sub_folder['folder_key_unencrypted']
+                encrypted_data = sub_folder.get('data')
+            elif sub_folder['type'] == 'shared_folder':
+                if folder_uid not in params.shared_folder_cache:
                     continue
-                dst_folder = get_copy(src_folder)
-                rq = new_mv_request(dst_folder)
-                transition_keys = []
-                moves = []
-                for r_uid in r_uids:
-                    if len(moves) >= limit:
-                        save_request(rq, moves[:limit], transition_keys[:limit])
-                        moves = moves[limit:]
-                        transition_keys = transition_keys[limit:]
-                        rq = new_mv_request(dst_folder)
-                    move = {
-                        'uid': r_uid,
-                        'type': 'record',
-                        'cascade': False,
-                        'from_type': src_folder.type,
-                        'from_uid': src_folder.uid
-                    }
-                    moves.append(move)
-                    rec = params.record_cache.get(r_uid)
-                    transition_key = None
-                    sf_key_prop = 'shared_folder_key_unencrypted'
-                    if src_folder.type in (BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType):
-                        if dst_folder.type in (BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType):
-                            ssf_uid = src_folder.uid if src_folder.type == BaseFolderNode.SharedFolderType \
-                                else src_folder.shared_folder_uid
-                            dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType \
-                                else dst_folder.shared_folder_uid
-                            if ssf_uid != dsf_uid:
-                                shf = params.shared_folder_cache[dsf_uid]
-                                transition_key = FolderMoveCommand.get_transition_key(rec, shf[sf_key_prop])
-                        else:
-                            transition_key = FolderMoveCommand.get_transition_key(rec, params.data_key)
-                    else:
-                        if dst_folder.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType}:
-                            dsf_uid = dst_folder.uid if dst_folder.type == BaseFolderNode.SharedFolderType \
-                                else dst_folder.shared_folder_uid
-                            shf = params.shared_folder_cache[dsf_uid]
-                            transition_key = FolderMoveCommand.get_transition_key(rec, shf[sf_key_prop])
-                    if transition_key is not None:
-                        transition_keys.append({
-                            'uid': r_uid,
-                            'key': transition_key
-                        })
-                save_request(rq, moves, transition_keys)
-            rs = api.execute_batch(params, rqs)
-            api.sync_down(params)
-            fails = [move_rs for move_rs in rs if move_rs.get('result') == 'fail']
-            if any(fails):
-                move_rs = next(iter(fails))
-                ka_msg = move_rs.get('message')
-                result_code = move_rs.get('result_code')
-                error_msg = f'One or more records in folder {folder.name} (UID: {folder.uid}) is preventing its ' \
-                            f'transformation.\nReason: {ka_msg}'
-                raise KeeperApiError(result_code, error_msg)
-
-        def get_copy_name(folder, dest):
-            def get_path_tokens(f):   # type: (BaseFolderNode) -> List[str]
-                result = []
-                while f and f is not params.root_folder:
-                    result = [f.name, *result]
-                    f = params.folder_cache.get(f.parent_uid) or params.root_folder \
-                        if f is not params.root_folder \
-                        else None
-                return result or []
-
-            rebasing_copy = dest.uid is None and folder.parent_uid
-            if rebasing_copy:
-                path_tokens = get_path_tokens(folder)
-                name = ' - '.join(path_tokens)
-                copy_name = name
+                rq['shared_folder_uid'] = folder_uid
+                shared_folder = params.shared_folder_cache[folder_uid]
+                encryption_key = shared_folder['shared_folder_key_unencrypted']
+                encrypted_data = shared_folder.get('data')
+            elif sub_folder['type'] == 'shared_folder_folder':
+                rq['shared_folder_uid'] = sub_folder['shared_folder_uid']
+                encryption_key = sub_folder['folder_key_unencrypted']
+                encrypted_data = sub_folder.get('data')
             else:
-                copy_name = folder.name + '(TRANSFORMED)' if folder.parent_uid == dest.uid else folder.name
+                return
 
-            while True:
-                rs = try_resolve_path(params, copy_name)
-                if rs is None:
+            decrypted_data = crypto.decrypt_aes_v1(utils.base64_url_decode(encrypted_data), encryption_key)
+            data = json.loads(decrypted_data)
+            folder_name = data.get('name') or ''
+            folder_name = f'{folder_name}@delete'
+            data['name'] = folder_name
+            encrypted_data = crypto.encrypt_aes_v1(json.dumps(data).encode(), encryption_key)
+            rq['data'] = utils.base64_url_encode(encrypted_data)
+            if (sub_folder['type'] == 'shared_folder'):
+                rq['name'] = utils.base64_url_encode(crypto.encrypt_aes_v1(folder_name.encode('utf-8'), encryption_key))
+            rename_rqs.append(rq)
+        try:
+            api.execute_batch(params, rename_rqs)
+        except Exception as e:
+            logging.debug('Error renaming source folders: %s', e)
+
+    @staticmethod
+    def move_records(params, folder_map, is_link):   # type: (KeeperParams, Tuple[str, str], bool) -> None
+        move_rqs = []    # type: List[Dict]
+        record_permissions = {}    # type: Dict[str, Dict[str, Tuple[bool, bool]]]
+        def get_record_permissions(sf_uid, r_uid):    # type: (str, str) -> Optional[Tuple[bool, bool]]
+            nonlocal record_permissions
+            if sf_uid in record_permissions:
+                return record_permissions[sf_uid].get(r_uid)
+
+            sf = params.shared_folder_cache.get(sf_uid)
+            if sf:
+                record_permissions[sf_uid] = {}
+                recs = sf.get('records')
+                if isinstance(records, dict):
+                    for rp in recs:
+                        rec_uid = rp.get('record_uid')
+                        can_share = rp.get('can_share') or False
+                        can_edit = rp.get('can_edit') or False
+                        if rec_uid:
+                            record_permissions[sf_uid][rec_uid] = (can_edit, can_share)
+
+        for src_folder_uid, dst_folder_uid in folder_map:
+            src_folder = params.folder_cache.get(src_folder_uid)
+            dst_folder = params.folder_cache.get(dst_folder_uid)
+            if not src_folder:
+                continue
+            if not dst_folder:
+                continue
+            src_scope = ''
+            dst_scope = ''
+            if src_folder.type == BaseFolderNode.SharedFolderType:
+                src_scope = src_folder.uid
+            elif src_folder.type == BaseFolderNode.SharedFolderFolderType:
+                src_scope = src_folder.shared_folder_uid
+
+            if dst_folder.type == BaseFolderNode.SharedFolderType:
+                dst_scope = dst_folder.uid
+            elif dst_folder.type == BaseFolderNode.SharedFolderFolderType:
+                dst_scope = dst_folder.shared_folder_uid
+
+            if dst_scope != src_scope:
+                if dst_scope:
+                    shared_folder = params.shared_folder_cache.get(dst_scope)
+                    scope_key = shared_folder['shared_folder_key_unencrypted']
+                else:
+                    scope_key = params.data_key
+            else:
+                scope_key = None
+            if src_scope:
+                src_type = 'shared_folder' if src_folder.type == BaseFolderNode.SharedFolderType else 'shared_folder_folder'
+            else:
+                src_type = 'user_folder'
+
+            records = list(params.subfolder_record_cache.get(src_folder.uid) or [])
+            while len(records) > 0:
+                rq = {
+                    'command': 'move',
+                    'to_type': 'shared_folder_folder' if dst_scope else 'user_folder',
+                    'to_uid': dst_folder.uid,
+                    'link': is_link,
+                    'move': [],
+                    'transition_keys': []
+                }
+                chunk = records[:990]
+                records = records[990:]
+                for record_uid in chunk:
+                    move = {
+                        'type': 'record',
+                        'uid': record_uid,
+                        'from_type': src_type,
+                        'from_uid': src_folder_uid,
+                        'cascade': False,
+                    }
+                    if scope_key and src_scope and dst_scope:
+                        perms = get_record_permissions(src_scope, record_uid)
+                        if isinstance(perms, tuple):
+                            move['can_edit'] = perms[0]
+                            move['can_reshare'] = perms[1]
+
+                    rq['move'].append(move)
+                    if scope_key:
+                        record = params.record_cache.get(record_uid)
+                        if record:
+                            version = record.get('version', 0)
+                            record_key = record.get('record_key_unencrypted')
+                            if version < 3:
+                                transfer_key = crypto.encrypt_aes_v1(record_key, scope_key)
+                            else:
+                                transfer_key = crypto.encrypt_aes_v2(record_key, scope_key)
+                            tko = {
+                                'uid': record_uid,
+                                'key': utils.base64_url_encode(transfer_key)
+                            }
+                            rq['transition_keys'].append(tko)
+                move_rqs.append(rq)
+
+
+        while len(move_rqs) > 0:
+            record_count = 0
+            requests = []
+            while len(move_rqs) > 0:
+                rq = move_rqs.pop()
+                record_rq = len(rq['move'])
+                if (record_count + record_rq) > 1000:
+                    if record_count > 0:
+                        move_rqs.append(rq)
+                    else:
+                        requests.append(rq)
                     break
                 else:
-                    folder, pattern = rs
-                    if len(pattern) == 0:
-                        copy_name += '_'
-                    else:
-                        break
+                    requests.append(rq)
+            rs = api.execute_batch(params, requests)
 
-            # To allow new folder creation via FolderAddCommand, make sure the name provided adheres to the naming rules
-            pattern = re.compile(r'(?<!/)/(?!/)')
-            copy_name = re.sub(pattern, r'//', copy_name)
-            return copy_name
-
-        copy_uid_lookup = dict()    # type: Dict[str, str]
-
-        def copy_folder(original_folder, new_folder_type='user_folder', rebase=False):
-            # type: (BaseFolderNode, Optional[str], Optional[bool]) -> BaseFolderNode
-            folders_cache = params.folder_cache
-            vault_root = params.root_folder
-            dest_uid = copy_uid_lookup.get(original_folder.parent_uid) or original_folder.parent_uid or ''
-            dest = vault_root if rebase else folders_cache.get(dest_uid) or vault_root
-            params.current_folder = dest.uid or ''
-
-            # Create folder copy of appropriate type
-            mkdir_cmd = FolderMakeCommand()
-            copy_name = get_copy_name(original_folder, dest)
-            cmd_kwargs = {'folder': copy_name, new_folder_type: True}
-            copy_uid = mkdir_cmd.execute(params, **cmd_kwargs)
-            api.sync_down(params)
-            copy_uid_lookup.update({original_folder.uid: copy_uid})
-            return params.folder_cache.get(copy_uid)
-
-        def get_copy(original_folder):   # type: (BaseFolderNode) -> BaseFolderNode
-            copy_uid = copy_uid_lookup.get(original_folder.uid)
-            return params.folder_cache.get(copy_uid)
-
-        def remove_trees(roots):    # type: (Iterable[BaseFolderNode]) -> None
-            if roots:
-                # Remove share-folder permissions prior to removal
-                sf_subfolders = [get_shared_folders(root) for root in roots]
-                sf_cmd = ShareFolderCommand()
-                for sfs in sf_subfolders:
-                    for sf in sfs:
-                        sf_cmd.execute(params, action='remove', user=['@existing'], folder=sf.get('shared_folder_uid'))
-                rmdir_cmd = FolderRemoveCommand()
-                rmdir_cmd.execute(params, pattern=[root.uid for root in roots], force=True, quiet=True)
-                api.sync_down(params)
-
-        def transform_tree(root):   # type: (BaseFolderNode) -> BaseFolderNode
-            shared_folders = get_shared_folders(root)
-            clear_shares = kwargs.get('clear_shares')
-            is_root_sf = root.type == BaseFolderNode.SharedFolderType
-            is_root_sf_sub = root.type == BaseFolderNode.SharedFolderFolderType
-            make_root_copy_sf = not is_root_sf and not clear_shares
-            make_children_sfs = not make_root_copy_sf and not clear_shares
-
-            # Transform root folder (UF -> SF, SF -> UF, SF-sub -> rebased UF/SF depending on clear_shares)
-            copy_type = 'shared_folder' if make_root_copy_sf else 'user_folder'
-            root_copy = copy_folder(root, new_folder_type=copy_type, rebase=is_root_sf_sub)
-
-            children = [params.folder_cache.get(f) for f in root.subfolders]
-            children_copy_type = 'shared_folder' if make_children_sfs else 'user_folder'
-            children_copies = [copy_folder(c, new_folder_type=children_copy_type) for c in children]
-
-            # Copy children's contained folders
-            for child in children:
-                inner_folders = get_contained_folders(child)
-                for f in inner_folders:
-                    copy_folder(f)
-
-            def apply_transform_shares():
-                def get_sf_update_request(src_sfs, dst_sf):
-                    sf_key = dst_sf.get('shared_folder_key_unencrypted')
-                    req = folder_pb2.SharedFolderUpdateV3Request()
-                    req.sharedFolderUid = utils.base64_url_decode(dst_sf.get('shared_folder_uid'))
-                    req.revision = dst_sf.get('revision')
-                    MU_KEY = 'manage_users'
-                    MR_KEY = 'manage_records'
-                    TEAM_SHARE_KEY = 'team_uid'
-                    USER_SHARE_KEY = 'username'
-                    users = [us for sf in src_sfs for us in sf.get('users', [])]
-                    teams = [ts for sf in src_sfs for ts in sf.get('teams', [])]
-
-                    def consolidate_shares(shares, id_key):
-                        consolidated_shares = dict()
-                        for share in shares:
-                            share_key = share.get(id_key)
-                            saved_share = consolidated_shares.get(share_key) or share
-                            mr = saved_share.get(MR_KEY)
-                            mu = saved_share.get(MU_KEY)
-                            saved_share[MU_KEY] = mu or share.get(MU_KEY, False)
-                            saved_share[MR_KEY] = mr or share.get(MR_KEY, False)
-                            consolidated_shares[share_key] = saved_share
-                        return consolidated_shares
-
-                    users = consolidate_shares(users, USER_SHARE_KEY)
-                    teams = consolidate_shares(teams, TEAM_SHARE_KEY)
-
-                    for sf in src_sfs:
-                        if sf.get('default_manage_records'):
-                            req.defaultManageRecords = folder_pb2.BOOLEAN_TRUE
-                        if sf.get('default_manage_users'):
-                            req.defaultManageUsers = folder_pb2.BOOLEAN_TRUE
-                        if sf.get('default_can_edit'):
-                            req.defaultCanEdit = folder_pb2.BOOLEAN_TRUE
-                        if sf.get('default_can_share'):
-                            req.defaultCanShare = folder_pb2.BOOLEAN_TRUE
-
-                    emails = list(users.keys())
-                    api.load_user_public_keys(params, emails)
-                    for email, ushare in users.items():
-                        uo = folder_pb2.SharedFolderUpdateUser()
-                        if email == params.user:
-                            continue
-                        uo.username = email
-                        uo.manageUsers = folder_pb2.BOOLEAN_TRUE if ushare.get(MU_KEY) else folder_pb2.BOOLEAN_FALSE
-                        uo.manageRecords = folder_pb2.BOOLEAN_TRUE if ushare.get(MR_KEY) else folder_pb2.BOOLEAN_FALSE
-                        keys = params.key_cache.get(email)
-                        if keys:
-                            if params.forbid_rsa and keys.ec:
-                                ec_key = crypto.load_ec_public_key(keys.ec)
-                                uo.typedSharedFolderKey.encryptedKey = crypto.encrypt_ec(sf_key, ec_key)
-                                uo.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key_ecc
-                            elif not params.forbid_rsa and keys.rsa:
-                                rsa_key = crypto.load_rsa_public_key(keys.rsa)
-                                uo.typedSharedFolderKey.encryptedKey = crypto.encrypt_rsa(sf_key, rsa_key)
-                                uo.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key
-
-                        req_user_list = req.sharedFolderAddUser
-                        req_user_list.append(uo)
-
-                    team_uids = list(teams.keys())
-                    api.load_team_keys(params, team_uids)
-                    for team_uid, tshare in teams.items():
-                        to = folder_pb2.SharedFolderUpdateTeam()
-                        team_uid = tshare.get('team_uid')
-                        to.teamUid = utils.base64_url_decode(team_uid)
-                        to.manageRecords = tshare.get(MR_KEY)
-                        to.manageUsers = tshare.get(MU_KEY)
-                        if team_uid in params.team_cache:
-                            team = params.team_cache[team_uid]
-                            if 'team_key_unencrypted' in team:
-                                team_key = team['team_key_unencrypted']
-                                to.sharedFolderKey = crypto.encrypt_aes_v1(sf_key, team_key)
-                            else:
-                                continue
-                        elif team_uid in params.key_cache:
-                            team_keys = params.key_cache[team_uid]
-                            if team_keys.aes:
-                                if params.forbid_rsa:
-                                    to.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v2(sf_key, team_keys.aes)
-                                    to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key_gcm
-                                else:
-                                    to.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v1(sf_key, team_keys.aes)
-                                    to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key
-                            elif params.forbid_rsa and team_keys.ec:
-                                ec_key = crypto.load_ec_public_key(team_keys.ec)
-                                to.typedSharedFolderKey.encryptedKey = crypto.encrypt_ec(sf_key, ec_key)
-                                to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key_ecc
-                            elif not params.forbid_rsa and team_keys.rsa:
-                                rsa_key = crypto.load_rsa_public_key(team_keys.rsa)
-                                to.typedSharedFolderKey.encryptedKey = crypto.encrypt_rsa(sf_key, rsa_key)
-                                to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key
-                            else:
-                                continue
-                        req.sharedFolderAddTeam.append(to)
-
-                    return req
-
-                get_sf_fn = lambda sf_node: params.shared_folder_cache.get(sf_node.uid)
-
-                if make_root_copy_sf:
-                    new_sf = get_sf_fn(root_copy)
-                    rqs = [get_sf_update_request(shared_folders, new_sf)]
-                else:
-                    new_sfs = [get_sf_fn(cc) for cc in children_copies]
-                    rqs = [get_sf_update_request(shared_folders, sf) for sf in new_sfs]
-
-                while len(rqs) > 0:
-                    chunk = rqs[:999]
-                    rqs = rqs[999:]
-                    rq = folder_pb2.SharedFolderUpdateV3RequestV2()
-                    for x in chunk:
-                        if isinstance(x, folder_pb2.SharedFolderUpdateV3Request):
-                            rq.sharedFoldersUpdateV3.append(x)
-                    rss = api.communicate_rest(params, rq, 'vault/shared_folder_update_v3', payload_version=1,
-                                               rs_type=folder_pb2.SharedFolderUpdateV3ResponseV2)
-                params.sync_data = True
-
-            if not clear_shares:
-                apply_transform_shares()
-            move_contained_records(root)
-            return root_copy
-
-        def preview_transform(xform_pairs):
-            logging.info('\nORIGINAL vs. TRANSFORMED folder structures:')
-            logging.info('===========================================\n')
-            hide_key = False
-            for root, xformed in xform_pairs:
-                params.current_folder = root.parent_uid or ''
-                tree_cmd = FolderTreeCommand()
-                tree_cmd.execute(params, folder=root.uid, records=True, shares=True, hide_shares_key=hide_key,
-                                 title='ORIGINAL:\n=========')
-                params.current_folder = xformed.parent_uid or ''
-                tree_cmd.execute(params, folder=xformed.uid, records=True, shares=True, hide_shares_key=True,
-                                 title='TRANSFORMED:\n============')
-                hide_key = True
-
-        def rename_copies():
-            for orig_uid, copy_uid in copy_uid_lookup.items():
-                orig = params.folder_cache.get(orig_uid)    # type: BaseFolderNode
-                copy = params.folder_cache.get(copy_uid)    # type: BaseFolderNode
-                if orig.name != copy.name and orig.type is not BaseFolderNode.SharedFolderFolderType:
-                    orig_name = orig.name
-                    rn_cmd = FolderRenameCommand()
-                    orig_new_name = orig_name + '@delete'
-                    rn_cmd.execute(params, quiet=True, name=orig_new_name, folder=orig_uid)
-                    api.sync_down(params)
-                    rn_cmd.execute(params, quiet=True, name=orig_name, folder=copy_uid)
-            api.sync_down(params)
-
-        def finalize_transform(old_roots):
-            rename_copies()
-            remove_trees(old_roots)
-
-        def on_abort(roots):
-            new_roots = [params.folder_cache.get(copy_uid_lookup.get(r.uid)) for r in roots]
-            new_roots = [r for r in new_roots if r]
-            remove_trees(new_roots)
-
-        current_folder = params.current_folder
-        dry_run = kwargs.get('dry_run')
-        force = kwargs.get('force')
-        if force and dry_run:
-            raise CommandError('transform-folder', '"--force" and "--dry-run" options are mutually exclusive')
-
-        folders = kwargs.get('folder')
-        if not isinstance(folders, list):
-            folders = [folders]
-
-        children_transform = kwargs.get('children')
-        folder_uids = {(f if f in params.folder_cache else get_folder_uid(f)) for f in folders}
-        folder_nodes = dict()
-        targets = dict()
-        for f_uid in folder_uids:
-            folder_node = params.folder_cache.get(f_uid)
-            if not folder_node:
-                raise CommandError('transform-folder', f'Folder {f_uid} not found')
+    @staticmethod
+    def delete_source_tree(params, folders_to_remove):   # type: (KeeperParams, List[str]) -> None
+        # chunk into scopes
+        folder_by_scope = {}    # type: Dict[str, List[str]]
+        for folder_uid in folders_to_remove:
+            folder = params.folder_cache.get(folder_uid)  # type: Optional[Union[UserFolderNode, SharedFolderNode, SharedFolderFolderNode]]
+            if folder.type == BaseFolderNode.UserFolderType:
+                folder_scope = ''
+            elif folder.type == BaseFolderNode.SharedFolderType:
+                folder_scope = folder.uid
+            elif folder.type == BaseFolderNode.SharedFolderFolderType:
+                folder_scope = folder.shared_folder_uid
             else:
-                folder_map = {f_uid: folder_node}
-                folder_nodes.update(folder_map)
-                if not children_transform:
-                    targets.update(folder_map)
+                continue
+            if folder_scope not in folder_by_scope:
+                folder_by_scope[folder_scope] = []
+            folder_by_scope[folder_scope].append(folder_uid)
+        user_folders = folder_by_scope.pop('', None)
+        scopes = list(folder_by_scope.values())
+        if user_folders:
+            scopes.append(user_folders)
+        for folders in scopes:
+            while len(folders) > 0:
+                chunk = folders[-450:]
+                folders = folders[:-450]
+                folder_roots = set(chunk)
+                for folder_uid in chunk:
+                    if folder_uid in folder_roots:
+                        FolderMixin.traverse_folder_tree(params, folder_uid,
+                                                         lambda f: folder_roots.difference_update(f.subfolders or []))
+                chunk = [x for x in chunk if x in folder_roots]
+                delete_rq = {
+                    'command': 'pre_delete',
+                    'objects': [],
+                }
+                for folder_uid in chunk:
+                    folder = params.folder_cache.get(folder_uid)
+                    if folder is None:
+                        continue
+                    rq = {
+                        'delete_resolution': 'unlink',
+                        'object_uid': folder.uid,
+                        'object_type': folder.type,
+                    }
+                    if folder.parent_uid:
+                        folder = params.folder_cache.get(folder.parent_uid)
+                        if folder:
+                            rq['from_uid'] = folder.uid
+                            rq['from_type'] = folder.type
+                    else:
+                        rq['from_type'] = folder.UserFolderType
+                    delete_rq['objects'].append(rq)
+                try:
+                    delete_rs = api.communicate(params, delete_rq)
+                except Exception as e:
+                    logging.debug('Error deleting source tree: %s', e)
+                    continue
 
-        if children_transform:
-            targets.update({sub_f: params.folder_cache.get(sub_f) for f in folder_nodes.values() for sub_f in f.subfolders})
+                token = ''
+                if 'pre_delete_response' in delete_rs:
+                    pre_delete = delete_rs['pre_delete_response']
+                    if 'pre_delete_token' in pre_delete:
+                        token = pre_delete['pre_delete_token']
+                if token:
+                    delete_rq = {
+                        'command': 'delete',
+                        'pre_delete_token': token
+                    }
+                    try:
+                        delete_rs = api.communicate(params, delete_rq)
+                    except Exception as e:
+                        logging.debug('Error deleting source tree: %s', e)
 
-        validate(targets.values())
-
-        transformed = []
-        for t in targets.values():
-            try:
-                transformed.append(transform_tree(t))
-            except Error as e:
-                params.current_folder = current_folder
-                on_abort(targets.values())
-                raise CommandError('transform-folder', f'Folder {t.name} could not be transformed.\n{e.message}')
-
-        transform_pairs = zip(targets.values(), transformed)
-        if force:
-            finalize_transform(targets.values())
-        elif dry_run:
-            logging.info('Executing command in "dry-run" mode...')
-            preview_transform(transform_pairs)
-            remove_trees(transformed)
+    @staticmethod
+    def create_target_folder(params, source_folder_uid, dst_parent_uid, dst_scope_uid, dst_scope_key):
+        src_subfolder = params.folder_cache.get(source_folder_uid)
+        dst_folder_uid = utils.generate_uid()
+        sf = folder_pb2.FolderRequest()
+        sf.folderUid = utils.base64_url_decode(dst_folder_uid)
+        if dst_scope_uid:
+            sf.folderType = folder_pb2.shared_folder_folder
+            if dst_parent_uid != dst_scope_uid:
+                sf.parentFolderUid = utils.base64_url_decode(dst_parent_uid)
+            sf.sharedFolderFolderFields.sharedFolderUid = utils.base64_url_decode(dst_scope_uid)
         else:
-            preview_transform(transform_pairs)
-            inp = user_choice('Are you sure you want to proceed with this/these transformation(s)?', 'yn', default='n')
+            sf.folderType = folder_pb2.user_folder
+            sf.parentFolderUid = utils.base64_url_decode(dst_parent_uid)
+
+        subfolder_key = utils.generate_aes_key()
+        subfolder_data = {'name': src_subfolder.name}
+        sf.folderData = crypto.encrypt_aes_v1(json.dumps(subfolder_data).encode('utf-8'), subfolder_key)
+        sf.encryptedFolderKey = crypto.encrypt_aes_v1(subfolder_key, dst_scope_key)
+        return sf
+
+    def execute(self, params, **kwargs):  # type: (KeeperParams, Any) -> Any
+        target = kwargs.get('target')
+        if target:
+            target_folder_uid = FolderMixin.resolve_folder(params, target)
+            if not target_folder_uid:
+                raise CommandError('transform-folder', '"folder" parameter is required')
+        else:
+            target_folder_uid = None
+
+        source_folder_uids = set()        # type: Set[str]
+        folder_names = kwargs.get('folder')
+        if not folder_names:
+            raise CommandError('transform-folder', '"folder" parameter is required')
+        if isinstance(folder_names, str):
+            folder_names = [folder_names]
+        for folder_name in folder_names:
+            folder_uid = FolderMixin.resolve_folder(params, folder_name)
+            if not folder_uid:
+                raise CommandError('transform-folder', f'Folder "{folder_name}" cannot be found')
+            source_folder_uids.add(folder_uid)
+
+        for folder_uid in source_folder_uids:
+            src_folder = params.folder_cache.get(folder_uid)   # type: Optional[Union[UserFolderNode, SharedFolderNode, SharedFolderFolderNode]]
+            if target_folder_uid and src_folder.parent_uid == target_folder_uid:
+                raise CommandError('transform-folder',
+                                   f'Folder "{src_folder.uid}" is already in the target')
+
+            while src_folder and src_folder.parent_uid:
+                if src_folder.parent_uid in source_folder_uids:
+                    raise CommandError('transform-folder',
+                                       f'Folder "{src_folder.parent_uid}" is a parent of "{folder_uid}"\n' +
+                                       f'Move folder "{folder_uid}" first')
+                src_folder = params.folder_cache.get(src_folder.parent_uid)
+
+        is_link = kwargs.get('link') is True
+
+        # create folder structure
+        table = []
+        headers = ['Source Folder', 'Folder Count', 'Record Count']
+
+        folders_to_remove = []    # type: List[str]
+        folders_to_create = []    # type: List[folder_pb2.FolderRequest]
+        src_to_dst_map = {}       # type: Dict[str, str]
+        for source_uid in source_folder_uids:
+            target_scope_uid = ''
+            target_scope_key = params.data_key
+
+            source_folder = params.folder_cache.get(source_uid)
+            if not source_folder:
+                continue
+            target_uid = utils.generate_uid()
+            target_key = params.data_key
+            f = folder_pb2.FolderRequest()
+            f.folderUid = utils.base64_url_decode(target_uid)
+            folder_key = utils.generate_aes_key()
+            data = {'name': source_folder.name}
+            f.folderData = crypto.encrypt_aes_v1(json.dumps(data).encode('utf-8'), folder_key)
+            if target_folder_uid is None:
+                if source_folder.parent_uid:
+                    is_target_shared = kwargs.get('folder_type') == 'shared'
+                else:
+                    is_target_shared = source_folder.type == BaseFolderNode.UserFolderType
+                if is_target_shared:
+                    f.folderType = folder_pb2.shared_folder
+                    f.sharedFolderFields.encryptedFolderName = crypto.encrypt_aes_v1(source_folder.name.encode(), folder_key)
+                    target_scope_uid = target_uid
+                    target_scope_key = folder_key
+                else:
+                    f.folderType = folder_pb2.user_folder
+            else:
+                target_folder = params.folder_cache.get(target_folder_uid)  # type: Optional[BaseFolderNode]
+                assert target_folder is not None
+                if target_folder.type == BaseFolderNode.UserFolderType:
+                    f.folderType = folder_pb2.user_folder
+                    target_scope_key = params.data_key
+                    f.parentFolderUid = utils.base64_url_decode(target_folder.uid)
+                elif target_folder.type == BaseFolderNode.SharedFolderType:
+                    f.folderType = folder_pb2.shared_folder_folder
+                    shared_folder = params.shared_folder_cache.get(target_folder.uid)
+                    if not shared_folder:
+                        raise CommandError('transform-folder', f'Shared Folder "{target_folder.uid}" not found')
+                    target_scope_key = shared_folder['shared_folder_key_unencrypted']
+                    target_scope_uid = target_folder.uid
+                    f.sharedFolderFolderFields.sharedFolderUid = utils.base64_url_decode(target_scope_uid)
+                    target_key = target_scope_key
+                elif target_folder.type == BaseFolderNode.SharedFolderFolderType:
+                    f.folderType = folder_pb2.shared_folder_folder
+                    target_scope_uid = target_folder.shared_folder_uid
+                    shared_folder = params.shared_folder_cache.get(target_scope_uid)
+                    if not shared_folder:
+                        raise CommandError('transform-folder', f'Shared Folder "{target_folder.uid}" not found')
+                    target_scope_key = shared_folder['shared_folder_key_unencrypted']
+                    target_key = target_scope_key
+                    f.sharedFolderFolderFields.sharedFolderUid = utils.base64_url_decode(target_scope_uid)
+                    f.parentFolderUid = utils.base64_url_decode(target_folder.uid)
+                else:
+                    continue
+
+            f.encryptedFolderKey = crypto.encrypt_aes_v1(folder_key, target_key)
+            folders_to_create.append(f)
+            folders_to_remove.append(source_uid)
+            src_to_dst_map[source_uid] = target_uid
+
+            subfolder_count = 0
+            record_count = 0
+            source_folder = params.folder_cache.get(source_uid)  # type: Optional[BaseFolderNode]
+            if source_folder is None:
+                continue
+
+
+            def add_subfolders(folder):    # type: (BaseFolderNode) -> None
+                nonlocal subfolder_count
+                nonlocal record_count
+                subfolder_count += 1
+                records = params.subfolder_record_cache.get(folder.uid)
+                if isinstance(records, set):
+                    record_count += len(records)
+
+                dst_folder_uid = src_to_dst_map.get(folder.uid)
+                if dst_folder_uid:
+                    for src_subfolder_uid in folder.subfolders:
+                        folder_rq = self.create_target_folder(
+                            params, src_subfolder_uid, dst_folder_uid, target_scope_uid, target_scope_key)
+                        dst_subfolder_uid = utils.base64_url_encode(folder_rq.folderUid)
+                        folders_to_create.append(folder_rq)
+                        folders_to_remove.append(src_subfolder_uid)
+                        src_to_dst_map[src_subfolder_uid] = dst_subfolder_uid
+
+            FolderMixin.traverse_folder_tree(params, source_uid, add_subfolders)
+
+            table.append([get_folder_path(params, source_uid), subfolder_count, record_count])
+
+        # Display statistics
+        operation = 'copied' if is_link else 'moved'
+        target_name = get_folder_path(params, target_folder_uid) if target_folder_uid else 'My Vault'
+        title = f'The following folders will be {operation} to "{target_name}"'
+        base.dump_report_data(table, headers=headers, title=title)
+        if kwargs.get('dry_run') is True:
+            return
+        if kwargs.get('force') is not True:
+            inp = user_choice('Are you sure you want to proceed with this action?', 'yn', default='n')
             if inp.lower() == 'y':
                 logging.info('Executing transformation(s)...')
-                finalize_transform(targets.values())
             else:
-                logging.info('Transformation cancelled by user.')
-                remove_trees(transformed)
-        params.current_folder = current_folder
+                logging.info('Cancelled.')
+
+        while len(folders_to_create) > 0:
+            chunk = folders_to_create[:990]
+            folders_to_create = folders_to_create[990:]
+            rq = folder_pb2.ImportFolderRecordRequest()
+            for e in chunk:
+                rq.folderRequest.append(e)
+            rs = api.communicate_rest(params, rq, 'folder/import_folders_and_records', rs_type=folder_pb2.ImportFolderRecordResponse)
+            errors = [x for x in rs.folderResponse if x.status.upper() != 'SUCCESS']
+            if len(errors) > 0:
+                raise CommandError('transform-folder',
+                                   f'Failed to re-create folder structure: {errors[0].status}')
+        api.sync_down(params)
+
+        # Rename source folders
+        if not is_link:
+            self.rename_source_folders(params, source_folder_uids)
+            api.sync_down(params)
+
+        # Move records
+        self.move_records(params, src_to_dst_map.items(), is_link)
+        api.sync_down(params)
+
+        # Delete source tree
+        if not is_link:
+            self.delete_source_tree(params, folders_to_remove)
+
+        api.sync_down(params)
 
 
 def formatted_tree(params, folder, verbose=False, show_records=False, shares=False, hide_shares_key=False, title=None):

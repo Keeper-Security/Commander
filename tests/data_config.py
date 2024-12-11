@@ -6,7 +6,7 @@ from keepercommander.params import KeeperParams
 
 def read_config_file(params, file_name='config.json'):       # type: (KeeperParams, str) -> None
     params.config_filename = os.path.join(os.path.dirname(__file__), file_name)
-    with open(params.config_filename, 'r') as f:
+    with open(params.config_filename, 'r', encoding='utf-8') as f:
         params.config = json.load(f)
         params.server = params.config['server']
         params.user = params.config['user']

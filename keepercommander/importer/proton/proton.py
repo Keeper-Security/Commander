@@ -13,7 +13,7 @@ class ProtonJsonImporter(importer.BaseFileImporter):
         name, ext = os.path.splitext(filename)
         proton_export = None     # type: Optional[dict]
         if ext == '.json':
-            with open(filename, 'r') as f:
+            with open(filename, 'r', encoding='utf-8') as f:
                 proton_export = json.load(f)
         elif ext == '.zip':
             with zipfile.ZipFile(filename, 'r') as zf:

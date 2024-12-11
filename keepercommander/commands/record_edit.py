@@ -675,21 +675,6 @@ class RecordEditMixin:
                         facade.file_ref.remove(file_uids[0])
 
     @staticmethod
-    def resolve_folder(params, folder_name):    # type: (KeeperParams, str) -> Optional[str]
-        if not folder_name:
-            return params.current_folder
-
-        if folder_name in params.folder_cache:
-            return folder_name
-        else:
-            rs = try_resolve_path(params, folder_name)
-            if rs is not None:
-                folder, record_name = rs
-                if folder and not record_name:
-                    if folder.uid:
-                        return folder.uid
-
-    @staticmethod
     def get_record_type_fields(params, record_type):      # type: (KeeperParams, str) -> Optional[List[Dict]]
         rti = recordv3.RecordTypeInfo()
         js_rt = rti.execute(params, format='json', record_name=record_type)
@@ -721,7 +706,7 @@ class RecordAddCommand(Command, RecordEditMixin):
             if expiration_period.total_seconds() > 182 * 24 * 60 * 60:
                 raise CommandError('', 'URL expiration period cannot be greater than 6 months.')
 
-        folder_uid = self.resolve_folder(params, kwargs.get('folder'))
+        folder_uid = FolderMixin.resolve_folder(params, kwargs.get('folder'))
 
         self.warnings.clear()
         title = kwargs.get('title')

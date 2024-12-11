@@ -780,3 +780,18 @@ class FolderMixin:
                 if folder.subfolders:
                     folders.extend(folder.subfolders)
                 callback(folder)
+
+    @staticmethod
+    def resolve_folder(params, folder_name):    # type: (KeeperParams, str) -> Optional[str]
+        if not folder_name:
+            return
+
+        if folder_name in params.folder_cache:
+            return folder_name
+        else:
+            rs = try_resolve_path(params, folder_name)
+            if rs is not None:
+                folder, record_name = rs
+                if folder and not record_name:
+                    if folder.uid:
+                        return folder.uid

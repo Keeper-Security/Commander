@@ -641,7 +641,7 @@ class AuditAlertRecipients(EnterpriseCommand, AuditSettingMixin):
                         file_name = http_body[1:]
                         file_name = os.path.expanduser(file_name)
                         if os.path.isfile(file_name):
-                            with open(file_name, 'rt') as tf:
+                            with open(file_name, 'rt', encoding='utf-8') as tf:
                                 webhook_body = tf.read()
                         else:
                             raise CommandError('', f'File \"{file_name}\" not found')
