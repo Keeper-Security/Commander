@@ -158,7 +158,7 @@ class EnterprisePushCommand(EnterpriseCommand):
 
         file_name = os.path.abspath(os.path.expanduser(name))
         if os.path.isfile(file_name):
-            with open(file_name, 'r') as f:
+            with open(file_name, 'r', encoding='utf-8') as f:
                 template_records = json.load(f)
         else:
             raise CommandError('enterprise-push', f'File {name} does not exists')

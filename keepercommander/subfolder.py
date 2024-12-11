@@ -226,7 +226,7 @@ class BaseFolderNode:
         self.type = type
         self.uid = None
         self.parent_uid = None
-        self.name = None
+        self.name = None     # type: Optional[str]
         self.color = None    # type: Optional[str]
         self.subfolders = []
 

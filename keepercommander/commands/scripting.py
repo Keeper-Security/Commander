@@ -80,7 +80,7 @@ class RunBatchCommand(Command):
                 elif not quiet:
                     logging.info(f'Running Keeper Commander batch file {filepath}...')
 
-                with open(filepath) as f:
+                with open(filepath, encoding='utf-8') as f:
                     lines = f.readlines()
                     commands = [c.strip() for c in lines if not c.startswith('#')]
                     if len(commands) > 0:

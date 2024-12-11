@@ -74,7 +74,7 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                 if email.startswith('@'):
                     filename = email[1:]
                     if os.path.exists(filename):
-                        with open(filename, 'r') as f:
+                        with open(filename, 'r', encoding='utf-8') as f:
                             lines = f.readlines()
                         for line in lines:
                             line = line.strip()

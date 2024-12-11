@@ -1145,7 +1145,7 @@ class GenerateCommand(Command):
 
         if output_file:
             try:
-                with open(output_file, 'w') as f:
+                with open(output_file, 'w', encoding='utf-8') as f:
                     f.write(formatted_output)
             except Exception as e:
                 logging.warning('Error writing to file {}: {}'.format(output_file, str(e)))

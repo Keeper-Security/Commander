@@ -138,7 +138,6 @@ class KeeperParams:
         self.enterprise_loader = None
         self.enterprise_id = 0
         self.msp_tree_key = None
-        self.prepare_commands = False
         self.batch_mode = False
         self.__rest_context = RestApiContext(server=server)
         self.pending_share_requests = set()
@@ -212,7 +211,6 @@ class KeeperParams:
         self.enterprise_loader = None
         self.enterprise_id = 0
         self.msp_tree_key = None
-        self.prepare_commands = True
         self.pending_share_requests.clear()
         self.environment_variables.clear()
         self.record_history.clear()

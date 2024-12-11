@@ -378,7 +378,7 @@ class AutomatorEditCommand(EnterpriseCommand, AutomatorMixin):
                             if parts[0].lower() == 'file':
                                 filename = parts[1].strip()
                                 if os.path.isfile(filename):
-                                    with open(filename, 'r') as f:
+                                    with open(filename, 'r', encoding='utf-8') as f:
                                         value = f.read()
                             if parts[0].lower() == 'base64':
                                 filename = parts[1].strip()

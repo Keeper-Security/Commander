@@ -140,7 +140,7 @@ class DicewarePasswordGenerator(PasswordGenerator):
             dice_path = os.path.join(os.path.dirname(__file__), 'resources', 'diceware.wordlist.asc.txt')
         self._vocabulary = None    # type: Optional[List[str]]
         if os.path.isfile(dice_path):
-            with open(dice_path, 'r') as dw:
+            with open(dice_path, 'r', encoding='utf-8') as dw:
                 self._vocabulary = []
                 line_count = 0
                 unique_words = set()
@@ -173,7 +173,7 @@ class CryptoPassphraseGenerator(PasswordGenerator):
         self._vocabulary = None    # type: Optional[List[str]]
         dice_path = os.path.join(os.path.dirname(__file__), 'resources', 'bip-39.english.txt')
         if os.path.isfile(dice_path):
-            with open(dice_path, 'r') as dw:
+            with open(dice_path, 'r', encoding='utf-8') as dw:
                 self._vocabulary = []
                 for line in dw.readlines():
                     if not line:

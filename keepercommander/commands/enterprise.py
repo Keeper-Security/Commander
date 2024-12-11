@@ -1989,7 +1989,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
     def enforcement_value_from_file(filepath):
         filepath = os.path.expanduser(filepath)
         if os.path.isfile(filepath):
-            with open(filepath, 'r') as f:
+            with open(filepath, 'r', encoding='utf-8') as f:
                 enforcement_value = f.read()
                 if ':' in enforcement_value:
                     # Validate JSON
@@ -2671,7 +2671,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     json_roles = json_roles[0]
                 file_name = kwargs.get('output')
                 if file_name:
-                    with open(file_name, 'w') as f:
+                    with open(file_name, 'w', encoding='utf-8') as f:
                         json.dump(json_roles, f, indent=4)
                 else:
                     return json.dumps(json_roles, indent=4)

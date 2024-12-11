@@ -20,7 +20,7 @@ class TestCrossEnterpriseCommands(TestCase):
     def setUpClass(cls):
         cls.params1 = KeeperParams()
         config_filename = os.path.join(os.path.dirname(__file__), 'cross-enterprise.json')
-        with open(config_filename, 'r') as f:
+        with open(config_filename, 'r', encoding='utf-8') as f:
             config = json.load(f)
             cls.params1.server = config['server']
             cls.params1.user = config['user']
