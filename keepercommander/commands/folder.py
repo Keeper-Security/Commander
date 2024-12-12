@@ -1651,6 +1651,7 @@ class FolderTransformCommand(Command, RecordMixin):
                 logging.info('Executing transformation(s)...')
             else:
                 logging.info('Cancelled.')
+                return
 
         while len(folders_to_create) > 0:
             chunk = folders_to_create[:990]
