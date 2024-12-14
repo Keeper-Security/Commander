@@ -29,10 +29,10 @@ class CyberArkImporter(BaseImporter):
 
     def do_import(self, filename, **kwargs):
         # The CyberArk API implements paging with a limit of 1000 records per page
-        params = {"limit": 1000, "offset": 0}
+        query_params = {"limit": 1000, "offset": 0}
         if "?" in filename:
             # Use what comes after the (optional) '?' as the search query
-            pvwa_host, params["search"] = filename.split("?", 1)
+            pvwa_host, query_params["search"] = filename.split("?", 1)
         else:
             pvwa_host = filename
 
@@ -54,7 +54,7 @@ class CyberArkImporter(BaseImporter):
                 "Authorization": authorization_token,
                 "Content-Type": "application/json",
             },
-            params=params,
+            params=query_params,
             timeout=self.TIMEOUT,
             verify=False,
         )
@@ -88,16 +88,16 @@ class CyberArkImporter(BaseImporter):
                     )
                 record.password = response.text.strip('"')
                 yield record
-            if count <= params["limit"]:
+            if count <= query_params["limit"]:
                 break
-            params["offset"] += params["limit"]
+            query_params["offset"] += query_params["limit"]
             response = requests.get(
                 self.get_url(pvwa_host, "accounts"),
                 headers={
                     "Authorization": authorization_token,
                     "Content-Type": "application/json",
                 },
-                params=params,
+                params=query_params,
                 timeout=self.TIMEOUT,
                 verify=False,
             )
