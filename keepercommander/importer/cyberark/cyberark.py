@@ -60,20 +60,8 @@ class CyberArkImporter(BaseImporter):
         )
         if response.status_code != 200:
             raise CyberArkImporterException("Getting Accounts failed", response)
-        count = response.json().get("count", 0)
-        while params["offset"] < count:
-            response = requests.get(
-                self.get_url(pvwa_host, "accounts"),
-                headers={
-                    "Authorization": authorization_token,
-                    "Content-Type": "application/json",
-                },
-                params=params,
-                timeout=self.TIMEOUT,
-                verify=False,
-            )
-            if response.status_code != 200:
-                raise CyberArkImporterException("Getting Accounts failed", response)
+        while True:
+            count = response.json().get("count", 0)
             for r in response.json().get("value", []):
                 record = Record()
                 record.type = "serverCredentials"
@@ -100,4 +88,18 @@ class CyberArkImporter(BaseImporter):
                     )
                 record.password = response.text.strip('"')
                 yield record
+            if count <= params["limit"]:
+                break
             params["offset"] += params["limit"]
+            response = requests.get(
+                self.get_url(pvwa_host, "accounts"),
+                headers={
+                    "Authorization": authorization_token,
+                    "Content-Type": "application/json",
+                },
+                params=params,
+                timeout=self.TIMEOUT,
+                verify=False,
+            )
+            if response.status_code != 200:
+                raise CyberArkImporterException("Getting Accounts failed", response)
