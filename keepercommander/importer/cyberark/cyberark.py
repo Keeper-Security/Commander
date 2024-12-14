@@ -9,9 +9,9 @@ from ..importer import BaseImporter, Record, RecordField
 
 
 class CyberArkImporterException(BaseException):
-    def __init__(self, response, message):
+    def __init__(self, message, response):
         self.message = f"{message}: status {response.status_code}: {response.text}"
-
+        super().__init__(self.message)
 
 class CyberArkImporter(BaseImporter):
     # CyberArk REST API endpoints (relative to the base URL)
