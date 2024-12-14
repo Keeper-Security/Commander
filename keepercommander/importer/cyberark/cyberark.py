@@ -13,12 +13,13 @@ class CyberArkImporterException(BaseException):
         self.message = f"{message}: status {response.status_code}: {response.text}"
         super().__init__(self.message)
 
+
 class CyberArkImporter(BaseImporter):
     # CyberArk REST API endpoints (relative to the base URL)
     ENDPOINTS = {
         "accounts": "Accounts",
         "account_password": "Accounts/{account_id}/Password/Retrieve",
-        "logon": "Auth/LDAP/Logon",
+        "logon": "Auth/{type}/Logon",
     }
     # Request timeout in seconds
     TIMEOUT = 10
@@ -37,7 +38,9 @@ class CyberArkImporter(BaseImporter):
             pvwa_host = filename
 
         response = requests.post(
-            self.get_url(pvwa_host, "logon"),
+            self.get_url(pvwa_host, "logon").format(
+                type=input("CyberArk logon type (Cyberark, LDAP, RADIUS or Windows): ")
+            ),
             json={
                 "username": input("CyberArk username: "),
                 "password": getpass.getpass("CyberArk password: "),
