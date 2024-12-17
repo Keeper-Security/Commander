@@ -3001,8 +3001,8 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                 if not params.forbid_rsa:
                     rsa_private_key, rsa_public_key = crypto.generate_rsa_key()
                     encrypted_rsa_private_key = crypto.encrypt_aes_v1(crypto.unload_rsa_private_key(rsa_private_key), team_key)
-                    rq['public_key'] = utils.base64_url_encode(crypto.unload_rsa_public_key(rsa_public_key)),
-                    rq['private_key'] = utils.base64_url_encode(encrypted_rsa_private_key),
+                    rq['public_key'] = utils.base64_url_encode(crypto.unload_rsa_public_key(rsa_public_key))
+                    rq['private_key'] = utils.base64_url_encode(encrypted_rsa_private_key)
 
                 request_batch.append(rq)
         else:
