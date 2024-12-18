@@ -135,6 +135,7 @@ class ConsoleLoginUi(login_steps.LoginUi):
 
                 if response:
                     credential_id = response.credential_id
+                    extensions = dict(response.extension_results) if response.extension_results else {}
                     signature = {
                         "id": utils.base64_url_encode(credential_id),
                         "rawId": utils.base64_url_encode(credential_id),
@@ -144,7 +145,7 @@ class ConsoleLoginUi(login_steps.LoginUi):
                             "signature": utils.base64_url_encode(response.signature),
                         },
                         "type": "public-key",
-                        "clientExtensionResults": response.extension_results or {}
+                        "clientExtensionResults": extensions
                     }
                     step.duration = login_steps.TwoFactorDuration.EveryLogin
                     step.send_code(channel.channel_uid, json.dumps(signature))
