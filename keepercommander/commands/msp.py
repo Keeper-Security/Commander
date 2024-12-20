@@ -15,6 +15,7 @@ import datetime
 import json
 import logging
 import os
+from functools import reduce
 from typing import Set, Dict, List, Iterable, Any, Tuple, Union
 from urllib.parse import urlparse, urlunparse
 
@@ -627,6 +628,45 @@ class MSPBillingReportCommand(EnterpriseCommand):
             MSPBillingReportCommand.SNAPSHOT_CACHE[key] = snapshot
         return MSPBillingReportCommand.SNAPSHOT_CACHE[key]
 
+    @staticmethod
+    def get_bounding_snapshots(period_snapshots, mc_id=None):
+        # type: (Dict[DailySnapshot, Dict[int, int]], Union[str, None]) -> Tuple[Union[Dict[int, int], Dict[int, Tuple[int, int]]], Union[Dict[int, int], Dict[int, Tuple[int, int]]]]
+
+        snap_keys = period_snapshots.keys()
+
+        def get_mc_bounding_snapshots(mc):
+            # type: (str) -> Tuple[Dict[int, int], Dict[int, int]]
+            mc_snapshots = {ds for ds in snap_keys if ds.mc_enterprise_id == mc}
+            dates = {ds.date_no for ds in mc_snapshots}
+            start_date, end_date = min(dates), max(dates)
+            start_ds = [ds for ds in mc_snapshots if ds.date_no == start_date].pop()
+            end_ds = [ds for ds in mc_snapshots if ds.date_no == end_date].pop()
+            return period_snapshots.get(start_ds), period_snapshots.get(end_ds)
+
+        if mc_id is None:
+            start_snapshots = []
+            end_snapshots = []
+            mc_ids = {ds.mc_enterprise_id for ds in snap_keys}
+            # Get the first and last snapshot for each MC
+            for mc in mc_ids:
+                start, end = get_mc_bounding_snapshots(mc)
+                start and start_snapshots.append(start)
+                end and end_snapshots.append(end)
+
+            # Merge all first snapshots together, then all last snapshots
+            merge_counts = lambda x, y: DailySnapshot.merge_units((x, y))
+            start_snapshot = reduce(merge_counts, start_snapshots)
+            end_snapshot = reduce(merge_counts, end_snapshots)
+            return start_snapshot, end_snapshot
+        else:
+             return get_mc_bounding_snapshots(mc_id)
+
+    @staticmethod
+    def get_num_reported_days(period_snapshots): # type: (Dict[DailySnapshot, Dict[int, int]]) -> int
+        dates = [ds.date_no for ds in period_snapshots]
+        return max(dates) - min(dates) + 1
+
+
     def execute(self, params, **kwargs):
         month_str = kwargs.get('month')
         if not month_str:
@@ -663,7 +703,7 @@ class MSPBillingReportCommand(EnterpriseCommand):
             headers.extend(('company', 'company_id'))
         headers.extend(('product', 'licenses', 'rate'))
         if not show_date:
-            headers.append('avg_per_day')
+            headers.extend(['avg_per_day', 'initial_licenses', 'final_licenses'])
         plan_lookup = {x[0]: x for x in constants.MSP_PLANS}
         storage_lookup = {x[0]: x for x in constants.MSP_FILE_PLANS}
         addon_lookup = {}
@@ -675,6 +715,9 @@ class MSPBillingReportCommand(EnterpriseCommand):
         for point in merged_counts:
             day_str = str(datetime.date.fromordinal(point.date_no)) if show_date else ''
             company = MSPBillingReportCommand.COMPANY_CACHE.get(point.mc_enterprise_id, '') if show_company else ''
+            start_snapshots, end_snapshots = (None, None) \
+                if show_date \
+                else MSPBillingReportCommand.get_bounding_snapshots(daily_counts, None if not show_company else point.mc_enterprise_id)
             counts = merged_counts[point]
             products = list(counts.keys())
             products.sort()
@@ -685,7 +728,9 @@ class MSPBillingReportCommand(EnterpriseCommand):
                 if show_company:
                     row.extend((company, point.mc_enterprise_id))
                 count_id = MSPBillingReportCommand.get_count_id(product)
-                count, days = counts[product]
+                count, days = counts[product] \
+                    if show_company \
+                    else (counts[product][0], MSPBillingReportCommand.get_num_reported_days(daily_counts))
 
                 product_name = ''
                 rate_text = ''
@@ -716,6 +761,15 @@ class MSPBillingReportCommand(EnterpriseCommand):
                 row.extend((product_name, count, rate_text))
                 if not show_date:
                     row.append(round(count / days, 2))
+                    if start_snapshots and end_snapshots:
+                        start_counts_data = start_snapshots.get(product)
+                        end_counts_data = end_snapshots.get(product)
+                        if isinstance(start_counts_data, int):
+                            start_count, end_count = start_counts_data, end_counts_data
+                        else:
+                            start_count, _ = start_counts_data
+                            end_count, _ = end_counts_data
+                        row.extend([start_count, end_count])
 
                 table.append(row)
 
