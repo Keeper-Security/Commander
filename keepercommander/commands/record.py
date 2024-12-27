@@ -150,8 +150,10 @@ clipboard_copy_parser = argparse.ArgumentParser(
     prog='clipboard-copy', description='Retrieve the password for a specific record.')
 clipboard_copy_parser.add_argument('--username', dest='username', action='store', help='match login name (optional)')
 clipboard_copy_parser.add_argument(
-    '--output', dest='output', choices=['clipboard', 'stdout', 'stdouthidden'], default='clipboard', action='store',
+    '--output', dest='output', choices=['clipboard', 'stdout', 'stdouthidden', 'variable'], default='clipboard', action='store',
     help='password output destination')
+clipboard_copy_parser.add_argument(
+    '--name', dest='name', action='store', help='Variable name if output is set to variable')
 clipboard_copy_parser.add_argument(
     '-cu', '--copy-uid', dest='copy_uid', action='store_true', help='output uid instead of password')
 clipboard_copy_parser.add_argument(
@@ -1894,6 +1896,12 @@ class ClipboardCommand(Command, RecordMixin):
                 logging.info(f'{copy_item} copied to clipboard')
             elif kwargs['output'] == 'stdouthidden':
                 print(f'{Fore.RED}{Back.RED}{txt}{Style.RESET_ALL}')
+            elif kwargs['output'] == 'variable':
+                var_name = kwargs.get('name')
+                if not var_name:
+                    raise CommandError('', '"name" parameter is required when "output" is set to "variable"')
+                params.environment_variables[var_name] = txt
+                logging.info(f'{copy_item} is set to variable "{var_name}"')
             else:
                 print(txt)
 
