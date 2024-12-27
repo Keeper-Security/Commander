@@ -325,7 +325,6 @@ def size_to_str(size):  # type: (int) -> str
     size = size / 1024
     return f'{size:,.2f} Gb'
 
-
 def parse_totp_uri(uri):    # type: (str) -> Dict[str, Union[str, int, None]]
     def parse_int(val):
         return val and int(val)
@@ -363,3 +362,15 @@ def parse_totp_uri(uri):    # type: (str) -> Dict[str, Union[str, int, None]]
         }
 
     return result
+
+def value_to_boolean(value):
+    """
+    Replacement for distutils.util.strtobool
+    """
+    value = str(value)
+    if value.lower() in ['true', 'yes', 'on', '1']:
+        return True
+    elif value.lower() in ['false', 'no', 'off', '0']:
+        return False
+    else:
+        return None
