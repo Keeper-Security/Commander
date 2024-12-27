@@ -181,7 +181,7 @@ class _EnterpriseLoader(object):
             if self._continuationToken:
                 rq.continuationToken = self._continuationToken
             rs = api.communicate_rest(params, rq, 'enterprise/get_enterprise_data_for_user',
-                                      rs_type=proto.EnterpriseDataResponse)
+                                      rs_type=proto.EnterpriseDataResponse, payload_version=2)
 
             if rs.cacheStatus == proto.CLEAR:
                 for d in self._data_types.values():
