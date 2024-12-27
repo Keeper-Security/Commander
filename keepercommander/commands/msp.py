@@ -635,12 +635,14 @@ class MSPBillingReportCommand(EnterpriseCommand):
         snap_keys = period_snapshots.keys()
 
         def get_mc_bounding_snapshots(mc):
-            # type: (str) -> Tuple[Dict[int, int], Dict[int, int]]
+            # type: (str) -> Tuple[Union[Dict[int, int], None], Union[Dict[int, int], None]]
             mc_snapshots = {ds for ds in snap_keys if ds.mc_enterprise_id == mc}
+            if not len(mc_snapshots):
+                return None, None
             dates = {ds.date_no for ds in mc_snapshots}
             start_date, end_date = min(dates), max(dates)
-            start_ds = [ds for ds in mc_snapshots if ds.date_no == start_date].pop()
-            end_ds = [ds for ds in mc_snapshots if ds.date_no == end_date].pop()
+            start_ds = next((ds for ds in mc_snapshots if ds.date_no == start_date), None)
+            end_ds = next((ds for ds in mc_snapshots if ds.date_no == end_date), None)
             return period_snapshots.get(start_ds), period_snapshots.get(end_ds)
 
         if mc_id is None:
@@ -659,13 +661,12 @@ class MSPBillingReportCommand(EnterpriseCommand):
             end_snapshot = reduce(merge_counts, end_snapshots)
             return start_snapshot, end_snapshot
         else:
-             return get_mc_bounding_snapshots(mc_id)
+            return get_mc_bounding_snapshots(mc_id)
 
     @staticmethod
     def get_num_reported_days(period_snapshots): # type: (Dict[DailySnapshot, Dict[int, int]]) -> int
         dates = [ds.date_no for ds in period_snapshots]
-        return max(dates) - min(dates) + 1
-
+        return max(dates) - min(dates) + 1 if dates else 30
 
     def execute(self, params, **kwargs):
         month_str = kwargs.get('month')
@@ -761,15 +762,11 @@ class MSPBillingReportCommand(EnterpriseCommand):
                 row.extend((product_name, count, rate_text))
                 if not show_date:
                     row.append(round(count / days, 2))
-                    if start_snapshots and end_snapshots:
-                        start_counts_data = start_snapshots.get(product)
-                        end_counts_data = end_snapshots.get(product)
-                        if isinstance(start_counts_data, int):
-                            start_count, end_count = start_counts_data, end_counts_data
-                        else:
-                            start_count, _ = start_counts_data
-                            end_count, _ = end_counts_data
-                        row.extend([start_count, end_count])
+                    start_counts_data = 0 if start_snapshots is None else start_snapshots.get(product) or 0
+                    end_counts_data = 0 if start_snapshots is None else end_snapshots.get(product) or 0
+                    start_count = next(iter(start_counts_data)) if isinstance(start_counts_data, tuple) else start_counts_data
+                    end_count = next(iter(end_counts_data)) if isinstance(end_counts_data, tuple) else end_counts_data
+                    row.extend([start_count, end_count])
 
                 table.append(row)
 
