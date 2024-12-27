@@ -22,10 +22,10 @@ from urllib.parse import urlparse, urlunparse
 from .base import dump_report_data, user_choice, field_to_title, report_output_parser
 from .enterprise import EnterpriseCommand
 from .. import api, crypto, utils, loginv3, constants
-from ..params import KeeperParams
 from ..display import bcolors
 from ..error import CommandError
-from ..proto import enterprise_pb2, BI_pb2
+from ..params import KeeperParams
+from ..proto import enterprise_pb2, BI_pb2, APIRequest_pb2
 
 
 def register_commands(commands):
@@ -621,7 +621,7 @@ class MSPBillingReportCommand(EnterpriseCommand):
                         if addon.maxAddonId > 0:
                             units[addon.maxAddonId * 10000] = addon.units
                 mc_id = record.mcEnterpriseId
-                ds = datetime.datetime.utcfromtimestamp(record.date // 1000)
+                ds = datetime.datetime.fromtimestamp(record.date // 1000, tz=datetime.timezone.utc)
                 dt = ds.date()
                 daily = DailySnapshot(mc_id, dt.toordinal())
                 snapshot[daily] = units
@@ -1208,18 +1208,7 @@ class MSPConvertNodeCommand(EnterpriseCommand):
                 (x for x in params.enterprise.get('managed_companies', []) if x['mc_enterprise_name'] == msp_node_name),
                 None)
         tree_key = params.enterprise['unencrypted_tree_key']
-        if mc:
-            mc_id = mc['mc_enterprise_id']
-            encrypted_tree_key = mc.get('tree_key')
-            if not encrypted_tree_key:
-                login_rq = enterprise_pb2.LoginToMcRequest()
-                login_rq.mcEnterpriseId = mc_id
-                login_rq.messageSessionUid = utils.base64_url_decode(params.session_token)
-                login_rs = api.communicate_rest(
-                    params, login_rq, 'authentication/login_to_mc', rs_type=enterprise_pb2.LoginToMcResponse)
-                encrypted_tree_key = login_rs.encryptedTreeKey
-            mc_tree_key = crypto.decrypt_aes_v2(utils.base64_url_decode(encrypted_tree_key), tree_key)
-        else:
+        if not mc:
             mc_tree_key = utils.generate_aes_key()
             rq = {
                 'command': 'enterprise_registration_by_msp',
@@ -1236,6 +1225,11 @@ class MSPConvertNodeCommand(EnterpriseCommand):
             }
             rs = api.communicate(params, rq)
             mc_id = rs['enterprise_id']
+        else:
+            mc_id = mc['mc_enterprise_id']
+
+        mc_params = api.login_and_get_mc_params_login_v3(params, mc_id)
+        mc_tree_key = mc_params.enterprise['unencrypted_tree_key']
 
         mc_rq = enterprise_pb2.NodeToManagedCompanyRequest()
         mc_rq.companyId = mc_id
@@ -1291,6 +1285,32 @@ class MSPConvertNodeCommand(EnterpriseCommand):
                 else:
                     etkr.force = True
                 mc_rq.teamKeys.append(etkr)
+
+        dk_rq = APIRequest_pb2.UserDataKeyByNodeRequest()
+        dk_rq.nodeIds.extend(nodes_to_move)
+        dk_rs = api.communicate_rest(params, dk_rq, 'enterprise/get_enterprise_user_data_key_by_node',
+                                     rs_type=enterprise_pb2.EnterpriseUserDataKeysByNodeResponse)
+
+        if len(dk_rs.keys) > 0:
+            keys = params.enterprise['keys']
+            mc_keys = mc_params.enterprise['keys']
+            if 'ecc_encrypted_private_key' in keys and 'ecc_public_key' in mc_keys:
+                encrypted_ec_private_key = utils.base64_url_decode(keys['ecc_encrypted_private_key'])
+                ec_private_key = crypto.decrypt_aes_v2(encrypted_ec_private_key, tree_key)
+                private_key = crypto.load_ec_private_key(ec_private_key)
+                mc_public_key = crypto.load_ec_public_key(utils.base64_url_decode(mc_keys['ecc_public_key']))
+
+                for dk_node in dk_rs.keys:
+                    for dk in dk_node.keys:
+                        if dk.keyTypeId == 4:
+                            enterprise_user_id = dk.enterpriseUserId
+                            if enterprise_user_id in users_to_move:
+                                encrypted_key = crypto.decrypt_ec(dk.userEncryptedDataKey, private_key)
+                                encrypted_key = crypto.encrypt_ec(encrypted_key, mc_public_key)
+                                re_dk = enterprise_pb2.ReEncryptedUserDataKey()
+                                re_dk.enterpriseUserId = enterprise_user_id
+                                re_dk.userEncryptedDataKey = encrypted_key
+                                mc_rq.usersDataKeys.append(re_dk)
 
         api.communicate_rest(params, mc_rq, 'enterprise/node_to_managed_company')
         logging.info(f'Node \"{msp_node_name}\" was converted to Managed Company')
