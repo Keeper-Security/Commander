@@ -10,4 +10,4 @@
 # Contact: ops@keepersecurity.com
 #
 
-__version__ = '16.11.22'
+__version__ = '17.0.0'
