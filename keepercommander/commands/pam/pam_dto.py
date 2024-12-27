@@ -17,20 +17,62 @@ class RouterRequest:
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
 
 
-# ACTION INPUTS
+# ACTION DISCOVER INPUTS
 
+class GatewayActionDiscoverJobStartInputs:
 
-class GatewayActionDiscoverInputs:
+    def __init__(self, configuration_uid, user_map, shared_folder_uid, resource_uid=None, language="en",
+                 # Settings
+                 include_machine_dir_users=False,
+                 include_azure_aadds=False,
+                 skip_rules=False,
+                 skip_machines=False,
+                 skip_databases=False,
+                 skip_directories=False,
+                 skip_cloud_users=False,
+                 credentials=None):
+        self.configurationUid = configuration_uid
+        self.resourceUid = resource_uid
+        self.userMap = user_map
+        self.sharedFolderUid = shared_folder_uid
+        self.language = language
+        self.includeMachineDirUsers = include_machine_dir_users
+        self.includeAzureAadds = include_azure_aadds
+        self.skipRules = skip_rules
+        self.skipMachines = skip_machines
+        self.skipDatabases = skip_databases
+        self.skipDirectories = skip_directories
+        self.skipCloudUsers = skip_cloud_users
 
-    def __init__(self, shared_folder_uid, provider_record_uid):
-        self.shared_folder_uid = shared_folder_uid
-        self.provider_record_uid = provider_record_uid
+        if credentials is None:
+            credentials = []
+        self.credentials = credentials
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
 
 
+class GatewayActionDiscoverJobRemoveInputs:
+
+    def __init__(self, configuration_uid, job_id):
+        self.configurationUid = configuration_uid
+        self.jobId = job_id
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionDiscoverRuleValidateInputs:
+
+    def __init__(self, configuration_uid, statement):
+        self.configurationUid = configuration_uid
+        self.statement = statement
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
 # ACTIONS
+
 
 class GatewayAction(metaclass=abc.ABCMeta):
 
@@ -67,10 +109,29 @@ class GatewayActionGatewayInfo(GatewayAction):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
 
 
-class GatewayActionDiscover(GatewayAction):
+class GatewayActionDiscoverJobStart(GatewayAction):
 
-    def __init__(self, inputs: GatewayActionDiscoverInputs, conversation_id=None):
-        super().__init__('discover', inputs=inputs, conversation_id=conversation_id, is_scheduled=True)
+    def __init__(self, inputs: GatewayActionDiscoverJobStartInputs, conversation_id=None):
+        super().__init__('discover-job-start', inputs=inputs, conversation_id=conversation_id, is_scheduled=True)
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionDiscoverJobRemove(GatewayAction):
+
+    def __init__(self, inputs: GatewayActionDiscoverJobRemoveInputs, conversation_id=None):
+        super().__init__('discover-job-remove', inputs=inputs, conversation_id=conversation_id, is_scheduled=True)
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionDiscoverRuleValidate(GatewayAction):
+
+    def __init__(self, inputs: GatewayActionDiscoverRuleValidateInputs, conversation_id=None):
+        super().__init__('discover-rule-validate', inputs=inputs, conversation_id=conversation_id,
+                         is_scheduled=True)
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
@@ -118,8 +179,8 @@ class GatewayActionRotateInputs:
 class GatewayActionRotate(GatewayAction):
 
     def __init__(self, inputs: GatewayActionRotateInputs, conversation_id=None, gateway_destination=None):
-        super().__init__('rotate', inputs=inputs, conversation_id=conversation_id, gateway_destination=gateway_destination,
-                         is_scheduled=True)
+        super().__init__('rotate', inputs=inputs, conversation_id=conversation_id,
+                         gateway_destination=gateway_destination, is_scheduled=True)
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
