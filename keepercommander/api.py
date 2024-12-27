@@ -310,7 +310,8 @@ def load_user_public_keys(params, emails, send_invites=False):  # type: (KeeperP
         if pk.errorCode in ['', 'success']:
             rsa = pk.publicKey
             ec = pk.publicEccKey
-            params.key_cache[email] = PublicKeys(rsa=rsa, ec=ec)
+            aes = params.data_key if email == params.user else None
+            params.key_cache[email] = PublicKeys(aes=aes, rsa=rsa, ec=ec)
         elif pk.errorCode == 'no_active_share_exist':
             need_share_accept.append(pk.username)
     if len(need_share_accept) > 0 and send_invites:

@@ -106,13 +106,16 @@ class EnterpriseCommand(Command):
                             if role_key:
                                 encrypted_role_key = crypto.encrypt_ec(role_key, ec_key)
                                 rq['role_admin_key'] = utils.base64_url_encode(encrypted_role_key)
+                                rq['role_admin_key_type'] = 'encrypted_by_public_key_ecc'
                         elif not params.forbid_rsa and public_key.rsa:
                             rsa_key = crypto.load_rsa_public_key(public_key.rsa)
                             encrypted_tree_key = crypto.encrypt_rsa(tree_key, rsa_key)
                             rq['tree_key'] = utils.base64_url_encode(encrypted_tree_key)
+                            rq['tree_key_type'] = 'encrypted_by_public_key'
                             if role_key:
                                 encrypted_role_key = crypto.encrypt_rsa(role_key, rsa_key)
                                 rq['role_admin_key'] = utils.base64_url_encode(encrypted_role_key)
+                                rq['role_admin_key_type'] = 'encrypted_by_public_key'
                         else:
                             continue
 

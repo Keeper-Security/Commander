@@ -1654,13 +1654,16 @@ class EnterpriseUserCommand(EnterpriseCommand):
                                             rq['tree_key'] = utils.base64_url_encode(encrypted_tree_key)
                                             if role_key:
                                                 encrypted_role_key = crypto.encrypt_ec(role_key, ec_key)
+                                                rq['role_admin_key_type'] = 'encrypted_by_public_key_ecc'
                                                 rq['role_admin_key'] = utils.base64_url_encode(encrypted_role_key)
                                         elif not params.forbid_rsa and public_key.rsa:
                                             rsa_key = crypto.load_rsa_public_key(public_key.rsa)
                                             encrypted_tree_key = crypto.encrypt_rsa(tree_key, rsa_key)
+                                            rq['tree_key_type'] = 'encrypted_by_public_key'
                                             rq['tree_key'] = utils.base64_url_encode(encrypted_tree_key)
                                             if role_key:
                                                 encrypted_role_key = crypto.encrypt_rsa(role_key, rsa_key)
+                                                rq['role_admin_key_type'] = 'encrypted_by_public_key'
                                                 rq['role_admin_key'] = utils.base64_url_encode(encrypted_role_key)
                                         else:
                                             continue
@@ -2356,11 +2359,11 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     for node_id in node_changes:
                         is_add, node_name = node_changes[node_id]
                         is_update = is_add and self.is_node_managed_by_role(params, node_id, role_id)
-                        action = 'remove' if not is_add \
-                            else 'update' if is_update \
-                            else 'add'
+                        command = 'role_managed_node_remove' if not is_add \
+                            else 'role_managed_node_update' if is_update \
+                            else 'role_managed_node_add'
                         rq = {
-                            "command": f'role_managed_node_{action}',
+                            "command": command,
                             "role_id": role_id,
                             "managed_node_id": node_id
                         }
@@ -2390,6 +2393,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                                     rq['tree_keys'].append({
                                                         'enterprise_user_id': user_id,
                                                         'tree_key': utils.base64_url_encode(encrypted_tree_key),
+                                                        'tree_key_type': 'encrypted_by_public_key'
                                                     })
                                                 else:
                                                     continue
