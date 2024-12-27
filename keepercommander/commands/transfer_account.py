@@ -210,7 +210,8 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
     @staticmethod
     def transfer_user_account(params, username, target_user, target_public_key):
         # type: (KeeperParams, str, str, PublicKeys) -> bool
-        ec_public_key = crypto.load_ec_public_key(target_public_key.ec) if target_public_key.ec and params.forbid_rsa else None
+        aes_key = target_public_key.aes
+        ec_public_key = crypto.load_ec_public_key(target_public_key.ec) if target_public_key.ec else None
         rsa_public_key = crypto.load_rsa_public_key(target_public_key.rsa) if target_public_key.rsa and not params.forbid_rsa else None
         if not ec_public_key and not rsa_public_key:
             raise Exception(f'Cannot user target user public key')
@@ -278,8 +279,6 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                 'from_user': username,
                 'to_user': target_user
             }
-            if ec_public_key:
-                rqt['key_type'] = 'encrypted_by_public_key_ecc'
 
             if 'record_keys' in rs:
                 rqt['record_keys'] = []
@@ -301,13 +300,15 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                             record_key = user_data_key
                         else:
                             raise Exception(f'Unsupported record key type')
-
                         if ec_public_key:
                             encrypted_record_key = crypto.encrypt_ec(record_key, ec_public_key)
                             record_key_type = 'encrypted_by_public_key_ecc'
-                        else:
+                        elif rsa_public_key:
                             encrypted_record_key = crypto.encrypt_rsa(record_key, rsa_public_key)
                             record_key_type = 'encrypted_by_public_key'
+                        else:
+                            raise Exception(f'Cannot re-encrypt record key')
+
                         rqt['record_keys'].append({
                             'record_uid': record_uid,
                             'record_key': utils.base64_url_encode(encrypted_record_key),
@@ -336,12 +337,25 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                         else:
                             raise Exception(f'Unsupported shared folder key type')
 
-                        if ec_public_key:
-                            encrypted_shared_folder_key = crypto.encrypt_ec(shared_folder_key, ec_public_key)
-                            shared_folder_key_type = 'encrypted_by_public_key_ecc'
+                        if params.forbid_rsa:
+                            if aes_key:
+                                encrypted_shared_folder_key = crypto.encrypt_aes_v2(shared_folder_key, aes_key)
+                                shared_folder_key_type = 'encrypted_by_data_key_gcm'
+                            elif ec_public_key:
+                                encrypted_shared_folder_key = crypto.encrypt_ec(shared_folder_key, ec_public_key)
+                                shared_folder_key_type = 'encrypted_by_public_key_ecc'
+                            else:
+                                raise Exception(f'Cannot re-encrypt shared folder key')
                         else:
-                            encrypted_shared_folder_key = crypto.encrypt_rsa(shared_folder_key, rsa_public_key)
-                            shared_folder_key_type = 'encrypted_by_public_key'
+                            if aes_key:
+                                encrypted_shared_folder_key = crypto.encrypt_aes_v1(shared_folder_key, aes_key)
+                                shared_folder_key_type = 'encrypted_by_data_key'
+                            elif rsa_public_key:
+                                encrypted_shared_folder_key = crypto.encrypt_rsa(shared_folder_key, rsa_public_key)
+                                shared_folder_key_type = 'encrypted_by_public_key'
+                            else:
+                                raise Exception(f'Cannot re-encrypt shared folder key')
+
                         rqt['shared_folder_keys'].append({
                             'shared_folder_uid': shared_folder_uid,
                             'shared_folder_key': utils.base64_url_encode(encrypted_shared_folder_key),
@@ -370,12 +384,24 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                         else:
                             raise Exception(f'Unsupported team key type')
 
-                        if ec_public_key:
-                            encrypted_team_key = crypto.encrypt_ec(team_key, ec_public_key)
-                            team_key_type = 'encrypted_by_public_key_ecc'
+                        if params.forbid_rsa:
+                            if aes_key:
+                                encrypted_team_key = crypto.encrypt_aes_v2(team_key, aes_key)
+                                team_key_type = 'encrypted_by_data_key_gcm'
+                            elif ec_public_key:
+                                encrypted_team_key = crypto.encrypt_ec(team_key, ec_public_key)
+                                team_key_type = 'encrypted_by_public_key_ecc'
+                            else:
+                                raise Exception(f'Cannot re-encrypt team key')
                         else:
-                            encrypted_team_key = crypto.encrypt_rsa(team_key, rsa_public_key)
-                            team_key_type = 'encrypted_by_public_key'
+                            if aes_key:
+                                encrypted_team_key = crypto.encrypt_aes_v1(team_key, aes_key)
+                                team_key_type = 'encrypted_by_data_key'
+                            elif rsa_public_key:
+                                encrypted_team_key = crypto.encrypt_rsa(team_key, rsa_public_key)
+                                team_key_type = 'encrypted_by_public_key'
+                            else:
+                                raise Exception(f'Cannot re-encrypt team key')
                         rqt['team_keys'].append({
                             'team_uid': team_uid,
                             'team_key': utils.base64_url_encode(encrypted_team_key),
@@ -391,13 +417,29 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                 folder_key = utils.generate_aes_key()
                 folder_data = json.dumps({ 'name': f'Transfer from {username}' }).encode('utf-8')
                 folder_data = crypto.encrypt_aes_v1(folder_data, folder_key)
-                if ec_public_key:
-                    encrypted_folder_key = crypto.encrypt_ec(folder_key, ec_public_key)
+                if params.forbid_rsa:
+                    if aes_key:
+                        encrypted_folder_key = crypto.encrypt_aes_v2(folder_key, aes_key)
+                        folder_key_type = 'encrypted_by_data_key_gcm'
+                    elif ec_public_key:
+                        encrypted_folder_key = crypto.encrypt_ec(folder_key, ec_public_key)
+                        folder_key_type = 'encrypted_by_public_key_ecc'
+                    else:
+                        raise Exception(f'Cannot re-encrypt user folder key')
                 else:
-                    encrypted_folder_key = crypto.encrypt_rsa(folder_key, rsa_public_key)
+                    if aes_key:
+                        encrypted_folder_key = crypto.encrypt_aes_v1(folder_key, aes_key)
+                        folder_key_type = 'encrypted_by_data_key'
+                    elif rsa_public_key:
+                        encrypted_folder_key = crypto.encrypt_rsa(folder_key, rsa_public_key)
+                        folder_key_type = 'encrypted_by_public_key'
+                    else:
+                        raise Exception(f'Cannot re-encrypt user folder key')
+
                 rqt['user_folder_transfer'] = {
                     'transfer_folder_uid': utils.generate_uid(),
                     'transfer_folder_key': utils.base64_url_encode(encrypted_folder_key),
+                    'transfer_folder_key_type': folder_key_type,
                     'transfer_folder_data': utils.base64_url_encode(folder_data)
                 }
                 for ufk in rs['user_folder_keys']:
@@ -415,13 +457,24 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                             user_folder_key = crypto.decrypt_ec(user_folder_key, user_ecc_private_key)
                         else:
                             raise Exception(f'Unsupported user folder key type')
-
-                        if ec_public_key:
-                            encrypted_user_folder_key = crypto.encrypt_ec(user_folder_key, ec_public_key)
-                            user_folder_key_type = 'encrypted_by_public_key_ecc'
+                        if params.forbid_rsa:
+                            if aes_key:
+                                encrypted_user_folder_key = crypto.encrypt_aes_v2(user_folder_key, aes_key)
+                                user_folder_key_type = 'encrypted_by_data_key_gcm'
+                            elif ec_public_key:
+                                encrypted_user_folder_key = crypto.encrypt_ec(user_folder_key, ec_public_key)
+                                user_folder_key_type = 'encrypted_by_public_key_ecc'
+                            else:
+                                raise Exception(f'Cannot re-encrypt user folder key')
                         else:
-                            encrypted_user_folder_key = crypto.encrypt_rsa(user_folder_key, rsa_public_key)
-                            user_folder_key_type = 'encrypted_by_public_key'
+                            if aes_key:
+                                encrypted_user_folder_key = crypto.encrypt_aes_v1(user_folder_key, aes_key)
+                                user_folder_key_type = 'encrypted_by_data_key'
+                            elif ec_public_key:
+                                encrypted_user_folder_key = crypto.encrypt_rsa(user_folder_key, rsa_public_key)
+                                user_folder_key_type = 'encrypted_by_public_key'
+                            else:
+                                raise Exception(f'Cannot re-encrypt user folder key')
                         rqt['user_folder_keys'].append({
                             'user_folder_uid': user_folder_uid,
                             'user_folder_key': utils.base64_url_encode(encrypted_user_folder_key),
