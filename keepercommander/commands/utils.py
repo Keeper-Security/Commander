@@ -1364,10 +1364,13 @@ class SyncSecurityDataCommand(Command):
         ex_pw_rec_uids = no_pw_rec_uids & sd_rec_uids
         ex_pw_recs = [(vault.KeeperRecord.load(params, r), None) for r in ex_pw_rec_uids]
         to_update = [*pw_recs, *ex_pw_recs]
+        to_update = [(r, p) for r, p in to_update if r is not None]
 
         bw_enabled = bool(params.breach_watch)
 
         def has_stale_security_data(record):
+            if not record:
+                return False
             record_security_data = sd_objs.get(record.record_uid, {})
             sd_revision = record_security_data.get('revision', 0)
             if bw_enabled:
