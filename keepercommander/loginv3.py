@@ -1040,7 +1040,7 @@ class LoginV3API:
     @staticmethod
     def accountSummary(params: KeeperParams):
         rq = AccountSummary_pb2.AccountSummaryRequest()
-        rq.summaryVersion = 1
+        rq.summaryVersion = 3
         return api.communicate_rest(params, rq, 'login/account_summary', rs_type=AccountSummary_pb2.AccountSummaryElements)
 
     @staticmethod
