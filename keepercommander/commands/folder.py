@@ -1007,7 +1007,7 @@ class ShortcutListCommand(Command):
             record = vault.KeeperRecord.load(params, record_uid)
             if record:
                 folders = [params.folder_cache.get(x, params.root_folder) for x in records[record_uid]]
-                folders.sort(key=lambda x: x.name)
+                folders.sort(key=lambda x: x.name or '')
                 f = []
                 for x in folders:
                     is_shared = True if x.type in {BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType} else False
