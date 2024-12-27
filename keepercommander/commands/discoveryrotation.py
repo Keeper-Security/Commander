@@ -22,37 +22,60 @@ import time
 from datetime import datetime
 from typing import Dict, Optional, Any, Set, List
 
+
 import requests
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec
-from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from keeper_secrets_manager_core.utils import url_safe_str_to_bytes, bytes_to_base64, base64_to_bytes
 
-from .base import Command, GroupCommand, user_choice, dump_report_data, report_output_parser, field_to_title, FolderMixin
+from .base import (Command, GroupCommand, user_choice, dump_report_data, report_output_parser, field_to_title,
+                   FolderMixin)
 from .folder import FolderMoveCommand
 from .ksm import KSMCommand
 from .pam import gateway_helper, router_helper
 from .pam.config_facades import PamConfigurationRecordFacade
-from .pam.config_helper import pam_configurations_get_all, pam_configuration_remove, pam_configuration_create_record_v6, record_rotation_get, \
+from .pam.config_helper import configuration_controller_get
+from .pam.config_helper import pam_configurations_get_all, \
+    pam_configuration_remove, pam_configuration_create_record_v6, record_rotation_get, \
     pam_decrypt_configuration_data
-from .pam.pam_dto import GatewayActionGatewayInfo, GatewayActionDiscoverInputs, GatewayActionDiscover, \
-    GatewayActionRotate, \
-    GatewayActionRotateInputs, GatewayAction, GatewayActionJobInfoInputs, \
-    GatewayActionJobInfo, GatewayActionJobCancel
+from .pam.pam_dto import (
+    GatewayActionGatewayInfo,
+    GatewayActionRotate,
+    GatewayActionRotateInputs, GatewayAction, GatewayActionJobInfoInputs,
+    GatewayActionJobInfo,
+    GatewayActionJobCancel)
+
 from .pam.router_helper import router_send_action_to_gateway, print_router_response, \
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, \
     get_router_url
 from .record_edit import RecordEditMixin
-from .tunnel.port_forward.endpoint import establish_symmetric_key, WebRTCConnection, TunnelEntrance, READ_TIMEOUT, \
-    find_open_port, CloseConnectionReasons
+from .tunnel.port_forward.endpoint import WebRTCConnection, TunnelEntrance, READ_TIMEOUT, \
+    find_open_port, CloseConnectionReasons, SOCKS5Server, TunnelDAG, get_config_uid, MAIN_NONCE_LENGTH, \
+    SYMMETRIC_KEY_LENGTH, get_keeper_tokens
 from .. import api, utils, vault_extensions, crypto, vault, record_management, attachment, record_facades
 from ..display import bcolors
 from ..error import CommandError, KeeperApiError
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..proto import pam_pb2, router_pb2, record_pb2
-from ..proto.APIRequest_pb2 import GetKsmPublicKeysRequest, GetKsmPublicKeysResponse
 from ..subfolder import find_parent_top_folder, try_resolve_path, BaseFolderNode
 from ..vault import TypedField
+from .discover.job_start import PAMGatewayActionDiscoverJobStartCommand
+from .discover.job_status import PAMGatewayActionDiscoverJobStatusCommand
+from .discover.job_remove import PAMGatewayActionDiscoverJobRemoveCommand
+from .discover.result_process import PAMGatewayActionDiscoverResultProcessCommand
+from .discover.rule_add import PAMGatewayActionDiscoverRuleAddCommand
+from .discover.rule_list import PAMGatewayActionDiscoverRuleListCommand
+from .discover.rule_remove import PAMGatewayActionDiscoverRuleRemoveCommand
+from .discover.rule_update import PAMGatewayActionDiscoverRuleUpdateCommand
+from .pam_debug.acl import PAMDebugACLCommand
+from .pam_debug.alter import PAMDebugAlterCommand
+from .pam_debug.graph import PAMDebugGraphCommand
+from .pam_debug.info import PAMDebugInfoCommand
+from .pam_debug.verify import PAMDebugVerifyCommand
+from .pam_debug.version import PAMDebugVersionCommand
+from .pam_debug.gateway import PAMDebugGatewayCommand
 
 
 def register_commands(commands):
@@ -94,9 +117,8 @@ class PAMTunnelCommand(GroupCommand):
         self.register_command('list', PAMTunnelListCommand(), 'List all Tunnels', 'l')
         self.register_command('stop', PAMTunnelStopCommand(), 'Stop Tunnel to the server', 'x')
         self.register_command('tail', PAMTunnelTailCommand(), 'View Tunnel Log', 't')
-        self.register_command('disable', PAMTunnelDisableCommand(), 'Disable Tunnel', 'd')
-        self.register_command('enable', PAMTunnelEnableCommand(), 'Enable Tunnel', 'e')
-        # self.default_verb = 'list'
+        self.register_command('edit', PAMTunnelEditCommand(), 'Edit Tunnel settings', 'e')
+        self.default_verb = 'list'
 
 
 class PAMConfigurationsCommand(GroupCommand):
@@ -115,10 +137,34 @@ class PAMRotationCommand(GroupCommand):
 
     def __init__(self):
         super(PAMRotationCommand, self).__init__()
-        self.register_command('set',  PAMCreateRecordRotationCommand(), 'Sets Record Rotation configuration', 'new')
+        self.register_command('edit',  PAMCreateRecordRotationCommand(), 'Edits Record Rotation configuration', 'new')
         self.register_command('list', PAMListRecordRotationCommand(), 'List Record Rotation configuration', 'l')
         self.register_command('info', PAMRouterGetRotationInfo(), 'Get Rotation Info', 'i')
         self.register_command('script', PAMRouterScriptCommand(), 'Add, delete, or edit script field')
+        self.default_verb = 'list'
+
+
+class PAMDiscoveryCommand(GroupCommand):
+
+    def __init__(self):
+        super(PAMDiscoveryCommand, self).__init__()
+        self.register_command('start', PAMGatewayActionDiscoverJobStartCommand(), 'Start a discovery process', 's')
+        self.register_command('status', PAMGatewayActionDiscoverJobStatusCommand(), 'Status of discovery jobs', 'st')
+        self.register_command('remove', PAMGatewayActionDiscoverJobRemoveCommand(), 'Cancel or remove of discovery jobs', 'r')
+        self.register_command('process', PAMGatewayActionDiscoverResultProcessCommand(), 'Process discovered items', 'p')
+        self.register_command('rule', PAMDiscoveryRuleCommand(), 'Manage discovery rules')
+
+        self.default_verb = 'status'
+
+
+class PAMDiscoveryRuleCommand(GroupCommand):
+
+    def __init__(self):
+        super(PAMDiscoveryRuleCommand, self).__init__()
+        self.register_command('add', PAMGatewayActionDiscoverRuleAddCommand(), 'Add a rule', 'a')
+        self.register_command('list', PAMGatewayActionDiscoverRuleListCommand(), 'List all rules', 'l')
+        self.register_command('remove', PAMGatewayActionDiscoverRuleRemoveCommand(), 'Remove a rule', 'r')
+        self.register_command('update', PAMGatewayActionDiscoverRuleUpdateCommand(), 'Update a rule', 'u')
         self.default_verb = 'list'
 
 
@@ -127,17 +173,31 @@ class GatewayActionCommand(GroupCommand):
     def __init__(self):
         super(GatewayActionCommand, self).__init__()
         self.register_command('gateway-info', PAMGatewayActionServerInfoCommand(), 'Info command', 'i')
-        self.register_command('unreleased-discover', PAMGatewayActionDiscoverCommand(), 'Discover command')
+        self.register_command('discover', PAMDiscoveryCommand(), 'Discover command', 'd')
         self.register_command('rotate', PAMGatewayActionRotateCommand(), 'Rotate command', 'r')
         self.register_command('job-info', PAMGatewayActionJobCommand(), 'View Job details', 'ji')
         self.register_command('job-cancel', PAMGatewayActionJobCommand(), 'View Job details', 'jc')
+        self.register_command('debug', PAMDebugCommand(), 'PAM debug information')
 
         # self.register_command('job-list', DRCmdListJobs(), 'List Running jobs')
 
 
+class PAMDebugCommand(GroupCommand):
+
+    def __init__(self):
+        super(PAMDebugCommand, self).__init__()
+        self.register_command('info', PAMDebugInfoCommand(), 'Debug a record', 'i')
+        self.register_command('gateway', PAMDebugGatewayCommand(), 'Debug a getway', 'g')
+        self.register_command('graph', PAMDebugGraphCommand(), 'Render graphs', 'r')
+        self.register_command('verify', PAMDebugVerifyCommand(), 'Verify graphs', 'v')
+        self.register_command('alter', PAMDebugAlterCommand(), 'Alter graph information', 'a')
+        self.register_command('acl', PAMDebugACLCommand(), 'Control ACL of PAM Users', 'c')
+        self.register_command('version', PAMDebugVersionCommand(), 'Version modules versions')
+
+
 class PAMCmdListJobs(Command):
     parser = argparse.ArgumentParser(prog='pam action job-list')
-    parser.add_argument('--jobId', '-j', required=False, dest='job_id', action='store',  help='ID of the Job running')
+    parser.add_argument('--jobId', '-j', required=False, dest='job_id', action='store', help='ID of the Job running')
 
     def get_parser(self):
         return PAMCmdListJobs.parser
@@ -163,21 +223,35 @@ class PAMCmdListJobs(Command):
 
 
 class PAMCreateRecordRotationCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam rotation set')
+    parser = argparse.ArgumentParser(prog='pam rotation edit')
     record_group = parser.add_mutually_exclusive_group(required=True)
-    record_group.add_argument('--record', dest='record_name', action='store', help='Record UID, name, or pattern to be rotated manually or via schedule')
-    record_group.add_argument('--folder', dest='folder_name', action='store', help='Folder UID or name that holds records to be rotated manually or via schedule')
+    record_group.add_argument('--record', '-r', dest='record_name', action='store',
+                              help='Record UID, name, or pattern to be rotated manually or via schedule')
+    record_group.add_argument('--folder', '-fd', dest='folder_name', action='store',
+                              help='Used for bulk rotation setup. The folder UID or name that holds records to be '
+                                   'configured')
     parser.add_argument('--force', '-f', dest='force', action='store_true', help='Do not ask for confirmation')
-    parser.add_argument('--config', dest='config_uid', action='store', help='UID of the PAM Configuration')
-    parser.add_argument('--resource', dest='resource_uid', action='store', help='UID of the resource record.')
+    parser.add_argument('--config', '-c', required=False, dest='config_uid', action='store',
+                        help='UID of the configuration record.')
+    parser.add_argument('--iam-aad-config', '-iac', dest='iam_aad_config_uid', action='store',
+                        help='UID of a PAM Configuration. Used for an IAM or Azure AD user in place of --resource.')
+    parser.add_argument('--resource', '-rs', dest='resource_uid', action='store', help='UID of the resource record.')
     schedule_group = parser.add_mutually_exclusive_group()
-    schedule_group.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data', action='append', help='Json of the scheduler. Example: -sj \'{"type": "WEEKLY", "utcTime": "15:44", "weekday": "SUNDAY", "intervalCount": 1}\'')
-    schedule_group.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data', action='append', help='Cron tab string of the scheduler. Example: to run job daily at 5:56PM UTC enter following cron -sc "56 17 * * *"')
-    schedule_group.add_argument('--on-demand', '-sm', required=False, dest='on_demand', action='store_true', help='Schedule On Demand')
-    parser.add_argument('--complexity',   '-x',  required=False, dest='pwd_complexity', action='store', help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,5,5')
+    schedule_group.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data',
+                                action='append', help='Json of the scheduler. Example: -sj \'{"type": "WEEKLY", '
+                                                      '"utcTime": "15:44", "weekday": "SUNDAY", "intervalCount": 1}\'')
+    schedule_group.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data',
+                                action='append', help='Cron tab string of the scheduler. Example: to run job daily at '
+                                                      '5:56PM UTC enter following cron -sc "56 17 * * *"')
+    schedule_group.add_argument('--on-demand', '-od', required=False, dest='on_demand',
+                                action='store_true', help='Schedule On Demand')
+    parser.add_argument('--complexity',   '-x',  required=False, dest='pwd_complexity', action='store',
+                        help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,5,5')
+    parser.add_argument('--admin-user', '-a', required=False, dest='admin', action='store',
+                        help='UID for the PAMUser record to configure the admin credential on the PAM Resource as the Admin when rotating')
     state_group = parser.add_mutually_exclusive_group()
-    state_group.add_argument('--enable', dest='enable', action='store_true', help='Enable rotation')
-    state_group.add_argument('--disable', dest='disable', action='store_true', help='Disable rotation')
+    state_group.add_argument('--enable', '-e', dest='enable', action='store_true', help='Enable rotation')
+    state_group.add_argument('--disable', '-d', dest='disable', action='store_true', help='Disable rotation')
 
     def get_parser(self):
         return PAMCreateRecordRotationCommand.parser
@@ -188,6 +262,8 @@ class PAMCreateRecordRotationCommand(Command):
         folder_uids = set()
         record_pattern = ''
         record_name = kwargs.get('record_name')
+
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         if record_name:
             if record_name in params.record_cache:
                 record_uids.add(record_name)
@@ -227,6 +303,9 @@ class PAMCreateRecordRotationCommand(Command):
                     else:
                         logging.warning('Folder \"%s\" not found. Skipping.', folder_name)
 
+        if record_name and folder_name:
+            raise CommandError('', 'Cannot use both --record and --folder at the same time.')
+
         if folder_uids:
             regex = re.compile(fnmatch.translate(record_pattern), re.IGNORECASE).match if record_pattern else None
             for folder_uid in folder_uids:
@@ -245,7 +324,7 @@ class PAMCreateRecordRotationCommand(Command):
                                 record_uids.add(record_uid)
 
         pam_records = []    # type: List[vault.TypedRecord]
-        valid_record_types = {'pamDatabase', 'pamDirectory', 'pamMachine', 'pamUser'}
+        valid_record_types = ['pamDatabase', 'pamDirectory', 'pamMachine', 'pamUser', 'pamRemoteBrowser']
         for record_uid in record_uids:
             record = vault.KeeperRecord.load(params, record_uid)
             if record and isinstance(record, vault.TypedRecord) and record.record_type in valid_record_types:
@@ -301,46 +380,94 @@ class PAMCreateRecordRotationCommand(Command):
                 pwd_complexity_rule_list = {}
 
         resource_uid = kwargs.get('resource_uid')
-        if isinstance(resource_uid, str) and len(resource_uid) > 0:
-            if pam_config is None:
-                raise CommandError('', '"--resource" parameter requires "--config" parameter to be set as well.')
-            resource_field = pam_config.get_typed_field('pamResources')
-            if resource_field and isinstance(resource_field.value, list) and len(resource_field.value) > 0:
-                resources = resource_field.value[0]
-                if isinstance(resources, dict):
-                    resource_uids = resources.get('resourceRef')
-                    if isinstance(resource_uids, list):
-                        if resource_uid not in resource_uids:
-                            raise CommandError('', f'PAM Configuration "{pam_config.record_uid}" does not have admin credential for UID "{resource_uid}"')
-            else:
-                raise CommandError('', f'PAM Configuration "{pam_config.record_uid}'" does not have admin credentials")
 
         skipped_header = ['record_uid', 'record_title', 'problem', 'description']
         skipped_records = []
         valid_header = ['record_uid', 'record_title', 'enabled', 'configuration_uid', 'resource_uid', 'schedule', 'complexity']
         valid_records = []
 
-        requests = []   # type: List[router_pb2.RouterRecordRotationRequest]
-        for record in pam_records:
-            current_record_rotation = params.record_rotation_cache.get(record.record_uid)
+        r_requests = []   # type: List[router_pb2.RouterRecordRotationRequest]
+
+        def config_resource(_dag, target_record, target_config_uid):
+            if not _dag.linking_dag.has_graph:
+                # Add DAG for resource
+                if target_config_uid:
+                    _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_config_uid)
+                    _dag.edit_tunneling_config(rotation=True)
+                else:
+                    raise CommandError('', f'{bcolors.FAIL}Resource "{target_record.record_uid}" is not associated '
+                                           f'with any configuration. '
+                                           f'{bcolors.OKBLUE}pam rotation edit -rs {target_record.record_uid} '
+                                           f'--config CONFIG_UID{bcolors.ENDC}')
+            resource_dag = None
+            if not _dag.resource_belongs_to_config(target_record.record_uid):
+                # Change DAG to this new configuration.
+                resource_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key,
+                                             target_record.record_uid)
+                _dag.link_resource_to_config(target_record.record_uid)
+
+            admin = kwargs.get('admin')
+            if admin and target_record.record_type != 'pamRemoteBrowser':
+                _dag.link_user_to_resource(admin, target_record.record_uid, is_admin=True)
+
+            _rotation_enabled = True if kwargs.get('enable') else False if kwargs.get('disable') else None
+
+            if _rotation_enabled is not None:
+                _dag.set_resource_allowed(target_record, rotation=_rotation_enabled,
+                                                    allowed_settings_name="rotation")
+
+            if resource_dag is not None and resource_dag.linking_dag.has_graph:
+                # TODO: Make sure this doesn't remove everything from the new dag too
+                resource_dag.remove_from_dag(target_record.record_uid)
+
+            _dag.print_tunneling_config(target_record .record_uid, config_uid=target_config_uid)
+
+        def config_iam_aad_user(_dag, target_record, target_iam_aad_config_uid):
+            if _dag and not _dag.linking_dag.has_graph:
+                _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_iam_aad_config_uid)
+                if not _dag or not _dag.linking_dag.has_graph:
+                    _dag.edit_tunneling_config(rotation=True)
+            old_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_record.record_uid)
+            if old_dag.linking_dag.has_graph and old_dag.record.record_uid != target_iam_aad_config_uid:
+                old_dag.remove_from_dag(target_record.record_uid)
+
+            # with IAM users the user is at the level the resource is usually at,
+            if not _dag.user_belongs_to_config(target_record.record_uid):
+                old_resource_uid = _dag.get_resource_uid(target_record.record_uid)
+                if old_resource_uid is not None:
+                    print(
+                        f'{bcolors.WARNING}User "{target_record.record_uid}" is associated with another resource: '
+                        f'{old_resource_uid}. '
+                        f'Now moving it to {target_iam_aad_config_uid} and it will no longer be rotated on {old_resource_uid}.'
+                        f'{bcolors.ENDC}')
+                    if old_resource_uid == _dag.record.record_uid:
+                        _dag.unlink_user_from_resource(target_record.record_uid)
+                    _dag.link_user_to_resource(target_record.record_uid, old_resource_uid, belongs_to=False)
+                _dag.link_user_to_config(target_record.record_uid)
+
+
+            current_record_rotation = params.record_rotation_cache.get(target_record.record_uid)
 
             # 1. PAM Configuration UID
-            record_config_uid = config_uid
+            record_config_uid = _dag.record.record_uid
             record_pam_config = pam_config
             if not record_config_uid:
                 if current_record_rotation:
                     record_config_uid = current_record_rotation.get('configuration_uid')
                     pc = vault.KeeperRecord.load(params, record_config_uid)
                     if pc is None:
-                        skipped_records.append([record.record_uid, record.title, 'PAM Configuration was deleted', 'Specify a configuration UID parameter [--config]'])
-                        continue
+                        skipped_records.append([target_record.record_uid, target_record.title, 'PAM Configuration was deleted',
+                                                'Specify a configuration UID parameter [--config]'])
+                        return
                     if not isinstance(pc, vault.TypedRecord) or pc.version != 6:
-                        skipped_records.append([record.record_uid, record.title, 'PAM Configuration is invalid', 'Specify a configuration UID parameter [--config]'])
-                        continue
+                        skipped_records.append([target_record.record_uid, target_record.title, 'PAM Configuration is invalid',
+                                                'Specify a configuration UID parameter [--config]'])
+                        return
                     record_pam_config = pc
                 else:
-                    skipped_records.append([record.record_uid, record.title, 'No current PAM Configuration', 'Specify a configuration UID parameter [--config]'])
-                    continue
+                    skipped_records.append([target_record.record_uid, target_record.title, 'No current PAM Configuration',
+                                            'Specify a configuration UID parameter [--config]'])
+                    return
 
             # 2. Schedule
             record_schedule_data = schedule_data
@@ -366,12 +493,13 @@ class PAMCreateRecordRotationCommand(Command):
                     pwd_complexity_rule_list_encrypted = b''
             else:
                 if len(pwd_complexity_rule_list) > 0:
-                    pwd_complexity_rule_list_encrypted = router_helper.encrypt_pwd_complexity(pwd_complexity_rule_list, record.record_key)
+                    pwd_complexity_rule_list_encrypted = router_helper.encrypt_pwd_complexity(pwd_complexity_rule_list,
+                                                                                              record.record_key)
                 else:
                     pwd_complexity_rule_list_encrypted = b''
 
             # 4. Resource record
-            record_resource_uid = resource_uid
+            record_resource_uid = iam_aad_config_uid
             if record_resource_uid is None:
                 if current_record_rotation:
                     record_resource_uid = current_record_rotation.get('resourceUid')
@@ -385,15 +513,17 @@ class PAMCreateRecordRotationCommand(Command):
                             if len(resource_uids) == 1:
                                 record_resource_uid = resource_uids[0]
                             else:
-                                skipped_records.append([record.record_uid, record.title, f'PAM Configuration: {len(resource_uids)} admin resources',
+                                skipped_records.append([target_record.record_uid, target_record.title,
+                                                        f'PAM Configuration: {len(resource_uids)} admin resources',
                                                         'Specify both configuration UID and resource UID  [--config, --resource]'])
-                                continue
+                                return
 
+            disabled = False
             # 5. Enable rotation
-            disabled = current_record_rotation.get('disabled') if current_record_rotation else False
-            if kwargs.get('enable') is True:
-                disabled = False
-            elif kwargs.get('disable') is True:
+            if kwargs.get('enable'):
+                _dag.set_resource_allowed(iam_aad_config_uid, rotation=True, is_config=bool(target_iam_aad_config_uid))
+            elif kwargs.get('disable'):
+                _dag.set_resource_allowed(iam_aad_config_uid, rotation=False, is_config=bool(target_iam_aad_config_uid))
                 disabled = True
 
             schedule = 'On-Demand'
@@ -403,24 +533,221 @@ class PAMCreateRecordRotationCommand(Command):
             complexity = ''
             if pwd_complexity_rule_list_encrypted:
                 try:
-                    decrypted_complexity = crypto.decrypt_aes_v2(pwd_complexity_rule_list_encrypted, record.record_key)
+                    decrypted_complexity = crypto.decrypt_aes_v2(pwd_complexity_rule_list_encrypted, target_record.record_key)
                     c = json.loads(decrypted_complexity.decode())
                     complexity = f"{c.get('length', 0)},{c.get('caps', 0)},{c.get('lowercase', 0)},{c.get('digits', 0)},{c.get('special', 0)}"
                 except:
                     pass
-            valid_records.append([record.record_uid, record.title, not disabled, record_config_uid, record_resource_uid, schedule, complexity])
+            valid_records.append(
+                [target_record.record_uid, target_record.title, not disabled, record_config_uid, record_resource_uid, schedule,
+                 complexity])
 
             # 6. Construct Request object
             rq = router_pb2.RouterRecordRotationRequest()
             if current_record_rotation:
-                rq.revision = current_record_rotation.get('revision')
-            rq.recordUid = utils.base64_url_decode(record.record_uid)
+                rq.revision = current_record_rotation.get('revision', 0)
+            rq.recordUid = utils.base64_url_decode(target_record.record_uid)
             rq.configurationUid = utils.base64_url_decode(record_config_uid)
             rq.resourceUid = utils.base64_url_decode(record_resource_uid) if record_resource_uid else b''
             rq.schedule = json.dumps(record_schedule_data) if record_schedule_data else ''
             rq.pwdComplexity = pwd_complexity_rule_list_encrypted
             rq.disabled = disabled
-            requests.append(rq)
+            r_requests.append(rq)
+
+        def config_user(_dag, target_record, target_resource_uid, target_config_uid=None):
+
+            if _dag and _dag.linking_dag:
+                admin_record_uids = _dag.get_all_admins()
+                if folder_name and target_record.record_uid in admin_record_uids:
+                    # If iterating through a folder, skip admin records
+                    skipped_records.append([target_record.record_uid, target_record.title, 'Admin Credential',
+                                            'This record is used as Admin credentials on a PAM Configuration. Skipped'])
+                    return
+
+            if isinstance(target_resource_uid, str) and len(target_resource_uid) > 0:
+                _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_resource_uid)
+                if not _dag or not _dag.linking_dag.has_graph:
+                    if target_config_uid and target_resource_uid:
+                        config_resource(_dag, target_record, target_config_uid)
+                    if not _dag or not _dag.linking_dag.has_graph:
+                        raise CommandError('', f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated '
+                                               f'with any configuration. '
+                                               f'{bcolors.OKBLUE}pam rotation edit -rs {target_resource_uid} '
+                                               f'--config CONFIG_UID{bcolors.ENDC}')
+
+                if not _dag.check_if_resource_has_admin(target_resource_uid):
+                    raise CommandError('', f'PAM Resource "{target_resource_uid}'" does not have "
+                                           "admin credentials. Please link an admin credential to this resource. "
+                                           f"{bcolors.OKBLUE}pam rotation edit -rs {target_resource_uid} "
+                                           f"--admin-user ADMIN_UID{bcolors.ENDC}")
+            current_record_rotation = params.record_rotation_cache.get(target_record.record_uid)
+
+            if not _dag or not _dag.linking_dag.has_graph:
+                _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_resource_uid)
+                if not _dag.linking_dag.has_graph:
+                    raise CommandError('', f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated '
+                                           f'with any configuration.'
+                                           f'{bcolors.OKBLUE}pam rotation edit -rs {target_resource_uid} '
+                                           f'--config CONFIG_UID{bcolors.ENDC}')
+            if not target_resource_uid:
+                # Get the resource configuration from DAG
+                resource_uids = _dag.get_all_owners(target_record.record_uid)
+                if len(resource_uids) > 1:
+                    raise CommandError('', f'{bcolors.FAIL}Record "{target_record.record_uid}" is '
+                                           f'associated with multiple resources so you must supply '
+                                           f'{bcolors.OKBLUE}"--resource/-rs RESOURCE_UID".{bcolors.ENDC}')
+                elif len(resource_uids) == 0:
+                    raise CommandError('',
+                                       f'{bcolors.FAIL}Record "{target_record.record_uid}" is not associated with'
+                                       f' any resource. Please use {bcolors.OKBLUE}"pam rotation user '
+                                       f'{target_record.record_uid} --resource RESOURCE_UID" {bcolors.FAIL}to associate '
+                                       f'it.{bcolors.ENDC}')
+                target_resource_uid = resource_uids[0]
+
+            if not _dag.resource_belongs_to_config(target_resource_uid):
+                raise CommandError('',
+                                   f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated with the '
+                                   f'configuration of the user "{target_record.record_uid}". To associated the resources '
+                                   f'to this config run {bcolors.OKBLUE}"pam rotation resource {target_resource_uid} '
+                                   f'--config {_dag.record.record_uid}"{bcolors.ENDC}')
+            if not _dag.user_belongs_to_resource(target_record.record_uid, target_resource_uid):
+                old_resource_uid = _dag.get_resource_uid(target_record.record_uid)
+                if old_resource_uid is not None and old_resource_uid != target_resource_uid:
+                    print(
+                        f'{bcolors.WARNING}User "{target_record.record_uid}" is associated with another resource: '
+                        f'{old_resource_uid}. '
+                        f'Now moving it to {target_resource_uid} and it will no longer be rotated on {old_resource_uid}.'
+                        f'{bcolors.ENDC}')
+                    _dag.link_user_to_resource(target_record.record_uid, old_resource_uid, belongs_to=False)
+                _dag.link_user_to_resource(target_record.record_uid, target_resource_uid, belongs_to=True)
+
+            # 1. PAM Configuration UID
+            record_config_uid = _dag.record.record_uid
+            record_pam_config = pam_config
+            if not record_config_uid:
+                if current_record_rotation:
+                    record_config_uid = current_record_rotation.get('configuration_uid')
+                    pc = vault.KeeperRecord.load(params, record_config_uid)
+                    if pc is None:
+                        skipped_records.append([target_record.record_uid, target_record.title, 'PAM Configuration was deleted',
+                                                'Specify a configuration UID parameter [--config]'])
+                        return
+                    if not isinstance(pc, vault.TypedRecord) or pc.version != 6:
+                        skipped_records.append([target_record.record_uid, target_record.title, 'PAM Configuration is invalid',
+                                                'Specify a configuration UID parameter [--config]'])
+                        return
+                    record_pam_config = pc
+                else:
+                    skipped_records.append([target_record.record_uid, target_record.title, 'No current PAM Configuration',
+                                            'Specify a configuration UID parameter [--config]'])
+                    return
+
+            # 2. Schedule
+            record_schedule_data = schedule_data
+            if record_schedule_data is None:
+                if current_record_rotation:
+                    try:
+                        current_schedule = current_record_rotation.get('schedule')
+                        if current_schedule:
+                            record_schedule_data = json.loads(current_schedule)
+                    except:
+                        pass
+                elif record_pam_config:
+                    schedule_field = record_pam_config.get_typed_field('schedule', 'defaultRotationSchedule')
+                    if schedule_field and isinstance(schedule_field.value, list) and len(schedule_field.value) > 0:
+                        if isinstance(schedule_field.value[0], dict):
+                            record_schedule_data = [schedule_field.value[0]]
+                else:
+                    record_schedule_data = []
+
+            # 3. Password complexity
+            if pwd_complexity_rule_list is None:
+                if current_record_rotation:
+                    pwd_complexity_rule_list_encrypted = utils.base64_url_decode(current_record_rotation['pwd_complexity'])
+                else:
+                    pwd_complexity_rule_list_encrypted = b''
+            else:
+                if len(pwd_complexity_rule_list) > 0:
+                    pwd_complexity_rule_list_encrypted = router_helper.encrypt_pwd_complexity(pwd_complexity_rule_list,
+                                                                                              record.record_key)
+                else:
+                    pwd_complexity_rule_list_encrypted = b''
+
+            # 4. Resource record
+            record_resource_uid = target_resource_uid
+            if record_resource_uid is None:
+                if current_record_rotation:
+                    record_resource_uid = current_record_rotation.get('resourceUid')
+            if record_resource_uid is None:
+                resource_field = record_pam_config.get_typed_field('pamResources')
+                if resource_field and isinstance(resource_field.value, list) and len(resource_field.value) > 0:
+                    resources = resource_field.value[0]
+                    if isinstance(resources, dict):
+                        resource_uids = resources.get('resourceRef')
+                        if isinstance(resource_uids, list) and len(resource_uids) > 0:
+                            if len(resource_uids) == 1:
+                                record_resource_uid = resource_uids[0]
+                            else:
+                                skipped_records.append([target_record.record_uid, target_record.title,
+                                                        f'PAM Configuration: {len(resource_uids)} admin resources',
+                                                        'Specify both configuration UID and resource UID  [--config, --resource]'])
+                                return
+
+            disabled = False
+            # 5. Enable rotation
+            if kwargs.get('enable'):
+                _dag.set_resource_allowed(target_resource_uid, rotation=True)
+            elif kwargs.get('disable'):
+                _dag.set_resource_allowed(target_resource_uid, rotation=False)
+                disabled = True
+
+            schedule = 'On-Demand'
+            if isinstance(record_schedule_data, list) and len(record_schedule_data) > 0:
+                if isinstance(record_schedule_data[0], dict):
+                    schedule = record_schedule_data[0].get('type')
+            complexity = ''
+            if pwd_complexity_rule_list_encrypted:
+                try:
+                    decrypted_complexity = crypto.decrypt_aes_v2(pwd_complexity_rule_list_encrypted, target_record.record_key)
+                    c = json.loads(decrypted_complexity.decode())
+                    complexity = f"{c.get('length', 0)},{c.get('caps', 0)},{c.get('lowercase', 0)},{c.get('digits', 0)},{c.get('special', 0)}"
+                except:
+                    pass
+            valid_records.append(
+                [target_record.record_uid, target_record.title, not disabled, record_config_uid, record_resource_uid, schedule,
+                 complexity])
+
+            # 6. Construct Request object
+            rq = router_pb2.RouterRecordRotationRequest()
+            if current_record_rotation:
+                rq.revision = current_record_rotation.get('revision', 0)
+            rq.recordUid = utils.base64_url_decode(target_record.record_uid)
+            rq.configurationUid = utils.base64_url_decode(record_config_uid)
+            rq.resourceUid = utils.base64_url_decode(record_resource_uid) if record_resource_uid else b''
+            rq.schedule = json.dumps(record_schedule_data) if record_schedule_data else ''
+            rq.pwdComplexity = pwd_complexity_rule_list_encrypted
+            rq.disabled = disabled
+            r_requests.append(rq)
+
+        for _record in pam_records:
+            tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, _record.record_uid)
+            if _record.record_type in ['pamMachine', 'pamDatabase', 'pamDirectory', 'pamRemoteBrowser']:
+                config_resource(tmp_dag, _record, config_uid)
+            elif _record.record_type == 'pamUser':
+                iam_aad_config_uid = kwargs.get('iam_aad_config_uid')
+
+                if iam_aad_config_uid and iam_aad_config_uid not in pam_configurations:
+                    raise CommandError('', f'Record uid {iam_aad_config_uid} is not a PAM Configuration record.')
+
+                if resource_uid and iam_aad_config_uid:
+                    raise CommandError('', f'Cannot use both --resource and --iam-aad-config_uid at once.'
+                                           f' --resource is used to configure users found on a resource.'
+                                           f' --iam-aad-config-uid is used to configure AWS IAM or Azure AD users')
+
+                if iam_aad_config_uid:
+                    config_iam_aad_user(tmp_dag, _record, iam_aad_config_uid)
+                else:
+                    config_user(tmp_dag, _record, resource_uid, config_uid)
 
         force = kwargs.get('force') is True
 
@@ -428,12 +755,12 @@ class PAMCreateRecordRotationCommand(Command):
             skipped_header = [field_to_title(x) for x in skipped_header]
             dump_report_data(skipped_records, skipped_header, title='The following record(s) were skipped')
 
-            if len(requests) > 0 and not force:
+            if len(r_requests) > 0 and not force:
                 answer = user_choice('\nDo you want to cancel password rotation?', 'Yn', 'Y')
                 if answer.lower().startswith('y'):
                     return
 
-        if len(requests) > 0:
+        if len(r_requests) > 0:
             valid_header = [field_to_title(x) for x in valid_header]
             dump_report_data(valid_records, valid_header, title='The following record(s) will be updated')
             if not force:
@@ -441,18 +768,21 @@ class PAMCreateRecordRotationCommand(Command):
                 if answer.lower().startswith('n'):
                     return
 
-            for rq in requests:
+            for rq in r_requests:
                 record_uid = utils.base64_url_encode(rq.recordUid)
                 try:
-                    router_set_record_rotation_information(params, rq)
+                    router_set_record_rotation_information(params, rq, transmission_key, encrypted_transmission_key,
+                                                           encrypted_session_token)
                 except KeeperApiError as kae:
-                    logging.warning('Record "%s": Set rotation error "%s": %s', record_uid, kae.result_code, kae.message)
+                    logging.warning('Record "%s": Set rotation error "%s": %s',
+                                    record_uid, kae.result_code, kae.message)
             params.sync_data = True
 
 
 class PAMListRecordRotationCommand(Command):
     parser = argparse.ArgumentParser(prog='pam rotation list')
-    parser.add_argument('--verbose', '-v', dest='is_verbose', action='store_true', help='Verbose output')
+    parser.add_argument('--verbose', '-v', required=False, default=False, dest='is_verbose', action='store_true',
+                        help='Verbose output')
 
     def get_parser(self):
         return PAMListRecordRotationCommand.parser
@@ -495,19 +825,23 @@ class PAMListRecordRotationCommand(Command):
 
             record_uid = utils.base64_url_encode(s.recordUid)
             controller_uid = s.controllerUid
-            controller_details = next((ctr for ctr in enterprise_all_controllers if ctr.controllerUid == controller_uid), None)
+            controller_details = next(
+                (ctr for ctr in enterprise_all_controllers if ctr.controllerUid == controller_uid), None)
             configuration_uid = s.configurationUid
             configuration_uid_str = utils.base64_url_encode(configuration_uid)
-            pam_configuration = next((pam_config for pam_config in all_pam_config_records if pam_config.get('record_uid') == configuration_uid_str), None)
+            pam_configuration = next((pam_config for pam_config in all_pam_config_records if
+                                      pam_config.get('record_uid') == configuration_uid_str), None)
 
-            is_controller_online = any((poc for poc in enterprise_controllers_connected_uids_bytes if poc == controller_uid))
+            is_controller_online = any(
+                (poc for poc in enterprise_controllers_connected_uids_bytes if poc == controller_uid))
 
             row_color = ''
             if record_uid in params.record_cache:
                 row_color = bcolors.HIGHINTENSITYWHITE
                 rec = params.record_cache[record_uid]
 
-                data_json = rec['data_unencrypted'].decode('utf-8') if isinstance(rec['data_unencrypted'], bytes) else rec['data_unencrypted']
+                data_json = rec['data_unencrypted'].decode('utf-8') if isinstance(rec['data_unencrypted'], bytes) else \
+                    rec['data_unencrypted']
                 data = json.loads(data_json)
 
                 record_title = data.get('title')
@@ -517,6 +851,10 @@ class PAMListRecordRotationCommand(Command):
 
                 record_title = '[record inaccessible]'
                 record_type = '[record inaccessible]'
+
+            if record_type != "pamUser":
+                # only pamUser records are supported for rotation
+                continue
 
             row.append(f'{row_color}{record_uid}')
             row.append(record_title)
@@ -546,16 +884,14 @@ class PAMListRecordRotationCommand(Command):
             enterprise_controllers_connected = router_get_connected_gateways(params)
             connected_controller = None
             if enterprise_controllers_connected and controller_details:
-                # Find connected controller (TODO: Optimize, don't search for controllers every time, no N^n)
-                router_controllers = [x.controllerUid for x in enterprise_controllers_connected.controllers]
-                connected_controller = next(
-                    (x for x in router_controllers if x == controller_details.controllerUid), None)
+                router_controllers = {controller.controllerUid: controller for controller in
+                                      list(enterprise_controllers_connected.controllers)}
+                connected_controller = router_controllers.get(controller_details.controllerUid)
 
             if connected_controller:
                 controller_stat_color = bcolors.OKGREEN
             else:
                 controller_stat_color = bcolors.WHITE
-
 
             controller_color = bcolors.WHITE
             if is_controller_online:
@@ -573,7 +909,8 @@ class PAMListRecordRotationCommand(Command):
                 if not is_verbose:
                     row.append(f"{bcolors.FAIL}[No config found]{bcolors.ENDC}")
                 else:
-                    row.append(f"{bcolors.FAIL}[No config found. Looks like configuration {configuration_uid_str} was removed but rotation schedule was not modified{bcolors.ENDC}")
+                    row.append(
+                        f"{bcolors.FAIL}[No config found. Looks like configuration {configuration_uid_str} was removed but rotation schedule was not modified{bcolors.ENDC}")
 
             else:
                 pam_data_decrypted = pam_decrypt_configuration_data(pam_configuration)
@@ -597,8 +934,10 @@ class PAMListRecordRotationCommand(Command):
 
 class PAMGatewayListCommand(Command):
     parser = argparse.ArgumentParser(prog='dr-gateway')
-    parser.add_argument('--force', '-f', required=False, default=False, dest='is_force', action='store_true', help='Force retrieval of gateways')
-    parser.add_argument('--verbose', '-v', required=False, default=False, dest='is_verbose', action='store_true', help='Verbose output')
+    parser.add_argument('--force', '-f', required=False, default=False, dest='is_force', action='store_true',
+                        help='Force retrieval of gateways')
+    parser.add_argument('--verbose', '-v', required=False, default=False, dest='is_verbose', action='store_true',
+                        help='Verbose output')
 
     def get_parser(self):
         return PAMGatewayListCommand.parser
@@ -656,9 +995,9 @@ class PAMGatewayListCommand(Command):
 
             connected_controller = None
             if enterprise_controllers_connected:
-                # Find connected controller (TODO: Optimize, don't search for controllers every time, no N^n)
-                router_controllers = list(enterprise_controllers_connected.controllers)
-                connected_controller = next((x for x in router_controllers if x.controllerUid == c.controllerUid), None)
+                router_controllers = {controller.controllerUid: controller for controller in
+                                      list(enterprise_controllers_connected.controllers)}
+                connected_controller = router_controllers.get(c.controllerUid)
 
             row_color = ''
             if not is_router_down:
@@ -698,8 +1037,8 @@ class PAMGatewayListCommand(Command):
             if is_verbose:
                 row.append(f'{row_color}{c.deviceName}{bcolors.ENDC}')
                 row.append(f'{row_color}{c.deviceToken}{bcolors.ENDC}')
-                row.append(f'{row_color}{datetime.fromtimestamp(c.created/1000)}{bcolors.ENDC}')
-                row.append(f'{row_color}{datetime.fromtimestamp(c.lastModified/1000)}{bcolors.ENDC}')
+                row.append(f'{row_color}{datetime.fromtimestamp(c.created / 1000)}{bcolors.ENDC}')
+                row.append(f'{row_color}{datetime.fromtimestamp(c.lastModified / 1000)}{bcolors.ENDC}')
                 row.append(f'{row_color}{c.nodeId}{bcolors.ENDC}')
 
             table.append(row)
@@ -726,10 +1065,15 @@ class PAMConfigurationListCommand(Command):
         pam_configuration_uid = kwargs.get('pam_configuration')
         is_verbose = kwargs.get('verbose')
 
-        if not pam_configuration_uid:    # Print ALL root level configs
+        if not pam_configuration_uid:  # Print ALL root level configs
             PAMConfigurationListCommand.print_root_rotation_setting(params, is_verbose)
-        else:   # Print element configs (config that is not a root)
+        else:  # Print element configs (config that is not a root)
             PAMConfigurationListCommand.print_pam_configuration_details(params, pam_configuration_uid, is_verbose)
+
+            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+            tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_configuration_uid,
+                                is_config=True)
+            tmp_dag.print_tunneling_config(pam_configuration_uid, None)
 
     @staticmethod
     def print_pam_configuration_details(params, config_uid, is_verbose=False):
@@ -778,7 +1122,7 @@ class PAMConfigurationListCommand(Command):
 
         configurations = list(vault_extensions.find_records(params, record_version=6))
         facade = PamConfigurationRecordFacade()
-        for c in configurations:   # type: vault.TypedRecord
+        for c in configurations:  # type: vault.TypedRecord
             if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamNetworkConfiguration'):
                 facade.record = c
                 shared_folder_parents = find_parent_top_folder(params, c.record_uid)
@@ -799,24 +1143,24 @@ class PAMConfigurationListCommand(Command):
 
                     table.append(row)
                 else:
-                    logging.warning(f'Following configuration is not in the shared folder: UID: %s, Title: %s', c.record_uid, c.title)
+                    logging.warning(f'Following configuration is not in the shared folder: UID: %s, Title: %s',
+                                    c.record_uid, c.title)
             else:
-                logging.warning(f'Following configuration has unsupported type: UID: %s, Title: %s', c.record_uid, c.title)
+                logging.warning(f'Following configuration has unsupported type: UID: %s, Title: %s', c.record_uid,
+                                c.title)
 
         table.sort(key=lambda x: (x[1] or ''))
         dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
 
 
 common_parser = argparse.ArgumentParser(add_help=False)
-common_parser.add_argument('--config-type', '-ct', dest='config_type', action='store',
-                           choices=['network', 'aws', 'azure'], help='PAM Configuration Type', )
+common_parser.add_argument('--environment', '-env', dest='config_type', action='store',
+                           choices=['local', 'aws', 'azure'], help='PAM Configuration Type', )
 common_parser.add_argument('--title', '-t', dest='title', action='store', help='Title of the PAM Configuration')
-common_parser.add_argument('--gateway', '-g', dest='gateway', action='store', help='Gateway UID or Name')
-common_parser.add_argument('--shared-folder', '-sf', dest='shared_folder', action='store',
+common_parser.add_argument('--gateway', '-g', dest='gateway_uid', action='store', help='Gateway UID or Name')
+common_parser.add_argument('--shared-folder', '-sf', dest='shared_folder_uid', action='store',
                            help='Share Folder where this PAM Configuration is stored. Should be one of the folders to '
                                 'which the gateway has access to.')
-common_parser.add_argument('--resource-record', '-rr', dest='resource_records', action='append',
-                           help='Resource Record UID')
 common_parser.add_argument('--schedule', '-sc', dest='default_schedule', action='store', help='Default Schedule: Use CRON syntax')
 common_parser.add_argument('--port-mapping', '-pm', dest='port_mapping', action='append', help='Port Mapping')
 network_group = common_parser.add_argument_group('network', 'Local network configuration')
@@ -869,8 +1213,8 @@ class PamConfigurationEditMixin(RecordEditMixin):
             field.value.append(dict())
         value = field.value[0]
 
-        gateway_uid = None   # type: Optional[str]
-        gateway = kwargs.get('gateway')   # type: Optional[str]
+        gateway_uid = None  # type: Optional[str]
+        gateway = kwargs.get('gateway_uid')  # type: Optional[str]
         if gateway:
             gateways = gateway_helper.get_all_gateways(params)
             gateway_uid = next((utils.base64_url_encode(x.controllerUid) for x in gateways
@@ -887,24 +1231,29 @@ class PamConfigurationEditMixin(RecordEditMixin):
         # if len(shares) == 0:
         #     raise Exception(f'Gateway %s has no shared folders', gateway.controllerName)
 
-        shared_folder_uid = None   # type: Optional[str]
-        folder_name = kwargs.get('shared_folder')    # type: Optional[str]
+        shared_folder_uid = None  # type: Optional[str]
+        folder_name = kwargs.get('shared_folder_uid')  # type: Optional[str]
         if folder_name:
             if folder_name in params.shared_folder_cache:
                 shared_folder_uid = folder_name
             else:
                 for sf_uid in params.shared_folder_cache:
                     sf = api.get_shared_folder(params, sf_uid)
-                    if sf:
-                        if sf.name.casefold() == folder_name.casefold():
-                            shared_folder_uid = sf_uid
-                            break
+                    if sf and sf.name.casefold() == folder_name.casefold():
+                        shared_folder_uid = sf_uid
+                        break
         if shared_folder_uid:
             value['folderUid'] = shared_folder_uid
+        else:
+            for f in record.fields:
+                if f.type == 'pamResources' and f.value and len(f.value) > 0 and 'folderUid' in f.value[0]:
+                    shared_folder_uid = f.value[0]['folderUid']
+                    break
+            if not shared_folder_uid:
+                raise CommandError('pam config edit', 'Shared Folder not found')
 
-        rr = kwargs.get('resource_records')
         rrr = kwargs.get('remove_records')
-        if rr or rrr:
+        if rrr:
             pam_record_lookup = {}
             rti = PamConfigurationEditMixin.get_pam_record_types(params)
             for r in vault_extensions.find_records(params, record_type=rti):
@@ -924,15 +1273,6 @@ class PamConfigurationEditMixin(RecordEditMixin):
                         record_uids.remove(r_l)
                         continue
                     logging.warning(f'Failed to find PAM record: {r}')
-            if isinstance(rr, list):
-                for r in rr:
-                    if r in pam_record_lookup:
-                        record_uids.add(r)
-                        continue
-                    r_l = r.lower()
-                    if r_l in pam_record_lookup:
-                        record_uids.add(r_l)
-                    self.warnings.append(f'Failed to find PAM record: {r}')
 
             value['resourceRef'] = list(record_uids)
 
@@ -946,6 +1286,8 @@ class PamConfigurationEditMixin(RecordEditMixin):
         schedule = kwargs.get('default_schedule')
         if schedule:
             extra_properties.append(f'schedule.defaultRotationSchedule={schedule}')
+        else:
+            extra_properties.append(f'schedule.defaultRotationSchedule=On-Demand')
 
         if record.record_type == 'pamNetworkConfiguration':
             network_id = kwargs.get('network_id')
@@ -991,15 +1333,13 @@ class PamConfigurationEditMixin(RecordEditMixin):
         if extra_properties:
             self.assign_typed_fields(record, [RecordEditMixin.parse_field(x) for x in extra_properties])
 
-    def verify_required(self, record):    # type: (vault.TypedRecord) -> None
+    def verify_required(self, record):  # type: (vault.TypedRecord) -> None
         for field in record.fields:
             if field.required:
                 if len(field.value) == 0:
                     if field.type == 'schedule':
                         field.value = [{
-                            'type': 'RUN_ONCE',
-                            'time': '2000-01-01T00:00:00',
-                            'tz': 'Etc/UTC',
+                            'type': 'ON_DEMAND'
                         }]
                     else:
                         self.warnings.append(f'Empty required field: "{field.get_field_name()}"')
@@ -1010,6 +1350,16 @@ class PamConfigurationEditMixin(RecordEditMixin):
 
 class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
     parser = argparse.ArgumentParser(prog='pam config new', parents=[common_parser])
+    parser.add_argument('--enable-connections', '-ec', dest='enable_connections', action='store_true',
+                        help='Enable connections')
+    parser.add_argument('--enable-tunneling', '-et', dest='enable_tunneling',
+                        action='store_true', help='Enable tunneling')
+    parser.add_argument('--enable-rotation', '-er', dest='enable_rotation', action='store_true',
+                        help='Enable rotation')
+    parser.add_argument('--enable-connections-recording', '-ecr', required=False, dest='recordingenabled',
+                        action='store_true', help='Enable recording connections for the resource')
+    parser.add_argument('--enable-typescripts-recording', '-etcr', required=False, dest='typescriptrecordingenabled',
+                        action='store_true', help='Enable TypeScript recording for the resource')
 
     def __init__(self):
         super().__init__()
@@ -1022,13 +1372,16 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
 
         config_type = kwargs.get('config_type')
         if not config_type:
-            raise CommandError('pam-config-new', '--config-type parameter is required')
+            raise CommandError('pam-config-new', '--environment parameter is required')
         if config_type == 'aws':
             record_type = 'pamAwsConfiguration'
         elif config_type == 'azure':
             record_type = 'pamAzureConfiguration'
-        else:
+        elif config_type == 'local':
             record_type = 'pamNetworkConfiguration'
+        else:
+            raise CommandError('pam-config-new', f'--environment {config_type} is not supported'
+                                                 f' supported options are aws, azure, or local')
 
         title = kwargs.get('title')
         if not title:
@@ -1056,11 +1409,24 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
             shared_folder_uid = value.get('folderUid')
 
         if not shared_folder_uid:
-            raise CommandError('pam-config-new', '--shared_folder parameter is required to create a PAM configuration')
+            raise CommandError('pam-config-new', '--shared-folder parameter is required to create a PAM configuration')
 
         self.verify_required(record)
 
         pam_configuration_create_record_v6(params, record, shared_folder_uid)
+
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        # Add DAG for configuration
+        tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid=record.record_uid,
+                            is_config=True)
+        tmp_dag.edit_tunneling_config(
+            bool(kwargs.get('enable_connections')),
+            bool(kwargs.get('enable_tunneling')),
+            bool(kwargs.get('enable_rotation')),
+            bool(kwargs.get('recordingenabled')),
+            bool(kwargs.get('typescriptrecordingenabled'))
+        )
+        tmp_dag.print_tunneling_config(record.record_uid, None)
 
         # Moving v6 record into the folder
         api.sync_down(params)
@@ -1078,15 +1444,33 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
         for w in self.warnings:
             logging.warning(w)
 
+        params.environment_variables[LAST_RECORD_UID] = record.record_uid
         return record.record_uid
 
 
 class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
     parser = argparse.ArgumentParser(prog='pam config edit', parents=[common_parser])
+    parser.add_argument('uid', type=str, action='store', help='The Config UID to edit')
     parser.add_argument('--remove-resource-record', '-rrr', dest='remove_records', action='append',
                         help='Resource Record UID to remove')
-    parser.add_argument('--config', '-c', required=True, dest='config', action='store',
-                        help='PAM Configuration UID or Title')
+    parser.add_argument('--enable-rotation', '-er', required=False, action='store_true',help='Enable rotation')
+    parser.add_argument('--disable-rotation', '-dr', required=False, action='store_true', help='Disable rotation')
+    parser.add_argument('--enable-tunneling', '-et', required=False, dest='enable_tunneling', action='store_true',
+                        help='Disable tunneling')
+    parser.add_argument('--disable-tunneling', '-dt', required=False, dest='disable_tunneling', action='store_true',
+                        help='Disable tunneling')
+    parser.add_argument('--enable-connections', '-ec', required=False, dest='enable_connections', action='store_true',
+                        help='Enable connections')
+    parser.add_argument('--disable-connections', '-dc', required=False, dest='disable_connections', action='store_true',
+                        help='Enable connections')
+    parser.add_argument('--enable-connections-recording', '-ecr', required=False, dest='enable_connections_recording',
+                        action='store_true', help='Enable connections recording')
+    parser.add_argument('--disable-connections-recording', '-dcr', required=False, dest='disable_connections_recording',
+                        action='store_true', help='Disable connections recording')
+    parser.add_argument('--enable-typescripts-recording', '-etsr', required=False, dest='enable_typescripts_recording',
+                        action='store_true', help='Enable typescripts recording')
+    parser.add_argument('--disable-typescripts-recording', '-dtsr', required=False, dest='disable_typescripts_recording',
+                        action='store_true', help='Disable typescripts recording')
 
     def __init__(self):
         super(PAMConfigurationEditCommand, self).__init__()
@@ -1098,7 +1482,10 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
         self.warnings.clear()
 
         configuration = None
-        config_name = kwargs.get('config')
+
+        config_name = kwargs.get('uid')
+        if not config_name:
+            raise CommandError('pam config edit', 'PAM Configuration UID or Title is required')
         if config_name in params.record_cache:
             configuration = vault.KeeperRecord.load(params, config_name)
         else:
@@ -1115,12 +1502,12 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
         config_type = kwargs.get('config_type')
         if config_type:
             if not config_type:
-                raise CommandError('pam-config-new', '--config-type parameter is required')
+                raise CommandError('pam-config-new', '--environment parameter is required')
             if config_type == 'aws':
                 record_type = 'pamAwsConfiguration'
             elif config_type == 'azure':
                 record_type = 'pamAzureConfiguration'
-            elif config_type == 'network':
+            elif config_type == 'local':
                 record_type = 'pamNetworkConfiguration'
             else:
                 record_type = configuration.record_type
@@ -1163,22 +1550,49 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
             if shared_folder_uid != orig_shared_folder_uid:
                 FolderMoveCommand().execute(params, src=configuration.record_uid, dst=shared_folder_uid)
 
+        if ((kwargs.get('enable_connections') and kwargs.get('disable_connections')) or
+                (kwargs.get('enable_tunneling') and kwargs.get('disable_tunneling')) or
+                (kwargs.get('enable_rotation') and kwargs.get('disable_rotation')) or
+                (kwargs.get('enable_connections_recording') and kwargs.get('disable_connections_recording')) or
+                (kwargs.get('enable_typescripts_recording') and kwargs.get('disable_typescripts_recording'))):
+            raise CommandError('pam-config-edit', 'Cannot enable and disable the same feature at the same time')
+
+        # First check if enabled is true then check if disabled is true. if not then set it to None
+        _connections = True if kwargs.get('enable_connections') \
+            else False if kwargs.get('disable_connections') else None
+        _tunneling = True if kwargs.get('enable_tunneling') else False if kwargs.get('disable_tunneling') else None
+        _rotation = True if kwargs.get('enable_rotation') else False if kwargs.get('disable_rotation') else None
+        _recording = True if kwargs.get('enable_connections_recording') \
+            else False if kwargs.get('disable_connections_recording') else None
+        _typescript_recording = (True if kwargs.get('enable_typescripts_recording') else False if
+                                 kwargs.get('disable_typescripts_recording') else None)
+
+        if (_connections is not None or _tunneling is not None or _rotation is not None or _recording is not None or
+                _typescript_recording is not None):
+            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+            tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key,
+                                configuration.record_uid, is_config=True)
+            tmp_dag.edit_tunneling_config(_connections, _tunneling, _rotation, _recording, _typescript_recording)
+            tmp_dag.print_tunneling_config(configuration.record_uid, None)
         for w in self.warnings:
             logging.warning(w)
+
         params.sync_data = True
 
 
 class PAMConfigurationRemoveCommand(Command):
     parser = argparse.ArgumentParser(prog='pam config remove')
-    parser.add_argument('--config', '-c', required=True, dest='pam_config', action='store',
-                        help='PAM Configuration UID. To view all rotation settings with their UIDs, '
-                             'use command `pam config list`')
+    parser.add_argument('uid', type=str, action='store',
+                        help='PAM Configuration UID. To view all rotation settings with their UIDs, use command '
+                             '`pam config list`')
 
     def get_parser(self):
         return PAMConfigurationRemoveCommand.parser
 
     def execute(self, params, **kwargs):
-        pam_config_name = kwargs.get('pam_config')
+        pam_config_name = kwargs.get('uid')
+        if not pam_config_name:
+            raise CommandError('pam config edit', 'PAM Configuration UID is required')
         pam_config_uid = None
         for config in vault_extensions.find_records(params, record_version=6):
             if config.record_uid == pam_config_name:
@@ -1188,7 +1602,14 @@ class PAMConfigurationRemoveCommand(Command):
                 pass
         if not pam_config_name:
             raise Exception(f'Configuration "{pam_config_name}" not found')
-
+        pam_config = vault.KeeperRecord.load(params, pam_config_uid)
+        if not pam_config:
+            raise Exception(f'Configuration "{pam_config_uid}" not found')
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_config.record_uid,
+                            is_config=True)
+        if tmp_dag.linking_dag.has_graph:
+            tmp_dag.remove_from_dag(pam_config_uid)
         pam_configuration_remove(params, pam_config_uid)
         params.sync_data = True
 
@@ -1217,20 +1638,31 @@ class PAMRouterGetRotationInfo(Command):
 
             print(f"Gateway Name where the rotation will be performed: {bcolors.OKBLUE}{(rri.controllerName if rri.controllerName else '-')}{bcolors.ENDC}")
             print(f"Gateway Uid: {bcolors.OKBLUE}{(utils.base64_url_encode(rri.controllerUid) if rri.controllerUid else '-') } {bcolors.ENDC}")
+
+            def is_resource_ok(resource_id, params, configuration_uid):
+                if resource_id not in params.record_cache:
+                    return False
+
+                configuration = vault.KeeperRecord.load(params, configuration_uid)
+                if not isinstance(configuration, vault.TypedRecord):
+                    return False
+
+                field = configuration.get_typed_field('pamResources')
+                if not (field and isinstance(field.value, list) and len(field.value) == 1):
+                    return False
+
+                rv = field.value[0]
+                if not isinstance(rv, dict):
+                    return False
+
+                resources = rv.get('resourceRef')
+                return isinstance(resources, list) and resource_id in resources
+
             if rri.resourceUid:
                 resource_id = utils.base64_url_encode(rri.resourceUid)
-                resource_ok = False
-                if resource_id in params.record_cache:
-                    configuration = vault.KeeperRecord.load(params, configuration_uid)
-                    if isinstance(configuration, vault.TypedRecord):
-                        field = configuration.get_typed_field('pamResources')
-                        if field and isinstance(field.value, list) and len(field.value) == 1:
-                            rv = field.value[0]
-                            if isinstance(rv, dict):
-                                resources = rv.get('resourceRef')
-                                if isinstance(resources, list):
-                                    resource_ok = resource_id in resources
-                print(f"Admin Resource Uid: {bcolors.OKBLUE if resource_ok else bcolors.FAIL}{resource_id}{bcolors.ENDC}")
+                resource_ok = is_resource_ok(resource_id, params, configuration_uid)
+                print(f"Admin Resource Uid: {bcolors.OKBLUE if resource_ok else bcolors.FAIL}{resource_id}"
+                      f"{bcolors.ENDC}")
 
             # print(f"Router Cookie: {bcolors.OKBLUE}{(rri.cookie if rri.cookie else '-')}{bcolors.ENDC}")
             # print(f"scriptName: {bcolors.OKGREEN}{rri.scriptName}{bcolors.ENDC}")
@@ -1256,7 +1688,7 @@ class PAMRouterGetRotationInfo(Command):
 class PAMRouterScriptCommand(GroupCommand):
     def __init__(self):
         super().__init__()
-        self.register_command('list',  PAMScriptListCommand(), 'List script fields')
+        self.register_command('list', PAMScriptListCommand(), 'List script fields')
         self.register_command('add', PAMScriptAddCommand(), 'List Record Rotation Schedulers')
         self.register_command('edit', PAMScriptEditCommand(), 'Add, delete, or edit script field')
         self.register_command('delete', PAMScriptDeleteCommand(), 'Delete script field')
@@ -1386,7 +1818,7 @@ class PAMScriptEditCommand(Command):
         if not record_name:
             raise CommandError('rotate script', '"record" argument is required')
 
-        script_name = kwargs.get('script')   # type: Optional[str]
+        script_name = kwargs.get('script')  # type: Optional[str]
         if not script_name:
             raise CommandError('rotate script', '"script" argument is required')
 
@@ -1461,7 +1893,7 @@ class PAMScriptDeleteCommand(Command):
         if not record_name:
             raise CommandError('rotate script', '"record" argument is required')
 
-        script_name = kwargs.get('script')   # type: Optional[str]
+        script_name = kwargs.get('script')  # type: Optional[str]
         if not script_name:
             raise CommandError('rotate script', '"script" argument is required')
 
@@ -1508,7 +1940,6 @@ class PAMGatewayActionJobCancelCommand(Command):
         return PAMGatewayActionJobCancelCommand.parser
 
     def execute(self, params, **kwargs):
-
         job_id = kwargs.get('job_id')
 
         print(f"Job id to cancel [{job_id}]")
@@ -1535,7 +1966,6 @@ class PAMGatewayActionJobCommand(Command):
         return PAMGatewayActionJobCommand.parser
 
     def execute(self, params, **kwargs):
-
         job_id = kwargs.get('job_id')
         gateway_uid = kwargs.get('gateway_uid')
 
@@ -1561,6 +1991,7 @@ class PAMGatewayActionRotateCommand(Command):
     parser = argparse.ArgumentParser(prog='dr-rotate-command')
     parser.add_argument('--record-uid', '-r', required=True, dest='record_uid', action='store',
                         help='Record UID to rotate')
+
     # parser.add_argument('--config', '-c', required=True, dest='configuration_uid', action='store',
     #                                           help='Rotation configuration UID')
 
@@ -1593,33 +2024,53 @@ class PAMGatewayActionRotateCommand(Command):
         #     rule_list_json = crypto.decrypt_aes_v2(utils.base64_url_decode(ri_pwd_complexity_encrypted), record.record_key)
         #     complexity = json.loads(rule_list_json.decode())
 
-        ri_rotation_setting_uid = utils.base64_url_encode(ri.configurationUid)  # Configuration on the UI is "Rotation Setting"
-        resource_uid = utils.base64_url_encode(ri.resourceUid)
+        resource_uid = None
 
-        pam_config = vault.KeeperRecord.load(params, ri_rotation_setting_uid)
-        if not isinstance(pam_config, vault.TypedRecord):
-            print(f'{bcolors.FAIL}PAM Configuration [{ri_rotation_setting_uid}] is not available.{bcolors.ENDC}')
-            return
-        facade = PamConfigurationRecordFacade()
-        facade.record = pam_config
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
+        if not config_uid:
+            # Still try it the old way
+            # Configuration on the UI is "Rotation Setting"
+            ri_rotation_setting_uid = utils.base64_url_encode(ri.configurationUid)
+            resource_uid = utils.base64_url_encode(ri.resourceUid)
+            pam_config = vault.KeeperRecord.load(params, ri_rotation_setting_uid)
+            if not isinstance(pam_config, vault.TypedRecord):
+                print(f'{bcolors.FAIL}PAM Configuration [{ri_rotation_setting_uid}] is not available.{bcolors.ENDC}')
+                return
+            facade = PamConfigurationRecordFacade()
+            facade.record = pam_config
+
+            config_uid = facade.controller_uid
+
+        if not resource_uid:
+            tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record.record_uid)
+            resource_uid = tmp_dag.get_resource_uid(record_uid)
+            if not resource_uid:
+                print(f'{bcolors.FAIL}Resource UID not found for record [{record_uid}]. please configure it '
+                      f'{bcolors.OKBLUE}"pam rotation user {record_uid} --resource RESOURCE_UID"{bcolors.ENDC}')
+                return
+
+        controller = configuration_controller_get(params, url_safe_str_to_bytes(config_uid))
+        if not controller.controllerUid:
+            raise CommandError('', f'{bcolors.FAIL}Gateway UID not found for configuration '
+                                   f'{config_uid}.')
 
         # Find connected controllers
         enterprise_controllers_connected = router_get_connected_gateways(params)
 
+        controller_from_config_bytes = controller.controllerUid
+        gateway_uid = utils.base64_url_encode(controller.controllerUid)
         if enterprise_controllers_connected:
-            # Find connected controller (TODO: Optimize, don't search for controllers every time, no N^n)
-            router_controllers = list(enterprise_controllers_connected.controllers)
-            controller_from_config_bytes = utils.base64_url_decode(facade.controller_uid)
-            connected_controller = next((x.controllerUid for x in router_controllers
-                                         if x.controllerUid == controller_from_config_bytes), None)
+            router_controllers = {controller.controllerUid: controller for controller in
+                                  list(enterprise_controllers_connected.controllers)}
+            connected_controller = router_controllers.get(controller_from_config_bytes)
 
             if not connected_controller:
-                print(f'{bcolors.WARNING}The Gateway "{facade.controller_uid}" is down.{bcolors.ENDC}')
+                print(f'{bcolors.WARNING}The Gateway "{gateway_uid}" is down.{bcolors.ENDC}')
                 return
         else:
             print(f'{bcolors.WARNING}There are no connected gateways.{bcolors.ENDC}')
             return
-
 
         # rrs = RouterRotationStatus.Name(ri.status)
         # if rrs == 'RRS_NO_ROTATION':
@@ -1642,7 +2093,7 @@ class PAMGatewayActionRotateCommand(Command):
 
         action_inputs = GatewayActionRotateInputs(
             record_uid=record_uid,
-            configuration_uid=ri_rotation_setting_uid,
+            configuration_uid=config_uid,
             pwd_complexity_encrypted=ri_pwd_complexity_encrypted,
             resource_uid=resource_uid
         )
@@ -1651,8 +2102,9 @@ class PAMGatewayActionRotateCommand(Command):
 
         router_response = router_send_action_to_gateway(
             params=params, gateway_action=GatewayActionRotate(inputs=action_inputs, conversation_id=conversation_id,
-                                                              gateway_destination=facade.controller_uid),
-            message_type=pam_pb2.CMT_ROTATE, is_streaming=False)
+                                                              gateway_destination=gateway_uid),
+            message_type=pam_pb2.CMT_ROTATE, is_streaming=False, encrypted_transmission_key=encrypted_transmission_key,
+            encrypted_session_token=encrypted_session_token)
 
         print_router_response(router_response, conversation_id)
 
@@ -1679,33 +2131,81 @@ class PAMGatewayActionServerInfoCommand(Command):
         print_router_response(router_response, response_type='gateway_info', is_verbose=is_verbose)
 
 
-class PAMGatewayActionDiscoverCommand(Command):
-    parser = argparse.ArgumentParser(prog='dr-discover-command')
-    parser.add_argument('--shared-folder', '-f', required=True, dest='shared_folder_uid', action='store',
-                        help='UID of the Shared Folder where results will be stored')
-    parser.add_argument('--provider-record', '-p', required=True, dest='provider_record_uid', action='store',
-                        help='Provider Record UID that defines network')
-    # parser.add_argument('--destinations', '-d', required=False, dest='destinations', action='store',
-    #                     help='Controller id')
+class PAMGatewayActionDiscoverCommandBase(Command):
 
-    def get_parser(self):
-        return PAMGatewayActionDiscoverCommand.parser
+    """
+    The discover command base.
 
-    def execute(self, params, **kwargs):
+    Contains static methods to get the configuration record, get and update the discovery store. These are method
+    used by multiple discover actions.
+    """
 
-        provider_record_uid = kwargs.get('provider_record_uid')
-        shared_folder_uid = kwargs.get('shared_folder_uid')
+    # If the discovery data field does not exist, or the field contains no values, use the template to init the
+    # field.
+    STORE_VALUE_TEMPLATE = {
+        "ignore_list": [],
+        "jobs": []
+    }
 
-        action_inputs = GatewayActionDiscoverInputs(shared_folder_uid, provider_record_uid)
-        conversation_id = GatewayAction.generate_conversation_id()
+    STORE_LABEL = "discoveryStore"
 
-        router_response = router_send_action_to_gateway(
-            params,
-            GatewayActionDiscover(inputs=action_inputs, conversation_id=conversation_id),
-            message_type=pam_pb2.CMT_GENERAL,
-            is_streaming=False)
+    @staticmethod
+    def get_configuration(params, configuration_uid):
 
-        print_router_response(router_response, conversation_id)
+        configuration_record = vault.KeeperRecord.load(params, configuration_uid)
+        if not isinstance(configuration_record, vault.TypedRecord):
+            print(f'{bcolors.FAIL}PAM Configuration [{configuration_uid}] is not available.{bcolors.ENDC}')
+            return
+
+        configuration_facade = PamConfigurationRecordFacade()
+        configuration_facade.record = configuration_record
+
+        return configuration_record, configuration_facade
+
+    @staticmethod
+    def get_discovery_store(configuration_record):
+
+        # Get the discovery store. It contains information about discovery job for a configuration. It is on the custom
+        # fields.
+        discovery_field = None
+        if configuration_record.custom is not None:
+            discovery_field = next((field
+                                    for field in configuration_record.custom
+                                    if field.label == PAMGatewayActionDiscoverCommandBase.STORE_LABEL),
+                                   None)
+
+        discovery_field_exists = True
+        if discovery_field is None:
+            logging.debug("discovery store field does not exists, creating")
+            discovery_field = TypedField.new_field("_hidden",
+                                                   [PAMGatewayActionDiscoverCommandBase.STORE_VALUE_TEMPLATE],
+                                                   PAMGatewayActionDiscoverCommandBase.STORE_LABEL)
+            discovery_field_exists = False
+        else:
+            logging.debug("discovery store record exists")
+
+        # The value should not be [], if it is, init with the defaults.
+        if len(discovery_field.value) == 0:
+            logging.debug("discovery store does not have a value, set to the default value")
+            discovery_field.value = [PAMGatewayActionDiscoverCommandBase.STORE_VALUE_TEMPLATE]
+
+        # TODO - REMOVE ME, this is just so we have one job
+        # discovery_field.value = [PAMGatewayActionDiscoverCommandBase.STORE_VALUE_TEMPLATE]
+
+        return discovery_field.value[0], discovery_field, discovery_field_exists
+
+    @staticmethod
+    def update_discovery_store(params, configuration_record, discovery_store, discovery_field, discovery_field_exists):
+
+        discovery_field.value = [discovery_store]
+        if discovery_field_exists is False:
+            if configuration_record.custom is None:
+                configuration_record.custom = []
+            configuration_record.custom.append(discovery_field)
+
+        # Update the record here to prevent a race-condition
+        record_management.update_record(params, configuration_record)
+        params.sync_data = True
 
 
 class PAMGatewayRemoveCommand(Command):
@@ -1731,7 +2231,6 @@ class PAMGatewayRemoveCommand(Command):
 
 
 class PAMCreateGatewayCommand(Command):
-
     dr_create_controller_parser = argparse.ArgumentParser(prog='dr-create-gateway')
     dr_create_controller_parser.add_argument('--name', '-n', required=True, dest='gateway_name',
                                              help='Name of the Gateway',
@@ -1746,7 +2245,8 @@ class PAMCreateGatewayCommand(Command):
     dr_create_controller_parser.add_argument('--return_value', '-r', dest='return_value', action='store_true',
                                              help='Return value from the command for automation purposes')
     dr_create_controller_parser.add_argument('--config-init', '-c', type=str, dest='config_init', action='store',
-                                             choices=['json', 'b64'], help='Initialize client config and return configuration string.')  # json, b64, file
+                                             choices=['json', 'b64'],
+                                             help='Initialize client config and return configuration string.')  # json, b64, file
 
     def get_parser(self):
         return PAMCreateGatewayCommand.dr_create_controller_parser
@@ -1785,16 +2285,7 @@ class PAMCreateGatewayCommand(Command):
             print('-----------------------------------------------')
 
 
-
-
-
-
-
-
-
-
-
-############################################## TUNNELING ###############################################################
+# TUNNELING
 class PAMTunnelListCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel list')
 
@@ -1804,21 +2295,19 @@ class PAMTunnelListCommand(Command):
     def execute(self, params, **kwargs):
         def gather_tabel_row_data(thread):
             # {"thread": t, "host": host, "port": port, "started": datetime.now(),
-            row = []
+            r_row = []
             run_time = None
             hours = 0
             minutes = 0
             seconds = 0
 
             entrance = thread.get('entrance')
-            #
-            # row.append(f"{thread.get('name', '')}")
             if entrance is not None:
-                row.append(f"{bcolors.OKBLUE}{entrance.pc.endpoint_name}{bcolors.ENDC}")
+                r_row.append(f"{bcolors.OKBLUE}{entrance.pc.endpoint_name}{bcolors.ENDC}")
             else:
-                row.append(f"{bcolors.WARNING}Connecting..{bcolors.ENDC}")
+                r_row.append(f"{bcolors.WARNING}Connecting..{bcolors.ENDC}")
 
-            row.append(f"{thread.get('host', '')}")
+            r_row.append(f"{thread.get('host', '')}")
 
             if entrance is not None and entrance.print_ready_event.is_set():
                 if thread.get('started'):
@@ -1826,12 +2315,12 @@ class PAMTunnelListCommand(Command):
                     hours, remainder = divmod(run_time.seconds, 3600)
                     minutes, seconds = divmod(remainder, 60)
 
-                row.append(
-                    f"{bcolors.OKBLUE}{entrance._port}{bcolors.ENDC}"
+                r_row.append(
+                    f"{bcolors.OKBLUE}{entrance.port}{bcolors.ENDC}"
                 )
             else:
-                row.append(f"{bcolors.WARNING}Connecting...{bcolors.ENDC}")
-            row.append(f"{thread.get('record_uid', '')}")
+                r_row.append(f"{bcolors.WARNING}Connecting...{bcolors.ENDC}")
+            r_row.append(f"{thread.get('record_uid', '')}")
             if entrance is not None and entrance.print_ready_event.is_set():
                 text_line = ""
                 if run_time:
@@ -1842,10 +2331,10 @@ class PAMTunnelListCommand(Command):
                     text_line += f"{hours} hr " if hours > 0 or run_time.days > 0 else ''
                 text_line += f"{minutes} min "
                 text_line += f"{seconds} sec"
-                row.append(text_line)
+                r_row.append(text_line)
             else:
-                row.append(f"{bcolors.WARNING}Connecting...{bcolors.ENDC}")
-            return row
+                r_row.append(f"{bcolors.WARNING}Connecting...{bcolors.ENDC}")
+            return r_row
 
         if not params.tunnel_threads:
             logging.warning(f"{bcolors.OKBLUE}No Tunnels running{bcolors.ENDC}")
@@ -1973,149 +2462,226 @@ class SocketNotConnectedException(Exception):
     pass
 
 
-def retrieve_gateway_public_key(gateway_uid, params, api, utils) -> bytes:
-    gateway_uid_bytes = utils.base64_url_decode(gateway_uid)
-    get_ksm_pubkeys_rq = GetKsmPublicKeysRequest()
-    get_ksm_pubkeys_rq.controllerUids.append(gateway_uid_bytes)
-    get_ksm_pubkeys_rs = api.communicate_rest(params, get_ksm_pubkeys_rq, 'vault/get_ksm_public_keys',
-                                              rs_type=GetKsmPublicKeysResponse)
-
-    if len(get_ksm_pubkeys_rs.keyResponses) == 0:
-        # No keys found
-        print(f"{bcolors.FAIL}No keys found for gateway {gateway_uid}{bcolors.ENDC}")
-        return b''
-    try:
-        gateway_public_key_bytes = get_ksm_pubkeys_rs.keyResponses[0].publicKey
-    except Exception as e:
-        # No public key found
-        print(f"{bcolors.FAIL}Error getting public key for gateway {gateway_uid}: {e}{bcolors.ENDC}")
-        gateway_public_key_bytes = b''
-
-    return gateway_public_key_bytes
-
-
-class PAMTunnelEnableCommand(Command):
-    pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel enable')
+class PAMTunnelEditCommand(Command):
+    pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel edit')
     pam_cmd_parser.add_argument('uid', type=str, action='store', help='The Record UID of the PAM '
                                                                       'resource record with network information to use '
                                                                       'for tunneling')
     pam_cmd_parser.add_argument('--configuration', '-c', required=False, dest='config', action='store',
                                 help='The PAM Configuration UID to use for tunneling. '
                                      'Use command `pam config list` to view available PAM Configurations.')
+    # pam_cmd_parser.add_argument('--enable-connections', '-ec', required=False, dest='enable_connections', action='store_true',
+    #                             help='Enable connections on the record')
+    pam_cmd_parser.add_argument('--enable-tunneling', '-et', required=False, dest='enable_tunneling', action='store_true',
+                                help='Enable tunneling on the record')
+    pam_cmd_parser.add_argument('--tunneling-override-port', '-top', required=False, dest='tunneling_override_port',
+                                action='store', help='Port to use for tunneling. If not provided, '
+                                                     'the port from the record will be used.')
+    # pam_cmd_parser.add_argument('--connections-override-port', '-cop', required=False, dest='connections_override_port',
+    #                             action='store', help='Port to use for connections. If not provided, '
+    #                                                  'the port from the record will be used.')
+    # pam_cmd_parser.add_argument('--disable-connections', '-dc', required=False, dest='disable_connections',
+    #                             action='store_true', help='Disable connections on the record')
+    pam_cmd_parser.add_argument('--disable-tunneling', '-dt', required=False, dest='disable_tunneling',
+                                action='store_true', help='Disable tunneling on the record')
+    pam_cmd_parser.add_argument('--remove-tunneling-override-port', '-rtop', required=False,
+                                dest='remove_tunneling_override_port', action='store_true',
+                                help='Remove tunneling override port')
+    # pam_cmd_parser.add_argument('--remove-connections-override-port', '-rcop', required=False,
+    #                             dest='remove_tunneling_override_port', action='store_true',
+    #                             help='Remove connections override port')
+    # pam_cmd_parser.add_argument('--enable-connections-recording', '-ecr', required=False,
+    #                             dest='enable_connections_recording', action='store_true',
+    #                             help='Enable connections recording')
+    # pam_cmd_parser.add_argument('--disable-connections-recording', '-dcr', required=False,
+    #                             dest='disable_connections_recording', action='store_true',
+    #                             help='Disable connections recording')
+    # pam_cmd_parser.add_argument('--enable-typescripts-recording', '-etsr', required=False,
+    #                             dest='enable_typescripts_recording', action='store_true',
+    #                             help='Enable typescripts recording')
+    # pam_cmd_parser.add_argument('--disable-typescripts-recording', '-dtsr', required=False,
+    #                             dest='disable_typescripts_recording', action='store_true',
+    #                             help='Disable typescripts recording')
 
     def get_parser(self):
-        return PAMTunnelEnableCommand.pam_cmd_parser
+        return PAMTunnelEditCommand.pam_cmd_parser
 
     def execute(self, params, **kwargs):
         record_uid = kwargs.get('uid')
         config_uid = kwargs.get('config')
+        # connection_override_port = kwargs.get('connections_override_port')
+        tunneling_override_port = kwargs.get('tunneling_override_port')
+
+        if ((kwargs.get('enable_tunneling') and kwargs.get('disable_tunneling')) or
+                (kwargs.get('enable_rotation') and kwargs.get('disable_rotation')) or
+                (kwargs.get('tunneling-override-port') and kwargs.get('remove_tunneling_override_port'))):
+            raise CommandError('pam-config-edit', 'Cannot enable and disable the same feature at the same time')
+
+        # if ((kwargs.get('enable_connections') and kwargs.get('disable_connections')) or
+        #         (kwargs.get('enable_tunneling') and kwargs.get('disable_tunneling')) or
+        #         (kwargs.get('enable_rotation') and kwargs.get('disable_rotation')) or
+        #         (kwargs.get('enable_connections_recording') and kwargs.get('disable_connections_recording')) or
+        #         (kwargs.get('enable_typescripts_recording') and kwargs.get('disable_typescripts_recording')) or
+        #         (kwargs.get('tunneling-override-port') and kwargs.get('remove_tunneling_override_port')) or
+        #         (kwargs.get('connections-override-port') and kwargs.get('remove_connections_override_port'))):
+        #     raise CommandError('pam-config-edit', 'Cannot enable and disable the same feature at the same time')
+
+        # First check if enabled is true then check if disabled is true. if not then set it to None
+        # _connections = True if kwargs.get('enable_connections') else False if kwargs.get('disable_connections') else None
+        _tunneling = True if kwargs.get('enable_tunneling') else False if  kwargs.get('disable_tunneling') else None
+        # _rotation = True if kwargs.get('enable_rotation') else False if  kwargs.get('disable_rotation') else None
+        # _recording = True if kwargs.get('enable_connections_recording') else False if  kwargs.get('disable_connections_recording') else None
+        # _typescript_recording = (True if kwargs.get('enable_typescripts_recording') else False if
+        #                          kwargs.get('disable_typescripts_recording') else None)
+        _remove_tunneling_override_port = kwargs.get('remove_tunneling_override_port')
+        # _remove_connections_override_port = kwargs.get('remove_connections_override_port')
+
         if not record_uid:
-            raise CommandError('tunnel Enable', '"record UID" argument is required')
-        dirty = False
+            raise CommandError('tunnel edit', '"record UID" argument is required')
+
+        if tunneling_override_port:
+            try:
+                tunneling_override_port = int(tunneling_override_port)
+            except ValueError:
+                raise CommandError('tunnel edit', 'tunneling-override-port must be an integer')
+        # if connection_override_port:
+        #     try:
+        #         connection_override_port = int(connection_override_port)
+        #     except ValueError:
+        #         raise CommandError('tunnel edit', 'connection-override-port must be an integer')
 
         record = vault.KeeperRecord.load(params, record_uid)
 
         if not isinstance(record, vault.TypedRecord):
-            print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
-            return
+            raise CommandError('', f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
 
         record_type = record.record_type
-        if record_type not in "pamMachine pamDatabase pamDirectory".split():
-            print(f"{bcolors.FAIL}This record's type is not supported for tunnels. "
-                  f"Tunnels are only supported on Pam Machine, Pam Database, and Pam Directory records{bcolors.ENDC}")
-            return
+        if record_type not in ("pamMachine pamDatabase pamDirectory pamNetworkConfiguration pamAwsConfiguration "
+                               "pamRemoteBrowser pamAzureConfiguration").split():
+            raise CommandError('', f"{bcolors.FAIL}This record's type is not supported for tunnels. "
+                                   f"Tunnels are only supported on pamMachine, pamDatabase, pamDirectory, "
+                                   f"pamRemoteBrowser, pamNetworkConfiguration pamAwsConfiguration, and "
+                                   f"pamAzureConfiguration records{bcolors.ENDC}")
 
-        if config_uid:
-            configuration = vault.KeeperRecord.load(params, config_uid)
-            if not isinstance(configuration, vault.TypedRecord):
-                print(f"{bcolors.FAIL}Configuration {config_uid} not found.{bcolors.ENDC}")
-                return
-            if (configuration.record_type not in
-                    'pamNetworkConfiguration pamAwsConfiguration pamAzureConfiguration'.split()):
-                print(f"{bcolors.FAIL}The record {config_uid} is not a Pam Configuration.{bcolors.ENDC}")
-                return
-
-        pam_settings = record.get_typed_field('pamSettings')
-        if not pam_settings:
-            pre_settings = {"portForward": {"enabled": True}}
-            if config_uid:
-                pre_settings["configUid"] = config_uid
-            pam_settings = vault.TypedField.new_field('pamSettings', pre_settings, "")
-            record.custom.append(pam_settings)
-            dirty = True
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        if record_type in "pamNetworkConfiguration pamAwsConfiguration pamAzureConfiguration".split():
+            tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid, is_config=True)
+            tmp_dag.edit_tunneling_config(tunneling=_tunneling)
+            tmp_dag.print_tunneling_config(record_uid, None)
         else:
-            if config_uid:
-                if pam_settings.value[0].get('configUid') != config_uid:
-                    pam_settings.value[0]['configUid'] = config_uid
-                    dirty = True
-            if not pam_settings.value[0]['portForward']['enabled']:
-                pam_settings.value[0]['portForward']['enabled'] = True
+            traffic_encryption_key = record.get_typed_field('trafficEncryptionSeed')
+            # Generate a 256-bit (32-byte) random seed
+            seed = os.urandom(32)
+            dirty = False
+            if not traffic_encryption_key.value:
+                base64_seed = bytes_to_base64(seed)
+                record_seed = vault.TypedField.new_field('trafficEncryptionSeed', base64_seed, "")
+                record.custom.append(record_seed)
                 dirty = True
-        if not pam_settings.value[0].get('configUid'):
-            print(f"{bcolors.FAIL}No PAM Configuration UID set. This must be set for tunneling to work. "
-                  f"This can be done by running 'pam tunnel enable {record_uid} --config [ConfigUID]' "
-                  f"The ConfigUID can be found by running 'pam config list'{bcolors.ENDC}")
-            return
-
-        client_private_key = record.get_typed_field('trafficEncryptionKey')
-        if not client_private_key:
-            # Generate an EC private key
-            # TODO: maybe try to use keeper method to generate key
-            # private_key, _ = crypto.generate_ec_key()
-            # client_private_key_value = crypto.unload_ec_private_key(private_key).decode('utf-8')
-            private_key = ec.generate_private_key(
-                ec.SECP256R1(),  # Using P-256 curve
-                backend=default_backend()
-            )
-            # Serialize to PEM format
-            client_private_key_value = private_key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption()
-            ).decode('utf-8')
-            client_private_key = vault.TypedField.new_field('trafficEncryptionKey',
-                                                            client_private_key_value, "")
-            record.custom.append(client_private_key)
-            dirty = True
-
-        if dirty:
-            record_management.update_record(params, record)
-            api.sync_down(params)
-        if pam_settings.value[0].get('configUid'):
-            print(f"{bcolors.OKGREEN}Tunneling enabled for {record_uid} using configuration "
-                  f"{pam_settings.value[0].get('configUid')} {bcolors.ENDC}")
-        else:
-            print(f"{bcolors.OKGREEN}Tunneling enabled for {record_uid}{bcolors.ENDC}")
-
-
-class PAMTunnelDisableCommand(Command):
-    pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel disable')
-    pam_cmd_parser.add_argument('uid', type=str, action='store', help='The Record UID of the PAM '
-                                                                      'resource record with network information to use '
-                                                                      'for tunneling')
-
-    def get_parser(self):
-        return PAMTunnelDisableCommand.pam_cmd_parser
-
-    def execute(self, params, **kwargs):
-
-        record_uid = kwargs.get('uid')
-        if not record_uid:
-            raise CommandError('tunnel Disable', '"record" argument is required')
-
-        record = vault.KeeperRecord.load(params, record_uid)
-
-        if not isinstance(record, vault.TypedRecord):
-            print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
-            return
-
-        pam_settings = record.get_typed_field('pamSettings')
-        if pam_settings:
-            if pam_settings.value[0]['portForward']['enabled']:
-                pam_settings.value[0]['portForward']['enabled'] = False
+            if dirty:
                 record_management.update_record(params, record)
                 api.sync_down(params)
-        print(f"{bcolors.OKGREEN}Tunneling disabled for {record_uid}{bcolors.ENDC}")
+
+                traffic_encryption_key = record.get_typed_field('trafficEncryptionSeed')
+                if not traffic_encryption_key:
+                    raise CommandError('', f"{bcolors.FAIL}Unable to add Seed to record {record_uid}. "
+                                       f"Please make sure you have edit rights to record {record_uid} {bcolors.ENDC}")
+            dirty = False
+
+            existing_config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
+
+            tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, config_uid)
+            old_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, existing_config_uid)
+
+            if config_uid and existing_config_uid != config_uid:
+                old_dag.remove_from_dag(record_uid)
+                tmp_dag.link_resource_to_config(record_uid)
+
+            if tmp_dag is None or not tmp_dag.linking_dag.has_graph:
+                raise CommandError('', f"{bcolors.FAIL}No PAM Configuration UID set. "
+                                   f"This must be set or supplied for tunneling to work. This can be done by adding "
+                                   f"{bcolors.OKBLUE}' --config [ConfigUID] "
+                                   f" {bcolors.FAIL}The ConfigUID can be found by running "
+                                   f"{bcolors.OKBLUE}'pam config list'{bcolors.ENDC}")
+
+            if not tmp_dag.check_tunneling_enabled_config(enable_tunneling=_tunneling):
+                tmp_dag.print_tunneling_config(config_uid, None)
+                command = f"{bcolors.OKBLUE}'pam tunnel edit {config_uid}"
+                # if _connections and not tmp_dag.check_tunneling_enabled_config(enable_connections=_connections):
+                #     command += f" --enable-connections" if _connections else ""
+                if _tunneling and not tmp_dag.check_tunneling_enabled_config(
+                        enable_tunneling=_tunneling):
+                    command += f" --enable-tunneling" if _tunneling else ""
+                # if _recording and not tmp_dag.check_tunneling_enabled_config(
+                #         enable_session_recording=_recording):
+                #     command += f" --enable-connections-recording" if _recording else ""
+                # if _typescript_recording and not tmp_dag.check_tunneling_enabled_config(
+                #         enable_typescript_recording=_typescript_recording):
+                #     command += f" --enable-typescripts-recording" if _typescript_recording else ""
+
+                print(f"{bcolors.FAIL}The settings are denied by PAM Configuration: {config_uid}. "
+                      f"Please enable settings for the configuration by running\n"
+                      f"{command}'{bcolors.ENDC}")
+                return
+
+            if not tmp_dag.is_tunneling_config_set_up(record_uid):
+                tmp_dag.link_resource_to_config(record_uid)
+
+            pam_settings = record.get_typed_field('pamSettings')
+            if not pam_settings:
+                pre_settings = {}
+                if _tunneling and tunneling_override_port:
+                    pre_settings["portForward"]["port"] = tunneling_override_port
+                # if _connections and connection_override_port:
+                #     pre_settings["connection"]["port"] = connection_override_port
+                if pre_settings:
+                    pam_settings = vault.TypedField.new_field('pamSettings', pre_settings, "")
+                    # TODO follow template
+                    record.custom.append(pam_settings)
+                    dirty = True
+            else:
+                if not tmp_dag.is_tunneling_config_set_up(record_uid):
+                    tmp_dag.link_resource_to_config(record_uid)
+                if not pam_settings.value:
+                    pam_settings.value.append({"connection": {}, "portForward": {}})
+                # if _connections and connection_override_port:
+                #     pam_settings.value[0]['connection']['port'] = connection_override_port
+                #     dirty = True
+                if _tunneling and tunneling_override_port:
+                    pam_settings.value[0]['portForward']['port'] = tunneling_override_port
+                    dirty = True
+
+                if _remove_tunneling_override_port and pam_settings.value[0]['portForward'].get('port'):
+                    pam_settings.value[0]['portForward'].pop('port')
+                    dirty = True
+                # if _remove_connections_override_port and pam_settings.value[0]['connection'].get('port'):
+                #     pam_settings.value[0]['connection'].pop('port')
+                #     dirty = True
+            if not tmp_dag.is_tunneling_config_set_up(record_uid):
+                print(f"{bcolors.FAIL}No PAM Configuration UID set. This must be set for tunneling to work. "
+                      f"This can be done by running "
+                      f"{bcolors.OKBLUE}'pam tunnel edit {record_uid} --config [ConfigUID] --enable-tunneling' "
+                      f"{bcolors.FAIL}The ConfigUID can be found by running "
+                      f"{bcolors.OKBLUE}'pam config list'{bcolors.ENDC}")
+                return
+            allowed_settings_name = "allowedSettings"
+            if record.record_type == "pamRemoteBrowser":
+                allowed_settings_name = "pamRemoteBrowserSettings"
+
+            # if _recording is not None and tmp_dag.check_if_resource_allowed(record_uid, "sessionRecording") != _recording:
+            #     dirty = True
+            # if _typescript_recording is not None and tmp_dag.check_if_resource_allowed(record_uid, "typescriptRecording") != _typescript_recording:
+            #     dirty = True
+            # if _connections is not None and tmp_dag.check_if_resource_allowed(record_uid, "connections") != _connections:
+            #     dirty = True
+            if _tunneling is not None and tmp_dag.check_if_resource_allowed(record_uid, "portForwards") != _tunneling:
+                dirty = True
+
+            if dirty:
+                tmp_dag.set_resource_allowed(resource_uid=record_uid, tunneling=_tunneling, allowed_settings_name=allowed_settings_name)
+
+            # Print out the tunnel settings
+            tmp_dag.print_tunneling_config(record_uid, record.get_typed_field('pamSettings'), config_uid)
 
 
 class PAMTunnelStartCommand(Command):
@@ -2162,60 +2728,64 @@ class PAMTunnelStartCommand(Command):
         logger.debug("Logging setup complete.")
         return logger
 
-    async def connect(self, params, record_uid, convo_num, gateway_uid, host, port,
-                      log_queue, gateway_public_key_bytes, client_private_key):
+    async def connect(self, params, record_uid, convo_num, host, port,
+                      log_queue, seed, target_host, target_port, socks):
 
         # Setup custom logging to put logs into log_queue
         logger = self.setup_logging(str(convo_num), log_queue, logging.getLogger().getEffectiveLevel())
 
-        print(f"{bcolors.HIGHINTENSITYWHITE}Establishing tunnel between Commander and Gateway. Please wait...{bcolors.ENDC}")
-        # get the keys
-        gateway_public_key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), gateway_public_key_bytes)
+        print(f"{bcolors.HIGHINTENSITYWHITE}Establishing tunnel between Commander and Gateway. Please wait..."
+              f"{bcolors.ENDC}")
 
+        # Symmetric key
         """
-# Generate an EC private key
-private_key = ec.generate_private_key(
-    ec.SECP256R1(),  # Using P-256 curve
-    backend=default_backend()
-)
-# Serialize to PEM format
-private_key_str = private_key.private_bytes(
-    encoding=serialization.Encoding.PEM,
-    format=serialization.PrivateFormat.PKCS8,
-    encryption_algorithm=serialization.NoEncryption()
-).decode('utf-8')
+        Generate a 256-bit (32-byte) random seed
+        seed = os.urandom(32)
         """
-
-        client_private_key_pem = serialization.load_pem_private_key(
-            client_private_key.encode(),
-            password=None,
+        if isinstance(seed, str):
+            seed = base64_to_bytes(seed)
+        # Generate a 128-bit (16-byte) random nonce
+        nonce = os.urandom(MAIN_NONCE_LENGTH)
+        # Derive the encryption key using HKDF
+        hkdf = HKDF(
+            algorithm=hashes.SHA256(),
+            length=SYMMETRIC_KEY_LENGTH,  # 256-bit key
+            salt=nonce,
+            info=b"KEEPER_TUNNEL_ENCRYPT_AES_GCM_128",
             backend=default_backend()
-        )
-
-        # Get symmetric key
-        symmetric_key = establish_symmetric_key(client_private_key_pem, gateway_public_key)
+        ).derive(seed)
+        symmetric_key = AESGCM(hkdf)
 
         # Set up the pc
         print_ready_event = asyncio.Event()
         kill_server_event = asyncio.Event()
-        pc = WebRTCConnection(params=params, record_uid=record_uid, gateway_uid=gateway_uid,
-                              symmetric_key=symmetric_key, print_ready_event=print_ready_event,
-                              kill_server_event=kill_server_event, logger=logger, server=params.server)
+        pc = WebRTCConnection(params=params, record_uid=record_uid, symmetric_key=symmetric_key,
+                              print_ready_event=print_ready_event, kill_server_event=kill_server_event,
+                              logger=logger, server=params.server)
 
         try:
-            await pc.signal_channel('start')
+            await pc.signal_channel('start', bytes_to_base64(nonce))
         except Exception as e:
             raise CommandError('Tunnel Start', f"{e}")
 
         logger.debug("starting private tunnel")
 
-        private_tunnel = TunnelEntrance(host=host, port=port, pc=pc, print_ready_event=print_ready_event, logger=logger,
-                                        connect_task=params.tunnel_threads[convo_num].get("connect_task", None),
-                                        kill_server_event=kill_server_event)
+        if socks:
+            private_tunnel = SOCKS5Server(host=host, port=port, pc=pc, print_ready_event=print_ready_event,
+                                          logger=logger,
+                                          connect_task=params.tunnel_threads[convo_num].get("connect_task", None),
+                                          kill_server_event=kill_server_event, target_host=target_host,
+                                          target_port=target_port)
+        else:
+            private_tunnel = TunnelEntrance(host=host, port=port, pc=pc, print_ready_event=print_ready_event,
+                                            logger=logger,
+                                            connect_task=params.tunnel_threads[convo_num].get("connect_task", None),
+                                            kill_server_event=kill_server_event, target_host=target_host,
+                                            target_port=target_port)
 
         t1 = asyncio.create_task(private_tunnel.start_server())
         params.tunnel_threads[convo_num].update({"server": t1, "entrance": private_tunnel,
-                                                "kill_server_event": kill_server_event})
+                                                 "kill_server_event": kill_server_event})
 
         logger.debug("--> START LISTENING FOR MESSAGES FROM GATEWAY --------")
         try:
@@ -2225,10 +2795,11 @@ private_key_str = private_key.private_bytes(
         finally:
             logger.debug("--> STOP LISTENING FOR MESSAGES FROM GATEWAY --------")
 
-    def pre_connect(self, params, record_uid, convo_num, gateway_uid, host, port,
-                    gateway_public_key_bytes, client_private_key):
+    def pre_connect(self, params, record_uid, convo_num, host, port,
+                    seed, target_host, target_port, socks):
         tunnel_name = f"{convo_num}"
-        def custom_exception_handler(loop, context):
+
+        def custom_exception_handler(_loop, context):
             # Check if the exception is present in the context
             if "exception" in context:
                 exception = context["exception"]
@@ -2254,12 +2825,13 @@ private_key_str = private_key.private_bytes(
                     params=params,
                     record_uid=record_uid,
                     convo_num=convo_num,
-                    gateway_uid=gateway_uid,
                     host=host,
                     port=port,
                     log_queue=output_queue,
-                    gateway_public_key_bytes=gateway_public_key_bytes,
-                    client_private_key=client_private_key
+                    seed=seed,
+                    target_host=target_host,
+                    target_port=target_port,
+                    socks=socks
                 )
             )
             params.tunnel_threads[convo_num].update({"connect_task": connect_task})
@@ -2306,7 +2878,9 @@ private_key_str = private_key.private_bytes(
                     except Exception as e:
                         logging.debug(f"{bcolors.WARNING}Exception while stopping event loop: {e}{bcolors.ENDC}")
                 except Exception as e:
-                    print(f"{bcolors.FAIL}An exception occurred in pre_connect for connection {tunnel_name}: {e}{bcolors.ENDC}")
+                    print(
+                        f"{bcolors.FAIL}An exception occurred in pre_connect for connection {tunnel_name}: {e}"
+                        f"{bcolors.ENDC}")
                 finally:
                     clean_up_tunnel(params, convo_num)
                     print(f"{bcolors.OKBLUE}Tunnel {tunnel_name} closed.{bcolors.ENDC}")
@@ -2339,11 +2913,13 @@ private_key_str = private_key.private_bytes(
                 port = find_open_port(tried_ports=[], preferred_port=port, host=host)
             except CommandError as e:
                 print(f"{bcolors.FAIL}{e}{bcolors.ENDC}")
+                del params.tunnel_threads[convo_num]
                 return
         else:
             port = find_open_port(tried_ports=[], host=host)
             if port is None:
                 print(f"{bcolors.FAIL}Could not find open port to use for tunnel{bcolors.ENDC}")
+                del params.tunnel_threads[convo_num]
                 return
 
         api.sync_down(params)
@@ -2354,64 +2930,44 @@ private_key_str = private_key.private_bytes(
 
         pam_settings = record.get_typed_field('pamSettings')
         if not pam_settings:
-            print(f"{bcolors.FAIL}PAM Settings not enabled for record {record_uid}'.{bcolors.ENDC}")
-            print(f"{bcolors.WARNING}This is done by running 'pam tunnel enable {record_uid} "
-                  f"--config [ConfigUID]' The ConfigUID can be found by running 'pam config list'{bcolors.ENDC}.")
+            print(f"{bcolors.FAIL}PAM Settings not configured for record {record_uid}'.{bcolors.ENDC}")
+            print(f"{bcolors.WARNING}This is done by running {bcolors.OKBLUE}'pam tunnel edit {record_uid} "
+                  f"--enable-tunneling --config [ConfigUID]'"
+                  f"{bcolors.WARNING} The ConfigUID can be found by running"
+                  f"{bcolors.OKBLUE} 'pam config list'{bcolors.ENDC}.")
             return
 
-        try:
-            pam_info = pam_settings.value[0]
-            enabled_port_forward = pam_info.get("portForward", {}).get("enabled", False)
-            if not enabled_port_forward:
-                print(f"{bcolors.FAIL}PAM Settings not enabled for record {record_uid}. "
-                      f"{bcolors.WARNING}This is done by running 'pam tunnel enable {record_uid}'.{bcolors.ENDC}")
-                return
-        except Exception as e:
-            print(f"{bcolors.FAIL}Error parsing PAM Settings for record {record_uid}: {e}{bcolors.ENDC}")
+        # SOCKS5 Proxy uses this to determine what connection to use for the tunnel
+        target = record.get_typed_field('pamHostname')
+        if not target:
+            print(f"{bcolors.FAIL}Hostname not found for record {record_uid}.{bcolors.ENDC}")
+            return
+        target_host = target.get_default_value().get('hostName', None)
+        target_port = target.get_default_value().get('port', None)
+        if not target_host:
+            print(f"{bcolors.FAIL}Host not found for record {record_uid}.{bcolors.ENDC}")
+            return
+        if not target_port:
+            print(f"{bcolors.FAIL}Port not found for record {record_uid}.{bcolors.ENDC}")
             return
 
-        client_private_key = record.get_typed_field('trafficEncryptionKey')
-        if not client_private_key:
-            print(f"{bcolors.FAIL}Traffic Encryption Key not found for record {record_uid}.{bcolors.ENDC}")
-            return
+        # IP or a CIDR subnet.
+        allowed_hosts = record.get_typed_field('multiline', 'Allowed Hosts')
 
-        client_private_key_value = client_private_key.get_default_value(str)
+        allowed_ports = record.get_typed_field('multiline', 'Allowed Ports')
+        socks = False
+        if allowed_hosts or allowed_ports:
+            socks = True
 
-        configuration_uid = pam_info.get("configUid", None)
-        if not configuration_uid:
-            print(f"{bcolors.FAIL}Configuration UID not found for record {record_uid}.{bcolors.ENDC}")
+        client_private_seed = record.get_typed_field('trafficEncryptionSeed')
+        if not client_private_seed:
+            print(f"{bcolors.FAIL}Traffic Encryption Seed not found for record {record_uid}.{bcolors.ENDC}")
             return
-        configuration = vault.KeeperRecord.load(params, configuration_uid)
-        if not isinstance(configuration, vault.TypedRecord):
-            print(f"{bcolors.FAIL}Configuration {configuration_uid} not found.{bcolors.ENDC}")
-            return
+        base64_seed = client_private_seed.get_default_value(str).encode('utf-8')
+        seed = base64_to_bytes(base64_seed)
 
-        pam_resources = configuration.get_typed_field('pamResources')
-        if not pam_resources:
-            print(f"{bcolors.FAIL}PAM Resources not found for configuration {configuration_uid}.{bcolors.ENDC}")
-            return
-        if len(pam_resources.value) == 0:
-            print(f"{bcolors.FAIL}PAM Resources not found for configuration {configuration_uid}.{bcolors.ENDC}")
-            return
-        gateway_uid = ''
-        try:
-            gateway_uid = pam_resources.value[0].get("controllerUid", '')
-        except Exception as e:
-            print(f"{bcolors.FAIL}Error parsing PAM Resources for configuration {configuration_uid}: {e}{bcolors.ENDC}")
-            CommandError('Tunnel Start', f"{e}")
-
-        if not gateway_uid:
-            print(f"{bcolors.FAIL}Gateway UID not found for configuration {configuration_uid}.{bcolors.ENDC}")
-            return
-
-        gateway_public_key_bytes = retrieve_gateway_public_key(gateway_uid, params, api, utils)
-
-        if not gateway_public_key_bytes:
-            print(f"{bcolors.FAIL}Could not retrieve public key for gateway {gateway_uid}{bcolors.ENDC}")
-            return
-
-        t = threading.Thread(target=self.pre_connect, args=(params, record_uid, convo_num, gateway_uid, host, port,
-                                                            gateway_public_key_bytes, client_private_key_value)
+        t = threading.Thread(target=self.pre_connect, args=(params, record_uid, convo_num, host, port,
+                                                            seed, target_host, target_port, socks)
                              )
 
         # Setting the thread as a daemon thread
@@ -2442,7 +2998,9 @@ private_key_str = private_key.private_bytes(
 
         def print_fail(con_num):
             con_name = ''
-            con_entrance = params.tunnel_threads[con_num].get("entrance", None)
+            con_entrance = None
+            if con_num in params.tunnel_threads:
+                con_entrance = params.tunnel_threads[con_num].get("entrance", None)
             fail_dynamic_length = len("| Endpoint ") + len(" failed to start..")
             if con_entrance:
                 con_name = con_entrance.pc.endpoint_name

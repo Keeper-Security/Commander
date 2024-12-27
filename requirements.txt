@@ -15,3 +15,16 @@ cryptography>=39.0.1
 protobuf>=3.19.0
 keeper-secrets-manager-core>=16.6.0
 aiortc; python_version>='3.8' and python_version<'3.13'
+
+pydantic>=2.6.4
+
+# pip uninstall keeper-dag -y
+# python3 setup.py wheel --whlsrc ~/src/keeper-dag --libdir $PWD/libs --reqfiles $PWD/requirements.txt
+# pip install $(ls libs/keeper_dag-*)
+./libs/keeper_dag-1.0.20-py3-none-any.whl
+
+
+# pip uninstall discovery-common -y
+# python3 setup.py wheel --whlsrc ~/src/discovery-common --libdir $PWD/libs --reqfiles $PWD/requirements.txt
+# pip install $(ls libs/discovery_common-*)
+./libs/discovery_common-1.0.26-py3-none-any.whl
