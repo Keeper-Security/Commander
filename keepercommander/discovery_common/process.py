@@ -1338,6 +1338,8 @@ class Process:
 
             # If the action is to ADD, replace the PLACEHOLDER data.
             if admin_result.action == PromptActionEnum.ADD:
+                self.logger.debug("adding admin user")
+
                 source = "local"
                 if resource_content.record_type == PAM_DIRECTORY:
                     source = resource_content.name
@@ -1348,7 +1350,7 @@ class Process:
                 admin_acl = UserAcl(is_admin=True)
 
                 if admin_record_uid is None:
-                    logging.debug("add admin user from content")
+                    self.logger.debug("add admin user from content")
                     admin_content = admin_result.content
 
                     # With the result, we can fill in information in the object item.
@@ -1415,12 +1417,14 @@ class Process:
                         self.record_link.discovery_belongs_to(admin_vertex, resource_vertex, acl=admin_acl)
 
                 else:
-                    logging.debug("add admin user from existing record")
+                    self.logger.debug("add admin user from existing record")
 
                     # If this is NOT existing directory user, we want to convert the record rotation setting to
                     #   work with this gateway/controller.
                     # If it is a directory user, we just want link this record; no conversion.
                     if admin_result.is_directory_user is False:
+
+                        self.logger.debug("the admin user is NOT a directory user, convert record's rotation settings")
 
                         # This is a pamUser record that may need to have the controller set.
                         # Add it to this queue to make sure the protobuf items are current.
@@ -1442,6 +1446,8 @@ class Process:
 
                         # There is _prepare_record, the record exists.
                         # Needs to add to records linking.
+                    else:
+                        self.logger.debug("the admin user is a directory user")
 
                     # Link the record UIDs.
                     # We might not have this user in discovery data.
