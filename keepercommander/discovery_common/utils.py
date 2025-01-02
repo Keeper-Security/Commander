@@ -1,12 +1,12 @@
 from __future__ import annotations
 import os
-from discovery_common.constants import PAM_USER
-from discovery_common.types import DiscoveryObject
-from keeper_dag.vertex import DAGVertex
+from .constants import PAM_USER
+from .types import DiscoveryObject
+from keepercommander.keeper_dag.vertex import DAGVertex
 from typing import List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from keeper_dag.dag import DAG
+    from keepercommander.keeper_dag.dag import DAG
 
 
 def value_to_boolean(value):
@@ -32,16 +32,16 @@ def get_connection(**kwargs):
     """
 
     if value_to_boolean(os.environ.get("USE_LOCAL_DAG")) is True:
-        from keeper_dag.connection.local import Connection
+        from keepercommander.keeper_dag.connection.local import Connection
         conn = Connection()
     else:
         ksm = kwargs.get("ksm")
         params = kwargs.get("params")
         if ksm is not None:
-            from keeper_dag.connection.ksm import Connection
+            from keepercommander.keeper_dag.connection.ksm import Connection
             conn = Connection(config=ksm.storage_config)
         elif params is not None:
-            from keeper_dag.connection.commander import Connection
+            from keepercommander.keeper_dag.connection.commander import Connection
             conn = Connection(params=params)
         else:
             raise ValueError("Must pass 'ksm' for KSK, 'params' for Commander. Found neither.")

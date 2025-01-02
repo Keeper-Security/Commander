@@ -7,7 +7,7 @@ from ...proto import pam_pb2
 from ..pam.router_helper import router_send_action_to_gateway, router_get_connected_gateways
 from ... import vault_extensions
 from ...display import bcolors
-from discovery_common.jobs import Jobs
+from keepercommander.discovery_common.jobs import Jobs
 
 
 class PAMGatewayActionDiscoverJobRemoveCommand(PAMGatewayActionDiscoverCommandBase):

@@ -13,10 +13,10 @@ from typing import Optional, Dict
 
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from keeper_dag import DAG, EdgeType
-from keeper_dag.connection.commander import Connection
-from keeper_dag.types import RefType
-from keeper_dag.vertex import DAGVertex
+from keepercommander.keeper_dag import DAG, EdgeType
+from keepercommander.keeper_dag.connection.commander import Connection
+from keepercommander.keeper_dag.types import RefType
+from keepercommander.keeper_dag.vertex import DAGVertex
 from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes, bytes_to_string, string_to_bytes
 
 from keepercommander import crypto, utils, rest_api
