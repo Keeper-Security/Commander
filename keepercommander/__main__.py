@@ -21,12 +21,15 @@ import os
 import re
 import shlex
 import sys
+
 from pathlib import Path
 
 from . import __version__
 from . import cli
 from .params import KeeperParams
 from .config_storage import loader
+
+
 
 def get_params_from_config(config_filename=None, launched_with_shortcut=False):    # type: (Optional[str], bool) -> KeeperParams
     if os.getenv("KEEPER_COMMANDER_DEBUG"):
