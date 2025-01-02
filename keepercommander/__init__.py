@@ -10,4 +10,7 @@
 # Contact: ops@keepersecurity.com
 #
 
-__version__ = '17.0.0'
+import keepercommander.keeper_dag as keeper_dag
+import keepercommander.discovery_common as discovery_common
+
+__version__ = '17.0.2'
