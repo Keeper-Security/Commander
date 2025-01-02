@@ -2,7 +2,7 @@ from __future__ import annotations
 from .constants import DIS_JOBS_GRAPH_ID
 from .utils import get_connection
 from .types import JobContent, JobItem, Settings
-from keeper_dag import DAG, EdgeType
+from keepercommander.keeper_dag import DAG, EdgeType
 import logging
 import os
 import base64

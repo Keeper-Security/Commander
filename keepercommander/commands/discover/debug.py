@@ -4,10 +4,10 @@ import os
 from . import PAMGatewayActionDiscoverCommandBase
 from ...display import bcolors
 from ... import vault
-from discovery_common.infrastructure import Infrastructure
-from discovery_common.record_link import RecordLink
-from discovery_common.types import UserAcl, DiscoveryObject
-from keeper_dag import EdgeType
+from keepercommander.discovery_common.infrastructure import Infrastructure
+from keepercommander.discovery_common.record_link import RecordLink
+from keepercommander.discovery_common.types import UserAcl, DiscoveryObject
+from keepercommander.keeper_dag import EdgeType
 from importlib.metadata import version
 from typing import Optional, TYPE_CHECKING
 
