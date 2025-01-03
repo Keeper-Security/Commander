@@ -129,6 +129,10 @@ class _EnterpriseLoader(object):
                         self._enterprise._tree_key = crypto.decrypt_aes_v1(encrypted_tree_key, params.data_key)
                     elif rs.treeKey.keyTypeId == proto.ENCRYPTED_BY_PUBLIC_KEY:
                         self._enterprise._tree_key = crypto.decrypt_rsa(encrypted_tree_key, params.rsa_key2)
+                    elif rs.treeKey.keyTypeId == proto.ENCRYPTED_BY_DATA_KEY_GCM:
+                        self._enterprise._tree_key = crypto.decrypt_aes_v2(encrypted_tree_key, params.data_key)
+                    elif rs.treeKey.keyTypeId == proto.ENCRYPTED_BY_PUBLIC_KEY_ECC:
+                        self._enterprise._tree_key = crypto.decrypt_ec(encrypted_tree_key, params.ecc_key)
             params.enterprise['unencrypted_tree_key'] = self._enterprise.tree_key
 
             keys = {}    # type: Dict[str, str]
