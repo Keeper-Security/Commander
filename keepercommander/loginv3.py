@@ -456,6 +456,7 @@ class LoginV3Flow:
                         if params.logout_timer == 0 or logout_timer < params.logout_timer:
                             params.logout_timer = logout_timer
 
+        params.forbid_rsa = acct_summary_dict_snake_case.get('forbid_key_type2') is True
         params.is_enterprise_admin = acct_summary_dict_snake_case.get('is_enterprise_admin') is True
 
         # settings
