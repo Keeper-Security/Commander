@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 
 class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='dr-pam-command-debug')
+    parser = argparse.ArgumentParser(prog='pam-action-debug-graph')
 
     # The record to base everything on.
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',

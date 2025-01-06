@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging
+import os
 from .constants import PAM_DIRECTORY, PAM_USER, VERTICES_SORT_MAP, LOCAL_USER
 from .jobs import Jobs
 from .infrastructure import Infrastructure
@@ -15,7 +16,6 @@ from keepercommander.keeper_dag import EdgeType
 from keepercommander.keeper_dag.crypto import bytes_to_urlsafe_str
 import hashlib
 import time
-import os
 from typing import Any, Callable, List, Optional, Union, TYPE_CHECKING
 
 
@@ -323,6 +323,7 @@ class Process:
             }, ignore_case=True)
 
             self.logger.debug(f"found {len(directories)} directories in the graph")
+
 
             # If we found directories, return the list of directory vertices.
             if len(directories) > 0:
@@ -812,7 +813,6 @@ class Process:
                                 # The user is a remote user.
                                 else:
                                     self.logger.debug("    check directory for remote user")
-
                                     domain = content.access_user.source
                                     if content.record_type == PAM_DIRECTORY:
                                         domain = content.name
@@ -887,7 +887,6 @@ class Process:
                         if admin_user_record_uid is not None or admin_content is not None:
 
                             if admin_content is not None:
-
                                 self.logger.debug("the admin record does not exists, create it")
 
                                 # Create the local admin here since we need the resource record added.

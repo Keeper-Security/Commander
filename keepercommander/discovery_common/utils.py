@@ -1,7 +1,7 @@
 from __future__ import annotations
 import os
-from .constants import PAM_USER
-from .types import DiscoveryObject
+from discovery_common.constants import PAM_USER
+from discovery_common.types import DiscoveryObject
 from keepercommander.keeper_dag.vertex import DAGVertex
 from typing import List, Optional, TYPE_CHECKING
 
@@ -48,7 +48,10 @@ def get_connection(**kwargs):
     return conn
 
 
-def split_user_and_domain(user: str) -> (str, Optional[str]):
+def split_user_and_domain(user: str) -> (Optional[str], Optional[str]):
+
+    if user is None:
+        return None, None
 
     domain = None
 
@@ -94,6 +97,7 @@ def user_in_lookup(user: str, lookup: dict, name: Optional[str] = None, source: 
     return False
 
 
+
 def find_user_vertex(graph: DAG, user: str, domain: Optional[str] = None) -> Optional[DAGVertex]:
 
     user_vertices = graph.search_content({"record_type": PAM_USER})
@@ -114,8 +118,3 @@ def find_user_vertex(graph: DAG, user: str, domain: Optional[str] = None) -> Opt
             return user_vertex
 
     return None
-
-
-
-
-
