@@ -70,11 +70,8 @@ from .discover.rule_list import PAMGatewayActionDiscoverRuleListCommand
 from .discover.rule_remove import PAMGatewayActionDiscoverRuleRemoveCommand
 from .discover.rule_update import PAMGatewayActionDiscoverRuleUpdateCommand
 from .pam_debug.acl import PAMDebugACLCommand
-from .pam_debug.alter import PAMDebugAlterCommand
 from .pam_debug.graph import PAMDebugGraphCommand
 from .pam_debug.info import PAMDebugInfoCommand
-from .pam_debug.verify import PAMDebugVerifyCommand
-from .pam_debug.version import PAMDebugVersionCommand
 from .pam_debug.gateway import PAMDebugGatewayCommand
 
 
@@ -189,10 +186,10 @@ class PAMDebugCommand(GroupCommand):
         self.register_command('info', PAMDebugInfoCommand(), 'Debug a record', 'i')
         self.register_command('gateway', PAMDebugGatewayCommand(), 'Debug a getway', 'g')
         self.register_command('graph', PAMDebugGraphCommand(), 'Render graphs', 'r')
-        self.register_command('verify', PAMDebugVerifyCommand(), 'Verify graphs', 'v')
-        self.register_command('alter', PAMDebugAlterCommand(), 'Alter graph information', 'a')
+
+        # Disable for now. Needs more work.
+        # self.register_command('verify', PAMDebugVerifyCommand(), 'Verify graphs', 'v')
         self.register_command('acl', PAMDebugACLCommand(), 'Control ACL of PAM Users', 'c')
-        self.register_command('version', PAMDebugVersionCommand(), 'Version modules versions')
 
 
 class PAMCmdListJobs(Command):

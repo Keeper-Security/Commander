@@ -18,7 +18,7 @@ class Jobs:
     KEY_PATH = "jobs"
 
     def __init__(self, record: Any, logger: Optional[Any] = None, debug_level: int = 0, fail_on_corrupt: bool = True,
-                 **kwargs):
+                 log_prefix: str = "GS Jobs", **kwargs):
 
         self.conn = get_connection(**kwargs)
 
@@ -28,6 +28,7 @@ class Jobs:
         if logger is None:
             logger = logging.getLogger()
         self.logger = logger
+        self.log_prefix = log_prefix
         self.debug_level = debug_level
         self.fail_on_corrupt = fail_on_corrupt
 
@@ -37,7 +38,7 @@ class Jobs:
 
             self._dag = DAG(conn=self.conn, record=self.record, graph_id=DIS_JOBS_GRAPH_ID, auto_save=False,
                             logger=self.logger, debug_level=self.debug_level, name="Discovery Jobs",
-                            fail_on_corrupt=self.fail_on_corrupt)
+                            fail_on_corrupt=self.fail_on_corrupt, log_prefix=self.log_prefix)
             self._dag.load()
 
             # Has the status been initialized?

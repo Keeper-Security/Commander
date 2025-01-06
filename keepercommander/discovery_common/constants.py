@@ -17,7 +17,6 @@ PAM_DIRECTORY = "pamDirectory"
 PAM_DATABASE = "pamDatabase"
 PAM_MACHINE = "pamMachine"
 PAM_USER = "pamUser"
-
 LOCAL_USER = "local"
 
 # The record types to process.
