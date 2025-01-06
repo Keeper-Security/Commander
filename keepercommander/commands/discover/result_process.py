@@ -1221,10 +1221,14 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         dry_run = kwargs.get("dry_run", False)
         debug_level = kwargs.get("debug_level", 0)
 
+        all_gateways = GatewayContext.all_gateways(params)
+
         configuration_records = list(vault_extensions.find_records(params, "pam.*Configuration"))
         for configuration_record in configuration_records:
 
-            gateway_context = GatewayContext.from_configuration_uid(params, configuration_record.record_uid)
+            gateway_context = GatewayContext.from_configuration_uid(params=params,
+                                                                    configuration_uid=configuration_record.record_uid,
+                                                                    gateways=all_gateways)
             if gateway_context is None:
                 continue
 
