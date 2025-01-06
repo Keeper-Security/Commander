@@ -240,13 +240,16 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
         max_gateway_name = 12
 
         all_jobs = []
+        all_gateways = GatewayContext.all_gateways(params)
 
         # For each configuration/ gateway, we are going to get all jobs.
         # We are going to query the gateway for any updated status.
         gateway_context = None
         for configuration_record in configuration_records:
 
-            gateway_context = GatewayContext.from_configuration_uid(params, configuration_record.record_uid)
+            gateway_context = GatewayContext.from_configuration_uid(params=params,
+                                                                    configuration_uid=configuration_record.record_uid,
+                                                                    gateways=all_gateways)
             if gateway_context is None:
                 continue
 
