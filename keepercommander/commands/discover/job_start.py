@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='dr-discover-start-command')
+    parser = argparse.ArgumentParser(prog='pam-action-discover-start')
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID.')
     parser.add_argument('--resource', '-r', required=False, dest='resource_uid', action='store',

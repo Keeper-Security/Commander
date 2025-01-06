@@ -32,9 +32,9 @@ class Infrastructure:
     USER_PATH = "USERS"
 
     def __init__(self, record: Any, logger: Optional[Any] = None, history_level: int = 0,
-                 debug_level: int = 0, fail_on_corrupt: bool = True, **kwargs):
-
-        self.conn = get_connection(**kwargs)
+                 debug_level: int = 0, fail_on_corrupt: bool = True, log_prefix: str = "GS Infrastructure",
+                 save_batch_count: int = 0,
+                 **kwargs):
 
         # This will either be a KSM Record, or Commander KeeperRecord
         self.record = record
@@ -42,23 +42,29 @@ class Infrastructure:
         if logger is None:
             logger = logging.getLogger()
         self.logger = logger
+        self.log_prefix = log_prefix
         self.history_level = history_level
         self.debug_level = debug_level
         self.fail_on_corrupt = fail_on_corrupt
+        self.save_batch_count = save_batch_count
 
         self.auto_save = False
         self.delta_graph = True
         self.last_sync_point = -1
+
+        self.conn = get_connection(**kwargs)
 
     @property
     def dag(self) -> DAG:
         if self._dag is None:
 
             self.logger.debug(f"loading the dag graph {DIS_INFRA_GRAPH_ID}")
+            self.logger.debug(f"setting graph save batch count to {self.save_batch_count}")
 
             self._dag = DAG(conn=self.conn, record=self.record, graph_id=DIS_INFRA_GRAPH_ID, auto_save=self.auto_save,
                             logger=self.logger, history_level=self.history_level, debug_level=self.debug_level,
-                            name="Discovery Infrastructure", fail_on_corrupt=self.fail_on_corrupt)
+                            name="Discovery Infrastructure", fail_on_corrupt=self.fail_on_corrupt,
+                            log_prefix=self.log_prefix, save_batch_count=self.save_batch_count)
             # Do not load the DAG here.
             # We don't know if we are using a sync point yet.
 

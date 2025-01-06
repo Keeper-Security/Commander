@@ -17,7 +17,8 @@ if TYPE_CHECKING:
 class UserService:
 
     def __init__(self, record: Any, logger: Optional[Any] = None, history_level: int = 0,
-                 debug_level: int = 0, fail_on_corrupt: bool = True, **kwargs):
+                 debug_level: int = 0, fail_on_corrupt: bool = True, log_prefix: str = "GS Services/Tasks",
+                 **kwargs):
 
         self.conn = get_connection(**kwargs)
 
@@ -27,6 +28,7 @@ class UserService:
         if logger is None:
             logger = logging.getLogger()
         self.logger = logger
+        self.log_prefix = log_prefix
         self.history_level = history_level
         self.debug_level = debug_level
         self.fail_on_corrupt = fail_on_corrupt
@@ -41,7 +43,7 @@ class UserService:
             self._dag = DAG(conn=self.conn, record=self.record, graph_id=USER_SERVICE_GRAPH_ID,
                             auto_save=False, logger=self.logger, history_level=self.history_level,
                             debug_level=self.debug_level, name="Discovery Service/Tasks",
-                            fail_on_corrupt=self.fail_on_corrupt)
+                            fail_on_corrupt=self.fail_on_corrupt, log_prefix=self.log_prefix)
 
             self._dag.load(sync_point=0)
 
@@ -473,5 +475,3 @@ class UserService:
                             infra_resource_content.item.facts.tasks)
 
         self.save()
-
-
