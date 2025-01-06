@@ -7,7 +7,7 @@ from keepercommander.discovery_common.types import RuleTypeEnum
 
 
 class PAMGatewayActionDiscoverRuleRemoveCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='dr-discover-rule-list')
+    parser = argparse.ArgumentParser(prog='pam-action-discover-rule-remove')
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID')
     parser.add_argument('--rule-id', '-i', required=True, dest='rule_id', action='store',

@@ -11,7 +11,7 @@ from keepercommander.discovery_common.jobs import Jobs
 
 
 class PAMGatewayActionDiscoverJobRemoveCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='dr-discover-command-process')
+    parser = argparse.ArgumentParser(prog='pam-action-discover-remove')
     parser.add_argument('--job-id', '-j', required=True, dest='job_id', action='store',
                         help='Discovery job id.')
 

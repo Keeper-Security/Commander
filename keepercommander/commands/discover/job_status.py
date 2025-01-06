@@ -33,7 +33,7 @@ def _b(text):
 
 
 class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='dr-discover-status-command')
+    parser = argparse.ArgumentParser(prog='pam-action-discover-status')
     parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
                         help='Show only discovery jobs from a specific gateway.')
     parser.add_argument('--job-id', '-j', required=False, dest='job_id', action='store',

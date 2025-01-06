@@ -70,8 +70,10 @@ class Settings(BaseModel):
     skip_directories: bool = False
     skip_cloud_users: bool = False
 
-    allow_resource_deletion: bool = True
-    allow_user_deletion: bool = True
+    # For now, don't delete anything.
+    allow_resource_deletion: bool = False
+    allow_user_deletion: bool = False
+
     resource_deletion_limit: int = 0
     user_deletion_limit: int = 0
 
@@ -364,6 +366,10 @@ class DiscoveryUser(DiscoveryItem):
     password: Optional[str] = None
     private_key: Optional[str] = None
 
+    # Simple flag, for access user in discovery, that states could connect with creds.
+    # Local connection might not have passwords, so this is our flag to indicate that the user connected.
+    could_login: Optional[bool] = False
+
 
 class FactsDirectory(BaseModel):
     domain: str
@@ -461,6 +467,10 @@ class DiscoveryObject(BaseModel):
 
     # If the object is missing, this will show a timestamp on when it went missing.
     missing_since_ts: Optional[int] = None
+
+    # Should this object be deleted? This does not prevent user from deleting, but prevents automated processed from
+    #  deleting.
+    allow_delete: bool = False
 
     # This is not the official admin.
     # This is the user discovery used to access to the resource.
@@ -573,7 +583,7 @@ class NormalizedRecord(BaseModel):
     def find_dn(self, user):
         return self._field("distinguishedName", user)
 
-
+      
 class PromptResult(BaseModel):
 
     # "add" and "ignore" are the only action
@@ -620,7 +630,7 @@ class BulkRecordAdd(BaseModel):
     # Record note
     note: Optional[str] = None
 
-    # This could be a Commander KeeperRecord, Commander RecordAdd, or KSM Record
+    # This could be a Commander KeeperRecord, Commander RecordAdd, NormalizedRecord, or KSM Record
     record: Any
     record_type: str
 

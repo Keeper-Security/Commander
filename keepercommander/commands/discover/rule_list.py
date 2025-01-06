@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 class PAMGatewayActionDiscoverRuleListCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='dr-discover-rule-list')
+    parser = argparse.ArgumentParser(prog='pam-action-discover-rule-list')
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID.')
     parser.add_argument('--search', '-s', required=False, dest='search', action='store',

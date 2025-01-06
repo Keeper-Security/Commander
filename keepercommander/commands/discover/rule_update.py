@@ -8,7 +8,7 @@ from keepercommander.discovery_common.rule import Rules, RuleTypeEnum
 
 
 class PAMGatewayActionDiscoverRuleUpdateCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='dr-discover-rule-add')
+    parser = argparse.ArgumentParser(prog='pam-action-discover-rule-update')
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID.')
     parser.add_argument('--rule-id', '-i', required=True, dest='rule_id', action='store',

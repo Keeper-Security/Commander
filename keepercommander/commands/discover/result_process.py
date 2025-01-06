@@ -54,7 +54,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
     Process the discovery data
     """
 
-    parser = argparse.ArgumentParser(prog='dr-discover-command-process')
+    parser = argparse.ArgumentParser(prog='pam-action-discover-process')
     parser.add_argument('--job-id', '-j', required=True, dest='job_id', action='store',
                         help='Discovery job to process.')
 

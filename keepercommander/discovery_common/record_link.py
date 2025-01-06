@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 class RecordLink:
 
     def __init__(self, record: Any, logger: Optional[Any] = None, debug_level: int = 0, fail_on_corrupt: bool = True,
-                 **kwargs):
+                 log_prefix: str = "GS Record Linking", **kwargs):
 
         self.conn = get_connection(**kwargs)
 
@@ -24,6 +24,7 @@ class RecordLink:
         if logger is None:
             logger = logging.getLogger()
         self.logger = logger
+        self.log_prefix = log_prefix
         self.debug_level = debug_level
 
         # Technically, since there is no encryption in this graph, there should be no corruption.
@@ -38,7 +39,7 @@ class RecordLink:
             # Since we don't have transactions, we want to save the record link if everything worked.
             self._dag = DAG(conn=self.conn, record=self.record, graph_id=RECORD_LINK_GRAPH_ID, auto_save=False,
                             logger=self.logger, debug_level=self.debug_level, name="Record Linking",
-                            fail_on_corrupt=self.fail_on_corrupt)
+                            fail_on_corrupt=self.fail_on_corrupt, log_prefix=self.log_prefix)
             sync_point = self._dag.load(sync_point=0)
             self.logger.debug(f"the record linking sync point is {sync_point or 0}")
             if self.dag.has_graph is False:
