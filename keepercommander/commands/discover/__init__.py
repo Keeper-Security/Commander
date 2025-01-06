@@ -2,7 +2,6 @@ from __future__ import annotations
 import logging
 from ..base import Command
 from ..pam.config_facades import PamConfigurationRecordFacade
-from ..pam import gateway_helper
 from ..pam.router_helper import get_response_payload
 from ..pam.gateway_helper import get_all_gateways
 from ..ksm import KSMCommand
@@ -33,7 +32,14 @@ class GatewayContext:
         self._shared_folders = None
 
     @staticmethod
-    def from_configuration_uid(params: KeeperParams, configuration_uid: str):
+    def all_gateways(params: KeeperParams):
+        return get_all_gateways(params)
+
+    @staticmethod
+    def from_configuration_uid(params: KeeperParams, configuration_uid: str, gateways: Optional[List] = None):
+
+        if gateways is None:
+            gateways = GatewayContext.all_gateways(KeeperParams)
 
         configuration_record = vault.KeeperRecord.load(params, configuration_uid)
         if not isinstance(configuration_record, vault.TypedRecord):
@@ -44,7 +50,7 @@ class GatewayContext:
         configuration_facade.record = configuration_record
 
         gateway_uid = configuration_facade.controller_uid
-        gateway = next((x for x in gateway_helper.get_all_gateways(params)
+        gateway = next((x for x in gateways
                         if utils.base64_url_encode(x.controllerUid) == gateway_uid),
                        None)
 

@@ -27,10 +27,13 @@ class PAMGatewayActionDiscoverJobRemoveCommand(PAMGatewayActionDiscoverCommandBa
 
         # Get all the PAM configuration records
         configuration_records = list(vault_extensions.find_records(params, "pam.*Configuration"))
+        all_gateways = GatewayContext.all_gateways(params)
 
         for configuration_record in configuration_records:
 
-            gateway_context = GatewayContext.from_configuration_uid(params, configuration_record.record_uid)
+            gateway_context = GatewayContext.from_configuration_uid(params=params,
+                                                                    configuration_uid=configuration_record.record_uid,
+                                                                    gateways=all_gateways)
             if gateway_context is None:
                 continue
 
