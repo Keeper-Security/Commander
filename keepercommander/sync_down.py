@@ -706,7 +706,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                             decrypted_sf_key = None
                             if key_type == record_pb2.ENCRYPTED_BY_DATA_KEY:
                                 decrypted_sf_key = crypto.decrypt_aes_v1(encrypted_sf_key, team_key)
-                            elif key_type == record_pb2.ENCRYPTED_BY_DATA_KEY:
+                            elif key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY:
                                 if 'team_private_key_unencrypted' in team:
                                     team_private_key = team['team_private_key_unencrypted']
                                     team_pk = crypto.load_rsa_private_key(team_private_key)
