@@ -14,8 +14,8 @@
 import argparse
 from typing import Optional
 
-import certifi
 import json
+import certifi
 import logging
 import os
 import re
