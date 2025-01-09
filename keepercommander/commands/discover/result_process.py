@@ -12,9 +12,9 @@ from ...display import bcolors
 from ...proto import router_pb2, record_pb2
 from keepercommander.discovery_common.jobs import Jobs
 from keepercommander.discovery_common.process import Process, QuitException, NoDiscoveryDataException
-from keepercommander.discovery_common.types import (DiscoveryObject, UserAcl, PromptActionEnum, PromptResult,
-                                    BulkRecordAdd, BulkRecordConvert, BulkProcessResults, BulkRecordSuccess,
-                                    BulkRecordFail, DirectoryInfo, NormalizedRecord, RecordField)
+from keepercommander.discovery_common.types import (
+    DiscoveryObject, UserAcl, PromptActionEnum, PromptResult, BulkRecordAdd, BulkRecordConvert, BulkProcessResults,
+    BulkRecordSuccess, BulkRecordFail, DirectoryInfo, NormalizedRecord, RecordField)
 from pydantic import BaseModel
 from typing import Optional, List, Any, TYPE_CHECKING
 
@@ -46,6 +46,7 @@ class AdminSearchResult(BaseModel):
     record: Any
     is_directory_user: bool
     is_pam_user: bool
+    being_used: bool = False
 
 
 class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverCommandBase):
@@ -582,7 +583,10 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     raise QuitException()
             print()
 
-    def _find_user_record(self, params: KeeperParams, context: Optional[Any] = None) -> Optional[TypedRecord]:
+    def _find_user_record(self,
+                          params: KeeperParams,
+                          bulk_convert_records: List[BulkRecordConvert],
+                          context: Optional[Any] = None) -> (Optional[TypedRecord], bool):
 
         gateway_context = context.get("gateway_context")  # type: GatewayContext
         record_link = context.get("record_link")  # type: RecordLink
@@ -599,11 +603,15 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 for record in folder["records"]:
                     shared_record_uids.append(record.get("record_uid"))
 
+        # Make a list of record we are already converting so we don't show them again.
+        converting_list = [x.record_uid for x in bulk_convert_records]
+
         logging.debug(f"shared folders record uid {shared_record_uids}")
 
         while True:
             user_search = input("Enter an user to search for [ENTER/RETURN to quit]> ")
             if user_search == "":
+                print(f"{bcolors.FAIL}No search terms, not performing search.{bcolors.ENDC}")
                 return None
 
             # Search for record with the search string.
@@ -613,8 +621,10 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 search_str=user_search,
                 record_version=3
             ))
+            # If not record are returned by the search just return None,
             if len(user_record) == 0:
-                print(f"{bcolors.FAIL}Could not find any record.{bcolors.ENDC}")
+                print(f"{bcolors.FAIL}Could not find any records that contain the search text.{bcolors.ENDC}")
+                return None
 
             # Find usable admin records.
             admin_search_results = []  # type: List[AdminSearchResult]
@@ -622,29 +632,28 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
                 user_record = vault.KeeperRecord.load(params, record.record_uid)
                 if user_record.record_type == "pamUser":
+                    logging.debug(f"{record.record_uid} is a pamUser")
+
+                    # If we are already converting this pamUser record, then don't show it.
+                    if record.record_uid in converting_list:
+                        logging.debug(f"pamUser {user_record.title}, {user_record.record_uid} is being converted; "
+                                      "BAD for search")
+                        admin_search_results.append(
+                            AdminSearchResult(
+                                record=user_record,
+                                is_directory_user=False,
+                                is_pam_user=True,
+                                being_used=True
+                            )
+                        )
+                        continue
 
                     # Does the record exist in the gateway shared folder?
                     # We want to filter our other gateway's pamUser, or it will get overwhelming.
                     if user_record.record_uid not in shared_record_uids:
                         logging.debug(f"pamUser {record.title}, {user_record.record_uid} not in shared "
-                                      "folder, skip")
+                                      "folder, BAD for search")
                         continue
-
-                    # # If a pamUser, make sure the user is part of our configuration
-                    # record_rotation = params.record_rotation_cache.get(record.record_uid)
-                    # if record_rotation is not None:
-                    #     configuration_uid = record_rotation.get("configuration_uid")
-                    #     if configuration_uid is None or configuration_uid == "":
-                    #         logging.debug(f"pamUser {record.title}, {record.record_uid} does not have a controller, "
-                    #                       "skip")
-                    #         continue
-                    #     if configuration_uid != gateway_context.configuration_uid:
-                    #         logging.debug(f"pamUser {record.title}, {record.record_uid} controller is not this "
-                    #                       " controller, skip")
-                    #         continue
-                    # else:
-                    #     logging.debug(f"pamUser {record.title}, {record.record_uid} does not have a rotation
-                    #     settings.")
 
                     # If the record does not exist in the record linking, it's orphaned; accept it
                     # If it does exist, then check if it belonged to a directory.
@@ -659,28 +668,32 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                             is_directory_user = self._is_directory_user(parent_record.record_type)
                             if is_directory_user is False:
                                 logging.debug(f"pamUser parent for {user_record.title}, "
-                                              "{user_record.record_uid} is not a directory, skip")
+                                              "{user_record.record_uid} is not a directory; BAD for search")
                                 continue
 
+                            logging.debug(f"pamUser {user_record.title}, {user_record.record_uid} is a directory user; "
+                                          "good for search")
+
                         else:
-                            logging.debug(f"pamUser {user_record.title}, {user_record.record_uid} does not have record "
-                                          "linking vertex.")
+                            logging.debug(f"pamUser {user_record.title}, {user_record.record_uid} does not a parent; "
+                                          "good for search")
                     else:
                         logging.debug(f"pamUser {user_record.title}, {user_record.record_uid} does not have record "
-                                      "linking vertex.")
+                                      "linking vertex; good for search")
 
                     admin_search_results.append(
                         AdminSearchResult(
                             record=user_record,
                             is_directory_user=is_directory_user,
-                            is_pam_user=True
+                            is_pam_user=True,
+                            being_used=False
                         )
                     )
 
                 # Else this is a non-PAM record.
                 # Make sure it has a login, password, private key
                 else:
-                    logging.debug(f"{record.record_uid} is not a pamUser")
+                    logging.debug(f"{record.record_uid} is NOT a pamUser")
                     login_field = next((x for x in record.fields if x.type == "login"), None)
                     password_field = next((x for x in record.fields if x.type == "password"), None)
                     private_key_field = next((x for x in record.fields if x.type == "keyPair"), None)
@@ -693,11 +706,16 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                                 is_pam_user=False
                             )
                         )
+                        logging.debug(f"{record.title} is has credentials, good for search")
                     else:
-                        logging.debug(f"{record.title} is missing full credentials, skip")
+                        logging.debug(f"{record.title} is missing full credentials, BAD for search")
+
+            # If all the users have been filtered out, then just return None
+            if len(admin_search_results) == 0:
+                print(f"{bcolors.FAIL}Could not find any available records.{bcolors.ENDC}")
+                return None
 
             user_index = 1
-
             admin_search_results = sorted(admin_search_results,
                                           key=lambda x: x.is_pam_user,
                                           reverse=True)
@@ -709,17 +727,28 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     has_local_user = True
                     is_local_user = True
 
-                print(f"{bcolors.HEADER}[{user_index}] {bcolors.ENDC}"
-                      f"{_b('* ') if is_local_user is True else ''}"
-                      f"{admin_search_result.record.title} "
-                      f'{"(Directory User)" if admin_search_result.is_directory_user is True else ""}')
+                hc = bcolors.HEADER
+                b = bcolors.BOLD
+                tc = ""
+                index_str = user_index
+                if admin_search_result.being_used is True:
+                    hc = bcolors.WARNING
+                    b = bcolors.WARNING
+                    tc = bcolors.WARNING
+                    index_str = "-" * len(str(index_str))
+
+                print(f"{hc}[{index_str}] {bcolors.ENDC}"
+                      f"{b + '* ' + bcolors.ENDC if is_local_user is True else ''}"
+                      f"{tc}{admin_search_result.record.title}{bcolors.ENDC} "
+                      f'{"(Directory User) " if admin_search_result.is_directory_user is True else ""}'
+                      f'{tc + "(Already taken)" + bcolors.ENDC if admin_search_result.being_used is True else ""}')
                 user_index += 1
 
             if has_local_user is True:
                 print(f"{bcolors.BOLD}* Not a PAM User record. "
                       f"A PAM User would be generated from this record.{bcolors.ENDC}")
 
-            select = input("Enter line number of user record to use, enter/return to refind the search, "
+            select = input("Enter line number of user record to use, enter/return to refine the search, "
                            f"or {_b('Q')} to quit search. > ").lower()
             if select == "":
                 continue
@@ -727,14 +756,21 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 return None
             else:
                 try:
-                    return admin_search_results[int(select) - 1].record  # type: TypedRecord
+                    selected = admin_search_results[int(select) - 1]
+                    if selected.being_used is True:
+                        print(f"{bcolors.FAIL}Cannot select a record that has already been taken. "
+                              f"Another record is using this local user as its administrator.{bcolors.ENDC}")
+                        return None
+                    admin_record = selected.record  # type: TypedRecord
+                    return admin_record, selected.is_directory_user
                 except IndexError:
                     print(f"{bcolors.FAIL}Entered row index does not exists.{bcolors.ENDC}")
                     continue
 
     @staticmethod
-    def _handle_admin_record_from_record(record: TypedRecord, content: DiscoveryObject, context: Optional[Any] = None) \
-            -> Optional[PromptResult]:
+    def _handle_admin_record_from_record(record: TypedRecord,
+                                         content: DiscoveryObject,
+                                         context: Optional[Any] = None) -> Optional[PromptResult]:
 
         params = context.get("param")  # type: KeeperParams
         gateway_context = context.get("gateway_context")  # type: GatewayContext
@@ -817,8 +853,13 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                  "The password on that record will not be rotated."
         )
 
-    def _prompt_admin(self, parent_vertex: DAGVertex, content: DiscoveryObject, acl: UserAcl,
-                      indent: int = 0, context: Optional[Any] = None) -> PromptResult:
+    def _prompt_admin(self,
+                      parent_vertex: DAGVertex,
+                      content: DiscoveryObject,
+                      acl: UserAcl,
+                      bulk_convert_records: List[BulkRecordConvert],
+                      indent: int = 0,
+                      context: Optional[Any] = None) -> PromptResult:
 
         if content is None:
             raise Exception("The admin content was not passed in to prompt the user.")
@@ -863,7 +904,9 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 return prompt_result
             elif action[0] == 'f':
                 print("")
-                record = self._find_user_record(params, context=context)
+                record, is_directory_user = self._find_user_record(params,
+                                                                   context=context,
+                                                                   bulk_convert_records=bulk_convert_records)
                 if record is not None:
                     admin_prompt_result = self._handle_admin_record_from_record(
                         record=record,
@@ -872,6 +915,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     )
                     if admin_prompt_result is not None:
                         if admin_prompt_result.action == PromptActionEnum.ADD:
+                            admin_prompt_result.is_directory_user = is_directory_user
                             print(f"{bcolors.OKGREEN}Adding admin record to save queue.{bcolors.ENDC}")
                         return admin_prompt_result
             elif action[0] == 's':
@@ -907,7 +951,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             msg = (f"{bcolors.BOLD}There is 1 record queued to be added to your vault. "
                    f"Do you wish to add it? [Y/N]> {bcolors.ENDC}")
         else:
-            msg = (f"{bcolors.BOLD}There are {count} records queue to be added to your vault. "
+            msg = (f"{bcolors.BOLD}There are {count} records queued to be added to your vault. "
                    f"Do you wish to add them? [Y/N]> {bcolors.ENDC}")
         while True:
             yn = input(msg).lower()
@@ -1038,8 +1082,15 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         # STEP 3 - Add rotation settings.
         # Use the list we passed in, find the results, and add if the additions were successful.
 
+        # Keep track of each record we create a rotation for to avoid version problems, if there was a dup.
+        created_cache = []
+
         # For the records passed in to be created.
         for bulk_record in bulk_add_records:
+            if bulk_record.record_uid in created_cache:
+                logging.debug(f"found a duplicate of record uid: {bulk_record.record_uid}")
+                continue
+
             # Grab the type Keeper record instance, and title from that record.
             pb_add_record = bulk_record.record
             title = bulk_record.title
@@ -1088,7 +1139,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
             # Only set the resource if the record type is a PAM User.
             # Machines, databases, and directories have a login/password in the record that indicates who the admin is.
-            if bulk_record.record_type == "pamUser":
+            if bulk_record.record_type == "pamUser" and bulk_record.parent_record_uid is not None:
                 rq.resourceUid = url_safe_str_to_bytes(bulk_record.parent_record_uid)
 
             # Right now, the schedule and password complexity are not set. This would be part of a rule engine.
@@ -1097,6 +1148,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             rq.disabled = rotation_disabled
 
             router_set_record_rotation_information(params, rq)
+
+            created_cache.append(bulk_record.record_uid)
 
             build_process_results.success.append(
                 BulkRecordSuccess(
@@ -1123,6 +1176,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
             rq = router_pb2.RouterRecordRotationRequest()
             rq.recordUid = url_safe_str_to_bytes(bulk_convert_record.record_uid)
+
+            # We can't set the version to 0 if it's greater than 0, look up prior version.
             record_rotation_revision = params.record_rotation_cache.get(bulk_convert_record.record_uid)
             rq.revision = record_rotation_revision.get('revision') if record_rotation_revision else 0
 
@@ -1131,7 +1186,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
             # Only set the resource if the record type is a PAM User.
             # Machines, databases, and directories have a login/password in the record that indicates who the admin is.
-            if record.record_type == "pamUser":
+            if record.record_type == "pamUser" and bulk_convert_record.parent_record_uid is not None:
                 rq.resourceUid = url_safe_str_to_bytes(bulk_convert_record.parent_record_uid)
             else:
                 rq.resourceUid = None
