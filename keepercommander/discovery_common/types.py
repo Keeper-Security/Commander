@@ -598,6 +598,9 @@ class PromptResult(BaseModel):
     # Existing record that should be the admin.
     record_uid: Optional[str] = None
 
+    # Is this is a pamUser and a directory user?
+    is_directory_user: bool = False
+
     # Note to include with record
     note:  Optional[str] = None
 
@@ -636,7 +639,7 @@ class BulkRecordAdd(BaseModel):
 
     # Normal record UID strings
     record_uid: str
-    parent_record_uid: str
+    parent_record_uid: Optional[str] = None
 
     # The shared folder UID where the record should be created.
     shared_folder_uid: str
@@ -644,7 +647,7 @@ class BulkRecordAdd(BaseModel):
 
 class BulkRecordConvert(BaseModel):
     record_uid: str
-    parent_record_uid: str
+    parent_record_uid: Optional[str] = None
 
     # Record note
     note: Optional[str] = None

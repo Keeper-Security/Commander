@@ -224,13 +224,16 @@ class Process:
         if record_uid is None:
             raise Exception("The prepared record did not contain a record UID.")
 
+        parent_record_uid = parent_content.record_uid
+        if parent_content.object_type_value == "providers":
+            parent_record_uid = None
         bulk_add_records.append(
             BulkRecordAdd(
                 title=content.title,
                 record=record_to_be_added,
                 record_type=content.record_type,
                 record_uid=record_uid,
-                parent_record_uid=parent_content.record_uid,
+                parent_record_uid=parent_record_uid,
                 shared_folder_uid=content.shared_folder_uid
             )
         )
@@ -1328,6 +1331,7 @@ class Process:
                 parent_vertex=resource_vertex,
                 content=admin_content,
                 acl=None,
+                bulk_convert_records=bulk_convert_records,
                 indent=indent,
                 context=context
             )
@@ -1413,22 +1417,31 @@ class Process:
                 else:
                     logging.debug("add admin user from existing record")
 
-                    # This is a pamUser record that may need to have the controller set.
-                    # Add it to this queue to make sure the protobuf items are current.
-                    bulk_convert_records.append(
-                        BulkRecordConvert(
-                            record_uid=admin_record_uid,
-                            parent_record_uid=resource_content.record_uid,
+                    # If this is NOT existing directory user, we want to convert the record rotation setting to
+                    #   work with this gateway/controller.
+                    # If it is a directory user, we just want link this record; no conversion.
+                    if admin_result.is_directory_user is False:
+
+                        # This is a pamUser record that may need to have the controller set.
+                        # Add it to this queue to make sure the protobuf items are current.
+                        parent_record_uid = resource_content.record_uid
+                        if resource_content.object_type_value == "providers":
+                            parent_record_uid = None
+
+                        bulk_convert_records.append(
+                            BulkRecordConvert(
+                                record_uid=admin_record_uid,
+                                parent_record_uid=parent_record_uid
+                            )
                         )
-                    )
 
-                    # If this user record does not belong to another resource, make it belong to this one.
-                    record_vertex = self.record_link.acl_has_belong_to_record_uid(admin_record_uid)
-                    if record_vertex is None:
-                        admin_acl.belongs_to = True
+                        # If this user record does not belong to another resource, make it belong to this one.
+                        record_vertex = self.record_link.acl_has_belong_to_record_uid(admin_record_uid)
+                        if record_vertex is None:
+                            admin_acl.belongs_to = True
 
-                    # There is _prepare_record, the record exists.
-                    # Needs to add to records linking.
+                        # There is _prepare_record, the record exists.
+                        # Needs to add to records linking.
 
                     # Link the record UIDs.
                     # We might not have this user in discovery data.
