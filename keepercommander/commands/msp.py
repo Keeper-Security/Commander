@@ -730,7 +730,6 @@ class MSPBillingReportCommand(EnterpriseCommand):
         for point in merged_counts:
             day_str = str(datetime.date.fromordinal(point.date_no)) if show_date else ''
             company = MSPBillingReportCommand.COMPANY_CACHE.get(point.mc_enterprise_id, '') if show_company else ''
-            # start_snapshots, end_snapshots, max_snapshots = (None, None, None) \
             start_snapshots, end_snapshots = (None, None) \
                 if show_date \
                 else MSPBillingReportCommand.get_bounding_snapshots(daily_counts, None if not show_company else point.mc_enterprise_id)
@@ -779,11 +778,9 @@ class MSPBillingReportCommand(EnterpriseCommand):
                     row.append(round(count / days, 2))
                     start_counts_data = 0 if start_snapshots is None else start_snapshots.get(product) or 0
                     end_counts_data = 0 if end_snapshots is None else end_snapshots.get(product) or 0
-                    # max_counts_data = 0 if max_snapshots is None else max_snapshots.get(product) or 0
                     start_count = next(iter(start_counts_data)) if isinstance(start_counts_data, tuple) else start_counts_data
                     end_count = next(iter(end_counts_data)) if isinstance(end_counts_data, tuple) else end_counts_data
                     max_count = MSPBillingReportCommand.get_max_product_count(daily_counts, product, None if not show_company else point.mc_enterprise_id)
-                    # max_count = next(iter(max_counts_data)) if isinstance(max_counts_data, tuple) else max_counts_data
                     row.extend([start_count, end_count, max_count])
 
                 table.append(row)
