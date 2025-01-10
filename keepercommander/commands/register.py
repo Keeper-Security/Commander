@@ -517,10 +517,10 @@ class ShareFolderCommand(Command):
                             if keys:
                                 if keys.aes:
                                     if params.forbid_rsa:
-                                        to.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v2(sf_key, params.data_key)
+                                        to.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v2(sf_key, keys.aes)
                                         to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key_gcm
                                     else:
-                                        to.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v1(sf_key, params.data_key)
+                                        to.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v1(sf_key, keys.aes)
                                         to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key
                                 elif params.forbid_rsa and keys.ec:
                                     ec_key = crypto.load_ec_public_key(keys.ec)
