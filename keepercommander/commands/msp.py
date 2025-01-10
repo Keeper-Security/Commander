@@ -16,7 +16,7 @@ import json
 import logging
 import os
 from functools import reduce
-from typing import Set, Dict, List, Iterable, Any, Tuple, Union
+from typing import Set, Dict, List, Iterable, Any, Tuple, Union, Optional
 from urllib.parse import urlparse, urlunparse
 
 from .base import dump_report_data, user_choice, field_to_title, report_output_parser
@@ -630,36 +630,44 @@ class MSPBillingReportCommand(EnterpriseCommand):
 
     @staticmethod
     def get_bounding_snapshots(period_snapshots, mc_id=None):
-        # type: (Dict[DailySnapshot, Dict[int, int]], Union[str, None]) -> Tuple[Union[Dict[int, int], Dict[int, Tuple[int, int]]], Union[Dict[int, int], Dict[int, Tuple[int, int]]]]
-
+        # type: (Dict[DailySnapshot, Dict[int, int]], Optional[str]) -> Tuple[Union[Dict[int, int], Dict[int, Tuple[int, int]]], ...]
+        plans = {x[0] for x in constants.MSP_PLANS}
         snap_keys = period_snapshots.keys()
 
         def get_mc_bounding_snapshots(mc):
-            # type: (str) -> Tuple[Union[Dict[int, int], None], Union[Dict[int, int], None]]
+            # type: (str) -> Tuple[Optional[Dict[int, int]], ...]
             mc_snapshots = {ds for ds in snap_keys if ds.mc_enterprise_id == mc}
             if not len(mc_snapshots):
-                return None, None
+                return None, None, None
+
             dates = {ds.date_no for ds in mc_snapshots}
             start_date, end_date = min(dates), max(dates)
             start_ds = next((ds for ds in mc_snapshots if ds.date_no == start_date), None)
             end_ds = next((ds for ds in mc_snapshots if ds.date_no == end_date), None)
-            return period_snapshots.get(start_ds), period_snapshots.get(end_ds)
+
+            def get_product_count(counts):    # type: (Dict[int, int]) -> int
+                return max((count for product, count in counts.items() if product in plans), default=0)
+            max_snapshot = max((v for k, v in period_snapshots.items() if k in mc_snapshots), default=None, key=get_product_count)
+            return period_snapshots.get(start_ds), period_snapshots.get(end_ds), max_snapshot
 
         if mc_id is None:
-            start_snapshots = []
-            end_snapshots = []
+            start_snapshots = []   # type: List[Dict[int, int]]
+            end_snapshots = []     # type: List[Dict[int, int]]
+            max_snapshots = []     # type: List[Dict[int, int]]
             mc_ids = {ds.mc_enterprise_id for ds in snap_keys}
             # Get the first and last snapshot for each MC
             for mc in mc_ids:
-                start, end = get_mc_bounding_snapshots(mc)
+                start, end, max_count = get_mc_bounding_snapshots(mc)
                 start and start_snapshots.append(start)
                 end and end_snapshots.append(end)
+                max_count and max_snapshots.append(max_count)
 
             # Merge all first snapshots together, then all last snapshots
             merge_counts = lambda x, y: DailySnapshot.merge_units((x, y))
             start_snapshot = reduce(merge_counts, start_snapshots)
             end_snapshot = reduce(merge_counts, end_snapshots)
-            return start_snapshot, end_snapshot
+            max_snapshot = reduce(merge_counts, max_snapshots)
+            return start_snapshot, end_snapshot, max_snapshot
         else:
             return get_mc_bounding_snapshots(mc_id)
 
@@ -704,7 +712,7 @@ class MSPBillingReportCommand(EnterpriseCommand):
             headers.extend(('company', 'company_id'))
         headers.extend(('product', 'licenses', 'rate'))
         if not show_date:
-            headers.extend(['avg_per_day', 'initial_licenses', 'final_licenses'])
+            headers.extend(['avg_per_day', 'initial_licenses', 'final_licenses', 'max_licenses'])
         plan_lookup = {x[0]: x for x in constants.MSP_PLANS}
         storage_lookup = {x[0]: x for x in constants.MSP_FILE_PLANS}
         addon_lookup = {}
@@ -716,7 +724,7 @@ class MSPBillingReportCommand(EnterpriseCommand):
         for point in merged_counts:
             day_str = str(datetime.date.fromordinal(point.date_no)) if show_date else ''
             company = MSPBillingReportCommand.COMPANY_CACHE.get(point.mc_enterprise_id, '') if show_company else ''
-            start_snapshots, end_snapshots = (None, None) \
+            start_snapshots, end_snapshots, max_snapshots = (None, None, None) \
                 if show_date \
                 else MSPBillingReportCommand.get_bounding_snapshots(daily_counts, None if not show_company else point.mc_enterprise_id)
             counts = merged_counts[point]
@@ -763,10 +771,12 @@ class MSPBillingReportCommand(EnterpriseCommand):
                 if not show_date:
                     row.append(round(count / days, 2))
                     start_counts_data = 0 if start_snapshots is None else start_snapshots.get(product) or 0
-                    end_counts_data = 0 if start_snapshots is None else end_snapshots.get(product) or 0
+                    end_counts_data = 0 if end_snapshots is None else end_snapshots.get(product) or 0
+                    max_counts_data = 0 if max_snapshots is None else max_snapshots.get(product) or 0
                     start_count = next(iter(start_counts_data)) if isinstance(start_counts_data, tuple) else start_counts_data
                     end_count = next(iter(end_counts_data)) if isinstance(end_counts_data, tuple) else end_counts_data
-                    row.extend([start_count, end_count])
+                    max_count = next(iter(max_counts_data)) if isinstance(max_counts_data, tuple) else max_counts_data
+                    row.extend([start_count, end_count, max_count])
 
                 table.append(row)
 
