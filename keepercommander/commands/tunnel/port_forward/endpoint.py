@@ -692,6 +692,7 @@ class WebRTCConnection:
         '''
         router_response = router_send_action_to_gateway(
             params=self.params,
+            destination_gateway_uid_str=self.gateway_uid,
             gateway_action=GatewayActionWebRTCSession(
                 inputs={
                     "recordUid": self.record_uid,

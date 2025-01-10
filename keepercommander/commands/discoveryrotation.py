@@ -2725,7 +2725,7 @@ class PAMTunnelStartCommand(Command):
         logger.debug("Logging setup complete.")
         return logger
 
-    async def connect(self, params, record_uid, convo_num, host, port,
+    async def connect(self, params, record_uid, gateway_uid, convo_num, host, port,
                       log_queue, seed, target_host, target_port, socks):
 
         # Setup custom logging to put logs into log_queue
@@ -2756,7 +2756,7 @@ class PAMTunnelStartCommand(Command):
         # Set up the pc
         print_ready_event = asyncio.Event()
         kill_server_event = asyncio.Event()
-        pc = WebRTCConnection(params=params, record_uid=record_uid, symmetric_key=symmetric_key,
+        pc = WebRTCConnection(params=params, record_uid=record_uid, gateway_uid=gateway_uid, symmetric_key=symmetric_key,
                               print_ready_event=print_ready_event, kill_server_event=kill_server_event,
                               logger=logger, server=params.server)
 
@@ -2792,7 +2792,7 @@ class PAMTunnelStartCommand(Command):
         finally:
             logger.debug("--> STOP LISTENING FOR MESSAGES FROM GATEWAY --------")
 
-    def pre_connect(self, params, record_uid, convo_num, host, port,
+    def pre_connect(self, params, record_uid, gateway_uid, convo_num, host, port,
                     seed, target_host, target_port, socks):
         tunnel_name = f"{convo_num}"
 
@@ -2821,6 +2821,7 @@ class PAMTunnelStartCommand(Command):
                 self.connect(
                     params=params,
                     record_uid=record_uid,
+                    gateway_uid=gateway_uid,
                     convo_num=convo_num,
                     host=host,
                     port=port,
@@ -2892,12 +2893,12 @@ class PAMTunnelStartCommand(Command):
         micro_version = sys.version_info.micro
 
         if (major_version, minor_version, micro_version) < (from_version[0], from_version[1], from_version[2]):
-            print(f"{bcolors.FAIL}This code requires Python {from_version[0]}.{from_version[1]}.{from_version[2]} or higher. "
+            print(f"{bcolors.FAIL}This command requires Python {from_version[0]}.{from_version[1]}.{from_version[2]} or higher. "
                   f"You are using {major_version}.{minor_version}.{micro_version}.{bcolors.ENDC}")
             return
-        if (major_version, minor_version, micro_version) >= (tom_version[0], from_version[1], from_version[2]):
-            print(f"{bcolors.FAIL}This code requires Python {from_version[0]}.{from_version[1]}.{from_version[2]} or higher. "
-                  f"You are using {major_version}.{minor_version}.{micro_version}.{bcolors.ENDC}")
+        if (major_version, minor_version, micro_version) >= (to_version[0], to_version[1], to_version[2]):
+            print(f"{bcolors.FAIL}This command is compatible with Python versions below {to_version[0]}.{to_version[1]}.{to_version[2]} "
+                  f"(Current Python version: {major_version}.{minor_version}.{micro_version}){bcolors.ENDC}")
             return
 
         record_uid = kwargs.get('uid')
@@ -2963,8 +2964,19 @@ class PAMTunnelStartCommand(Command):
         base64_seed = client_private_seed.get_default_value(str).encode('utf-8')
         seed = base64_to_bytes(base64_seed)
 
-        t = threading.Thread(target=self.pre_connect, args=(params, record_uid, convo_num, host, port,
-                                                            seed, target_host, target_port, socks)
+        # gateway = kwargs.get('gateway_uid')  # type: Optional[str]
+        # if gateway:
+        #     gateways = gateway_helper.get_all_gateways(params)
+        #     gateway_uid = next((utils.base64_url_encode(x.controllerUid) for x in gateways
+        #                         if utils.base64_url_encode(x.controllerUid) == gateway
+        #                         or x.controllerName.casefold() == gateway.casefold()), None)
+        gateway_uid = self.get_gateway_uid_from_record(params, record_uid)
+        if not gateway_uid:
+            print(f"{bcolors.FAIL}Gateway not found for record {record_uid}.{bcolors.ENDC}")
+            return
+
+        t = threading.Thread(target=self.pre_connect, args=(params, record_uid, gateway_uid, convo_num,
+                                                            host, port, seed, target_host, target_port, socks)
                              )
 
         # Setting the thread as a daemon thread
@@ -3056,3 +3068,29 @@ class PAMTunnelStartCommand(Command):
         else:
             print_fail(convo_num)
 
+    def get_config_uid_from_record(self, params, record_uid):
+        record = vault.KeeperRecord.load(params, record_uid)
+        if not isinstance(record, vault.TypedRecord):
+            raise CommandError('', f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
+        record_type = record.record_type
+        if record_type not in ("pamMachine pamDatabase pamDirectory pamRemoteBrowser").split():
+            raise CommandError('', f"{bcolors.FAIL}This record's type is not supported for tunnels. "
+                                f"Tunnels are only supported on pamMachine, pamDatabase, pamDirectory, "
+                                f"and pamRemoteBrowser records{bcolors.ENDC}")
+
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        existing_config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
+        return existing_config_uid
+
+    def get_gateway_uid_from_record(self, params, record_uid):
+        gateway_uid = ''
+        pam_config_uid = self.get_config_uid_from_record(params, record_uid)
+        if pam_config_uid:
+            record = vault.KeeperRecord.load(params, pam_config_uid)
+            if record:
+                field = record.get_typed_field('pamResources')
+                value = field.get_default_value(dict)
+                if value:
+                    gateway_uid = value.get('controllerUid', '') or ''
+
+        return gateway_uid
