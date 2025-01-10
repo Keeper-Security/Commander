@@ -14,9 +14,10 @@ import logging
 
 from .base import report_output_parser, Command, try_resolve_path, FolderMixin, dump_report_data, field_to_title
 from ..error import CommandError
-from .. import vault, generator, vault_extensions
+from .. import vault, generator, vault_extensions, utils
 
 password_report_parser = argparse.ArgumentParser(prog='password-report', parents=[report_output_parser], description='Display record password report.')
+password_report_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='Display verbose information')
 password_report_parser.add_argument('--policy', dest='policy', action='store',
                                     help='Password complexity policy. Length,Lower,Upper,Digits,Special. Default is 12,2,2,2,0')
 password_report_parser.add_argument('-l', '--length', dest='length', type=int, action='store', help='Minimum password length.')
@@ -32,6 +33,7 @@ class PasswordReportCommand(Command):
         return password_report_parser
 
     def execute(self, params, **kwargs):
+        verbose = kwargs.get('verbose') is True
         p_length = 0
         p_lower = 0
         p_upper = 0
@@ -90,9 +92,27 @@ class PasswordReportCommand(Command):
         records = list(FolderMixin.get_records_in_folder_tree(params, folder_uid))
         table = []
         header = ['record_uid', 'title', 'description', 'length', 'lower', 'upper', 'digits', 'special']
+        password_count = {}
+        if verbose:
+            header.append('score')
+            if params.breach_watch:
+                header.extend(['status', 'reused'])
+                for record_uid, bw_record in params.breach_watch_records.items():
+                    if record_uid in params.record_cache:
+                        if isinstance(bw_record, dict):
+                            data = bw_record.get('data_unencrypted')
+                            if isinstance(data, dict):
+                                passwords = data.get('passwords')
+                                if isinstance(passwords, list):
+                                    for pwd in passwords:
+                                        password = pwd.get('value')
+                                        if password:
+                                            if password in password_count:
+                                                password_count[password] += 1
+                                            else:
+                                                password_count[password] = 1
 
         fmt = kwargs.get('format')
-
         for record_uid in records:
             record = vault.KeeperRecord.load(params, record_uid)
             if not record:
@@ -123,7 +143,28 @@ class PasswordReportCommand(Command):
             if isinstance(description, str):
                 if len(description) > 32:
                     description = description[:30] + '...'
-            table.append([record_uid, title, description, strength.length, strength.lower, strength.caps, strength.digits, strength.symbols])
+            row = [record_uid, title, description, strength.length, strength.lower, strength.caps, strength.digits, strength.symbols]
+            if verbose:
+                row.append(utils.password_score(password))
+                if params.breach_watch:
+                    status = ''
+                    reused = None
+                    bw_record = params.breach_watch_records.get(record_uid)
+                    if isinstance(bw_record, dict):
+                        data = bw_record.get('data_unencrypted')
+                        if isinstance(data, dict):
+                            passwords = data.get('passwords')
+                            if isinstance(passwords, list):
+                                password_status = next((x for x in passwords if x.get('value') == password), None)
+                                if isinstance(password_status, dict):
+                                    status = password_status.get('status')
+                    if password in password_count:
+                        reused_count = password_count[password]
+                        if isinstance(reused_count, int) and reused_count > 1:
+                            reused = reused_count
+                    row.extend([status, reused])
+
+            table.append(row)
 
         if fmt != 'json':
             header = [field_to_title(x) for x in header]
