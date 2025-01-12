@@ -2043,9 +2043,13 @@ class PAMGatewayActionRotateCommand(Command):
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record.record_uid)
             resource_uid = tmp_dag.get_resource_uid(record_uid)
             if not resource_uid:
-                print(f'{bcolors.FAIL}Resource UID not found for record [{record_uid}]. please configure it '
-                      f'{bcolors.OKBLUE}"pam rotation user {record_uid} --resource RESOURCE_UID"{bcolors.ENDC}')
-                return
+                # NOOP records don't need resource_uid
+                noop_field = record.get_typed_field('text', 'NOOP')
+                noop = utils.value_to_boolean(noop_field.value[0]) if noop_field and noop_field.value else False
+                if not noop:
+                    print(f'{bcolors.FAIL}Resource UID not found for record [{record_uid}]. please configure it '
+                          f'{bcolors.OKBLUE}"pam rotation user {record_uid} --resource RESOURCE_UID"{bcolors.ENDC}')
+                    return
 
         controller = configuration_controller_get(params, url_safe_str_to_bytes(config_uid))
         if not controller.controllerUid:
@@ -2100,10 +2104,12 @@ class PAMGatewayActionRotateCommand(Command):
         router_response = router_send_action_to_gateway(
             params=params, gateway_action=GatewayActionRotate(inputs=action_inputs, conversation_id=conversation_id,
                                                               gateway_destination=gateway_uid),
-            message_type=pam_pb2.CMT_ROTATE, is_streaming=False, encrypted_transmission_key=encrypted_transmission_key,
+            message_type=pam_pb2.CMT_ROTATE, is_streaming=False,
+            transmission_key=transmission_key,
+            encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token)
 
-        print_router_response(router_response, conversation_id)
+        print_router_response(router_response, 'job_info', conversation_id)
 
 
 class PAMGatewayActionServerInfoCommand(Command):
