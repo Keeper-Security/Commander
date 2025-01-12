@@ -434,18 +434,26 @@ def print_router_response(router_response, response_type, original_conversation_
     router_response_response_payload_str = router_response_response.get('payload')
     router_response_response_payload_dict = json.loads(router_response_response_payload_str)
 
-    gateway_response_conversation_id = utils.base64_url_decode(router_response_response_payload_dict.get('conversation_id')).decode("utf-8")
-
     if router_response_response_payload_dict.get('warnings'):
         for w in router_response_response_payload_dict.get('warnings'):
             if w:
                 print(f'{bcolors.WARNING}{w}{bcolors.ENDC}')
 
+    if original_conversation_id:
+        # gateway_response_conversation_id = utils.base64_url_decode(router_response_response_payload_dict.get('conversation_id')).decode("utf-8")
+        # IDs are either bytes or base64 encoded strings which may be padded
+        gateway_response_conversation_id = router_response_response_payload_dict.get('conversation_id', None)
+        oid = (utils.base64_url_decode(original_conversation_id)
+               if isinstance(original_conversation_id, str)
+               else original_conversation_id)
+        gid = (utils.base64_url_decode(gateway_response_conversation_id)
+               if isinstance(gateway_response_conversation_id, str)
+               else gateway_response_conversation_id)
 
-    if original_conversation_id and original_conversation_id != gateway_response_conversation_id:
-        logging.error(f"Message ID that was sent to the server [{original_conversation_id}] and the conversation id "
-                      f"received back is [{gateway_response_conversation_id}] were different. That probably means that "
-                      f"the gateway sent a wrong response that was not associated with the reqeust.")
+        if oid != gid:
+            logging.error(f"Message ID that was sent to the server [{original_conversation_id}] and the conversation id "
+                          f"received back [{gateway_response_conversation_id}] are different. That probably means that "
+                          f"the gateway sent a wrong response that was not associated with the request.")
 
     if not (router_response_response_payload_dict.get('is_ok') or router_response_response_payload_dict.get('isOk')):
         print(f"{bcolors.FAIL}{json.dumps(router_response_response_payload_dict, indent=4)}{bcolors.ENDC}")
