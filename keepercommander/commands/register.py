@@ -508,32 +508,28 @@ class ShareFolderCommand(Command):
                     to.manageUsers = True if mu else curr_sf.get('default_manage_users') is True
                     sf_key = curr_sf.get('shared_folder_key_unencrypted')  # type: Optional[bytes]
                     if sf_key:
-                        if team_uid in params.team_cache:
-                            team = params.team_cache[team_uid]
-                            to.sharedFolderKey = crypto.encrypt_aes_v1(sf_key, team['team_key_unencrypted'])
-                        else:
-                            api.load_team_keys(params, [team_uid])
-                            keys = params.key_cache.get(team_uid)
-                            if keys:
-                                if keys.aes:
-                                    if params.forbid_rsa:
-                                        to.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v2(sf_key, keys.aes)
-                                        to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key_gcm
-                                    else:
-                                        to.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v1(sf_key, keys.aes)
-                                        to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key
-                                elif params.forbid_rsa and keys.ec:
-                                    ec_key = crypto.load_ec_public_key(keys.ec)
-                                    to.typedSharedFolderKey.encryptedKey = crypto.encrypt_ec(sf_key, ec_key)
-                                    to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key_ecc
-                                elif not params.forbid_rsa and keys.rsa:
-                                    rsa_key = crypto.load_rsa_public_key(keys.rsa)
-                                    to.typedSharedFolderKey.encryptedKey = crypto.encrypt_rsa(sf_key, rsa_key)
-                                    to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key
+                        api.load_team_keys(params, [team_uid])
+                        keys = params.key_cache.get(team_uid)
+                        if keys:
+                            if keys.aes:
+                                if params.forbid_rsa:
+                                    to.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v2(sf_key, keys.aes)
+                                    to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key_gcm
                                 else:
-                                    continue
+                                    to.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v1(sf_key, keys.aes)
+                                    to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key
+                            elif params.forbid_rsa and keys.ec:
+                                ec_key = crypto.load_ec_public_key(keys.ec)
+                                to.typedSharedFolderKey.encryptedKey = crypto.encrypt_ec(sf_key, ec_key)
+                                to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key_ecc
+                            elif not params.forbid_rsa and keys.rsa:
+                                rsa_key = crypto.load_rsa_public_key(keys.rsa)
+                                to.typedSharedFolderKey.encryptedKey = crypto.encrypt_rsa(sf_key, rsa_key)
+                                to.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key
                             else:
                                 continue
+                        else:
+                            continue
                     else:
                         logging.info('Shared folder key is not available.')
                     rq.sharedFolderAddTeam.append(to)
