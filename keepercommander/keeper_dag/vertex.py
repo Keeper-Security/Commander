@@ -562,7 +562,7 @@ class DAGVertex:
             if edge_type == EdgeType.DELETION:
                 return
 
-            self.dag.logger.info(f"vertex {self.uid} was inactive; reactivating vertex.")
+            self.dag.logger.debug(f"vertex {self.uid} was inactive; reactivating vertex.")
             self.active = True
 
         # Create and append a new DAGEdge instance.
