@@ -300,10 +300,14 @@ class EnterpriseTransferUserCommand(EnterpriseCommand):
                             record_key = user_data_key
                         else:
                             raise Exception(f'Unsupported record key type')
-                        if ec_public_key:
+
+                        if aes_key:
+                            encrypted_record_key = crypto.encrypt_aes_v2(record_key, aes_key)
+                            record_key_type = 'encrypted_by_data_key_gcm'
+                        elif ec_public_key:
                             encrypted_record_key = crypto.encrypt_ec(record_key, ec_public_key)
                             record_key_type = 'encrypted_by_public_key_ecc'
-                        elif rsa_public_key:
+                        elif not params.forbid_rsa and rsa_public_key:
                             encrypted_record_key = crypto.encrypt_rsa(record_key, rsa_public_key)
                             record_key_type = 'encrypted_by_public_key'
                         else:
