@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from datetime import datetime
 
 import requests
 from keeper_secrets_manager_core.utils import bytes_to_base64, url_safe_str_to_bytes
@@ -512,55 +513,129 @@ def print_router_response(router_response, response_type, original_conversation_
 
         gateway_info = router_response_response_payload_dict.get('data')
 
-        print(f'{bcolors.OKBLUE}Gateway Details{bcolors.ENDC}')
-        gateway_config = gateway_info.get('gateway-config')
-        print(f'\t{bcolors.OKGREEN}Started Time      : {gateway_config.get("connection_info").get("started")}{bcolors.ENDC}')
-        print(f'\t{bcolors.OKGREEN}Logs File         : {gateway_config.get("ws_log_file")}{bcolors.ENDC}')
+        # Version and Gateway Details
+        print(f'\n{bcolors.OKBLUE}Gateway Details{bcolors.ENDC}')
+        gateway_config = gateway_info.get('gateway-config', {})
+        version_info = gateway_config.get('version', {})
+        if version_info.get("current"):
+            print(f'\t{bcolors.OKGREEN}Version           : {version_info.get("current")}{bcolors.ENDC}')
 
+        # Convert Unix timestamp to readable format
+        started_time = gateway_config.get("connection_info", {}).get("started")
+        try:
+            if started_time:
+                started_dt = datetime.fromtimestamp(float(started_time))
+                local_tz = datetime.now().astimezone().tzinfo
+                started_str = f"{started_dt.strftime('%Y-%m-%d %H:%M:%S')} {local_tz}"
+                print(f'\t{bcolors.OKGREEN}Started Time      : {started_str}{bcolors.ENDC}')
+        except (ValueError, TypeError):
+            pass  # Skip if timestamp is invalid
+
+        if gateway_config.get("ws_log_file"):
+            print(f'\t{bcolors.OKGREEN}Logs Location     : {gateway_config.get("ws_log_file")}{bcolors.ENDC}')
+
+        # Environment Info
+        machine_env = gateway_info.get('machine', {}).get('environment', {})
+        if machine_env and machine_env.get('provider'):
+            print(f'\n{bcolors.OKBLUE}Environment Details{bcolors.ENDC}')
+            env_color = bcolors.WARNING if machine_env.get('provider') == 'Local/Other' else bcolors.OKGREEN
+            print(f'\t{env_color}Provider          : {machine_env.get("provider")}{bcolors.ENDC}')
+            if machine_env.get('provider') != 'Local/Other':
+                if machine_env.get('account_id'):
+                    print(f'\t{env_color}Account           : {machine_env.get("account_id")}{bcolors.ENDC}')
+                if machine_env.get('region'):
+                    print(f'\t{env_color}Region            : {machine_env.get("region")}{bcolors.ENDC}')
+                if machine_env.get('instance_type'):
+                    print(f'\t{env_color}Instance Type     : {machine_env.get("instance_type")}{bcolors.ENDC}')
+
+        # Machine Details
+        machine = gateway_info.get('machine', {})
+        print(f'\n{bcolors.OKBLUE}Machine Details{bcolors.ENDC}')
+
+        if machine.get("hostname"):
+            print(f'\t{bcolors.OKGREEN}Hostname          : {machine.get("hostname")}{bcolors.ENDC}')
+        if machine.get("ip_address_local") and machine.get("ip_address_local") != "unknown":
+            print(f'\t{bcolors.OKGREEN}IP (Local)        : {machine.get("ip_address_local")}{bcolors.ENDC}')
+        if machine.get("ip_address_external"):
+            print(f'\t{bcolors.OKGREEN}IP (External)     : {machine.get("ip_address_external")}{bcolors.ENDC}')
+
+        os_info = []
+        if machine.get("system"): os_info.append(machine.get("system"))
+        if machine.get("release"): os_info.append(machine.get("release"))
+        if os_info:
+            print(f'\t{bcolors.OKGREEN}Operating System  : {" ".join(os_info)}{bcolors.ENDC}')
+
+        memory = machine.get('memory', {})
+        if memory.get('free_gb') is not None and memory.get('total_gb') is not None:
+            print(
+                f'\t{bcolors.OKGREEN}Memory            : {memory.get("free_gb")}GB free / {memory.get("total_gb")}GB total{bcolors.ENDC}')
+
+        # Core Package Versions - Extract from installed packages
+        installed_packages = {
+            pkg.split('==')[0]: pkg.split('==')[1]
+            for pkg in machine.get('installed-python-packages', [])
+        }
+
+        core_packages = [
+            ('KDNRM', installed_packages.get('kdnrm')),
+            ('Keeper GraphSync', installed_packages.get('keeper-dag')),
+            ('Discovery Common', installed_packages.get('discovery-common'))
+        ]
+
+        # Only print Core Components section if at least one core package is found
+        if any(version for _, version in core_packages):
+            print(f'\n{bcolors.OKBLUE}Core Components{bcolors.ENDC}')
+            for name, version in core_packages:
+                if version:  # Only print if version is found
+                    print(f'\t{bcolors.OKGREEN}{name:<16} : {version}{bcolors.ENDC}')
+
+        # KSM Details
         print(f'\n{bcolors.OKBLUE}KSM Application Details{bcolors.ENDC}')
-        ksm_app = gateway_info.get('ksm').get('app')
-        warnings_row_color = bcolors.WARNING if ksm_app.get("warnings") else bcolors.OKGREEN
+        ksm_app = gateway_info.get('ksm', {}).get('app', {})
+        warnings_color = bcolors.WARNING if ksm_app.get("warnings") else bcolors.OKGREEN
 
-        print(f'\t{bcolors.OKGREEN}Application Title : {ksm_app.get("title")}{bcolors.ENDC}')
-        print(f'\t{bcolors.OKGREEN}Number of Records : {ksm_app.get("records-count")}{bcolors.ENDC}')
-        print(f'\t{bcolors.OKGREEN}Number of Folders : {ksm_app.get("folders-count")}{bcolors.ENDC}')
-        print(f'\t{warnings_row_color}Warnings          : {ksm_app.get("warnings")}{bcolors.ENDC}')
+        if ksm_app.get("title"):
+            print(f'\t{bcolors.OKGREEN}Title             : {ksm_app.get("title")}{bcolors.ENDC}')
+        if ksm_app.get("records-count") is not None:
+            print(f'\t{bcolors.OKGREEN}Records Count     : {ksm_app.get("records-count")}{bcolors.ENDC}')
+        if ksm_app.get("folders-count") is not None:
+            print(f'\t{bcolors.OKGREEN}Folders Count     : {ksm_app.get("folders-count")}{bcolors.ENDC}')
+        if ksm_app.get("expires-on"):
+            print(f'\t{bcolors.OKGREEN}Expires On        : {ksm_app.get("expires-on")}{bcolors.ENDC}')
+        print(f'\t{warnings_color}Warnings          : {ksm_app.get("warnings") or "None"}{bcolors.ENDC}')
 
-        print(f'\n{bcolors.OKBLUE}Host Details{bcolors.ENDC}')
-        host_details = gateway_info.get('machine')
-        installed_packages_list = host_details.get('installed-python-packages')
-        installed_packages_str = ', '.join(installed_packages_list)
+        # Router Details
+        print(f'\n{bcolors.OKBLUE}Router Connection{bcolors.ENDC}')
+        router_conn = gateway_info.get('router', {}).get('connection', {})
+        if router_conn.get("base-url"):
+            print(f'\t{bcolors.OKGREEN}URL               : {router_conn.get("base-url")}{bcolors.ENDC}')
+        router_status = router_conn.get("status", "UNKNOWN").lower()
+        status_color = bcolors.OKGREEN if router_status == "connected" else bcolors.WARNING
+        print(f'\t{status_color}Status            : {router_status}{bcolors.ENDC}')
 
-        hostname = host_details.get('hostname')
-        ip_address_local = host_details.get('ip_address_local')
-        ip_address_external = host_details.get('ip_address_external')
-
-        print(f'\t{bcolors.OKGREEN}Hostname          : {hostname}{bcolors.ENDC}')
-        print(f'\t{bcolors.OKGREEN}IP Address (loc.) : {ip_address_local}{bcolors.ENDC}')
-        print(f'\t{bcolors.OKGREEN}IP Address (ext.) : {ip_address_external}{bcolors.ENDC}')
-
-        print(f'\t{bcolors.OKGREEN}OS                : {host_details.get("os")}{bcolors.ENDC}')
-        print(f'\t{bcolors.OKGREEN}Current Time      : {host_details.get("current-time")}{bcolors.ENDC}')
-        print(f'\t{bcolors.OKGREEN}Executable        : {host_details.get("executable")}{bcolors.ENDC}')
-        print(f'\t{bcolors.OKGREEN}Package Directory : {host_details.get("package-dir")}{bcolors.ENDC}')
-        print(f'\t{bcolors.OKGREEN}Working Directory : {host_details.get("working-dir")}{bcolors.ENDC}')
-
-        if is_verbose:
-            print(f'\t{bcolors.OKGREEN}Installed Packages: {installed_packages_str}{bcolors.ENDC}')
-
-        print(f'\n{bcolors.OKBLUE}Router Details{bcolors.ENDC}')
-        router_details = gateway_info.get('router').get('connection')
-        print(f'\t{bcolors.OKGREEN}Base URL          : {router_details.get("base-url")}{bcolors.ENDC}')
-        print(f'\t{bcolors.OKGREEN}Connection Status : {router_details.get("status")}{bcolors.ENDC}')
-
-        print(f'\n{bcolors.OKBLUE}PAM Configurations(s) Available to Gateway{bcolors.ENDC}')
-        pam_configs = gateway_info.get('pam_configurations')
-
+        # PAM Configurations
+        print(f'\n{bcolors.OKBLUE}PAM Configurations Accessible to this Gateway{bcolors.ENDC}')
+        pam_configs = gateway_info.get('pam_configurations', [])
         if pam_configs:
-            for pc in pam_configs:
-                print(f'\t{bcolors.OKGREEN}UID          : {pc}{bcolors.ENDC}')
+            for idx, config in enumerate(pam_configs, 1):
+                print(f'\t{bcolors.OKGREEN}{idx}. {config}{bcolors.ENDC}')
         else:
-            print(f'\t{bcolors.WARNING}No PAM Configurations{bcolors.ENDC}')
+            print(f'\t{bcolors.WARNING}No PAM Configurations found{bcolors.ENDC}')
+
+        # Additional details for verbose mode
+        if is_verbose:
+            print(f'\n{bcolors.OKBLUE}Additional Details{bcolors.ENDC}')
+            if machine.get("working-dir"):
+                print(f'\t{bcolors.OKGREEN}Working Directory : {machine.get("working-dir")}{bcolors.ENDC}')
+            if machine.get("package-dir"):
+                print(f'\t{bcolors.OKGREEN}Package Directory: {machine.get("package-dir")}{bcolors.ENDC}')
+            if machine.get("executable"):
+                print(f'\t{bcolors.OKGREEN}Python Executable: {machine.get("executable")}{bcolors.ENDC}')
+
+            if machine.get('installed-python-packages'):
+                print(f'\n{bcolors.OKBLUE}Installed Python Packages{bcolors.ENDC}')
+                for package in sorted(machine.get('installed-python-packages', [])):
+                    print(f'\t{bcolors.OKGREEN}{package}{bcolors.ENDC}')
 
     # else:
     #     print(f"{bcolors.OKBLUE}{json.dumps(router_response_response_payload_dict, indent=4)}{bcolors.ENDC}")
