@@ -31,7 +31,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes, bytes_to_base64, base64_to_bytes
 
 from .base import (Command, GroupCommand, user_choice, dump_report_data, report_output_parser, field_to_title,
-                   FolderMixin)
+                   FolderMixin, register_pam_legacy_commands)
 from .folder import FolderMoveCommand
 from .ksm import KSMCommand
 from .pam import gateway_helper, router_helper
@@ -94,6 +94,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('action', GatewayActionCommand(), 'Execute action on the Gateway', 'a')
         self.register_command('tunnel', PAMTunnelCommand(), 'Manage Tunnels', 't')
         self.register_command('split', PAMSplitCommand(), 'Split credentials from legacy PAM Machine', 's')
+        self.register_command('legacy', PAMLegacyCommand(), 'Switch to legacy PAM commands')
 
 
 class PAMGatewayCommand(GroupCommand):
@@ -194,6 +195,16 @@ class PAMDebugCommand(GroupCommand):
         self.register_command('acl', PAMDebugACLCommand(), 'Control ACL of PAM Users', 'c')
 
 
+class PAMLegacyCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam legacy', description="Switch to using obsolete PAM commands")
+
+    def get_parser(self):
+        return PAMLegacyCommand.parser
+
+    def execute(self, params, **kwargs):
+        register_pam_legacy_commands()
+
+
 class PAMCmdListJobs(Command):
     parser = argparse.ArgumentParser(prog='pam action job-list')
     parser.add_argument('--jobId', '-j', required=False, dest='job_id', action='store', help='ID of the Job running')
@@ -214,7 +225,7 @@ class PAMCmdListJobs(Command):
 
         command_payload = {
             'action': action,
-            # 'args': command_arr[1:] if len(command_arr) > 1 else []
+            # 'args': command_arr[1:] if len(command_arr) F 1 else []
             'kwargs': kwargs
         }
 
