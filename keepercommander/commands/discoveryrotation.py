@@ -225,7 +225,7 @@ class PAMCmdListJobs(Command):
 
         command_payload = {
             'action': action,
-            # 'args': command_arr[1:] if len(command_arr) F 1 else []
+            # 'args': command_arr[1:] if len(command_arr) > 1 else []
             'kwargs': kwargs
         }
 
