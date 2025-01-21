@@ -18,7 +18,7 @@ from keepercommander.breachwatch import BreachWatch
 
 from . import api, subfolder, utils, crypto, vault, vault_extensions
 from .error import KeeperApiError
-from .params import KeeperParams
+from .params import KeeperParams, LAST_RECORD_UID
 from .proto import record_pb2
 
 
@@ -133,6 +133,8 @@ def add_record_to_folder(params, record, folder_uid=None):
                     'file_attachment_uploaded', record_uid=record.record_uid, attachment_id=file_uid)
     else:
         raise ValueError('Unsupported Keeper record')
+
+    params.environment_variables[LAST_RECORD_UID] = record.record_uid
 
 
 class RecordChangeStatus(enum.Flag):

@@ -59,7 +59,8 @@ from ..display import bcolors
 from ..error import CommandError, KeeperApiError
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..proto import pam_pb2, router_pb2, record_pb2
-from ..subfolder import find_parent_top_folder, try_resolve_path, BaseFolderNode
+from ..subfolder import find_folders, find_parent_top_folder, \
+    try_resolve_path, BaseFolderNode
 from ..vault import TypedField
 from .discover.job_start import PAMGatewayActionDiscoverJobStartCommand
 from .discover.job_status import PAMGatewayActionDiscoverJobStatusCommand
@@ -92,6 +93,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('rotation', PAMRotationCommand(), 'Manage Rotations', 'r')
         self.register_command('action', GatewayActionCommand(), 'Execute action on the Gateway', 'a')
         self.register_command('tunnel', PAMTunnelCommand(), 'Manage Tunnels', 't')
+        self.register_command('split', PAMSplitCommand(), 'Split credentials from legacy PAM Machine', 's')
         self.register_command('legacy', PAMLegacyCommand(), 'Switch to legacy PAM commands')
 
 
@@ -2587,10 +2589,17 @@ class PAMTunnelEditCommand(Command):
             # Generate a 256-bit (32-byte) random seed
             seed = os.urandom(32)
             dirty = False
-            if not traffic_encryption_key.value:
+            if not traffic_encryption_key or not traffic_encryption_key.value:
                 base64_seed = bytes_to_base64(seed)
                 record_seed = vault.TypedField.new_field('trafficEncryptionSeed', base64_seed, "")
-                record.custom.append(record_seed)
+                # if field is present update in-place, if in rec definition add to fields[] else custom[]
+                record_types_with_seed = ("pamDatabase", "pamDirectory", "pamMachine", "pamRemoteBrowser")
+                if traffic_encryption_key:
+                    traffic_encryption_key.value = [base64_seed]
+                elif record.get_record_type() in record_types_with_seed:
+                    record.fields.append(record_seed)  # DU-469
+                else:
+                    record.custom.append(record_seed)
                 dirty = True
             if dirty:
                 record_management.update_record(params, record)
@@ -3111,3 +3120,261 @@ class PAMTunnelStartCommand(Command):
                     gateway_uid = value.get('controllerUid', '') or ''
 
         return gateway_uid
+
+
+class PAMSplitCommand(Command):
+    pam_cmd_parser = argparse.ArgumentParser(prog='pam split')
+    pam_cmd_parser.add_argument('pam_machine_record', type=str, action='store',
+                                help='The record UID or title of the legacy PAM Machine '
+                                'record with built-in PAM User credentials.')
+    pam_cmd_parser.add_argument('--configuration', '-c', required=False, dest='pam_config', action='store',
+                                help='The PAM Configuration Name or UID - If the legacy record was configured '
+                                     'for rotation this command will try to autodetect PAM Configuration settings '
+                                     'otherwise you\'ll be prompted to provide the PAM Config.')
+    pam_cmd_parser.add_argument('--folder', '-f', required=False, dest='pam_user_folder', action='store',
+                                help='The folder where to store the new PAM User record - '
+                                     'folder names/paths are case sensitive!'
+                                     '(if skipped - PAM User will be created into the '
+                                     'same folder as PAM Machine)')
+
+    def get_parser(self):
+        return PAMSplitCommand.pam_cmd_parser
+
+    def execute(self, params, **kwargs):
+        def remove_field(record, field): # type: (vault.TypedRecord, vault.TypedField) -> bool
+            # Since TypedRecord.get_typed_field scans both fields[] and custom[]
+            # we need corresponding remove field lookup
+            fld = next((x for x in record.fields if field.type == x.type and
+                        (not field.label or
+                        (x.label and field.label.casefold() == x.label.casefold()))), None)
+            if fld is not None:
+                record.fields.remove(field)
+                return True
+
+            fld = next((x for x in record.custom if field.type == x.type and
+                        (not field.label or
+                        (x.label and field.label.casefold() == x.label.casefold()))), None)
+            if fld is not None:
+                record.custom.remove(field)
+                return True
+
+            return False
+
+        def resolve_record(params, name):
+            record_uid = None
+            if name in params.record_cache:
+                record_uid = name  # unique record UID
+            else:
+                # lookup unique folder/record path
+                rs = try_resolve_path(params, name)
+                if rs is not None:
+                    folder, name = rs
+                    if folder is not None and name is not None:
+                        folder_uid = folder.uid or ''
+                        if folder_uid in params.subfolder_record_cache:
+                            for uid in params.subfolder_record_cache[folder_uid]:
+                                r = api.get_record(params, uid)
+                                if r.title.lower() == name.lower():
+                                    record_uid = uid
+                                    break
+            if not record_uid:
+                # lookup unique record title
+                records = []
+                for uid in params.record_cache:
+                    data_json = params.record_cache[uid].get("data_unencrypted", "{}") or {}
+                    data = json.loads(data_json)
+                    if "pamMachine" == str(data.get("type", "")):
+                        title = data.get('title', '') or ''
+                        if title.lower() == name.lower():
+                            records.append(uid)
+                uniq_recs = len(set(records))
+                if uniq_recs > 1:
+                    print(f"{bcolors.FAIL}Multiple PAM Machine records match title '{name}' - "
+                          f"specify unique record path/name.{bcolors.ENDC}")
+                elif records:
+                    record_uid = records[0]
+            return record_uid
+
+        def resolve_folder(params, name):
+            folder_uid = ''
+            if name:
+                # lookup unique folder path
+                folder_uid = FolderMixin.resolve_folder(params, name)
+                # lookup unique folder name/uid
+                if not folder_uid and name != '/':
+                    folders = []
+                    for fkey in params.subfolder_cache:
+                        data_json = params.subfolder_cache[fkey].get('data_unencrypted', '{}') or {}
+                        data = json.loads(data_json)
+                        fname = data.get('name', '') or ''
+                        if fname == name:
+                            folders.append(fkey)
+                    uniq_items = len(set(folders))
+                    if uniq_items > 1:
+                        print(f"{bcolors.FAIL}Multiple folders match '{name}' - specify unique "
+                                f"folder name or use folder UID (or omit --folder parameter to create "
+                                f"PAM User record in same folder as PAM Machine record).{bcolors.ENDC}")
+                        folders = []
+                    folder_uid = folders[0] if folders else ''
+            return folder_uid
+
+        def resolve_pam_config(params, record_uid, pam_config_option):
+            # PAM Config lookup - Legacy PAM Machine will have associated PAM Config
+            # only if it is set up for rotation - otherwise PAM Config must be provided
+            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+            pamcfg_rec = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
+            if not pamcfg_rec and not pam_config_option:
+                print(f"{bcolors.FAIL}Unable to find PAM Config associated with record '{record_uid}' "
+                    "- please provide PAM Config with --configuration|-c option. "
+                    "(Note: Legacy PAM Machine is linked to PAM Config only if "
+                    f"the machine is set up for rotation).{bcolors.ENDC}")
+                return
+
+            pamcfg_cmd = ''
+            if pam_config_option:
+                pam_uids = []
+                for uid in params.record_cache:
+                    if params.record_cache[uid].get('version', 0) == 6:
+                        r = api.get_record(params, uid)
+                        if r.record_uid == pam_config_option or r.title.lower() == pam_config_option.lower():
+                            pam_uids.append(uid)
+                uniq_recs = len(set(pam_uids))
+                if uniq_recs > 1:
+                    print(f"{bcolors.FAIL}Multiple PAM Config records match '{pam_config_option}' - "
+                            f"specify unique record UID/Title.{bcolors.ENDC}")
+                elif pam_uids:
+                    pamcfg_cmd = pam_uids[0]
+                elif not pamcfg_rec:
+                    print(f"{bcolors.FAIL}Unable to find PAM Configuration '{pam_config_option}'.{bcolors.ENDC}")
+
+            # PAM Config set on command line overrides the PAM Machine associated PAM Config
+            pam_config_uid = pamcfg_cmd or pamcfg_rec or ""
+            if pamcfg_cmd and pamcfg_rec and pamcfg_cmd != pamcfg_rec:
+                print(f"{bcolors.WARNING}PAM Config associated with record '{record_uid}' "
+                    "is different from PAM Config set with --configuration|-c option. "
+                    f"Using the configuration from command line option.{bcolors.ENDC}")
+
+            return pam_config_uid
+
+        # Parse command params
+        pam_config = kwargs.get('pam_config', '')  # PAM Configuration Name or UID
+        folder = kwargs.get('pam_user_folder', '')  # destination folder
+        record_uid = kwargs.get('pam_machine_record', '')  # existing record UID
+
+        record_uid = resolve_record(params, record_uid) or record_uid
+        record = vault.KeeperRecord.load(params, record_uid)
+        if not record:
+            raise CommandError('', f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
+        if not isinstance(record, vault.TypedRecord) or record.record_type != "pamMachine":
+            raise CommandError('', f"{bcolors.FAIL}Record {record_uid} is not of the expected type 'pamMachine'.{bcolors.ENDC}")
+
+        pam_config_uid = resolve_pam_config(params, record_uid, pam_config)
+        if not pam_config_uid:
+            print(f"{bcolors.FAIL}Please provide a valid PAM Configuration.{bcolors.ENDC}")
+            return
+            # print(f"{bcolors.WARNING}Failed to find PAM Configuration for {record_uid} "
+            #       "and unable to link new PAM User to PAM Machine. Remember to manually link "
+            #       f"Administrative Credentials record later.{bcolors.ENDC}")
+
+        folder_uid = resolve_folder(params, folder)
+        if folder and not folder_uid:
+            print(f"{bcolors.WARNING}Unable to find destination folder '{folder}' "
+                  "(Note: folder names/paths are case sensitive) "
+                  "- PAM User record will be stored into same folder "
+                  f"as the originating PAM Machine record.{bcolors.ENDC}")
+
+        flogin = record.get_typed_field('login')
+        vlogin = flogin.get_default_value(str) if flogin else ''
+        fpass = record.get_typed_field('password')
+        vpass = fpass.get_default_value(str) if fpass else ''
+        fpkey = record.get_typed_field('secret')
+        vpkey = fpkey.get_default_value(str) if fpkey else ''
+        if not(vlogin or vpass or vpkey):
+            if not(flogin or fpass or fpkey):
+                print(f"{bcolors.WARNING}Record {record_uid} is already in the new format.{bcolors.ENDC}")
+            else:
+                # No values present - just drop the old fields and add new ones
+                # thus converting the record to the new pamMachine format
+                # NB! If record was edited - newer clients moved these to custom fields
+                if flogin:
+                    remove_field(record, flogin)
+                if fpass:
+                    remove_field(record, fpass)
+                if fpkey:
+                    remove_field(record, fpkey)
+
+                if not record.get_typed_field('trafficEncryptionSeed'):
+                    record_seed = vault.TypedField.new_field('trafficEncryptionSeed', "", "")
+                    record.fields.append(record_seed)
+                if not record.get_typed_field('pamSettings'):
+                    pam_settings = vault.TypedField.new_field('pamSettings', "", "")
+                    record.fields.append(pam_settings)
+
+                record_management.update_record(params, record)
+                params.sync_data = True
+
+                print(f"{bcolors.WARNING}Record {record_uid} has no data to split and "
+                    "was converted to the new format. Remember to manually add "
+                    f"Administrative Credentials later.{bcolors.ENDC}")
+            return
+        elif not vlogin or not(vpass or vpkey):
+            print(f"{bcolors.WARNING}Record {record_uid} has incomplete user data "
+                  "but splitting anyway. Remember to manually update linked "
+                  f"Administrative Credentials record later.{bcolors.ENDC}")
+
+        # Create new pamUser record
+        user_rec = vault.KeeperRecord.create(params, 'pamUser')
+        user_rec.type_name = 'pamUser'
+        user_rec.title = str(record.title) + ' Admin User'
+        if flogin:
+            field = user_rec.get_typed_field('login')
+            field.value = flogin.value
+        if fpass:
+            field = user_rec.get_typed_field('password')
+            field.value = fpass.value
+        if fpkey:
+            field = user_rec.get_typed_field('secret')
+            field.value = fpkey.value
+
+        if not folder_uid:  # use the folder of the PAM Machine record
+            folders = list(find_folders(params, record.record_uid))
+            uniq_items = len(set(folders))
+            if uniq_items < 1:
+                print(f"{bcolors.WARNING}The new record will be created in root folder.{bcolors.ENDC}")
+            elif uniq_items > 1:
+                print(f"{bcolors.FAIL}Record '{record.record_uid}' is probably "
+                      "a linked record with copies/links across multiple folders "
+                      f"and PAM User record will be created in folder '{folders[0]}'.{bcolors.ENDC}")
+            folder_uid = folders[0] if folders else ''  # '' means root folder
+
+        record_management.add_record_to_folder(params, user_rec, folder_uid)
+        pam_user_uid = params.environment_variables.get(LAST_RECORD_UID, '')
+        api.sync_down(params)
+
+        if flogin:
+            remove_field(record, flogin)
+        if fpass:
+            remove_field(record, fpass)
+        if fpkey:
+            remove_field(record, fpkey)
+
+        if not record.get_typed_field('trafficEncryptionSeed'):
+            record_seed = vault.TypedField.new_field('trafficEncryptionSeed', "", "")
+            record.fields.append(record_seed)
+        if not record.get_typed_field('pamSettings'):
+            pam_settings = vault.TypedField.new_field('pamSettings', "", "")
+            record.fields.append(pam_settings)
+
+        record_management.update_record(params, record)
+        params.sync_data = True
+
+        if pam_config_uid:
+            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_config_uid)
+            tdag.link_resource_to_config(record_uid)
+            tdag.link_user_to_resource(pam_user_uid, record_uid, True, True)
+
+        print(f"PAM Machine record {record_uid} user credentials were split into "
+              f"a new PAM User record {pam_user_uid}")
+
+        return

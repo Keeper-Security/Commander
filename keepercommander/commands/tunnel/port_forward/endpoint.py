@@ -472,7 +472,7 @@ class TunnelDAG:
                              session_recording=None, typescript_recording=None,
                              allowed_settings_name='allowedSettings', is_config=False,
                              v_type: RefType=str(RefType.PAM_MACHINE)):
-        v_type =  RefType(v_type)
+        v_type = RefType(v_type)
         allowed_ref_types = [RefType.PAM_MACHINE, RefType.PAM_DATABASE, RefType.PAM_DIRECTORY, RefType.PAM_BROWSER]
         if v_type not in allowed_ref_types:
             # default to machine
@@ -504,6 +504,12 @@ class TunnelDAG:
             dirty = True
         # We default rotation to True
         if rotation is not None and rotation != settings.get("rotation", True):
+            settings["rotation"] = rotation
+            dirty = True
+        # some clients disagree with error "Rotation is disabled by the PAM configuration."
+        # where it seems to default to False, and PAM configurations block all records
+        # as a workaround always explicitly set rotation for PAM Config types
+        if resource_vertex.vertex_type == RefType.PAM_NETWORK and rotation is not None and rotation != settings.get("rotation", False):
             settings["rotation"] = rotation
             dirty = True
         if session_recording is not None and session_recording != settings.get("sessionRecording", False):
@@ -541,7 +547,7 @@ class TunnelDAG:
         self.linking_dag.load()
         vertex = self.linking_dag.get_vertex(record_uid)
         content = self.get_vertex_content(vertex)
-        config_id = config_uid if config_uid else pam_settings.value[0].get('configUid')
+        config_id = config_uid if config_uid else pam_settings.value[0].get('configUid') if pam_settings else None
         if content and content.get('allowedSettings'):
             allowed_settings = content['allowedSettings']
             print(f"{bcolors.OKGREEN}Settings configured for {record_uid}{bcolors.ENDC}")
