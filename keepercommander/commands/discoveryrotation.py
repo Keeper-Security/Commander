@@ -1366,6 +1366,8 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
                         action='store_true', help='Enable tunneling')
     parser.add_argument('--enable-rotation', '-er', dest='enable_rotation', action='store_true',
                         help='Enable rotation')
+    parser.add_argument('--enable-remote-browser-isolation', '-erbi', dest='enable_remotebrowserisolation',
+                        action='store_true', help='Enable remote browser isolation')
     parser.add_argument('--enable-connections-recording', '-ecr', required=False, dest='recordingenabled',
                         action='store_true', help='Enable recording connections for the resource')
     parser.add_argument('--enable-typescripts-recording', '-etcr', required=False, dest='typescriptrecordingenabled',
@@ -1434,7 +1436,8 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
             bool(kwargs.get('enable_tunneling')),
             bool(kwargs.get('enable_rotation')),
             bool(kwargs.get('recordingenabled')),
-            bool(kwargs.get('typescriptrecordingenabled'))
+            bool(kwargs.get('typescriptrecordingenabled')),
+            bool(kwargs.get('enable_remotebrowserisolation'))
         )
         tmp_dag.print_tunneling_config(record.record_uid, None)
 
@@ -1473,6 +1476,10 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
                         help='Enable connections')
     parser.add_argument('--disable-connections', '-dc', required=False, dest='disable_connections', action='store_true',
                         help='Enable connections')
+    parser.add_argument('--enable-remote-browser-isolation', '-erbi', required=False, dest='enable_remotebrowserisolation', action='store_true',
+                        help='Enable remote browser isolation')
+    parser.add_argument('--disable-remote-browser-isolation', '-drbi', required=False, dest='disable_remotebrowserisolation', action='store_true',
+                        help='Disable remote browser isolation')
     parser.add_argument('--enable-connections-recording', '-ecr', required=False, dest='enable_connections_recording',
                         action='store_true', help='Enable connections recording')
     parser.add_argument('--disable-connections-recording', '-dcr', required=False, dest='disable_connections_recording',
@@ -1563,6 +1570,7 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
         if ((kwargs.get('enable_connections') and kwargs.get('disable_connections')) or
                 (kwargs.get('enable_tunneling') and kwargs.get('disable_tunneling')) or
                 (kwargs.get('enable_rotation') and kwargs.get('disable_rotation')) or
+                (kwargs.get('enable_remotebrowserisolation') and kwargs.get('disable_remotebrowserisolation')) or
                 (kwargs.get('enable_connections_recording') and kwargs.get('disable_connections_recording')) or
                 (kwargs.get('enable_typescripts_recording') and kwargs.get('disable_typescripts_recording'))):
             raise CommandError('pam-config-edit', 'Cannot enable and disable the same feature at the same time')
@@ -1570,19 +1578,23 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
         # First check if enabled is true then check if disabled is true. if not then set it to None
         _connections = True if kwargs.get('enable_connections') \
             else False if kwargs.get('disable_connections') else None
-        _tunneling = True if kwargs.get('enable_tunneling') else False if kwargs.get('disable_tunneling') else None
-        _rotation = True if kwargs.get('enable_rotation') else False if kwargs.get('disable_rotation') else None
+        _tunneling = True if kwargs.get('enable_tunneling') \
+            else False if kwargs.get('disable_tunneling') else None
+        _rotation = True if kwargs.get('enable_rotation') \
+            else False if kwargs.get('disable_rotation') else None
+        _rbi = True if kwargs.get('enable_remotebrowserisolation') \
+            else False if kwargs.get('disable_remotebrowserisolation') else None
         _recording = True if kwargs.get('enable_connections_recording') \
             else False if kwargs.get('disable_connections_recording') else None
-        _typescript_recording = (True if kwargs.get('enable_typescripts_recording') else False if
-                                 kwargs.get('disable_typescripts_recording') else None)
+        _typescript_recording = True if kwargs.get('enable_typescripts_recording') \
+            else False if kwargs.get('disable_typescripts_recording') else None
 
-        if (_connections is not None or _tunneling is not None or _rotation is not None or _recording is not None or
-                _typescript_recording is not None):
+        if (_connections is not None or _tunneling is not None or _rotation is not None or _rbi is not None or
+            _recording is not None or _typescript_recording is not None):
             encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key,
                                 configuration.record_uid, is_config=True)
-            tmp_dag.edit_tunneling_config(_connections, _tunneling, _rotation, _recording, _typescript_recording)
+            tmp_dag.edit_tunneling_config(_connections, _tunneling, _rotation, _recording, _typescript_recording, _rbi)
             tmp_dag.print_tunneling_config(configuration.record_uid, None)
         for w in self.warnings:
             logging.warning(w)
