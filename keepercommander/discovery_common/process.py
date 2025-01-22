@@ -318,7 +318,30 @@ class Process:
 
         self.logger.debug(f"search for directories: {', '.join(domains)}")
 
+        # Some providers provider directory type services.
+        # They can also provide mulitple domains
+        provider_vertices = self.infra.dag.search_content({
+            "record_type": ["pamAzureConfiguration", "pamDomainConfiguration"],
+        }, ignore_case=True)
+        found_provider_directories = []
+        for provider_vertex in provider_vertices:
+            content = DiscoveryObject.get_discovery_object(provider_vertex)
+            found = False
+            for domain in domains:
+                for provider_domain in content.item.info.get("domains", []):
+                    if domain.lower() in provider_domain.lower():
+                        found = True
+                        break
+                if found is True:
+                    break
+            if found is True:
+                found_provider_directories.append(provider_vertex)
+        if len(found_provider_directories) > 0:
+            return found_provider_directories
+
         # Check the graph first.
+        # `search_content` does an "is in" type match; so subdomains should match a full domain
+        # pamDomainConfiguration is an edge case because it's name in the record is the domain name.
         for domain_name in domains:
             directories = self.infra.dag.search_content({
                 "record_type": ["pamDirectory", "pamDomainConfiguration"],
@@ -327,9 +350,9 @@ class Process:
 
             self.logger.debug(f"found {len(directories)} directories in the graph")
 
-
             # If we found directories, return the list of directory vertices.
             if len(directories) > 0:
+                # Return vertices
                 return directories
 
         # Check the vault secondly.
@@ -337,6 +360,7 @@ class Process:
             info = directory_info_func(domain=domain_name, skip_users=False, context=context)
             if info is not None:
                 # If we found directories in the Vault, then return directory info
+                # This will be an instance of DirectoryInfo
                 return info
 
         return None
@@ -751,11 +775,6 @@ class Process:
                         if access_dn is not None:
                             access_dn = access_dn.lower()
 
-                        self.logger.debug(f"REMOVE ME: access_username_and_domain = {access_username_and_domain}")
-                        self.logger.debug(f"REMOVE ME: access_username = {access_username}")
-                        self.logger.debug(f"REMOVE ME: access_domain = {access_domain}")
-                        self.logger.debug(f"REMOVE ME: access_dn = {access_dn}")
-
                         # Go through the users to find the administrative user.
                         found_user_in_discovery_user_list = False
                         for user_vertex in vertex.has_vertices():
@@ -779,11 +798,6 @@ class Process:
                             dn = user_content.item.dn
                             if dn is not None:
                                 dn = dn.lower()
-
-                            self.logger.debug(f"REMOVE ME: user_and_domain = {user_and_domain}")
-                            self.logger.debug(f"REMOVE ME: user = {user}")
-                            self.logger.debug(f"REMOVE ME: domain = {domain}")
-                            self.logger.debug(f"REMOVE ME: dn = {dn}")
 
                             if (access_username_and_domain == user_and_domain
                                     or access_username_and_domain == user
@@ -1051,24 +1065,6 @@ class Process:
                     # If the ignore_object flag is set, then continue.
                     continue
 
-                # # If the rule engine flagged this object to be auto added, and no record exists,
-                # # prepare a record and add it to the bulk_add_records queue.
-                # # At the end of processing, the record will be added.
-                # elif content.action_rules_result == RuleActionEnum.ADD.value and content.record_exists is False:
-                #     self.logger.debug(f"    vertex {vertex.uid} had an ADD result for the rule engine, auto add")
-                #
-                #     # The record could be a resource or user record.
-                #     self._prepare_record(
-                #         record_prepare_func=record_prepare_func,
-                #         bulk_add_records=bulk_add_records,
-                #         content=content,
-                #         parent_content=current_content,
-                #         vertex=vertex,
-                #         context=context
-                #     )
-                #
-                #     self.record_link.discovery_belongs_to(vertex, current_vertex, acl=default_acl)
-
                 # If the record doesn't exist, then prompt the user.
                 else:
                     self.logger.debug(f"    vertex {vertex.uid} had an PROMPT result, prompt user")
@@ -1210,6 +1206,8 @@ class Process:
                                     resource_content=content,
                                     bulk_add_records=bulk_add_records,
                                     bulk_convert_records=bulk_convert_records,
+                                    record_lookup_func=record_lookup_func,
+                                    directory_info_func=directory_info_func,
                                     prompt_admin_func=prompt_admin_func,
                                     record_prepare_func=record_prepare_func,
                                     indent=indent,
@@ -1269,6 +1267,8 @@ class Process:
                             resource_content: DiscoveryObject,
                             bulk_add_records: List[BulkRecordAdd],
                             bulk_convert_records: List[BulkRecordConvert],
+                            record_lookup_func: Callable,
+                            directory_info_func: Callable,
                             prompt_admin_func: Callable,
                             record_prepare_func: Callable,
                             indent: int = 0,
@@ -1338,6 +1338,8 @@ class Process:
 
             # If the action is to ADD, replace the PLACEHOLDER data.
             if admin_result.action == PromptActionEnum.ADD:
+                self.logger.debug("adding admin user")
+
                 source = "local"
                 if resource_content.record_type == PAM_DIRECTORY:
                     source = resource_content.name
@@ -1348,7 +1350,6 @@ class Process:
                 admin_acl = UserAcl(is_admin=True)
 
                 if admin_record_uid is None:
-                    logging.debug("add admin user from content")
                     admin_content = admin_result.content
 
                     # With the result, we can fill in information in the object item.
@@ -1362,6 +1363,8 @@ class Process:
                     admin_content.item.source = source
                     admin_content.name = admin_content.item.user
 
+                    self.logger.debug(f"added admin user from content")
+
                     if admin_content.item.user is None or admin_content.item.user == "":
                         raise ValueError("The user name is missing or is blank. Cannot create the administrator user.")
 
@@ -1372,25 +1375,61 @@ class Process:
                     # We need to populate the id and uid of the content, now that we have data in the content.
                     self.populate_admin_content_ids(admin_content, resource_vertex)
 
+                    ad_user, ad_domain = split_user_and_domain(admin_content.item.user)
+                    if ad_domain is not None and  admin_content.item.source == LOCAL_USER:
+                        self.logger.debug("The admin is an directory user, but the source is set to a local user")
+
+                        found_admin_record_uid = None
+                        try:
+                            found_admin_record_uid = self._find_admin_directory_user(
+                                domain=ad_domain,
+                                admin_acl=admin_acl,
+                                directory_info_func=directory_info_func,
+                                record_lookup_func=record_lookup_func,
+                                context=context,
+                                user=admin_content.item.user,
+                                dn=admin_content.item.dn
+                            )
+                        except DirectoryNotFoundException:
+                            self.logger.debug(f"    directory {source} was not found for admin user")
+                        except UserNotFoundException:
+                            self.logger.debug(f"    directory user was not found in directory {source}")
+
+                        if found_admin_record_uid is not None:
+                            self.logger.debug("    found directory user admin, connect to resource")
+                            found_admin_vertices = self.infra.dag.search_content({"record_uid": found_admin_record_uid})
+                            if len(found_admin_vertices) == 1:
+                                found_admin_vertices[0].belongs_to(resource_vertex, edge_type=EdgeType.KEY)
+                            self.record_link.belongs_to(found_admin_record_uid, resource_content.record_uid,
+                                                        acl=admin_acl)
+                            return
+
                     # Does an admin vertex already exist for this user?
                     # This most likely user on the gateway, since without a resource record users can be discovered.
                     # If we did find it, get the content for the admin; we really want any existing record uid.
                     admin_vertex = self.infra.dag.get_vertex(admin_content.uid)
                     if admin_vertex is not None and admin_vertex.active is True and admin_vertex.has_data is True:
+                        self.logger.debug("admin exists in the graph")
                         found_content = DiscoveryObject.get_discovery_object(admin_vertex)
                         admin_record_uid = found_content.record_uid
+                    else:
+                        self.logger.debug("admin does not exists in the graph")
 
                     # If there is a record UID for the admin user, connect it.
                     if admin_record_uid is not None:
+                        self.logger.debug("the admin has a record UID")
 
                         # If the admin record does not belong to another resource, make this resource its owner.
                         if self.record_link.get_parent_record_uid(admin_record_uid) is None:
+                            self.logger.debug("the admin does not belong to another resourse, "
+                                              "setting it belong to this resource")
                             admin_acl.belongs_to = True
 
                         admin_vertex.belongs_to(resource_vertex, edge_type=EdgeType.KEY)
                         self.record_link.belongs_to(admin_record_uid, resource_content.record_uid, acl=admin_acl)
                     else:
                         if admin_vertex is None:
+                            self.logger.debug("creating an entry in the graph for the admin")
                             admin_vertex = self.infra.dag.add_vertex(uid=admin_content.uid,
                                                                      name=admin_content.description)
 
@@ -1415,12 +1454,14 @@ class Process:
                         self.record_link.discovery_belongs_to(admin_vertex, resource_vertex, acl=admin_acl)
 
                 else:
-                    logging.debug("add admin user from existing record")
+                    self.logger.debug("add admin user from existing record")
 
                     # If this is NOT existing directory user, we want to convert the record rotation setting to
                     #   work with this gateway/controller.
                     # If it is a directory user, we just want link this record; no conversion.
                     if admin_result.is_directory_user is False:
+
+                        self.logger.debug("the admin user is NOT a directory user, convert record's rotation settings")
 
                         # This is a pamUser record that may need to have the controller set.
                         # Add it to this queue to make sure the protobuf items are current.
@@ -1442,6 +1483,8 @@ class Process:
 
                         # There is _prepare_record, the record exists.
                         # Needs to add to records linking.
+                    else:
+                        self.logger.debug("the admin user is a directory user")
 
                     # Link the record UIDs.
                     # We might not have this user in discovery data.
