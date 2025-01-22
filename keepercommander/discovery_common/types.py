@@ -486,7 +486,7 @@ class DiscoveryObject(BaseModel):
 
     def get_field_value(self, label):
         for field in self.fields:
-            if field.label == label:
+            if field.label == label or field.type == label:
                 value = field.value
                 if len(value) == 0:
                     return None
@@ -497,7 +497,7 @@ class DiscoveryObject(BaseModel):
         if isinstance(value, list) is False:
             value = [value]
         for field in self.fields:
-            if field.label == label:
+            if field.label == label or field.type == label:
                 field.value = value
                 return
         raise ValueError(f"Cannot not find field with label {label}")
@@ -560,12 +560,12 @@ class NormalizedRecord(BaseModel):
     fields: List[RecordField] = []
     note: Optional[str] = None
 
-    def _field(self, type, label) -> Optional[RecordField]:
+    def _field(self, field_type, label) -> Optional[RecordField]:
         for field in self.fields:
             value = field.value
             if value is None or len(value) == 0:
                 continue
-            if field.label == type and value[0].lower() == label.lower():
+            if field.label == field_type and value[0].lower() == label.lower():
                 return field
         return None
 
