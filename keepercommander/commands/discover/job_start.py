@@ -233,4 +233,4 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
             print(f"To stop and remove the current job, use the command "
                   f"'{bcolors.OKGREEN}pam action discover remove -j <Job ID>'.")
         else:
-            print_router_response(router_response, conversation_id)
+            print_router_response(router_response, "job_info", conversation_id, gateway_uid=gateway_context.gateway_uid)

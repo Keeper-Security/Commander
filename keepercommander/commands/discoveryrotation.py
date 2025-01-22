@@ -1975,7 +1975,7 @@ class PAMGatewayActionJobCancelCommand(Command):
             message_type=pam_pb2.CMT_GENERAL,
             is_streaming=False
         )
-        print_router_response(router_response, conversation_id)
+        print_router_response(router_response, 'job_info', conversation_id)
 
 
 class PAMGatewayActionJobCommand(Command):
@@ -2006,7 +2006,7 @@ class PAMGatewayActionJobCommand(Command):
             destination_gateway_uid_str=gateway_uid
         )
 
-        print_router_response(router_response, original_conversation_id=conversation_id, response_type='job_info')
+        print_router_response(router_response, 'job_info', original_conversation_id=conversation_id, gateway_uid=gateway_uid)
 
 
 class PAMGatewayActionRotateCommand(Command):
@@ -2156,7 +2156,7 @@ class PAMGatewayActionServerInfoCommand(Command):
             destination_gateway_uid_str=destination_gateway_uid_str
         )
 
-        print_router_response(router_response, response_type='gateway_info', is_verbose=is_verbose)
+        print_router_response(router_response, 'gateway_info', is_verbose=is_verbose, gateway_uid=destination_gateway_uid_str)
 
 
 class PAMGatewayActionDiscoverCommandBase(Command):
