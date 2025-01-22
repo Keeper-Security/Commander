@@ -427,7 +427,7 @@ def get_dag_leafs(params, encrypted_session_token, encrypted_transmission_key, r
         return None
 
 
-def print_router_response(router_response, response_type, original_conversation_id=None, is_verbose=False):
+def print_router_response(router_response, response_type, original_conversation_id=None, is_verbose=False, gateway_uid=''):
     if not router_response:
         return
 
@@ -463,8 +463,9 @@ def print_router_response(router_response, response_type, original_conversation_
     if router_response_response_payload_dict.get('isScheduled') or router_response_response_payload_dict.get('is_scheduled'):
         conversation_id = router_response_response_payload_dict.get('conversation_id')
 
+        gwinfo = f" --gateway={gateway_uid}" if gateway_uid else ""
         print(f"Scheduled action id: {bcolors.OKBLUE}{conversation_id}{bcolors.ENDC}")
-        print(f"The action has been scheduled, use command '{bcolors.OKGREEN}pam action job-info {conversation_id}{bcolors.ENDC}' to get status of the scheduled action")
+        print(f"The action has been scheduled, use command '{bcolors.OKGREEN}pam action job-info {conversation_id}{gwinfo}{bcolors.ENDC}' to get status of the scheduled action")
         return
 
     elif response_type == 'job_info':

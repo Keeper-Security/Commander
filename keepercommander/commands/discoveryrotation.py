@@ -2134,7 +2134,7 @@ class PAMGatewayActionRotateCommand(Command):
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token)
 
-        print_router_response(router_response, 'job_info', conversation_id)
+        print_router_response(router_response, 'job_info', conversation_id, gateway_uid=gateway_uid)
 
 
 class PAMGatewayActionServerInfoCommand(Command):
