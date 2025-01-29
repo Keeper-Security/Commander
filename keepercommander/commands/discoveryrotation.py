@@ -74,6 +74,9 @@ from .pam_debug.acl import PAMDebugACLCommand
 from .pam_debug.graph import PAMDebugGraphCommand
 from .pam_debug.info import PAMDebugInfoCommand
 from .pam_debug.gateway import PAMDebugGatewayCommand
+from .pam_service.list import PAMActionServiceListCommand
+from .pam_service.add import PAMActionServiceAddCommand
+from .pam_service.remove import PAMActionServiceRemoveCommand
 
 
 def register_commands(commands):
@@ -168,6 +171,19 @@ class PAMDiscoveryRuleCommand(GroupCommand):
         self.default_verb = 'list'
 
 
+class PAMActionServiceCommand(GroupCommand):
+
+    def __init__(self):
+        super(PAMActionServiceCommand, self).__init__()
+        self.register_command('list', PAMActionServiceListCommand(),
+                              'List all mappings', 'l')
+        self.register_command('add', PAMActionServiceAddCommand(),
+                              'Add a user and machine to the mapping', 'a')
+        self.register_command('remove', PAMActionServiceRemoveCommand(),
+                              'Remove a user and machine from the mapping', 'r')
+        self.default_verb = 'list'
+
+
 class GatewayActionCommand(GroupCommand):
 
     def __init__(self):
@@ -177,6 +193,8 @@ class GatewayActionCommand(GroupCommand):
         self.register_command('rotate', PAMGatewayActionRotateCommand(), 'Rotate command', 'r')
         self.register_command('job-info', PAMGatewayActionJobCommand(), 'View Job details', 'ji')
         self.register_command('job-cancel', PAMGatewayActionJobCommand(), 'View Job details', 'jc')
+        self.register_command('service', PAMActionServiceCommand(),
+                              'Manage services and scheduled tasks user mappings.', 's')
         self.register_command('debug', PAMDebugCommand(), 'PAM debug information')
 
         # self.register_command('job-list', DRCmdListJobs(), 'List Running jobs')
