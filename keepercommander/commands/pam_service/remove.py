@@ -20,9 +20,9 @@ class PAMActionServiceRemoveCommand(PAMGatewayActionDiscoverCommandBase):
                         help='Gateway name or UID')
 
     parser.add_argument('--machine-uid', '-m', required=True, dest='machine_uid', action='store',
-                        help='The UID of the Windows Machine')
+                        help='The UID of the Windows Machine record')
     parser.add_argument('--user-uid', '-u', required=True, dest='user_uid', action='store',
-                        help='The UID of the User')
+                        help='The UID of the User record')
     parser.add_argument('--type', '-t', required=True, choices=['service', 'task'], dest='type',
                         action='store', help='Relationship to remove [service, task]')
 
@@ -69,16 +69,18 @@ class PAMActionServiceRemoveCommand(PAMGatewayActionDiscoverCommandBase):
 
         machine_vertex = user_service.get_record_link(machine_record.record_uid)
         if machine_vertex is None:
-            print(self._f(f"The machine {machine_record.title} does not exist in the mapping."))
+            print(self._f(f"The machine does not exist in the mapping."))
+            return
 
         user_vertex = user_service.get_record_link(user_record.record_uid)
         if user_vertex is None:
-            print(self._f(f"The user {user_record.title} does not exist in the mapping."))
+            print(self._f(f"The user does not exist in the mapping."))
+            return
 
         acl = user_service.get_acl(machine_vertex.uid, user_vertex.uid)
         if acl is None:
-            print(f"{bcolors.WARNING}The user {user_record.title} did not control any services or "
-                  f"scheduled tasks on {machine_record.title}{bcolors.ENDC}")
+            print(f"{bcolors.WARNING}The user did not control any services or "
+                  f"scheduled tasks on the machine.{bcolors.ENDC}")
             return
 
         if rel_type == "service":
@@ -90,15 +92,19 @@ class PAMActionServiceRemoveCommand(PAMGatewayActionDiscoverCommandBase):
             user_service.belongs_to(gateway_context.configuration_uid, machine_vertex.uid)
 
         user_service.belongs_to(machine_vertex.uid, user_vertex.uid, acl=acl)
-
-        text_type = "services"
-        if rel_type == "task":
-            text_type = "scheduled tasks"
-
         user_service.save()
 
-        print(
-            self._gr(
-                f"{user_record.title} was removed from {machine_record.title} for {text_type}."
+        if rel_type == "service":
+            print(
+                self._gr(
+                    "Success: Services running on this machine will no longer have their password changed when this "
+                    "user's password is rotated."
+                )
             )
-        )
+        else:
+            print(
+                self._gr(
+                    "Success: Scheduled tasks running on this machine will no longer have their password changed "
+                    "when this user's password is rotated."
+                )
+            )

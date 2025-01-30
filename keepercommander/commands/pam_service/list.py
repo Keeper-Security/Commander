@@ -58,10 +58,12 @@ class PAMActionServiceListCommand(PAMGatewayActionDiscoverCommandBase):
                             "machines": []
                         }
                     text = f"{resource_record.title} ({resource_record.record_uid}) :"
+                    comma = ""
                     if acl.is_service is True:
                         text += f" {bcolors.OKGREEN}Services{bcolors.ENDC}"
+                        comma = ","
                     if acl.is_task is True:
-                        text += f" {bcolors.OKBLUE}Scheduled Tasks{bcolors.ENDC}"
+                        text += f"{comma} {bcolors.OKGREEN}Scheduled Tasks{bcolors.ENDC}"
                     service_map[user_record.record_uid]["machines"].append(text)
 
         print("")
