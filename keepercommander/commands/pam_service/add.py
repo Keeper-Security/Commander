@@ -23,9 +23,9 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
                         help='Gateway name or UID')
 
     parser.add_argument('--machine-uid', '-m', required=True, dest='machine_uid', action='store',
-                        help='The UID of the Windows Machine')
+                        help='The UID of the Windows Machine record')
     parser.add_argument('--user-uid', '-u', required=True, dest='user_uid', action='store',
-                        help='The UID of the User')
+                        help='The UID of the User record')
     parser.add_argument('--type', '-t', required=True, choices=['service', 'task'], dest='type',
                         action='store', help='Relationship to add [service, task]')
 
@@ -108,9 +108,11 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
             os_type = os_field.value[0]
         if os_type is None:
             print(self._f("The operating system field of the machine record is blank."))
+            return
         if os_type != "windows":
             print(self._f("The operating system is not Windows. "
                           "PAM can only rotate the services and scheduled task password on Windows."))
+            return
 
         # Get the machine service vertex.
         # If it doesn't exist, create one.
@@ -146,15 +148,19 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
         # Add our new ACL edge between the machine and the yser.
         user_service.belongs_to(machine_vertex.uid, user_vertex.uid, acl=acl)
 
-        text_type = "service"
-        if rel_type == "task":
-            text_type = "scheduled task"
-
         user_service.save()
 
-        print(
-            self._gr(
-                f"{user_record.title} is connected to {machine_record.title}. "
-                f"The user, and password, is used on this machine for a {text_type}."
+        if rel_type == "service":
+            print(
+                self._gr(
+                    f"Success: Services running on this machine, with this user, will be updated and restarted after "
+                    "password rotation."
+                )
             )
-        )
+        else:
+            print(
+                self._gr(
+                    f"Success: Scheduled tasks running on this machine, with this user, will be updated after "
+                    "password rotation."
+                )
+            )
