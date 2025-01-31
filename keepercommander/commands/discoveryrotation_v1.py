@@ -149,6 +149,7 @@ class PAMCreateRecordRotationCommand(Command):
     schedule_group.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data', action='append', help='Json of the scheduler. Example: -sj \'{"type": "WEEKLY", "utcTime": "15:44", "weekday": "SUNDAY", "intervalCount": 1}\'')
     schedule_group.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data', action='append', help='Cron tab string of the scheduler. Example: to run job daily at 5:56PM UTC enter following cron -sc "56 17 * * *"')
     schedule_group.add_argument('--on-demand', '-sm', required=False, dest='on_demand', action='store_true', help='Schedule On Demand')
+    schedule_group.add_argument('--schedule-config', '-sf', required=False, dest='schedule_config', action='store_true', help='Schedule from Configuration')
     parser.add_argument('--complexity',   '-x',  required=False, dest='pwd_complexity', action='store', help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,5,5')
     state_group = parser.add_mutually_exclusive_group()
     state_group.add_argument('--enable', dest='enable', action='store_true', help='Enable rotation')
@@ -245,6 +246,7 @@ class PAMCreateRecordRotationCommand(Command):
         schedule_json_data = kwargs.get('schedule_json_data')
         schedule_cron_data = kwargs.get('schedule_cron_data')    # See this page for more details: http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html#examples
         schedule_on_demand = kwargs.get('on_demand') is True
+        schedule_config = kwargs.get('schedule_config') is True
         schedule_data = None   # type: Optional[List]
         if isinstance(schedule_json_data, list):
             schedule_data = [json.loads(x) for x in schedule_json_data]
@@ -320,7 +322,7 @@ class PAMCreateRecordRotationCommand(Command):
             # 2. Schedule
             record_schedule_data = schedule_data
             if record_schedule_data is None:
-                if current_record_rotation:
+                if current_record_rotation and not schedule_config:
                     try:
                         current_schedule = current_record_rotation.get('schedule')
                         if current_schedule:
