@@ -774,6 +774,7 @@ class RecordAddCommand(Command, RecordEditMixin):
 
         record_management.add_record_to_folder(params, record, folder_uid)
         params.sync_data = True
+        params.environment_variables[LAST_RECORD_UID] = record.record_uid
         if expiration_period is not None:
             record_uid = record.record_uid
             record_key = record.record_key
@@ -789,7 +790,6 @@ class RecordAddCommand(Command, RecordEditMixin):
             url = urlunparse(('https', params.server, '/vault/share', None, None, utils.base64_url_encode(client_key)))
             return url
         else:
-            params.environment_variables[LAST_RECORD_UID] = record.record_uid
             BreachWatch.scan_and_update_security_data(params, record.record_uid, params.breach_watch)
             return record.record_uid
 

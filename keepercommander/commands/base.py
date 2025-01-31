@@ -15,6 +15,7 @@ import collections
 import csv
 import datetime
 import io
+import itertools
 import json
 import logging
 import os
@@ -675,7 +676,7 @@ class RecordMixin:
             return next((x.value for x in record.custom if field_name.lower() == x.name.lower()), None)
 
         if isinstance(record, vault.TypedRecord):
-            return next((x.get_default_value(str) for x in record.custom
+            return next((x.get_default_value(str) for x in itertools.chain(record.fields, record.custom)
                          if (x.type or 'text') in RecordMixin.CUSTOM_FIELD_TYPES and field_name.lower() == (x.label or '').lower()), None)
 
     @staticmethod
