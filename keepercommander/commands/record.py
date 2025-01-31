@@ -1779,6 +1779,15 @@ class ClipboardCommand(Command, RecordMixin):
                             continue
                     records.append(r)
 
+            if len(records) > 1:
+                try:
+                    pattern = re.compile(record_name, re.IGNORECASE).search
+                    exact_title = [x for x in records if pattern(x.title)]
+                    if len(exact_title) == 1:
+                        records = exact_title
+                except:
+                    pass
+
             if len(records) == 1:
                 if kwargs['output'] == 'clipboard':
                     logging.info('Record Title: %s', records[0].title)
