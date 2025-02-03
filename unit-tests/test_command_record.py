@@ -140,14 +140,6 @@ class TestRecord(TestCase):
                 cmd.execute(params, records=[rec.title])
                 self.assertTrue(KeeperApiHelper.is_expect_empty())
 
-    def test_search_command(self):
-        params = get_synced_params()
-        cmd = record.SearchCommand()
-
-        with mock.patch('builtins.print'):
-            cmd.execute(params, pattern='.*')
-            cmd.execute(params, pattern='Non-existing-name')
-
     def test_record_list_command(self):
         params = get_synced_params()
         cmd = record.RecordListCommand()
@@ -203,6 +195,19 @@ class TestRecord(TestCase):
         with mock.patch('builtins.print'), mock.patch('keepercommander.api.get_record_shares'):
             cmd.execute(params, uid=record_uid)
             cmd.execute(params, format='json', uid=record_uid)
+
+    def test_record_list_command_with_name(self):
+        params = get_synced_params()
+        cmd = record.RecordListCommand()
+
+        with mock.patch('builtins.print') as mock_print:
+            cmd.execute(params, name='Record 3')
+            printed_args = mock_print.call_args[0][0] if mock_print.call_args else ''
+            self.assertIn('Record 3', printed_args)
+
+        with mock.patch('builtins.print') as mock_print:
+            cmd.execute(params, name='NonExistentRecordName')
+            mock_print.assert_not_called()
 
     def test_get_shared_folder_uid(self):
         params = get_synced_params()

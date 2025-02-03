@@ -106,6 +106,7 @@ list_parser.add_argument('--output', dest='output', action='store',
                          help='output file name. (ignored for table format)')
 list_parser.add_argument('-t', '--type', dest='record_type', action='append',
                          help='List records of certain types. Can be repeated')
+list_parser.add_argument('--name', dest='name', type=str, help='Filter records by name')
 list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 
 
@@ -631,7 +632,6 @@ class SearchCommand(Command):
         verbose = kwargs.get('verbose') is True
         skip_details = not verbose
 
-        # Search records
         if 'r' in categories:
             records = list(vault_extensions.find_records(params, pattern))
             if records:
@@ -672,7 +672,11 @@ class RecordListCommand(Command):
     def execute(self, params, **kwargs):
         verbose = kwargs.get('verbose', False)
         fmt = kwargs.get('format', 'table')
-        pattern = kwargs.get('pattern')
+
+        # Explicitly separate logic: if --name is provided, search by title only.
+        name_filter = kwargs.get('name')
+        pattern, search_field = (name_filter, 'name') if name_filter is not None else (kwargs.get('pattern'), None)
+
         record_types = kwargs.get('record_type')
         if record_types:
             record_version = set()
@@ -696,7 +700,12 @@ class RecordListCommand(Command):
             record_version = None if verbose else (1, 2, 3)
             record_type = None
 
-        records = [x for x in vault_extensions.find_records(params, pattern, record_type=record_type, record_version=record_version)]
+        records = [x for x in vault_extensions.find_records(
+            params,
+            pattern,
+            record_type=record_type,
+            record_version=record_version,
+            search_field=search_field)]
         if any(records):
             headers = ['record_uid', 'type', 'title', 'description', 'shared']
             if fmt == 'table':
@@ -708,8 +717,14 @@ class RecordListCommand(Command):
                 table.append(row)
             table.sort(key=lambda x: (x[2] or '').lower())
 
-            return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
-                                    row_number=True, column_width=None if verbose else 40)
+            return base.dump_report_data(
+                table,
+                headers,
+                fmt=fmt,
+                filename=kwargs.get('output'),
+                row_number=True,
+                column_width=None if verbose else 40
+            )
         else:
             logging.info('No records are found')
 

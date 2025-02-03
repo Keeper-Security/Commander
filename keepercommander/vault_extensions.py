@@ -48,11 +48,12 @@ def matches_record(record, pattern):    # type: (vault.KeeperRecord, Union[str, 
     return False
 
 
-def find_records(params,                  # type: KeeperParams
-                 search_str=None,         # type: Optional[str]
-                 record_type=None,        # type: Union[str, Iterable[str], None]
-                 record_version=None      # type: Union[int, Iterable[int], None]
-                 ):                       # type: (...) -> Iterator[vault.KeeperRecord]
+def find_records(params,                   # type: KeeperParams
+                 search_str=None,          # type: Optional[str]
+                 record_type=None,         # type: Union[str, Iterable[str], None]
+                 record_version=None,      # type: Union[int, Iterable[int], None]
+                 search_field=None         # type: Optional[str],
+                 ):                        # type: (...) -> Iterator[vault.KeeperRecord]
     pattern = re.compile(search_str, re.IGNORECASE).search if search_str else None
 
     type_filter = None       # type: Optional[Set[str]]
