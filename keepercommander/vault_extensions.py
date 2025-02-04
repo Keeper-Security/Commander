@@ -88,8 +88,10 @@ def find_records(params,                   # type: KeeperParams
         if type_filter and record.record_type not in type_filter:
             continue
 
-        is_match = matches_record(record, pattern) if pattern else True
-
+        if pattern:
+            is_match = matches_record(record, pattern, search_fields)
+        else:
+            is_match = True
         if is_match:
             yield record
 
