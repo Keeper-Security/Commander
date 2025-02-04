@@ -40,7 +40,7 @@ def matches_record(record, pattern, search_fields=None):    # type: (vault.Keepe
         search_fields = {f.lower() for f in search_fields}
 
     for key, value in record.enumerate_fields():
-        m = re.search(r'^\(\w+\)\.?', key)
+        m = re.match(r'^\((\w+)\)\.?', key)
         if m:
             key = m.group(1)
         if search_fields is not None and key.lower() not in search_fields:
