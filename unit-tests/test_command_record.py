@@ -196,17 +196,17 @@ class TestRecord(TestCase):
             cmd.execute(params, uid=record_uid)
             cmd.execute(params, format='json', uid=record_uid)
 
-    def test_record_list_command_with_name(self):
+    def test_record_list_command_with_fields(self):
         params = get_synced_params()
         cmd = record.RecordListCommand()
 
         with mock.patch('builtins.print') as mock_print:
-            cmd.execute(params, name='Record 3')
+            cmd.execute(params, field=['title'], pattern='Record 3')
             printed_args = mock_print.call_args[0][0] if mock_print.call_args else ''
             self.assertIn('Record 3', printed_args)
 
         with mock.patch('builtins.print') as mock_print:
-            cmd.execute(params, name='NonExistentRecordName')
+            cmd.execute(params, field=['title'], pattern='NonExistentRecordName')
             mock_print.assert_not_called()
 
     def test_get_shared_folder_uid(self):

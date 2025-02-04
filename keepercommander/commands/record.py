@@ -106,7 +106,7 @@ list_parser.add_argument('--output', dest='output', action='store',
                          help='output file name. (ignored for table format)')
 list_parser.add_argument('-t', '--type', dest='record_type', action='append',
                          help='List records of certain types. Can be repeated')
-list_parser.add_argument('--name', dest='name', type=str, help='Filter records by name')
+list_parser.add_argument('--field', dest='field', action='append', help='Filter records by specific field(s). Can be specified multiple times.')
 list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 
 
@@ -672,10 +672,9 @@ class RecordListCommand(Command):
     def execute(self, params, **kwargs):
         verbose = kwargs.get('verbose', False)
         fmt = kwargs.get('format', 'table')
-
-        # Explicitly separate logic: if --name is provided, search by title only.
-        name_filter = kwargs.get('name')
-        pattern, search_field = (name_filter, 'name') if name_filter is not None else (kwargs.get('pattern'), None)
+        # Use the --field parameter(s) if provided.
+        search_fields = kwargs.get('field')  # Can be a list if passed multiple times.
+        pattern = kwargs.get('pattern')
 
         record_types = kwargs.get('record_type')
         if record_types:
@@ -705,7 +704,7 @@ class RecordListCommand(Command):
             pattern,
             record_type=record_type,
             record_version=record_version,
-            search_field=search_field)]
+            search_fields=search_fields)]
         if any(records):
             headers = ['record_uid', 'type', 'title', 'description', 'shared']
             if fmt == 'table':
@@ -717,14 +716,8 @@ class RecordListCommand(Command):
                 table.append(row)
             table.sort(key=lambda x: (x[2] or '').lower())
 
-            return base.dump_report_data(
-                table,
-                headers,
-                fmt=fmt,
-                filename=kwargs.get('output'),
-                row_number=True,
-                column_width=None if verbose else 40
-            )
+            return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
+                                         row_number=True, column_width=None if verbose else 40)
         else:
             logging.info('No records are found')
 
