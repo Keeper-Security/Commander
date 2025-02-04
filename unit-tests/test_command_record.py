@@ -140,6 +140,14 @@ class TestRecord(TestCase):
                 cmd.execute(params, records=[rec.title])
                 self.assertTrue(KeeperApiHelper.is_expect_empty())
 
+    def test_search_command(self):
+        params = get_synced_params()
+        cmd = record.SearchCommand()
+
+        with mock.patch('builtins.print'):
+            cmd.execute(params, pattern='.*')
+            cmd.execute(params, pattern='Non-existing-name')
+
     def test_record_list_command(self):
         params = get_synced_params()
         cmd = record.RecordListCommand()

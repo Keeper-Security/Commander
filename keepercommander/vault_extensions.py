@@ -40,7 +40,7 @@ def matches_record(record, pattern, search_fields=None):    # type: (vault.Keepe
         search_fields = {f.lower() for f in search_fields}
 
     for key, value in record.enumerate_fields():
-        m = re.match(r'^\((\w+)\)\.?', key)
+        m = re.search(r'^\(\w+\)\.?', key)
         if m:
             key = m.group(1)
         if search_fields is not None and key.lower() not in search_fields:
@@ -88,10 +88,7 @@ def find_records(params,                   # type: KeeperParams
         if type_filter and record.record_type not in type_filter:
             continue
 
-        if pattern:
-            is_match = matches_record(record, pattern, search_fields)
-        else:
-            is_match = True
+        is_match = matches_record(record, pattern) if pattern else True
 
         if is_match:
             yield record
