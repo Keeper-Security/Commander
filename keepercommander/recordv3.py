@@ -208,7 +208,7 @@ class RecordV3:
         if badf:
             return {'is_valid': False, 'error': 'Unknown field types: ' + str(badf)}
 
-        known_ft_atributes = {'$ref', 'label', 'required', 'privacyScreen', 'enforceGeneration', 'complexity'}
+        known_ft_atributes = {'$ref', 'label', 'required', 'privacyScreen', 'enforceGeneration', 'complexity', 'default'}
         unknown_ft_atributes = [x for x in flds if not set(x.keys()).issubset(known_ft_atributes)]
         if unknown_ft_atributes:
             return {'is_valid': False, 'error': 'Unknown field atributes: ' + str(unknown_ft_atributes)}
@@ -494,6 +494,71 @@ class RecordV3:
         #   '$id': 'custom',
         #   'type': 'custom'
         # }
+        # 2025-01-28 added PAM field types
+        'appFiller': {
+            '$id': 'appFiller',
+            'type': 'appFiller'
+        },
+        'isSSIDHidden': {
+            '$id': 'isSSIDHidden',
+            'type': 'isSSIDHidden'
+        },
+        'wifiEncryption': {
+            '$id': 'wifiEncryption',
+            'type': 'wifiEncryption'
+        },
+        'checkbox': {
+            '$id': 'checkbox',
+            'type': 'checkbox'
+        },
+        'dropdown': {
+            '$id': 'dropdown',
+            'type': 'text'
+        },
+        'databaseType': {
+            '$id': 'databaseType',
+            'type': 'text'
+        },
+        'directoryType': {
+            '$id': 'directoryType',
+            'type': 'text'
+        },
+        'schedule': {
+            '$id': 'schedule',
+            'type': 'schedule'
+        },
+        'script': {
+            '$id': 'script',
+            'type': 'script'
+        },
+        'pamHostname': {
+            '$id': 'pamHostname',
+            'type': 'host'
+        },
+        'pamRemoteBrowserSettings': {
+            '$id': 'pamRemoteBrowserSettings',
+            'type': 'pamRemoteBrowserSettings'
+        },
+        'pamResources': {
+            '$id': 'pamResources',
+            'type': 'pamResources'
+        },
+        'pamSettings': {
+            '$id': 'pamSettings',
+            'type': 'pamSettings'
+        },
+        'rbiUrl': {
+            '$id': 'rbiUrl',
+            'type': 'text'
+        },
+        'recordRef': {
+            '$id': 'recordRef',
+            'type': 'text'
+        },
+        'trafficEncryptionSeed': {
+            '$id': 'trafficEncryptionSeed',
+            'type': 'text'
+        }
     }
 
     # https://github.com/Keeper-Security/record-templates/blob/master/field-types.json
@@ -662,7 +727,182 @@ class RecordV3:
                 'username': '',       # user.name from webauthn create request
                 'createdDate': 0,     # unix timestamp
             }
-        }
+        },
+        # 2025-01-28 PAM field types
+        'appFiller': {
+            'type': 'appFiller',
+            'value_description': 'app filler parameters',
+            'value': {  # object
+                'applicationTitle': '',  # string
+                'contentFilter': '',  # string
+                'macroSequence': ''  # string
+            }
+        },
+        'isSSIDHidden': {
+            'type': 'isSSIDHidden',
+            'value_description': 'on/off flag',
+            'value': False  # boolean
+        },
+        'wifiEncryption': {
+            'type': 'wifiEncryption',
+            'value_description': 'wifi encryption type',
+            'value': ''  # string
+        },
+        'checkbox': {
+            'type': 'checkbox',
+            'value_description': 'on/off checkbox',
+            'value': False  # boolean
+        },
+        'databaseType': {
+            'type': 'databaseType',
+            'value_description': 'database type',
+            'value': ''  # string
+        },
+        'directoryType': {
+            'type': 'directoryType',
+            'value_description': 'directory type',
+            'value': ''  # string
+        },
+        'dropdown': {
+            'type': 'dropdown',
+            'value_description': 'list of text choices',
+            'value': ''  # string
+        },
+        'recordRef': {
+            'type': 'recordRef',
+            'value_description': 'record references',
+            'value': ''  # string
+        },
+        'rbiUrl': {
+            'type': 'rbiUrl',
+            'value_description': 'rbi URL',
+            'value': ''  # string
+        },
+        'schedule': {
+            'type': 'schedule',
+            'value_description': 'rotation schedule parameters',
+            'value': {  # object
+                'type': '',  # string
+                'cron': '',  # string
+                'time': '',  # string
+                'tz': '',  # string
+                'weekday': '',  # string
+                'intervalCount': ''  # integer
+            }
+        },
+        'script': {
+            'type': 'script',
+            'value_description': 'post-rotation script parameters',
+            'value': {  # object
+                'fileRef': '',  # string (script file ref uid)
+                'command': '',  # string (interpreter path)
+                'recordRef': []  # list of referenced records
+            }
+        },
+        'pamHostname': {
+            'type': 'pamHostname',
+            'value_description': 'multiple fields to capture host information for PAM.  When the field is required, they must enter both host and port',
+            'value': {  # object
+                'hostName': '',  # string
+                'port': ''  # string
+            }
+        },
+        'pamRemoteBrowserSettings': {
+            'type': 'pamResources',
+            'value_description': 'multiple fields to capture PAM remote browser settings',
+            'value': {  # object
+                'connection': {  # object
+                    'protocol': '',  # string
+                    'userRecords': [],  # List[str]
+                    'allowUrlManipulation': False,
+                    'allowedUrlPatterns': '',
+                    'allowedResourceUrlPatterns': '',
+                    'httpCredentialsUid': '',
+                    'autofillConfiguration': '',
+                    'ignoreInitialSslCert': False
+                }
+            }
+        },
+        'pamResources': {
+            'type': 'pamResources',
+            'value_description': 'multiple fields to capture PAM resources',
+            'value': {  # object
+                'controllerUid': '',  # string
+                'folderUid': '',  # string
+                'resourceRef': [],  # List[str]
+                'allowedSettings': {  # object
+                    'connections': False,
+                    'portForwards': False,
+                    'rotation': False,
+                    'sessionRecording': False,
+                    'typescriptRecording': False
+                }
+            }
+        },
+        'pamSettings': {
+            'type': 'pamSettings',
+            'value_description': 'PAM setings',
+            'value': {  # object (multiple)
+                'connection': {
+                    # Base connection properties
+                    'protocol': '',
+                    'userRecords': [],
+                    'port': '',
+                    # Common display and security settings
+                    'colorScheme': '',
+                    'resizeMethod': '',
+                    'security': '',
+                    'ignoreCert': False,
+                    # Clipboard settings
+                    'disableCopy': False,
+                    'disablePaste': False,
+                    # Database-specific fields
+                    'database': '',
+                    'disableCsvExport': False,
+                    'disableCsvImport': False,
+                    # SSH/Connection verification
+                    'hostKey': '',
+                    # VNC/Proxy settings
+                    'destHost': '',
+                    'destPort': '',
+                    # RDP specific settings
+                    'disableAuth': False,
+                    'loadBalanceInfo': '',
+                    'preconnectionId': '',
+                    'preconnectionBlob': '',
+                    'disableAudio': False,
+                    'sftp': {
+                        'enableSftp': False,
+                        'sftpRootDirectory': '',
+                        'sftpResourceUid': '',
+                        'sftpUserUid': '',
+                        'sftpDirectory': '',
+                        'sftpServerAliveInterval': 0
+                    },
+                    # Telnet specific fields
+                    'usernameRegex': '',
+                    'passwordRegex': '',
+                    'loginSuccessRegex': '',
+                    'loginFailureRegex': '',
+                    # Kubernetes specific fields
+                    'caCert': '',
+                    'namespace': '',
+                    'pod': '',
+                    'container': '',
+                    'clientCert': '',
+                    'clientKey': ''
+                },
+                'portForward': {
+                    'reusePort': False,  # boolean
+                    'port': ''  # string?
+                }
+            }
+        },
+        'trafficEncryptionSeed': {
+            'type': 'trafficEncryptionSeed',
+            'value_description': 'traffic Eecryption seed',
+            'value': ''  # string
+        },
     }
 
     # field_values w/o field_type - probably migrated to different types
@@ -834,7 +1074,7 @@ class RecordV3:
             ref = ft.get('$ref')
             result = RecordV3.is_valid_field_type(ref)
 
-            known_keys = ('$ref', 'label', 'required', 'privacyscreen', 'enforcegeneration', 'complexity')
+            known_keys = ('$ref', 'label', 'required', 'privacyscreen', 'enforcegeneration', 'complexity', 'default')
             unknown_keys = [x for x in ft if x.lower() not in known_keys]
             if unknown_keys:
                 logging.warning('Unknown attributes in field reference: ' + str(unknown_keys))

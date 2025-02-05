@@ -3403,7 +3403,7 @@ class PAMSplitCommand(Command):
 
         if pam_config_uid:
             encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
-            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_config_uid)
+            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_config_uid, True)
             tdag.link_resource_to_config(record_uid)
             tdag.link_user_to_resource(pam_user_uid, record_uid, True, True)
 
