@@ -61,10 +61,12 @@ scim_delete_parser.add_argument('--force', '-f', dest='force', action='store_tru
 scim_push_parser = argparse.ArgumentParser(prog='scim push', description='Push data to SCIM endpoint.')
 scim_push_parser.add_argument('--dry-run', dest='dry_run', action='store_true',
                               help='display SCIM requests without posing them')
-scim_push_parser.add_argument('--source', dest='source', action='store', choices=['google', 'ad'],
+scim_push_parser.add_argument('--source', dest='source', action='store', choices=['google', 'ad', 'record'],
                               default='google', help='Source of SCIM data')
 scim_push_parser.add_argument('--record', '-r', dest='record', action='store',
                               help='Record UID with SCIM configuration')
+scim_push_parser.add_argument('--auto-approve', dest='auto_approve', action='store', choices=['on', 'off'],
+                              default='on', help='Auto approve SCIM teams')
 scim_push_parser.add_argument('target', help='SCIM ID')
 
 
@@ -429,12 +431,12 @@ class ScimPushCommand(EnterpriseCommand):
                             continue
                         scim_groups.append(by_nl.strip())
                         
-        if len(scim_groups) == 0:
-            raise CommandError('', f'SCIM record "{record.title}" does not have "SCIM Group(s)" field.\n'
-                                   'This field contains a group name or other group identifier with users to be imported to Keeper.')
-
         if source == 'google':
-            # Admin user
+            if len(scim_groups) == 0:
+                raise CommandError('', f'SCIM record "{record.title}" does not have "SCIM Group(s)" field.\n'
+                                       'This field contains a group name or other group identifier with users to be imported to Keeper.')
+
+                # Admin user
             field = record.get_typed_field('login')
             if field is None:
                 raise CommandError('', f'Google SCIM record "{record.title}" does not have "login" field.\n'
@@ -457,7 +459,11 @@ class ScimPushCommand(EnterpriseCommand):
 
             data_source = GoogleCrmDataSource(admin_user, credentials, scim_groups)
         elif source == 'ad':
-            # AD URL
+            if len(scim_groups) == 0:
+                raise CommandError('', f'SCIM record "{record.title}" does not have "SCIM Group(s)" field.\n'
+                                       'This field contains a group name or other group identifier with users to be imported to Keeper.')
+
+                # AD URL
             ad_url = ''
             field = next((x for x in record.custom if (x.label or '').lower().strip() == 'ad url'), None)
             if field:
@@ -485,6 +491,13 @@ class ScimPushCommand(EnterpriseCommand):
                 raise CommandError('', f'Active Directory SCIM record "{record.title}" does not have "AD Password" field.\n'
                                        'This field contains AD user password.')
             data_source = AdCrmDataSource(ad_url, ad_user, ad_password, scim_groups)
+        elif source == 'record':
+            json_data = record.notes
+            if not json_data:
+                raise CommandError('', f'SCIM record "{record.title}" has empty Notes.\n'
+                                       'Please store your SCIM configuration to Notes field as JSON text')
+            data = json.loads(json_data)
+            data_source = LocalCrmDataSource(data)
         else:
             raise CommandError('', f'SCIM source {source} is not supported')
 
@@ -508,9 +521,11 @@ class ScimPushCommand(EnterpriseCommand):
         self.sync_users(scim_url, token, keeper_users, other_users, dry_run)
         self.sync_membership(scim_url, token, keeper_groups, keeper_users, other_users, dry_run, destructive=destructive)
         api.query_enterprise(params)
-        team_approve = TeamApproveCommand()
-        team_approve.execute(params)
-        api.query_enterprise(params)
+        auto_approve = kwargs.get('auto_approve') or ''
+        if auto_approve != 'off':
+            team_approve = TeamApproveCommand()
+            team_approve.execute(params)
+            api.query_enterprise(params)
 
     @staticmethod
     def sync_groups(scim_url, token,
@@ -1006,6 +1021,47 @@ class AdCrmDataSource(ICrmDataSource):
 
             yield from scim_groups.values()
             yield from scim_users.values()
+
+
+class LocalCrmDataSource(ICrmDataSource):
+    USER_FIELDS = ['id', 'external_id', 'email', 'full_name', 'first_name', 'last_name', 'active', 'groups']
+    GROUP_FIELDS = ['id', 'external_id', 'name']
+
+    def __init__(self, data):  # type: (Dict[str, Any]) -> None
+        super().__init__()
+        self.data = data
+
+    def populate(self):      # type: () -> Iterable[Union[ScimGroup, ScimUser]]
+        if not isinstance(self.data, dict):
+            raise CommandError('', f'SCIM data are missing')
+
+        if 'users' in self.data:
+            for user in self.data['users']:
+                if not isinstance(user, dict):
+                    continue
+                su = ScimUser()
+                for key, value in user.items():
+                    if hasattr(su, key):
+                        setattr(su, key, value)
+                    else:
+                        raise CommandError('', f'SCIM user: unsupported field "{key}": {','.join(self.USER_FIELDS)}')
+                if not su.id or not su.email:
+                    raise CommandError('', f'SCIM user: fields "id" and "email" are required')
+                yield su
+
+        if 'groups' in self.data:
+            for group in self.data['groups']:
+                if not isinstance(group, dict):
+                    continue
+                sg = ScimGroup()
+                for key, value in group.items():
+                    if hasattr(sg, key):
+                        setattr(sg, key, value)
+                    else:
+                        raise CommandError('', f'SCIM group: unsupported field "{key}": {','.join(self.GROUP_FIELDS)}')
+                if not sg.id or not sg.name:
+                    raise CommandError('', f'SCIM group: fields "id" and "name" are required')
+                yield sg
 
 
 class GoogleCrmDataSource(ICrmDataSource):
