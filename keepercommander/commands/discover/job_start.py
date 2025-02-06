@@ -25,7 +25,7 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
                         help='Gateway name of UID.')
     parser.add_argument('--resource', '-r', required=False, dest='resource_uid', action='store',
                         help='UID of the resource record. Set to discover specific resource.')
-    parser.add_argument('--lang', required=False, dest='language', action='store', default="en",
+    parser.add_argument('--lang', required=False, dest='language', action='store', default="en_US",
                         help='Language')
     parser.add_argument('--include-machine-dir-users', required=False, dest='include_machine_dir_users',
                         action='store_false', default=True, help='Include directory users found on the machine.')
@@ -194,7 +194,7 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
             ),
 
             shared_folder_uid=gateway_context.default_shared_folder_uid,
-            language=kwargs.get('language'),
+            languages=[kwargs.get('language')],
 
             # Settings
             include_machine_dir_users=kwargs.get('include_machine_dir_users', True),
