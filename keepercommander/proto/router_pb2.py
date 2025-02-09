@@ -16,7 +16,7 @@ _sym_db = _symbol_database.Default()
 from . import pam_pb2 as pam__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0crouter.proto\x12\x06Router\x1a\tpam.proto\"r\n\x0eRouterResponse\x12\x30\n\x0cresponseCode\x18\x01 \x01(\x0e\x32\x1a.Router.RouterResponseCode\x12\x14\n\x0c\x65rrorMessage\x18\x02 \x01(\t\x12\x18\n\x10\x65ncryptedPayload\x18\x03 \x01(\x0c\"\xaf\x01\n\x17RouterControllerMessage\x12/\n\x0bmessageType\x18\x01 \x01(\x0e\x32\x1a.PAM.ControllerMessageType\x12\x12\n\nmessageUid\x18\x02 \x01(\x0c\x12\x15\n\rcontrollerUid\x18\x03 \x01(\x0c\x12\x16\n\x0estreamResponse\x18\x04 \x01(\x08\x12\x0f\n\x07payload\x18\x05 \x01(\x0c\x12\x0f\n\x07timeout\x18\x06 \x01(\x05\"\xd3\x01\n\x0eRouterUserAuth\x12\x17\n\x0ftransmissionKey\x18\x01 \x01(\x0c\x12\x14\n\x0csessionToken\x18\x02 \x01(\x0c\x12\x0e\n\x06userId\x18\x03 \x01(\x05\x12\x18\n\x10\x65nterpriseUserId\x18\x04 \x01(\x03\x12\x12\n\ndeviceName\x18\x05 \x01(\t\x12\x13\n\x0b\x64\x65viceToken\x18\x06 \x01(\x0c\x12\x17\n\x0f\x63lientVersionId\x18\x07 \x01(\x05\x12\x14\n\x0cneedUsername\x18\x08 \x01(\x08\x12\x10\n\x08username\x18\t \x01(\t\"\xf2\x01\n\x10RouterDeviceAuth\x12\x10\n\x08\x63lientId\x18\x01 \x01(\t\x12\x15\n\rclientVersion\x18\x02 \x01(\t\x12\x11\n\tsignature\x18\x03 \x01(\x0c\x12\x14\n\x0c\x65nterpriseId\x18\x04 \x01(\x05\x12\x0e\n\x06nodeId\x18\x05 \x01(\x03\x12\x12\n\ndeviceName\x18\x06 \x01(\t\x12\x13\n\x0b\x64\x65viceToken\x18\x07 \x01(\x0c\x12\x16\n\x0e\x63ontrollerName\x18\x08 \x01(\t\x12\x15\n\rcontrollerUid\x18\t \x01(\x0c\x12\x11\n\townerUser\x18\n \x01(\t\x12\x11\n\tchallenge\x18\x0b \x01(\t\"\x83\x01\n\x14RouterRecordRotation\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x18\n\x10\x63onfigurationUid\x18\x02 \x01(\x0c\x12\x15\n\rcontrollerUid\x18\x03 \x01(\x0c\x12\x13\n\x0bresourceUid\x18\x04 \x01(\x0c\x12\x12\n\nnoSchedule\x18\x05 \x01(\x08\"E\n\x1cRouterRecordRotationsRequest\x12\x14\n\x0c\x65nterpriseId\x18\x01 \x01(\x05\x12\x0f\n\x07records\x18\x02 \x03(\x0c\"a\n\x1dRouterRecordRotationsResponse\x12/\n\trotations\x18\x01 \x03(\x0b\x32\x1c.Router.RouterRecordRotation\x12\x0f\n\x07hasMore\x18\x02 \x01(\x08\"\xed\x01\n\x12RouterRotationInfo\x12,\n\x06status\x18\x01 \x01(\x0e\x32\x1c.Router.RouterRotationStatus\x12\x18\n\x10\x63onfigurationUid\x18\x02 \x01(\x0c\x12\x13\n\x0bresourceUid\x18\x03 \x01(\x0c\x12\x0e\n\x06nodeId\x18\x04 \x01(\x03\x12\x15\n\rcontrollerUid\x18\x05 \x01(\x0c\x12\x16\n\x0e\x63ontrollerName\x18\x06 \x01(\t\x12\x12\n\nscriptName\x18\x07 \x01(\t\x12\x15\n\rpwdComplexity\x18\x08 \x01(\t\x12\x10\n\x08\x64isabled\x18\t \x01(\x08\"\xf6\x01\n\x1bRouterRecordRotationRequest\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x10\n\x08revision\x18\x02 \x01(\x03\x12\x18\n\x10\x63onfigurationUid\x18\x03 \x01(\x0c\x12\x13\n\x0bresourceUid\x18\x04 \x01(\x0c\x12\x10\n\x08schedule\x18\x05 \x01(\t\x12\x18\n\x10\x65nterpriseUserId\x18\x06 \x01(\x03\x12\x15\n\rpwdComplexity\x18\x07 \x01(\x0c\x12\x10\n\x08\x64isabled\x18\x08 \x01(\x08\x12\x15\n\rremoteAddress\x18\t \x01(\t\x12\x17\n\x0f\x63lientVersionId\x18\n \x01(\x05\"<\n\x17UserRecordAccessRequest\x12\x0e\n\x06userId\x18\x01 \x01(\x05\x12\x11\n\trecordUid\x18\x02 \x01(\x0c\"a\n\x18UserRecordAccessResponse\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x32\n\x0b\x61\x63\x63\x65ssLevel\x18\x02 \x01(\x0e\x32\x1d.Router.UserRecordAccessLevel\"8\n\x10RotationSchedule\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x10\n\x08schedule\x18\x02 \x01(\t\"\x90\x01\n\x12\x41piCallbackRequest\x12\x13\n\x0bresourceUid\x18\x01 \x01(\x0c\x12.\n\tschedules\x18\x02 \x03(\x0b\x32\x1b.Router.ApiCallbackSchedule\x12\x0b\n\x03url\x18\x03 \x01(\t\x12(\n\x0bserviceType\x18\x04 \x01(\x0e\x32\x13.Router.ServiceType\"5\n\x13\x41piCallbackSchedule\x12\x10\n\x08schedule\x18\x01 \x01(\t\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c*\xb6\x01\n\x12RouterResponseCode\x12\n\n\x06RRC_OK\x10\x00\x12\x15\n\x11RRC_GENERAL_ERROR\x10\x01\x12\x13\n\x0fRRC_NOT_ALLOWED\x10\x02\x12\x13\n\x0fRRC_BAD_REQUEST\x10\x03\x12\x0f\n\x0bRRC_TIMEOUT\x10\x04\x12\x11\n\rRRC_BAD_STATE\x10\x05\x12\x17\n\x13RRC_CONTROLLER_DOWN\x10\x06\x12\x16\n\x12RRC_WRONG_INSTANCE\x10\x07*k\n\x14RouterRotationStatus\x12\x0e\n\nRRS_ONLINE\x10\x00\x12\x13\n\x0fRRS_NO_ROTATION\x10\x01\x12\x15\n\x11RRS_NO_CONTROLLER\x10\x02\x12\x17\n\x13RRS_CONTROLLER_DOWN\x10\x03*}\n\x15UserRecordAccessLevel\x12\r\n\tRRAL_NONE\x10\x00\x12\r\n\tRRAL_READ\x10\x01\x12\x0e\n\nRRAL_SHARE\x10\x02\x12\r\n\tRRAL_EDIT\x10\x03\x12\x17\n\x13RRAL_EDIT_AND_SHARE\x10\x04\x12\x0e\n\nRRAL_OWNER\x10\x05*.\n\x0bServiceType\x12\x0f\n\x0bUNSPECIFIED\x10\x00\x12\x06\n\x02KA\x10\x01\x12\x06\n\x02\x42I\x10\x02\x42\"\n\x18\x63om.keepersecurity.protoB\x06Routerb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0crouter.proto\x12\x06Router\x1a\tpam.proto\"r\n\x0eRouterResponse\x12\x30\n\x0cresponseCode\x18\x01 \x01(\x0e\x32\x1a.Router.RouterResponseCode\x12\x14\n\x0c\x65rrorMessage\x18\x02 \x01(\t\x12\x18\n\x10\x65ncryptedPayload\x18\x03 \x01(\x0c\"\xaf\x01\n\x17RouterControllerMessage\x12/\n\x0bmessageType\x18\x01 \x01(\x0e\x32\x1a.PAM.ControllerMessageType\x12\x12\n\nmessageUid\x18\x02 \x01(\x0c\x12\x15\n\rcontrollerUid\x18\x03 \x01(\x0c\x12\x16\n\x0estreamResponse\x18\x04 \x01(\x08\x12\x0f\n\x07payload\x18\x05 \x01(\x0c\x12\x0f\n\x07timeout\x18\x06 \x01(\x05\"\xd3\x01\n\x0eRouterUserAuth\x12\x17\n\x0ftransmissionKey\x18\x01 \x01(\x0c\x12\x14\n\x0csessionToken\x18\x02 \x01(\x0c\x12\x0e\n\x06userId\x18\x03 \x01(\x05\x12\x18\n\x10\x65nterpriseUserId\x18\x04 \x01(\x03\x12\x12\n\ndeviceName\x18\x05 \x01(\t\x12\x13\n\x0b\x64\x65viceToken\x18\x06 \x01(\x0c\x12\x17\n\x0f\x63lientVersionId\x18\x07 \x01(\x05\x12\x14\n\x0cneedUsername\x18\x08 \x01(\x08\x12\x10\n\x08username\x18\t \x01(\t\"\x83\x02\n\x10RouterDeviceAuth\x12\x10\n\x08\x63lientId\x18\x01 \x01(\t\x12\x15\n\rclientVersion\x18\x02 \x01(\t\x12\x11\n\tsignature\x18\x03 \x01(\x0c\x12\x14\n\x0c\x65nterpriseId\x18\x04 \x01(\x05\x12\x0e\n\x06nodeId\x18\x05 \x01(\x03\x12\x12\n\ndeviceName\x18\x06 \x01(\t\x12\x13\n\x0b\x64\x65viceToken\x18\x07 \x01(\x0c\x12\x16\n\x0e\x63ontrollerName\x18\x08 \x01(\t\x12\x15\n\rcontrollerUid\x18\t \x01(\x0c\x12\x11\n\townerUser\x18\n \x01(\t\x12\x11\n\tchallenge\x18\x0b \x01(\t\x12\x0f\n\x07ownerId\x18\x0c \x01(\x05\"\x83\x01\n\x14RouterRecordRotation\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x18\n\x10\x63onfigurationUid\x18\x02 \x01(\x0c\x12\x15\n\rcontrollerUid\x18\x03 \x01(\x0c\x12\x13\n\x0bresourceUid\x18\x04 \x01(\x0c\x12\x12\n\nnoSchedule\x18\x05 \x01(\x08\"E\n\x1cRouterRecordRotationsRequest\x12\x14\n\x0c\x65nterpriseId\x18\x01 \x01(\x05\x12\x0f\n\x07records\x18\x02 \x03(\x0c\"a\n\x1dRouterRecordRotationsResponse\x12/\n\trotations\x18\x01 \x03(\x0b\x32\x1c.Router.RouterRecordRotation\x12\x0f\n\x07hasMore\x18\x02 \x01(\x08\"\xed\x01\n\x12RouterRotationInfo\x12,\n\x06status\x18\x01 \x01(\x0e\x32\x1c.Router.RouterRotationStatus\x12\x18\n\x10\x63onfigurationUid\x18\x02 \x01(\x0c\x12\x13\n\x0bresourceUid\x18\x03 \x01(\x0c\x12\x0e\n\x06nodeId\x18\x04 \x01(\x03\x12\x15\n\rcontrollerUid\x18\x05 \x01(\x0c\x12\x16\n\x0e\x63ontrollerName\x18\x06 \x01(\t\x12\x12\n\nscriptName\x18\x07 \x01(\t\x12\x15\n\rpwdComplexity\x18\x08 \x01(\t\x12\x10\n\x08\x64isabled\x18\t \x01(\x08\"\x84\x02\n\x1bRouterRecordRotationRequest\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x10\n\x08revision\x18\x02 \x01(\x03\x12\x18\n\x10\x63onfigurationUid\x18\x03 \x01(\x0c\x12\x13\n\x0bresourceUid\x18\x04 \x01(\x0c\x12\x10\n\x08schedule\x18\x05 \x01(\t\x12\x18\n\x10\x65nterpriseUserId\x18\x06 \x01(\x03\x12\x15\n\rpwdComplexity\x18\x07 \x01(\x0c\x12\x10\n\x08\x64isabled\x18\x08 \x01(\x08\x12\x15\n\rremoteAddress\x18\t \x01(\t\x12\x17\n\x0f\x63lientVersionId\x18\n \x01(\x05\x12\x0c\n\x04noop\x18\x0b \x01(\x08\"<\n\x17UserRecordAccessRequest\x12\x0e\n\x06userId\x18\x01 \x01(\x05\x12\x11\n\trecordUid\x18\x02 \x01(\x0c\"a\n\x18UserRecordAccessResponse\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x32\n\x0b\x61\x63\x63\x65ssLevel\x18\x02 \x01(\x0e\x32\x1d.Router.UserRecordAccessLevel\"8\n\x10RotationSchedule\x12\x12\n\nrecord_uid\x18\x01 \x01(\x0c\x12\x10\n\x08schedule\x18\x02 \x01(\t\"\x90\x01\n\x12\x41piCallbackRequest\x12\x13\n\x0bresourceUid\x18\x01 \x01(\x0c\x12.\n\tschedules\x18\x02 \x03(\x0b\x32\x1b.Router.ApiCallbackSchedule\x12\x0b\n\x03url\x18\x03 \x01(\t\x12(\n\x0bserviceType\x18\x04 \x01(\x0e\x32\x13.Router.ServiceType\"5\n\x13\x41piCallbackSchedule\x12\x10\n\x08schedule\x18\x01 \x01(\t\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"@\n\x16RouterScheduledActions\x12\x10\n\x08schedule\x18\x01 \x01(\t\x12\x14\n\x0cresourceUids\x18\x02 \x03(\x0c\"Y\n\x1cRouterRecordsRotationRequest\x12\x39\n\x11rotationSchedules\x18\x01 \x03(\x0b\x32\x1e.Router.RouterScheduledActions\"\x85\x01\n\x14\x43onnectionParameters\x12\x15\n\rconnectionUid\x18\x01 \x01(\x0c\x12\x11\n\trecordUid\x18\x02 \x01(\x0c\x12\x0e\n\x06userId\x18\x03 \x01(\x05\x12\x15\n\rcontrollerUid\x18\x04 \x01(\x0c\x12\x1c\n\x14\x63redentialsRecordUid\x18\x05 \x01(\x0c\"O\n\x1aValidateConnectionsRequest\x12\x31\n\x0b\x63onnections\x18\x01 \x03(\x0b\x32\x1c.Router.ConnectionParameters\"J\n\x1b\x43onnectionValidationFailure\x12\x15\n\rconnectionUid\x18\x01 \x01(\x0c\x12\x14\n\x0c\x65rrorMessage\x18\x02 \x01(\t\"]\n\x1bValidateConnectionsResponse\x12>\n\x11\x66\x61iledConnections\x18\x01 \x03(\x0b\x32#.Router.ConnectionValidationFailure\"1\n\x15GetEnforcementRequest\x12\x18\n\x10\x65nterpriseUserId\x18\x01 \x01(\x03\";\n\x0f\x45nforcementType\x12\x19\n\x11\x65nforcementTypeId\x18\x01 \x01(\x05\x12\r\n\x05value\x18\x02 \x01(\t\"K\n\x16GetEnforcementResponse\x12\x31\n\x10\x65nforcementTypes\x18\x01 \x03(\x0b\x32\x17.Router.EnforcementType*\xb6\x01\n\x12RouterResponseCode\x12\n\n\x06RRC_OK\x10\x00\x12\x15\n\x11RRC_GENERAL_ERROR\x10\x01\x12\x13\n\x0fRRC_NOT_ALLOWED\x10\x02\x12\x13\n\x0fRRC_BAD_REQUEST\x10\x03\x12\x0f\n\x0bRRC_TIMEOUT\x10\x04\x12\x11\n\rRRC_BAD_STATE\x10\x05\x12\x17\n\x13RRC_CONTROLLER_DOWN\x10\x06\x12\x16\n\x12RRC_WRONG_INSTANCE\x10\x07*k\n\x14RouterRotationStatus\x12\x0e\n\nRRS_ONLINE\x10\x00\x12\x13\n\x0fRRS_NO_ROTATION\x10\x01\x12\x15\n\x11RRS_NO_CONTROLLER\x10\x02\x12\x17\n\x13RRS_CONTROLLER_DOWN\x10\x03*}\n\x15UserRecordAccessLevel\x12\r\n\tRRAL_NONE\x10\x00\x12\r\n\tRRAL_READ\x10\x01\x12\x0e\n\nRRAL_SHARE\x10\x02\x12\r\n\tRRAL_EDIT\x10\x03\x12\x17\n\x13RRAL_EDIT_AND_SHARE\x10\x04\x12\x0e\n\nRRAL_OWNER\x10\x05*.\n\x0bServiceType\x12\x0f\n\x0bUNSPECIFIED\x10\x00\x12\x06\n\x02KA\x10\x01\x12\x06\n\x02\x42I\x10\x02\x42\"\n\x18\x63om.keepersecurity.protoB\x06Routerb\x06proto3')
 
 _ROUTERRESPONSECODE = DESCRIPTOR.enum_types_by_name['RouterResponseCode']
 RouterResponseCode = enum_type_wrapper.EnumTypeWrapper(_ROUTERRESPONSECODE)
@@ -63,6 +63,15 @@ _USERRECORDACCESSRESPONSE = DESCRIPTOR.message_types_by_name['UserRecordAccessRe
 _ROTATIONSCHEDULE = DESCRIPTOR.message_types_by_name['RotationSchedule']
 _APICALLBACKREQUEST = DESCRIPTOR.message_types_by_name['ApiCallbackRequest']
 _APICALLBACKSCHEDULE = DESCRIPTOR.message_types_by_name['ApiCallbackSchedule']
+_ROUTERSCHEDULEDACTIONS = DESCRIPTOR.message_types_by_name['RouterScheduledActions']
+_ROUTERRECORDSROTATIONREQUEST = DESCRIPTOR.message_types_by_name['RouterRecordsRotationRequest']
+_CONNECTIONPARAMETERS = DESCRIPTOR.message_types_by_name['ConnectionParameters']
+_VALIDATECONNECTIONSREQUEST = DESCRIPTOR.message_types_by_name['ValidateConnectionsRequest']
+_CONNECTIONVALIDATIONFAILURE = DESCRIPTOR.message_types_by_name['ConnectionValidationFailure']
+_VALIDATECONNECTIONSRESPONSE = DESCRIPTOR.message_types_by_name['ValidateConnectionsResponse']
+_GETENFORCEMENTREQUEST = DESCRIPTOR.message_types_by_name['GetEnforcementRequest']
+_ENFORCEMENTTYPE = DESCRIPTOR.message_types_by_name['EnforcementType']
+_GETENFORCEMENTRESPONSE = DESCRIPTOR.message_types_by_name['GetEnforcementResponse']
 RouterResponse = _reflection.GeneratedProtocolMessageType('RouterResponse', (_message.Message,), {
   'DESCRIPTOR' : _ROUTERRESPONSE,
   '__module__' : 'router_pb2'
@@ -161,18 +170,81 @@ ApiCallbackSchedule = _reflection.GeneratedProtocolMessageType('ApiCallbackSched
   })
 _sym_db.RegisterMessage(ApiCallbackSchedule)
 
+RouterScheduledActions = _reflection.GeneratedProtocolMessageType('RouterScheduledActions', (_message.Message,), {
+  'DESCRIPTOR' : _ROUTERSCHEDULEDACTIONS,
+  '__module__' : 'router_pb2'
+  # @@protoc_insertion_point(class_scope:Router.RouterScheduledActions)
+  })
+_sym_db.RegisterMessage(RouterScheduledActions)
+
+RouterRecordsRotationRequest = _reflection.GeneratedProtocolMessageType('RouterRecordsRotationRequest', (_message.Message,), {
+  'DESCRIPTOR' : _ROUTERRECORDSROTATIONREQUEST,
+  '__module__' : 'router_pb2'
+  # @@protoc_insertion_point(class_scope:Router.RouterRecordsRotationRequest)
+  })
+_sym_db.RegisterMessage(RouterRecordsRotationRequest)
+
+ConnectionParameters = _reflection.GeneratedProtocolMessageType('ConnectionParameters', (_message.Message,), {
+  'DESCRIPTOR' : _CONNECTIONPARAMETERS,
+  '__module__' : 'router_pb2'
+  # @@protoc_insertion_point(class_scope:Router.ConnectionParameters)
+  })
+_sym_db.RegisterMessage(ConnectionParameters)
+
+ValidateConnectionsRequest = _reflection.GeneratedProtocolMessageType('ValidateConnectionsRequest', (_message.Message,), {
+  'DESCRIPTOR' : _VALIDATECONNECTIONSREQUEST,
+  '__module__' : 'router_pb2'
+  # @@protoc_insertion_point(class_scope:Router.ValidateConnectionsRequest)
+  })
+_sym_db.RegisterMessage(ValidateConnectionsRequest)
+
+ConnectionValidationFailure = _reflection.GeneratedProtocolMessageType('ConnectionValidationFailure', (_message.Message,), {
+  'DESCRIPTOR' : _CONNECTIONVALIDATIONFAILURE,
+  '__module__' : 'router_pb2'
+  # @@protoc_insertion_point(class_scope:Router.ConnectionValidationFailure)
+  })
+_sym_db.RegisterMessage(ConnectionValidationFailure)
+
+ValidateConnectionsResponse = _reflection.GeneratedProtocolMessageType('ValidateConnectionsResponse', (_message.Message,), {
+  'DESCRIPTOR' : _VALIDATECONNECTIONSRESPONSE,
+  '__module__' : 'router_pb2'
+  # @@protoc_insertion_point(class_scope:Router.ValidateConnectionsResponse)
+  })
+_sym_db.RegisterMessage(ValidateConnectionsResponse)
+
+GetEnforcementRequest = _reflection.GeneratedProtocolMessageType('GetEnforcementRequest', (_message.Message,), {
+  'DESCRIPTOR' : _GETENFORCEMENTREQUEST,
+  '__module__' : 'router_pb2'
+  # @@protoc_insertion_point(class_scope:Router.GetEnforcementRequest)
+  })
+_sym_db.RegisterMessage(GetEnforcementRequest)
+
+EnforcementType = _reflection.GeneratedProtocolMessageType('EnforcementType', (_message.Message,), {
+  'DESCRIPTOR' : _ENFORCEMENTTYPE,
+  '__module__' : 'router_pb2'
+  # @@protoc_insertion_point(class_scope:Router.EnforcementType)
+  })
+_sym_db.RegisterMessage(EnforcementType)
+
+GetEnforcementResponse = _reflection.GeneratedProtocolMessageType('GetEnforcementResponse', (_message.Message,), {
+  'DESCRIPTOR' : _GETENFORCEMENTRESPONSE,
+  '__module__' : 'router_pb2'
+  # @@protoc_insertion_point(class_scope:Router.GetEnforcementResponse)
+  })
+_sym_db.RegisterMessage(GetEnforcementResponse)
+
 if _descriptor._USE_C_DESCRIPTORS == False:
 
   DESCRIPTOR._options = None
   DESCRIPTOR._serialized_options = b'\n\030com.keepersecurity.protoB\006Router'
-  _ROUTERRESPONSECODE._serialized_start=2003
-  _ROUTERRESPONSECODE._serialized_end=2185
-  _ROUTERROTATIONSTATUS._serialized_start=2187
-  _ROUTERROTATIONSTATUS._serialized_end=2294
-  _USERRECORDACCESSLEVEL._serialized_start=2296
-  _USERRECORDACCESSLEVEL._serialized_end=2421
-  _SERVICETYPE._serialized_start=2423
-  _SERVICETYPE._serialized_end=2469
+  _ROUTERRESPONSECODE._serialized_start=2768
+  _ROUTERRESPONSECODE._serialized_end=2950
+  _ROUTERROTATIONSTATUS._serialized_start=2952
+  _ROUTERROTATIONSTATUS._serialized_end=3059
+  _USERRECORDACCESSLEVEL._serialized_start=3061
+  _USERRECORDACCESSLEVEL._serialized_end=3186
+  _SERVICETYPE._serialized_start=3188
+  _SERVICETYPE._serialized_end=3234
   _ROUTERRESPONSE._serialized_start=35
   _ROUTERRESPONSE._serialized_end=149
   _ROUTERCONTROLLERMESSAGE._serialized_start=152
@@ -180,25 +252,43 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _ROUTERUSERAUTH._serialized_start=330
   _ROUTERUSERAUTH._serialized_end=541
   _ROUTERDEVICEAUTH._serialized_start=544
-  _ROUTERDEVICEAUTH._serialized_end=786
-  _ROUTERRECORDROTATION._serialized_start=789
-  _ROUTERRECORDROTATION._serialized_end=920
-  _ROUTERRECORDROTATIONSREQUEST._serialized_start=922
-  _ROUTERRECORDROTATIONSREQUEST._serialized_end=991
-  _ROUTERRECORDROTATIONSRESPONSE._serialized_start=993
-  _ROUTERRECORDROTATIONSRESPONSE._serialized_end=1090
-  _ROUTERROTATIONINFO._serialized_start=1093
-  _ROUTERROTATIONINFO._serialized_end=1330
-  _ROUTERRECORDROTATIONREQUEST._serialized_start=1333
-  _ROUTERRECORDROTATIONREQUEST._serialized_end=1579
-  _USERRECORDACCESSREQUEST._serialized_start=1581
-  _USERRECORDACCESSREQUEST._serialized_end=1641
-  _USERRECORDACCESSRESPONSE._serialized_start=1643
-  _USERRECORDACCESSRESPONSE._serialized_end=1740
-  _ROTATIONSCHEDULE._serialized_start=1742
-  _ROTATIONSCHEDULE._serialized_end=1798
-  _APICALLBACKREQUEST._serialized_start=1801
-  _APICALLBACKREQUEST._serialized_end=1945
-  _APICALLBACKSCHEDULE._serialized_start=1947
-  _APICALLBACKSCHEDULE._serialized_end=2000
+  _ROUTERDEVICEAUTH._serialized_end=803
+  _ROUTERRECORDROTATION._serialized_start=806
+  _ROUTERRECORDROTATION._serialized_end=937
+  _ROUTERRECORDROTATIONSREQUEST._serialized_start=939
+  _ROUTERRECORDROTATIONSREQUEST._serialized_end=1008
+  _ROUTERRECORDROTATIONSRESPONSE._serialized_start=1010
+  _ROUTERRECORDROTATIONSRESPONSE._serialized_end=1107
+  _ROUTERROTATIONINFO._serialized_start=1110
+  _ROUTERROTATIONINFO._serialized_end=1347
+  _ROUTERRECORDROTATIONREQUEST._serialized_start=1350
+  _ROUTERRECORDROTATIONREQUEST._serialized_end=1610
+  _USERRECORDACCESSREQUEST._serialized_start=1612
+  _USERRECORDACCESSREQUEST._serialized_end=1672
+  _USERRECORDACCESSRESPONSE._serialized_start=1674
+  _USERRECORDACCESSRESPONSE._serialized_end=1771
+  _ROTATIONSCHEDULE._serialized_start=1773
+  _ROTATIONSCHEDULE._serialized_end=1829
+  _APICALLBACKREQUEST._serialized_start=1832
+  _APICALLBACKREQUEST._serialized_end=1976
+  _APICALLBACKSCHEDULE._serialized_start=1978
+  _APICALLBACKSCHEDULE._serialized_end=2031
+  _ROUTERSCHEDULEDACTIONS._serialized_start=2033
+  _ROUTERSCHEDULEDACTIONS._serialized_end=2097
+  _ROUTERRECORDSROTATIONREQUEST._serialized_start=2099
+  _ROUTERRECORDSROTATIONREQUEST._serialized_end=2188
+  _CONNECTIONPARAMETERS._serialized_start=2191
+  _CONNECTIONPARAMETERS._serialized_end=2324
+  _VALIDATECONNECTIONSREQUEST._serialized_start=2326
+  _VALIDATECONNECTIONSREQUEST._serialized_end=2405
+  _CONNECTIONVALIDATIONFAILURE._serialized_start=2407
+  _CONNECTIONVALIDATIONFAILURE._serialized_end=2481
+  _VALIDATECONNECTIONSRESPONSE._serialized_start=2483
+  _VALIDATECONNECTIONSRESPONSE._serialized_end=2576
+  _GETENFORCEMENTREQUEST._serialized_start=2578
+  _GETENFORCEMENTREQUEST._serialized_end=2627
+  _ENFORCEMENTTYPE._serialized_start=2629
+  _ENFORCEMENTTYPE._serialized_end=2688
+  _GETENFORCEMENTRESPONSE._serialized_start=2690
+  _GETENFORCEMENTRESPONSE._serialized_end=2765
 # @@protoc_insertion_point(module_scope)

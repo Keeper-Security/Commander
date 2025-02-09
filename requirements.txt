@@ -15,4 +15,4 @@ cryptography>=39.0.1
 protobuf>=3.19.0
 keeper-secrets-manager-core>=16.6.0
 aiortc; python_version>='3.8' and python_version<'3.13'
-pydantic>=2.6.4
+pydantic>=2.6.4; python_version>='3.8'
