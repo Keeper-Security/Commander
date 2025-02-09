@@ -1044,7 +1044,8 @@ class LocalCrmDataSource(ICrmDataSource):
                     if hasattr(su, key):
                         setattr(su, key, value)
                     else:
-                        raise CommandError('', f'SCIM user: unsupported field "{key}": {','.join(self.USER_FIELDS)}')
+                        user_fields = ','.join(self.USER_FIELDS)
+                        raise CommandError('', f'SCIM user: unsupported field "{key}": {user_fields}')
                 if not su.id or not su.email:
                     raise CommandError('', f'SCIM user: fields "id" and "email" are required')
                 yield su
@@ -1058,7 +1059,8 @@ class LocalCrmDataSource(ICrmDataSource):
                     if hasattr(sg, key):
                         setattr(sg, key, value)
                     else:
-                        raise CommandError('', f'SCIM group: unsupported field "{key}": {','.join(self.GROUP_FIELDS)}')
+                        group_fields = ','.join(self.GROUP_FIELDS)
+                        raise CommandError('', f'SCIM group: unsupported field "{key}": {group_fields}')
                 if not sg.id or not sg.name:
                     raise CommandError('', f'SCIM group: fields "id" and "name" are required')
                 yield sg
