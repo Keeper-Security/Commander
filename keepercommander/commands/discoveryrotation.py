@@ -36,10 +36,11 @@ from .folder import FolderMoveCommand
 from .ksm import KSMCommand
 from .pam import gateway_helper, router_helper
 from .pam.config_facades import PamConfigurationRecordFacade
-from .pam.config_helper import configuration_controller_get
-from .pam.config_helper import pam_configurations_get_all, \
-    pam_configuration_remove, pam_configuration_create_record_v6, record_rotation_get, \
+from .pam.config_helper import configuration_controller_get, \
+    pam_configurations_get_all, pam_configuration_remove, \
+    pam_configuration_create_record_v6, record_rotation_get, \
     pam_decrypt_configuration_data
+
 from .pam.pam_dto import (
     GatewayActionGatewayInfo,
     GatewayActionRotate,
@@ -587,6 +588,21 @@ class PAMCreateRecordRotationCommand(Command):
 
         def config_user(_dag, target_record, target_resource_uid, target_config_uid=None):
 
+            # NOOP rotation
+            noop_rotation = str(kwargs.get('noop', False) or False).upper() == 'TRUE'
+            if target_record and not noop_rotation:  # check from record data
+                noop_field = target_record.get_typed_field('text', 'NOOP')
+                if (noop_field and noop_field.value and
+                        isinstance(noop_field.value, list) and
+                        str(noop_field.value[0]).upper() == 'TRUE'):
+                    noop_rotation = True
+                    # script_field = target_record.get_typed_field('script', 'rotationScripts')
+                    # if script_field and isinstance(script_field.value, list) and len(script_field.value) > 0:
+                    #     record_refs = [x.get('recordRef')[0] for x in script_field.value if isinstance(x, dict) and x.get('recordRef', [])]
+                    #     if record_refs:
+                    #         logging.warning(f'Record "{target_record.record_uid}" is set for NOOP rotation '
+                    #                         f'but rotation scripts reference some recordRef: {record_refs}')
+
             if _dag and _dag.linking_dag:
                 admin_record_uids = _dag.get_all_admins()
                 if folder_name and target_record.record_uid in admin_record_uids:
@@ -620,37 +636,42 @@ class PAMCreateRecordRotationCommand(Command):
                                            f'with any configuration.'
                                            f'{bcolors.OKBLUE}pam rotation edit -rs {target_resource_uid} '
                                            f'--config CONFIG_UID{bcolors.ENDC}')
-            if not target_resource_uid:
-                # Get the resource configuration from DAG
-                resource_uids = _dag.get_all_owners(target_record.record_uid)
-                if len(resource_uids) > 1:
-                    raise CommandError('', f'{bcolors.FAIL}Record "{target_record.record_uid}" is '
-                                           f'associated with multiple resources so you must supply '
-                                           f'{bcolors.OKBLUE}"--resource/-rs RESOURCE_UID".{bcolors.ENDC}')
-                elif len(resource_uids) == 0:
-                    raise CommandError('',
-                                       f'{bcolors.FAIL}Record "{target_record.record_uid}" is not associated with'
-                                       f' any resource. Please use {bcolors.OKBLUE}"pam rotation user '
-                                       f'{target_record.record_uid} --resource RESOURCE_UID" {bcolors.FAIL}to associate '
-                                       f'it.{bcolors.ENDC}')
-                target_resource_uid = resource_uids[0]
+            # Noop and resource cannot be both assigned
+            if noop_rotation:
+                target_resource_uid = target_record.record_uid
+                record_resource_uid = None
+            else:
+                if not target_resource_uid:
+                    # Get the resource configuration from DAG
+                    resource_uids = _dag.get_all_owners(target_record.record_uid)
+                    if len(resource_uids) > 1:
+                        raise CommandError('', f'{bcolors.FAIL}Record "{target_record.record_uid}" is '
+                                            f'associated with multiple resources so you must supply '
+                                            f'{bcolors.OKBLUE}"--resource/-rs RESOURCE_UID".{bcolors.ENDC}')
+                    elif len(resource_uids) == 0:
+                        raise CommandError('',
+                                        f'{bcolors.FAIL}Record "{target_record.record_uid}" is not associated with'
+                                        f' any resource. Please use {bcolors.OKBLUE}"pam rotation user '
+                                        f'{target_record.record_uid} --resource RESOURCE_UID" {bcolors.FAIL}to associate '
+                                        f'it.{bcolors.ENDC}')
+                    target_resource_uid = resource_uids[0]
 
-            if not _dag.resource_belongs_to_config(target_resource_uid):
-                raise CommandError('',
-                                   f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated with the '
-                                   f'configuration of the user "{target_record.record_uid}". To associated the resources '
-                                   f'to this config run {bcolors.OKBLUE}"pam rotation resource {target_resource_uid} '
-                                   f'--config {_dag.record.record_uid}"{bcolors.ENDC}')
-            if not _dag.user_belongs_to_resource(target_record.record_uid, target_resource_uid):
-                old_resource_uid = _dag.get_resource_uid(target_record.record_uid)
-                if old_resource_uid is not None and old_resource_uid != target_resource_uid:
-                    print(
-                        f'{bcolors.WARNING}User "{target_record.record_uid}" is associated with another resource: '
-                        f'{old_resource_uid}. '
-                        f'Now moving it to {target_resource_uid} and it will no longer be rotated on {old_resource_uid}.'
-                        f'{bcolors.ENDC}')
-                    _dag.link_user_to_resource(target_record.record_uid, old_resource_uid, belongs_to=False)
-                _dag.link_user_to_resource(target_record.record_uid, target_resource_uid, belongs_to=True)
+                if not _dag.resource_belongs_to_config(target_resource_uid):
+                    raise CommandError('',
+                                    f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated with the '
+                                    f'configuration of the user "{target_record.record_uid}". To associated the resources '
+                                    f'to this config run {bcolors.OKBLUE}"pam rotation resource {target_resource_uid} '
+                                    f'--config {_dag.record.record_uid}"{bcolors.ENDC}')
+                if not _dag.user_belongs_to_resource(target_record.record_uid, target_resource_uid):
+                    old_resource_uid = _dag.get_resource_uid(target_record.record_uid)
+                    if old_resource_uid is not None and old_resource_uid != target_resource_uid:
+                        print(
+                            f'{bcolors.WARNING}User "{target_record.record_uid}" is associated with another resource: '
+                            f'{old_resource_uid}. '
+                            f'Now moving it to {target_resource_uid} and it will no longer be rotated on {old_resource_uid}.'
+                            f'{bcolors.ENDC}')
+                        _dag.link_user_to_resource(target_record.record_uid, old_resource_uid, belongs_to=False)
+                    _dag.link_user_to_resource(target_record.record_uid, target_resource_uid, belongs_to=True)
 
             # 1. PAM Configuration UID
             record_config_uid = _dag.record.record_uid
@@ -705,24 +726,26 @@ class PAMCreateRecordRotationCommand(Command):
                     pwd_complexity_rule_list_encrypted = b''
 
             # 4. Resource record
-            record_resource_uid = target_resource_uid
-            if record_resource_uid is None:
-                if current_record_rotation:
-                    record_resource_uid = current_record_rotation.get('resourceUid')
-            if record_resource_uid is None:
-                resource_field = record_pam_config.get_typed_field('pamResources')
-                if resource_field and isinstance(resource_field.value, list) and len(resource_field.value) > 0:
-                    resources = resource_field.value[0]
-                    if isinstance(resources, dict):
-                        resource_uids = resources.get('resourceRef')
-                        if isinstance(resource_uids, list) and len(resource_uids) > 0:
-                            if len(resource_uids) == 1:
-                                record_resource_uid = resource_uids[0]
-                            else:
-                                skipped_records.append([target_record.record_uid, target_record.title,
-                                                        f'PAM Configuration: {len(resource_uids)} admin resources',
-                                                        'Specify both configuration UID and resource UID  [--config, --resource]'])
-                                return
+            # Noop and resource cannot be both assigned
+            if not noop_rotation:
+                record_resource_uid = target_resource_uid
+                if record_resource_uid is None:
+                    if current_record_rotation:
+                        record_resource_uid = current_record_rotation.get('resourceUid')
+                if record_resource_uid is None:
+                    resource_field = record_pam_config.get_typed_field('pamResources')
+                    if resource_field and isinstance(resource_field.value, list) and len(resource_field.value) > 0:
+                        resources = resource_field.value[0]
+                        if isinstance(resources, dict):
+                            resource_uids = resources.get('resourceRef')
+                            if isinstance(resource_uids, list) and len(resource_uids) > 0:
+                                if len(resource_uids) == 1:
+                                    record_resource_uid = resource_uids[0]
+                                else:
+                                    skipped_records.append([target_record.record_uid, target_record.title,
+                                                            f'PAM Configuration: {len(resource_uids)} admin resources',
+                                                            'Specify both configuration UID and resource UID  [--config, --resource]'])
+                                    return
 
             disabled = False
             # 5. Enable rotation
@@ -758,6 +781,9 @@ class PAMCreateRecordRotationCommand(Command):
             rq.schedule = json.dumps(record_schedule_data) if record_schedule_data else ''
             rq.pwdComplexity = pwd_complexity_rule_list_encrypted
             rq.disabled = disabled
+            if noop_rotation:
+                rq.noop = True
+                rq.resourceUid = b''  # Noop and resource cannot be both assigned
             r_requests.append(rq)
 
         for _record in pam_records:
@@ -3403,7 +3429,7 @@ class PAMSplitCommand(Command):
 
         if pam_config_uid:
             encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
-            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_config_uid)
+            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_config_uid, True)
             tdag.link_resource_to_config(record_uid)
             tdag.link_user_to_resource(pam_user_uid, record_uid, True, True)
 

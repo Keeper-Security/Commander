@@ -26,6 +26,7 @@ MSP_FILE_PLANS = [
 MSP_PLANS = [
     (1, 'business', 'Business', 4),
     (2, 'businessPlus', 'Business Plus', 7),
+    (3, 'businessStarter', 'Business Starter', 0),
     (10, 'enterprise', 'Enterprise', 4),
     (11, 'enterprisePlus', 'Enterprise Plus', 7),
 ]

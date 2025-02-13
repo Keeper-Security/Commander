@@ -32,15 +32,19 @@ def _match_value(pattern, value):  # type: (Callable[[str], Any], Any) -> bool
     return False
 
 
-def matches_record(record, pattern):    # type: (vault.KeeperRecord, Union[str, Callable[[str], Any]]) -> bool
+def matches_record(record, pattern, search_fields=None):    # type: (vault.KeeperRecord, Union[str, Callable[[str], Any]], Optional[Iterable[str]]) -> bool
     if isinstance(pattern, str):
         pattern = re.compile(pattern, re.IGNORECASE).search
 
+    if search_fields is not None:
+        search_fields = {f.lower() for f in search_fields}
+
     for key, value in record.enumerate_fields():
-        m = re.search(r'^\(\w+\)\.?', key)
+        m = re.match(r'^\((\w+)\)\.?', key)
         if m:
-            span = m.span(0)
-            key = key[span[1]:]
+            key = m.group(1)
+        if search_fields is not None and key.lower() not in search_fields:
+            continue
         if key and _match_value(pattern, key):
             return True
         if value and _match_value(pattern, value):
@@ -48,10 +52,11 @@ def matches_record(record, pattern):    # type: (vault.KeeperRecord, Union[str, 
     return False
 
 
-def find_records(params,                  # type: KeeperParams
-                 search_str=None,         # type: Optional[str]
-                 record_type=None,        # type: Union[str, Iterable[str], None]
-                 record_version=None      # type: Union[int, Iterable[int], None]
+def find_records(params,                   # type: KeeperParams
+                 search_str=None,          # type: Optional[str]
+                 record_type=None,         # type: Union[str, Iterable[str], None]
+                 record_version=None,      # type: Union[int, Iterable[int], None]
+                 search_fields=None        # type: Optional[Iterable[str]]
                  ):                       # type: (...) -> Iterator[vault.KeeperRecord]
     pattern = re.compile(search_str, re.IGNORECASE).search if search_str else None
 
@@ -83,7 +88,10 @@ def find_records(params,                  # type: KeeperParams
         if type_filter and record.record_type not in type_filter:
             continue
 
-        is_match = matches_record(record, pattern) if pattern else True
+        if pattern:
+            is_match = matches_record(record, pattern, search_fields)
+        else:
+            is_match = True
         if is_match:
             yield record
 

@@ -21,7 +21,7 @@ class RouterRequest:
 
 class GatewayActionDiscoverJobStartInputs:
 
-    def __init__(self, configuration_uid, user_map, shared_folder_uid, resource_uid=None, language="en",
+    def __init__(self, configuration_uid, user_map, shared_folder_uid, resource_uid=None, languages=None,
                  # Settings
                  include_machine_dir_users=False,
                  include_azure_aadds=False,
@@ -31,11 +31,13 @@ class GatewayActionDiscoverJobStartInputs:
                  skip_directories=False,
                  skip_cloud_users=False,
                  credentials=None):
+        if languages is None:
+            languages = ["en_US"]
         self.configurationUid = configuration_uid
         self.resourceUid = resource_uid
         self.userMap = user_map
         self.sharedFolderUid = shared_folder_uid
-        self.language = language
+        self.languages = languages
         self.includeMachineDirUsers = include_machine_dir_users
         self.includeAzureAadds = include_azure_aadds
         self.skipRules = skip_rules
