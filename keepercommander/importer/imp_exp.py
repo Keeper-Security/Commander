@@ -2420,14 +2420,7 @@ def prepare_folder_permission(params, folders, full_sync):
                             sft.manageUsers = perm.manage_users
                             sft.manageRecords = perm.manage_records
                             keep_teams.add(team_uid)
-                            if team_uid in params.team_cache:
-                                team = params.team_cache[team_uid]
-                                if 'team_key_unencrypted' in team:
-                                    team_key = team['team_key_unencrypted']
-                                    sft.sharedFolderKey = crypto.encrypt_aes_v1(shared_folder_key, team_key)
-                                else:
-                                    continue
-                            elif team_uid in params.key_cache:
+                            if team_uid in params.key_cache:
                                 team_keys = params.key_cache[team_uid]
                                 if team_keys.aes:
                                     if params.forbid_rsa:
