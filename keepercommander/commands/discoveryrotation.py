@@ -63,6 +63,7 @@ from ..proto import pam_pb2, router_pb2, record_pb2
 from ..subfolder import find_folders, find_parent_top_folder, \
     try_resolve_path, BaseFolderNode
 from ..vault import TypedField
+from ..discovery_common.record_link import RecordLink
 from .discover.job_start import PAMGatewayActionDiscoverJobStartCommand
 from .discover.job_status import PAMGatewayActionDiscoverJobStatusCommand
 from .discover.job_remove import PAMGatewayActionDiscoverJobRemoveCommand
@@ -78,6 +79,10 @@ from .pam_debug.gateway import PAMDebugGatewayCommand
 from .pam_service.list import PAMActionServiceListCommand
 from .pam_service.add import PAMActionServiceAddCommand
 from .pam_service.remove import PAMActionServiceRemoveCommand
+from .pam_saas.add import PAMActionSaasAddCommand
+from .pam_saas.info import PAMActionSaasInfoCommand
+from .pam_saas.remove import PAMActionSaasRemoveCommand
+from .pam_saas.config import PAMActionSaasConfigCommand
 
 
 def register_commands(commands):
@@ -185,6 +190,20 @@ class PAMActionServiceCommand(GroupCommand):
         self.default_verb = 'list'
 
 
+class PAMActionSaasCommand(GroupCommand):
+
+    def __init__(self):
+        super(PAMActionSaasCommand, self).__init__()
+        self.register_command('info', PAMActionSaasInfoCommand(),
+                              'Information of SaaS service rotation for a PAM User record.', 'i')
+        self.register_command('add', PAMActionSaasAddCommand(),
+                              'Add a SaaS rotation to a PAM User record.', 'a')
+        self.register_command('remove', PAMActionSaasRemoveCommand(),
+                              'Remove a SaaS rotation from a PAM User record', 'r')
+        self.register_command('config', PAMActionSaasConfigCommand(),
+                              'Create a configuration for a SaaS rotation.', 'c')
+
+
 class GatewayActionCommand(GroupCommand):
 
     def __init__(self):
@@ -196,6 +215,8 @@ class GatewayActionCommand(GroupCommand):
         self.register_command('job-cancel', PAMGatewayActionJobCommand(), 'View Job details', 'jc')
         self.register_command('service', PAMActionServiceCommand(),
                               'Manage services and scheduled tasks user mappings.', 's')
+        self.register_command('saas', PAMActionSaasCommand(),
+                              'Manage user SaaS rotations.', 'sa')
         self.register_command('debug', PAMDebugCommand(), 'PAM debug information')
 
         # self.register_command('job-list', DRCmdListJobs(), 'List Running jobs')
@@ -2094,9 +2115,22 @@ class PAMGatewayActionRotateCommand(Command):
             resource_uid = tmp_dag.get_resource_uid(record_uid)
             if not resource_uid:
                 # NOOP records don't need resource_uid
-                noop_field = record.get_typed_field('text', 'NOOP')
-                noop = utils.value_to_boolean(noop_field.value[0]) if noop_field and noop_field.value else False
-                if not noop:
+
+                is_noop = False
+                pam_config = vault.KeeperRecord.load(params, config_uid)
+
+                # Check the graph for the noop setting.
+                record_link = RecordLink(record=pam_config, params=params, fail_on_corrupt=False)
+                acl = record_link.get_acl(record_uid, pam_config.record_uid)
+                if acl is not None and acl.rotation_settings is not None:
+                    is_noop = acl.rotation_settings.noop
+
+                # If it was false  in the graph, or did not exist, check the record.
+                if is_noop is False:
+                    noop_field = record.get_typed_field('text', 'NOOP')
+                    is_noop = utils.value_to_boolean(noop_field.value[0]) if noop_field and noop_field.value else False
+
+                if not is_noop:
                     print(f'{bcolors.FAIL}Resource UID not found for record [{record_uid}]. please configure it '
                           f'{bcolors.OKBLUE}"pam rotation user {record_uid} --resource RESOURCE_UID"{bcolors.ENDC}')
                     return

@@ -1,7 +1,7 @@
 from __future__ import annotations
 import os
-from .constants import PAM_USER
-from .types import DiscoveryObject
+from discovery_common.constants import PAM_USER
+from discovery_common.types import DiscoveryObject
 from keepercommander.keeper_dag.vertex import DAGVertex
 from typing import List, Optional, TYPE_CHECKING
 
