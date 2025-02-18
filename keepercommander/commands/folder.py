@@ -1755,7 +1755,7 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
             records = [r for r in records if isinstance(r, Record)]
             rec_nodes.extend(records)
 
-        dir_nodes.sort(key=lambda f: f.name.lower(), reverse=False)
+        dir_nodes.sort(key=lambda f: f.name.lower() if f.name else '', reverse=False)
         rec_nodes.sort(key=lambda r: r.title.lower(), reverse=False)
         child_nodes = dir_nodes + rec_nodes
 
