@@ -39,7 +39,7 @@ class GatewayContext:
     def from_configuration_uid(params: KeeperParams, configuration_uid: str, gateways: Optional[List] = None):
 
         if gateways is None:
-            gateways = GatewayContext.all_gateways(KeeperParams)
+            gateways = GatewayContext.all_gateways(params)
 
         configuration_record = vault.KeeperRecord.load(params, configuration_uid)
         if not isinstance(configuration_record, vault.TypedRecord):
