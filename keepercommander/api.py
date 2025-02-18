@@ -240,7 +240,7 @@ def get_share_admins_for_shared_folder(params, shared_folder_uid):
             rq.sharedFolderUid = utils.base64_url_decode(shared_folder_uid)
             rs = communicate_rest(params, rq, 'enterprise/get_sharing_admins',
                                   rs_type=enterprise_pb2.GetSharingAdminsResponse)
-            admins = [x.email for x in rs.userProfileExts if x.isShareAdminForSharedFolderOwner]
+            admins = [x.email for x in rs.userProfileExts if x.isShareAdminForSharedFolderOwner and x.isInSharedFolder]
         except Exception as e:
             logging.debug(e)
             return

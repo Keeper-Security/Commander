@@ -3278,8 +3278,8 @@ class EnterpriseTeamCommand(EnterpriseCommand):
         team_uid = team['team_uid']
         is_queued_team = 'restrict_edit' not in team
 
-        print('{0:>16s}: {1}'.format('Queued ' if is_queued_team else '' + 'Team UID', team_uid))
-        print('{0:>16s}: {1}'.format('Queued ' if is_queued_team else '' + 'Team Name', team['name']))
+        print('{0:>16s}: {1}'.format(('Queued ' if is_queued_team else '') + 'Team UID', team_uid))
+        print('{0:>16s}: {1}'.format(('Queued ' if is_queued_team else '') + 'Team Name', team['name']))
         print('{0:>16s}: {1:<24s}{2}'.format(
             'Node', self.get_node_path(params, team['node_id']),
             f' [{team["node_id"]}]' if is_verbose else ''))
