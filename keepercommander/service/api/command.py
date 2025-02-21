@@ -10,6 +10,7 @@
 #
 
 from flask import Blueprint, request, jsonify
+from html import escape
 from ..decorators.unified import unified_api_decorator
 from ..util.command_util import CommandExecutor
 
@@ -21,10 +22,11 @@ def create_command_blueprint():
     @unified_api_decorator()
     def execute_command(**kwargs):
         try:
-            command = request.json.get("command")
+            request_command = request.json.get("command")
+            command = escape(request_command)
             response, status_code = CommandExecutor.execute(command)
             return response if isinstance(response, bytes) else jsonify(response), status_code
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)}), 500
+            return jsonify({"success": False, "error": f"{str(e)}"}), 500
 
     return bp
