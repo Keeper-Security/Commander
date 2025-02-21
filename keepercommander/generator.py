@@ -22,7 +22,7 @@ from . import crypto
 
 from Cryptodome.Random.random import shuffle
 
-DEFAULT_PASSWORD_LENGTH = 32
+DEFAULT_PASSWORD_LENGTH = 20
 PW_SPECIAL_CHARACTERS = '!@#$%()+;<>=?[]{}^.,'
 
 PasswordStrength = namedtuple('PasswordStrength', 'length caps lower digits symbols')
@@ -110,21 +110,27 @@ class KeeperPasswordGenerator(PasswordGenerator):
                           special_characters: str = PW_SPECIAL_CHARACTERS):
         """Create instance of class from rules string
 
-        rule_string: comma separated integer character counts of uppercase, lowercase, numbers, symbols
+        rule_string: comma separated integer character counts of [length,] uppercase, lowercase, numbers, symbols
         length: length of password
         special_characters: set of characters used to generate password symbols
         """
-        rule_list = [s.strip() for s in rule_string.split(',')]
-        if len(rule_list) != 4 or not all(n.isnumeric() for n in rule_list):
-            logging.warning(
-                'Invalid rules to generate password. Format is "upper, lower, digits, symbols"'
-            )
+        try:
+            rule_list = [int(s.strip()) for s in rule_string.split(',')]
+            if len(rule_list) == 5:
+                l = rule_list.pop(0)
+                if not length:
+                    length = l
+            if len(rule_list) != 4:
+                raise Exception('Invalid rules')
+        except:
+            logging.warning('Invalid rules to generate password. Format is "[length,] upper, lower, digits, symbols"')
             return None
-        else:
-            rule_list = [int(n) for n in rule_list]
-            upper, lower, digits, symbols = rule_list
-            length = sum(rule_list) if length is None else length
-            return cls(length=length, caps=upper, lower=lower, digits=digits, symbols=symbols, special_characters=special_characters)
+
+        if length is None:
+            length = DEFAULT_PASSWORD_LENGTH
+        upper, lower, digits, symbols = rule_list
+        length = sum(rule_list) if length is None else length
+        return cls(length=length, caps=upper, lower=lower, digits=digits, symbols=symbols, special_characters=special_characters)
 
 
 class DicewarePasswordGenerator(PasswordGenerator):

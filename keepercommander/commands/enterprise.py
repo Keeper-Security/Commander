@@ -3278,8 +3278,8 @@ class EnterpriseTeamCommand(EnterpriseCommand):
         team_uid = team['team_uid']
         is_queued_team = 'restrict_edit' not in team
 
-        print('{0:>16s}: {1}'.format('Queued ' if is_queued_team else '' + 'Team UID', team_uid))
-        print('{0:>16s}: {1}'.format('Queued ' if is_queued_team else '' + 'Team Name', team['name']))
+        print('{0:>16s}: {1}'.format(('Queued ' if is_queued_team else '') + 'Team UID', team_uid))
+        print('{0:>16s}: {1}'.format(('Queued ' if is_queued_team else '') + 'Team Name', team['name']))
         print('{0:>16s}: {1:<24s}{2}'.format(
             'Node', self.get_node_path(params, team['node_id']),
             f' [{team["node_id"]}]' if is_verbose else ''))
@@ -3527,8 +3527,8 @@ class TeamApproveCommand(EnterpriseCommand):
                 if not params.forbid_rsa:
                     rsa_pri_key, rsa_pub_key = crypto.generate_rsa_key()
                     encrypted_rsa_private_key = crypto.encrypt_aes_v1(crypto.unload_rsa_private_key(rsa_pri_key), team_key)
-                    rq['public_key'] = utils.base64_url_encode(encrypted_rsa_private_key)
-                    rq['private_key'] = utils.base64_url_encode(crypto.unload_rsa_public_key(rsa_pub_key))
+                    rq['private_key'] = utils.base64_url_encode(encrypted_rsa_private_key)
+                    rq['public_key'] = utils.base64_url_encode(crypto.unload_rsa_public_key(rsa_pub_key))
 
                 request_batch.append(rq)
             teams.update(added_teams)

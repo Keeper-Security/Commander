@@ -5,10 +5,10 @@ import unittest
 from unittest import mock
 from unittest.mock import Mock
 
-from keepercommander.commands.tunnel.port_forward.endpoint import WebRTCConnection, \
-    CloseConnectionReasons
-
 if sys.version_info >= (3, 8):
+    from keepercommander.commands.tunnel.port_forward.endpoint import WebRTCConnection, \
+        CloseConnectionReasons
+
     from keepercommander.commands.tunnel.port_forward.endpoint import SOCKS5Server
 
 
