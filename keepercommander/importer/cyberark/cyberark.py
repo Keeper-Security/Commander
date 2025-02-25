@@ -36,21 +36,43 @@ class CyberArkImporter(BaseImporter):
             pvwa_host, query_params["search"] = filename.split("?", 1)
         else:
             pvwa_host = filename
-
-        response = requests.post(
-            self.get_url(pvwa_host, "logon").format(
-                type=input("CyberArk logon type (Cyberark, LDAP, RADIUS or Windows): ")
-            ),
-            json={
-                "username": input("CyberArk username: "),
-                "password": getpass.getpass("CyberArk password: "),
-            },
-            timeout=self.TIMEOUT,
-            verify=False,
-        )
-        if response.status_code != 200:
-            raise CyberArkImporterException("Log on failed", response)
-        authorization_token = response.text.strip('"')
+        # CyberArk Cloud uses an OAuth2 client_credentials grant for authentication
+        if pvwa_host.endswith(".cyberark.cloud"):
+            response = requests.post(
+                f"https://{
+                    input("CyberArk Identity Tenant ID: ").rstrip(".id")
+                }.id.cyberark.cloud/oauth2/platformtoken",
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": input("CyberArk service user name: "),
+                    "client_secret": getpass.getpass(
+                        "CyberArk service user password: "
+                    ),
+                },
+                timeout=self.TIMEOUT,
+            )
+            if response.status_code != 200:
+                raise CyberArkImporterException(
+                    "OAuth2 client_credentials request failed", response
+                )
+            authorization_token = f"Bearer {response.json()["access_token"]}"
+        else:
+            response = requests.post(
+                self.get_url(pvwa_host, "logon").format(
+                    type=input(
+                        "CyberArk logon type (Cyberark, LDAP, RADIUS or Windows): "
+                    )
+                ),
+                json={
+                    "username": input("CyberArk username: "),
+                    "password": getpass.getpass("CyberArk password: "),
+                },
+                timeout=self.TIMEOUT,
+                verify=False,
+            )
+            if response.status_code != 200:
+                raise CyberArkImporterException("Log on failed", response)
+            authorization_token = response.text.strip('"')
         response = requests.get(
             self.get_url(pvwa_host, "accounts"),
             headers={
