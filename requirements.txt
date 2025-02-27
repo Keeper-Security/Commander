@@ -16,3 +16,8 @@ protobuf>=3.19.0
 keeper-secrets-manager-core>=16.6.0
 aiortc; python_version>='3.8' and python_version<'3.13'
 pydantic>=2.6.4; python_version>='3.8'
+flask; python_version>='3.8' and python_version<'3.13'
+pyngrok; python_version>='3.8' and python_version<'3.13'
+flask-limiter; python_version>='3.8' and python_version<'3.13'
+psutil; python_version>='3.8' and python_version<'3.13'
+python-dotenv
