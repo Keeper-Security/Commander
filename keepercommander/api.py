@@ -689,8 +689,8 @@ def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version
     raise KeeperApiError('Error', endpoint)
 
 
-def communicate(params, request):
-    # type: (KeeperParams, dict) -> dict
+def communicate(params, request, retry_on_throttle=True):
+    # type: (KeeperParams, dict, Optional[bool]) -> dict
 
     request['client_time'] = current_milli_time()
     request['locale'] = LOCALE
@@ -700,6 +700,11 @@ def communicate(params, request):
     try:
         response_json = run_command(params, request)
         if response_json['result'] != 'success':
+            if retry_on_throttle and response_json.get('result_code') == 'throttled':
+                logging.info('Throttled. sleeping for 10 seconds')
+                time.sleep(10)
+                # Allow maximum 1 retry per call
+                return communicate(params, request, retry_on_throttle=False)
             raise KeeperApiError(response_json['result_code'], response_json['message'])
         TTK.update_time_of_last_activity()
         return response_json

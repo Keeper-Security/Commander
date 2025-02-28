@@ -1045,8 +1045,8 @@ class TrashListCommand(Command, TrashMixin):
         folder_table = []
 
         if shared_folders and len(shared_folders) > 0:
-            folders = shared_folders.get('folders')    # type: Dict[str, dict]
-            records = shared_folders.get('records')    # type: Dict[str, dict]
+            folders = shared_folders.get('folders', {})    # type: Dict[str, dict]
+            records = shared_folders.get('records', {})    # type: Dict[str, dict]
             if verbose:
                 for rec in records.values():
                     folder_uid = rec.get('folder_uid')
