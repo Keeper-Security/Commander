@@ -161,7 +161,7 @@ class BaseComplianceReportCommand(EnterpriseCommand):
 
 class ComplianceReportCommand(BaseComplianceReportCommand):
     def __init__(self):
-        headers = ['record_uid', 'title', 'type', 'username', 'permissions', 'url', 'in_trash']
+        headers = ['record_uid', 'title', 'type', 'username', 'permissions', 'url', 'in_trash', 'shared_folder_uid']
         super(ComplianceReportCommand, self).__init__(headers, allow_no_opts=False)
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
@@ -200,6 +200,7 @@ class ComplianceReportCommand(BaseComplianceReportCommand):
         logging.info(help_txt)
 
     def generate_report_data(self, params, kwargs, sox_data, report_fmt, node, root_node):
+        # type: (KeeperParams, Dict[str, Any], SoxData, str, int, int) -> List[List[Union[str, Any]]]
         def filter_owners(rec_owners):
             def filter_by_teams(users, teams):
                 enterprise_teams = params.enterprise.get('teams', [])
@@ -296,10 +297,11 @@ class ComplianceReportCommand(BaseComplianceReportCommand):
                 r_title = r_data.get('title', '')
                 r_type = r_data.get('record_type', '')
                 r_url = r_data.get('url', '')
+                rec_sfs = sox_data.get_record_sfs(rec_uid)
                 formatted_rec_uid = rec_uid if report_fmt != 'table' or last_rec_uid != rec_uid else ''
                 u_email = row.get('email')
                 permissions = RecordPermissions.to_permissions_str(row.get('permissions'))
-                fmt_row = [formatted_rec_uid, r_title, r_type, u_email, permissions, r_url.rstrip('/'), rec.in_trash]
+                fmt_row = [formatted_rec_uid, r_title, r_type, u_email, permissions, r_url.rstrip('/'), rec.in_trash, rec_sfs]
                 formatted_rows.append(fmt_row)
                 last_rec_uid = rec_uid
             return formatted_rows
