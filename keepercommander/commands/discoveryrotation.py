@@ -1406,19 +1406,20 @@ class PamConfigurationEditMixin(RecordEditMixin):
 
 
 class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
+    choices = ['on', 'off', 'default']
     parser = argparse.ArgumentParser(prog='pam config new', parents=[common_parser])
-    parser.add_argument('--enable-connections', '-ec', dest='enable_connections', action='store_true',
-                        help='Enable connections')
-    parser.add_argument('--enable-tunneling', '-et', dest='enable_tunneling',
-                        action='store_true', help='Enable tunneling')
-    parser.add_argument('--enable-rotation', '-er', dest='enable_rotation', action='store_true',
-                        help='Enable rotation')
-    parser.add_argument('--enable-remote-browser-isolation', '-erbi', dest='enable_remotebrowserisolation',
-                        action='store_true', help='Enable remote browser isolation')
-    parser.add_argument('--enable-connections-recording', '-ecr', required=False, dest='recordingenabled',
-                        action='store_true', help='Enable recording connections for the resource')
-    parser.add_argument('--enable-typescripts-recording', '-etcr', required=False, dest='typescriptrecordingenabled',
-                        action='store_true', help='Enable TypeScript recording for the resource')
+    parser.add_argument('--connections', '-c', dest='connections', choices=choices,
+                        help='Set connections permissions')
+    parser.add_argument('--tunneling', '-u', dest='tunneling', choices=choices,
+                        help='Set tunneling permissions')
+    parser.add_argument('--rotation', '-r', dest='rotation', choices=choices,
+                        help='Set rotation permissions')
+    parser.add_argument('--remote-browser-isolation', '-rbi', dest='remotebrowserisolation', choices=choices,
+                        help='Set remote browser isolation permissions')
+    parser.add_argument('--connections-recording', '-cr', dest='recording', choices=choices,
+                        help='Set recording connections permissions for the resource')
+    parser.add_argument('--typescript-recording', '-tr', dest='typescriptrecording', choices=choices,
+                        help='Set TypeScript recording permissions for the resource')
 
     def __init__(self):
         super().__init__()
@@ -1479,12 +1480,12 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
         tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid=record.record_uid,
                             is_config=True)
         tmp_dag.edit_tunneling_config(
-            bool(kwargs.get('enable_connections')),
-            bool(kwargs.get('enable_tunneling')),
-            bool(kwargs.get('enable_rotation')),
-            bool(kwargs.get('recordingenabled')),
-            bool(kwargs.get('typescriptrecordingenabled')),
-            bool(kwargs.get('enable_remotebrowserisolation'))
+            kwargs.get('connections'),
+            kwargs.get('tunneling'),
+            kwargs.get('rotation'),
+            kwargs.get('recording'),
+            kwargs.get('typescriptrecording'),
+            kwargs.get('remotebrowserisolation')
         )
         tmp_dag.print_tunneling_config(record.record_uid, None)
 
@@ -1509,32 +1510,23 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
 
 
 class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
+    choices = ['on', 'off', 'default']
     parser = argparse.ArgumentParser(prog='pam config edit', parents=[common_parser])
     parser.add_argument('uid', type=str, action='store', help='The Config UID to edit')
     parser.add_argument('--remove-resource-record', '-rrr', dest='remove_records', action='append',
                         help='Resource Record UID to remove')
-    parser.add_argument('--enable-rotation', '-er', required=False, action='store_true',help='Enable rotation')
-    parser.add_argument('--disable-rotation', '-dr', required=False, action='store_true', help='Disable rotation')
-    parser.add_argument('--enable-tunneling', '-et', required=False, dest='enable_tunneling', action='store_true',
-                        help='Disable tunneling')
-    parser.add_argument('--disable-tunneling', '-dt', required=False, dest='disable_tunneling', action='store_true',
-                        help='Disable tunneling')
-    parser.add_argument('--enable-connections', '-ec', required=False, dest='enable_connections', action='store_true',
-                        help='Enable connections')
-    parser.add_argument('--disable-connections', '-dc', required=False, dest='disable_connections', action='store_true',
-                        help='Enable connections')
-    parser.add_argument('--enable-remote-browser-isolation', '-erbi', required=False, dest='enable_remotebrowserisolation', action='store_true',
-                        help='Enable remote browser isolation')
-    parser.add_argument('--disable-remote-browser-isolation', '-drbi', required=False, dest='disable_remotebrowserisolation', action='store_true',
-                        help='Disable remote browser isolation')
-    parser.add_argument('--enable-connections-recording', '-ecr', required=False, dest='enable_connections_recording',
-                        action='store_true', help='Enable connections recording')
-    parser.add_argument('--disable-connections-recording', '-dcr', required=False, dest='disable_connections_recording',
-                        action='store_true', help='Disable connections recording')
-    parser.add_argument('--enable-typescripts-recording', '-etsr', required=False, dest='enable_typescripts_recording',
-                        action='store_true', help='Enable typescripts recording')
-    parser.add_argument('--disable-typescripts-recording', '-dtsr', required=False, dest='disable_typescripts_recording',
-                        action='store_true', help='Disable typescripts recording')
+    parser.add_argument('--connections', '-c', dest='connections', choices=choices,
+                        help='Set connections permissions')
+    parser.add_argument('--tunneling', '-u', dest='tunneling', choices=choices,
+                        help='Set tunneling permissions')
+    parser.add_argument('--rotation', '-r', dest='rotation', choices=choices,
+                        help='Set rotation permissions')
+    parser.add_argument('--remote-browser-isolation', '-rbi', dest='remotebrowserisolation', choices=choices,
+                        help='Set remote browser isolation permissions')
+    parser.add_argument('--connections-recording', '-cr', dest='recording', choices=choices,
+                        help='Set recording connections permissions for the resource')
+    parser.add_argument('--typescript-recording', '-tr', dest='typescriptrecording', choices=choices,
+                        help='Set TypeScript recording permissions for the resource')
 
     def __init__(self):
         super(PAMConfigurationEditCommand, self).__init__()
@@ -1614,30 +1606,16 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
             if shared_folder_uid != orig_shared_folder_uid:
                 FolderMoveCommand().execute(params, src=configuration.record_uid, dst=shared_folder_uid)
 
-        if ((kwargs.get('enable_connections') and kwargs.get('disable_connections')) or
-                (kwargs.get('enable_tunneling') and kwargs.get('disable_tunneling')) or
-                (kwargs.get('enable_rotation') and kwargs.get('disable_rotation')) or
-                (kwargs.get('enable_remotebrowserisolation') and kwargs.get('disable_remotebrowserisolation')) or
-                (kwargs.get('enable_connections_recording') and kwargs.get('disable_connections_recording')) or
-                (kwargs.get('enable_typescripts_recording') and kwargs.get('disable_typescripts_recording'))):
-            raise CommandError('pam-config-edit', 'Cannot enable and disable the same feature at the same time')
-
-        # First check if enabled is true then check if disabled is true. if not then set it to None
-        _connections = True if kwargs.get('enable_connections') \
-            else False if kwargs.get('disable_connections') else None
-        _tunneling = True if kwargs.get('enable_tunneling') \
-            else False if kwargs.get('disable_tunneling') else None
-        _rotation = True if kwargs.get('enable_rotation') \
-            else False if kwargs.get('disable_rotation') else None
-        _rbi = True if kwargs.get('enable_remotebrowserisolation') \
-            else False if kwargs.get('disable_remotebrowserisolation') else None
-        _recording = True if kwargs.get('enable_connections_recording') \
-            else False if kwargs.get('disable_connections_recording') else None
-        _typescript_recording = True if kwargs.get('enable_typescripts_recording') \
-            else False if kwargs.get('disable_typescripts_recording') else None
+        # check if there are any permission changes
+        _connections = kwargs.get('connections', None)
+        _tunneling = kwargs.get('tunneling', None)
+        _rotation = kwargs.get('rotation', None)
+        _rbi = kwargs.get('remotebrowserisolation', None)
+        _recording = kwargs.get('recording', None)
+        _typescript_recording = kwargs.get('typescriptrecording', None)
 
         if (_connections is not None or _tunneling is not None or _rotation is not None or _rbi is not None or
-            _recording is not None or _typescript_recording is not None):
+                _recording is not None or _typescript_recording is not None):
             encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key,
                                 configuration.record_uid, is_config=True)
