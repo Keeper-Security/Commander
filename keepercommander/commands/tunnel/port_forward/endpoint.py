@@ -299,8 +299,17 @@ class TunnelDAG:
             return False
         return True
 
-    def edit_tunneling_config(self, connections=None, tunneling=None, rotation=None, session_recording=None,
-                              typescript_recording=None, remote_browser_isolation=None):
+    @staticmethod
+    def _convert_allowed_setting(value):
+        """Converts on/off/default|any to True/False/None"""
+        if value is None or isinstance(value, bool):
+            return value
+        return {"on": True, "off": False}.get(str(value).lower(), None)
+
+    def edit_tunneling_config(self, connections=None, tunneling=None,
+                              rotation=None, session_recording=None,
+                              typescript_recording=None,
+                              remote_browser_isolation=None):
         config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
         if config_vertex is None:
             config_vertex = self.linking_dag.add_vertex(uid=self.record.record_uid, vertex_type=RefType.PAM_NETWORK)
@@ -321,27 +330,64 @@ class TunnelDAG:
         allowed_settings = content['allowedSettings']
         dirty = False
 
-        if connections is not None and connections != allowed_settings.get("connections", False):
-            allowed_settings["connections"] = connections
-            dirty = True
-        if tunneling is not None and tunneling != allowed_settings.get("portForwards", False):
-            allowed_settings["portForwards"] = tunneling
-            dirty = True
-        # We default rotation to True
-        if rotation is not None and rotation != allowed_settings.get("rotation", True):
-            allowed_settings["rotation"] = rotation
-            dirty = True
-        if session_recording is not None and session_recording != allowed_settings.get("sessionRecording", False):
-            allowed_settings["sessionRecording"] = session_recording
-            dirty = True
-        if (typescript_recording is not None and
-                typescript_recording != allowed_settings.get("typescriptRecording", False)):
-            allowed_settings["typescriptRecording"] = typescript_recording
-            dirty = True
+        # When no value in allowedSettings: client will substitute with default
+        # rotation defaults to True, everything else defaults to False
 
-        if remote_browser_isolation is not None and remote_browser_isolation != allowed_settings.get("remoteBrowserIsolation", False):
-            allowed_settings["remoteBrowserIsolation"] = remote_browser_isolation
-            dirty = True
+        # switching to 3-state on/off/default: on/true, off/false
+        # None = Keep existing, 'default' = Reset to default (remove from dict)
+        if connections is not None:
+            connections = self._convert_allowed_setting(connections)
+            if connections != allowed_settings.get("connections", None):
+                dirty = True
+                if connections is None:
+                    allowed_settings.pop("connections", None)
+                else:
+                    allowed_settings["connections"] = connections
+
+        if tunneling is not None:
+            tunneling = self._convert_allowed_setting(tunneling)
+            if tunneling != allowed_settings.get("portForwards", None):
+                dirty = True
+                if tunneling is None:
+                    allowed_settings.pop("portForwards", None)
+                else:
+                    allowed_settings["portForwards"] = tunneling
+
+        if rotation is not None:
+            rotation = self._convert_allowed_setting(rotation)
+            if rotation != allowed_settings.get("rotation", None):
+                dirty = True
+                if rotation is None:
+                    allowed_settings.pop("rotation", None)
+                else:
+                    allowed_settings["rotation"] = rotation
+
+        if session_recording is not None:
+            session_recording = self._convert_allowed_setting(session_recording)
+            if session_recording != allowed_settings.get("sessionRecording", None):
+                dirty = True
+                if session_recording is None:
+                    allowed_settings.pop("sessionRecording", None)
+                else:
+                    allowed_settings["sessionRecording"] = session_recording
+
+        if typescript_recording is not None:
+            typescript_recording = self._convert_allowed_setting(typescript_recording)
+            if typescript_recording != allowed_settings.get("typescriptRecording", None):
+                dirty = True
+                if typescript_recording is None:
+                    allowed_settings.pop("typescriptRecording", None)
+                else:
+                    allowed_settings["typescriptRecording"] = typescript_recording
+
+        if remote_browser_isolation is not None:
+            remote_browser_isolation = self._convert_allowed_setting(remote_browser_isolation)
+            if remote_browser_isolation != allowed_settings.get("remoteBrowserIsolation", None):
+                dirty = True
+                if remote_browser_isolation is None:
+                    allowed_settings.pop("remoteBrowserIsolation", None)
+                else:
+                    allowed_settings["remoteBrowserIsolation"] = remote_browser_isolation
 
         if dirty:
             config_vertex.add_data(content=content, path='meta', needs_encryption=False)
@@ -469,7 +515,7 @@ class TunnelDAG:
         return content.get('allowedSettings', {}).get(setting, False) if content else False
 
     def set_resource_allowed(self, resource_uid, tunneling=None, connections=None, rotation=None,
-                             session_recording=None, typescript_recording=None,
+                             session_recording=None, typescript_recording=None, remote_browser_isolation=None,
                              allowed_settings_name='allowedSettings', is_config=False,
                              v_type: RefType=str(RefType.PAM_MACHINE)):
         v_type = RefType(v_type)
@@ -496,28 +542,65 @@ class TunnelDAG:
             dirty = True
 
         settings = content[allowed_settings_name]
-        if tunneling is not None and tunneling != settings.get("portForwards", False):
-            settings["portForwards"] = tunneling
-            dirty = True
-        if connections is not None and connections != settings.get("connections", False):
-            settings["connections"] = connections
-            dirty = True
-        # We default rotation to True
-        if rotation is not None and rotation != settings.get("rotation", True):
-            settings["rotation"] = rotation
-            dirty = True
-        # some clients disagree with error "Rotation is disabled by the PAM configuration."
-        # where it seems to default to False, and PAM configurations block all records
-        # as a workaround always explicitly set rotation for PAM Config types
-        if resource_vertex.vertex_type == RefType.PAM_NETWORK and rotation is not None and rotation != settings.get("rotation", False):
-            settings["rotation"] = rotation
-            dirty = True
-        if session_recording is not None and session_recording != settings.get("sessionRecording", False):
-            settings["sessionRecording"] = session_recording
-            dirty = True
-        if typescript_recording is not None and typescript_recording != settings.get("typescriptRecording", False):
-            settings["typescriptRecording"] = typescript_recording
-            dirty = True
+
+        # When no value in allowedSettings: client will substitute with default
+        # rotation defaults to True, everything else defaults to False
+
+        # switching to 3-state on/off/default: on/true, off/false
+        # None = Keep existing, 'default' = Reset to default (remove from dict)
+        if connections is not None:
+            connections = self._convert_allowed_setting(connections)
+            if connections != settings.get("connections", None):
+                dirty = True
+                if connections is None:
+                    settings.pop("connections", None)
+                else:
+                    settings["connections"] = connections
+
+        if tunneling is not None:
+            tunneling = self._convert_allowed_setting(tunneling)
+            if tunneling != settings.get("portForwards", None):
+                dirty = True
+                if tunneling is None:
+                    settings.pop("portForwards", None)
+                else:
+                    settings["portForwards"] = tunneling
+
+        if rotation is not None:
+            rotation = self._convert_allowed_setting(rotation)
+            if rotation != settings.get("rotation", None):
+                dirty = True
+                if rotation is None:
+                    settings.pop("rotation", None)
+                else:
+                    settings["rotation"] = rotation
+
+        if session_recording is not None:
+            session_recording = self._convert_allowed_setting(session_recording)
+            if session_recording != settings.get("sessionRecording", None):
+                dirty = True
+                if session_recording is None:
+                    settings.pop("sessionRecording", None)
+                else:
+                    settings["sessionRecording"] = session_recording
+
+        if typescript_recording is not None:
+            typescript_recording = self._convert_allowed_setting(typescript_recording)
+            if typescript_recording != settings.get("typescriptRecording", None):
+                dirty = True
+                if typescript_recording is None:
+                    settings.pop("typescriptRecording", None)
+                else:
+                    settings["typescriptRecording"] = typescript_recording
+
+        if remote_browser_isolation is not None:
+            remote_browser_isolation = self._convert_allowed_setting(remote_browser_isolation)
+            if remote_browser_isolation != settings.get("remoteBrowserIsolation", None):
+                dirty = True
+                if remote_browser_isolation is None:
+                    settings.pop("remoteBrowserIsolation", None)
+                else:
+                    settings["remoteBrowserIsolation"] = remote_browser_isolation
 
         if dirty:
             resource_vertex.add_data(content=content, path='meta', needs_encryption=False)
