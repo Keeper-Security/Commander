@@ -86,22 +86,22 @@ expiration.add_argument('--expire-in', dest='expire_in', action='store',
 share_record_parser.add_argument('record', nargs='?', type=str, action='store', help='record/shared folder path/UID')
 
 share_folder_parser = argparse.ArgumentParser(prog='share-folder', description='Change a shared folders permissions.')
-share_folder_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke', 'remove'], default='grant',
-                                 action='store', help='shared folder action. \'grant\' if omitted')
+share_folder_parser.add_argument('-a', '--action', dest='action', choices=['grant','remove'],
+                                 default='grant', action='store', help='shared folder action. \'grant\' if omitted')
 share_folder_parser.add_argument('-e', '--email', dest='user', action='append',
                                  help='account email, team, @existing for all users and teams in the folder, '
                                       'or \'*\' as default folder permission')
 share_folder_parser.add_argument('-r', '--record', dest='record', action='append',
                                  help='record name, record UID, @existing for all records in the folder,'
                                       ' or \'*\' as default folder permission')
-share_folder_parser.add_argument('-p', '--manage-records', dest='manage_records', action='store_true',
-                                 help='account permission: can manage records.')
-share_folder_parser.add_argument('-o', '--manage-users', dest='manage_users', action='store_true',
-                                 help='account permission: can manage users.')
-share_folder_parser.add_argument('-s', '--can-share', dest='can_share', action='store_true',
-                                 help='record permission: can be shared')
-share_folder_parser.add_argument('-d', '--can-edit', dest='can_edit', action='store_true',
-                                 help='record permission: can be modified.')
+share_folder_parser.add_argument('-p', '--manage-records', dest='manage_records', action='store',
+                                 choices=['on', 'off'], help='account permission: can manage records.')
+share_folder_parser.add_argument('-o', '--manage-users', dest='manage_users', action='store',
+                                 choices=['on', 'off'], help='account permission: can manage users.')
+share_folder_parser.add_argument('-s', '--can-share', dest='can_share', action='store',
+                                 choices=['on', 'off'], help='record permission: can be shared')
+share_folder_parser.add_argument('-d', '--can-edit', dest='can_edit', action='store',
+                                 choices=['on', 'off'], help='record permission: can be modified.')
 share_folder_parser.add_argument('-f', '--force', dest='force', action='store_true',
                                  help='Apply permission changes ignoring default folder permissions. Used on the '
                                       'initial sharing action')
@@ -423,13 +423,13 @@ class ShareFolderCommand(Command):
         action = kwargs.get('action') or 'grant'
         mr = kwargs.get('manage_records')
         mu = kwargs.get('manage_users')
-        if default_account and action != 'remove':
-            if mr:
-                rq.defaultManageRecords = folder_pb2.BOOLEAN_TRUE if action == 'grant' else folder_pb2.BOOLEAN_FALSE
+        if default_account and action == 'grant':
+            if mr is not None:
+                rq.defaultManageRecords = folder_pb2.BOOLEAN_TRUE if mr == 'on' else folder_pb2.BOOLEAN_FALSE
             else:
                 rq.defaultManageRecords = folder_pb2.BOOLEAN_NO_CHANGE
-            if mu:
-                rq.defaultManageUsers = folder_pb2.BOOLEAN_TRUE if action == 'grant' else folder_pb2.BOOLEAN_FALSE
+            if mu is not None:
+                rq.defaultManageUsers = folder_pb2.BOOLEAN_TRUE if mu == 'on' else folder_pb2.BOOLEAN_FALSE
             else:
                 rq.defaultManageUsers = folder_pb2.BOOLEAN_NO_CHANGE
 
@@ -446,12 +446,8 @@ class ShareFolderCommand(Command):
                         uo.expiration = -1
                 if email in existing_users:
                     if action == 'grant':
-                        uo.manageRecords = folder_pb2.BOOLEAN_TRUE if mr else folder_pb2.BOOLEAN_NO_CHANGE
-                        uo.manageUsers = folder_pb2.BOOLEAN_TRUE if mu else folder_pb2.BOOLEAN_NO_CHANGE
-                        rq.sharedFolderUpdateUser.append(uo)
-                    elif action == 'revoke':
-                        uo.manageRecords = folder_pb2.BOOLEAN_FALSE if mr else folder_pb2.BOOLEAN_NO_CHANGE
-                        uo.manageUsers = folder_pb2.BOOLEAN_FALSE if mu else folder_pb2.BOOLEAN_NO_CHANGE
+                        uo.manageRecords = folder_pb2.BOOLEAN_NO_CHANGE if mr is None else folder_pb2.BOOLEAN_TRUE if mr == 'on' else folder_pb2.BOOLEAN_FALSE
+                        uo.manageUsers = folder_pb2.BOOLEAN_NO_CHANGE if mu is None else folder_pb2.BOOLEAN_TRUE if mu == 'on' else folder_pb2.BOOLEAN_FALSE
                         rq.sharedFolderUpdateUser.append(uo)
                     elif action == 'remove':
                         rq.sharedFolderRemoveUser.append(uo.username)
@@ -463,8 +459,8 @@ class ShareFolderCommand(Command):
                         logging.warning('Please repeat this command when invitation is accepted.')
                     keys = params.key_cache.get(email)
                     if keys and keys.rsa:
-                        uo.manageRecords = folder_pb2.BOOLEAN_TRUE if mr or curr_sf.get('default_manage_records') is True else folder_pb2.BOOLEAN_FALSE
-                        uo.manageUsers = folder_pb2.BOOLEAN_TRUE if mu or curr_sf.get('default_manage_users') is True else folder_pb2.BOOLEAN_FALSE
+                        uo.manageRecords = curr_sf.get('default_manage_records') is True if mr is None else folder_pb2.BOOLEAN_TRUE if mr == 'on' else folder_pb2.BOOLEAN_FALSE
+                        uo.manageUsers = curr_sf.get('default_manage_users') is True if mu is None else folder_pb2.BOOLEAN_TRUE if mu == 'on' else folder_pb2.BOOLEAN_FALSE
                         sf_key = curr_sf.get('shared_folder_key_unencrypted')  # type: Optional[bytes]
                         if sf_key:
                             if params.forbid_rsa and keys.ec:
@@ -494,12 +490,8 @@ class ShareFolderCommand(Command):
                 if team_uid in existing_teams:
                     team = existing_teams[team_uid]
                     if action == 'grant':
-                        to.manageRecords = True if mr else team.get('manage_records', False)
-                        to.manageUsers = True if mu else team.get('manage_users', False)
-                        rq.sharedFolderUpdateTeam.append(to)
-                    elif action == 'revoke':
-                        to.manageRecords = False if mr else team.get('manage_records', False)
-                        to.manageUsers = False if mu else team.get('manage_users', False)
+                        to.manageRecords = team.get('manage_records') is True if mr is None else mr == 'on'
+                        to.manageUsers = team.get('manage_users') is True if mu is None else mu == 'on'
                         rq.sharedFolderUpdateTeam.append(to)
                     elif action == 'remove':
                         rq.sharedFolderRemoveTeam.append(to.teamUid)
@@ -537,15 +529,9 @@ class ShareFolderCommand(Command):
         ce = kwargs.get('can_edit')
         cs = kwargs.get('can_share')
 
-        if default_record:
-            if ce and action != 'remove':
-                rq.defaultCanEdit = folder_pb2.BOOLEAN_TRUE if action == 'grant' else folder_pb2.BOOLEAN_FALSE
-            else:
-                rq.defaultCanEdit = folder_pb2.BOOLEAN_NO_CHANGE
-            if cs and action != 'remove':
-                rq.defaultCanShare = folder_pb2.BOOLEAN_TRUE if action == 'grant' else folder_pb2.BOOLEAN_FALSE
-            else:
-                rq.defaultCanShare = folder_pb2.BOOLEAN_NO_CHANGE
+        if default_record and action == 'grant':
+            rq.defaultCanEdit = folder_pb2.BOOLEAN_NO_CHANGE if ce is None else folder_pb2.BOOLEAN_TRUE if ce == 'on' else folder_pb2.BOOLEAN_FALSE
+            rq.defaultCanShare = folder_pb2.BOOLEAN_NO_CHANGE if cs is None else  folder_pb2.BOOLEAN_TRUE if cs == 'on' else folder_pb2.BOOLEAN_FALSE
 
         if len(rec_uids) > 0:
             existing_records = {x['record_uid'] for x in curr_sf.get('records', [])}
@@ -561,19 +547,15 @@ class ShareFolderCommand(Command):
 
                 if record_uid in existing_records:
                     if action == 'grant':
-                        ro.canEdit = folder_pb2.BOOLEAN_TRUE if ce else folder_pb2.BOOLEAN_NO_CHANGE
-                        ro.canShare = folder_pb2.BOOLEAN_TRUE if cs else folder_pb2.BOOLEAN_NO_CHANGE
-                        rq.sharedFolderUpdateRecord.append(ro)
-                    elif action == 'revoke':
-                        ro.canEdit = folder_pb2.BOOLEAN_FALSE if ce else folder_pb2.BOOLEAN_NO_CHANGE
-                        ro.canShare = folder_pb2.BOOLEAN_FALSE if cs else folder_pb2.BOOLEAN_NO_CHANGE
+                        ro.canEdit = folder_pb2.BOOLEAN_NO_CHANGE if ce is None else  folder_pb2.BOOLEAN_TRUE if ce == 'on' else folder_pb2.BOOLEAN_FALSE
+                        ro.canShare = folder_pb2.BOOLEAN_NO_CHANGE if cs is None else folder_pb2.BOOLEAN_TRUE if cs == 'on' else folder_pb2.BOOLEAN_FALSE
                         rq.sharedFolderUpdateRecord.append(ro)
                     elif action == 'remove':
                         rq.sharedFolderRemoveRecord.append(ro.recordUid)
                 else:
                     if action == 'grant':
-                        ro.canEdit = folder_pb2.BOOLEAN_TRUE if ce or curr_sf.get('default_can_edit') is True else folder_pb2.BOOLEAN_FALSE
-                        ro.canShare = folder_pb2.BOOLEAN_TRUE if cs or curr_sf.get('default_can_share') is True else folder_pb2.BOOLEAN_FALSE
+                        ro.canEdit = curr_sf.get('default_can_edit') is True if ce is None else folder_pb2.BOOLEAN_TRUE if ce == 'on' else folder_pb2.BOOLEAN_FALSE
+                        ro.canShare = curr_sf.get('default_can_share') is True if cs is None else folder_pb2.BOOLEAN_TRUE if cs == 'on' else folder_pb2.BOOLEAN_FALSE
                         sf_key = curr_sf.get('shared_folder_key_unencrypted')
                         if sf_key:
                             rec = params.record_cache[record_uid]
