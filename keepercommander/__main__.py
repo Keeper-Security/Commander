@@ -25,10 +25,9 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from . import cli
+from . import cli, utils
 from .params import KeeperParams
 from .config_storage import loader
-
 
 
 def get_params_from_config(config_filename=None, launched_with_shortcut=False):    # type: (Optional[str], bool) -> KeeperParams
@@ -42,16 +41,11 @@ def get_params_from_config(config_filename=None, launched_with_shortcut=False): 
             logging.debug(f'Setting config file from KEEPER_CONFIG_FILE env variable {path}')
         return path
 
-    def get_default_path():
-        default_path = Path.home().joinpath('.keeper')
-        default_path.mkdir(parents=True, exist_ok=True)
-        return default_path
-
     config_filename = config_filename or get_env_config()
     if not config_filename:
         config_filename = 'config.json'
         if launched_with_shortcut or not os.path.isfile(config_filename):
-            config_filename = os.path.join(get_default_path(), config_filename)
+            config_filename = os.path.join(utils.get_default_path(), config_filename)
         else:
             config_filename = os.path.join(os.getcwd(), config_filename)
     else:
