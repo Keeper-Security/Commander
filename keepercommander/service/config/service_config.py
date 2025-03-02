@@ -17,19 +17,23 @@ from .file_handler import ConfigFormatHandler
 from ..decorators.logging import logger, debug_decorator
 from ..util.exceptions import ValidationError
 from .models import ServiceConfigData
+from keepercommander import resources, utils
 
 class ServiceConfig:
     def __init__(self, title: str = 'Commander Service Mode'):
         self.title = title
         
         self.config = ConfigParser()
-        config_ini_path = Path(__file__).parent / 'config.ini'
+
+        config_ini_path = Path(resources.__file__).parent / 'service_config.ini'
         self.config.read(config_ini_path)
         self.messages = self.config['Messages']
         self.validation_messages = self.config['Validation_Messages']
 
+        default_path = utils.get_default_path()
+
         self.format_handler = ConfigFormatHandler(
-            config_dir=Path(__file__).parent,
+            config_dir=default_path,
             messages=self.messages,
             validation_messages=self.validation_messages
         )

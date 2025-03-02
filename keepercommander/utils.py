@@ -15,12 +15,18 @@ import math
 import re
 import time
 from urllib.parse import urlparse, parse_qs, unquote
+from pathlib import Path
 
 from . import crypto
 from .constants import EMAIL_PATTERN
 
 
 VALID_URL_SCHEME_CHARS = '+-.:'
+
+def get_default_path():
+    default_path = Path.home().joinpath('.keeper')
+    default_path.mkdir(parents=True, exist_ok=True)
+    return default_path
 
 
 def generate_uid():             # type: () -> str

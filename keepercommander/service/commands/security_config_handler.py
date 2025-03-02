@@ -16,12 +16,13 @@ from ..decorators.logging import logger, debug_decorator
 from ..config.service_config import ServiceConfig
 from keepercommander.commands.base import Command
 from ..util.exceptions import ValidationError
+from keepercommander import resources
 
 class SecurityConfigHandler(Command):
     def __init__(self, service_config: ServiceConfig):
         self.service_config = service_config
         self.config = ConfigParser()
-        config_path = Path(__file__).parent.parent / 'config' / 'config.ini'
+        config_path = Path(resources.__file__).parent / 'service_config.ini'
         self.config.read(config_path)
         self.messages = self.config['Messages']
         self.validation_messages = self.config['Validation_Messages']
