@@ -177,14 +177,13 @@ class RecordLink:
 
         # Get the current edge if it exists.
         # We need to create it if it does not exist and only add it if the ACL changed.
-        # TODO: create a better ACL diff
         existing_edge = record_vertex.get_edge(parent_record_vertex, edge_type=edge_type)
         add_edge = True
         if existing_edge is not None and existing_edge.active is True:
             if edge_type == EdgeType.ACL:
-                # content = existing_edge.content_as_object(UserAcl)  # type: UserAcl
-                # if content.is_admin == acl.is_admin:
-                add_edge = False
+                content = existing_edge.content_as_object(UserAcl)  # type: UserAcl
+                if content.model_dump_json() == acl.model_dump_json():
+                    add_edge = False
             else:
                 add_edge = False
 

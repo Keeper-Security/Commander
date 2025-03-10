@@ -91,7 +91,11 @@ class Connection(ConnectionBase):
         return self.get_config_value(ConfigKeys.KEY_APP_KEY)
 
     def router_url_from_ksm_config(self) -> str:
-        return f'connect.{self.hostname}'
+        hostname = self.hostname
+        # In GovCloud environments, the router service is not under the govcloud subdomain
+        if 'govcloud.' in hostname:
+            hostname = hostname.replace('govcloud.', '')
+        return f'connect.{hostname}'
 
     def ws_router_url_from_ksm_config(self, is_ws: bool = False) -> str:
 
