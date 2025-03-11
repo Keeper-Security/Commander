@@ -8,6 +8,8 @@
 # Copyright 2017 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
+from typing import Optional, List
+
 
 class Team:
     """Defines a Keeper Team """
@@ -18,6 +20,7 @@ class Team:
         self.restrict_view = restrict_view
         self.restrict_share = restrict_share
         self.name = name
+        self.members = None                     # type: Optional[List[str]]
 
     def load(self,team):
         self.restrict_edit = team['restrict_edit'] or False
