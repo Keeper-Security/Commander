@@ -20,7 +20,7 @@ import urllib.parse
 
 from keeper_secrets_manager_core.utils import bytes_to_base64, url_safe_str_to_bytes
 
-from typing import Any, Sequence
+from typing import Sequence, List
 
 from .base import Command, dump_report_data, user_choice, as_boolean
 from . import record
@@ -53,6 +53,12 @@ Commands to configure and manage the Keeper Secrets Manager platform.
     Options: 
       --purge : Remove the application and purge it from the trash
       --force : Do not prompt for confirmation
+
+  {bcolors.BOLD}Grant User Access to Application (Share Application):{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager app share {bcolors.OKBLUE}[APP NAME OR UID]{bcolors.OKGREEN} --email {bcolors.OKBLUE}[USERNAME] {bcolors.ENDC}
+
+  {bcolors.BOLD}Revoke User Access to Application (Unshare Application):{bcolors.ENDC}
+  {bcolors.OKGREEN}secrets-manager app unshare {bcolors.OKBLUE}[APP NAME OR UID]{bcolors.OKGREEN} --email {bcolors.OKBLUE}[USERNAME]{bcolors.ENDC}
 
   {bcolors.BOLD}Add Client Device:{bcolors.ENDC}
   {bcolors.OKGREEN}secrets-manager client add --app {bcolors.OKBLUE}[APP NAME OR UID] {bcolors.OKGREEN}--unlock-ip{bcolors.ENDC}
@@ -91,8 +97,8 @@ Commands to configure and manage the Keeper Secrets Manager platform.
 ksm_parser = argparse.ArgumentParser(prog='secrets-manager', description='Keeper Secrets Management (KSM) Commands',
                                      add_help=False)
 ksm_parser.add_argument('command', type=str, action='store', nargs="*",
-                        help='One of: "app list", "app get", "app create", "app remove", "client add", ' +
-                             '"client remove", "share add" or "share remove"')
+                    help='One of: "app list", "app get", "app create", "app remove", "app share", "app unshare", ' +
+                             '"client add", "client remove", "share add" or "share remove"')
 ksm_parser.add_argument('--secret', '-s', type=str, action='append', required=False,
                         help='Record UID')
 ksm_parser.add_argument('--app', '-a', type=str, action='store', required=False,
@@ -121,6 +127,10 @@ ksm_parser.add_argument('--purge', dest='purge', action='store_true',
 ksm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
 ksm_parser.add_argument('--config-init', type=str, dest='config_init', action='store',
                         help='Initialize client config')    # json, b64, file
+# Application sharing options
+ksm_parser.add_argument('--email', action='store', type=str, dest='email', help='Email of user to grant / remove application access to / from')
+ksm_parser.add_argument('--admin', action='store_true', help='Allow share recipient to manage application')
+
 
 
 def ms_to_str(ms, frmt='%Y-%m-%d %H:%M:%S'):
@@ -139,7 +149,7 @@ class KSMCommand(Command):
 
     def execute(self, params, **kwargs):
 
-        ksm_command = kwargs.get('command')
+        ksm_command = kwargs.get('command') # type: List[str]
         ksm_helpflag = kwargs.get('helpflag')
 
         if len(ksm_command) == 0 or ksm_helpflag:
@@ -206,6 +216,27 @@ class KSMCommand(Command):
 
             KSMCommand.remove_v5_app(params=params, app_name_or_uid=app_name_or_uid, purge=purge, force=force)
 
+            return
+
+        if ksm_obj in ['app', 'apps'] and ksm_action in ['share', 'unshare']:
+            app_name_or_uid = kwargs.get('app') or ksm_command[2] if len(ksm_command) == 3 else None
+            if not app_name_or_uid:
+                print(
+                    f'''{bcolors.WARNING}Application name is missing.{bcolors.ENDC}\n'''
+                    f'''\tEx: {bcolors.OKGREEN}secrets-manager app {ksm_action} {bcolors.OKBLUE}--app=MyApp{bcolors.OKGREEN} --email=myemail@mydomain.com{bcolors.ENDC}'''
+                )
+                return
+            email = kwargs.get('email')
+            unshare = 'un' in ksm_action
+            is_admin = kwargs.get('admin', False)
+            if not email:
+                print(
+                    f'''{bcolors.WARNING}Email is missing.{bcolors.ENDC}\n'''
+                    f'''\tEx: {bcolors.OKGREEN}secrets-manager app {ksm_action} --app=MyApp {bcolors.OKBLUE}--email=myemail@mydomain.com{bcolors.ENDC}'''
+                )
+                return
+
+            KSMCommand.share_app(params, app_name_or_uid, email, is_admin=is_admin, unshare=unshare)
             return
 
         if ksm_obj in ['share', 'secret'] and ksm_action is None:
@@ -292,6 +323,43 @@ class KSMCommand(Command):
 
         print(f"{bcolors.WARNING}Unknown combination of KSM commands. " +
               f"Type 'secrets-manager' for more details'{bcolors.ENDC}")
+
+    @staticmethod
+    def share_app(params, app_name_or_uid, email, is_admin=False, unshare=False):
+        app_rec = KSMCommand.get_app_record(params, app_name_or_uid)
+        if app_rec is None:
+            logging.warning('Application "%s" not found.' % app_name_or_uid)
+            return
+        app_uid = app_rec.get('record_uid', '')
+        app_info = KSMCommand.get_app_info(params, app_uid)
+        share_action = unshare and 'remove' or 'grant'
+        sf_perm_keys = ('manage_users', 'manage_records', 'can_edit', 'can_share')
+        sf_perms = {k: is_admin and not unshare and 'on' or 'off' for k in sf_perm_keys}
+        rec_perms = dict(can_edit=is_admin and not unshare, can_share=is_admin and not unshare)
+        users = [email]
+        share_folder_args = dict(**sf_perms, action=share_action, user=users)
+        share_rec_args = dict(**rec_perms, action=share_action, email=users)
+
+        from keepercommander.commands.register import ShareRecordCommand
+        from keepercommander.commands.register import ShareFolderCommand
+
+        # (Un)Share application record
+        share_rec_cmd = ShareRecordCommand()
+        share_rec_cmd.execute(params, record=app_uid, **share_rec_args)
+
+        get_share_uid = lambda share: utils.base64_url_encode(share.secretUid)
+
+        # (Un)Share shared-folders associated w/ application
+        is_sf = lambda share: APIRequest_pb2.ApplicationShareType.Name(share.shareType) == 'SHARE_TYPE_FOLDER'
+        shared_folders = [get_share_uid(s) for ai in app_info for s in ai.shares or [] if is_sf(s)]
+        share_folder_cmd = ShareFolderCommand()
+        share_folder_cmd.execute(params, folder=shared_folders, **share_folder_args)
+
+        # (Un)Share records associated w/ the application
+        is_rec = lambda share: APIRequest_pb2.ApplicationShareType.Name(share.shareType) == 'SHARE_TYPE_RECORD'
+        shared_recs = [get_share_uid(s) for ai in app_info for s in ai.shares or [] if is_rec(s)]
+        for rec in shared_recs:
+            share_rec_cmd.execute(params, **share_rec_args, record=rec)
 
     @staticmethod
     def add_app_share(params, secret_uids, app_name_or_uid, is_editable):
