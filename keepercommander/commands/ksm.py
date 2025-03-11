@@ -348,7 +348,7 @@ class KSMCommand(Command):
 
         # (Un)Share application record
         share_rec_cmd = ShareRecordCommand()
-        share_rec_cmd.execute(params, record=app_rec.get('record_uid'), **share_rec_args)
+        share_rec_cmd.execute(params, record=app_uid, **share_rec_args)
 
         # (Un)Share shared-folders associated w/ application
         shared_folders = [get_share_uid(s) for ai in app_info for s in ai.shares or [] if is_sf(s)]
