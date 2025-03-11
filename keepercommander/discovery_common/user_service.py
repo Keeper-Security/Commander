@@ -18,6 +18,7 @@ class UserService:
 
     def __init__(self, record: Any, logger: Optional[Any] = None, history_level: int = 0,
                  debug_level: int = 0, fail_on_corrupt: bool = True, log_prefix: str = "GS Services/Tasks",
+                 save_batch_count: int = 200,
                  **kwargs):
 
         self.conn = get_connection(**kwargs)
@@ -32,6 +33,7 @@ class UserService:
         self.history_level = history_level
         self.debug_level = debug_level
         self.fail_on_corrupt = fail_on_corrupt
+        self.save_batch_count = save_batch_count
 
         self.auto_save = False
         self.last_sync_point = -1
@@ -43,7 +45,8 @@ class UserService:
             self._dag = DAG(conn=self.conn, record=self.record, graph_id=USER_SERVICE_GRAPH_ID,
                             auto_save=False, logger=self.logger, history_level=self.history_level,
                             debug_level=self.debug_level, name="Discovery Service/Tasks",
-                            fail_on_corrupt=self.fail_on_corrupt, log_prefix=self.log_prefix)
+                            fail_on_corrupt=self.fail_on_corrupt, log_prefix=self.log_prefix,
+                            save_batch_count=self.save_batch_count)
 
             self._dag.load(sync_point=0)
 
