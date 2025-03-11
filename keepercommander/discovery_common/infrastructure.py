@@ -33,7 +33,7 @@ class Infrastructure:
 
     def __init__(self, record: Any, logger: Optional[Any] = None, history_level: int = 0,
                  debug_level: int = 0, fail_on_corrupt: bool = True, log_prefix: str = "GS Infrastructure",
-                 save_batch_count: int = 0,
+                 save_batch_count: int = 200,
                  **kwargs):
 
         # This will either be a KSM Record, or Commander KeeperRecord
