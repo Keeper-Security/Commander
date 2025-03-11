@@ -13,12 +13,12 @@ import argparse
 import base64
 import getpass
 import logging
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, List, Union
 
 from .enterprise_common import EnterpriseCommand
 from .security_audit import SecurityAuditReportCommand
 from .. import api, crypto, utils, vault, vault_extensions
-from .base import GroupCommand, Command, dump_report_data
+from .base import GroupCommand, Command, dump_report_data, fields_to_titles
 from ..breachwatch import BreachWatch
 from ..params import KeeperParams
 from ..error import CommandError
@@ -32,6 +32,11 @@ breachwatch_list_parser.add_argument('--owned', '-o', dest='owned', action='stor
                                      help='Display only breached records owned by user (omits records shared to user)')
 breachwatch_list_parser.add_argument('--numbered', '-n', action='store_true',
                                      help='Display records as a numbered list')
+breachwatch_list_parser.add_argument('--format', dest='format', action='store',
+                                       choices=['table', 'csv', 'json'], default='table', help='output format.')
+breachwatch_list_parser.add_argument('--output', dest='output', action='store',
+                                       help='output file name. (ignored for table format)')
+
 #breachwatch_list_parser.add_argument('--ignored', '-i', dest='ignored', action='store_true', help='Display ignored records')
 
 
@@ -83,8 +88,11 @@ class BreachWatchListCommand(Command):
     def get_parser(self):
         return breachwatch_list_parser
 
-    def execute(self, params, **kwargs):   # type: (KeeperParams, ...) -> None
+    def execute(self, params, **kwargs):   # type: (KeeperParams, ...) -> Union[None, List[Any]]
+        fmt = kwargs.get('format', 'table')
+        out = kwargs.get('output')
         table = []
+        report_data = None
         for record, _ in BreachWatch.get_records_by_status(params, ['WEAK', 'BREACHED'], kwargs.get('owned')):
             row = [record.record_uid, record.title, vault_extensions.get_record_description(record)]
             table.append(row)
@@ -94,8 +102,9 @@ class BreachWatchListCommand(Command):
             total = len(table)
             if not kwargs.get('all', False) and total > 32:
                 table = table[:30]
-            columns = ['Record UID', 'Title', 'Login']
-            dump_report_data(table, columns, title='Detected High-Risk Password(s)', row_number=kwargs.get('numbered'))
+            columns = ['record_uid', 'title', 'login']
+            columns = fields_to_titles(columns) if fmt != 'json' else columns
+            report_data = dump_report_data(table, columns, title='Detected High-Risk Password(s)', row_number=kwargs.get('numbered'), fmt=fmt, filename=out)
             if len(table) < total:
                 logging.info('')
                 logging.info('%d records skipped.', total - len(table))
@@ -107,7 +116,7 @@ class BreachWatchListCommand(Command):
             logging.info('Some passwords in your vault has not been scanned.\n'
                          'Use "breachwatch scan" command to scan your passwords against our database '
                          'of breached accounts on the Dark Web.')
-
+        return report_data
 
 class BreachWatchPasswordCommand(Command):
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]

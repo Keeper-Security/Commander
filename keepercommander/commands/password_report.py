@@ -75,18 +75,18 @@ class PasswordReportCommand(Command):
         if p_length <= 0 and p_upper <= 0 and p_lower <= 0 and p_digits <= 0 and p_special <= 0:
             raise CommandError('', 'Password policy must be specified.')
 
-        folder = kwargs.get('folder')
+        path_or_uid = kwargs.get('folder')
         folder_uid = ''
-        if folder:
-            if folder in params.folder_cache:
-                folder_uid = folder
+        if path_or_uid:
+            if path_or_uid in params.folder_cache:
+                folder_uid = path_or_uid
             else:
-                rs = try_resolve_path(params, folder)
+                rs = try_resolve_path(params, path_or_uid)
                 if rs is None:
-                    raise CommandError('', f'Folder path {folder} not found')
+                    raise CommandError('', f'Folder path {path_or_uid} not found')
                 folder, pattern = rs
-                if not pattern:
-                    raise CommandError('', f'Folder path {folder} not found')
+                if not folder or pattern:
+                    raise CommandError('', f'Folder path {path_or_uid} not found')
                 folder_uid = folder.uid or ''
 
         records = list(FolderMixin.get_records_in_folder_tree(params, folder_uid))
