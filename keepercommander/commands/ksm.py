@@ -332,9 +332,6 @@ class KSMCommand(Command):
             return
         app_uid = app_rec.get('record_uid', '')
         app_info = KSMCommand.get_app_info(params, app_uid)
-        get_share_uid = lambda share: utils.base64_url_encode(share.secretUid)
-        is_rec = lambda share: APIRequest_pb2.ApplicationShareType.Name(share.shareType) == 'SHARE_TYPE_RECORD'
-        is_sf = lambda share: APIRequest_pb2.ApplicationShareType.Name(share.shareType) == 'SHARE_TYPE_FOLDER'
         share_action = unshare and 'remove' or 'grant'
         sf_perm_keys = ('manage_users', 'manage_records', 'can_edit', 'can_share')
         sf_perms = {k: is_admin and not unshare and 'on' or 'off' for k in sf_perm_keys}
@@ -350,12 +347,16 @@ class KSMCommand(Command):
         share_rec_cmd = ShareRecordCommand()
         share_rec_cmd.execute(params, record=app_uid, **share_rec_args)
 
+        get_share_uid = lambda share: utils.base64_url_encode(share.secretUid)
+
         # (Un)Share shared-folders associated w/ application
+        is_sf = lambda share: APIRequest_pb2.ApplicationShareType.Name(share.shareType) == 'SHARE_TYPE_FOLDER'
         shared_folders = [get_share_uid(s) for ai in app_info for s in ai.shares or [] if is_sf(s)]
         share_folder_cmd = ShareFolderCommand()
         share_folder_cmd.execute(params, folder=shared_folders, **share_folder_args)
 
         # (Un)Share records associated w/ the application
+        is_rec = lambda share: APIRequest_pb2.ApplicationShareType.Name(share.shareType) == 'SHARE_TYPE_RECORD'
         shared_recs = [get_share_uid(s) for ai in app_info for s in ai.shares or [] if is_rec(s)]
         for rec in shared_recs:
             share_rec_cmd.execute(params, **share_rec_args, record=rec)
