@@ -332,13 +332,14 @@ class KSMCommand(Command):
             return
         app_uid = app_rec.get('record_uid', '')
         app_info = KSMCommand.get_app_info(params, app_uid)
-        share_action = unshare and 'remove' or 'grant'
+        sf_action = 'remove' if unshare else 'grant'
+        sr_action = 'revoke' if unshare else 'grant'
         sf_perm_keys = ('manage_users', 'manage_records', 'can_edit', 'can_share')
         sf_perms = {k: is_admin and not unshare and 'on' or 'off' for k in sf_perm_keys}
         rec_perms = dict(can_edit=is_admin and not unshare, can_share=is_admin and not unshare)
         users = [email]
-        share_folder_args = dict(**sf_perms, action=share_action, user=users)
-        share_rec_args = dict(**rec_perms, action=share_action, email=users)
+        share_folder_args = dict(**sf_perms, action=sf_action, user=users)
+        share_rec_args = dict(**rec_perms, action=sr_action, email=users)
 
         from keepercommander.commands.register import ShareRecordCommand
         from keepercommander.commands.register import ShareFolderCommand

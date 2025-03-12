@@ -30,6 +30,7 @@ from .enterprise import query_enterprise as qe
 from .error import KeeperApiError
 from .params import KeeperParams, PublicKeys, LAST_RECORD_UID
 from .proto import APIRequest_pb2, record_pb2, enterprise_pb2
+from .proto.record_pb2 import GetShareObjectsRequest, GetShareObjectsResponse
 from .record import Record
 from .recordv3 import RecordV3
 from .shared_folder import SharedFolder
@@ -293,6 +294,32 @@ def get_shared_folder(params, shared_folder_uid):   # type: (KeeperParams, str) 
     sf.load(cached_sf, cached_sf['revision'])
     return sf
 
+def get_share_objects(params):  # type: (KeeperParams) -> Dict[str, Dict[str, Any]]
+    if not params.share_object_cache:
+        rq = GetShareObjectsRequest()
+        rs = communicate_rest(params, rq, 'vault/get_share_objects', rs_type=GetShareObjectsResponse)
+        users_by_type = dict(
+            relationship=rs.shareRelationships,
+            family= rs.shareFamilyUsers,
+            enterprise=rs.shareEnterpriseUsers,
+            mc=rs.shareMCEnterpriseUsers,
+        )
+        get_users = lambda rs_data, cat: {su.username: dict(name=su.fullname, is_sa=su.isShareAdmin, enterprise_id=su.enterpriseId, status=su.status, category=cat) for su in rs_data}
+        users = [get_users(users, cat) for cat, users in users_by_type.items()]
+        users = list(itertools.chain.from_iterable(users))
+        enterprises = {se.enterpriseId: se.enterprisename for se in rs.shareEnterpriseNames}
+        get_teams = lambda rs_data: {utils.base64_url_encode(st.teamUid): dict(name=st.teamname, enterprise_id=st.enterpriseId) for st in rs_data}
+        teams = get_teams(rs.shareTeams)
+        teams_mc = get_teams(rs.shareMCTeams)
+
+        share_objects = dict(
+            users=users,
+            enterprises=enterprises,
+            teams=teams,
+            teams_mc=teams_mc
+        )
+        params.share_object_cache = share_objects
+    return params.share_object_cache
 
 def load_user_public_keys(params, emails, send_invites=False):  # type: (KeeperParams, List[str], bool) -> Optional[List[str]]
     s = set((x.casefold() for x in emails))

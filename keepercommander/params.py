@@ -115,6 +115,7 @@ class KeeperParams:
         self.non_shared_data_cache = {}
         self.shared_folder_cache = {}
         self.team_cache = {}
+        self.share_object_cache = {}
         self.record_link_cache = {}
         self.record_rotation_cache = {}
         self.record_owner_cache = {}   # type: Dict[str, RecordOwner]
@@ -189,6 +190,7 @@ class KeeperParams:
         self.non_shared_data_cache.clear()
         self.shared_folder_cache.clear()
         self.team_cache.clear()
+        self.share_object_cache.clear()
         self.record_link_cache.clear()
         self.record_rotation_cache.clear()
         self.record_owner_cache.clear()
