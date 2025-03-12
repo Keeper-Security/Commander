@@ -27,7 +27,7 @@ from tabulate import tabulate
 
 from . import base
 from .base import dump_report_data, field_to_title, fields_to_titles, raise_parse_exception, suppress_exit, Command, \
-    GroupCommand, FolderMixin
+    GroupCommand, FolderMixin, user_choice
 from .helpers.record import get_record_uids
 from .helpers.timeout import parse_timeout
 from .record import RecordRemoveCommand
@@ -42,6 +42,7 @@ from ..shared_record import SharePermissions, get_shared_records, SharedRecord
 from ..sox.sox_types import Record
 from ..subfolder import BaseFolderNode, SharedFolderNode, SharedFolderFolderNode, try_resolve_path, get_folder_path, \
     get_folder_uids, get_contained_record_uids
+from ..utils import is_email
 
 
 def register_commands(commands):
@@ -71,6 +72,9 @@ def register_command_info(aliases, command_info):
 
 share_record_parser = argparse.ArgumentParser(prog='share-record', description='Change the sharing permissions of an individual record')
 share_record_parser.add_argument('-e', '--email', dest='email', action='append', required=True, help='account email')
+share_record_parser.add_argument('--contacts-only', action='store_true', help="Share only to known targets; Allows routing to"
+                                                                                  " alternate domains with matching usernames if needed")
+share_record_parser.add_argument('-f', '--force', action='store_true', help='Skip confirmation prompts')
 share_record_parser.add_argument('-a', '--action', dest='action', choices=['grant', 'revoke', 'owner', 'cancel'],
                                  default='grant', action='store', help='user share action. \'grant\' if omitted')
 share_record_parser.add_argument('-s', '--share', dest='can_share', action='store_true', help='can re-share record')
@@ -651,7 +655,31 @@ class ShareRecordCommand(Command):
             raise CommandError('share-record', '\'email\' parameter is missing')
 
         dry_run = kwargs.get('dry_run') is True
+        force = kwargs.get('force') is True
         action = kwargs.get('action') or 'grant'
+        use_contacts = kwargs.get('contacts_only')
+
+        def get_contact(user, contacts):
+            get_username = lambda addr: next(iter(addr.split('@')), '')
+            matches = [c for c in contacts if get_username(user) == get_username(c)]
+            if len(matches) > 1:
+                raise CommandError('More than 1 matching usernames found. Aborting')
+            return next(iter(matches), None)
+
+        if use_contacts:
+            known_users = api.get_share_objects(params).get('users', {})
+            is_unknown = lambda e: e not in known_users and is_email(e)
+            unknowns = [e for e in emails if is_unknown(e)]
+            if unknowns:
+                username_map = {e: get_contact(e, known_users) for e in unknowns}
+                table = [[k, v] for k, v in username_map.items()]
+                logging.info(f'{len(unknowns)} unrecognized share recipient(s) and closest matching contact(s)')
+                dump_report_data(table, ['Username', 'From Contacts'])
+                confirmed = force or user_choice('\tReplace with known matching contact(s)?', 'yn', default='n') == 'y'
+                if confirmed:
+                    good_emails = [e for e in emails if e not in unknowns]
+                    replacements = [e for e in username_map.values() if e]
+                    emails = [*good_emails, *replacements]
 
         if action == 'cancel':
             answer = base.user_choice(
