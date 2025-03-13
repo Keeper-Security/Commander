@@ -333,7 +333,7 @@ class ShareFolderCommand(Command):
                             logging.warning(f'User "{u}" could not be resolved as email or team' if not matches
                                             else f'Multiple matches were found for team "{u}". Try using its UID -- which can be found via `list-team` -- instead')
                         else:
-                            team = next(iter(matches))
+                            [team] = matches
                             as_teams.add(team)
 
         record_uids = set()

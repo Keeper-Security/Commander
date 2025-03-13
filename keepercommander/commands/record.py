@@ -125,6 +125,8 @@ list_team_parser.add_argument('--format', dest='format', action='store', choices
 list_team_parser.add_argument('--output', dest='output', action='store',
                               help='output file name. (ignored for table format)')
 list_team_parser.add_argument('-v', '--verbose', action='store_true', help="verbose output (include team membership info)")
+list_team_parser.add_argument('-a', '--all', action='store_true',
+                              help="show all teams in your contacts (including those outside your primary organization)")
 
 
 record_history_parser = argparse.ArgumentParser(prog='record-history', parents=[base.report_output_parser],
@@ -752,11 +754,15 @@ class RecordListTeamCommand(Command):
 
     def execute(self, params, **kwargs):
         fmt = kwargs.get('format', 'table')
+        show_all_teams = kwargs.get('all')
         show_team_users = kwargs.get('verbose')
         share_targets = api.get_share_objects(params)
         teams = share_targets.get('teams')
         orgs = share_targets.get('enterprises')
-        teams = [Team(team_uid=uid, enterprise_id=t.get('enterprise_id'), name=t.get('name')) for uid, t in teams.items()]
+        is_enterprise_user = bool(params.enterprise_ec_key)
+        enterprise_id = params.license.get('enterprise_id')
+        is_included = lambda t: not is_enterprise_user or show_all_teams or t.get('enterprise_id') == enterprise_id
+        teams = [Team(team_uid=uid, enterprise_id=t.get('enterprise_id'), name=t.get('name')) for uid, t in teams.items() if is_included(t)]
         teams = self.get_team_members(params, teams) if show_team_users else teams
         if teams:
             table = []
@@ -769,7 +775,7 @@ class RecordListTeamCommand(Command):
                 if show_team_users:
                     row.append(team.members)
                 table.append(row)
-            table.sort(key=lambda x: (x[1] or '').lower())
+            table.sort(key=lambda x: (x[0] or '').lower())
 
             return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
                                     row_number=True)
