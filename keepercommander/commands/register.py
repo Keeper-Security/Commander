@@ -659,7 +659,7 @@ class ShareRecordCommand(Command):
         use_contacts = kwargs.get('contacts_only')
 
         def get_contact(user, contacts):
-            get_username = lambda addr: next(iter(addr.split('@')), '')
+            get_username = lambda addr: next(iter(addr.split('@')), '').casefold()
             matches = [c for c in contacts if get_username(user) == get_username(c)]
             if len(matches) > 1:
                 raise CommandError('More than 1 matching usernames found. Aborting')
@@ -667,7 +667,8 @@ class ShareRecordCommand(Command):
 
         if use_contacts:
             known_users = api.get_share_objects(params).get('users', {})
-            is_unknown = lambda e: e not in known_users and is_email(e)
+            known_emails = [u.casefold() for u in known_users.keys()]
+            is_unknown = lambda e: e.casefold() not in known_emails and is_email(e)
             unknowns = [e for e in emails if is_unknown(e)]
             if unknowns:
                 username_map = {e: get_contact(e, known_users) for e in unknowns}
