@@ -759,9 +759,8 @@ class RecordListTeamCommand(Command):
         share_targets = api.get_share_objects(params)
         teams = share_targets.get('teams', {})
         orgs = share_targets.get('enterprises', {})
-        is_enterprise_user = bool(params.enterprise_ec_key)
-        enterprise_id = params.license.get('enterprise_id')
-        is_included = lambda t: not is_enterprise_user or show_all_teams or t.get('enterprise_id') == enterprise_id
+        enterprise_id = params.license.get('enterprise_id') if params.license else None
+        is_included = lambda t: show_all_teams or t.get('enterprise_id') == enterprise_id
         teams = [Team(team_uid=uid, enterprise_id=t.get('enterprise_id'), name=t.get('name')) for uid, t in teams.items() if is_included(t)]
         teams = self.get_team_members(params, teams) if show_team_users else teams
         if teams:
