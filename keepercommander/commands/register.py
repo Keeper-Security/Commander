@@ -327,15 +327,14 @@ class ShareFolderCommand(Command):
                     if em is not None:
                         as_users.add(u.lower())
                     else:
-                        api.load_available_teams(params)
-                        team = next((x for x in params.available_team_cache
-                                     if u == x.get('team_uid') or
-                                     u.lower() == (x.get('team_name') or '').lower()), None)
-                        if team:
-                            team_uid = team['team_uid']
-                            as_teams.add(team_uid)
+                        teams = api.get_share_objects(params).get('teams')
+                        matches = [uid for uid, t in teams.items() if uid == u or t.get('name', '').lower() == u.lower()]
+                        if len(matches) != 1:
+                            logging.warning(f'User "{u}" could not be resolved as email or team' if not matches
+                                            else f'Multiple matches were found for team "{u}". Try using its UID -- which can be found via `list-team` -- instead')
                         else:
-                            logging.warning('User %s could not be resolved as email or team', u)
+                            team = next(iter(matches))
+                            as_teams.add(team)
 
         record_uids = set()
         all_records = False

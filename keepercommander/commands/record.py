@@ -753,22 +753,19 @@ class RecordListTeamCommand(Command):
     def execute(self, params, **kwargs):
         fmt = kwargs.get('format', 'table')
         show_team_users = kwargs.get('verbose')
-        api.load_available_teams(params)
-        results = []
-        if type(params.available_team_cache) == list:
-            for team in params.available_team_cache:
-                team = Team(team_uid=team['team_uid'], name=team['team_name'])
-                results.append(team)
-        if any(results):
-            if show_team_users:
-                results = self.get_team_members(params, results)
+        share_targets = api.get_share_objects(params)
+        teams = share_targets.get('teams')
+        orgs = share_targets.get('enterprises')
+        teams = [Team(team_uid=uid, enterprise_id=t.get('enterprise_id'), name=t.get('name')) for uid, t in teams.items()]
+        teams = self.get_team_members(params, teams) if show_team_users else teams
+        if teams:
             table = []
-            headers = ['team_uid', 'name']
+            headers = ['company', 'team_uid', 'name']
             if show_team_users:
                 headers.append('member')
             headers = fields_to_titles(headers) if 'fmt' != 'json' else headers
-            for team in results:
-                row = [team.team_uid, team.name]
+            for team in teams:
+                row = [orgs.get(team.enterprise_id), team.team_uid, team.name]
                 if show_team_users:
                     row.append(team.members)
                 table.append(row)
