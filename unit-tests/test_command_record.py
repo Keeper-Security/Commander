@@ -15,10 +15,14 @@ from keepercommander.error import CommandError
 
 class TestRecord(TestCase):
     vault_env = VaultEnvironment()
+    expected_commands = []
 
     def setUp(self):
         self.communicate_mock = mock.patch('keepercommander.api.communicate').start()
         self.communicate_mock.side_effect = KeeperApiHelper.communicate_command
+        self.communicate_mock = mock.patch('keepercommander.api.communicate_rest').start()
+        self.communicate_mock.side_effect = TestRecord.communicate_rest_success
+        TestRecord.expected_commands.clear()
 
     def tearDown(self):
         mock.patch.stopall()
@@ -176,24 +180,10 @@ class TestRecord(TestCase):
         params = get_synced_params()
         cmd = record.RecordListTeamCommand()
 
-        def get_available_teams(rq):
-            self.assertEqual(rq['command'], 'get_available_teams')
-            return {
-                'teams': [
-                    {
-                        'team_uid': api.generate_record_uid(),
-                        'team_name': 'Team 1'
-                    },
-                    {
-                        'team_uid': api.generate_record_uid(),
-                        'team_name': 'Team 2'
-                    }
-                ]
-            }
-        KeeperApiHelper.communicate_expect([get_available_teams])
+        TestRecord.expected_commands.extend(['get_share_objects'])
         with mock.patch('builtins.print'):
             cmd.execute(params)
-        self.assertTrue(KeeperApiHelper.is_expect_empty())
+        self.assertTrue(len(TestRecord.expected_commands) == 0)
 
     def test_get_record_uid(self):
         params = get_synced_params()
@@ -312,3 +302,20 @@ class TestRecord(TestCase):
         cmd = record_edit.RecordDeleteAttachmentCommand()
         cmd.execute(params, name=[rec.attachments[0].id], record=rec.title)
         self.assertTrue(KeeperApiHelper.is_expect_empty())
+
+
+    @staticmethod
+    def communicate_rest_success(params, request, endpoint, **kwargs):
+        if 'rs_type' in kwargs:
+            rs = kwargs['rs_type']()
+        else:
+            rs = None
+
+        _, _, command = endpoint.rpartition('/')
+
+        cmd = TestRecord.expected_commands.pop(0)
+        if cmd == command:
+            return rs
+
+        raise Exception()
+
