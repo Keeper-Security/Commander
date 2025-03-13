@@ -3168,7 +3168,7 @@ class PAMTunnelStartCommand(Command):
 
 class PAMConnectionEditCommand(Command):
     choices = ['on', 'off', 'default']
-    protocols = ['', 'http', 'mysql', 'postgresql', 'rdp', 'sqlserver', 'ssh', 'telnet', 'vnc']
+    protocols = ['', 'http', 'kubernetes', 'mysql', 'postgresql', 'rdp', 'sql-server', 'ssh', 'telnet', 'vnc']
     parser = argparse.ArgumentParser(prog='pam connection edit')
     parser.add_argument('record', type=str, action='store', help='The record UID or path of the PAM '
                         'resource record with network information to use for connections')
