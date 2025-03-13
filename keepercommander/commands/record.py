@@ -757,8 +757,8 @@ class RecordListTeamCommand(Command):
         show_all_teams = kwargs.get('all')
         show_team_users = kwargs.get('verbose')
         share_targets = api.get_share_objects(params)
-        teams = share_targets.get('teams')
-        orgs = share_targets.get('enterprises')
+        teams = share_targets.get('teams', {})
+        orgs = share_targets.get('enterprises', {})
         is_enterprise_user = bool(params.enterprise_ec_key)
         enterprise_id = params.license.get('enterprise_id')
         is_included = lambda t: not is_enterprise_user or show_all_teams or t.get('enterprise_id') == enterprise_id
