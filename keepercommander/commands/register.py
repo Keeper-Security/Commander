@@ -327,7 +327,7 @@ class ShareFolderCommand(Command):
                     if em is not None:
                         as_users.add(u.lower())
                     else:
-                        teams = api.get_share_objects(params).get('teams')
+                        teams = api.get_share_objects(params).get('teams', {})
                         matches = [uid for uid, t in teams.items() if uid == u or t.get('name', '').lower() == u.lower()]
                         if len(matches) != 1:
                             logging.warning(f'User "{u}" could not be resolved as email or team' if not matches
