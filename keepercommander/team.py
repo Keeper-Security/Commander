@@ -14,13 +14,14 @@ from typing import Optional, List
 class Team:
     """Defines a Keeper Team """
 
-    def __init__(self, team_uid='', restrict_edit=False, restrict_view=False, restrict_share=False, name=''):
+    def __init__(self, team_uid='', enterprise_id='', restrict_edit=False, restrict_view=False, restrict_share=False, name=''):
         self.team_uid = team_uid 
         self.restrict_edit = restrict_edit 
         self.restrict_view = restrict_view
         self.restrict_share = restrict_share
         self.name = name
         self.members = None                     # type: Optional[List[str]]
+        self.enterprise_id = enterprise_id
 
     def load(self,team):
         self.restrict_edit = team['restrict_edit'] or False

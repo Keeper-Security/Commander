@@ -315,8 +315,7 @@ def get_share_objects(params):  # type: (KeeperParams) -> Dict[str, Dict[str, An
         share_objects = dict(
             users=users,
             enterprises=enterprises,
-            teams=teams,
-            teams_mc=teams_mc
+            teams={**teams, **teams_mc}
         )
         params.share_object_cache = share_objects
     return params.share_object_cache
