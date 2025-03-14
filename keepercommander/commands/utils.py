@@ -27,7 +27,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from google.protobuf.json_format import MessageToDict
 
 from keepercommander.commands.breachwatch import BreachWatchScanCommand
-from . import aliases, commands, enterprise_commands, msp_commands, msp
+from . import aliases, commands, enterprise_commands, msp_commands, msp, base
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, GroupCommand, as_boolean
 from .helpers.record import get_record_uids as get_ruids
 from .helpers.timeout import (
@@ -36,7 +36,7 @@ from .helpers.timeout import (
 from .helpers.whoami import get_hostname, get_environment, get_data_center
 from .ksm import KSMCommand, ksm_parser
 from .. import __version__, vault
-from .. import api, rest_api, loginv3, crypto, utils, constants, error
+from .. import api, rest_api, loginv3, crypto, utils, constants, error, vault_extensions
 from ..breachwatch import BreachWatch
 from ..display import bcolors
 from ..error import CommandError
@@ -70,6 +70,7 @@ def register_commands(commands):
     commands['generate'] = GenerateCommand()
     commands['reset-password'] = ResetPasswordCommand()
     commands['sync-security-data'] = SyncSecurityDataCommand()
+    commands['blank-records'] = BlankRecordCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -1402,3 +1403,39 @@ class SyncSecurityDataCommand(Command):
                 logging.info(f'Updated security data for [{len(to_update)}] record(s)')
             elif not kwargs.get('suppress_no_op'):
                 logging.info('No records requiring security-data updates found')
+
+
+class BlankRecordCommand(Command):
+    blank_record_parser = argparse.ArgumentParser(prog='blank-record', parents=[base.report_output_parser],
+                                                  description='returns empy records')
+    def get_parser(self):
+        return BlankRecordCommand.blank_record_parser
+
+    def execute(self, params, **kwargs):
+        headers = ['record_uid', 'record_type', 'record_title']
+        table = []
+        for record in vault_extensions.find_records(params, record_version=(2,3)):
+            if isinstance(record, vault.PasswordRecord):
+                if not record.login and not record.password and not record.link:
+                    table.append([record.record_uid, '', record.title])
+            elif isinstance(record, vault.TypedRecord):
+                all_empty = True
+                for field in record.fields:
+                    if field.type == 'fileRef' and record.record_type != 'file':
+                        continue
+                    if not field.value:
+                        continue
+                    if isinstance(field.value, list):
+                        for value in field.value:
+                            if isinstance(value, str) and not value:
+                                continue
+                            all_empty = False
+                            break
+                    if not all_empty:
+                        break
+                if all_empty:
+                    table.append([record.record_uid, record.record_type, record.title])
+
+        fmt = kwargs.get('format') or 'table'
+        output = kwargs.get('output')
+        return base.dump_report_data(table, headers, fmt=fmt, filename=output)
