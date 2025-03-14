@@ -10,6 +10,7 @@ from typing import Optional, Dict, Tuple, List, Any, Iterable, Union
 from keepercommander.commands.base import GroupCommand, dump_report_data, field_to_title
 from keepercommander.commands.enterprise_common import EnterpriseCommand
 from keepercommander.sox.sox_types import RecordPermissions
+from .helpers.reporting import filter_rows
 from .. import sox, api
 from ..error import CommandError
 from ..params import KeeperParams
@@ -28,6 +29,8 @@ compliance_parser.add_argument('--format', dest='format', action='store', choice
                                default='table', help='format of output')
 compliance_parser.add_argument('--output', dest='output', action='store',
                                help='path to resulting output file (ignored for "table" format)')
+compliance_parser.add_argument('--regex', action='store_true', help='Allow use of regular expressions in search criteria')
+compliance_parser.add_argument('pattern', type=str, nargs='*', help='Search string / pattern to filter results by. Multiple values allowed.')
 
 default_report_parser = argparse.ArgumentParser(prog='compliance report', description='Run a compliance report.',
                                                 parents=[compliance_parser])
@@ -59,8 +62,8 @@ team_report_parser.add_argument('-tu', '--show-team-users', action='store_true',
 access_report_desc = 'Run a report showing all records a user has accessed or can access'
 access_report_parser = argparse.ArgumentParser(prog='compliance record-access-report', description=access_report_desc,
                                                parents=[compliance_parser])
-user_arg_help = 'username(s) or ID(s). Set to "@all" to run report for all users'
-access_report_parser.add_argument('user', nargs='+', metavar='USER', type=str, help=user_arg_help)
+user_arg_help = 'username(s) or ID(s). Set once for each user to include. Set to "@all" to run report for all users'
+access_report_parser.add_argument('--email', '-e', action='append', type=str, help=user_arg_help)
 report_type_help = ('select type of record-access data to include in report (defaults to "history"). '
                     'Set to "history" to view past record-access activity, "vault" to view current vault contents')
 ACCESS_REPORT_TYPES = ('history', 'vault')
@@ -153,6 +156,11 @@ class BaseComplianceReportCommand(EnterpriseCommand):
         sd = get_sox_data_fn(*fn_args, **fn_kwargs)
         report_fmt = kwargs.get('format', 'table')
         report_data = self.generate_report_data(params, kwargs, sd, report_fmt, node_id, root_node_id)
+        patterns = kwargs.get('pattern', [])
+        if '@all' in patterns:
+            patterns.remove('@all')
+        if patterns:
+            report_data = filter_rows(report_data, patterns, use_regex=kwargs.get('regex'))
         headers = self.report_headers if report_fmt == 'json' else [field_to_title(h) for h in self.report_headers]
         report = dump_report_data(report_data, headers, title=self.title, fmt=report_fmt, filename=kwargs.get('output'),
                                   column_width=32, group_by=self.group_by_column)
@@ -584,8 +592,8 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
         user_lookup = {user.get('enterprise_user_id'): user.get('username') for user in params.enterprise.get('users')}
         user_access_lookup = dict()
         aging = kwargs.get('aging')
-        users = kwargs.get('user')
-        managed_users = json.loads(EnterpriseInfoCommand().execute(params, users=True, quiet=True, format='json'))
+        users = kwargs.get('email') or ['@all']
+        managed_users = json.loads( EnterpriseInfoCommand().execute(params, users=True, quiet=True, format='json'))
         usernames = [user_lookup.get(user_id) for user_id in sox_data.get_users()] if '@all' in users \
             else [user_lookup.get(int(ref)) if ref.isdigit() else ref for ref in users]
         usernames = [u for u in usernames if u and u in [mu.get('email') for mu in managed_users]]

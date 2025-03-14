@@ -39,7 +39,7 @@ from .. import __version__, vault
 from .. import api, rest_api, loginv3, crypto, utils, constants, error, vault_extensions
 from ..breachwatch import BreachWatch
 from ..display import bcolors
-from ..error import CommandError
+from ..error import CommandError, KeeperApiError
 from ..generator import KeeperPasswordGenerator, DicewarePasswordGenerator, CryptoPassphraseGenerator
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ..proto import ssocloud_pb2, enterprise_pb2, APIRequest_pb2, client_pb2
@@ -1388,19 +1388,24 @@ class SyncSecurityDataCommand(Command):
         sds = [get_security_data(r, s) for r, s in to_update] if to_update else []
         # Remove empty security-data update requests (resulting from failed RSA encryption)
         sds = [sd for sd in sds if sd]
+        num_to_update = len(sds)
         while sds:
             record_sds = sds[:update_limit]
             update_rq = APIRequest_pb2.SecurityDataRequest()
             update_rq.recordSecurityData.extend(record_sds)
             update_rq.encryptionType = enterprise_pb2.KT_ENCRYPTED_BY_PUBLIC_KEY_ECC if params.forbid_rsa else enterprise_pb2.KT_ENCRYPTED_BY_PUBLIC_KEY
-            api.communicate_rest(params, update_rq, 'enterprise/update_security_data')
-            sds = sds[update_limit:]
+            try:
+                api.communicate_rest(params, update_rq, 'enterprise/update_security_data')
+            except KeeperApiError:
+                pass
+            finally:
+                sds = sds[update_limit:]
         if to_update:
             BreachWatch.save_reused_pw_count(params)
             api.sync_down(params)
         if not kwargs.get('quiet'):
             if to_update:
-                logging.info(f'Updated security data for [{len(to_update)}] record(s)')
+                logging.info(f'Updated security data for [{num_to_update}] record(s)')
             elif not kwargs.get('suppress_no_op'):
                 logging.info('No records requiring security-data updates found')
 
