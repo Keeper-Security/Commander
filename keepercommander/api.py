@@ -19,6 +19,7 @@ import os
 import re
 import time
 from datetime import datetime
+from functools import reduce
 from typing import Optional, Tuple, Iterable, List, Dict, Any
 
 import google
@@ -305,8 +306,11 @@ def get_share_objects(params):  # type: (KeeperParams) -> Dict[str, Dict[str, An
             mc=rs.shareMCEnterpriseUsers,
         )
         get_users = lambda rs_data, cat: {su.username: dict(name=su.fullname, is_sa=su.isShareAdmin, enterprise_id=su.enterpriseId, status=su.status, category=cat) for su in rs_data}
-        users = [get_users(users, cat) for cat, users in users_by_type.items()]
-        users = list(itertools.chain.from_iterable(users))
+        users = reduce(
+            lambda a, b: {**a, **b},
+            [get_users(users, cat) for cat, users in users_by_type.items()],
+            {}
+        )
         enterprises = {se.enterpriseId: se.enterprisename for se in rs.shareEnterpriseNames}
         get_teams = lambda rs_data: {utils.base64_url_encode(st.teamUid): dict(name=st.teamname, enterprise_id=st.enterpriseId) for st in rs_data}
         teams = get_teams(rs.shareTeams)
