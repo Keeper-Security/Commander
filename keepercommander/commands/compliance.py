@@ -306,7 +306,7 @@ class ComplianceReportCommand(BaseComplianceReportCommand):
                 r_type = r_data.get('record_type', '')
                 r_url = r_data.get('url', '')
                 rec_sfs = sox_data.get_record_sfs(rec_uid)
-                formatted_rec_uid = rec_uid if report_fmt != 'table' or last_rec_uid != rec_uid else ''
+                formatted_rec_uid = rec_uid if report_fmt != 'table' or kwargs.get('pattern') or last_rec_uid != rec_uid else ''
                 u_email = row.get('email')
                 permissions = RecordPermissions.to_permissions_str(row.get('permissions'))
                 fmt_row = [formatted_rec_uid, r_title, r_type, u_email, permissions, r_url.rstrip('/'), rec.in_trash, rec_sfs]
