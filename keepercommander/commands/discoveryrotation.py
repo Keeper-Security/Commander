@@ -2710,7 +2710,7 @@ class PAMTunnelEditCommand(Command):
 
             pam_settings = record.get_typed_field('pamSettings')
             if not pam_settings:
-                pre_settings = {}
+                pre_settings = {"connection": {}, "portForward": {}}
                 if _tunneling and tunneling_override_port:
                     pre_settings["portForward"]["port"] = tunneling_override_port
                 if pre_settings:
@@ -3260,7 +3260,7 @@ class PAMConnectionEditCommand(Command):
             protocol = kwargs.get("protocol", None)
             pam_settings = record.get_typed_field('pamSettings')
             if not pam_settings:
-                pre_settings = {}
+                pre_settings = {"connection": {}, "portForward": {}}
                 if _connections:
                     if connection_override_port:
                         pre_settings["connection"]["port"] = connection_override_port
