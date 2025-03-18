@@ -1,8 +1,6 @@
 from __future__ import annotations
 import logging
 import os
-import time
-
 from .vertex import DAGVertex
 from .types import DAGData, EdgeType, RefType, Ref, DataPayload
 from .crypto import encrypt_aes, decrypt_aes, generate_uid_str, bytes_to_str, str_to_bytes, urlsafe_str_to_bytes
@@ -701,6 +699,7 @@ class DAG:
                         self.corrupt_uids.append(vertex.uid)
                         raise DAGDataException(f"The data edge {vertex.uid} could not be decrypted.")
 
+
                     edge.content = content
                     edge.needs_encryption = False
                     self.debug(f"  * edge is not encrypted or key is incorrect.")
@@ -920,6 +919,11 @@ class DAG:
                         self.debug(f"    edge is {edge.edge_type}", level=3)
 
                 parent_vertex = self.get_vertex(edge.head_uid)
+
+                if content is not None and len(content) > 65_535:
+                    self.debug(f"data edge is {len(content)} bytes. The limit is 64K.")
+                    raise DAGDataException(f"A DATA edge is {len(content)} bytes. "
+                                           "This is too large for the MySQL BLOB (64K).")
 
                 data = DAGData(
                     type=edge.edge_type,
