@@ -20,6 +20,7 @@ from .display import bcolors
 from .params import KeeperParams, RecordOwner
 from .proto import SyncDown_pb2, record_pb2, client_pb2, breachwatch_pb2
 from .subfolder import RootFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, BaseFolderNode
+from .vault import KeeperRecord
 
 
 def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> None
@@ -68,6 +69,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
 
     resp_bw_recs = []            # type: List[SyncDown_pb2.BreachWatchRecord]
     resp_sec_data_recs = []      # type: List[SyncDown_pb2.BreachWatchSecurityData]
+    resp_sec_scores = []         # type: List[SyncDown_pb2.SecurityScoreData]
     request = SyncDown_pb2.SyncDownRequest()
     revision = params.revision
     full_sync = False
@@ -92,6 +94,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             params.record_owner_cache.clear()
             params.breach_watch_security_data.clear()
             params.breach_watch_records.clear()
+            params.security_score_data.clear()
 
         if len(response.removedRecords) > 0:
             logging.debug('Processing removed records')
@@ -550,6 +553,9 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
         if len(response.breachWatchSecurityData) > 0:
             resp_sec_data_recs.extend(response.breachWatchSecurityData)
 
+        if len(response.securityScoreData) > 0:
+            resp_sec_scores.extend(response.securityScoreData)
+
         if len(response.removedUsers) > 0:
             for a_uid in response.removedUsers:
                 account_uid = utils.base64_url_encode(a_uid)
@@ -953,6 +959,20 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
     for sec_data in resp_sec_data_recs:
         record_uid = utils.base64_url_encode(sec_data.recordUid)
         params.breach_watch_security_data[record_uid] = {'revision': sec_data.revision}
+
+    # Populate/update security score data
+    for sec_score_rec in resp_sec_scores:
+        record_uid = utils.base64_url_encode(sec_score_rec.recordUid or b'')
+        record = KeeperRecord.load(params, record_uid)
+        if not record:
+            continue
+        try:
+            data = crypto.decrypt_aes_v2(sec_score_rec.data, record.record_key).decode()
+            data = json.loads(data)
+            revision = sec_score_rec.revision
+            params.security_score_data.update({record_uid: dict(record_uid=record_uid, data=data, revision=revision)})
+        except:
+            pass
 
     # Populate/update cache BreachWatch records data
     for p_bwr in resp_bw_recs:
