@@ -155,6 +155,7 @@ class KeeperParams:
         self.breach_watch = None
         self.breach_watch_records = {}
         self.breach_watch_security_data = {}
+        self.security_score_data = {}
         self.sso_login_info = None
         self.__proxy = None
         self.ssh_agent = None
@@ -223,6 +224,7 @@ class KeeperParams:
         self.breach_watch = None
         self.breach_watch_records = {}
         self.breach_watch_security_data = {}
+        self.security_score_data.clear()
         self.sso_login_info = None
         self.ws = None
         if self.ssh_agent:
