@@ -1303,15 +1303,16 @@ class SyncSecurityDataCommand(Command):
             raise CommandError('sync-security-data', msg)
 
         def parse_input_records():  # type: () -> Set[str]
+            is_owned = lambda uid: bool(uid and params.record_owner_cache.get(uid, RecordOwner(False, '')).owner)
             names = kwargs.get('record',[])
-            return set(params.record_cache.keys() if '@all' in names
-                else filter(bool, itertools.chain.from_iterable([get_ruids(params, name) for name in names]))
+            return set(
+                params.record_cache.keys() if '@all' in names
+                else filter(is_owned, itertools.chain.from_iterable(get_ruids(params, name) for name in names))
             )
 
         force_update = kwargs.get('force', False)
         api.sync_down(params)
-        is_owned = lambda uid: params.record_owner_cache.get(uid, RecordOwner(False, '')).owner
-        recs = [KeeperRecord.load(params, r) for r in parse_input_records() if is_owned(r)]
+        recs = [KeeperRecord.load(params, r) for r in parse_input_records()]
         recs_to_update = [r for r in recs if force_update or needs_security_audit(params, r)]
         num_to_update = len(recs_to_update)
         update_security_audit_data(params, recs_to_update)
