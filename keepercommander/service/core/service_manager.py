@@ -64,14 +64,14 @@ class ServiceManager:
             cls._is_running = True
             ProcessInfo.save(cls._is_running)
             
-            print(f"Commander Service starting on http://localhost:{port}")
+            print(f"Commander Service starting on port:{port}")
             print(f"Process ID: {os.getpid()}")
             
             NgrokConfigurator.configure_ngrok(config_data, service_config)
             
             logging.getLogger('werkzeug').setLevel(logging.WARNING)
             
-            cls._flask_app.run(host='localhost', port=port)
+            cls._flask_app.run(host='0.0.0.0', port=port)
             
         except FileNotFoundError:
             print("Error: Service configuration file not found. Please use 'service-create' command to create a service_config file.")
