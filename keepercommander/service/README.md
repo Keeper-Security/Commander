@@ -204,3 +204,30 @@ This module is part of Keeper Commander and is subject to its license terms.
 For support, please contact:
 - Email: commander@keepersecurity.com
 - Documentation: [Keeper Commander Documentation](https://docs.keeper.io/en/secrets-manager/commander-cli/overview)
+
+
+## Docker Build (Commander Service Mode)
+ Installation
+  1. Install [Docker](https://www.docker.com/).
+  2. Clone the repository [git clone](https://github.com/Keeper-Security/Commander.git).
+  3. Build docker image using command  ``` docker build -t keeper-commander . ```
+  4. Verify docker image created. ``` docker images ```
+  5. Run the keeper-commander docker image using command
+     ``` docker run -d -p <port>:<port> keeper-commander \```
+      ```service-create -p <port> -c '<commands using comma seprated like tree,ls>' \```
+      ```--user $KEEPER_USERNAME \```
+      ```--password $KEEPER_PASSWORD ```
+   6. Verify keeper-commander image is started using command ``` docker ps ```
+   7. Check the logs using command ```docker logs <Process Name>``` and get the API key from logs
+       ```Generated API key: <API-KEY>```
+
+### Execute Command Endpoint
+
+```bash
+curl --location 'http://localhost:<port>/api/v1/executecommand' \
+--header 'Content-Type: application/json' \
+--header 'api-key: <your-api-key>' \
+--data '{
+    "command": "<command>"
+}'
+```
