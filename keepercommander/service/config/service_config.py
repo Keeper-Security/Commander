@@ -31,7 +31,7 @@ class ServiceConfig:
         self.validation_messages = self.config['Validation_Messages']
 
         default_path = utils.get_default_path()
-        
+
         self.format_handler = ConfigFormatHandler(
             config_dir=default_path,
             messages=self.messages,
