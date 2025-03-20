@@ -159,13 +159,13 @@ class DistributorInfoCommand(EnterpriseCommand, DistributorMixin):
         if output_format == 'json':
             return json.dumps(msps, indent=4)
         else:
-            right_align = (2, 4, 5) if show_mc_details else (2, 3, 4)
+            right_align = (2, 6, 7) if show_mc_details else (2, 5)
             header = ['ID', 'MSP Name', '# MC\'s']
             if show_mc_details:
                 header.extend(('MC Name', 'Plan', 'Storage', 'Total Licenses'))
             else:
                 header.extend(('Unlimited allowed', 'Allowed Addons'))
-            header.extend(['Licenses used', 'KSM', 'KCM', 'Addons'])
+            header.extend(['Licenses used', 'KSM', 'KCM', 'PAM', 'Addons'])
             addon_lookup = {x[0]: x[3] for x in constants.MSP_ADDONS}
 
             table = []
@@ -195,12 +195,19 @@ class DistributorInfoCommand(EnterpriseCommand, DistributorMixin):
                     if isinstance(apis, int) and apis > 0:
                         ksm_text = f'{apis} Calls/Month'
 
+                pam = next((x for x in add_ons if x and x['name'].lower() == 'privileged_access_manager'), None)
+                pam_text = 'enabled' if kcm else 'disabled'
+                if pam:
+                    seats = pam.get("seats")
+                    if isinstance(seats, int) and seats > 0:
+                        kcm_text = f'{seats} seats'
+
                 add_ons = [x['name'] for x in add_ons
-                           if x['name'].lower() not in {'connection_manager', 'secrets_manager'} and
+                           if x['name'].lower() not in {'connection_manager', 'secrets_manager', 'privileged_access_manager'} and
                            not x['included_in_product']]
 
                 row.extend((msp.get('allocated_licenses'),
-                            ksm_text, kcm_text,
+                            ksm_text, kcm_text, pam_text,
                             [addon_lookup.get(x.lower(), x) for x in add_ons]))
                 table.append(row)
 
@@ -234,13 +241,18 @@ class DistributorInfoCommand(EnterpriseCommand, DistributorMixin):
                             apis = ksm.get("api_call_count")
                             if isinstance(apis, int) and apis > 0:
                                 ksm_text = f'{apis} Calls/Month'
+                        pam = next((x for x in add_ons if x and x['name'].lower() == 'privileged_access_manager'), None)
+                        pam_text = 'enabled' if pam else 'disabled'
+                        if pam:
+                            seats = kcm.get("seats")
+                            if isinstance(pam, int) and seats > 0:
+                                pam_text = f'{seats} seats'
                         add_ons = [x['name'] for x in add_ons
-                                   if x['name'].lower() not in {'connection_manager', 'secrets_manager'} and
+                                   if x['name'].lower() not in {'connection_manager', 'secrets_manager', 'privileged_access_manager'} and
                                    not x['included_in_product']]
-
                         row = [mc.get('mc_enterprise_id'), msp_name, None,
                                mc_name, product, file_plan, total_licences,
-                               used, ksm_text, kcm_text,
+                               used, ksm_text, kcm_text, pam_text,
                                [addon_lookup.get(x.lower(), x) for x in add_ons]]
                         table.append(row)
 
