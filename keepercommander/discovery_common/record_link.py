@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 class RecordLink:
 
     def __init__(self, record: Any, logger: Optional[Any] = None, debug_level: int = 0, fail_on_corrupt: bool = True,
-                 log_prefix: str = "GS Record Linking", **kwargs):
+                 log_prefix: str = "GS Record Linking", save_batch_count: int = 200, **kwargs):
 
         self.conn = get_connection(**kwargs)
 
@@ -26,6 +26,7 @@ class RecordLink:
         self.logger = logger
         self.log_prefix = log_prefix
         self.debug_level = debug_level
+        self.save_batch_count = save_batch_count
 
         # Technically, since there is no encryption in this graph, there should be no corruption.
         # Allow it to be set regardlessly.
@@ -39,7 +40,8 @@ class RecordLink:
             # Since we don't have transactions, we want to save the record link if everything worked.
             self._dag = DAG(conn=self.conn, record=self.record, graph_id=RECORD_LINK_GRAPH_ID, auto_save=False,
                             logger=self.logger, debug_level=self.debug_level, name="Record Linking",
-                            fail_on_corrupt=self.fail_on_corrupt, log_prefix=self.log_prefix)
+                            fail_on_corrupt=self.fail_on_corrupt, log_prefix=self.log_prefix,
+                            save_batch_count=self.save_batch_count)
             sync_point = self._dag.load(sync_point=0)
             self.logger.debug(f"the record linking sync point is {sync_point or 0}")
             if self.dag.has_graph is False:
@@ -177,14 +179,13 @@ class RecordLink:
 
         # Get the current edge if it exists.
         # We need to create it if it does not exist and only add it if the ACL changed.
-        # TODO: create a better ACL diff
         existing_edge = record_vertex.get_edge(parent_record_vertex, edge_type=edge_type)
         add_edge = True
         if existing_edge is not None and existing_edge.active is True:
             if edge_type == EdgeType.ACL:
-                # content = existing_edge.content_as_object(UserAcl)  # type: UserAcl
-                # if content.is_admin == acl.is_admin:
-                add_edge = False
+                content = existing_edge.content_as_object(UserAcl)  # type: UserAcl
+                if content.model_dump_json() == acl.model_dump_json():
+                    add_edge = False
             else:
                 add_edge = False
 

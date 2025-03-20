@@ -229,6 +229,7 @@ The service includes robust error handling for:
    }'
    ```
 
+
 ## Contributing
 
 Please refer to Keeper Commander's contribution guidelines while making changes to this module.
@@ -242,3 +243,4 @@ This module is part of Keeper Commander and is subject to its license terms.
 For support, please contact:
 - Email: commander@keepersecurity.com
 - Documentation: [Keeper Commander Documentation](https://docs.keeper.io/en/secrets-manager/commander-cli/overview)
+

@@ -19,6 +19,7 @@ import os
 import re
 import time
 from datetime import datetime
+from functools import reduce
 from typing import Optional, Tuple, Iterable, List, Dict, Any
 
 import google
@@ -30,6 +31,7 @@ from .enterprise import query_enterprise as qe
 from .error import KeeperApiError
 from .params import KeeperParams, PublicKeys, LAST_RECORD_UID
 from .proto import APIRequest_pb2, record_pb2, enterprise_pb2
+from .proto.record_pb2 import GetShareObjectsRequest, GetShareObjectsResponse
 from .record import Record
 from .recordv3 import RecordV3
 from .shared_folder import SharedFolder
@@ -293,6 +295,34 @@ def get_shared_folder(params, shared_folder_uid):   # type: (KeeperParams, str) 
     sf.load(cached_sf, cached_sf['revision'])
     return sf
 
+def get_share_objects(params):  # type: (KeeperParams) -> Dict[str, Dict[str, Any]]
+    if not params.share_object_cache:
+        rq = GetShareObjectsRequest()
+        rs = communicate_rest(params, rq, 'vault/get_share_objects', rs_type=GetShareObjectsResponse)
+        users_by_type = dict(
+            relationship=rs.shareRelationships,
+            family= rs.shareFamilyUsers,
+            enterprise=rs.shareEnterpriseUsers,
+            mc=rs.shareMCEnterpriseUsers,
+        )
+        get_users = lambda rs_data, cat: {su.username: dict(name=su.fullname, is_sa=su.isShareAdmin, enterprise_id=su.enterpriseId, status=su.status, category=cat) for su in rs_data}
+        users = reduce(
+            lambda a, b: {**a, **b},
+            [get_users(users, cat) for cat, users in users_by_type.items()],
+            {}
+        )
+        enterprises = {se.enterpriseId: se.enterprisename for se in rs.shareEnterpriseNames}
+        get_teams = lambda rs_data: {utils.base64_url_encode(st.teamUid): dict(name=st.teamname, enterprise_id=st.enterpriseId) for st in rs_data}
+        teams = get_teams(rs.shareTeams)
+        teams_mc = get_teams(rs.shareMCTeams)
+
+        share_objects = dict(
+            users=users,
+            enterprises=enterprises,
+            teams={**teams, **teams_mc}
+        )
+        params.share_object_cache = share_objects
+    return params.share_object_cache
 
 def load_user_public_keys(params, emails, send_invites=False):  # type: (KeeperParams, List[str], bool) -> Optional[List[str]]
     s = set((x.casefold() for x in emails))
@@ -689,8 +719,8 @@ def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version
     raise KeeperApiError('Error', endpoint)
 
 
-def communicate(params, request):
-    # type: (KeeperParams, dict) -> dict
+def communicate(params, request, retry_on_throttle=True):
+    # type: (KeeperParams, dict, Optional[bool]) -> dict
 
     request['client_time'] = current_milli_time()
     request['locale'] = LOCALE
@@ -700,6 +730,11 @@ def communicate(params, request):
     try:
         response_json = run_command(params, request)
         if response_json['result'] != 'success':
+            if retry_on_throttle and response_json.get('result_code') == 'throttled':
+                logging.info('Throttled. sleeping for 10 seconds')
+                time.sleep(10)
+                # Allow maximum 1 retry per call
+                return communicate(params, request, retry_on_throttle=False)
             raise KeeperApiError(response_json['result_code'], response_json['message'])
         TTK.update_time_of_last_activity()
         return response_json

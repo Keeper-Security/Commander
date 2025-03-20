@@ -18,6 +18,7 @@ jobs:
         run: |
           pip install wheel
           pip install build
+          rm -rf build/ dist/ *.egg-info/
           python3 -m build --wheel
         shell: bash
 

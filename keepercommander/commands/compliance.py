@@ -1,14 +1,16 @@
 import argparse
 import datetime
+import itertools
 import json
 import logging
 import operator
 from functools import partial
-from typing import Optional, Dict, Tuple, List, Any, Iterable
+from typing import Optional, Dict, Tuple, List, Any, Iterable, Union
 
 from keepercommander.commands.base import GroupCommand, dump_report_data, field_to_title
 from keepercommander.commands.enterprise_common import EnterpriseCommand
 from keepercommander.sox.sox_types import RecordPermissions
+from keepercommander.commands.helpers.reporting import filter_rows
 from .. import sox, api
 from ..error import CommandError
 from ..params import KeeperParams
@@ -27,6 +29,8 @@ compliance_parser.add_argument('--format', dest='format', action='store', choice
                                default='table', help='format of output')
 compliance_parser.add_argument('--output', dest='output', action='store',
                                help='path to resulting output file (ignored for "table" format)')
+compliance_parser.add_argument('--regex', action='store_true', help='Allow use of regular expressions in search criteria')
+compliance_parser.add_argument('pattern', type=str, nargs='*', help='Search string / pattern to filter results by. Multiple values allowed.')
 
 default_report_parser = argparse.ArgumentParser(prog='compliance report', description='Run a compliance report.',
                                                 parents=[compliance_parser])
@@ -58,8 +62,8 @@ team_report_parser.add_argument('-tu', '--show-team-users', action='store_true',
 access_report_desc = 'Run a report showing all records a user has accessed or can access'
 access_report_parser = argparse.ArgumentParser(prog='compliance record-access-report', description=access_report_desc,
                                                parents=[compliance_parser])
-user_arg_help = 'username(s) or ID(s). Set to "@all" to run report for all users'
-access_report_parser.add_argument('user', nargs='+', metavar='USER', type=str, help=user_arg_help)
+user_arg_help = 'username(s) or ID(s). Set once for each user to include. Set to "@all" to run report for all users'
+access_report_parser.add_argument('--email', '-e', action='append', type=str, help=user_arg_help)
 report_type_help = ('select type of record-access data to include in report (defaults to "history"). '
                     'Set to "history" to view past record-access activity, "vault" to view current vault contents')
 ACCESS_REPORT_TYPES = ('history', 'vault')
@@ -152,6 +156,11 @@ class BaseComplianceReportCommand(EnterpriseCommand):
         sd = get_sox_data_fn(*fn_args, **fn_kwargs)
         report_fmt = kwargs.get('format', 'table')
         report_data = self.generate_report_data(params, kwargs, sd, report_fmt, node_id, root_node_id)
+        patterns = kwargs.get('pattern', [])
+        if '@all' in patterns:
+            patterns.remove('@all')
+        if patterns:
+            report_data = filter_rows(report_data, patterns, use_regex=kwargs.get('regex'))
         headers = self.report_headers if report_fmt == 'json' else [field_to_title(h) for h in self.report_headers]
         report = dump_report_data(report_data, headers, title=self.title, fmt=report_fmt, filename=kwargs.get('output'),
                                   column_width=32, group_by=self.group_by_column)
@@ -160,7 +169,7 @@ class BaseComplianceReportCommand(EnterpriseCommand):
 
 class ComplianceReportCommand(BaseComplianceReportCommand):
     def __init__(self):
-        headers = ['record_uid', 'title', 'type', 'username', 'permissions', 'url', 'in_trash']
+        headers = ['record_uid', 'title', 'type', 'username', 'permissions', 'url', 'in_trash', 'shared_folder_uid']
         super(ComplianceReportCommand, self).__init__(headers, allow_no_opts=False)
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
@@ -199,6 +208,7 @@ class ComplianceReportCommand(BaseComplianceReportCommand):
         logging.info(help_txt)
 
     def generate_report_data(self, params, kwargs, sox_data, report_fmt, node, root_node):
+        # type: (KeeperParams, Dict[str, Any], SoxData, str, int, int) -> List[List[Union[str, Any]]]
         def filter_owners(rec_owners):
             def filter_by_teams(users, teams):
                 enterprise_teams = params.enterprise.get('teams', [])
@@ -295,10 +305,11 @@ class ComplianceReportCommand(BaseComplianceReportCommand):
                 r_title = r_data.get('title', '')
                 r_type = r_data.get('record_type', '')
                 r_url = r_data.get('url', '')
-                formatted_rec_uid = rec_uid if report_fmt != 'table' or last_rec_uid != rec_uid else ''
+                rec_sfs = sox_data.get_record_sfs(rec_uid)
+                formatted_rec_uid = rec_uid if report_fmt != 'table' or kwargs.get('pattern') or last_rec_uid != rec_uid else ''
                 u_email = row.get('email')
                 permissions = RecordPermissions.to_permissions_str(row.get('permissions'))
-                fmt_row = [formatted_rec_uid, r_title, r_type, u_email, permissions, r_url.rstrip('/'), rec.in_trash]
+                fmt_row = [formatted_rec_uid, r_title, r_type, u_email, permissions, r_url.rstrip('/'), rec.in_trash, rec_sfs]
                 formatted_rows.append(fmt_row)
                 last_rec_uid = rec_uid
             return formatted_rows
@@ -366,52 +377,50 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
 
     def generate_report_data(self, params, kwargs, sox_data, report_fmt, node, root_node):
         # type: (KeeperParams, Dict[str, Any], sox.sox_data.SoxData, str, int, int) -> List[List[str]]
-        def get_records_accessed(email, records=None):
-            records_accessed = dict()   # type: Dict[str, Dict[str, Any]]
+        def get_records_accessed_rq(email, filter_recs=None, created_max=None):
+            # type: (str, Optional[List[str]], Optional[int]) -> Union[None, Dict[str, Any]]
             # Empty record filter list -> no records to search for
-            if records is not None and not records:
-                return records_accessed
+            if filter_recs is not None and not filter_recs:
+                return None
 
             columns = ['record_uid', 'ip_address', 'keeper_version']
             rq_filter = {'username': email}
-            if records is not None:
-                rq_filter['record_uid'] = records
-
-            rq = {
-                'command':      'get_audit_event_reports',
-                'report_type':  'span',
-                'scope':        'enterprise',
-                'aggregate':    ['last_created'],
-                'limit':        API_EVENT_SUMMARY_ROW_LIMIT,
-                'filter':       rq_filter,
-                'columns':      columns,
-            }
-
-            def update_records_accessed(record_access_events):
-                for event in record_access_events:
-                    r_uid = event.get('record_uid')
-                    records_accessed.setdefault(r_uid, event)
-
-            def get_events(period_end, filter_recs):
-                if period_end:
-                    rq_filter['created'] = {'max': period_end}
+            if filter_recs is not None:
                 rq_filter['record_uid'] = filter_recs
-                rs = api.communicate(params, rq)
-                return rs.get('audit_event_overview_report_rows')
+            if created_max:
+                rq_filter['created'] = {'max': created_max}
 
-            done = records is not None and not records
-            max_ts = 0
-            missing_records = [] if not records else [*records]
-            while not done:
-                chunk = missing_records[:API_EVENT_SUMMARY_ROW_LIMIT]
-                events = get_events(max_ts, chunk)
-                update_records_accessed(events)
-                missing_records = [r for r in records if r not in records_accessed] if records else []
+            return dict(
+                command         = 'get_audit_event_reports',
+                report_type     = 'span',
+                scope           = 'enterprise',
+                aggregate       = ['last_created'],
+                limit           = API_EVENT_SUMMARY_ROW_LIMIT,
+                filter          = rq_filter,
+                columns         = columns
+            )
+
+        # Extract data and meta-data from the server response, which determines the next request and/or its filter params
+        # 2nd value of returned Tuple (filters for the next request) is None if there are no more events to fetch
+        def process_access_events(events, filter_recs=None):
+            records_accessed = dict()   # type: Dict[str, Dict[str, Any]]
+            recs_set = set(filter_recs or [])
+
+            for event in events:
+                r_uid = event.get('record_uid')
+                records_accessed.setdefault(r_uid, event)
+                recs_set.discard(r_uid)
+
+            queries_done = len(events) < API_EVENT_SUMMARY_ROW_LIMIT or not recs_set and filter_recs is not None
+            filter_params = None
+            if not queries_done:
                 earliest_event = {} if not events else events[-1]
-                max_ts = int(earliest_event.get('last_created', 0))
-                done = not missing_records and records or len(events) < API_EVENT_SUMMARY_ROW_LIMIT
+                filter_params = dict(
+                    filter_recs =   list(recs_set) if filter_recs is not None else filter_recs,
+                    created_max =   int(earliest_event.get('last_created', 0))
+                )
 
-            return records_accessed
+            return records_accessed, filter_params
 
         def format_datetime(dt_str):
             if not dt_str:
@@ -423,10 +432,9 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
             return datetime.datetime.fromtimestamp(ts) if ts else None
 
         def compile_user_report(user, access_events):
-            access_records = dict()
-            user_access_data = {user: access_records}
+            accessed_records = dict()
             rec_uids = access_events.keys() if report_type == report_type_default \
-                else {r for r in vault_records}
+                else sox_data.get_vault_records(user).keys()
 
             for uid in rec_uids:
                 access_event = access_events.get(uid, {})
@@ -434,7 +442,7 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
                 rec_info = sox_rec.data if sox_rec else {}
                 rec_owner = sox_data.get_record_owner(uid)
                 event_ts = access_event.get('last_created')
-                access_record = {uid: {'record_title': rec_info.get('title'),
+                accessed_record = {uid: {'record_title': rec_info.get('title'),
                                        'record_type':  rec_info.get('record_type'),
                                        'record_url': rec_info.get('url', '').rstrip('/'),
                                        'record_owner': rec_owner and rec_owner.email,
@@ -444,8 +452,8 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
                                        'device': access_event.get('keeper_version'),
                                        'last_access': from_ts(int(event_ts)) if event_ts else None,
                                        'vault_owner': user}}
-                access_records.update(access_record)
-            return user_access_data
+                accessed_records.update(accessed_record)
+            return accessed_records
 
         def get_aging_data(rec_ids):
             if not rec_ids:
@@ -458,66 +466,67 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
             stored_aging_data = {e.record_uid: {'created': from_ts(e.created), 'last_modified': from_ts(e.last_modified), 'last_rotation': from_ts(e.last_rotation)} for e in stored_entities}
             aging_data.update(stored_aging_data)
 
-            from keepercommander.commands.aram import AuditReportCommand
-            cmd = AuditReportCommand()
+            def get_requests(filter_recs, filter_type, order='desc', aggregate='last_created'):
+                columns = ['record_uid']
+                requests = []
+                while filter_recs:
+                    chunk = filter_recs[:API_EVENT_SUMMARY_ROW_LIMIT]
+                    filter_recs = filter_recs[API_EVENT_SUMMARY_ROW_LIMIT:]
+                    request = dict(
+                        command         = 'get_audit_event_reports',
+                        report_type     = 'span',
+                        scope           = 'enterprise',
+                        aggregate       = [aggregate],
+                        limit           = API_EVENT_SUMMARY_ROW_LIMIT,
+                        filter          = dict(record_uid=chunk, audit_event_type=filter_type),
+                        columns         = columns,
+                        order           = order
+                    )
+                    requests.append(request)
+                return requests
 
-            def get_events(record_filter, type_filter, order='desc', aggregate='last_created'):
-                events = []
-                cmd_kwargs = {'report_type': 'span',
-                              'columns': ['record_uid'],
-                              'format': 'json',
-                              'limit': API_EVENT_SUMMARY_ROW_LIMIT,
-                              'order': order,
-                              'aggregate': [aggregate]}
-                if type_filter:
-                    cmd_kwargs['event_type'] = type_filter
-                while record_filter:
-                    chunk = record_filter[:API_EVENT_SUMMARY_ROW_LIMIT]
-                    record_filter = record_filter[API_EVENT_SUMMARY_ROW_LIMIT:]
-                    cmd_kwargs['record_uid'] = chunk
-                    event_data = cmd.execute(params, **cmd_kwargs)
-                    event_data = json.loads(event_data)
-                    events.extend(event_data)
-                return events
+            def get_request_params(record_aging_event):
+                # type: (str) -> Tuple[List[str], Union[List[str], None], Optional[str], Optional[str]]
+                known_events_map = get_known_aging_data(record_aging_event)
+                filter_recs = [uid for uid in rec_ids if uid not in known_events_map]
+                types_by_aging_event = dict(
+                    created         = None,
+                    last_modified   = ['record_update'],
+                    last_rotation   = ['record_rotation_scheduled_ok', 'record_rotation_on_demand_ok']
+                )
+                filter_types = types_by_aging_event.get(record_aging_event)
+                order, aggregate = ('asc', 'first_created') if record_aging_event == 'created' \
+                    else ('desc', 'last_created')
+                return filter_recs, filter_types, order, aggregate
+
+            def fetch_events(requests):
+                return list(
+                    itertools.chain.from_iterable(
+                        [rs.get('audit_event_overview_report_rows', []) for rs in api.execute_batch(params, requests)]
+                    )
+                )
+
+            def get_aging_events(aging_prop):
+                req_params = get_request_params(aging_prop)
+                requests = get_requests(*req_params)
+                return fetch_events(requests)
 
             def get_known_aging_data(event_type):
                 return {r: events.get(event_type) for r, events in stored_aging_data.items() if events.get(event_type) or 0 >= max_stored_age_ts}
 
-            def get_created_dts():
-                known_rec_created_lookup = get_known_aging_data('created')
-                for rec_id, dt in known_rec_created_lookup.items():
-                    aging_data[rec_id]['created'] = dt
-                r_filter = [uid for uid in rec_ids if uid not in known_rec_created_lookup]
-                event_data = get_events(r_filter, None, 'asc', 'first_created')
-                record_created_lookup = {event.get('record_uid'): event.get('first_created') for event in event_data}
-                for rec, created in record_created_lookup.items():
-                    aging_data[rec]['created'] = format_datetime(created)
+            def get_aging_event_dts(event_type):
+                events = get_aging_events(event_type)
+                aggregate = 'first_created' if event_type == 'created' else 'last_created'
+                record_timestamps = {event.get('record_uid', ''): event.get(aggregate) for event in events}
+                return {rec: format_datetime(ts) for rec, ts in record_timestamps.items()}
 
-            def get_last_modified_dts():
-                known_rec_last_modified_lookup = get_known_aging_data('last_modified')
-                for rec_id, dt in known_rec_last_modified_lookup.items():
-                    aging_data[rec_id]['last_modified'] = dt
-                r_filter = [uid for uid in rec_ids if uid not in known_rec_last_modified_lookup]
-                event_data = get_events(r_filter, ['record_update'])
-                dt_lookup = {event.get('record_uid'): event.get('last_created') for event in event_data}
-                for rec, dt in dt_lookup.items():
-                    aging_data[rec]['last_modified'] = format_datetime(dt)
-                for rec, events in aging_data.items():
-                    events['last_modified'] = events.get('last_modified') or events.get('created')
+            aging_stats = ['created', 'last_modified', 'last_rotation']
+            record_events_by_stat = {stat: get_aging_event_dts(stat) for stat in aging_stats}
+            for stat, record_event_dts in record_events_by_stat.items():
+                for record, dt in record_event_dts.items():
+                    aging_data.get(record, {}).update({stat: dt})
+                    stat == 'created' and aging_data.get(record, {}).setdefault('last_modified', dt)
 
-            def get_last_rotation_dts():
-                known_rec_last_rotation_lookup = get_known_aging_data('last_rotation')
-                for rec_id, dt in known_rec_last_rotation_lookup.items():
-                    aging_data[rec_id]['last_rotation'] = dt
-                r_filter = [uid for uid in rec_ids if uid not in known_rec_last_rotation_lookup]
-                event_data = get_events(r_filter, ['record_rotation_scheduled_ok', 'record_rotation_on_demand_ok'])
-                dt_lookup = {event.get('record_uid'): event.get('last_created') for event in event_data}
-                for rec, dt in dt_lookup.items():
-                    aging_data[rec]['last_rotation'] = format_datetime(dt)
-
-            get_created_dts()
-            get_last_modified_dts()
-            get_last_rotation_dts()
             save_aging_data(aging_data)
             return aging_data
 
@@ -551,6 +560,30 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
                         row.append(value)
                     report_data.append(row)
 
+        def get_records_accessed(emails, limit_to_vault=False):
+            # type: (List[str], Optional[bool]) -> Dict[str, Dict[str, List[str]]]
+            get_rec_filter = lambda e: list(sox_data.get_vault_records(e).keys()) if limit_to_vault else None
+            records_accessed_by_user = {e: dict() for e in emails}
+            filters_by_user = {e: dict(filter_recs=get_rec_filter(e)) for e in emails}
+            should_query = lambda rq_filter: rq_filter and (rq_filter.get('filter_recs') or not limit_to_vault)
+            # Make requests in batches, walking backwards in time (w/ query filters) for all users in parallel (1 user per sub-request)
+            while True:
+                users_to_query = [user for user, user_filter in filters_by_user.items() if should_query(user_filter)]
+                if not users_to_query:
+                    break
+                requests = [get_records_accessed_rq(email, **filters_by_user.get(email)) for email in users_to_query]
+                responses = api.execute_batch(params, requests)
+                responses_by_user = zip(users_to_query, responses)
+                for user, response in responses_by_user:
+                    access_events = response.get('audit_event_overview_report_rows', [])
+                    records_accessed = records_accessed_by_user.get(user, {})
+                    records_accessed_new, filters = process_access_events(access_events, filter_recs=filters_by_user.get(user, {}).get('filter_recs'))
+                    for rec_uid, event in records_accessed_new.items():
+                        records_accessed.setdefault(rec_uid, event)
+                    records_accessed_by_user.update({user: records_accessed})
+                    filters_by_user.update({user: filters})
+            return records_accessed_by_user
+
         from keepercommander.sox.storage_types import StorageRecordAging
         from keepercommander.commands.aram import API_EVENT_SUMMARY_ROW_LIMIT
         from keepercommander.commands.enterprise import EnterpriseInfoCommand
@@ -559,8 +592,8 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
         user_lookup = {user.get('enterprise_user_id'): user.get('username') for user in params.enterprise.get('users')}
         user_access_lookup = dict()
         aging = kwargs.get('aging')
-        users = kwargs.get('user')
-        managed_users = json.loads(EnterpriseInfoCommand().execute(params, users=True, quiet=True, format='json'))
+        users = kwargs.get('email') or ['@all']
+        managed_users = json.loads( EnterpriseInfoCommand().execute(params, users=True, quiet=True, format='json'))
         usernames = [user_lookup.get(user_id) for user_id in sox_data.get_users()] if '@all' in users \
             else [user_lookup.get(int(ref)) if ref.isdigit() else ref for ref in users]
         usernames = [u for u in usernames if u and u in [mu.get('email') for mu in managed_users]]
@@ -577,12 +610,8 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
         aging_columns = ['created', 'last_modified', 'last_rotation'] if aging else []
         self.report_headers = default_columns + aging_columns
 
-        for name in usernames:
-            vault_records = sox_data.get_vault_records(name)
-            filter_by_recs = None if report_type == report_type_default else {r for r in vault_records}
-            user_access_events = get_records_accessed(name, filter_by_recs)
-            user_access_lookup.update(compile_user_report(name, user_access_events))
-
+        record_access_events = get_records_accessed(usernames, report_type != report_type_default)
+        user_access_lookup = {user: compile_user_report(user, access_events) for user, access_events in record_access_events.items()}
         record_ids = {r for recs in user_access_lookup.values() for r in recs} if aging else {}
         compile_report_data(record_ids)
         return report_data

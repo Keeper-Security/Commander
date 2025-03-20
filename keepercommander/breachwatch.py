@@ -9,7 +9,6 @@
 # Contact: ops@keepersecurity.com
 #
 import base64
-import json
 import logging
 from urllib.parse import urlparse, urlunparse
 from typing import Iterator, Tuple, Optional, List, Callable, Dict, Iterable, Union
@@ -20,6 +19,7 @@ from . import api, crypto, utils, rest_api, vault
 from .proto import breachwatch_pb2, client_pb2, APIRequest_pb2, enterprise_pb2
 from .error import KeeperApiError, CommandError
 from .params import KeeperParams
+from .security_audit import needs_security_audit, update_security_audit_data
 from .vault import KeeperRecord
 
 
@@ -188,72 +188,11 @@ class BreachWatch(object):
         return bw_res
 
     @staticmethod
-    def update_security_data(params, record, bw_result=None, force_update=False):
-        # type: (KeeperParams, KeeperRecord, Optional[int], Optional[bool]) -> None
-        def calculate_security_data():  # type: () -> APIRequest_pb2.SecurityData
-            def prepare_security_data():
-                strength = utils.password_score(record_pw)
-                result = {'strength': strength}
-                if bw_result is not None:
-                    result['bw_result'] = bw_result
-                elif bw_enabled:
-                    logging.error(f'No BreachWatch status for record {record.record_uid}')
-
-                url = BreachWatch.extract_url(record)
-                parse_results = urlparse(url)
-                domain = parse_results.hostname or parse_results.path
-                if domain:
-                    # truncate domain string if needed to avoid reaching RSA encryption data size limitation
-                    result['domain'] = domain[:200]
-                return result
-
-            sec_data = APIRequest_pb2.SecurityData()
-            sec_data.uid = utils.base64_url_decode(record.record_uid)
-            if record_pw:
-                rec_sd = prepare_security_data()
-                data = json.dumps(rec_sd).encode('utf-8')
-                if params.forbid_rsa:
-                    sec_data.data = crypto.encrypt_ec(data, params.enterprise_ec_key)
-                else:
-                    sec_data.data = crypto.encrypt_rsa(data, params.enterprise_rsa_key)
-
-            return sec_data
-
-        def skip_update():
-            # Allow for enterprise users only
-            if not params.enterprise_ec_key:
-                return True
-
-            if force_update:
-                return False
-
-            security_data = params.breach_watch_security_data.get(record_uid, {}) if params.breach_watch_security_data \
-                else {}
-            bw_data = params.breach_watch_records.get(record_uid, {}) if params.breach_watch_records \
-                else {}
-
-            # Ignore records with no password and no security data
-            if not record_pw and not security_data:
-                return True
-
-            # Check if security data is already up-to-date
-            sd_revision = security_data.get('revision', 0)
-            return (sd_revision >= bw_data.get('revision', 0)) if bw_enabled else (sd_revision >= record.revision)
-
-        if not record:
+    def update_security_data(params, record, force_update=False):
+        # type: (KeeperParams, KeeperRecord, Optional[bool]) -> None
+        if not force_update and not needs_security_audit(params, record):
             return
-
-        record_uid = record.record_uid
-        record_pw = BreachWatch.extract_password(record)
-        bw_enabled = bool(params.breach_watch)
-        if skip_update():
-            return
-
-        update_rq = APIRequest_pb2.SecurityDataRequest()
-        rec_sec_data = calculate_security_data()
-        update_rq.recordSecurityData.append(rec_sec_data)
-        update_rq.encryptionType = enterprise_pb2.KT_ENCRYPTED_BY_PUBLIC_KEY_ECC if params.forbid_rsa else enterprise_pb2.KT_ENCRYPTED_BY_PUBLIC_KEY
-        api.communicate_rest(params, update_rq, 'enterprise/update_security_data')
+        update_security_audit_data(params, [record])
 
     @staticmethod
     def save_reused_pw_count(params):
@@ -422,8 +361,7 @@ class BreachWatch(object):
         if not isinstance(record, (vault.PasswordRecord, vault.TypedRecord)):
             return
 
-        bw_res = bw_obj.scan_and_store_record_status(params, record, force_update) if bw_obj else None
-        BreachWatch.update_security_data(params, record, force_update=force_update, bw_result=bw_res)
+        BreachWatch.update_security_data(params, record, force_update=force_update)
         if set_reused_pws:
             BreachWatch.save_reused_pw_count(params)
         api.sync_down(params)

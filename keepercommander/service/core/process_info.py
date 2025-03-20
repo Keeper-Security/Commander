@@ -12,10 +12,10 @@
 import os
 from dataclasses import dataclass
 from typing import Optional
-from pathlib import Path
 from dotenv import load_dotenv, set_key
 from ..decorators.logging import logger
 from .terminal_handler import TerminalHandler
+from keepercommander import utils
 
 @dataclass
 class ProcessInfo:
@@ -23,7 +23,7 @@ class ProcessInfo:
     terminal: Optional[str]
     is_running: bool
     
-    _env_file = Path(__file__).parent / ".service.env"
+    _env_file = utils.get_default_path() / ".service.env"
     
     @classmethod
     def _str_to_bool(cls, value: str) -> bool:

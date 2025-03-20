@@ -271,13 +271,16 @@ class UserAclRotationSettings(BaseModel):
     # Base64 JSON schedule
     schedule: Optional[str] = ""
 
-    # Base64 JSON for complexity
+    # Base64 JSON, encrypted
     pwd_complexity: Optional[str] = ""
 
     disabled: bool = False
 
     # If true, do not rotate the username/password on remote system, if it exists.
     noop: bool = False
+
+    # A list of SaaS Record configuration records.
+    saas_record_uid_list: List[str] = []
 
     def set_pwd_complexity(self, complexity: Union[dict, str, bytes], record_key_bytes: bytes):
         if isinstance(complexity, dict) is True:

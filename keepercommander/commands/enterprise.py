@@ -1310,8 +1310,8 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         'node_id': node_id
                     }
                     request_batch.append(rq)
-            elif parent_id or kwargs.get('name'):
-
+            elif parent_id or kwargs.get('displayname'):
+                display_name = kwargs.get('displayname')
                 def is_in_chain(node_id, parent_id):
                     if node_id == parent_id:
                         return True
@@ -1320,15 +1320,15 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         return False
                     return is_in_chain(nn['parent_id'], parent_id)
 
-                if kwargs.get('name') and len(matched_nodes) > 1:
-                    logging.warning('Cannot assign the same name to % nodes', len(matched_nodes) > 1)
-                    kwargs['name'] = None
-                if not parent_id or not kwargs.get('name'):
+                if display_name and len(matched_nodes) > 1:
+                    logging.warning('Cannot assign the same name to % nodes', len(matched_nodes))
+                    display_name = None
+                if not parent_id or not display_name:
                     for node in matched_nodes:
                         encrypted_data = node['encrypted_data']
-                        if kwargs.get('name'):
+                        if display_name:
                             dt = node['data']
-                            dt['displayname'] = kwargs.get('name')
+                            dt['displayname'] = display_name
                             data = json.dumps(dt)
                             encrypted_data = utils.base64_url_encode(
                                 crypto.encrypt_aes_v1(data.encode('utf-8'), params.enterprise['unencrypted_tree_key']))

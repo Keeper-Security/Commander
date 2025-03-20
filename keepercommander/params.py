@@ -115,6 +115,7 @@ class KeeperParams:
         self.non_shared_data_cache = {}
         self.shared_folder_cache = {}
         self.team_cache = {}
+        self.share_object_cache = {}
         self.record_link_cache = {}
         self.record_rotation_cache = {}
         self.record_owner_cache = {}   # type: Dict[str, RecordOwner]
@@ -154,6 +155,7 @@ class KeeperParams:
         self.breach_watch = None
         self.breach_watch_records = {}
         self.breach_watch_security_data = {}
+        self.security_score_data = {}
         self.sso_login_info = None
         self.__proxy = None
         self.ssh_agent = None
@@ -189,6 +191,7 @@ class KeeperParams:
         self.non_shared_data_cache.clear()
         self.shared_folder_cache.clear()
         self.team_cache.clear()
+        self.share_object_cache.clear()
         self.record_link_cache.clear()
         self.record_rotation_cache.clear()
         self.record_owner_cache.clear()
@@ -221,6 +224,7 @@ class KeeperParams:
         self.breach_watch = None
         self.breach_watch_records = {}
         self.breach_watch_security_data = {}
+        self.security_score_data.clear()
         self.sso_login_info = None
         self.ws = None
         if self.ssh_agent:

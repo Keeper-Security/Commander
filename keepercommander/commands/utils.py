@@ -13,6 +13,7 @@
 import argparse
 import datetime
 import getpass
+import itertools
 import json
 import logging
 import os
@@ -21,13 +22,13 @@ import re
 import sys
 import urllib.parse
 from datetime import timedelta
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Set
 
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from google.protobuf.json_format import MessageToDict
 
 from keepercommander.commands.breachwatch import BreachWatchScanCommand
-from . import aliases, commands, enterprise_commands, msp_commands, msp
+from . import aliases, commands, enterprise_commands, msp_commands, msp, base
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, GroupCommand, as_boolean
 from .helpers.record import get_record_uids as get_ruids
 from .helpers.timeout import (
@@ -36,13 +37,14 @@ from .helpers.timeout import (
 from .helpers.whoami import get_hostname, get_environment, get_data_center
 from .ksm import KSMCommand, ksm_parser
 from .. import __version__, vault
-from .. import api, rest_api, loginv3, crypto, utils, constants, error
+from .. import api, rest_api, loginv3, crypto, utils, constants, error, vault_extensions
 from ..breachwatch import BreachWatch
 from ..display import bcolors
 from ..error import CommandError
 from ..generator import KeeperPasswordGenerator, DicewarePasswordGenerator, CryptoPassphraseGenerator
-from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
+from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID, RecordOwner
 from ..proto import ssocloud_pb2, enterprise_pb2, APIRequest_pb2, client_pb2
+from ..security_audit import needs_security_audit, update_security_audit_data
 from ..utils import password_score
 from ..vault import KeeperRecord
 from ..versioning import is_binary_app, is_up_to_date_version
@@ -70,6 +72,7 @@ def register_commands(commands):
     commands['generate'] = GenerateCommand()
     commands['reset-password'] = ResetPasswordCommand()
     commands['sync-security-data'] = SyncSecurityDataCommand()
+    commands['blank-records'] = BlankRecordCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -1295,110 +1298,65 @@ class SyncSecurityDataCommand(Command):
         return sync_security_data_parser
 
     def execute(self, params, **kwargs):
-        def get_security_data(record, pw_obj):     # type: (KeeperRecord, Optional[Dict]) -> APIRequest_pb2.SecurityData
-            sd = APIRequest_pb2.SecurityData()
-            password = BreachWatch.extract_password(record)
-            # Send empty security data for this record if password was removed -- this removes the old security data
-            sd_data = None
-            if password:
-                strength = utils.password_score(password)
-                sd_data = {'strength': strength}
-                login_url = BreachWatch.extract_url(record)
-                parse_results = urllib.parse.urlparse(login_url)
-                domain = parse_results.hostname or parse_results.path
-                update_bw_result = bw_enabled and bool(pw_obj)
-                if update_bw_result:
-                    status = pw_obj.get('status')
-                    sd_data['bw_result'] = client_pb2.BWStatus.Value(status) if status else client_pb2.BWStatus.GOOD
-                if domain:
-                    # truncate domain string if needed to avoid reaching RSA encryption data size limitation
-                    sd_data['domain'] = domain[:200]
-            if sd_data:
-                try:
-                    if params.forbid_rsa:
-                        if params.enterprise_ec_key:
-                            sd.data = crypto.encrypt_ec(json.dumps(sd_data).encode('utf-8'), params.enterprise_ec_key)
-                        else:
-                            raise Exception('Enterprise ECC public key is not available')
-                    else:
-                        if params.enterprise_rsa_key:
-                            sd.data = crypto.encrypt_rsa(json.dumps(sd_data).encode('utf-8'), params.enterprise_rsa_key)
-                        else:
-                            raise Exception('Enterprise RSA public key is not available')
-                except Exception as e:
-                    logging.error(f'Error: {e}')
-                    logging.error(f'Enterprise RSA key length = {params.enterprise_rsa_key.key_size}')
-                    return
-            sd.uid = utils.base64_url_decode(record.record_uid)
-            return sd
-
-        def get_record_uids():
-            uids = set()
-            names = kwargs.get('record')
-            if isinstance(names, str):
-                names = [names]
-            if names:
-                if '@all' in names:
-                    return set(params.record_cache.keys())
-                for name in names:
-                    record_uids = get_ruids(params, name)
-                    if not record_uids:
-                        logging.warning(f'Record {name} could not be found (skipping security data update).')
-                    else:
-                        uids.update(get_ruids(params, name))
-            return uids
-
         if not params.enterprise_ec_key:
             msg = 'Command not allowed -- This command is limited to enterprise users only.'
             raise CommandError('sync-security-data', msg)
 
+        def parse_input_records():  # type: () -> Set[str]
+            is_owned = lambda uid: bool(uid and params.record_owner_cache.get(uid, RecordOwner(False, '')).owner)
+            names = kwargs.get('record',[])
+            return set(
+                params.record_cache.keys() if '@all' in names
+                else filter(is_owned, itertools.chain.from_iterable(get_ruids(params, name) for name in names))
+            )
+
         force_update = kwargs.get('force', False)
-        update_limit = 1000
         api.sync_down(params)
-        sd_objs = params.breach_watch_security_data or {}
-        sd_rec_uids = set(sd_objs.keys())
-        pw_recs = list(BreachWatch.get_records(params, lambda r, s: r.record_uid in get_record_uids(), owned=True))
-        pw_rec_uids = {r.record_uid for r, _ in pw_recs}
-        owned_rec_uids = {r for r, ro in params.record_owner_cache.items() if ro.owner}
-        no_pw_rec_uids = owned_rec_uids - pw_rec_uids
-        ex_pw_rec_uids = no_pw_rec_uids & sd_rec_uids
-        ex_pw_recs = [(vault.KeeperRecord.load(params, r), None) for r in ex_pw_rec_uids]
-        to_update = [*pw_recs, *ex_pw_recs]
-        to_update = [(r, p) for r, p in to_update if r is not None]
-
-        bw_enabled = bool(params.breach_watch)
-
-        def has_stale_security_data(record):
-            if not record:
-                return False
-            record_security_data = sd_objs.get(record.record_uid, {})
-            sd_revision = record_security_data.get('revision', 0)
-            if bw_enabled:
-                bw_recs = params.breach_watch_records or {}
-                bw_revision = bw_recs.get(record.record_uid, {}).get('revision', 0)
-                return sd_revision < bw_revision
-            else:
-                return sd_revision < record.revision
-
-        # Limit security-data updates to records modified AFTER its most recent security-data update
-        if not force_update:
-            to_update = [(r, p) for r, p in to_update if has_stale_security_data(r)]
-
-        sds = [get_security_data(r, s) for r, s in to_update] if to_update else []
-        # Remove empty security-data update requests (resulting from failed RSA encryption)
-        sds = [sd for sd in sds if sd]
-        while sds:
-            record_sds = sds[:update_limit]
-            update_rq = APIRequest_pb2.SecurityDataRequest()
-            update_rq.recordSecurityData.extend(record_sds)
-            update_rq.encryptionType = enterprise_pb2.KT_ENCRYPTED_BY_PUBLIC_KEY_ECC if params.forbid_rsa else enterprise_pb2.KT_ENCRYPTED_BY_PUBLIC_KEY
-            api.communicate_rest(params, update_rq, 'enterprise/update_security_data')
-            sds = sds[update_limit:]
-        if to_update:
+        recs = [KeeperRecord.load(params, r) for r in parse_input_records()]
+        recs_to_update = [r for r in recs if force_update or needs_security_audit(params, r)]
+        num_to_update = len(recs_to_update)
+        update_security_audit_data(params, recs_to_update)
+        if num_to_update:
             BreachWatch.save_reused_pw_count(params)
             api.sync_down(params)
         if not kwargs.get('quiet'):
-            if to_update:
-                logging.info(f'Updated security data for [{len(to_update)}] record(s)')
+            if num_to_update:
+                logging.info(f'Updated security data for [{num_to_update}] record(s)')
             elif not kwargs.get('suppress_no_op'):
                 logging.info('No records requiring security-data updates found')
+
+
+class BlankRecordCommand(Command):
+    blank_record_parser = argparse.ArgumentParser(prog='blank-record', parents=[base.report_output_parser],
+                                                  description='returns empy records')
+    def get_parser(self):
+        return BlankRecordCommand.blank_record_parser
+
+    def execute(self, params, **kwargs):
+        headers = ['record_uid', 'record_type', 'record_title']
+        table = []
+        for record in vault_extensions.find_records(params, record_version=(2,3)):
+            if isinstance(record, vault.PasswordRecord):
+                if not record.login and not record.password and not record.link:
+                    table.append([record.record_uid, '', record.title])
+            elif isinstance(record, vault.TypedRecord):
+                all_empty = True
+                for field in record.fields:
+                    if field.type == 'fileRef' and record.record_type != 'file':
+                        continue
+                    if not field.value:
+                        continue
+                    if isinstance(field.value, list):
+                        for value in field.value:
+                            if isinstance(value, str) and not value:
+                                continue
+                            all_empty = False
+                            break
+                    if not all_empty:
+                        break
+                if all_empty:
+                    table.append([record.record_uid, record.record_type, record.title])
+
+        fmt = kwargs.get('format') or 'table'
+        output = kwargs.get('output')
+        return base.dump_report_data(table, headers, fmt=fmt, filename=output)
