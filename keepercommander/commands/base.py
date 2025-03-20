@@ -119,7 +119,7 @@ def register_commands(commands, aliases, command_info):
         service_commands(commands)
         service_command_info(aliases, command_info)
 
-    if sys.version_info.major == 3 and 8 <= sys.version_info.minor < 13:
+    if sys.version_info.major == 3 and 8 <= sys.version_info.minor < 14:
         from . import discoveryrotation
         discoveryrotation.register_commands(commands)
         discoveryrotation.register_command_info(aliases, command_info)
