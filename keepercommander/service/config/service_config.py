@@ -24,12 +24,14 @@ class ServiceConfig:
         self.title = title
         
         self.config = ConfigParser()
+
         config_ini_path = Path(resources.__file__).parent / 'service_config.ini'
         self.config.read(config_ini_path)
         self.messages = self.config['Messages']
         self.validation_messages = self.config['Validation_Messages']
 
         default_path = utils.get_default_path()
+        
         self.format_handler = ConfigFormatHandler(
             config_dir=default_path,
             messages=self.messages,

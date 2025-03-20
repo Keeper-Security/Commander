@@ -678,21 +678,26 @@ class PAMCreateRecordRotationCommand(Command):
                     raise CommandError('', f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated '
                                            f'with any configuration.'
                                            f'{bcolors.OKBLUE}pam rotation edit -rs {target_resource_uid} '
-                                           f'--config CONFIG_UID{bcolors.ENDC}')
-            if not target_resource_uid:
-                # Get the resource configuration from DAG
-                resource_uids = _dag.get_all_owners(target_record.record_uid)
-                if len(resource_uids) > 1:
-                    raise CommandError('', f'{bcolors.FAIL}Record "{target_record.record_uid}" is '
-                                           f'associated with multiple resources so you must supply '
-                                           f'{bcolors.OKBLUE}"--resource/-rs RESOURCE_UID".{bcolors.ENDC}')
-                elif len(resource_uids) == 0:
-                    raise CommandError('',
-                                       f'{bcolors.FAIL}Record "{target_record.record_uid}" is not associated with'
-                                       f' any resource. Please use {bcolors.OKBLUE}"pam rotation user '
-                                       f'{target_record.record_uid} --resource RESOURCE_UID" {bcolors.FAIL}to associate '
-                                       f'it.{bcolors.ENDC}')
-                target_resource_uid = resource_uids[0]
+                                           f'--config CONFIG{bcolors.ENDC}')
+            # Noop and resource cannot be both assigned
+            if noop_rotation:
+                target_resource_uid = target_record.record_uid
+                record_resource_uid = None
+            else:
+                if not target_resource_uid:
+                    # Get the resource configuration from DAG
+                    resource_uids = _dag.get_all_owners(target_record.record_uid)
+                    if len(resource_uids) > 1:
+                        raise CommandError('', f'{bcolors.FAIL}Record "{target_record.record_uid}" is '
+                                            f'associated with multiple resources so you must supply '
+                                            f'{bcolors.OKBLUE}"--resource/-rs RESOURCE".{bcolors.ENDC}')
+                    elif len(resource_uids) == 0:
+                        raise CommandError('',
+                                        f'{bcolors.FAIL}Record "{target_record.record_uid}" is not associated with'
+                                        f' any resource. Please use {bcolors.OKBLUE}"pam rotation user '
+                                        f'{target_record.record_uid} --resource RESOURCE" {bcolors.FAIL}to associate '
+                                        f'it.{bcolors.ENDC}')
+                    target_resource_uid = resource_uids[0]
 
                 if not _dag.resource_belongs_to_config(target_resource_uid):
                     raise CommandError('',
