@@ -13,4 +13,3 @@ Keeper is the leading cybersecurity platform for preventing password-related dat
 
 Learn More at:
 [https://keepersecurity.com](https://keepersecurity.com)
-
