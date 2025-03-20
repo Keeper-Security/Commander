@@ -14,7 +14,7 @@ requests>=2.30.0; python_version>='3.7'
 cryptography>=39.0.1
 protobuf>=3.19.0
 keeper-secrets-manager-core>=16.6.0
-aiortc; python_version>='3.8' and python_version<'3.13'
+aiortc; python_version>='3.8' and python_version<'3.14'
 pydantic>=2.6.4; python_version>='3.8'
 flask; python_version>='3.8' and python_version<'3.13'
 pyngrok; python_version>='3.8' and python_version<'3.13'
