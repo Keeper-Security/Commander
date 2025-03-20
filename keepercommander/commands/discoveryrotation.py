@@ -31,7 +31,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes, bytes_to_base64, base64_to_bytes
 
 from .base import (Command, GroupCommand, user_choice, dump_report_data, report_output_parser, field_to_title,
-                   FolderMixin, register_pam_legacy_commands)
+                   FolderMixin, RecordMixin, register_pam_legacy_commands)
 from .folder import FolderMoveCommand
 from .ksm import KSMCommand
 from .pam import gateway_helper, router_helper
@@ -63,6 +63,7 @@ from ..proto import pam_pb2, router_pb2, record_pb2
 from ..subfolder import find_folders, find_parent_top_folder, \
     try_resolve_path, BaseFolderNode
 from ..vault import TypedField
+from ..discovery_common.record_link import RecordLink
 from .discover.job_start import PAMGatewayActionDiscoverJobStartCommand
 from .discover.job_status import PAMGatewayActionDiscoverJobStatusCommand
 from .discover.job_remove import PAMGatewayActionDiscoverJobRemoveCommand
@@ -78,6 +79,10 @@ from .pam_debug.gateway import PAMDebugGatewayCommand
 from .pam_service.list import PAMActionServiceListCommand
 from .pam_service.add import PAMActionServiceAddCommand
 from .pam_service.remove import PAMActionServiceRemoveCommand
+from .pam_saas.add import PAMActionSaasAddCommand
+from .pam_saas.info import PAMActionSaasInfoCommand
+from .pam_saas.remove import PAMActionSaasRemoveCommand
+from .pam_saas.config import PAMActionSaasConfigCommand
 
 
 def register_commands(commands):
@@ -99,6 +104,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('tunnel', PAMTunnelCommand(), 'Manage Tunnels', 't')
         self.register_command('split', PAMSplitCommand(), 'Split credentials from legacy PAM Machine', 's')
         self.register_command('legacy', PAMLegacyCommand(), 'Switch to legacy PAM commands')
+        self.register_command('connection', PAMConnectionCommand(), 'Manage Connections', 'n')
 
 
 class PAMGatewayCommand(GroupCommand):
@@ -123,6 +129,16 @@ class PAMTunnelCommand(GroupCommand):
         self.register_command('tail', PAMTunnelTailCommand(), 'View Tunnel Log', 't')
         self.register_command('edit', PAMTunnelEditCommand(), 'Edit Tunnel settings', 'e')
         self.default_verb = 'list'
+
+
+class PAMConnectionCommand(GroupCommand):
+
+    def __init__(self):
+        super(PAMConnectionCommand, self).__init__()
+        # self.register_command('start', PAMConnectionStartCommand(), 'Start Connection', 's')
+        # self.register_command('stop', PAMConnectionStopCommand(), 'Stop Connection', 'x')
+        self.register_command('edit', PAMConnectionEditCommand(), 'Edit Connection settings', 'e')
+        self.default_verb = 'edit'
 
 
 class PAMConfigurationsCommand(GroupCommand):
@@ -185,6 +201,20 @@ class PAMActionServiceCommand(GroupCommand):
         self.default_verb = 'list'
 
 
+class PAMActionSaasCommand(GroupCommand):
+
+    def __init__(self):
+        super(PAMActionSaasCommand, self).__init__()
+        self.register_command('info', PAMActionSaasInfoCommand(),
+                              'Information of SaaS service rotation for a PAM User record.', 'i')
+        self.register_command('add', PAMActionSaasAddCommand(),
+                              'Add a SaaS rotation to a PAM User record.', 'a')
+        self.register_command('remove', PAMActionSaasRemoveCommand(),
+                              'Remove a SaaS rotation from a PAM User record', 'r')
+        self.register_command('config', PAMActionSaasConfigCommand(),
+                              'Create a configuration for a SaaS rotation.', 'c')
+
+
 class GatewayActionCommand(GroupCommand):
 
     def __init__(self):
@@ -196,6 +226,8 @@ class GatewayActionCommand(GroupCommand):
         self.register_command('job-cancel', PAMGatewayActionJobCommand(), 'View Job details', 'jc')
         self.register_command('service', PAMActionServiceCommand(),
                               'Manage services and scheduled tasks user mappings.', 's')
+        self.register_command('saas', PAMActionSaasCommand(),
+                              'Manage user SaaS rotations.', 'sa')
         self.register_command('debug', PAMDebugCommand(), 'PAM debug information')
 
         # self.register_command('job-list', DRCmdListJobs(), 'List Running jobs')
@@ -260,14 +292,14 @@ class PAMCreateRecordRotationCommand(Command):
                               help='Used for bulk rotation setup. The folder UID or name that holds records to be '
                                    'configured')
     parser.add_argument('--force', '-f', dest='force', action='store_true', help='Do not ask for confirmation')
-    parser.add_argument('--config', '-c', required=False, dest='config_uid', action='store',
-                        help='UID of the configuration record.')
+    parser.add_argument('--config', '-c', required=False, dest='config', action='store',
+                        help='UID or path of the configuration record.')
     parser.add_argument('--iam-aad-config', '-iac', dest='iam_aad_config_uid', action='store',
                         help='UID of a PAM Configuration. Used for an IAM or Azure AD user in place of --resource.')
-    parser.add_argument('--resource', '-rs', dest='resource_uid', action='store', help='UID of the resource record.')
+    parser.add_argument('--resource', '-rs', dest='resource', action='store', help='UID or path of the resource record.')
     schedule_group = parser.add_mutually_exclusive_group()
     schedule_group.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data',
-                                action='append', help='Json of the scheduler. Example: -sj \'{"type": "WEEKLY", '
+                                action='append', help='JSON of the scheduler. Example: -sj \'{"type": "WEEKLY", '
                                                       '"utcTime": "15:44", "weekday": "SUNDAY", "intervalCount": 1}\'')
     schedule_group.add_argument('--schedulecron', '-sc', required=False, dest='schedule_cron_data',
                                 action='append', help='Cron tab string of the scheduler. Example: to run job daily at '
@@ -279,7 +311,7 @@ class PAMCreateRecordRotationCommand(Command):
     parser.add_argument('--complexity',   '-x',  required=False, dest='pwd_complexity', action='store',
                         help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,5,5')
     parser.add_argument('--admin-user', '-a', required=False, dest='admin', action='store',
-                        help='UID for the PAMUser record to configure the admin credential on the PAM Resource as the Admin when rotating')
+                        help='UID or path for the PAMUser record to configure the admin credential on the PAM Resource as the Admin when rotating')
     state_group = parser.add_mutually_exclusive_group()
     state_group.add_argument('--enable', '-e', dest='enable', action='store_true', help='Enable rotation')
     state_group.add_argument('--disable', '-d', dest='disable', action='store_true', help='Disable rotation')
@@ -369,7 +401,11 @@ class PAMCreateRecordRotationCommand(Command):
 
         pam_configurations = {x.record_uid: x for x in vault_extensions.find_records(params, record_version=6) if isinstance(x, vault.TypedRecord)}
 
-        config_uid = kwargs.get('config_uid')
+        config_uid = kwargs.get('config')
+        cfg_rec = RecordMixin.resolve_single_record(params, kwargs.get('config', None))
+        if cfg_rec and cfg_rec.version == 6 and cfg_rec.record_uid in pam_configurations:
+            config_uid = cfg_rec.record_uid
+
         pam_config = None   # type: Optional[vault.TypedRecord]
         if config_uid:
             if config_uid in pam_configurations:
@@ -411,7 +447,10 @@ class PAMCreateRecordRotationCommand(Command):
             else:
                 pwd_complexity_rule_list = {}
 
-        resource_uid = kwargs.get('resource_uid')
+        resource_uid = kwargs.get('resource')
+        res_rec = RecordMixin.resolve_single_record(params, kwargs.get('resource', None))
+        if res_rec and isinstance(res_rec, vault.TypedRecord):
+            resource_uid = res_rec.record_uid
 
         skipped_header = ['record_uid', 'record_title', 'problem', 'description']
         skipped_records = []
@@ -430,7 +469,7 @@ class PAMCreateRecordRotationCommand(Command):
                     raise CommandError('', f'{bcolors.FAIL}Resource "{target_record.record_uid}" is not associated '
                                            f'with any configuration. '
                                            f'{bcolors.OKBLUE}pam rotation edit -rs {target_record.record_uid} '
-                                           f'--config CONFIG_UID{bcolors.ENDC}')
+                                           f'--config CONFIG{bcolors.ENDC}')
             resource_dag = None
             if not _dag.resource_belongs_to_config(target_record.record_uid):
                 # Change DAG to this new configuration.
@@ -439,6 +478,10 @@ class PAMCreateRecordRotationCommand(Command):
                 _dag.link_resource_to_config(target_record.record_uid)
 
             admin = kwargs.get('admin')
+            adm_rec = RecordMixin.resolve_single_record(params, kwargs.get('admin', None))
+            if adm_rec and isinstance(adm_rec, vault.TypedRecord):
+                admin = adm_rec.record_uid
+
             if admin and target_record.record_type != 'pamRemoteBrowser':
                 _dag.link_user_to_resource(admin, target_record.record_uid, is_admin=True)
 
@@ -620,13 +663,13 @@ class PAMCreateRecordRotationCommand(Command):
                         raise CommandError('', f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated '
                                                f'with any configuration. '
                                                f'{bcolors.OKBLUE}pam rotation edit -rs {target_resource_uid} '
-                                               f'--config CONFIG_UID{bcolors.ENDC}')
+                                               f'--config CONFIG{bcolors.ENDC}')
 
                 if not _dag.check_if_resource_has_admin(target_resource_uid):
                     raise CommandError('', f'PAM Resource "{target_resource_uid}'" does not have "
                                            "admin credentials. Please link an admin credential to this resource. "
                                            f"{bcolors.OKBLUE}pam rotation edit -rs {target_resource_uid} "
-                                           f"--admin-user ADMIN_UID{bcolors.ENDC}")
+                                           f"--admin-user ADMIN{bcolors.ENDC}")
             current_record_rotation = params.record_rotation_cache.get(target_record.record_uid)
 
             if not _dag or not _dag.linking_dag.has_graph:
@@ -636,25 +679,20 @@ class PAMCreateRecordRotationCommand(Command):
                                            f'with any configuration.'
                                            f'{bcolors.OKBLUE}pam rotation edit -rs {target_resource_uid} '
                                            f'--config CONFIG_UID{bcolors.ENDC}')
-            # Noop and resource cannot be both assigned
-            if noop_rotation:
-                target_resource_uid = target_record.record_uid
-                record_resource_uid = None
-            else:
-                if not target_resource_uid:
-                    # Get the resource configuration from DAG
-                    resource_uids = _dag.get_all_owners(target_record.record_uid)
-                    if len(resource_uids) > 1:
-                        raise CommandError('', f'{bcolors.FAIL}Record "{target_record.record_uid}" is '
-                                            f'associated with multiple resources so you must supply '
-                                            f'{bcolors.OKBLUE}"--resource/-rs RESOURCE_UID".{bcolors.ENDC}')
-                    elif len(resource_uids) == 0:
-                        raise CommandError('',
-                                        f'{bcolors.FAIL}Record "{target_record.record_uid}" is not associated with'
-                                        f' any resource. Please use {bcolors.OKBLUE}"pam rotation user '
-                                        f'{target_record.record_uid} --resource RESOURCE_UID" {bcolors.FAIL}to associate '
-                                        f'it.{bcolors.ENDC}')
-                    target_resource_uid = resource_uids[0]
+            if not target_resource_uid:
+                # Get the resource configuration from DAG
+                resource_uids = _dag.get_all_owners(target_record.record_uid)
+                if len(resource_uids) > 1:
+                    raise CommandError('', f'{bcolors.FAIL}Record "{target_record.record_uid}" is '
+                                           f'associated with multiple resources so you must supply '
+                                           f'{bcolors.OKBLUE}"--resource/-rs RESOURCE_UID".{bcolors.ENDC}')
+                elif len(resource_uids) == 0:
+                    raise CommandError('',
+                                       f'{bcolors.FAIL}Record "{target_record.record_uid}" is not associated with'
+                                       f' any resource. Please use {bcolors.OKBLUE}"pam rotation user '
+                                       f'{target_record.record_uid} --resource RESOURCE_UID" {bcolors.FAIL}to associate '
+                                       f'it.{bcolors.ENDC}')
+                target_resource_uid = resource_uids[0]
 
                 if not _dag.resource_belongs_to_config(target_resource_uid):
                     raise CommandError('',
@@ -1406,19 +1444,20 @@ class PamConfigurationEditMixin(RecordEditMixin):
 
 
 class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
+    choices = ['on', 'off', 'default']
     parser = argparse.ArgumentParser(prog='pam config new', parents=[common_parser])
-    parser.add_argument('--enable-connections', '-ec', dest='enable_connections', action='store_true',
-                        help='Enable connections')
-    parser.add_argument('--enable-tunneling', '-et', dest='enable_tunneling',
-                        action='store_true', help='Enable tunneling')
-    parser.add_argument('--enable-rotation', '-er', dest='enable_rotation', action='store_true',
-                        help='Enable rotation')
-    parser.add_argument('--enable-remote-browser-isolation', '-erbi', dest='enable_remotebrowserisolation',
-                        action='store_true', help='Enable remote browser isolation')
-    parser.add_argument('--enable-connections-recording', '-ecr', required=False, dest='recordingenabled',
-                        action='store_true', help='Enable recording connections for the resource')
-    parser.add_argument('--enable-typescripts-recording', '-etcr', required=False, dest='typescriptrecordingenabled',
-                        action='store_true', help='Enable TypeScript recording for the resource')
+    parser.add_argument('--connections', '-c', dest='connections', choices=choices,
+                        help='Set connections permissions')
+    parser.add_argument('--tunneling', '-u', dest='tunneling', choices=choices,
+                        help='Set tunneling permissions')
+    parser.add_argument('--rotation', '-r', dest='rotation', choices=choices,
+                        help='Set rotation permissions')
+    parser.add_argument('--remote-browser-isolation', '-rbi', dest='remotebrowserisolation', choices=choices,
+                        help='Set remote browser isolation permissions')
+    parser.add_argument('--connections-recording', '-cr', dest='recording', choices=choices,
+                        help='Set recording connections permissions for the resource')
+    parser.add_argument('--typescript-recording', '-tr', dest='typescriptrecording', choices=choices,
+                        help='Set TypeScript recording permissions for the resource')
 
     def __init__(self):
         super().__init__()
@@ -1454,6 +1493,15 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
         if rt_fields:
             RecordEditMixin.adjust_typed_record_fields(record, rt_fields)
 
+        # resolve folder path to UID
+        sf_name = kwargs.get('shared_folder_uid', '')
+        if sf_name:
+            fpath = try_resolve_path(params, sf_name)
+            # [-1] == '' -> existing folder, 'path/' -> non-existing folder
+            if fpath and len(fpath) >= 2 and fpath[-1] == '':
+                sfuid = fpath[-2].uid
+                if sfuid: kwargs['shared_folder_uid'] = sfuid
+
         self.parse_properties(params, record, **kwargs)
 
         field = record.get_typed_field('pamResources')
@@ -1479,12 +1527,12 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
         tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid=record.record_uid,
                             is_config=True)
         tmp_dag.edit_tunneling_config(
-            bool(kwargs.get('enable_connections')),
-            bool(kwargs.get('enable_tunneling')),
-            bool(kwargs.get('enable_rotation')),
-            bool(kwargs.get('recordingenabled')),
-            bool(kwargs.get('typescriptrecordingenabled')),
-            bool(kwargs.get('enable_remotebrowserisolation'))
+            kwargs.get('connections'),
+            kwargs.get('tunneling'),
+            kwargs.get('rotation'),
+            kwargs.get('recording'),
+            kwargs.get('typescriptrecording'),
+            kwargs.get('remotebrowserisolation')
         )
         tmp_dag.print_tunneling_config(record.record_uid, None)
 
@@ -1509,32 +1557,23 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
 
 
 class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
+    choices = ['on', 'off', 'default']
     parser = argparse.ArgumentParser(prog='pam config edit', parents=[common_parser])
     parser.add_argument('uid', type=str, action='store', help='The Config UID to edit')
     parser.add_argument('--remove-resource-record', '-rrr', dest='remove_records', action='append',
                         help='Resource Record UID to remove')
-    parser.add_argument('--enable-rotation', '-er', required=False, action='store_true',help='Enable rotation')
-    parser.add_argument('--disable-rotation', '-dr', required=False, action='store_true', help='Disable rotation')
-    parser.add_argument('--enable-tunneling', '-et', required=False, dest='enable_tunneling', action='store_true',
-                        help='Disable tunneling')
-    parser.add_argument('--disable-tunneling', '-dt', required=False, dest='disable_tunneling', action='store_true',
-                        help='Disable tunneling')
-    parser.add_argument('--enable-connections', '-ec', required=False, dest='enable_connections', action='store_true',
-                        help='Enable connections')
-    parser.add_argument('--disable-connections', '-dc', required=False, dest='disable_connections', action='store_true',
-                        help='Enable connections')
-    parser.add_argument('--enable-remote-browser-isolation', '-erbi', required=False, dest='enable_remotebrowserisolation', action='store_true',
-                        help='Enable remote browser isolation')
-    parser.add_argument('--disable-remote-browser-isolation', '-drbi', required=False, dest='disable_remotebrowserisolation', action='store_true',
-                        help='Disable remote browser isolation')
-    parser.add_argument('--enable-connections-recording', '-ecr', required=False, dest='enable_connections_recording',
-                        action='store_true', help='Enable connections recording')
-    parser.add_argument('--disable-connections-recording', '-dcr', required=False, dest='disable_connections_recording',
-                        action='store_true', help='Disable connections recording')
-    parser.add_argument('--enable-typescripts-recording', '-etsr', required=False, dest='enable_typescripts_recording',
-                        action='store_true', help='Enable typescripts recording')
-    parser.add_argument('--disable-typescripts-recording', '-dtsr', required=False, dest='disable_typescripts_recording',
-                        action='store_true', help='Disable typescripts recording')
+    parser.add_argument('--connections', '-c', dest='connections', choices=choices,
+                        help='Set connections permissions')
+    parser.add_argument('--tunneling', '-u', dest='tunneling', choices=choices,
+                        help='Set tunneling permissions')
+    parser.add_argument('--rotation', '-r', dest='rotation', choices=choices,
+                        help='Set rotation permissions')
+    parser.add_argument('--remote-browser-isolation', '-rbi', dest='remotebrowserisolation', choices=choices,
+                        help='Set remote browser isolation permissions')
+    parser.add_argument('--connections-recording', '-cr', dest='recording', choices=choices,
+                        help='Set recording connections permissions for the resource')
+    parser.add_argument('--typescript-recording', '-tr', dest='typescriptrecording', choices=choices,
+                        help='Set TypeScript recording permissions for the resource')
 
     def __init__(self):
         super(PAMConfigurationEditCommand, self).__init__()
@@ -1614,30 +1653,16 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
             if shared_folder_uid != orig_shared_folder_uid:
                 FolderMoveCommand().execute(params, src=configuration.record_uid, dst=shared_folder_uid)
 
-        if ((kwargs.get('enable_connections') and kwargs.get('disable_connections')) or
-                (kwargs.get('enable_tunneling') and kwargs.get('disable_tunneling')) or
-                (kwargs.get('enable_rotation') and kwargs.get('disable_rotation')) or
-                (kwargs.get('enable_remotebrowserisolation') and kwargs.get('disable_remotebrowserisolation')) or
-                (kwargs.get('enable_connections_recording') and kwargs.get('disable_connections_recording')) or
-                (kwargs.get('enable_typescripts_recording') and kwargs.get('disable_typescripts_recording'))):
-            raise CommandError('pam-config-edit', 'Cannot enable and disable the same feature at the same time')
-
-        # First check if enabled is true then check if disabled is true. if not then set it to None
-        _connections = True if kwargs.get('enable_connections') \
-            else False if kwargs.get('disable_connections') else None
-        _tunneling = True if kwargs.get('enable_tunneling') \
-            else False if kwargs.get('disable_tunneling') else None
-        _rotation = True if kwargs.get('enable_rotation') \
-            else False if kwargs.get('disable_rotation') else None
-        _rbi = True if kwargs.get('enable_remotebrowserisolation') \
-            else False if kwargs.get('disable_remotebrowserisolation') else None
-        _recording = True if kwargs.get('enable_connections_recording') \
-            else False if kwargs.get('disable_connections_recording') else None
-        _typescript_recording = True if kwargs.get('enable_typescripts_recording') \
-            else False if kwargs.get('disable_typescripts_recording') else None
+        # check if there are any permission changes
+        _connections = kwargs.get('connections', None)
+        _tunneling = kwargs.get('tunneling', None)
+        _rotation = kwargs.get('rotation', None)
+        _rbi = kwargs.get('remotebrowserisolation', None)
+        _recording = kwargs.get('recording', None)
+        _typescript_recording = kwargs.get('typescriptrecording', None)
 
         if (_connections is not None or _tunneling is not None or _rotation is not None or _rbi is not None or
-            _recording is not None or _typescript_recording is not None):
+                _recording is not None or _typescript_recording is not None):
             encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key,
                                 configuration.record_uid, is_config=True)
@@ -2116,9 +2141,22 @@ class PAMGatewayActionRotateCommand(Command):
             resource_uid = tmp_dag.get_resource_uid(record_uid)
             if not resource_uid:
                 # NOOP records don't need resource_uid
-                noop_field = record.get_typed_field('text', 'NOOP')
-                noop = utils.value_to_boolean(noop_field.value[0]) if noop_field and noop_field.value else False
-                if not noop:
+
+                is_noop = False
+                pam_config = vault.KeeperRecord.load(params, config_uid)
+
+                # Check the graph for the noop setting.
+                record_link = RecordLink(record=pam_config, params=params, fail_on_corrupt=False)
+                acl = record_link.get_acl(record_uid, pam_config.record_uid)
+                if acl is not None and acl.rotation_settings is not None:
+                    is_noop = acl.rotation_settings.noop
+
+                # If it was false  in the graph, or did not exist, check the record.
+                if is_noop is False:
+                    noop_field = record.get_typed_field('text', 'NOOP')
+                    is_noop = utils.value_to_boolean(noop_field.value[0]) if noop_field and noop_field.value else False
+
+                if not is_noop:
                     print(f'{bcolors.FAIL}Resource UID not found for record [{record_uid}]. please configure it '
                           f'{bcolors.OKBLUE}"pam rotation user {record_uid} --resource RESOURCE_UID"{bcolors.ENDC}')
                     return
@@ -2539,52 +2577,27 @@ class SocketNotConnectedException(Exception):
 
 class PAMTunnelEditCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel edit')
-    pam_cmd_parser.add_argument('uid', type=str, action='store', help='The Record UID of the PAM '
+    pam_cmd_parser.add_argument('record', type=str, action='store', help='The record path or UID of the PAM '
                                                                       'resource record with network information to use '
                                                                       'for tunneling')
     pam_cmd_parser.add_argument('--configuration', '-c', required=False, dest='config', action='store',
-                                help='The PAM Configuration UID to use for tunneling. '
+                                help='The PAM Configuration UID or path to use for tunneling. '
                                      'Use command `pam config list` to view available PAM Configurations.')
-    # pam_cmd_parser.add_argument('--enable-connections', '-ec', required=False, dest='enable_connections', action='store_true',
-    #                             help='Enable connections on the record')
     pam_cmd_parser.add_argument('--enable-tunneling', '-et', required=False, dest='enable_tunneling', action='store_true',
                                 help='Enable tunneling on the record')
     pam_cmd_parser.add_argument('--tunneling-override-port', '-top', required=False, dest='tunneling_override_port',
                                 action='store', help='Port to use for tunneling. If not provided, '
                                                      'the port from the record will be used.')
-    # pam_cmd_parser.add_argument('--connections-override-port', '-cop', required=False, dest='connections_override_port',
-    #                             action='store', help='Port to use for connections. If not provided, '
-    #                                                  'the port from the record will be used.')
-    # pam_cmd_parser.add_argument('--disable-connections', '-dc', required=False, dest='disable_connections',
-    #                             action='store_true', help='Disable connections on the record')
     pam_cmd_parser.add_argument('--disable-tunneling', '-dt', required=False, dest='disable_tunneling',
                                 action='store_true', help='Disable tunneling on the record')
     pam_cmd_parser.add_argument('--remove-tunneling-override-port', '-rtop', required=False,
                                 dest='remove_tunneling_override_port', action='store_true',
                                 help='Remove tunneling override port')
-    # pam_cmd_parser.add_argument('--remove-connections-override-port', '-rcop', required=False,
-    #                             dest='remove_tunneling_override_port', action='store_true',
-    #                             help='Remove connections override port')
-    # pam_cmd_parser.add_argument('--enable-connections-recording', '-ecr', required=False,
-    #                             dest='enable_connections_recording', action='store_true',
-    #                             help='Enable connections recording')
-    # pam_cmd_parser.add_argument('--disable-connections-recording', '-dcr', required=False,
-    #                             dest='disable_connections_recording', action='store_true',
-    #                             help='Disable connections recording')
-    # pam_cmd_parser.add_argument('--enable-typescripts-recording', '-etsr', required=False,
-    #                             dest='enable_typescripts_recording', action='store_true',
-    #                             help='Enable typescripts recording')
-    # pam_cmd_parser.add_argument('--disable-typescripts-recording', '-dtsr', required=False,
-    #                             dest='disable_typescripts_recording', action='store_true',
-    #                             help='Disable typescripts recording')
 
     def get_parser(self):
         return PAMTunnelEditCommand.pam_cmd_parser
 
     def execute(self, params, **kwargs):
-        record_uid = kwargs.get('uid')
-        config_uid = kwargs.get('config')
-        # connection_override_port = kwargs.get('connections_override_port')
         tunneling_override_port = kwargs.get('tunneling_override_port')
 
         if ((kwargs.get('enable_tunneling') and kwargs.get('disable_tunneling')) or
@@ -2592,44 +2605,33 @@ class PAMTunnelEditCommand(Command):
                 (kwargs.get('tunneling-override-port') and kwargs.get('remove_tunneling_override_port'))):
             raise CommandError('pam-config-edit', 'Cannot enable and disable the same feature at the same time')
 
-        # if ((kwargs.get('enable_connections') and kwargs.get('disable_connections')) or
-        #         (kwargs.get('enable_tunneling') and kwargs.get('disable_tunneling')) or
-        #         (kwargs.get('enable_rotation') and kwargs.get('disable_rotation')) or
-        #         (kwargs.get('enable_connections_recording') and kwargs.get('disable_connections_recording')) or
-        #         (kwargs.get('enable_typescripts_recording') and kwargs.get('disable_typescripts_recording')) or
-        #         (kwargs.get('tunneling-override-port') and kwargs.get('remove_tunneling_override_port')) or
-        #         (kwargs.get('connections-override-port') and kwargs.get('remove_connections_override_port'))):
-        #     raise CommandError('pam-config-edit', 'Cannot enable and disable the same feature at the same time')
-
         # First check if enabled is true then check if disabled is true. if not then set it to None
-        # _connections = True if kwargs.get('enable_connections') else False if kwargs.get('disable_connections') else None
         _tunneling = True if kwargs.get('enable_tunneling') else False if  kwargs.get('disable_tunneling') else None
-        # _rotation = True if kwargs.get('enable_rotation') else False if  kwargs.get('disable_rotation') else None
-        # _recording = True if kwargs.get('enable_connections_recording') else False if  kwargs.get('disable_connections_recording') else None
-        # _typescript_recording = (True if kwargs.get('enable_typescripts_recording') else False if
-        #                          kwargs.get('disable_typescripts_recording') else None)
         _remove_tunneling_override_port = kwargs.get('remove_tunneling_override_port')
-        # _remove_connections_override_port = kwargs.get('remove_connections_override_port')
-
-        if not record_uid:
-            raise CommandError('tunnel edit', '"record UID" argument is required')
 
         if tunneling_override_port:
             try:
                 tunneling_override_port = int(tunneling_override_port)
             except ValueError:
                 raise CommandError('tunnel edit', 'tunneling-override-port must be an integer')
-        # if connection_override_port:
-        #     try:
-        #         connection_override_port = int(connection_override_port)
-        #     except ValueError:
-        #         raise CommandError('tunnel edit', 'connection-override-port must be an integer')
 
-        record = vault.KeeperRecord.load(params, record_uid)
-
+        record_name = kwargs.get('record')
+        if not record_name:
+            raise CommandError('pam tunnel edit', '"record" parameter is required.')
+        record = RecordMixin.resolve_single_record(params, record_name)
+        if not record:
+            raise CommandError('pam tunnel edit', f'{bcolors.FAIL}Record \"{record_name}\" not found.{bcolors.ENDC}')
         if not isinstance(record, vault.TypedRecord):
-            raise CommandError('', f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
+            raise CommandError('pam tunnel edit', f'Record \"{record_name}\" can not be edited.')
 
+        # config parameter is optional and may be (auto)resolved from PAM record
+        config_name = kwargs.get('config', None)
+        cfg_rec = RecordMixin.resolve_single_record(params, config_name)
+        if not cfg_rec and record.version == 6:
+            cfg_rec = record  # trying to edit PAM Config itself
+        config_uid = cfg_rec.record_uid if cfg_rec else None
+
+        record_uid = record.record_uid
         record_type = record.record_type
         if record_type not in ("pamMachine pamDatabase pamDirectory pamNetworkConfiguration pamAwsConfiguration "
                                "pamRemoteBrowser pamAzureConfiguration").split():
@@ -2689,17 +2691,9 @@ class PAMTunnelEditCommand(Command):
             if not tmp_dag.check_tunneling_enabled_config(enable_tunneling=_tunneling):
                 tmp_dag.print_tunneling_config(config_uid, None)
                 command = f"{bcolors.OKBLUE}'pam tunnel edit {config_uid}"
-                # if _connections and not tmp_dag.check_tunneling_enabled_config(enable_connections=_connections):
-                #     command += f" --enable-connections" if _connections else ""
                 if _tunneling and not tmp_dag.check_tunneling_enabled_config(
                         enable_tunneling=_tunneling):
                     command += f" --enable-tunneling" if _tunneling else ""
-                # if _recording and not tmp_dag.check_tunneling_enabled_config(
-                #         enable_session_recording=_recording):
-                #     command += f" --enable-connections-recording" if _recording else ""
-                # if _typescript_recording and not tmp_dag.check_tunneling_enabled_config(
-                #         enable_typescript_recording=_typescript_recording):
-                #     command += f" --enable-typescripts-recording" if _typescript_recording else ""
 
                 print(f"{bcolors.FAIL}The settings are denied by PAM Configuration: {config_uid}. "
                       f"Please enable settings for the configuration by running\n"
@@ -2711,11 +2705,9 @@ class PAMTunnelEditCommand(Command):
 
             pam_settings = record.get_typed_field('pamSettings')
             if not pam_settings:
-                pre_settings = {}
+                pre_settings = {"connection": {}, "portForward": {}}
                 if _tunneling and tunneling_override_port:
                     pre_settings["portForward"]["port"] = tunneling_override_port
-                # if _connections and connection_override_port:
-                #     pre_settings["connection"]["port"] = connection_override_port
                 if pre_settings:
                     pam_settings = vault.TypedField.new_field('pamSettings', pre_settings, "")
                     # TODO follow template
@@ -2726,9 +2718,6 @@ class PAMTunnelEditCommand(Command):
                     tmp_dag.link_resource_to_config(record_uid)
                 if not pam_settings.value:
                     pam_settings.value.append({"connection": {}, "portForward": {}})
-                # if _connections and connection_override_port:
-                #     pam_settings.value[0]['connection']['port'] = connection_override_port
-                #     dirty = True
                 if _tunneling and tunneling_override_port:
                     pam_settings.value[0]['portForward']['port'] = tunneling_override_port
                     dirty = True
@@ -2736,9 +2725,6 @@ class PAMTunnelEditCommand(Command):
                 if _remove_tunneling_override_port and pam_settings.value[0]['portForward'].get('port'):
                     pam_settings.value[0]['portForward'].pop('port')
                     dirty = True
-                # if _remove_connections_override_port and pam_settings.value[0]['connection'].get('port'):
-                #     pam_settings.value[0]['connection'].pop('port')
-                #     dirty = True
             if not tmp_dag.is_tunneling_config_set_up(record_uid):
                 print(f"{bcolors.FAIL}No PAM Configuration UID set. This must be set for tunneling to work. "
                       f"This can be done by running "
@@ -2750,12 +2736,6 @@ class PAMTunnelEditCommand(Command):
             if record.record_type == "pamRemoteBrowser":
                 allowed_settings_name = "pamRemoteBrowserSettings"
 
-            # if _recording is not None and tmp_dag.check_if_resource_allowed(record_uid, "sessionRecording") != _recording:
-            #     dirty = True
-            # if _typescript_recording is not None and tmp_dag.check_if_resource_allowed(record_uid, "typescriptRecording") != _typescript_recording:
-            #     dirty = True
-            # if _connections is not None and tmp_dag.check_if_resource_allowed(record_uid, "connections") != _connections:
-            #     dirty = True
             if _tunneling is not None and tmp_dag.check_if_resource_allowed(record_uid, "portForwards") != _tunneling:
                 dirty = True
 
@@ -3179,6 +3159,212 @@ class PAMTunnelStartCommand(Command):
                     gateway_uid = value.get('controllerUid', '') or ''
 
         return gateway_uid
+
+
+class PAMConnectionEditCommand(Command):
+    choices = ['on', 'off', 'default']
+    protocols = ['', 'http', 'kubernetes', 'mysql', 'postgresql', 'rdp', 'sql-server', 'ssh', 'telnet', 'vnc']
+    parser = argparse.ArgumentParser(prog='pam connection edit')
+    parser.add_argument('record', type=str, action='store', help='The record UID or path of the PAM '
+                        'resource record with network information to use for connections')
+    parser.add_argument('--configuration', '-c', required=False, dest='config', action='store',
+                        help='The PAM Configuration UID or path to use for connections. '
+                        'Use command `pam config list` to view available PAM Configurations.')
+    parser.add_argument('--admin-user', '-a', required=False, dest='admin', action='store',
+					help='The record path or UID of the PAM User record to configure the admin '
+                    'credential on the PAM Resource')
+    parser.add_argument('--protocol', '-p', dest='protocol', choices=protocols,
+                        help='Set connection protocol')
+    parser.add_argument('--connections', '-cn', dest='connections', choices=choices,
+                        help='Set connections permissions')
+    parser.add_argument('--connections-recording', '-cr', dest='recording', choices=choices,
+                        help='Set recording connections permissions for the resource')
+    parser.add_argument('--typescript-recording', '-tr', dest='typescriptrecording', choices=choices,
+                        help='Set TypeScript recording permissions for the resource')
+    parser.add_argument('--connections-override-port', '-cop', required=False, dest='connections_override_port',
+                        action='store', help='Port to use for connections. If not provided, '
+                        'the port from the record will be used.')
+    parser.add_argument('--silent', '-s', required=False, dest='silent', action='store_true',
+					help='Silent mode - don\'t print PAM User, PAM Config etc.')
+
+    def get_parser(self):
+        return PAMConnectionEditCommand.parser
+
+    def execute(self, params, **kwargs):
+        connection_override_port = kwargs.get('connections_override_port', None)
+
+        # Convert on/off/default to True/False/None
+        _connections = TunnelDAG._convert_allowed_setting(kwargs.get('connections', None))
+        _recording = TunnelDAG._convert_allowed_setting(kwargs.get('recording', None))
+        _typescript_recording = TunnelDAG._convert_allowed_setting(kwargs.get('typescriptrecording', None))
+
+        if connection_override_port:
+            try:
+                connection_override_port = int(connection_override_port)
+            except ValueError:
+                raise CommandError('connection edit', '--connections-override-port must be an integer')
+
+        record_name = kwargs.get('record')
+        if not record_name:
+            raise CommandError('pam connection edit', 'Record parameter is required.')
+        record = RecordMixin.resolve_single_record(params, record_name)
+        if not record:
+            raise CommandError('pam connection edit', f'{bcolors.FAIL}Record \"{record_name}\" not found.{bcolors.ENDC}')
+        if not isinstance(record, vault.TypedRecord):
+            raise CommandError('pam connection edit', f'Record \"{record_name}\" can not be edited.')
+
+        # config parameter is optional and may be (auto)resolved from PAM record
+        config_name = kwargs.get('config', None)
+        cfg_rec = RecordMixin.resolve_single_record(params, config_name)
+        if not cfg_rec and record.version == 6:
+            cfg_rec = record  # trying to edit PAM Config itself
+        config_uid = cfg_rec.record_uid if cfg_rec else None
+
+        record_uid = record.record_uid
+        record_type = record.record_type
+        if record_type not in ("pamMachine pamDatabase pamDirectory pamNetworkConfiguration pamAwsConfiguration "
+                               "pamRemoteBrowser pamAzureConfiguration").split():
+            raise CommandError('', f"{bcolors.FAIL}This record's type is not supported for connections. "
+                                   f"Connectins are only supported on pamMachine, pamDatabase, pamDirectory, "
+                                   f"pamRemoteBrowser, pamNetworkConfiguration pamAwsConfiguration, and "
+                                   f"pamAzureConfiguration records{bcolors.ENDC}")
+
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        if record_type in "pamNetworkConfiguration pamAwsConfiguration pamAzureConfiguration".split():
+            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid, is_config=True)
+            tdag.edit_tunneling_config(connections=_connections, session_recording=_recording, typescript_recording=_typescript_recording)
+            if not kwargs.get("silent", False): tdag.print_tunneling_config(record_uid, None)
+        else:
+            traffic_encryption_key = record.get_typed_field('trafficEncryptionSeed')
+            # Generate a 256-bit (32-byte) random seed
+            seed = os.urandom(32)
+            dirty = False
+            if not traffic_encryption_key or not traffic_encryption_key.value:
+                base64_seed = bytes_to_base64(seed)
+                record_seed = vault.TypedField.new_field('trafficEncryptionSeed', base64_seed, "")
+                # if field is present update in-place, if in rec definition add to fields[] else custom[]
+                record_types_with_seed = ("pamDatabase", "pamDirectory", "pamMachine", "pamRemoteBrowser")
+                if traffic_encryption_key:
+                    traffic_encryption_key.value = [base64_seed]
+                elif record.get_record_type() in record_types_with_seed:
+                    record.fields.append(record_seed)  # DU-469
+                else:
+                    record.custom.append(record_seed)
+                dirty = True
+
+            protocol = kwargs.get("protocol", None)
+            pam_settings = record.get_typed_field('pamSettings')
+            if not pam_settings:
+                pre_settings = {"connection": {}, "portForward": {}}
+                if _connections:
+                    if connection_override_port:
+                        pre_settings["connection"]["port"] = connection_override_port
+                    if protocol:
+                        pre_settings["connection"]["protocol"] = protocol
+                elif protocol or connection_override_port:
+                    logging.warning(f'Connection override port and protocol can be set only when connections are enabled '
+                            f'with {bcolors.OKGREEN}--connections=on{bcolors.ENDC} option')
+                if pre_settings:
+                    pam_settings = vault.TypedField.new_field('pamSettings', pre_settings, "")
+                    # TODO follow template
+                    record.custom.append(pam_settings)
+                    dirty = True
+            else:
+                if not pam_settings.value:
+                    pam_settings.value.append({"connection": {}, "portForward": {}})
+                if _connections:
+                    if connection_override_port:
+                        pam_settings.value[0]["connection"]["port"] = connection_override_port
+                    elif connection_override_port is not None:  # empty string means remove port override
+                        pam_settings.value[0]["connection"].pop("port", None)
+                    if protocol:
+                        pam_settings.value[0]["connection"]["protocol"] = protocol
+                    elif protocol is not None:  # empty string means remove protocol
+                        pam_settings.value[0]["connection"].pop("protocol", None)
+                    dirty = True
+                elif protocol or connection_override_port:
+                    logging.warning(f'Connection override port and protocol can be set only when connections are enabled '
+                            f'with {bcolors.OKGREEN}--connections=on{bcolors.ENDC} option')
+            if dirty:
+                record_management.update_record(params, record)
+                api.sync_down(params)
+
+                traffic_encryption_key = record.get_typed_field('trafficEncryptionSeed')
+                if not traffic_encryption_key:
+                    raise CommandError('', f"{bcolors.FAIL}Unable to add Seed to record {record_uid}. "
+                                       f"Please make sure you have edit rights to record {record_uid} {bcolors.ENDC}")
+            dirty = False
+
+            existing_config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
+
+            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, config_uid)
+            old_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, existing_config_uid)
+
+            if config_uid and existing_config_uid != config_uid:
+                old_dag.remove_from_dag(record_uid)
+                tdag.link_resource_to_config(record_uid)
+
+            if tdag is None or not tdag.linking_dag.has_graph:
+                raise CommandError('', f"{bcolors.FAIL}No PAM Configuration UID set. "
+                                   f"This must be set or supplied for connections to work. This can be done by adding "
+                                   f"{bcolors.OKBLUE}' --config [ConfigUID] "
+                                   f" {bcolors.FAIL}The ConfigUID can be found by running "
+                                   f"{bcolors.OKBLUE}'pam config list'{bcolors.ENDC}")
+
+            if not tdag.check_tunneling_enabled_config(enable_connections=_connections,
+                                                       enable_session_recording=_recording,
+                                                       enable_typescript_recording=_typescript_recording):
+                if not kwargs.get("silent", False): tdag.print_tunneling_config(config_uid, None)
+                command = f"{bcolors.OKBLUE}'pam connection edit {config_uid}"
+                if _connections and not tdag.check_tunneling_enabled_config(enable_connections=_connections):
+                    command += f" --connections=on" if _connections else ""
+                if _recording and not tdag.check_tunneling_enabled_config(enable_session_recording=_recording):
+                    command += f" --connections-recording=on" if _recording else ""
+                if _typescript_recording and not tdag.check_tunneling_enabled_config(enable_typescript_recording=_typescript_recording):
+                    command += f" --typescript-recording=on" if _typescript_recording else ""
+
+                print(f"{bcolors.FAIL}The settings are denied by PAM Configuration: {config_uid}. "
+                      f"Please enable settings for the configuration by running\n"
+                      f"{command}'{bcolors.ENDC}")
+                return
+
+            if not tdag.is_tunneling_config_set_up(record_uid):
+                tdag.link_resource_to_config(record_uid)
+
+            if not tdag.is_tunneling_config_set_up(record_uid):
+                print(f"{bcolors.FAIL}No PAM Configuration UID set. This must be set for connections to work. "
+                      f"This can be done by running {bcolors.OKBLUE}"
+                      f"'pam connection edit {record_uid} --config [ConfigUID] --enable-connections' "
+                      f"{bcolors.FAIL}The ConfigUID can be found by running {bcolors.OKBLUE}'pam config list'{bcolors.ENDC}")
+                return
+            allowed_settings_name = "allowedSettings"
+            if record.record_type == "pamRemoteBrowser":
+                allowed_settings_name = "pamRemoteBrowserSettings"
+
+            if _connections is not None and tdag.check_if_resource_allowed(record_uid, "connections") != _connections:
+                dirty = True
+            if _recording is not None and tdag.check_if_resource_allowed(record_uid, "sessionRecording") != _recording:
+                dirty = True
+            if _typescript_recording is not None and tdag.check_if_resource_allowed(record_uid, "typescriptRecording") != _typescript_recording:
+                dirty = True
+
+            if dirty:
+                tdag.set_resource_allowed(resource_uid=record_uid,
+                                          allowed_settings_name=allowed_settings_name,
+                                          connections=kwargs.get('connections', None),
+                                          session_recording=kwargs.get('recording', None),
+                                          typescript_recording=kwargs.get('typescriptrecording', None))
+
+            # admin parameter is optional yet if not set connections may fail
+            admin_name = kwargs.get('admin')
+            adm_rec = RecordMixin.resolve_single_record(params, admin_name)
+            admin_uid = adm_rec.record_uid if adm_rec else None
+            if admin_uid and record_type in ("pamDatabase", "pamDirectory", "pamMachine"):
+                tdag.link_user_to_resource(admin_uid, record_uid, is_admin=True, belongs_to=True)
+                # tdag.link_user_to_config(admin_uid)  # is_iam_user=True
+
+            # Print out PAM Settings
+            if not kwargs.get("silent", False): tdag.print_tunneling_config(record_uid, record.get_typed_field('pamSettings'), config_uid)
 
 
 class PAMSplitCommand(Command):

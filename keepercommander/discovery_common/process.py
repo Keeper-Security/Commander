@@ -290,7 +290,12 @@ class Process:
         if parent_content.object_type_value == "providers":
             is_iam_user = True
 
-        return UserAcl(belongs_to=belongs_to, is_admin=is_admin, is_iam_user=is_iam_user)
+        acl = UserAcl.default()
+        acl.belongs_to = belongs_to
+        acl.is_admin = is_admin
+        acl.is_iam_user = is_iam_user
+
+        return acl
 
     def _directory_exists(self, domain: str, directory_info_func: Callable, context: Any) -> Optional[DirectoryResult]:
 
@@ -664,7 +669,8 @@ class Process:
 
                 # If we are going to add an admin user, this is the default ACL
                 # This is for the smart add feature
-                admin_acl = UserAcl(is_admin=True, belongs_to=False, is_iam_user=False)
+                admin_acl = UserAcl.default()
+                admin_acl.is_admin = True
 
                 # This ACL is None for resource, and populated for users.
                 default_acl = None
@@ -1324,13 +1330,16 @@ class Process:
                 ]
             )
 
+            admin_acl = UserAcl.default()
+            admin_acl.is_admin = True
+
             # Prompt to add an admin user to this resource.
             # We are not passing an ACL instance.
             # We'll make it based on if the user is adding a new record or linking to an existing record.
             admin_result = prompt_admin_func(
                 parent_vertex=resource_vertex,
                 content=admin_content,
-                acl=None,
+                acl=admin_acl,
                 bulk_convert_records=bulk_convert_records,
                 indent=indent,
                 context=context
@@ -1345,9 +1354,6 @@ class Process:
                     source = resource_content.name
 
                 admin_record_uid = admin_result.record_uid
-
-                # We know the ACL is for the admin, so set that to True.
-                admin_acl = UserAcl(is_admin=True)
 
                 if admin_record_uid is None:
                     admin_content = admin_result.content

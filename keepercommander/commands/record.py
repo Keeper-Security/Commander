@@ -17,17 +17,18 @@ import itertools
 import json
 import logging
 import re
+from functools import reduce
 from typing import Dict, Any, List, Optional, Iterable, Tuple, Set
 
 from colorama import Fore, Back, Style
 
 from . import record_edit, base, record_totp, record_file_report
-from .base import Command, GroupCommand, RecordMixin, FolderMixin
+from .base import Command, GroupCommand, RecordMixin, FolderMixin, fields_to_titles
 from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3, record_types
 from ..breachwatch import BreachWatch
 from ..error import CommandError
 from ..params import KeeperParams
-from ..proto import record_pb2, folder_pb2
+from ..proto import record_pb2, folder_pb2, enterprise_pb2
 from ..record import get_totp_code
 from ..subfolder import try_resolve_path, get_folder_path, find_folders, find_all_folders, BaseFolderNode, \
     get_folder_uids
@@ -123,6 +124,9 @@ list_team_parser.add_argument('--format', dest='format', action='store', choices
                               default='table', help='output format')
 list_team_parser.add_argument('--output', dest='output', action='store',
                               help='output file name. (ignored for table format)')
+list_team_parser.add_argument('-v', '--verbose', action='store_true', help="verbose output (include team membership info)")
+list_team_parser.add_argument('-a', '--all', action='store_true',
+                              help="show all teams in your contacts (including those outside your primary organization)")
 
 
 record_history_parser = argparse.ArgumentParser(prog='record-history', parents=[base.report_output_parser],
@@ -750,24 +754,60 @@ class RecordListTeamCommand(Command):
 
     def execute(self, params, **kwargs):
         fmt = kwargs.get('format', 'table')
-        api.load_available_teams(params)
-        results = []
-        if type(params.available_team_cache) == list:
-            for team in params.available_team_cache:
-                team = Team(team_uid=team['team_uid'], name=team['team_name'])
-                results.append(team)
-        if any(results):
+        show_all_teams = kwargs.get('all')
+        show_team_users = kwargs.get('verbose')
+        share_targets = api.get_share_objects(params)
+        teams = share_targets.get('teams', {})
+        orgs = share_targets.get('enterprises', {})
+        enterprise_id = params.license.get('enterprise_id') if params.license else None
+        is_included = lambda t: show_all_teams or t.get('enterprise_id') == enterprise_id
+        teams = [Team(team_uid=uid, enterprise_id=t.get('enterprise_id'), name=t.get('name')) for uid, t in teams.items() if is_included(t)]
+        teams = self.get_team_members(params, teams) if show_team_users else teams
+        if teams:
             table = []
-            headers = ['team_uid', 'name'] if fmt == 'json' else ['Team UID', 'Name']
-            for team in results:
-                row = [team.team_uid, team.name]
+            headers = ['company', 'team_uid', 'name']
+            if show_team_users:
+                headers.append('member')
+            headers = fields_to_titles(headers) if 'fmt' != 'json' else headers
+            for team in teams:
+                row = [orgs.get(team.enterprise_id), team.team_uid, team.name]
+                if show_team_users:
+                    row.append(team.members)
                 table.append(row)
-            table.sort(key=lambda x: (x[1] or '').lower())
+            table.sort(key=lambda x: (x[0] or '').lower())
 
             return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
                                     row_number=True)
         else:
             logging.info('No teams are found')
+
+    @classmethod
+    def get_team_members(self, params, teams):    # type: (KeeperParams, List[Team]) -> List[Team]
+        if not params.enterprise_ec_key:
+            return teams
+
+        def get_enterprise_teams():
+            if not params.enterprise:
+                return {}
+            users = {x.get('enterprise_user_id'): x.get('username') for x in params.enterprise.get('users', [])}
+            return reduce(
+                lambda a, b: {**a, b.get('team_uid'): [*a.get(b.get('team_uid'), []), users.get(b.get('enterprise_user_id'))]},
+                params.enterprise.get('team_users', {}),
+                dict()
+            )
+
+        def fetch_members(team_uid):    # type: (str) -> List[str]
+            rq = enterprise_pb2.GetTeamMemberRequest()
+            rq.teamUid = utils.base64_url_decode(team_uid)
+            rs = api.communicate_rest(params, rq, 'vault/get_team_members', rs_type=enterprise_pb2.GetTeamMemberResponse)
+            return [x.email for x in rs.enterpriseUser]
+
+        enterprise_teams = get_enterprise_teams()
+        for t in teams:
+            t.members = enterprise_teams.get(t.team_uid) or fetch_members(t.team_uid)
+
+        return teams
+
 
 
 trash_list_parser = argparse.ArgumentParser(prog='trash list', description='Displays a list of deleted records.')
@@ -1045,8 +1085,8 @@ class TrashListCommand(Command, TrashMixin):
         folder_table = []
 
         if shared_folders and len(shared_folders) > 0:
-            folders = shared_folders.get('folders')    # type: Dict[str, dict]
-            records = shared_folders.get('records')    # type: Dict[str, dict]
+            folders = shared_folders.get('folders', {})    # type: Dict[str, dict]
+            records = shared_folders.get('records', {})    # type: Dict[str, dict]
             if verbose:
                 for rec in records.values():
                     folder_uid = rec.get('folder_uid')

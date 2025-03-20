@@ -1,6 +1,7 @@
 from __future__ import annotations
 import argparse
 import json
+import logging
 from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ... import vault_extensions
 from ...display import bcolors
@@ -188,6 +189,9 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                             print(f"{_h('Added')} - {len(delta.added)} count")
                             for item in delta.added:
                                 vertex = infra.dag.get_vertex(item.uid)
+                                if vertex is None or vertex.active is False or vertex.has_data is False:
+                                    logging.debug("added: vertex is none, inactive or has no data")
+                                    continue
                                 discovery_object = DiscoveryObject.get_discovery_object(vertex)
                                 print(f"  * {discovery_object.description}")
 
@@ -195,6 +199,9 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                             print(f"{_h('Changed')} - {len(delta.changed)} count")
                             for item in delta.changed:
                                 vertex = infra.dag.get_vertex(item.uid)
+                                if vertex is None or vertex.active is False or vertex.has_data is False:
+                                    logging.debug("changed: vertex is none, inactive or has no data")
+                                    continue
                                 discovery_object = DiscoveryObject.get_discovery_object(vertex)
                                 print(f"  * {discovery_object.description}")
                                 if item.changes is None:

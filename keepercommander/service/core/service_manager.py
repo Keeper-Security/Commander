@@ -64,7 +64,9 @@ class ServiceManager:
             cls._is_running = True
             ProcessInfo.save(cls._is_running)
             
+
             print(f"Commander Service starting on port:{port}")
+
             print(f"Process ID: {os.getpid()}")
             
             NgrokConfigurator.configure_ngrok(config_data, service_config)
