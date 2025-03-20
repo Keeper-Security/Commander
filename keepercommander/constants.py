@@ -32,18 +32,20 @@ MSP_PLANS = [
 ]
 
 MSP_ADDONS = [
-    ('enterprise_breach_watch', 'BreachWatch', False, 'BreachWatch'),
-    ('consumer_breach_watch', 'Consumer BreachWatch', False, 'BreachWatch'),
-    ('compliance_report', 'Compliance Reporting', False, 'Compliance'),
-    ('enterprise_audit_and_reporting', 'Advanced Reporting & Alerts Module', False, 'ARAM'),
-    ('onboarding_and_certificate', 'Dedicated Service & Support', False, 'Support'),
-    ('msp_service_and_support', 'MSP Dedicated Service & Support', False, 'MSP Support'),
-    ('secrets_manager', 'Keeper Secrets Manager (KSM)', False, 'Secrets Manager'),
-    ('connection_manager', 'Keeper Connection Manager (KCM)', True, 'Connection Manager'),
     ('chat', 'KeeperChat', False, 'Chat'),
+    ('enterprise_audit_and_reporting', 'Advanced Reporting & Alerts Module', False, 'ARAM'),
+    ('professional_services_silver_add_on', 'Professional Services & Support Silver Plan', False, 'Silver Support'),
+    ('gold_professional_services_add_on', 'Professional Services & Support Gold Plan', False, 'Gold Support'),
+    ('platinum_professional_services_add_on', 'Professional Services & Support Platinum Plan', False, 'Platinum Support'),
+    ('msp_service_and_support', 'MSP Dedicated Service & Support', False, 'MSP Support'),
+    ('consumer_breach_watch', 'Consumer BreachWatch', False, 'Consumer BW'),
+    ('enterprise_breach_watch', 'Enterprise BreachWatch', False, 'Enterprise BW'),
+    ('compliance_report', 'Compliance Reporting', False, 'Compliance'),
+    ('secrets_manager', 'Keeper Secrets Manager (KSM)', False, 'KSM'),
+    ('connection_manager', 'Keeper Connection Manager (KCM)', True, 'KCM'),
     ('password_rotation', 'Password Rotation', False, 'Rotation'),
-    ('platinum_professional_services_add_on', 'Professional Services - Platinum Plan', False, 'Platinum Support'),
-    ('gold_professional_services_add_on', 'Professional Services - Gold Plan', False, 'Gold Support'),
+    ('remote_browser_isolation', 'Remote Browser Isolation', False, 'Browser Isolation'),
+    ('privileged_access_manager', 'Privileged Access Manager (PAM)', True, 'PAM'),
 ]
 
 
