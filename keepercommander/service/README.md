@@ -191,6 +191,45 @@ The service includes robust error handling for:
 - Rate limit violations
 - Invalid commands
 
+## Docker Deploy
+
+### Install, build and run docker image
+ 
+  1. Install [Docker](https://www.docker.com/).
+  1. Clone the repository [git clone](https://github.com/Keeper-Security/Commander.git).
+  1. Build docker image using command  ``` docker build -t keeper-commander . ```
+  1. Verify docker image created. ``` docker images ```
+  1. Set two environment variables in your terminal window:
+      1. `KEEPER_USERNAME` - This is the username that can login to Keeper Commander
+      1. `KEEPER_PASSWORD` - This is the password for the above user
+  1. Run the keeper-commander docker image using command
+      ```bash
+        docker run -d -p <port>:<port> keeper-commander \
+          service-create -p <port> -c '<comma separated commands like tree,ls>' \
+          --user $KEEPER_USERNAME \
+          --password $KEEPER_PASSWORD
+      ```  
+   1. Verify keeper-commander image is started using command  `docker ps`
+   1. Check the logs using command
+      ```bash
+       docker logs <docker container name or ID>
+       ```
+      and get the API key from logs. The API key will show up like this:
+      ```
+      Generated API key: <API-KEY>
+      ```
+
+### Execute Command Endpoint
+
+   ```bash
+   curl --location 'http://localhost:<port>/api/v1/executecommand' \
+   --header 'Content-Type: application/json' \
+   --header 'api-key: <your-api-key>' \
+   --data '{
+      "command": "<command>"
+   }'
+   ```
+
 ## Contributing
 
 Please refer to Keeper Commander's contribution guidelines while making changes to this module.

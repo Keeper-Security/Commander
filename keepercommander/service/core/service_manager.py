@@ -71,7 +71,7 @@ class ServiceManager:
             
             logging.getLogger('werkzeug').setLevel(logging.WARNING)
             
-            cls._flask_app.run(host='localhost', port=port)
+            cls._flask_app.run(host='0.0.0.0', port=port)
             
         except FileNotFoundError:
             print("Error: Service configuration file not found. Please use 'service-create' command to create a service_config file.")
