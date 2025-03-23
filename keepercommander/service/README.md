@@ -27,69 +27,7 @@ The Service Mode module for Keeper Commander enables REST API integration by pro
 - IP deny list management
 - Request validation and policy enforcement
 
-## Installation
-
-### Prerequisites
-- Python 3.6 or higher
-- Git
-- pip (Python package installer)
-
-### Step-by-Step Installation
-
-1. **Clone the Repository**
-   ```bash
-   git clone https://github.com/metron-labs/keeper-commander.git
-   cd keeper-commander
-   ```
-
-2. **Create and Activate Virtual Environment**
-   ```bash
-   # Create and activate virtual environment
-
-   # On macOS/Linux:
-   python3 -m venv venv
-   source venv/bin/activate
-
-   # On Windows:
-   python -m venv venv
-   venv\Scripts\activate  
-   ```
-
-3. **Install Dependencies**
-   ```bash
-   # Install in editable mode with all dependencies
-   pip install -e .
-   ```
-
-4. **Verify Installation**
-   ```bash
-   # Start Keeper Commander
-   keeper shell
-   ```
-
-   Indicators of successful integration:
-   - Application starts without errors
-   - Ability to log in with Keeper credentials
-   - `service-status` command returns current service state
-
-### Troubleshooting Installation
-If you encounter any issues during installation, ensure:
-- Python 3.6+ is installed and in your system PATH
-- Virtual environment is activated (look for `(venv)` in terminal prompt)
-- All dependencies are installed correctly (`pip list`)
-
-## Usage
-
-### Basic Setup
-
-1. Start Keeper Commander:
-   ```bash
-   keeper shell
-   ```
-
-2. Log in with your Keeper credentials when prompted
-
-### Interactive Configuration
+### Configuration
 
 Create and configure the service with interactive prompts:
 ```bash
@@ -147,7 +85,7 @@ curl --location 'http://localhost:<port>/api/v1/executecommand' \
 
 ## Configuration
 
-The service configuration is stored in JSON/YAML format and includes:
+The service configuration is stored as an attachment to a vault record in JSON/YAML format and includes:
 
 - Port settings
 - Ngrok configuration (optional)
