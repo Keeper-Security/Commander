@@ -38,10 +38,9 @@ class CyberArkImporter(BaseImporter):
             pvwa_host = filename
         # CyberArk Cloud uses an OAuth2 client_credentials grant for authentication
         if pvwa_host.endswith(".cyberark.cloud"):
+            tenant_id = input("CyberArk Identity Tenant ID: ").rstrip(".id")
             response = requests.post(
-                f"https://{
-                    input("CyberArk Identity Tenant ID: ").rstrip(".id")
-                }.id.cyberark.cloud/oauth2/platformtoken",
+                f"https://{tenant_id}.id.cyberark.cloud/oauth2/platformtoken",
                 data={
                     "grant_type": "client_credentials",
                     "client_id": input("CyberArk service user name: "),
@@ -55,7 +54,8 @@ class CyberArkImporter(BaseImporter):
                 raise CyberArkImporterException(
                     "OAuth2 client_credentials request failed", response
                 )
-            authorization_token = f"Bearer {response.json()["access_token"]}"
+            access_token = response.json()["access_token"]
+            authorization_token = f"Bearer {access_token}"
         else:
             response = requests.post(
                 self.get_url(pvwa_host, "logon").format(
