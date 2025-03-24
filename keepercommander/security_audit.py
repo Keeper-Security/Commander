@@ -41,7 +41,6 @@ def encrypt_security_data(params, data):
         data = encrypt_fn(data, pubkey)
     except Exception as e:
         logging.error(f'Error: {e}')
-        logging.error(f'Enterprise RSA key length = {params.enterprise_rsa_key.key_size}')
         data = b''
     return data
 
