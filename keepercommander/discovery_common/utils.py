@@ -97,7 +97,6 @@ def user_in_lookup(user: str, lookup: dict, name: Optional[str] = None, source: 
     return False
 
 
-
 def find_user_vertex(graph: DAG, user: str, domain: Optional[str] = None) -> Optional[DAGVertex]:
 
     user_vertices = graph.search_content({"record_type": PAM_USER})

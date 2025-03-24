@@ -7,6 +7,7 @@ from keepercommander.keeper_dag.exceptions import DAGVertexException
 from keepercommander.keeper_dag.crypto import urlsafe_str_to_bytes
 import os
 import importlib
+import time
 from typing import Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -99,7 +100,10 @@ class Infrastructure:
         return self._dag.load(sync_point=0)
 
     def load(self, sync_point: int = 0):
-        return self.dag.load(sync_point=sync_point) or 0
+        ts = time.time()
+        res = self.dag.load(sync_point=sync_point) or 0
+        self.logger.debug(f"infrastructure took {time.time()-ts} secs to load")
+        return res
 
     def save(self, delta_graph: Optional[bool] = None):
         if delta_graph is None:
@@ -108,7 +112,9 @@ class Infrastructure:
         self.logger.debug(f"current sync point {self.last_sync_point}")
         if delta_graph is True:
             self.logger.debug("saving delta graph of the infrastructure")
+        ts = time.time()
         self._dag.save(delta_graph=delta_graph)
+        self.logger.debug(f"infrastructure took {time.time()-ts} secs to save")
 
     def to_dot(self, graph_format: str = "svg", show_hex_uid: bool = False,
                show_version: bool = True, show_only_active_vertices: bool = False,

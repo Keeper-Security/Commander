@@ -921,8 +921,8 @@ class DAG:
                 parent_vertex = self.get_vertex(edge.head_uid)
 
                 if content is not None and len(content) > 65_535:
-                    self.debug(f"data edge is {len(content)} bytes. The limit is 64K.")
-                    raise DAGDataException(f"A DATA edge is {len(content)} bytes. "
+                    self.debug(f"    !! vertex {vertex.uid} data edge is {len(content)}, over 64K.")
+                    raise DAGDataException(f"vertex {vertex.uid} DATA edge is {len(content)} bytes. "
                                            "This is too large for the MySQL BLOB (64K).")
 
                 data = DAGData(

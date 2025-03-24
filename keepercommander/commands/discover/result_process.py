@@ -612,7 +612,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             user_search = input("Enter an user to search for [ENTER/RETURN to quit]> ")
             if user_search == "":
                 print(f"{bcolors.FAIL}No search terms, not performing search.{bcolors.ENDC}")
-                return None
+                return None, False
 
             # Search for record with the search string.
             # Currently, this only works with TypedRecord, version 3.
@@ -624,7 +624,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             # If not record are returned by the search just return None,
             if len(user_record) == 0:
                 print(f"{bcolors.FAIL}Could not find any records that contain the search text.{bcolors.ENDC}")
-                return None
+                return None, False
 
             # Find usable admin records.
             admin_search_results = []  # type: List[AdminSearchResult]
@@ -713,7 +713,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             # If all the users have been filtered out, then just return None
             if len(admin_search_results) == 0:
                 print(f"{bcolors.FAIL}Could not find any available records.{bcolors.ENDC}")
-                return None
+                return None, False
 
             user_index = 1
             admin_search_results = sorted(admin_search_results,
@@ -753,14 +753,14 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             if select == "":
                 continue
             elif select[0] == "q":
-                return None
+                return None, False
             else:
                 try:
                     selected = admin_search_results[int(select) - 1]
                     if selected.being_used is True:
                         print(f"{bcolors.FAIL}Cannot select a record that has already been taken. "
                               f"Another record is using this local user as its administrator.{bcolors.ENDC}")
-                        return None
+                        return None, False
                     admin_record = selected.record  # type: TypedRecord
                     return admin_record, selected.is_directory_user
                 except IndexError:
