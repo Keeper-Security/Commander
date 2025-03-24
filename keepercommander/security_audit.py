@@ -158,6 +158,9 @@ def update_security_audit_data(params, records):   # type: (KeeperParams, List[K
 
 def attach_security_data(params, record, rq_param):
     # type: (KeeperParams, Union[str, Dict[str, any], KeeperRecord], Union[record_pb2.RecordUpdate, record_pb2.RecordAdd]) -> Union[record_pb2.RecordUpdate, record_pb2.RecordAdd]
+    if params.forbid_rsa:
+        return rq_param
+
     try:
         if not isinstance(record, TypedRecord):
             record = KeeperRecord.load(params, record)
