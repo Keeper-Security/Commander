@@ -22,7 +22,7 @@ from .. import vault, utils, crypto, api
 from ..params import KeeperParams
 from ..error import CommandError
 from ..proto import record_pb2
-
+from ..security_audit import attach_security_data
 
 kf_parse = argparse.ArgumentParser(add_help=False)
 kf_parse.add_argument('-r', '--recursive', dest='recursive', action='store_true',
@@ -268,6 +268,7 @@ class KeeperFillSetCommand(Command, KeeperFillMixin):
                     ru.client_modified_time = utils.current_milli_time()
                     ru.revision = record.revision
                     ru.non_shared_data = crypto.encrypt_aes_v2(nsd, params.data_key)
+                    ru = attach_security_data(params, record, ru)
                     record_v3_updates.append(ru)
 
         if len(record_v3_updates) > 0 or len(record_v2_updates) > 0:

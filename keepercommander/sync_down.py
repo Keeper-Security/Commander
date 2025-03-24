@@ -106,6 +106,9 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                 # remove associated security data
                 if record_uid in params.breach_watch_security_data:
                     del params.breach_watch_security_data[record_uid]
+                # remove associated security score data
+                if record_uid in params.breach_watch_security_data:
+                    del params.security_score_data[record_uid]
                 # remove record metadata
                 if record_uid in params.meta_data_cache:
                     del params.meta_data_cache[record_uid]
@@ -966,13 +969,17 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
         record = KeeperRecord.load(params, record_uid)
         if not record:
             continue
+        revision = sec_score_rec.revision
+        data = sec_score_rec.data
         try:
-            data = crypto.decrypt_aes_v2(sec_score_rec.data, record.record_key).decode()
-            data = json.loads(data)
-            revision = sec_score_rec.revision
-            params.security_score_data.update({record_uid: dict(record_uid=record_uid, data=data, revision=revision)})
+            if data:
+                data = crypto.decrypt_aes_v2(sec_score_rec.data, record.record_key).decode()
+                data = json.loads(data)
+            else:
+                data = dict()
         except:
-            pass
+            data = dict()
+        params.security_score_data.update({record_uid: dict(record_uid=record_uid, data=data, revision=revision)})
 
     # Populate/update cache BreachWatch records data
     for p_bwr in resp_bw_recs:
