@@ -365,7 +365,7 @@ class RecordLink:
         except ImportError:
             raise Exception("Cannot to_dot(), graphviz module is not installed.")
 
-        dot = getattr(mod, "Digraph")(comment=f"DAG for Discovery", format=graph_format)
+        dot = getattr(mod, "Digraph")(comment=f"DAG for Record Linking", format=graph_format)
 
         if graph_type == "dot":
             dot.attr(rankdir='RL')

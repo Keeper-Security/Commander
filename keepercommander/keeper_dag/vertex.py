@@ -91,6 +91,9 @@ class DAGVertex:
             ret += "\n"
         return ret
 
+    def __repr__(self):
+        return f"<DAGVertex {self.uid}>"
+
     def debug(self, msg: str, level: int = 0):
         self.dag.debug(msg, level=level)
 
@@ -759,8 +762,8 @@ class DAGVertex:
             # Get a list of vertices that belong to this vertex (v)
             has_v = vertex.has_vertices()
 
-            if len(has_v) > 1:
-                self.debug(f"  * vertex has vertices that belong to it.", level=2)
+            if len(has_v) > 0:
+                self.debug(f"  * vertex has {len(has_v)} vertices that belong to it.", level=2)
                 for v in has_v:
                     self.debug(f"    checking {v.uid}")
                     _delete(v, vertex)
