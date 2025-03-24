@@ -10,10 +10,12 @@
 #
 
 import io
+from pathlib import Path
 import sys
 import json
 from typing import Any, Tuple, Optional
 from keepercommander import cli
+from keepercommander.__main__ import get_params_from_config
 from .exceptions import CommandExecutionError
 from .config_reader import ConfigReader
 from ..core.globals import get_current_params
@@ -71,11 +73,14 @@ class CommandExecutor:
         if validation_error:
             return validation_error
 
-        session_error = cls.validate_session()
-        if session_error:
-            return session_error
+        home_dir = Path.home()  # Gets the home directory
+        keeper_dir = home_dir / ".keeper"
+        keeper_dir.mkdir(parents=True, exist_ok=True)
 
-        params = get_current_params()
+        config_path = keeper_dir / f"config.json"
+
+        params = get_params_from_config(config_path)
+
         try:
             return_value, printed_output = cls.capture_output(params, command)
             response = return_value if return_value else printed_output
@@ -90,3 +95,4 @@ class CommandExecutor:
             
         except Exception as e:
             raise CommandExecutionError(f"Command execution failed: {str(e)}")
+        
