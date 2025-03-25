@@ -107,8 +107,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                 if record_uid in params.breach_watch_security_data:
                     del params.breach_watch_security_data[record_uid]
                 # remove associated security score data
-                if record_uid in params.breach_watch_security_data:
-                    del params.security_score_data[record_uid]
+                params.security_score_data.pop(record_uid, None)
                 # remove record metadata
                 if record_uid in params.meta_data_cache:
                     del params.meta_data_cache[record_uid]
