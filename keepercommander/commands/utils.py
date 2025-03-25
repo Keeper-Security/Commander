@@ -27,7 +27,7 @@ from typing import Optional, Dict, List, Set
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from google.protobuf.json_format import MessageToDict
 
-from keepercommander.commands.breachwatch import BreachWatchScanCommand
+from .breachwatch import BreachWatchScanCommand
 from . import aliases, commands, enterprise_commands, msp_commands, msp, base
 from .base import raise_parse_exception, suppress_exit, user_choice, Command, GroupCommand, as_boolean
 from .helpers.record import get_record_uids as get_ruids
@@ -1308,24 +1308,25 @@ class SyncSecurityDataCommand(Command):
         def parse_input_records():  # type: () -> Set[str]
             is_owned = lambda uid: bool(uid and params.record_owner_cache.get(uid, RecordOwner(False, '')).owner)
             names = kwargs.get('record',[])
-            return set(
-                params.record_cache.keys() if '@all' in names
-                else filter(is_owned, itertools.chain.from_iterable(get_ruids(params, name) for name in names))
-            )
+            do_all = '@all' in names
+            included = params.record_cache.keys() if do_all \
+                else itertools.chain.from_iterable(get_ruids(params, n) for n in names)
+            return {r for r in included if is_owned(r)}
 
         force_update = kwargs.get('force', False)
         api.sync_down(params)
         recs = [KeeperRecord.load(params, r) for r in parse_input_records()]
-        recs_to_update = [r for r in recs if force_update or needs_security_audit(params, r)]
+        should_update = lambda r: force_update or bool(needs_security_audit(params, r))
+        recs_to_update = [r for r in recs if should_update(r)]
         num_to_update = len(recs_to_update)
-        update_security_audit_data(params, recs_to_update)
-        if num_to_update:
+        num_updated = update_security_audit_data(params, recs_to_update)
+        if num_updated:
             BreachWatch.save_reused_pw_count(params)
             api.sync_down(params)
         if not kwargs.get('quiet'):
-            if num_to_update:
-                logging.info(f'Updated security data for [{num_to_update}] record(s)')
-            elif not kwargs.get('suppress_no_op'):
+            if num_updated:
+                logging.info(f'Updated security data for [{num_updated}] record(s)')
+            elif not kwargs.get('suppress_no_op') and not num_to_update:
                 logging.info('No records requiring security-data updates found')
 
 
