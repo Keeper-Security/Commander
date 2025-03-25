@@ -11,6 +11,7 @@
 
 import os
 import logging
+from pathlib import Path
 import signal
 import psutil
 
@@ -118,6 +119,8 @@ class ServiceManager:
             if ServiceManager.kill_process_by_pid(process_info.pid):
                 logger.debug(f"Commander Service stopped (PID: {process_info.pid})")
                 print("Service stopped successfully")
+                process = psutil.Process(process_info.pid)
+                process.terminate()
 
                 if process_info.terminal and process_info.terminal != TerminalHandler.get_terminal_info():
                     TerminalHandler.notify_other_terminal(process_info.terminal)
@@ -133,16 +136,19 @@ class ServiceManager:
     def get_status() -> str:
         """Get current service status."""
         process_info = ProcessInfo.load()
-        
         if process_info.pid and process_info.is_running:
             try:
-                process = psutil.Process(process_info.pid)    
+                psutil.Process(process_info.pid)
                 terminal = process_info.terminal or "unknown terminal"
                 status = f"Commander Service is Running (PID: {process_info.pid}, Terminal: {terminal})"
                 logger.debug(f"Service status check: {status}")
                 return status
             except psutil.NoSuchProcess:
+                ProcessInfo.clear()
                 pass
+        else:
+            status = "No Commander Service is running currently"
+            return status
         status = "Commander Service is Stopped"
         logger.debug(f"Service status check: {status}")
         return status
@@ -155,8 +161,10 @@ class ServiceManager:
                 subprocess.run(["taskkill", "/PID", str(pid), "/F"], check=True)
                 return True
             else:  #  Linux & macOS
-                os.kill(pid, signal.SIGTERM)  # Try graceful termination first
-                print(f" Process {pid} terminated successfully.")
+                env_file = Path(__file__).parent / ".service.env"
+                if os.path.exists(env_file):
+                    os.remove(env_file)
+                    print("⚠️ Deleted old .env file")
                 return True
         except ProcessLookupError:
             print(f"⚠️ No process found with PID {pid}. It may have already exited.")

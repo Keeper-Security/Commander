@@ -14,7 +14,7 @@ from pathlib import Path
 import sys
 import json
 from typing import Any, Tuple, Optional
-from keepercommander import cli
+from keepercommander import cli, utils
 from keepercommander.__main__ import get_params_from_config
 from .exceptions import CommandExecutionError
 from .config_reader import ConfigReader
@@ -73,12 +73,7 @@ class CommandExecutor:
         if validation_error:
             return validation_error
 
-        home_dir = Path.home()  # Gets the home directory
-        keeper_dir = home_dir / ".keeper"
-        keeper_dir.mkdir(parents=True, exist_ok=True)
-
-        config_path = keeper_dir / f"config.json"
-
+        config_path = utils.get_default_path() / "config.json"
         params = get_params_from_config(config_path)
 
         try:

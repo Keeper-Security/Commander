@@ -13,7 +13,7 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 from pathlib import Path
-from dotenv import load_dotenv, set_key
+from dotenv import load_dotenv, set_key, dotenv_values
 from ..decorators.logging import logger
 from .terminal_handler import TerminalHandler
 from keepercommander import utils
@@ -24,7 +24,7 @@ class ProcessInfo:
     terminal: Optional[str]
     is_running: bool
     
-    _env_file = Path(__file__).parent / ".service.env"
+    _env_file = utils.get_default_path() / ".service.env"
     
     @classmethod
     def _str_to_bool(cls, value: str) -> bool:
@@ -58,9 +58,11 @@ class ProcessInfo:
     def load(cls) -> 'ProcessInfo':
         """Load process information from .env file."""
         try:
+            for key in dotenv_values(cls._env_file).keys():
+                os.environ.pop(key, None)  # Remove old values
             
             if ProcessInfo._env_file.exists():
-                load_dotenv(ProcessInfo._env_file)
+                load_dotenv(ProcessInfo._env_file, override=True)
                 
                 pid_str = os.getenv('KEEPER_SERVICE_PID')
                 pid = int(pid_str) if pid_str else None
