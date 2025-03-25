@@ -117,14 +117,11 @@ def needs_security_audit(params, record):  # type: (KeeperParams, KeeperRecord) 
     if current_password != score_data.get('password') or None:
         return True
 
-    scores = dict(new=get_security_score(params, record), old=score_data.get('score') or None)
+    scores = dict(new=get_security_score(params, record), old=score_data.get('score'))
     passkey_changed = any(x and x >= 100 for x in scores.values()) and any(not x or x < 100 for x in scores.values())
-    is_score_sync = not saved_sec_data and bool(scores.get('old'))
-    is_remove = bool(scores.get('old')) and not scores.get('new')
-    is_sec_data_stale = saved_sec_data.get('revision', 0) < saved_score_data.get('revision', 0)
-
-    result = passkey_changed or is_remove or is_score_sync or is_sec_data_stale
-    return result
+    creds_removed = bool(scores.get('old') and not scores.get('new'))
+    needs_alignment = bool(scores.get('new')) and saved_sec_data.get('revision', 0) < saved_score_data.get('revision', 0)
+    return passkey_changed or creds_removed or needs_alignment
 
 def update_security_audit_data(params, records):   # type: (KeeperParams, List[KeeperRecord]) -> int
     if not params.enterprise_ec_key:
