@@ -34,6 +34,7 @@ from .proto import APIRequest_pb2, record_pb2, enterprise_pb2
 from .proto.record_pb2 import GetShareObjectsRequest, GetShareObjectsResponse
 from .record import Record
 from .recordv3 import RecordV3
+from .security_audit import attach_security_data
 from .shared_folder import SharedFolder
 from .subfolder import BaseFolderNode
 from .sync_down import sync_down
@@ -879,6 +880,7 @@ def get_pb2_record_update(params, rec, **kwargs):
         ru.record_links_remove.extend(record_links_remove)
     if audit:
         ru.audit.data = audit
+    ru = attach_security_data(params, rec.record_uid, ru)
 
     record_rq['pb2_record_update'] = ru
     return record_rq
@@ -1110,6 +1112,7 @@ def add_record_v3(params, record, **kwargs):   # type: (KeeperParams, dict, ...)
         #ra.audit = audit # Assignment not allowed to field "audit" in protocol message object.
         ra.audit.version = audit.version
         ra.audit.data = audit.data
+    ra = attach_security_data(params, record, ra)
 
     rq = record_pb2.RecordsAddRequest()
     rq.records.append(ra)

@@ -20,6 +20,7 @@ from . import api, subfolder, utils, crypto, vault, vault_extensions
 from .error import KeeperApiError
 from .params import KeeperParams, LAST_RECORD_UID
 from .proto import record_pb2
+from .security_audit import attach_security_data
 
 
 def add_record_to_folder(params, record, folder_uid=None):
@@ -117,7 +118,7 @@ def add_record_to_folder(params, record, folder_uid=None):
                 add_record.audit.version = 0
                 add_record.audit.data = crypto.encrypt_ec(
                     json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
-
+            add_record = attach_security_data(params, record, add_record)
         rq = record_pb2.RecordsAddRequest()
         rq.client_time = utils.current_milli_time()
         rq.records.append(add_record)
@@ -274,6 +275,7 @@ def update_record(params, record, skip_extra=False):
         ru.record_uid = record_uid_bytes
         ru.client_modified_time = utils.current_milli_time()
         ru.revision = existing_record.revision
+        ru = attach_security_data(params, record, ru)
 
         data = vault_extensions.extract_typed_record_data(record)
         json_data = api.get_record_data_json_bytes(data)

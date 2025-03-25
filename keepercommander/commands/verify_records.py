@@ -20,7 +20,7 @@ from .base import user_choice, dump_report_data, Command
 from .. import api, crypto, utils, vault, error
 from ..proto import record_pb2, folder_pb2
 from ..record import get_totp_code
-
+from ..security_audit import attach_security_data
 
 verify_shared_folders_parser = argparse.ArgumentParser(prog='verify-shared-folders')
 verify_shared_folders_parser.add_argument('--dry-run', dest='dry_run', action='store_true',
@@ -402,6 +402,7 @@ class VerifyRecordsCommand(Command):
                             upd_rq.revision = record.get('revision') or 0
                             data = records_v3_to_fix[record_uid]
                             upd_rq.data = crypto.encrypt_aes_v2(api.get_record_data_json_bytes(data), record_key)
+                            upd_rq = attach_security_data(params, record, upd_rq)
                             rq.records.append(upd_rq)
                             if len(rq.records) >= 999:
                                 break
