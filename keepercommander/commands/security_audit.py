@@ -7,14 +7,15 @@ from typing import Dict, List, Optional, Any
 
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
 
-from keepercommander import api, crypto, utils
-from keepercommander.breachwatch import BreachWatch
-from keepercommander.commands.base import GroupCommand, raise_parse_exception, suppress_exit, field_to_title, \
+from .helpers.enterprise import get_enterprise_key, try_enterprise_decrypt
+from .. import api, crypto, utils
+from ..breachwatch import BreachWatch
+from .base import GroupCommand, raise_parse_exception, suppress_exit, field_to_title, \
     dump_report_data
-from keepercommander.commands.enterprise_common import EnterpriseCommand
-from keepercommander.params import KeeperParams
-from keepercommander.proto import enterprise_pb2, APIRequest_pb2
-from keepercommander.utils import confirm
+from .enterprise_common import EnterpriseCommand
+from ..params import KeeperParams
+from ..proto import enterprise_pb2, APIRequest_pb2
+from ..utils import confirm
 
 
 def register_commands(commands):
@@ -129,6 +130,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         self.enterprise_private_rsa_key = None
         self.debug_report_builder = None
         self.error_report_builder = None
+        self.params = None
 
     def get_error_report_builder(self):
         if not self.error_report_builder:
@@ -205,6 +207,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             return
 
         self.enterprise_private_rsa_key = None
+        self.params = params
 
         show_breachwatch = kwargs.get('breachwatch')
         if show_breachwatch:
@@ -233,8 +236,8 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         from_page = 0
         complete = False
         rows = []
-        rsa_key = None      # type: Optional[rsa.RSAPrivateKey]
-        ec_key = None       # type: Optional[ec.EllipticCurvePrivateKey]
+        rsa_key = get_enterprise_key(params, is_rsa=True)      # type: Optional[rsa.RSAPrivateKey]
+        ec_key = get_enterprise_key(params, is_rsa=False)       # type: Optional[ec.EllipticCurvePrivateKey]
 
         while not complete:
             rq = APIRequest_pb2.SecurityReportRequest()
@@ -397,9 +400,11 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                         else:
                             decrypted_bytes = crypto.decrypt_rsa(sec_data, rsa_key)
                     except Exception as e:
-                        error = f'Decrypt fail (incremental data): {e}'
-                        self.get_error_report_builder().update_report_data(error)
-                        return
+                        decrypted_bytes = try_enterprise_decrypt(self.params, sec_data)
+                        if not decrypted_bytes:
+                            error = f'Decrypt fail (incremental data): {e}'
+                            self.get_error_report_builder().update_report_data(error)
+                            return
 
                     try:
                         decoded = decrypted_bytes.decode()
