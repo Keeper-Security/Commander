@@ -83,20 +83,18 @@ def prep_score_data(params, record):
     empty_score_data = crypto.encrypt_aes_v2(json.dumps(dict()).encode('utf8'), record.record_key)
     score = get_security_score(params, record)
     if not score:
-        logging.info('No score, removing security score')
         return empty_score_data
-    else:
+
+    try:
         password = _get_pass(record)
         pad_length = max(25 - len(password), 0) if password else 0
         pad = ''.join([' ' for _ in range(pad_length)])
         score_data = dict(version=1, password=password, score=score, padding=pad)
-    try:
         data = json.dumps(score_data).encode('utf-8')
         sec_score_data = crypto.encrypt_aes_v2(data, record.record_key)
     except Exception as ex:
         logging.error(f'Could not calculate security score data for record, {record and record.title}\nReason: {ex}')
         sec_score_data = empty_score_data
-
     return sec_score_data
 
 def prep_score_data_update(params, record):    # type: (KeeperParams, KeeperRecord) -> APIRequest_pb2.SecurityScoreData
@@ -157,7 +155,7 @@ def update_security_audit_data(params, records):   # type: (KeeperParams, List[K
 
 def attach_security_data(params, record, rq_param):
     # type: (KeeperParams, Union[str, Dict[str, any], KeeperRecord], Union[record_pb2.RecordUpdate, record_pb2.RecordAdd]) -> Union[record_pb2.RecordUpdate, record_pb2.RecordAdd]
-    if params.forbid_rsa:
+    if params.forbid_rsa:   # Skip attaching security data if encrypting w/ EC key (use update_security_data instead)
         return rq_param
 
     try:
