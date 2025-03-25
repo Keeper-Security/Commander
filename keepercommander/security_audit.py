@@ -110,19 +110,18 @@ def needs_security_audit(params, record):  # type: (KeeperParams, KeeperRecord) 
     if not params.enterprise_ec_key or not record:
         return False
 
-    rec_score_data = params.security_score_data.get(record.record_uid, {})
-    rec_sec_data = params.breach_watch_security_data.get(record.record_uid, {})
-    score_data =  rec_score_data.get('data', {})
-    security_data = params.breach_watch_security_data.get(record.record_uid)
+    saved_score_data = params.security_score_data.get(record.record_uid, {})
+    saved_sec_data = params.breach_watch_security_data.get(record.record_uid, {})
+    score_data =  saved_score_data.get('data', {})
     current_password = _get_pass(record)
     if current_password != score_data.get('password') or None:
         return True
 
     scores = dict(new=get_security_score(params, record), old=score_data.get('score') or None)
     passkey_changed = any(x and x >= 100 for x in scores.values()) and any(not x or x < 100 for x in scores.values())
-    is_score_sync = not security_data and bool(scores.get('old'))
+    is_score_sync = not saved_sec_data and bool(scores.get('old'))
     is_remove = bool(scores.get('old')) and not scores.get('new')
-    is_sec_data_stale = rec_sec_data.get('revision', 0) < rec_score_data.get('revision', 0)
+    is_sec_data_stale = saved_sec_data.get('revision', 0) < saved_score_data.get('revision', 0)
 
     result = passkey_changed or is_remove or is_score_sync or is_sec_data_stale
     return result
