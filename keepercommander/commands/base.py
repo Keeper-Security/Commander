@@ -656,17 +656,17 @@ class RecordMixin:
     @staticmethod
     def resolve_single_record(params, record_name):  # type: (KeeperParams, str) -> Optional[vault.KeeperRecord]
         if not record_name:
-            return
+            return None
 
         if record_name in params.record_cache:
             return vault.KeeperRecord.load(params, record_name)
 
         rs = try_resolve_path(params, record_name)
         if rs is None:
-            return
+            return None
         folder, record_name = rs
         if folder is None or record_name is None:
-            return
+            return None
 
         folder_uid = folder.uid or ''
         if folder_uid in params.subfolder_record_cache:

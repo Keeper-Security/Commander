@@ -51,6 +51,7 @@ from ..versioning import is_binary_app, is_up_to_date_version
 
 BREACHWATCH_MAX = 5
 
+is_windows = sys.platform.startswith('win')
 
 def register_commands(commands):
     commands['sync-down'] = SyncDownCommand()
@@ -73,6 +74,8 @@ def register_commands(commands):
     commands['reset-password'] = ResetPasswordCommand()
     commands['sync-security-data'] = SyncSecurityDataCommand()
     commands['blank-records'] = BlankRecordCommand()
+    if is_windows:
+        commands['run-as'] = RunAsCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -1360,3 +1363,35 @@ class BlankRecordCommand(Command):
         fmt = kwargs.get('format') or 'table'
         output = kwargs.get('output')
         return base.dump_report_data(table, headers, fmt=fmt, filename=output)
+
+
+class RunAsCommand(Command):
+    run_as_parser = argparse.ArgumentParser(
+        prog='run-as', description='Runs application with user credentials stored on a record')
+    run_as_parser.add_argument('--record', '-r', dest='record', action='store', required=True,
+                               help='Record name or UID')
+    run_as_parser.add_argument('application', help="Application to run")
+
+    def get_parser(self):
+        return RunAsCommand.run_as_parser
+
+    def execute(self, params, **kwargs):
+        if not is_windows:
+            raise CommandError('', f'run-as command is supported on Windows only')
+
+        from .. import native
+
+        record_name = kwargs.get('record')
+        record = base.RecordMixin.resolve_single_record(params, record_name)
+        if not record:
+            raise CommandError('', f'Record \"{record_name}\" not found.')
+
+        username = base.RecordMixin.get_record_field(record, 'login')
+        if not username:
+            raise CommandError('', f'Username not found on record \"{record.title}\"')
+
+        password = base.RecordMixin.get_record_field(record, 'password')
+        if not password:
+            raise CommandError('', f'Password not found on record \"{record.title}\"')
+
+        native.run_as(username, password, kwargs.get('application'))
