@@ -12,8 +12,6 @@
 
 
 import argparse
-from typing import Optional
-
 import certifi
 import json
 import logging
@@ -23,6 +21,7 @@ import shlex
 import sys
 
 from pathlib import Path
+from typing import Optional
 
 from . import __version__
 from . import cli, utils
