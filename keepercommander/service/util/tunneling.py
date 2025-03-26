@@ -13,7 +13,7 @@ from pyngrok import ngrok, conf
 import os
 import logging
 
-def generate_ngrok_url(port, auth_token):
+def generate_ngrok_url(port, auth_token, ngrok_custom_domain):
     """
     Start an ngrok tunnel with complete log suppression.
     Returns only the public URL.
@@ -36,11 +36,14 @@ def generate_ngrok_url(port, auth_token):
         os.dup2(devnull.fileno(), 2)
         
         try:
-            tunnel = ngrok.connect(port, pyngrok_config=ngrok_config)
+            if ngrok_custom_domain:
+                tunnel = ngrok.connect(port, subdomain=ngrok_custom_domain, pyngrok_config=ngrok_config)
+            else:
+               tunnel = ngrok.connect(port, pyngrok_config=ngrok_config)
             return tunnel.public_url
             
         finally:
             os.dup2(old_stdout_fd, 1)
-            os.dup2(old_stderr_fd, 2)
+            os.dup2(old_stderr_fd, 2) 
             os.close(old_stdout_fd)
             os.close(old_stderr_fd)

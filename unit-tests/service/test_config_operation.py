@@ -19,7 +19,7 @@ if sys.version_info >= (3, 8):
                 "api-key": "test-api-key",
                 "command_list": "list",
                 "expiration_timestamp": "2024-12-31T23:59:59",
-                "expiration_of_token": ""
+                #"expiration_of_token": ""
             }
             
             with mock.patch.object(ServiceConfig, 'load_config', return_value=mock_config), \
@@ -66,7 +66,7 @@ if sys.version_info >= (3, 8):
                 "api-key": "new-api-key",
                 "command_list": "list",
                 "expiration_timestamp": "2024-12-31T23:59:59",
-                "expiration_of_token": ""
+                #"expiration_of_token": ""
             }
             
             with mock.patch.object(ServiceConfig, 'load_config', return_value=mock_config), \
