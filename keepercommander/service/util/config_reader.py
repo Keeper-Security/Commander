@@ -35,6 +35,7 @@ class ConfigReader:
             param_handlers = {
                 'port': lambda: config_data.get('port', 5000),
                 'rate_limiting': lambda: config_data.get('rate_limiting', ""),
+                'ip_allowed_list': lambda: config_data.get('ip_allowed_list', ""),
                 'ip_denied_list': lambda: config_data.get('ip_denied_list', ""),
                 'is_advanced_security_enabled': lambda: config_data.get('is_advanced_security_enabled', "n"),
                 'encryption_private_key': lambda: config_data.get('encryption_private_key', ""),

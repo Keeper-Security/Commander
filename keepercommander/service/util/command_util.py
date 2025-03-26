@@ -18,7 +18,7 @@ from .exceptions import CommandExecutionError
 from .config_reader import ConfigReader
 from ..core.globals import get_current_params
 from .parse_keeper_response import parse_keeper_response
-from keepercommander.crypto import encrypt_aes_v1
+from keepercommander.crypto import encrypt_aes_v2
 from ..decorators.logging import logger, debug_decorator
 
 class CommandExecutor:
@@ -58,7 +58,7 @@ class CommandExecutor:
             try:
                 encryption_key_bytes = encryption_key.encode('utf-8')
                 response_bytes = json.dumps(response).encode('utf-8')
-                return encrypt_aes_v1(response_bytes, encryption_key_bytes)
+                return encrypt_aes_v2(response_bytes, encryption_key_bytes)
             except Exception as e:
                 raise
         return response

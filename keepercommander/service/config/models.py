@@ -19,9 +19,11 @@ class ServiceConfigData:
     port: Optional[int]
     ngrok: str
     ngrok_auth_token: str
+    ngrok_custom_domain: str
     ngrok_public_url: str
     is_advanced_security_enabled: str
     rate_limiting: str
+    ip_allowed_list: str
     ip_denied_list: str
     encryption: str
     encryption_private_key: str
