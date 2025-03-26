@@ -101,10 +101,14 @@ class ConfigValidator:
 
         logger.debug(f"Validating IP list: {ip_list}")
         ips = [ip.strip() for ip in ip_list.split(',')]
-        
         for ip in ips:
             try:
-                ipaddress.ip_network(ip)
+                if '-' in ip:
+                    start_ip, end_ip = ip.split('-')
+                    ipaddress.ip_network(start_ip)
+                    ipaddress.ip_network(end_ip)
+                else:
+                   ipaddress.ip_network(ip)     
             except ValueError:
                 try:
                     ipaddress.ip_network(ip, strict=False)

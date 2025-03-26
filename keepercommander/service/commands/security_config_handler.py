@@ -32,12 +32,39 @@ class SecurityConfigHandler(Command):
         config_data["is_advanced_security_enabled"] = (
             self.service_config._get_yes_no_input(self.messages['advanced_security_prompt'])
         )
-        
+        config_data["ip_allowed_list"] = '0.0.0.0/0'
         if config_data["is_advanced_security_enabled"] == "y":
             self._configure_advanced_security(config_data)
 
+    def _configure_ip_allowed(self, config_data: Dict[str, Any]) -> None:
+        while True:
+            try:
+                ip_list = input(self.messages['ip_allowed_list_prompt'])
+                logger.debug(f"Allowed Ip list: {ip_list}")
+                if ip_list:
+                    logger.debug(f"Validating IP list: {ip_list}")
+                    config_data["ip_allowed_list"] = (
+                        self.service_config.validator.validate_ip_list(ip_list)
+                    )
+                break
+            except ValidationError as e:
+                print(f"{self.validation_messages['invalid_ip_list']} {str(e)}")
+
+    def _configure_ip_blocking(self, config_data: Dict[str, Any]) -> None:
+        while True:
+            try:
+                ip_list = input(self.messages['ip_denied_list_prompt'])
+                logger.debug(f"Validating IP list: {ip_list}")
+                config_data["ip_denied_list"] = (
+                    self.service_config.validator.validate_ip_list(ip_list)
+                )
+                break
+            except ValidationError as e:
+                print(f"{self.validation_messages['invalid_ip_list']} {str(e)}")
+
     def _configure_advanced_security(self, config_data: Dict[str, Any]) -> None:
         self._configure_rate_limiting(config_data)
+        self._configure_ip_allowed(config_data)
         self._configure_ip_blocking(config_data)
         self._configure_encryption(config_data)
 
@@ -53,17 +80,7 @@ class SecurityConfigHandler(Command):
             except ValidationError as e:
                 print(f"{self.validation_messages['invalid_rate_limit']} {str(e)}")
 
-    def _configure_ip_blocking(self, config_data: Dict[str, Any]) -> None:
-        while True:
-            try:
-                ip_list = input(self.messages['ip_list_prompt'])
-                logger.debug(f"Validating IP list: {ip_list}")
-                config_data["ip_denied_list"] = (
-                    self.service_config.validator.validate_ip_list(ip_list)
-                )
-                break
-            except ValidationError as e:
-                print(f"{self.validation_messages['invalid_ip_list']} {str(e)}")
+    
 
     def _configure_encryption(self, config_data: Dict[str, Any]) -> None:
         config_data["encryption"] = self.service_config._get_yes_no_input(self.messages['encryption_prompt'])

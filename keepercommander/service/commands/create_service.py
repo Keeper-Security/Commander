@@ -22,8 +22,11 @@ from typing import Optional
 @dataclass
 class StreamlineArgs:
     port: Optional[int]
+    allowedip: Optional[str]
+    deniedip: Optional[str]
     commands: Optional[str]
-    ngrok: Optional[str]   
+    ngrok: Optional[str]
+    ngrok_custom_domain: Optional[str]
 
 class CreateService(Command):
     """Command to create a new service configuration."""
@@ -51,8 +54,11 @@ class CreateService(Command):
     def get_parser(self):
         parser = argparse.ArgumentParser(prog='service-create', parents=[report_output_parser], description='Creates and initializes the Commander API service.')
         parser.add_argument('-p', '--port', type=int, help='port number for the service (required)')
+        parser.add_argument('-aip', '--allowedip', type=str, help='allowed ip to access service')
+        parser.add_argument('-dip', '--deniedip', type=str, help='denied ip to access service')
         parser.add_argument('-c', '--commands', type=str, help='command list for policy')
         parser.add_argument('-ng', '--ngrok', type=str, help='ngrok auth token to generate public URL (optional)')
+        parser.add_argument('-cd', '--ngrok_custom_domain', type=str, help='ngrok custom domain name(optional)')
         return parser
     
     def execute(self, params: KeeperParams, **kwargs) -> None:
@@ -67,7 +73,7 @@ class CreateService(Command):
 
             config_data = self.service_config.create_default_config()
 
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'commands', 'ngrok']}
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain']}
             args = StreamlineArgs(**filtered_kwargs)
             self._handle_configuration(config_data, params, args)
             self._create_and_save_record(config_data, params, args)

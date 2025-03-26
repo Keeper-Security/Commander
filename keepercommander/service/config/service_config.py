@@ -80,9 +80,11 @@ class ServiceConfig:
             port=None,
             ngrok="n",
             ngrok_auth_token="",
+            ngrok_custom_domain="",
             ngrok_public_url="",
             is_advanced_security_enabled="n",
             rate_limiting="",
+            ip_allowed_list="",
             ip_denied_list="",
             encryption="",
             encryption_private_key="",
@@ -116,6 +118,7 @@ class ServiceConfig:
         if config_data.is_advanced_security_enabled == 'y':
             logger.debug("Validating advanced security settings")
             self.validator.validate_rate_limit(config_data.rate_limiting)
+            self.validator.validate_ip_list(config_data.ip_allowed_list)
             self.validator.validate_ip_list(config_data.ip_denied_list)
 
         if config_data.encryption == 'y':

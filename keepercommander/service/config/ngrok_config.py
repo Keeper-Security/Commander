@@ -23,7 +23,8 @@ class NgrokConfigurator:
             logger.debug("Configuring ngrok tunnel")
             config_data["ngrok_public_url"] = generate_ngrok_url(
                 config_data["port"], 
-                config_data["ngrok_auth_token"]
+                config_data["ngrok_auth_token"],
+                config_data["ngrok_custom_domain"]
             )
             print(f'Generated ngrok URL: {config_data["ngrok_public_url"]}')
             service_config.save_config(config_data)

@@ -69,7 +69,7 @@ class RecordHandler:
             "api-key": api_key,
             "command_list": commands,
             "expiration_timestamp": datetime(9999, 12, 31, 23, 59, 59).isoformat(),
-            "expiration_of_token": ""
+            #"expiration_of_token": ""
         }
 
     @debug_decorator
@@ -80,7 +80,7 @@ class RecordHandler:
         ).strip()
 
         if not expiration_str:
-            record["expiration_of_token"] = ""
+            #record["expiration_of_token"] = ""
             record["expiration_timestamp"] = datetime(9999, 12, 31, 23, 59, 59).isoformat()
             print("API key set to never expire")
             return
@@ -88,7 +88,7 @@ class RecordHandler:
         try:
             expiration_delta = self.validator.parse_expiration_time(expiration_str)
             expiration_time = datetime.now() + expiration_delta
-            record["expiration_of_token"] = expiration_str
+            #record["expiration_of_token"] = expiration_str
             record["expiration_timestamp"] = expiration_time.isoformat()
             print(f"API key will expire at: {record['expiration_timestamp']}")
         except ValidationError as e:
