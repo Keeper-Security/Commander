@@ -51,6 +51,8 @@ FieldTypes = {x[0]: x for x in (
     FieldType('recordRef', '', 'reference to other record'),
     FieldType('appFiller', {'macroSequence': '', 'applicationTitle': '', 'contentFilter': ''}, 'Native Application Filler'),
     FieldType('pamResources', {'controllerUid': '', 'folderUid': '', 'resourceRef': []}, 'PAM resources'),
+    FieldType('pamSettings', {'connection': {}, 'portForward': {}}, 'PAM Settings'),
+
 )}   # type: Dict[str, FieldType]
 
 
@@ -81,6 +83,7 @@ RecordFields = {x[0]: x for x in (
     RecordField('pamHostname', 'host', Multiple.Never),
     RecordField('databaseType', 'dropdown', Multiple.Never),
     RecordField('directoryType', 'dropdown', Multiple.Never),
+    RecordField('pamSettings', 'pamSettings', Multiple.Never),
 
 )}   # type: Dict[str, RecordField]
 
