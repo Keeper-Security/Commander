@@ -546,6 +546,14 @@ class RecordEditMixin:
                         value = parsed_field.value
                         if ft.name == 'multiline':
                             value = self.validate_notes(value)
+                    elif isinstance(ft.value, bool):
+                        lv = parsed_field.value.lower()
+                        if lv in ('1', 'y', 'yes', 't', 'true'):
+                            value = True
+                        elif lv in ('0', 'n', 'no', 'f', 'false'):
+                            value = False
+                        else:
+                            self.on_warning(f'Incorrect boolean value \"{parsed_field.value}\": [t]rue or [f]alse')
                     elif isinstance(ft.value, int):
                         if parsed_field.value.isdigit():
                             value = int(parsed_field.value)
@@ -557,14 +565,6 @@ class RecordEditMixin:
                             else:
                                 dt = datetime.datetime.strptime(parsed_field.value, '%Y-%m-%dT%H:%M:%SZ')
                             value = int(dt.timestamp() * 1000)
-                    elif isinstance(ft.value, bool):
-                        lv = parsed_field.value.lower()
-                        if lv in ('1', 'y', 'yes', 't', 'true'):
-                            value = True
-                        elif lv in ('0', 'n', 'no', 'f', 'false'):
-                            value = False
-                        else:
-                            self.on_warning(f'Incorrect boolean value \"{parsed_field.value}\": [t]rue or [f]alse')
                     elif isinstance(ft.value, dict):
                         if ft.name == 'name':
                             value = vault.TypedField.import_name_field(parsed_field.value)
