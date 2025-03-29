@@ -128,6 +128,7 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
                         'verification is only permitted on reserved domains.\n'
                         'To reserve a domain please contact Keeper support. '
                         f'Learn more about domain reservation here:\n{email_provisioning_doc}')
+        api.query_enterprise(params)
 
         login_facade = vault_extensions.LoginFacade()
         ots_command = OneTimeShareCreateCommand()
