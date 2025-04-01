@@ -5,7 +5,7 @@ from .exceptions import DAGContentException
 import json
 from typing import Optional, Union, Any, TYPE_CHECKING
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     from .vertex import DAGVertex
     Content = Union[str, bytes, dict]
     QueryValue = Union[list, dict, str, float, int, bool]

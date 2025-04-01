@@ -1,17 +1,17 @@
 from . import ConnectionBase
-import logging
 from ..types import DataPayload, SyncData, EdgeType
 import json
 import os
+import logging
 from tabulate import tabulate
 
-try:
+try:  # pragma: no cover
     import sqlite3
     from contextlib import closing
 except ImportError:
     raise Exception("Please install the sqlite3 module to use the Local connection.")
 
-from typing import Optional, Union, Any, TYPE_CHECKING
+from typing import Optional, Union, Any, TYPE_CHECKING  # pragma: no cover
 if TYPE_CHECKING:
     Logger = Union[logging.RootLogger, logging.Logger]
 
@@ -44,7 +44,8 @@ class Connection(ConnectionBase):
 
         self.create_database()
 
-    def debug(self, msg):
+    @staticmethod
+    def debug(msg):
         if Connection.DEBUG == 1:
             logging.debug(f"DAG: {msg}")
 
@@ -74,7 +75,10 @@ class Connection(ConnectionBase):
 
         self.debug("create local dag database")
 
-        with closing(sqlite3.connect(self.db_file))as connection:
+        if os.path.isfile(self.db_file) is True:
+            return False
+
+        with closing(sqlite3.connect(self.db_file)) as connection:
             with closing(connection.cursor()) as cursor:
 
                 # This is based on workflow, Database.kt.
@@ -261,7 +265,7 @@ CREATE TABLE IF NOT EXISTS dag_streams (
         # If we can't find stream ID, assume it's on the first item in the dataList
         if stream_id is None:
             item = data.get("dataList")[0]
-            stream_id = item.get("parentRef")["value"] or  item.get("ref")["value"]
+            stream_id = item.get("parentRef")["value"] or item.get("ref")["value"]
 
         return stream_id
 
@@ -424,7 +428,7 @@ CREATE TABLE IF NOT EXISTS dag_streams (
                 cols = ["graph_id", "edge_id", "type", "head", "tail", "data", "origin", "path", "created",
                         "creator_id", "creator_type", "creator_name"]
 
-                sql = f"SELECT {','.join(cols) } FROM dag_edges ORDER BY edge_id DESC"
+                sql = f"SELECT {','.join(cols)} FROM dag_edges ORDER BY edge_id DESC"
                 res = cursor.execute(sql,)
 
                 ret += "dag_edges\n"
@@ -437,7 +441,7 @@ CREATE TABLE IF NOT EXISTS dag_streams (
 
                 cols = ["e.graph_id", "e.edge_id", "v.vertex_id", "v.type", "v.name", "v.owner_id"]
 
-                sql = f"SELECT {','.join(cols) } "\
+                sql = f"SELECT {','.join(cols)} "\
                       "FROM dag_vertices v "\
                       "INNER JOIN dag_edges e ON e.tail = v.vertex_id "\
                       "ORDER BY e.graph_id DESC, e.edge_id DESC"
@@ -453,7 +457,7 @@ CREATE TABLE IF NOT EXISTS dag_streams (
 
                 cols = ["graph_id", "edge_id", "sync_point", "vertex_id", "count", "deletion"]
 
-                sql = f"SELECT {','.join(cols) } FROM dag_streams ORDER BY edge_id DESC"
+                sql = f"SELECT {','.join(cols)} FROM dag_streams ORDER BY edge_id DESC"
                 res = cursor.execute(sql,)
 
                 ret += "dag_streams\n"

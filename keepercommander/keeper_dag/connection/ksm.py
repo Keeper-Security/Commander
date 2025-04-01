@@ -125,8 +125,9 @@ class Connection(ConnectionBase):
 
     def authenticate(self,
                      refresh: bool = False,
-                     retry: int = 3,
-                     retry_wait: int = 10,
+                     retry: int = 5,
+                     retry_wait: float = 10.0,
+                     throttle_inc_factor: float = 1.5,
                      timeout: Optional[int] = None) -> (str, str):
 
         if self._signature is None or refresh is True:
@@ -167,6 +168,13 @@ class Connection(ConnectionBase):
                 except requests.exceptions.HTTPError as http_err:
                     err_msg = f"{http_err.response.status_code}, {http_err.response.text}"
 
+                    if http_err.response.status_code == 429:
+                        retry_wait *= throttle_inc_factor
+                        attempt -= 1
+                        self.logger.warning(
+                            "the connection to the graph service, for authentication, is being throttled; "
+                            f"increasing delay between retry: {retry_wait} seconds")
+
                 except Exception as err:
                     err_msg = str(err)
 
@@ -182,8 +190,9 @@ class Connection(ConnectionBase):
 
     def rest_call_to_router(self, http_method: str, endpoint: str,
                             payload_json: Optional[Union[bytes, str]] = None,
-                            retry: int = 3,
-                            retry_wait: int = 10,
+                            retry: int = 5,
+                            retry_wait: float = 10.0,
+                            throttle_inc_factor: float = 1.5,
                             timeout: Optional[int] = None) -> str:
 
         # If the timeout is set to 0, set to the default which is None.
@@ -243,6 +252,12 @@ class Connection(ConnectionBase):
 
                 err_msg = f"{http_err.response.status_code}, {http_err.response.text}"
                 content = http_err.response.text
+
+                if http_err.response.status_code == 429:
+                    retry_wait *= throttle_inc_factor
+                    attempt -= 1
+                    self.logger.warning("the connection to the graph service is being throttled, "
+                                        f"increasing the delay between retry: {retry_wait} seconds.")
 
             except Exception as err:
                 err_msg = str(err)

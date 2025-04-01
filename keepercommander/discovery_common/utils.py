@@ -31,12 +31,16 @@ def get_connection(**kwargs):
     It returns a child instance of the Connection class.
     """
 
+    # if the connection is passed in, return it.
+    if kwargs.get("connection") is not None:
+        return kwargs.get("connection")
+
+    ksm = kwargs.get("ksm")
+    params = kwargs.get("params")
     if value_to_boolean(os.environ.get("USE_LOCAL_DAG")) is True:
         from keepercommander.keeper_dag.connection.local import Connection
         conn = Connection()
     else:
-        ksm = kwargs.get("ksm")
-        params = kwargs.get("params")
         if ksm is not None:
             from keepercommander.keeper_dag.connection.ksm import Connection
             conn = Connection(config=ksm.storage_config)
