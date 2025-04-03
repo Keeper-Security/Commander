@@ -29,16 +29,16 @@ class CyberArkImporter(BaseImporter):
         return f"https://{pvwa_host}/PasswordVault/API/{cls.ENDPOINTS[endpoint]}"
 
     def do_import(self, filename, **kwargs):
+        pvwa_host = filename.rstrip('/').lstrip('https://')
         # The CyberArk API implements paging with a limit of 1000 records per page
         query_params = {"limit": 1000, "offset": 0}
-        if "?" in filename:
+        if "?" in pvwa_host:
             # Use what comes after the (optional) '?' as the search query
-            pvwa_host, query_params["search"] = filename.split("?", 1)
-        else:
-            pvwa_host = filename
+            pvwa_host, query_params["search"] = pvwa_host.split("?", 1)
         # CyberArk Cloud uses an OAuth2 client_credentials grant for authentication
         if pvwa_host.endswith(".cyberark.cloud"):
-            tenant_id = input("CyberArk Identity Tenant ID: ").rstrip(".id")
+            pvwa_host = f"{pvwa_host.split('.')[0]}.privilegecloud.cyberark.cloud"
+            tenant_id = input("CyberArk Identity Tenant ID: ").rstrip('/').lstrip('https://').split('.')[0]
             response = requests.post(
                 f"https://{tenant_id}.id.cyberark.cloud/oauth2/platformtoken",
                 data={
