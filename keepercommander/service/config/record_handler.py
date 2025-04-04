@@ -42,13 +42,8 @@ class RecordHandler:
         """Update existing record or add new one."""
         try:
             record_uid = self.cli_handler.find_config_record(params, title)
-            print("record_uid", record_uid)
             
             config_path_str = f"'{config_path.as_posix()}'"
-
-            
-            print("config_path_str", config_path_str)
-
 
             command = (
                 f"record-update --force --record {record_uid} "
@@ -74,14 +69,16 @@ class RecordHandler:
         try:
             record_uid = self.cli_handler.find_config_record(params, title)
 
-            keeper_dir = Path.home() / ".keeper"
-            cert_files = [file for file in keeper_dir.glob("*") if "cert" in file.name.lower()]
+            keeper_dir = utils.get_default_path()
+            valid_extensions = {".pem", ".crt", ".cer", ".key"}
+
+            cert_files = [file for file in keeper_dir.glob("*") if file.suffix in valid_extensions]
+
 
             if not cert_files:
                 raise FileNotFoundError("No certificate files found in .keeper directory.")
 
             file_args = " ".join(f"f.file='{file.as_posix()}'" for file in cert_files)
-            print("file_args", file_args)
             command = (
                 f"record-update --force --record {record_uid} "
                 f"--title '{title}' --record-type legacy {file_args}"
@@ -104,41 +101,6 @@ class RecordHandler:
         except Exception as e:
             print(f"Error updating/adding certificate record: {e}")
 
-    
-    # def update_or_add_cert_record(self, params: KeeperParams, title: str) -> None:
-    #     """Update existing certificate record or add a new one."""
-    #     try:
-    #         record_uid = self.cli_handler.find_config_record(params, title)
-            
-    #         certfile_path = utils.get_default_path() / "cert.pem"
-    #         certpassword_path = utils.get_default_path() / "cert_password.pem"
-            
-    #         certfile_str = f"'{certfile_path.as_posix()}'" if certfile_path.exists() else "''"
-    #         certpassword_str = f"'{certpassword_path.as_posix()}'" if certpassword_path.exists() else "''"
-            
-    #         command = (
-    #             f"record-update --force --record {record_uid} "
-    #             f"--title '{title}' --record-type legacy "
-    #             f"f.file={certfile_str} f.file={certpassword_str}"
-    #         ) if record_uid else (
-    #             f"record-add --title='{title}' "
-    #             f"--record-type=legacy "
-    #             f"f.file={certfile_str} f.file={certpassword_str}"
-    #         )
-            
-    #         if record_uid:
-    #             self.cli_handler.execute_cli_command(params, f"delete-attachment {record_uid} --name certfile --name certpassword")
-            
-    #         logger.debug(f"{'Updating' if record_uid else 'Creating'} certificate record")
-            
-    #         self.cli_handler.execute_cli_command(params, command)
-            
-    #         if not record_uid:
-    #             self.record_uid = self.cli_handler.find_config_record(params, title)
-        
-    #     except Exception as e:
-    #         print(f"Error updating/adding certificate record: {e}")
-    
     @debug_decorator
     def _create_base_record(self, api_key: str, commands: str) -> Dict[str, Any]:
         """Create base record structure."""

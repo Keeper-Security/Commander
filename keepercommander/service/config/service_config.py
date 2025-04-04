@@ -10,10 +10,13 @@
 #
 
 import json
+import logging
 from pathlib import Path
 import shutil
 from typing import Dict, Any, List, Optional
 from configparser import ConfigParser
+
+import yaml
 from keepercommander.params import KeeperParams
 from .file_handler import ConfigFormatHandler
 from ..decorators.logging import logger, debug_decorator
@@ -120,41 +123,60 @@ class ServiceConfig:
 
     def update_service_config(self, updates: Dict[str, str]) -> None:
         """
-        Update specified keys in the service_config.json file with new values.
-        
+        Update specified keys in the service configuration file (.json or .yml).
+
         Args:
             updates: Dictionary where each key is a config field (like 'certfile')
-                     and value is the `.keeper` file path as a string.
+                    and value is the **certificate file name** stored in `.keeper`.
         """
         try:
-            config_file_path = utils.get_default_path() / "service_config.json"
+            config_dir = utils.get_default_path()
+            config_dir.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
 
-            if config_file_path.exists():
-                with open(config_file_path, "r") as f:
-                    config_json = json.load(f)
+            # Find any service_config file
+            config_path = None
+            file_format = None
+
+            for file in config_dir.glob("service_config.*"):
+                ext = file.suffix.lower()
+                if ext in [".json", ".yml", ".yaml"]:
+                    config_path = file
+                    file_format = "json" if ext == ".json" else "yaml"
+                    break
+
+            if config_path: 
+                # Load existing configuration
+                with open(config_path, "r") as f:
+                    config_data = json.load(f) if file_format == "json" else yaml.safe_load(f) or {}
+
+                # Update configuration with only file names
+                config_data.update(updates)
+
+                # Save updated configuration
+                with open(config_path, "w") as f:
+                    if file_format == "json":
+                        json.dump(config_data, f, indent=4)
+                    else:
+                        yaml.safe_dump(config_data, f, default_flow_style=False)
+
+                logging.info(f"Updated keys in {config_path.name}: {', '.join(updates.keys())}")
+
             else:
-                config_json = {}
-
-            # Update config with only .keeper path
-            config_json.update(updates)
-
-            with open(config_file_path, "w") as f:
-                json.dump(config_json, f, indent=4)
-
-            print(f"Updated keys in service_config.json: {', '.join(updates.keys())}")
+                logging.info("No existing service_config file found.")
 
         except Exception as e:
-            print(f"Error updating service_config.json: {e}")
+            logging.info(f"Error updating service configuration: {e}")
+
 
     def save_cert_data(self, config_data: Dict[str, Any], save_type: str = None) -> Path:
-        """Save certificate and password files in the .keeper folder and update service_config.json."""
+        """Save certificate and password files in the .keeper folder and update service_config.json/.yml."""
         try:
             keeper_dir = utils.get_default_path()
             keeper_dir.mkdir(parents=True, exist_ok=True)
 
             cert_paths = self.get_cert_paths(config_data)
 
-            updated_paths = {}
+            updated_names = {}
             saved_files = []
 
             for key, src_path in cert_paths.items():
@@ -162,44 +184,18 @@ class ServiceConfig:
                 if src_path.exists():
                     shutil.copy(src_path, dest_path)
                     saved_files.append(dest_path)
-                    updated_paths[key] = str(dest_path)  # Store only the .keeper path
+                    updated_names[key] = src_path.name  # Store only the filename, not the full path
                 else:
                     raise FileNotFoundError(f"File not found: {src_path}")
 
-            self.update_service_config(updated_paths)
+            self.update_service_config(updated_names)
 
-            print(f"Certificates saved in {keeper_dir}: {', '.join(str(f) for f in saved_files)}")
+            logging.info(f"Certificates saved in {keeper_dir}: {', '.join(str(f.name) for f in saved_files)}")
             return keeper_dir
 
         except Exception as e:
-            print(f"Error saving certificate data: {e}")
+            logging.info(f"Error saving certificate data: {e}")
             return None
-
-
-    
-    # def save_cert_data(self, config_data: Dict[str, Any], save_type: str = None) -> Path:
-    #     """Save certificate and password files in the .keeper folder."""
-    #     try:
-    #         keeper_dir = utils.get_default_path() / ".keeper"
-    #         keeper_dir.mkdir(parents=True, exist_ok=True)  # Ensure .keeper directory exists
-
-    #         cert_paths = self.get_cert_paths(config_data)
-            
-    #         # Save certificate files dynamically based on their format
-    #         saved_files = []
-    #         for key, src_path in cert_paths.items():
-    #             dest_path = keeper_dir / src_path.name  # Preserve original filename
-    #             if src_path.exists():
-    #                 shutil.copy(src_path, dest_path)
-    #                 saved_files.append(dest_path)
-    #             else:
-    #                 raise FileNotFoundError(f"File not found: {src_path}")
-
-    #         print(f"Certificates saved in {keeper_dir}: {', '.join(str(f) for f in saved_files)}")
-    #         return keeper_dir
-    #     except Exception as e:
-    #         print(f"Error saving certificate data: {e}")
-    #         return None
 
     def load_config(self) -> Dict[str, Any]:
         """Load configuration from file."""

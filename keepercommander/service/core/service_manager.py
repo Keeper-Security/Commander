@@ -12,6 +12,8 @@
 import os
 import logging
 import psutil
+
+from keepercommander import utils
 from ..config.service_config import ServiceConfig
 from ..decorators.logging import logger, debug_decorator
 from .process_info import ProcessInfo
@@ -69,8 +71,9 @@ class ServiceManager:
             NgrokConfigurator.configure_ngrok(config_data, service_config)
             
             logging.getLogger('werkzeug').setLevel(logging.WARNING)
-            certfile = config_data.get("certfile")
-            certpassword = config_data.get("certpassword")
+            
+            certfile =  utils.get_default_path() / config_data.get("certfile")
+            certpassword = utils.get_default_path() / config_data.get("certpassword")
 
             if certfile and certpassword:   
                 try:
@@ -80,13 +83,13 @@ class ServiceManager:
                         ssl_context=(certfile, certpassword)
                     )
                 except Exception as e:
-                    print(f"TLS startup failed — {e}")
+                    logging.info(f"TLS startup failed — {e}")
                     cls._flask_app.run(host='0.0.0.0', port=port)  # Fallback: no TLS
             else:
                 cls._flask_app.run(host='0.0.0.0', port=port)  # No certs provided: no TLS
             
         except FileNotFoundError:
-            print("Error: Service configuration file not found. Please use 'service-create' command to create a service_config file.")
+            logging.info("Error: Service configuration file not found. Please use 'service-create' command to create a service_config file.")
             return
         except Exception as e:
             logger.error(f"Error: Failed to start Commander Service")

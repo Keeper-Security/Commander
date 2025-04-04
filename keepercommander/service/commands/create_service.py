@@ -102,7 +102,6 @@ class CreateService(Command):
         record = self.service_config.create_record(config_data["is_advanced_security_enabled"], params, args.commands)
         config_data["records"] = [record]
         self.service_config.save_config(config_data, 'create')
-        print("config_data", config_data)
         self.service_config.save_cert_data(config_data, 'create')
         
     def _upload_and_start_service(self, params: KeeperParams) -> None:
