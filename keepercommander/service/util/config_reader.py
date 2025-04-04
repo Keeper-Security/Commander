@@ -40,6 +40,8 @@ class ConfigReader:
                 'is_advanced_security_enabled': lambda: config_data.get('is_advanced_security_enabled', "n"),
                 'encryption_private_key': lambda: config_data.get('encryption_private_key', ""),
                 'ngrok_public_url': lambda: config_data.get('ngrok_public_url', ""),
+                'certfile': lambda: config_data.get('certfile', ""),
+                'certpassword': lambda: config_data.get('certpassword', ""),
             }
 
             if handler := param_handlers.get(service_config_param):

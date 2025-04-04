@@ -52,7 +52,6 @@ class ServiceManager:
         try:
             service_config = ServiceConfig()
             config_data = service_config.load_config()
-            
             if not (port := config_data.get("port")):
                 print("Error: Service configuration is incomplete. Please configure the service port in service_config")
                 return
@@ -70,8 +69,21 @@ class ServiceManager:
             NgrokConfigurator.configure_ngrok(config_data, service_config)
             
             logging.getLogger('werkzeug').setLevel(logging.WARNING)
-            
-            cls._flask_app.run(host='0.0.0.0', port=port)
+            certfile = config_data.get("certfile")
+            certpassword = config_data.get("certpassword")
+
+            if certfile and certpassword:   
+                try:
+                    cls._flask_app.run(
+                        host='0.0.0.0',
+                        port=port,
+                        ssl_context=(certfile, certpassword)
+                    )
+                except Exception as e:
+                    print(f"TLS startup failed — {e}")
+                    cls._flask_app.run(host='0.0.0.0', port=port)  # Fallback: no TLS
+            else:
+                cls._flask_app.run(host='0.0.0.0', port=port)  # No certs provided: no TLS
             
         except FileNotFoundError:
             print("Error: Service configuration file not found. Please use 'service-create' command to create a service_config file.")

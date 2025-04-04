@@ -9,8 +9,10 @@
 # Contact: ops@keepersecurity.com
 #
 
+import json
 from pathlib import Path
-from typing import Dict, Any, Optional
+import shutil
+from typing import Dict, Any, List, Optional
 from configparser import ConfigParser
 from keepercommander.params import KeeperParams
 from .file_handler import ConfigFormatHandler
@@ -19,6 +21,8 @@ from ..util.exceptions import ValidationError
 from .models import ServiceConfigData
 from keepercommander import resources, utils
 
+
+VALID_CERT_EXTENSIONS = {".pem", ".crt", ".cer", ".key"}
 class ServiceConfig:
     def __init__(self, title: str = 'Commander Service Mode'):
         self.title = title
@@ -82,6 +86,9 @@ class ServiceConfig:
             ngrok_auth_token="",
             ngrok_custom_domain="",
             ngrok_public_url="",
+            tls_certificate="n",
+            certfile="",
+            certpassword="",
             is_advanced_security_enabled="n",
             rate_limiting="",
             ip_allowed_list="",
@@ -96,6 +103,103 @@ class ServiceConfig:
         """Save configuration to file."""
         self._validate_config_structure(config_data)
         return self.format_handler.save_config(config_data, save_type)
+
+    
+
+    def get_cert_paths(self, config_data: Dict[str, Any]) -> Dict[str, Path]:
+        """Retrieve certificate file paths with validation."""
+        cert_paths = {}
+        for key in ["certfile", "certpassword"]:
+            if config_data.get(key):
+                file_path = Path(config_data[key])
+                if file_path.suffix in VALID_CERT_EXTENSIONS:
+                    cert_paths[key] = file_path
+                else:
+                    raise ValueError(f"Invalid file format for {key}: {file_path}. Allowed: {VALID_CERT_EXTENSIONS}")
+        return cert_paths
+
+    def update_service_config(self, updates: Dict[str, str]) -> None:
+        """
+        Update specified keys in the service_config.json file with new values.
+        
+        Args:
+            updates: Dictionary where each key is a config field (like 'certfile')
+                     and value is the `.keeper` file path as a string.
+        """
+        try:
+            config_file_path = utils.get_default_path() / "service_config.json"
+
+            if config_file_path.exists():
+                with open(config_file_path, "r") as f:
+                    config_json = json.load(f)
+            else:
+                config_json = {}
+
+            # Update config with only .keeper path
+            config_json.update(updates)
+
+            with open(config_file_path, "w") as f:
+                json.dump(config_json, f, indent=4)
+
+            print(f"Updated keys in service_config.json: {', '.join(updates.keys())}")
+
+        except Exception as e:
+            print(f"Error updating service_config.json: {e}")
+
+    def save_cert_data(self, config_data: Dict[str, Any], save_type: str = None) -> Path:
+        """Save certificate and password files in the .keeper folder and update service_config.json."""
+        try:
+            keeper_dir = utils.get_default_path()
+            keeper_dir.mkdir(parents=True, exist_ok=True)
+
+            cert_paths = self.get_cert_paths(config_data)
+
+            updated_paths = {}
+            saved_files = []
+
+            for key, src_path in cert_paths.items():
+                dest_path = keeper_dir / src_path.name
+                if src_path.exists():
+                    shutil.copy(src_path, dest_path)
+                    saved_files.append(dest_path)
+                    updated_paths[key] = str(dest_path)  # Store only the .keeper path
+                else:
+                    raise FileNotFoundError(f"File not found: {src_path}")
+
+            self.update_service_config(updated_paths)
+
+            print(f"Certificates saved in {keeper_dir}: {', '.join(str(f) for f in saved_files)}")
+            return keeper_dir
+
+        except Exception as e:
+            print(f"Error saving certificate data: {e}")
+            return None
+
+
+    
+    # def save_cert_data(self, config_data: Dict[str, Any], save_type: str = None) -> Path:
+    #     """Save certificate and password files in the .keeper folder."""
+    #     try:
+    #         keeper_dir = utils.get_default_path() / ".keeper"
+    #         keeper_dir.mkdir(parents=True, exist_ok=True)  # Ensure .keeper directory exists
+
+    #         cert_paths = self.get_cert_paths(config_data)
+            
+    #         # Save certificate files dynamically based on their format
+    #         saved_files = []
+    #         for key, src_path in cert_paths.items():
+    #             dest_path = keeper_dir / src_path.name  # Preserve original filename
+    #             if src_path.exists():
+    #                 shutil.copy(src_path, dest_path)
+    #                 saved_files.append(dest_path)
+    #             else:
+    #                 raise FileNotFoundError(f"File not found: {src_path}")
+
+    #         print(f"Certificates saved in {keeper_dir}: {', '.join(str(f) for f in saved_files)}")
+    #         return keeper_dir
+    #     except Exception as e:
+    #         print(f"Error saving certificate data: {e}")
+    #         return None
 
     def load_config(self) -> Dict[str, Any]:
         """Load configuration from file."""
@@ -165,3 +269,4 @@ class ServiceConfig:
     def update_or_add_record(self, params: KeeperParams) -> None:
         """Update existing record or add new one."""
         self.record_handler.update_or_add_record(params, self.title, self.format_handler.config_path)
+        self.record_handler.update_or_add_cert_record(params, self.title)

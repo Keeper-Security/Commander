@@ -38,13 +38,16 @@ class ServiceConfigHandler:
                 self.service_config.validator.validate_ngrok_token(args.ngrok)
                 if args.ngrok else ""
             ),
-            "ngrok_custom_domain": args.ngrok_custom_domain
+            "ngrok_custom_domain": args.ngrok_custom_domain,
+            "certfile": args.certfile,
+            "certpassword": args.certpassword
         })
 
     @debug_decorator
     def handle_interactive_config(self, config_data: Dict[str, Any], params: KeeperParams) -> None:
         self._configure_port(config_data)
         self._configure_ngrok(config_data)
+        self._configure_tls(config_data)
 
     def _configure_port(self, config_data: Dict[str, Any]) -> None:
         while True:
@@ -72,3 +75,21 @@ class ServiceConfigHandler:
                     print(f"{self.validation_messages['invalid_ngrok_token']} {str(e)}")
         else:
             config_data["ngrok_auth_token"] = ""
+        
+    def _configure_tls(self, config_data: Dict[str, Any]) -> None:
+        config_data["tls_certificate"] = self.service_config._get_yes_no_input(self.messages['tls_certificate'])
+        
+        if config_data["tls_certificate"] == "y":
+            while True:
+                try:
+                    certfile = input(self.messages['certfile'])
+                    certpassword = input(self.messages['certpassword'])
+                    config_data["certfile"] = self.service_config.validator.validate_cert_file(certfile)
+                    config_data["certpassword"]  = self.service_config.validator.validate_certpassword(certpassword)
+                    # print(f"ngrok custom domain >> "+{config_data["ngrok_custom_domain"]})
+                    break
+                except ValidationError as e:
+                    print(f"{self.validation_messages['invalid_certificate']} {str(e)}")
+        else:
+            config_data["certfile"] = ""
+            config_data["certpassword"] = ""
