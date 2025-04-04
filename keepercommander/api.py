@@ -20,7 +20,7 @@ import re
 import time
 from datetime import datetime
 from functools import reduce
-from typing import Optional, Tuple, Iterable, List, Dict, Any
+from typing import Optional, Tuple, Iterable, List, Dict, Any, Union
 
 import google
 from Cryptodome.PublicKey import RSA
@@ -34,7 +34,7 @@ from .proto import APIRequest_pb2, record_pb2, enterprise_pb2
 from .proto.record_pb2 import GetShareObjectsRequest, GetShareObjectsResponse
 from .record import Record
 from .recordv3 import RecordV3
-from .security_audit import attach_security_data
+from .security_audit import attach_security_data, get_security_data_key_type
 from .shared_folder import SharedFolder
 from .subfolder import BaseFolderNode
 from .sync_down import sync_down
@@ -935,7 +935,7 @@ def update_record_v3(params, rec, **kwargs):   # type: (KeeperParams, Record, ..
     if not record_rq:
         return
     ru = record_rq['pb2_record_update']
-    rq = record_pb2.RecordsUpdateRequest()
+    rq = get_records_update_request(params)
     rq.records.append(ru)
     record_rq_by_uid = {rec.record_uid: record_rq}
     return get_record_v3_response(params, rq, 'vault/records_update', record_rq_by_uid, silent=kwargs.get('silent'))
@@ -946,7 +946,7 @@ def update_records_v3(params, rec_list, **kwargs):   # type: (KeeperParams, List
         Takes a Record() object, converts to record JSON
         and pushes to the Keeper cloud API
     """
-    rq = record_pb2.RecordsUpdateRequest()
+    rq = get_records_update_request(params)
     record_rq_by_uid = {}
     for rec in rec_list:
         record_rq = get_pb2_record_update(params, rec, **kwargs)
@@ -1112,9 +1112,9 @@ def add_record_v3(params, record, **kwargs):   # type: (KeeperParams, dict, ...)
         #ra.audit = audit # Assignment not allowed to field "audit" in protocol message object.
         ra.audit.version = audit.version
         ra.audit.data = audit.data
-    ra = attach_security_data(params, record, ra)
+    ra = attach_security_data(params, record_rq, ra)
 
-    rq = record_pb2.RecordsAddRequest()
+    rq = get_records_add_request(params)
     rq.records.append(ra)
     #NB! 'error code (Invalid data) has occurred.' won't return proper status - throws CommunicationError
     rs = communicate_rest(params, rq, 'vault/records_add')
@@ -1536,3 +1536,24 @@ def load_records_in_shared_folder(params, shared_folder_uid, record_uids=None):
             except Exception as e:
                 logging.debug('Error decrypting record \"%s\": %s', record_uid, e)
         record_set.difference_update(params.record_cache.keys())
+
+
+def get_pb2_records_request(params, request_type='add'):
+    # type: (KeeperParams, str) -> Union[record_pb2.RecordsUpdateRequest, record_pb2.RecordsAddRequest]
+    rq_by_type = dict(add=record_pb2.RecordsAddRequest, update=record_pb2.RecordsUpdateRequest)
+    new_rq_fn = rq_by_type.get(request_type.lower())
+    if not new_rq_fn:
+        raise Exception(f'Request type [{request_type} is unrecognized. Valid choices are [add, update]')
+    else:
+        rq = new_rq_fn()
+        rq.client_time = utils.current_milli_time()
+        rq.security_data_key_type = get_security_data_key_type(params)
+        return rq
+
+
+def get_records_add_request(params):   # type: (KeeperParams) -> record_pb2.RecordsAddRequest
+    return get_pb2_records_request(params, 'add')
+
+
+def get_records_update_request(params): # type: (KeeperParams) -> record_pb2.RecordsUpdateRequest
+    return get_pb2_records_request(params, 'update')

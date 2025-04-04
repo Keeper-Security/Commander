@@ -22,6 +22,7 @@ from .. import vault, utils, crypto, api
 from ..params import KeeperParams
 from ..error import CommandError
 from ..proto import record_pb2
+from ..api import get_records_update_request
 from ..security_audit import attach_security_data
 
 kf_parse = argparse.ArgumentParser(add_help=False)
@@ -277,9 +278,8 @@ class KeeperFillSetCommand(Command, KeeperFillMixin):
         while len(record_v3_updates) > 0:
             chunk = record_v3_updates[:900]
             record_v3_updates = record_v3_updates[900:]
-            rq = record_pb2.RecordsUpdateRequest()
+            rq = get_records_update_request(params)
             rq.records.extend(chunk)
-            rq.client_time = utils.current_milli_time()
 
             rs = api.communicate_rest(params, rq, 'vault/records_update')
 

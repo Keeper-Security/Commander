@@ -1,7 +1,7 @@
 import json
 import logging
 import urllib
-from typing import Union, List, Dict
+from typing import Union, List, Dict, Optional
 from urllib import parse
 
 from . import utils, crypto
@@ -25,21 +25,16 @@ def get_security_score(record): # type: (KeeperRecord) -> Union[int, None]
     return utils.password_score(password) or has_passkey(record) and 100 or 0
 
 def encrypt_security_data(params, data):
-    try:
-        if params.forbid_rsa and not params.enterprise_ec_key:
-            raise Exception('Enterprise ECC public key is not available')
+    if params.forbid_rsa and not params.enterprise_ec_key:
+        raise Exception('Enterprise ECC public key is not available')
 
-        if not params.forbid_rsa and not params.enterprise_rsa_key:
-            raise Exception('Enterprise RSA public key is not available')
+    if not params.forbid_rsa and not params.enterprise_rsa_key:
+        raise Exception('Enterprise RSA public key is not available')
 
-        data = json.dumps(data).encode('utf8')
-        pubkey = params.enterprise_ec_key if params.forbid_rsa else params.enterprise_rsa_key
-        encrypt_fn = crypto.encrypt_ec if params.forbid_rsa else crypto.encrypt_rsa
-        data = encrypt_fn(data, pubkey)
-    except Exception as e:
-        logging.error(f'Error: {e}')
-        data = b''
-    return data
+    data = json.dumps(data).encode('utf8')
+    pubkey = params.enterprise_ec_key if params.forbid_rsa else params.enterprise_rsa_key
+    encrypt_fn = crypto.encrypt_ec if params.forbid_rsa else crypto.encrypt_rsa
+    return encrypt_fn(data, pubkey)
 
 def prep_security_data(params, record):
     get_bw_obj = lambda rec: next(
@@ -63,15 +58,25 @@ def prep_security_data(params, record):
                 else client_pb2.BWStatus.GOOD if is_pw_strong(score) \
                 else client_pb2.BWStatus.WEAK
         if domain:
+            sec_data.update(dict(domain=domain))
+            data_size = len(json.dumps(sec_data).encode('utf8'))
+            max_size = 244
+            diff = max_size - data_size
             # truncate domain string if needed to avoid reaching RSA encryption data size limitation
-            sec_data['domain'] = domain[:200]
+            if diff < 0:
+                new_length = len(domain) + diff
+                sec_data.update(dict(domain=domain[:new_length]))
         sec_data = encrypt_security_data(params, sec_data)
     return sec_data
 
-def prep_security_data_update(params, record): # type: (KeeperParams, KeeperRecord) -> APIRequest_pb2.SecurityData
+def prep_security_data_update(params, record): # type: (KeeperParams, KeeperRecord) -> Optional[APIRequest_pb2.SecurityData]
     sd = APIRequest_pb2.SecurityData()
-    sd.uid = utils.base64_url_decode(record.record_uid)
-    data = prep_security_data(params, record)
+    try:
+        sd.uid = utils.base64_url_decode(record.record_uid)
+        data = prep_security_data(params, record)
+    except:
+        logging.error(f'Could not update security data for record, title = {record.title}, UID = {record.record_uid}')
+        return
     if data:
         sd.data = data
     return sd
@@ -117,7 +122,7 @@ def needs_security_audit(params, record):  # type: (KeeperParams, KeeperRecord) 
     scores = dict(new=get_security_score(record), old=score_data.get('score', 0))
     score_changed_on_passkey = any(x >= 100 for x in scores.values()) and any(x < 100 for x in scores.values())
     creds_removed = bool(scores.get('old') and not scores.get('new'))
-    needs_alignment = bool(scores.get('new')) and saved_sec_data.get('revision', 0) < saved_score_data.get('revision', 0)
+    needs_alignment = bool(scores.get('new')) and not saved_sec_data
     return score_changed_on_passkey or creds_removed or needs_alignment
 
 def update_security_audit_data(params, records):   # type: (KeeperParams, List[KeeperRecord]) -> int
@@ -132,10 +137,12 @@ def update_security_audit_data(params, records):   # type: (KeeperParams, List[K
         chunk = records[:update_limit]
         records = records[update_limit:]
         rq = APIRequest_pb2.SecurityDataRequest()
-        rq.encryptionType = enterprise_pb2.KT_ENCRYPTED_BY_PUBLIC_KEY_ECC if params.forbid_rsa else enterprise_pb2.KT_ENCRYPTED_BY_PUBLIC_KEY
+        rq.encryptionType = get_security_data_key_type(params)
         try:
-            rq.recordSecurityData.extend(prep_security_data_update(params, rec) for rec in chunk)
-            rq.recordSecurityScoreData.extend(prep_score_data_update(params, rec) for rec in chunk)
+            sec_data_objs = (prep_security_data_update(params, rec) for rec in chunk)
+            score_data_objs = (prep_score_data_update(params, rec) for rec in chunk)
+            rq.recordSecurityData.extend(sd for sd in sec_data_objs if sd)
+            rq.recordSecurityScoreData.extend(sd for sd in score_data_objs if sd)
             rs = api.communicate_rest(params, rq, 'enterprise/update_security_data')
         except KeeperApiError as kae:
             logging.error(f'Problem updating security data, reason: {kae}')
@@ -148,18 +155,19 @@ def update_security_audit_data(params, records):   # type: (KeeperParams, List[K
 
 def attach_security_data(params, record, rq_param):
     # type: (KeeperParams, Union[str, Dict[str, any], KeeperRecord], Union[record_pb2.RecordUpdate, record_pb2.RecordAdd]) -> Union[record_pb2.RecordUpdate, record_pb2.RecordAdd]
-    if params.forbid_rsa:   # Skip attaching security data if encrypting w/ EC key (use update_security_data instead)
-        return rq_param
-
     try:
         if not isinstance(record, TypedRecord):
+            if isinstance(record, dict):
+                record['version'] = record.get('version', 3)
             record = KeeperRecord.load(params, record)
         if needs_security_audit(params, record):
-            for param, prep_fn in [(rq_param.securityData, prep_security_data), (rq_param.securityScoreData, prep_score_data)]:
-                data = prep_fn(params, record)
-                if data:
-                    param.data = data
+            rq_param.securityData.data = prep_security_data(params, record)
+            rq_param.securityScoreData.data = prep_score_data(record)
     except Exception as ex:
         logging.error(f'Could not update record security-audit data. Reason: {ex}')
 
     return rq_param
+
+def get_security_data_key_type(params):
+    return record_pb2.ENCRYPTED_BY_PUBLIC_KEY_ECC if params.forbid_rsa \
+        else record_pb2.ENCRYPTED_BY_PUBLIC_KEY

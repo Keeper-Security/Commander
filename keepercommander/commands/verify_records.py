@@ -20,6 +20,7 @@ from .base import user_choice, dump_report_data, Command
 from .. import api, crypto, utils, vault, error
 from ..proto import record_pb2, folder_pb2
 from ..record import get_totp_code
+from ..api import get_records_update_request
 from ..security_audit import attach_security_data
 
 verify_shared_folders_parser = argparse.ArgumentParser(prog='verify-shared-folders')
@@ -391,8 +392,7 @@ class VerifyRecordsCommand(Command):
                                     failed.append(f'{record_uid}: {rs_status.get("message", status)}')
 
                 if len(records_v3_to_fix) > 0:
-                        rq = record_pb2.RecordsUpdateRequest()
-                        rq.client_time = utils.current_milli_time()
+                        rq = get_records_update_request(params)
                         for record_uid in records_v3_to_fix:
                             record = params.record_cache[record_uid]
                             record_key = record['record_key_unencrypted']
