@@ -18,6 +18,8 @@ from keepercommander.discovery_common.types import (
 from pydantic import BaseModel
 from typing import Optional, List, Any, TYPE_CHECKING
 
+from ...api import get_records_add_request
+
 if TYPE_CHECKING:
     from ...params import KeeperParams
     from ...vault import TypedRecord, KeeperRecord
@@ -1066,8 +1068,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         logging.debug("adding record in batches")
         while record_add_list:
             logging.debug(f"* adding batch")
-            rq = record_pb2.RecordsAddRequest()
-            rq.client_time = utils.current_milli_time()
+            rq = get_records_add_request(params)
             rq.records.extend(record_add_list[:records_per_request])
             record_add_list = record_add_list[records_per_request:]
             rs = api.communicate_rest(params, rq, 'vault/records_add', rs_type=record_pb2.RecordsModifyResponse)
