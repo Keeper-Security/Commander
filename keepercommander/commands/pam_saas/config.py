@@ -5,6 +5,7 @@ from ...display import bcolors
 from ... import api, subfolder, utils, crypto, vault, vault_extensions
 from ...proto import record_pb2
 from . import get_gateway_saas_schema
+from ...api import get_records_add_request
 from ...utils import value_to_boolean
 from ...error import KeeperApiError
 import json
@@ -182,8 +183,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
                 add_record.audit.data = crypto.encrypt_ec(
                     json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
 
-        rq = record_pb2.RecordsAddRequest()
-        rq.client_time = utils.current_milli_time()
+        rq = get_records_add_request(params)
         rq.records.append(add_record)
         rs = api.communicate_rest(params, rq, 'vault/records_add', rs_type=record_pb2.RecordsModifyResponse)
         record_rs = next((x for x in rs.records if utils.base64_url_encode(x.record_uid) == record.record_uid), None)

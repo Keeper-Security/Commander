@@ -24,6 +24,7 @@ from ..importer import import_utils
 from ..importer.json.json import KeeperJsonMixin
 from ..params import KeeperParams
 from ..proto import record_pb2
+from ..api import get_records_add_request
 from ..security_audit import attach_security_data
 
 enterprise_push_parser = argparse.ArgumentParser(prog='enterprise-push', description='Populate user\'s vault with default records')
@@ -207,8 +208,7 @@ class EnterprisePushCommand(EnterpriseCommand):
             typed_records = list(import_utils.import_to_typed_records(params, user_records))
 
             record_keys[email] = {}
-            rq = record_pb2.RecordsAddRequest()
-            rq.client_time = utils.current_milli_time()
+            rq = get_records_add_request(params)
 
             for record in typed_records:
                 record.record_uid = api.generate_record_uid()
