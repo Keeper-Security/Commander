@@ -1,6 +1,9 @@
-import getpass
 import urllib3
 import requests
+from prompt_toolkit import HTML, print_formatted_text, prompt
+from prompt_toolkit.shortcuts import button_dialog, ProgressBar
+from prompt_toolkit.styles import Style
+from tabulate import tabulate
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -28,51 +31,7 @@ class CyberArkImporter(BaseImporter):
     def get_url(cls, pvwa_host, endpoint):
         return f"https://{pvwa_host}/PasswordVault/API/{cls.ENDPOINTS[endpoint]}"
 
-    def do_import(self, filename, **kwargs):
-        pvwa_host = filename.rstrip('/').lstrip('https://')
-        # The CyberArk API implements paging with a limit of 1000 records per page
-        query_params = {"limit": 1000, "offset": 0}
-        if "?" in pvwa_host:
-            # Use what comes after the (optional) '?' as the search query
-            pvwa_host, query_params["search"] = pvwa_host.split("?", 1)
-        # CyberArk Cloud uses an OAuth2 client_credentials grant for authentication
-        if pvwa_host.endswith(".cyberark.cloud"):
-            pvwa_host = f"{pvwa_host.split('.')[0]}.privilegecloud.cyberark.cloud"
-            tenant_id = input("CyberArk Identity Tenant ID: ").rstrip('/').lstrip('https://').split('.')[0]
-            response = requests.post(
-                f"https://{tenant_id}.id.cyberark.cloud/oauth2/platformtoken",
-                data={
-                    "grant_type": "client_credentials",
-                    "client_id": input("CyberArk service user name: "),
-                    "client_secret": getpass.getpass(
-                        "CyberArk service user password: "
-                    ),
-                },
-                timeout=self.TIMEOUT,
-            )
-            if response.status_code != 200:
-                raise CyberArkImporterException(
-                    "OAuth2 client_credentials request failed", response
-                )
-            access_token = response.json()["access_token"]
-            authorization_token = f"Bearer {access_token}"
-        else:
-            response = requests.post(
-                self.get_url(pvwa_host, "logon").format(
-                    type=input(
-                        "CyberArk logon type (Cyberark, LDAP, RADIUS or Windows): "
-                    )
-                ),
-                json={
-                    "username": input("CyberArk username: "),
-                    "password": getpass.getpass("CyberArk password: "),
-                },
-                timeout=self.TIMEOUT,
-                verify=False,
-            )
-            if response.status_code != 200:
-                raise CyberArkImporterException("Log on failed", response)
-            authorization_token = response.text.strip('"')
+    def get_accounts(self, pvwa_host, authorization_token, query_params):
         response = requests.get(
             self.get_url(pvwa_host, "accounts"),
             headers={
@@ -81,50 +40,126 @@ class CyberArkImporter(BaseImporter):
             },
             params=query_params,
             timeout=self.TIMEOUT,
-            verify=False,
+            verify=True if pvwa_host.endswith(".cyberark.cloud") else False,
         )
-        if response.status_code != 200:
-            raise CyberArkImporterException("Getting Accounts failed", response)
-        while True:
-            count = response.json().get("count", 0)
-            for r in response.json().get("value", []):
-                record = Record()
-                record.type = "serverCredentials"
-                record.title = r["name"]
-                record.login = r["userName"]
-                record.fields.append(
-                    RecordField(type="host", value={"hostName": r["address"]})
-                )
-                response = requests.post(
-                    self.get_url(pvwa_host, "account_password").format(
-                        account_id=r["id"]
-                    ),
-                    headers={
-                        "Authorization": authorization_token,
-                        "Content-Type": "application/json",
-                    },
-                    timeout=self.TIMEOUT,
-                    verify=False,
-                )
+        if response.status_code == 200:
+            return response
+        print_formatted_text(
+            HTML(f"Getting Accounts <ansired>failed</ansired> with status code <b>{response.status_code}</b>")
+        )
 
-                if response.status_code != 200:
-                    raise CyberArkImporterException(
-                        "Getting Account Password failed", response
-                    )
-                record.password = response.text.strip('"')
-                yield record
-            if count <= query_params["limit"]:
-                break
-            query_params["offset"] += query_params["limit"]
-            response = requests.get(
-                self.get_url(pvwa_host, "accounts"),
-                headers={
-                    "Authorization": authorization_token,
-                    "Content-Type": "application/json",
+    def do_import(self, filename, **kwargs):
+        pvwa_host = filename.rstrip("/").lstrip("https://")
+        # The CyberArk API implements paging with a limit of 1000 records per page
+        query_params = {"limit": 1000, "offset": 0}
+        if "?" in pvwa_host:
+            # Use what comes after the (optional) '?' as the search query
+            pvwa_host, query_params["search"] = pvwa_host.split("?", 1)
+        # CyberArk Cloud uses an OAuth2 client_credentials grant for authentication
+        if pvwa_host.endswith(".cyberark.cloud"):
+            pvwa_host = f"{pvwa_host.split('.')[0]}.privilegecloud.cyberark.cloud"
+            tenant_id = prompt("CyberArk Identity Tenant ID: ").rstrip("/").lstrip("https://").split(".")[0]
+            response = requests.post(
+                f"https://{tenant_id}.id.cyberark.cloud/oauth2/platformtoken",
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": prompt("CyberArk service user name: "),
+                    "client_secret": prompt("CyberArk service user password: ", is_password=True),
                 },
-                params=query_params,
+                timeout=self.TIMEOUT,
+            )
+            if response.status_code != 200:
+                print_formatted_text(
+                    HTML(
+                        f"OAuth2 authorization token request <ansired>failed</ansired> with status code <b>{response.status_code}</b>"
+                    )
+                )
+                return
+            access_token = response.json()["access_token"]
+            authorization_token = f"Bearer {access_token}"
+        else:
+            response = requests.post(
+                self.get_url(pvwa_host, "logon").format(
+                    type=prompt("CyberArk logon type (Cyberark, LDAP, RADIUS or Windows): ")
+                ),
+                json={
+                    "username": prompt("CyberArk username: "),
+                    "password": prompt("CyberArk password: ", is_password=True),
+                },
                 timeout=self.TIMEOUT,
                 verify=False,
             )
             if response.status_code != 200:
-                raise CyberArkImporterException("Getting Accounts failed", response)
+                print_formatted_text(
+                    HTML(f"CyberArk Log on <ansired>failed</ansired> with status code <b>{response.status_code}</b>")
+                )
+                return
+            authorization_token = response.text.strip('"')
+        print_formatted_text(HTML("Log on <ansigreen>successful</ansigreen>"))
+        while True:
+            print_formatted_text(f"Getting a list of up to {query_params['limit']} Accounts starting at {query_params['offset']}")
+            response = self.get_accounts(pvwa_host, authorization_token, query_params)
+            if response is None:
+                break
+            count = response.json().get("count", 0)
+            limit = count if count < query_params["limit"] else query_params["limit"]
+            accounts = response.json().get("value", [])
+            print_formatted_text(HTML(f"Importing <b>{limit}</b> Accounts:\n"))
+            print_formatted_text(
+                tabulate(
+                    [{"ID": x["id"], "Safe": x["safeName"], "Account": x["name"]} for x in accounts],
+                    headers="keys"),
+                end="\n\n")
+            with ProgressBar() as pb:
+                skipped_accounts = []
+                for r in pb(accounts, total=limit):
+                    record = Record()
+                    record.type = "serverCredentials"
+                    record.title = r["name"]
+                    record.login = r["userName"]
+                    record.fields.append(RecordField(type="host", value={"hostName": r["address"]}))
+                    retry = True
+                    while retry is True:
+                        response = requests.post(
+                            self.get_url(pvwa_host, "account_password").format(account_id=r["id"]),
+                            headers={
+                                "Authorization": authorization_token,
+                                "Content-Type": "application/json",
+                            },
+                            timeout=self.TIMEOUT,
+                            verify=True if pvwa_host.endswith(".cyberark.cloud") else False,
+                        )
+                        if response.status_code == 200 and r['id'] != "33_3":
+                            record.password = response.text.strip('"')
+                            retry = False
+                            yield record
+                        elif response.status_code == 403 or r['id'] == "33_3":
+                            retry = button_dialog(
+                                title="Forbidden (403)",
+                                text=HTML(
+                                    "Unable to get password for Account "
+                                    f"<i>{r['name']}</i> with ID <b><i>{r['id']}</i></b> in Safe <i>{r['safeName']}</i>"
+                                ),
+                                buttons=[("Retry", True), ("Skip", False), ("Abort", None)],
+                                style=Style.from_dict({"dialog": "bg:ansiblack"}
+                            ),
+                            ).run()
+                            if retry is None:
+                                print_formatted_text(HTML("Import <ansired>aborted</ansired>"))
+                                return
+                            elif retry is False:
+                                skipped_accounts.append(r)
+                        else:
+                            raise CyberArkImporterException("Unexpected response getting Account password", response)
+            if count > query_params["limit"]:
+                query_params["offset"] += query_params["limit"]
+            else:
+                print_formatted_text(HTML("\nImport <ansigreen>completed</ansigreen>"))
+                break
+        if len(skipped_accounts) > 0:
+            print_formatted_text(HTML(f"\nSkipped <b>{len(skipped_accounts)}</b> Accounts:\n"))
+            print_formatted_text(
+                tabulate(
+                    [{"ID": x["id"], "Safe": x["safeName"], "Account": x["name"]} for x in skipped_accounts],
+                    headers="keys"),
+                end="\n\n")
