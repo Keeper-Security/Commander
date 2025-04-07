@@ -29,6 +29,8 @@ class ServiceConfigHandler:
 
     @debug_decorator
     def handle_streamlined_config(self, config_data: Dict[str, Any], args, params: KeeperParams) -> None:
+        if args.allowedip is None:
+            args.allowedip = '0.0.0.0/0'
         config_data.update({
             "port": self.service_config.validator.validate_port(args.port),
             "ip_allowed_list": self.service_config.validator.validate_ip_list(args.allowedip),

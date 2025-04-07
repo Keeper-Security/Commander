@@ -103,9 +103,7 @@ class CreateService(Command):
     def _create_and_save_record(self, config_data: Dict[str, Any], params: KeeperParams, args: StreamlineArgs) -> None:
         record = self.service_config.create_record(config_data["is_advanced_security_enabled"], params, args.commands)
         config_data["records"] = [record]
-        print("_fileformat", args.fileformat)
         if args.fileformat:
-            print("Check1111111111111111111111111")
             format = args.fileformat
         else:
             format = 'create'
