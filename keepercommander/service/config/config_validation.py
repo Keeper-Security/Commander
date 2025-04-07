@@ -9,6 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
+import os
 import re
 import socket
 import ipaddress
@@ -43,6 +44,34 @@ class ConfigValidator:
         except ValueError:
             msg = "Port must be a valid integer"
             raise ValidationError(msg)
+
+    @staticmethod
+    def validate_cert_file(certfile: Any) -> str:
+        """Validate certificate file format based on its extension"""
+        if not isinstance(certfile, str):
+            raise ValidationError("Certificate file path must be a string")
+
+        valid_extensions = {".pem", ".crt", ".cer", ".key"}
+        file_ext = os.path.splitext(certfile)[1].lower()
+
+        if file_ext not in valid_extensions:
+            raise ValidationError(f"Invalid certificate format. Allowed formats: {', '.join(valid_extensions)}")
+
+        return certfile
+    
+    @staticmethod
+    def validate_certpassword(certpassword: Any) -> str:
+        """Validate certificate password"""
+        if not isinstance(certpassword, str):
+            raise ValidationError("Certificate password must be a string")
+
+        if not certpassword:
+            raise ValidationError("Certificate password cannot be empty")
+
+        if len(certpassword) < 8:
+            raise ValidationError("Certificate password must be at least 8 characters long")
+
+        return certpassword
 
     @staticmethod
     @debug_decorator

@@ -12,6 +12,8 @@
 import os
 import logging
 import psutil
+
+from keepercommander import utils
 from ..config.service_config import ServiceConfig
 from ..decorators.logging import logger, debug_decorator
 from .process_info import ProcessInfo
@@ -52,7 +54,6 @@ class ServiceManager:
         try:
             service_config = ServiceConfig()
             config_data = service_config.load_config()
-            
             if not (port := config_data.get("port")):
                 print("Error: Service configuration is incomplete. Please configure the service port in service_config")
                 return
@@ -71,10 +72,24 @@ class ServiceManager:
             
             logging.getLogger('werkzeug').setLevel(logging.WARNING)
             
-            cls._flask_app.run(host='0.0.0.0', port=port)
+            if config_data.get("certfile") and config_data.get("certpassword"):
+                certfile =  utils.get_default_path() / config_data.get("certfile")
+                certpassword = utils.get_default_path() / config_data.get("certpassword")
+
+                if certfile and certpassword:   
+                    print('Checking the condition')
+                    cls._flask_app.run(
+                        host='0.0.0.0',
+                        port=port,
+                        ssl_context=(certfile, certpassword)
+                    )
+                else:
+                    cls._flask_app.run(host='0.0.0.0', port=port)  # Fallback: no TLS
+            else:
+                cls._flask_app.run(host='0.0.0.0', port=port)  # No certs provided: no TLS
             
         except FileNotFoundError:
-            print("Error: Service configuration file not found. Please use 'service-create' command to create a service_config file.")
+            logging.info("Error: Service configuration file not found. Please use 'service-create' command to create a service_config file.")
             return
         except Exception as e:
             logger.error(f"Error: Failed to start Commander Service")
