@@ -20,6 +20,9 @@ class ServiceConfigData:
     ngrok: str
     ngrok_auth_token: str
     ngrok_custom_domain: str
+    tls_certificate: str
+    certfile: str
+    certpassword: str
     ngrok_public_url: str
     is_advanced_security_enabled: str
     rate_limiting: str
@@ -27,4 +30,5 @@ class ServiceConfigData:
     ip_denied_list: str
     encryption: str
     encryption_private_key: str
+    fileformat: str
     records: List[Dict[str, Any]]

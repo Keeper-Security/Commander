@@ -23,7 +23,11 @@ if sys.version_info >= (3, 8):
                 "ip_denied_list": "",
                 "encryption": "",
                 "encryption_private_key": "",
-                "records": []
+                "records": [],
+                "tls_certificate":"",
+                "certfile": "",
+                "certpassword": "",
+                "fileformat": "",
             }
 
         def test_create_default_config(self):
