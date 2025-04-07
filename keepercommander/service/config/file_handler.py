@@ -68,7 +68,10 @@ class ConfigFormatHandler:
 
     def save_config(self, config_data: Dict[str, Any], save_type: str = None) -> Path:
         """Save configuration to file in the current format."""
-        format_type = self.get_config_format(save_type)
+        if save_type in ("json", "yaml"):
+            format_type = save_type
+        else:
+            format_type = self.get_config_format(save_type)
         logger.debug(f"Saving config in format: {format_type}")
 
         base_path = self.config_dir / 'service_config'

@@ -72,18 +72,18 @@ class ServiceManager:
             
             logging.getLogger('werkzeug').setLevel(logging.WARNING)
             
-            certfile =  utils.get_default_path() / config_data.get("certfile")
-            certpassword = utils.get_default_path() / config_data.get("certpassword")
+            if config_data.get("certfile") and config_data.get("certpassword"):
+                certfile =  utils.get_default_path() / config_data.get("certfile")
+                certpassword = utils.get_default_path() / config_data.get("certpassword")
 
-            if certfile and certpassword:   
-                try:
+                if certfile and certpassword:   
+                    print('Checking the condition')
                     cls._flask_app.run(
                         host='0.0.0.0',
                         port=port,
                         ssl_context=(certfile, certpassword)
                     )
-                except Exception as e:
-                    logging.info(f"TLS startup failed — {e}")
+                else:
                     cls._flask_app.run(host='0.0.0.0', port=port)  # Fallback: no TLS
             else:
                 cls._flask_app.run(host='0.0.0.0', port=port)  # No certs provided: no TLS

@@ -29,7 +29,8 @@ class StreamlineArgs:
     ngrok_custom_domain: Optional[str]
     certfile: Optional[str]
     certpassword : Optional[str]
-
+    fileformat : Optional[str]
+    
 class CreateService(Command):
     """Command to create a new service configuration."""
     
@@ -63,6 +64,7 @@ class CreateService(Command):
         parser.add_argument('-cd', '--ngrok_custom_domain', type=str, help='ngrok custom domain name(optional)')
         parser.add_argument('-crtf', '--certfile', type=str, help='certificate file path')
         parser.add_argument('-crtp', '--certpassword', type=str, help='certificate password')
+        parser.add_argument('-f', '--fileformat', type=str, help='file format')
         return parser
     
     def execute(self, params: KeeperParams, **kwargs) -> None:
@@ -77,7 +79,7 @@ class CreateService(Command):
 
             config_data = self.service_config.create_default_config()
 
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'certfile', 'certpassword']}
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'certfile', 'certpassword', 'fileformat']}
             args = StreamlineArgs(**filtered_kwargs)
             self._handle_configuration(config_data, params, args)
             self._create_and_save_record(config_data, params, args)
@@ -101,7 +103,13 @@ class CreateService(Command):
     def _create_and_save_record(self, config_data: Dict[str, Any], params: KeeperParams, args: StreamlineArgs) -> None:
         record = self.service_config.create_record(config_data["is_advanced_security_enabled"], params, args.commands)
         config_data["records"] = [record]
-        self.service_config.save_config(config_data, 'create')
+        print("_fileformat", args.fileformat)
+        if args.fileformat:
+            print("Check1111111111111111111111111")
+            format = args.fileformat
+        else:
+            format = 'create'
+        self.service_config.save_config(config_data, format)
         self.service_config.save_cert_data(config_data, 'create')
         
     def _upload_and_start_service(self, params: KeeperParams) -> None:

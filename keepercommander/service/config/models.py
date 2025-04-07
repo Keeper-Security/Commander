@@ -30,4 +30,5 @@ class ServiceConfigData:
     ip_denied_list: str
     encryption: str
     encryption_private_key: str
+    fileformat: str
     records: List[Dict[str, Any]]

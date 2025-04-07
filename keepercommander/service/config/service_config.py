@@ -98,6 +98,7 @@ class ServiceConfig:
             ip_denied_list="",
             encryption="",
             encryption_private_key="",
+            fileformat="yaml",
             records=[]
         ).__dict__
         return config
