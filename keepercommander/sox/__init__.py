@@ -7,7 +7,7 @@ from typing import Dict, Tuple
 
 from .. import api, crypto, utils
 from ..commands.helpers.enterprise import user_has_privilege, is_addon_enabled
-from ..error import CommandError, Error
+from ..error import CommandError, Error, KeeperApiError
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
 from . import sqlite_storage, sox_data
@@ -87,37 +87,71 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
                               record_ents}
             return user_ent, record_ents, user_rec_links
 
+        def print_status(users_loaded, users_total, records_loaded, records_total):
+            print('\r' + (100 * ' '), file=sys.stderr, end='', flush=True)
+            print(f'\rLoading record information - Users: {users_loaded}/{users_total}, Current Batch: {records_loaded}/{records_total}', file=sys.stderr, end='', flush=True)
+
         def sync_all():
-            print('Loading record information.', file=sys.stderr, end='', flush=True)
             user_ids = list(user_lookup.keys())
+            users_total = len(user_ids)
+            records_total = 0
+            print_status(0, users_total, 0, records_total)
             users, records, links = [], [], []
+            chunk_size = 1
+            problem_ids = set()
             while user_ids:
-                print('.', file=sys.stderr, end='', flush=True)
                 token = b''
-                chunk = user_ids[:API_SOX_REQUEST_USER_LIMIT]
-                user_ids = user_ids[API_SOX_REQUEST_USER_LIMIT:]
+                chunk = user_ids[:chunk_size]
+                user_ids = user_ids[chunk_size:]
                 rq = enterprise_pb2.PreliminaryComplianceDataRequest()
                 rq.enterpriseUserIds.extend(chunk)
                 rq.includeNonShared = not shared_only
                 has_more = True
+                current_batch_loaded = 0
                 while has_more:
                     rq.continuationToken = token or rq.continuationToken
+                    rq.includeTotalMatchingRecordsInFirstResponse = True
                     endpoint = 'enterprise/get_preliminary_compliance_data'
                     rs_type = enterprise_pb2.PreliminaryComplianceDataResponse
-                    rs = api.communicate_rest(params, rq, endpoint, rs_type=rs_type)
-                    print('.', file=sys.stderr, end='', flush=True)
-                    has_more = rs.hasMore
-                    token = rs.continuationToken
-                    for user_data in rs.auditUserData:
-                        t_user, t_recs, t_links = to_storage_types(user_data, name_by_id)
-                        users += [t_user]
-                        records += t_recs
-                        links += t_links
+                    try:
+                        rs = api.communicate_rest(params, rq, endpoint, rs_type=rs_type)
+                        has_more = rs.hasMore
+                        if rs.totalMatchingRecords:
+                            current_batch_loaded = 0
+                            records_total = rs.totalMatchingRecords
+                            if records_total < 20 * API_SOX_REQUEST_USER_LIMIT:
+                               # Adjust chunk size to optimize queries
+                               chunk_size = min(chunk_size * 2, API_SOX_REQUEST_USER_LIMIT)
+                        token = rs.continuationToken
+                        for user_data in rs.auditUserData:
+                            t_user, t_recs, t_links = to_storage_types(user_data, name_by_id)
+                            users += [t_user]
+                            records += t_recs
+                            current_batch_loaded += len(t_recs)
+                            print_status(users_total - len(user_ids), users_total, current_batch_loaded, records_total)
+                            links += t_links
+                        if not has_more:
+                            print_status(users_total - len(user_ids), users_total, records_total, records_total)
+                    except KeeperApiError as kae:
+                        if kae.message.lower() == 'gateway_timeout':
+                            # Break up the request if the number of corresponding records exceeds the backend's limit
+                            if chunk_size > 1:
+                                chunk_size = 1
+                                user_ids = [*chunk, *user_ids]
+                            else:
+                                problem_ids.update(*chunk)
+                            break
+                        else:
+                            raise kae
+                    except Exception as ex:
+                        raise ex
+            if problem_ids:
+                problem_emails = '\n'.join([name_by_id.get(id) for id in problem_ids])
+                logging.error(f'Data could not fetched for the following users: \n{problem_emails}')
 
             store.rebuild_prelim_data(users, records, links)
-
         sync_all()
-        print('.', file=sys.stderr, flush=True)
+        print('', file=sys.stderr, flush=True)
 
     validate_data_access(params)
     enterprise_id = enterprise_id or next(((x['node_id'] >> 32) for x in params.enterprise['nodes']), 0)
@@ -142,9 +176,14 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
 
 def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_updated=0, no_cache=False, shared_only=False):
     def sync_down(sdata, node_uid, user_node_id_lookup):
+        recs_processed = 0
+        def print_status(pct_done):
+            print('\r' + (100 * ' '), file=sys.stderr, end='', flush=True)
+            print(f'\rLoading compliance data - {pct_done * 100:.2f}%', file=sys.stderr, end='', flush=True)
+
         def run_sync_tasks():
             def do_tasks():
-                print('Loading compliance data.', file=sys.stderr, end='', flush=True)
+                print_status(0)
                 users_uids = [int(uid) for uid in sdata.get_users()]
                 record_uids_raw = [rec.record_uid_bytes for rec in sdata.get_records().values()]
                 max_len = API_SOX_REQUEST_USER_LIMIT
@@ -158,11 +197,8 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
             do_tasks()
 
         def sync_chunk(chunk, uuids):
-            print('.', file=sys.stderr, end='', flush=True)
             rs = fetch_response(raw_ruids=chunk, user_uids=uuids)
-            print('.', file=sys.stderr, end='', flush=True)
             save_response(rs)
-            print(':', file=sys.stderr, end='', flush=True)
 
         def fetch_response(raw_ruids, user_uids):
             rq = enterprise_pb2.ComplianceReportRequest()
@@ -200,7 +236,6 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                 return response
 
             save_all_types(hash_anon_ids(rs))
-            print('.', file=sys.stderr, end='', flush=True)
 
         def save_all_types(rs):
             save_users(rs.userProfiles)
@@ -303,6 +338,9 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
         def save_records(records):
             entities = []
             for record in records:
+                nonlocal recs_processed
+                recs_processed += 1
+                print_status(recs_processed/len(sdata.get_records()))
                 rec_uid = utils.base64_url_encode(record.recordUid)
                 entity = sdata.storage.records.get_entity(rec_uid)
                 if entity:
