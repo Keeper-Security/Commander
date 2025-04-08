@@ -9,33 +9,39 @@
 # Contact: ops@keepersecurity.com
 #
 
-from typing import List, Dict, Any
+from typing import Tuple, Set, Dict, List, Any
 from ..decorators.logging import debug_decorator
 
 class CommandValidator:
     @debug_decorator
-    def parse_help_output(self, help_output: str) -> tuple[set, dict]:
+    def parse_help_output(self, help_output: str) -> Tuple[Set, Dict]:
         """Parse help output to extract valid commands."""
-        valid_commands = set()
-        command_info = {}
-        current_category = None
-        for line in help_output.split('\n'):
-            line = line.strip()
-            if not line or not (parts := line.split()):
-                continue
+        try:
+            valid_commands = set()
+            command_info = {}
+            current_category = None
+            for line in help_output.split('\n'):
+                line = line.strip()
+                if not line or not (parts := line.split()):
+                    continue
 
-            first_word = parts[0]
-            if first_word in ['Vault', 'Enterprise', 'MSP']:
-                self._process_category_line(parts, valid_commands, command_info, first_word)
-                current_category = first_word
-            elif current_category:
-                self._process_command_line(parts, valid_commands, command_info, current_category)
+                first_word = parts[0]
+                if first_word in ['Vault', 'Enterprise', 'MSP']:
+                    self._process_category_line(parts, valid_commands, command_info, first_word)
+                    current_category = first_word
+                elif current_category:
+                    self._process_command_line(parts, valid_commands, command_info, current_category)
 
-        return valid_commands, command_info
+            return valid_commands, command_info
+        except Exception as e:
+            import traceback 
+            traceback.print_exc()
+            
+         
 
     @debug_decorator
-    def _process_category_line(self, parts: List[str], valid_commands: set, 
-                           command_info: dict, category: str) -> None:
+    def _process_category_line(self, parts: List[str], valid_commands: Set, 
+                           command_info: Dict, category: str) -> None:
         """Process a category line from help output."""
         if len(parts) > 1:
             main_command = parts[1].strip()
@@ -48,8 +54,8 @@ class CommandValidator:
                 command_info[alias] = {'category': category, 'main_command': main_command}
 
     @debug_decorator
-    def _process_command_line(self, parts: List[str], valid_commands: set,
-                          command_info: dict, category: str) -> None:
+    def _process_command_line(self, parts: List[str], valid_commands: Set,
+                          command_info: Dict, category: str) -> None:
         """Process a command line from help output."""
         if len(parts) >= 1:
             main_command = parts[0].strip()
@@ -61,7 +67,7 @@ class CommandValidator:
                 valid_commands.add(alias)
                 command_info[alias] = {'category': category, 'main_command': main_command}
 
-    def validate_command_list(self, commands: str, valid_commands: set) -> str:
+    def validate_command_list(self, commands: str, valid_commands: Set) -> str:
         """Validate input commands against valid commands."""
         input_commands = [cmd.strip() for cmd in commands.split(',')]
         validated_commands = []
