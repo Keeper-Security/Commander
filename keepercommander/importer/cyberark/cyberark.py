@@ -114,10 +114,14 @@ class CyberArkImporter(BaseImporter):
                 skipped_accounts = []
                 for r in pb(accounts, total=limit):
                     record = Record()
-                    record.type = "serverCredentials"
                     record.title = r["name"]
-                    record.login = r["userName"]
-                    record.fields.append(RecordField(type="host", value={"hostName": r["address"]}))
+                    record.type = "Password"
+                    if r["userName"]:
+                        record.type = "login"
+                        record.login = r["userName"]
+                    if r["address"]:
+                        record.type = "serverCredentials"
+                        record.fields.append(RecordField(type="host", value={"hostName": r["address"]}))
                     retry = True
                     while retry is True:
                         response = requests.post(
