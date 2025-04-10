@@ -129,11 +129,11 @@ class CyberArkImporter(BaseImporter):
                             timeout=self.TIMEOUT,
                             verify=True if pvwa_host.endswith(".cyberark.cloud") else False,
                         )
-                        if response.status_code == 200 and r['id'] != "33_3":
+                        if response.status_code == 200:
                             record.password = response.text.strip('"')
                             retry = False
                             yield record
-                        elif response.status_code == 403 or r['id'] == "33_3":
+                        elif response.status_code == 403:
                             retry = button_dialog(
                                 title="Forbidden (403)",
                                 text=HTML(
