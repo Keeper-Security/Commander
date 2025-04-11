@@ -1,4 +1,6 @@
-from keepercommander.params import KeeperParams
+import logging
+from ... import utils, crypto
+from ...params import KeeperParams
 
 
 def is_addon_enabled(params, addon_name):    # type: (KeeperParams, Dict[str, ]) -> Boolean
@@ -35,3 +37,25 @@ def user_has_privilege(params, privilege):  # type: (KeeperParams, str) -> bool
     r_privileges = enterprise.get('role_privileges')
     p_key = 'privilege'
     return any(rp for rp in r_privileges if rp.get('role_id') in r_ids and rp.get(p_key) == privilege)
+
+def get_enterprise_key(params, is_rsa=False):
+    keys = params.enterprise.get('keys', {})
+    try:
+        pk_data = utils.base64_url_decode(keys.get(f'{is_rsa and "rsa" or "ecc"}_encrypted_private_key'))
+        pk_data = crypto.decrypt_aes_v2(pk_data, params.enterprise['unencrypted_tree_key'])
+        return is_rsa and crypto.load_rsa_private_key(pk_data) or crypto.load_ec_private_key(pk_data)
+    except Exception as e:
+        logging.debug(e)
+
+def try_enterprise_decrypt(params, data):
+    dec_params = [
+        [crypto.decrypt_ec, get_enterprise_key(params, is_rsa=False)],
+        [crypto.decrypt_rsa, get_enterprise_key(params, is_rsa=True)]
+    ]
+    while dec_params:
+        decrypt_fn, pk = dec_params.pop()
+        try:
+            decrypted = decrypt_fn(data, pk)
+            return decrypted
+        except:
+            continue

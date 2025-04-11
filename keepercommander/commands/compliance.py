@@ -7,10 +7,10 @@ import operator
 from functools import partial
 from typing import Optional, Dict, Tuple, List, Any, Iterable, Union
 
-from keepercommander.commands.base import GroupCommand, dump_report_data, field_to_title
-from keepercommander.commands.enterprise_common import EnterpriseCommand
-from keepercommander.sox.sox_types import RecordPermissions
-from keepercommander.commands.helpers.reporting import filter_rows
+from .base import GroupCommand, dump_report_data, field_to_title
+from .enterprise_common import EnterpriseCommand
+from ..sox.sox_types import RecordPermissions
+from .helpers.reporting import filter_rows
 from .. import sox, api
 from ..error import CommandError
 from ..params import KeeperParams

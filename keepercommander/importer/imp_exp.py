@@ -45,7 +45,9 @@ from ..display import bcolors
 from ..error import KeeperApiError, CommandError
 from ..params import KeeperParams
 from ..proto import record_pb2, folder_pb2
+from ..api import get_records_add_request, get_records_update_request
 from ..rest_api import CLIENT_VERSION  # pylint: disable=no-name-in-module
+from ..security_audit import attach_security_data
 from ..subfolder import BaseFolderNode, SharedFolderFolderNode, find_folders, try_resolve_path
 from ..constants import EMAIL_PATTERN
 
@@ -980,6 +982,7 @@ def _import(params, file_format, filename, **kwargs):
                         link.record_uid = utils.base64_url_decode(uid)
                         v3_upd_rq.record_links_add.append(link)
 
+                    v3_upd_rq = attach_security_data(params, data, v3_upd_rq)
                     records_v3_to_update.append(v3_upd_rq)
                 elif version == 2:
                     orig_extra = json.loads(existing_record['extra_unencrypted']) if 'extra_unencrypted' in existing_record else None
@@ -1053,6 +1056,7 @@ def _import(params, file_format, filename, **kwargs):
                             audit_data['url'] = utils.url_strip(import_record.login_url)
                         v3_add_rq.audit.version = 0
                         v3_add_rq.audit.data = crypto.encrypt_ec(json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
+                        v3_add_rq = attach_security_data(params, data, v3_add_rq)
 
                     records_v3_to_add.append(v3_add_rq)
                 else:
@@ -1327,8 +1331,7 @@ def record_status_to_str(status):  # type: (record_pb2.RecordModifyStatus) -> st
 def execute_records_add(params, records):  # type: (KeeperParams, List[record_pb2.RecordAdd]) -> List[record_pb2.RecordModifyResult]
     rs_record = []
     while records:
-        rq = record_pb2.RecordsAddRequest()
-        rq.client_time = utils.current_milli_time()
+        rq = get_records_add_request(params)
         rq.records.extend(records[:999])
         records = records[999:]
         rs = api.communicate_rest(params, rq, 'vault/records_add', rs_type=record_pb2.RecordsModifyResponse)
@@ -1342,8 +1345,7 @@ def execute_records_add(params, records):  # type: (KeeperParams, List[record_pb
 def execute_records_update(params, records):  # type: (KeeperParams, List[record_pb2.RecordUpdate]) -> List[record_pb2.RecordModifyResult]
     rs_record = []
     while records:
-        rq = record_pb2.RecordsUpdateRequest()
-        rq.client_time = utils.current_milli_time()
+        rq = get_records_update_request(params)
         rq.records.extend(records[:999])
         records = records[999:]
         rs = api.communicate_rest(params, rq, 'vault/records_update', rs_type=record_pb2.RecordsModifyResponse)

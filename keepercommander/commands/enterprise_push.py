@@ -24,6 +24,8 @@ from ..importer import import_utils
 from ..importer.json.json import KeeperJsonMixin
 from ..params import KeeperParams
 from ..proto import record_pb2
+from ..api import get_records_add_request
+from ..security_audit import attach_security_data
 
 enterprise_push_parser = argparse.ArgumentParser(prog='enterprise-push', description='Populate user\'s vault with default records')
 enterprise_push_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='Display help on file format and template parameters.')
@@ -206,8 +208,7 @@ class EnterprisePushCommand(EnterpriseCommand):
             typed_records = list(import_utils.import_to_typed_records(params, user_records))
 
             record_keys[email] = {}
-            rq = record_pb2.RecordsAddRequest()
-            rq.client_time = utils.current_milli_time()
+            rq = get_records_add_request(params)
 
             for record in typed_records:
                 record.record_uid = api.generate_record_uid()
@@ -229,6 +230,7 @@ class EnterprisePushCommand(EnterpriseCommand):
                 add_record.data = crypto.encrypt_aes_v2(json_data, record.record_key)
 
                 if params.enterprise_ec_key:
+                    add_record = attach_security_data(params, record, add_record)
                     audit_data = vault_extensions.extract_audit_data(record)
                     if audit_data:
                         add_record.audit.version = 0

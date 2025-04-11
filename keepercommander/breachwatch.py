@@ -190,9 +190,8 @@ class BreachWatch(object):
     @staticmethod
     def update_security_data(params, record, force_update=False):
         # type: (KeeperParams, KeeperRecord, Optional[bool]) -> None
-        if not force_update and not needs_security_audit(params, record):
-            return
-        update_security_audit_data(params, [record])
+        if force_update or needs_security_audit(params, record):
+            update_security_audit_data(params, [record])
 
     @staticmethod
     def save_reused_pw_count(params):
@@ -361,6 +360,8 @@ class BreachWatch(object):
         if not isinstance(record, (vault.PasswordRecord, vault.TypedRecord)):
             return
 
+        if params.breach_watch:
+            params.breach_watch.scan_and_store_record_status(params, record)
         BreachWatch.update_security_data(params, record, force_update=force_update)
         if set_reused_pws:
             BreachWatch.save_reused_pw_count(params)

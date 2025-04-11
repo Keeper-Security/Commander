@@ -17,9 +17,11 @@ from typing import Optional, Union
 from keepercommander.breachwatch import BreachWatch
 
 from . import api, subfolder, utils, crypto, vault, vault_extensions
+from .api import get_records_add_request, get_records_update_request
 from .error import KeeperApiError
 from .params import KeeperParams, LAST_RECORD_UID
 from .proto import record_pb2
+from .security_audit import attach_security_data
 
 
 def add_record_to_folder(params, record, folder_uid=None):
@@ -117,9 +119,8 @@ def add_record_to_folder(params, record, folder_uid=None):
                 add_record.audit.version = 0
                 add_record.audit.data = crypto.encrypt_ec(
                     json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
-
-        rq = record_pb2.RecordsAddRequest()
-        rq.client_time = utils.current_milli_time()
+            add_record = attach_security_data(params, record, add_record)
+        rq = get_records_add_request(params)
         rq.records.append(add_record)
         rs = api.communicate_rest(params, rq, 'vault/records_add', rs_type=record_pb2.RecordsModifyResponse)
         record_rs = next((x for x in rs.records if utils.base64_url_encode(x.record_uid) == record.record_uid), None)
@@ -274,6 +275,7 @@ def update_record(params, record, skip_extra=False):
         ru.record_uid = record_uid_bytes
         ru.client_modified_time = utils.current_milli_time()
         ru.revision = existing_record.revision
+        ru = attach_security_data(params, record, ru)
 
         data = vault_extensions.extract_typed_record_data(record)
         json_data = api.get_record_data_json_bytes(data)
@@ -304,8 +306,7 @@ def update_record(params, record, skip_extra=False):
                 ru.audit.data = crypto.encrypt_ec(
                     json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
 
-        rq = record_pb2.RecordsUpdateRequest()
-        rq.client_time = utils.current_milli_time()
+        rq = get_records_update_request(params)
         rq.records.append(ru)
 
         rs = api.communicate_rest(params, rq, 'vault/records_update', rs_type=record_pb2.RecordsModifyResponse)

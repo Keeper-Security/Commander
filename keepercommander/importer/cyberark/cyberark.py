@@ -114,10 +114,14 @@ class CyberArkImporter(BaseImporter):
                 skipped_accounts = []
                 for r in pb(accounts, total=limit):
                     record = Record()
-                    record.type = "serverCredentials"
                     record.title = r["name"]
-                    record.login = r["userName"]
-                    record.fields.append(RecordField(type="host", value={"hostName": r["address"]}))
+                    record.type = "Password"
+                    if r["userName"]:
+                        record.type = "login"
+                        record.login = r["userName"]
+                    if r["address"]:
+                        record.type = "serverCredentials"
+                        record.fields.append(RecordField(type="host", value={"hostName": r["address"]}))
                     retry = True
                     while retry is True:
                         response = requests.post(
@@ -129,11 +133,11 @@ class CyberArkImporter(BaseImporter):
                             timeout=self.TIMEOUT,
                             verify=True if pvwa_host.endswith(".cyberark.cloud") else False,
                         )
-                        if response.status_code == 200 and r['id'] != "33_3":
+                        if response.status_code == 200:
                             record.password = response.text.strip('"')
                             retry = False
                             yield record
-                        elif response.status_code == 403 or r['id'] == "33_3":
+                        elif response.status_code == 403:
                             retry = button_dialog(
                                 title="Forbidden (403)",
                                 text=HTML(
