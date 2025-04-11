@@ -5,11 +5,10 @@ from typing import Union, List, Dict, Optional
 from urllib import parse
 
 from . import utils, crypto
-from .error import KeeperApiError
 from .params import KeeperParams
-from .proto import APIRequest_pb2, client_pb2, enterprise_pb2, record_pb2
+from .proto import APIRequest_pb2, client_pb2, record_pb2
 from .utils import is_pw_strong
-from .vault import KeeperRecord, TypedRecord, PasswordRecord
+from .vault import KeeperRecord, TypedRecord
 
 def has_passkey(record):   # type: (KeeperRecord) -> bool
     if not isinstance(record, TypedRecord) or not record.get_typed_field('passkey'):
@@ -75,7 +74,7 @@ def prep_security_data_update(params, record): # type: (KeeperParams, KeeperReco
         sd.uid = utils.base64_url_decode(record.record_uid)
         data = prep_security_data(params, record)
     except:
-        logging.error(f'Could not update security data for record, title = {record.title}, UID = {record.record_uid}')
+        logging.error('Could not update security data for record')
         return
     if data:
         sd.data = data
@@ -94,8 +93,8 @@ def prep_score_data(record):
         score_data = dict(version=1, password=password, score=score, padding=pad)
         data = json.dumps(score_data).encode('utf-8')
         sec_score_data = crypto.encrypt_aes_v2(data, record.record_key)
-    except Exception as ex:
-        logging.error(f'Could not calculate security score data for record, {record and record.title}\nReason: {ex}')
+    except:
+        logging.error(f'Could not calculate security score data for record')
         sec_score_data = empty_score_data
     return sec_score_data
 
@@ -144,8 +143,7 @@ def update_security_audit_data(params, records):   # type: (KeeperParams, List[K
             rq.recordSecurityData.extend(sd for sd in sec_data_objs if sd)
             rq.recordSecurityScoreData.extend(sd for sd in score_data_objs if sd)
             rs = api.communicate_rest(params, rq, 'enterprise/update_security_data')
-        except KeeperApiError as kae:
-            logging.error(f'Problem updating security data, reason: {kae}')
+        except:
             failed_updates.extend(chunk)
 
     if failed_updates:
@@ -163,10 +161,10 @@ def attach_security_data(params, record, rq_param):
         if needs_security_audit(params, record):
             rq_param.securityData.data = prep_security_data(params, record)
             rq_param.securityScoreData.data = prep_score_data(record)
-    except Exception as ex:
-        logging.error(f'Could not update record security-audit data. Reason: {ex}')
-
-    return rq_param
+    except:
+        pass
+    finally:
+        return rq_param
 
 def get_security_data_key_type(params):
     return record_pb2.ENCRYPTED_BY_PUBLIC_KEY_ECC if params.forbid_rsa \
