@@ -700,7 +700,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                     encrypted_team_private_key = utils.base64_url_decode(team['team_ec_private_key'])
                     team['team_ec_private_key_unencrypted'] = crypto.decrypt_aes_v2(encrypted_team_private_key, team_key)
             except Exception as e:
-                logging.warning('Could not decrypt team %s key: %s', team_uid, e)
+                logging.info('Could not decrypt team %s key: %s', team_uid, e)
         if 'team_key_unencrypted' in team:
             team_key = team['team_key_unencrypted']
             team_uid = team['team_uid']
