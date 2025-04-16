@@ -116,10 +116,10 @@ class CyberArkImporter(BaseImporter):
                     record = Record()
                     record.title = r["name"]
                     record.type = "Password"
-                    if r["userName"]:
+                    if hasattr(r, "userName"):
                         record.type = "login"
                         record.login = r["userName"]
-                    if r["address"]:
+                    if hasattr(r, "address"):
                         record.type = "serverCredentials"
                         record.fields.append(RecordField(type="host", value={"hostName": r["address"]}))
                     retry = True
