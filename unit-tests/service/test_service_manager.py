@@ -43,7 +43,7 @@ if sys.version_info >= (3, 8):
 
                 self.assertIn(process_info.is_running, [True, False])
                 
-                mock_app.run.assert_called_once_with(host='0.0.0.0', port=8000)
+                mock_app.run.assert_called_once_with(host='0.0.0.0', port=8000, ssl_context=None)
                     
         def test_start_service_when_already_running(self):
             """Test starting service when another instance is already running"""
