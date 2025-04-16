@@ -38,6 +38,9 @@ You'll be prompted to configure:
 - Config format
 - Port number
 - Ngrok tunneling options
+- Enable TLS
+- File Format
+- Process run mode
 - Security settings
 - Command access controls
 
@@ -45,13 +48,20 @@ You'll be prompted to configure:
 
 Configure the service with a single command:
 ```bash
-My Vault> service-create -p 9090 -c 'tree,ls,search,record-add,mkdir' -ng <ngrok-token>
+My Vault> service-create -p 9090 -f <json-Or-yaml> -c 'tree,ls,search,record-add,mkdir' -ng <ngrok-token> rm <foreground-Or-background> –crtf <certificate-file-path> -crtp <certificate-password-key-path>
 ```
 
 Parameters:
 - `-p, --port`: Port number for the service
 - `-c, --commands`: Comma-separated list of allowed commands
 - `-ng, --ngrok`: Ngrok authentication token for public URL access
+- `-cd, --ngrok_custom_domain`: Ngrok custom domain name
+- `-f, --fileformat`: File Format.
+- `-crtf, --certfile`: Certificate file path.
+- `-crtp, --certpassword`: Certificate key path.
+- `-rm, --run_mode`: Mode of process
+- `-dip, --deniedip`: Denied ip to access service
+- `-aip, --allowedip'`: Allowed ip to access service
 
 ### Service Management
 

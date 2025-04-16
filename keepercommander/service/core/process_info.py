@@ -12,7 +12,8 @@
 import os
 from dataclasses import dataclass
 from typing import Optional
-from dotenv import load_dotenv, set_key
+from pathlib import Path
+from dotenv import load_dotenv, set_key, dotenv_values
 from ..decorators.logging import logger
 from .terminal_handler import TerminalHandler
 from keepercommander import utils
@@ -30,7 +31,7 @@ class ProcessInfo:
         return value.lower() in ('true', '1', 'yes', 'on')
     
     @classmethod
-    def save(cls, is_running: bool) -> None:
+    def save(cls, pid, is_running: bool) -> None:
         """Save current process information to .env file."""
         
         env_path = str(cls._env_file)
@@ -40,7 +41,7 @@ class ProcessInfo:
             cls._env_file.touch()
         
         process_info = {
-            'KEEPER_SERVICE_PID': str(os.getpid()),
+            'KEEPER_SERVICE_PID': str(pid),
             'KEEPER_SERVICE_TERMINAL': TerminalHandler.get_terminal_info() or '',
             'KEEPER_SERVICE_IS_RUNNING': str(is_running).lower()
         }
@@ -57,8 +58,11 @@ class ProcessInfo:
     def load(cls) -> 'ProcessInfo':
         """Load process information from .env file."""
         try:
-            if cls._env_file.exists():
-                load_dotenv(cls._env_file)
+            for key in dotenv_values(cls._env_file).keys():
+                os.environ.pop(key, None)  # Remove old values
+            
+            if ProcessInfo._env_file.exists():
+                load_dotenv(ProcessInfo._env_file, override=True)
                 
                 pid_str = os.getenv('KEEPER_SERVICE_PID')
                 pid = int(pid_str) if pid_str else None
@@ -66,10 +70,11 @@ class ProcessInfo:
                 terminal = os.getenv('KEEPER_SERVICE_TERMINAL') or None
                 
                 is_running_str = os.getenv('KEEPER_SERVICE_IS_RUNNING', 'false')
-                is_running = cls._str_to_bool(is_running_str)
+
+                is_running = ProcessInfo._str_to_bool(is_running_str)
                 
                 logger.debug("Process information loaded successfully from .env")
-                return cls(
+                return ProcessInfo(
                     pid=pid,
                     terminal=terminal,
                     is_running=is_running
@@ -78,7 +83,7 @@ class ProcessInfo:
             logger.error(f"Failed to load process information: {e}")
             pass
         
-        return cls(pid=None, terminal=None, is_running=False)
+        return ProcessInfo(pid=None, terminal=None, is_running=False)
     
     @classmethod
     def clear(cls) -> None:

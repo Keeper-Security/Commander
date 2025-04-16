@@ -43,7 +43,8 @@ class ServiceConfigHandler:
             "ngrok_custom_domain": args.ngrok_custom_domain,
             "certfile": args.certfile,
             "certpassword": args.certpassword,
-            "fileformat": args.fileformat
+            "fileformat": args.fileformat,
+            "run_mode": args.run_mode
         })
 
     @debug_decorator
@@ -51,7 +52,8 @@ class ServiceConfigHandler:
         self._configure_port(config_data)
         self._configure_ngrok(config_data)
         self._configure_tls(config_data)
-
+        config_data["run_mode"] = "background"
+    
     def _configure_port(self, config_data: Dict[str, Any]) -> None:
         while True:
             try:
