@@ -10,10 +10,13 @@
 #
 
 import io
+from pathlib import Path
 import sys
 import json
 from typing import Any, Tuple, Optional
-from keepercommander import cli
+from keepercommander import cli, utils
+from keepercommander.__main__ import get_params_from_config
+from keepercommander.service.config.service_config import ServiceConfig
 from .exceptions import CommandExecutionError
 from .config_reader import ConfigReader
 from ..core.globals import get_current_params
@@ -70,12 +73,23 @@ class CommandExecutor:
         validation_error = cls.validate_command(command)
         if validation_error:
             return validation_error
+        
+        service_config = ServiceConfig()
+        config_data = service_config.load_config()
 
-        session_error = cls.validate_session()
-        if session_error:
-            return session_error
+        if config_data.get("run_mode") == "background":
+            try:
+                config_path = utils.get_default_path() / "config.json"
+                params = get_params_from_config(config_path)
+            except FileNotFoundError:
+                logger.error(f"Config file not found at {config_path}")
+                raise
+            except Exception as e:
+                logger.error(f"Failed to load params from config file: {e}")
+                raise
+        else:
+            params = get_current_params()
 
-        params = get_current_params()
         try:
             return_value, printed_output = cls.capture_output(params, command)
             response = return_value if return_value else printed_output

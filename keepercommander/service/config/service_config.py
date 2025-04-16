@@ -99,6 +99,7 @@ class ServiceConfig:
             encryption="",
             encryption_private_key="",
             fileformat="yaml",
+            run_mode="foreground",
             records=[]
         ).__dict__
         return config

@@ -99,7 +99,7 @@ class RecordHandler:
                 self.record_uid = self.cli_handler.find_config_record(params, title)
 
         except Exception as e:
-            print(f"Error updating/adding certificate record: {e}")
+            logger.debug(f"Error updating/adding certificate record: {e}")
 
     @debug_decorator
     def _create_base_record(self, api_key: str, commands: str) -> Dict[str, Any]:
