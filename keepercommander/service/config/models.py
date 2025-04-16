@@ -31,4 +31,5 @@ class ServiceConfigData:
     encryption: str
     encryption_private_key: str
     fileformat: str
+    run_mode: str
     records: List[Dict[str, Any]]

@@ -42,6 +42,7 @@ class ConfigReader:
                 'ngrok_public_url': lambda: config_data.get('ngrok_public_url', ""),
                 'certfile': lambda: config_data.get('certfile', ""),
                 'certpassword': lambda: config_data.get('certpassword', ""),
+                'run_mode': lambda: config_data.get('run_mode', "")
             }
 
             if handler := param_handlers.get(service_config_param):
