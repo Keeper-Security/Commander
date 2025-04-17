@@ -2,8 +2,12 @@ import ctypes
 import os
 import shutil
 import sys
+import subprocess
+import platform
 
 is_windows = sys.platform.startswith('win')
+is_macos = sys.platform.startswith('darwin')
+is_linux = sys.platform.startswith('linux')
 
 if is_windows:
     # Constants
@@ -108,3 +112,29 @@ def run_as(username, password, application):    # type: (str, str, str) -> None
         if not success:
             error_code = ctypes.GetLastError()
             raise OSError(f'Failed to launch "{application}" as {username}. Windows Error: {error_code}')
+    elif is_macos or is_linux:
+        # Find the full path to the application
+        application_path = shutil.which(application)
+        if not application_path:
+            raise Exception(f'Application "{application}" not found. Please use full application path')
+
+        # Check if user exists
+        try:
+            subprocess.run(['id', '-u', username], check=True, capture_output=True)
+        except subprocess.CalledProcessError:
+            raise OSError(f'User "{username}" does not exist')
+
+        # Use sudo if we're not root, otherwise use su
+        if os.geteuid() != 0:
+            cmd = ['sudo', '-u', username, application_path]
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            proc.communicate(input=f'{password}\n'.encode())
+        else:
+            cmd = ['su', '-', username, '-c', application_path]
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            proc.communicate(input=f'{password}\n'.encode())
+
+        if proc.returncode != 0:
+            raise OSError(f'Failed to launch "{application}" as {username}. Error code: {proc.returncode}')
+    else:
+        raise OSError('Unsupported operating system')
