@@ -74,8 +74,7 @@ def register_commands(commands):
     commands['reset-password'] = ResetPasswordCommand()
     commands['sync-security-data'] = SyncSecurityDataCommand()
     commands['blank-records'] = BlankRecordCommand()
-    if is_windows:
-        commands['run-as'] = RunAsCommand()
+    commands['run-as'] = RunAsCommand()
 
 
 def register_command_info(aliases, command_info):
