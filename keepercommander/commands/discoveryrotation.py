@@ -85,6 +85,10 @@ from .pam_saas.remove import PAMActionSaasRemoveCommand
 from .pam_saas.config import PAMActionSaasConfigCommand
 
 
+# These characters are based on the Vault
+PAM_DEFAULT_SPECIAL_CHAR = '''!@#$%^?();',.=+[]<>{}-_/\\*&:"`~|'''
+
+
 def register_commands(commands):
     commands['pam'] = PAMControllerCommand()
 
@@ -309,7 +313,7 @@ class PAMCreateRecordRotationCommand(Command):
     schedule_group.add_argument('--schedule-config', '-sf', required=False, dest='schedule_config',
                                 action='store_true', help='Schedule from Configuration')
     parser.add_argument('--complexity',   '-x',  required=False, dest='pwd_complexity', action='store',
-                        help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,5,5')
+                        help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,5,5[,SPECIAL CHARS]')
     parser.add_argument('--admin-user', '-a', required=False, dest='admin', action='store',
                         help='UID or path for the PAMUser record to configure the admin credential on the PAM Resource as the Admin when rotating')
     state_group = parser.add_mutually_exclusive_group()
@@ -434,15 +438,28 @@ class PAMCreateRecordRotationCommand(Command):
         pwd_complexity_rule_list = None     # type: Optional[dict]
         if pwd_complexity is not None:
             if pwd_complexity:
-                pwd_complexity_list = [s.strip() for s in pwd_complexity.split(',')]
-                if len(pwd_complexity_list) != 5 or not all(n.isnumeric() for n in pwd_complexity_list):
-                    raise CommandError('', 'Invalid rules to generate password. Format is "length, upper, lower, digits, symbols". Ex: 32,5,5,5,5')
+                pwd_complexity_list = [s.strip() for s in pwd_complexity.split(',', maxsplit=5)]
+                if len(pwd_complexity_list) < 5 or not all(n.isnumeric() for n in pwd_complexity_list[:5]):
+                    raise CommandError('', 'Invalid rules to generate password. ''Format is "length, '
+                                           'upper, lower, digits, symbols". Ex: 32,5,5,5,5[,SPECIAL CHARS]')
+
+                special_chars = PAM_DEFAULT_SPECIAL_CHAR
+                if len(pwd_complexity_list) == 6:
+
+                    # Get the special characters.
+                    # Only take chars in our special char list.
+                    special_chars = ""
+                    for char in PAM_DEFAULT_SPECIAL_CHAR:
+                        if char in pwd_complexity_list[5]:
+                            special_chars += char
+
                 pwd_complexity_rule_list = {
                     'length': int(pwd_complexity_list[0]),
                     'caps': int(pwd_complexity_list[1]),
                     'lowercase': int(pwd_complexity_list[2]),
                     'digits': int(pwd_complexity_list[3]),
-                    'special': int(pwd_complexity_list[4])
+                    'special': int(pwd_complexity_list[4]),
+                    'specialChars': special_chars
                 }
             else:
                 pwd_complexity_rule_list = {}
@@ -610,7 +627,12 @@ class PAMCreateRecordRotationCommand(Command):
                 try:
                     decrypted_complexity = crypto.decrypt_aes_v2(pwd_complexity_rule_list_encrypted, target_record.record_key)
                     c = json.loads(decrypted_complexity.decode())
-                    complexity = f"{c.get('length', 0)},{c.get('caps', 0)},{c.get('lowercase', 0)},{c.get('digits', 0)},{c.get('special', 0)}"
+                    complexity = f"{c.get('length', 0)},"\
+                                 f"{c.get('caps', 0)},"\
+                                 f"{c.get('lowercase', 0)},"\
+                                 f"{c.get('digits', 0)},"\
+                                 f"{c.get('special', 0)},"\
+                                 f"{c.get('specialChars', PAM_DEFAULT_SPECIAL_CHAR)}"
                 except:
                     pass
             valid_records.append(
@@ -807,7 +829,12 @@ class PAMCreateRecordRotationCommand(Command):
                 try:
                     decrypted_complexity = crypto.decrypt_aes_v2(pwd_complexity_rule_list_encrypted, target_record.record_key)
                     c = json.loads(decrypted_complexity.decode())
-                    complexity = f"{c.get('length', 0)},{c.get('caps', 0)},{c.get('lowercase', 0)},{c.get('digits', 0)},{c.get('special', 0)}"
+                    complexity = f"{c.get('length', 0)},"\
+                                 f"{c.get('caps', 0)},"\
+                                 f"{c.get('lowercase', 0)},"\
+                                 f"{c.get('digits', 0)},"\
+                                 f"{c.get('special', 0)}," \
+                                 f"{c.get('specialChars', PAM_DEFAULT_SPECIAL_CHAR)}"
                 except:
                     pass
             valid_records.append(
@@ -1772,7 +1799,12 @@ class PAMRouterGetRotationInfo(Command):
                     if record:
                         complexity = crypto.decrypt_aes_v2(utils.base64_url_decode(rri.pwdComplexity), record['record_key_unencrypted'])
                         c = json.loads(complexity.decode())
-                        print(f"Password Complexity Data: {bcolors.OKBLUE}Length: {c.get('length')}; Lowercase: {c.get('lowercase')}; Uppercase: {c.get('caps')}; Digits: {c.get('digits')}; Symbols: {c.get('special')} {bcolors.ENDC}")
+                        print(f"Password Complexity Data: {bcolors.OKBLUE}"
+                              f"Length: {c.get('length')}; Lowercase: {c.get('lowercase')}; "
+                              f"Uppercase: {c.get('caps')}; "
+                              f"Digits: {c.get('digits')}; "
+                              f"Symbols: {c.get('special')}; "
+                              f"Symbols Chars: {c.get('specialChars')} {bcolors.ENDC}")
                 except:
                     pass
             else:
