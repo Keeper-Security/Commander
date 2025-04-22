@@ -2422,10 +2422,10 @@ class PAMCreateGatewayCommand(Command):
         else:
             print(f'The one time token has been created in application [{bcolors.OKBLUE}{ksm_app}{bcolors.ENDC}].\n\n'
                   f'The new Gateway named {bcolors.OKBLUE}{gateway_name}{bcolors.ENDC} will show up in a list '
-                  f'of gateways once it is initialized on the Gateway.\n\n')
+                  f'of gateways once it is initialized.\n\n')
 
             if config_init:
-                print('Use following initialized config be used in the controller:')
+                print('Use the following initialized config in the Gateway:')
             else:
                 print(f'Following one time token will expire in {bcolors.OKBLUE}{ott_expire_in_min}{bcolors.ENDC} '
                       f'minutes):')
