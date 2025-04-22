@@ -732,7 +732,8 @@ class KSMCommand(Command):
         ra.data = rdata
 
         api.communicate_rest(params, ra, 'vault/application_add')
-        print(bcolors.OKGREEN + "Application was successfully added" + bcolors.ENDC)
+        app_uid_str = utils.base64_url_encode(ra.app_uid)
+        print(bcolors.OKGREEN + f"Application was successfully added (UID: {app_uid_str})" + bcolors.ENDC)
 
         params.sync_data = True
 
