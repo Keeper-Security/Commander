@@ -1,5 +1,6 @@
 import urllib3
 import requests
+from http import HTTPStatus
 from prompt_toolkit import HTML, print_formatted_text, prompt
 from prompt_toolkit.shortcuts import button_dialog, ProgressBar
 from prompt_toolkit.styles import Style
@@ -9,12 +10,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 from ..importer import BaseImporter, Record, RecordField
-
-
-class CyberArkImporterException(BaseException):
-    def __init__(self, message, response):
-        self.message = f"{message}: status {response.status_code}: {response.text}"
-        super().__init__(self.message)
 
 
 class CyberArkImporter(BaseImporter):
@@ -97,7 +92,7 @@ class CyberArkImporter(BaseImporter):
             authorization_token = response.text.strip('"')
         print_formatted_text(HTML("Log on <ansigreen>successful</ansigreen>"))
         while True:
-            print_formatted_text(f"Getting a list of up to {query_params['limit']} Accounts starting at {query_params['offset']}")
+            print_formatted_text(f"Listing up to {query_params['limit']} Accounts starting at {query_params['offset']}")
             response = self.get_accounts(pvwa_host, authorization_token, query_params)
             if response is None:
                 break
@@ -111,6 +106,7 @@ class CyberArkImporter(BaseImporter):
                     headers="keys"),
                 end="\n\n")
             with ProgressBar() as pb:
+                skip_all = {}
                 skipped_accounts = []
                 for r in pb(accounts, total=limit):
                     record = Record()
@@ -130,6 +126,7 @@ class CyberArkImporter(BaseImporter):
                                 "Authorization": authorization_token,
                                 "Content-Type": "application/json",
                             },
+                            json={"reason": "Keeper Commander Import"},
                             timeout=self.TIMEOUT,
                             verify=True if pvwa_host.endswith(".cyberark.cloud") else False,
                         )
@@ -137,32 +134,35 @@ class CyberArkImporter(BaseImporter):
                             record.password = response.text.strip('"')
                             retry = False
                             yield record
-                        elif response.status_code == 403:
-                            retry = button_dialog(
-                                title="Forbidden (403)",
-                                text=HTML(
-                                    "Unable to get password for Account "
-                                    f"<i>{r['name']}</i> with ID <b><i>{r['id']}</i></b> in Safe <i>{r['safeName']}</i>"
-                                ),
-                                buttons=[("Retry", True), ("Skip", False), ("Abort", None)],
-                                style=Style.from_dict({"dialog": "bg:ansiblack"}
-                            ),
-                            ).run()
-                            if retry is None:
-                                print_formatted_text(HTML("Import <ansired>aborted</ansired>"))
-                                return
-                            elif retry is False:
+                        elif 400 <= response.status_code <= 500:
+                            if response.status_code in skip_all:
+                                retry = False
+                            else:
+                                retry = button_dialog(
+                                    title=f"{HTTPStatus(response.status_code).phrase} ({response.status_code})",
+                                    text=HTML(
+                                        "Getting password for Account "
+                                        f"<i>{r['name']}</i> with ID <i>{r['id']}</i> in Safe <i>{r['safeName']}</i>"
+                                    ),
+                                    buttons=[("Retry", True), ("Skip", False), ("Skip All", None)],
+                                    style=Style.from_dict({"dialog": "bg:ansiblack"}
+                                )).run()
+                                if retry is None:
+                                    skip_all[response.status_code] = True
+                                    retry = False
+                            if retry is False:
                                 skipped_accounts.append(r)
                         else:
-                            raise CyberArkImporterException("Unexpected response getting Account password", response)
+                            print_formatted_text(HTML("\nImport <ansired>aborted</ansired>"))
+                            return
             if count > query_params["limit"]:
                 query_params["offset"] += query_params["limit"]
             else:
                 print_formatted_text(HTML("\nImport <ansigreen>completed</ansigreen>"))
                 break
         if len(skipped_accounts) > 0:
-            print_formatted_text(HTML(f"\nSkipped <b>{len(skipped_accounts)}</b> Accounts:\n"))
             print_formatted_text(
+                HTML(f"\nSkipped <b>{len(skipped_accounts)}</b> Accounts:\n"),
                 tabulate(
                     [{"ID": x["id"], "Safe": x["safeName"], "Account": x["name"]} for x in skipped_accounts],
                     headers="keys"),
