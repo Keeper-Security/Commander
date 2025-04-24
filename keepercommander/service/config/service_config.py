@@ -23,6 +23,7 @@ from ..decorators.logging import logger, debug_decorator
 from ..util.exceptions import ValidationError
 from .models import ServiceConfigData
 from keepercommander import resources, utils
+from .file_handler import ConfigFormatHandler
 
 
 VALID_CERT_EXTENSIONS = {".pem", ".crt", ".cer", ".key"}
@@ -147,22 +148,12 @@ class ServiceConfig:
                     break
 
             if config_path: 
-                # Load existing configuration
-                with open(config_path, "r") as f:
-                    config_data = json.load(f) if file_format == "json" else yaml.safe_load(f) or {}
-
-                # Update configuration with only file names
+                decrypted_content = ConfigFormatHandler.decrypt_config_file(config_path.read_bytes(), config_dir)
+                config_data = json.loads(decrypted_content) if file_format == "json" else yaml.safe_load(decrypted_content) or {}
                 config_data.update(updates)
-
-                # Save updated configuration
-                with open(config_path, "w") as f:
-                    if file_format == "json":
-                        json.dump(config_data, f, indent=4)
-                    else:
-                        yaml.safe_dump(config_data, f, default_flow_style=False)
-
-                logging.info(f"Updated keys in {config_path.name}: {', '.join(updates.keys())}")
-
+                encrypted_content = ConfigFormatHandler.encrypted_content(config_data, config_path, config_dir)
+                with open(config_path, "wb") as f:
+                    f.write(encrypted_content)
             else:
                 logging.info("No existing service_config file found.")
 
