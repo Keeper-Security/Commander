@@ -51,7 +51,7 @@ import_parser.add_argument('--display-json', '-dj', dest='display_json', action=
                            help='display Keeper JSON import instructions')
 import_parser.add_argument(
     '--format', choices=['json', 'csv', 'cyberark', 'keepass', 'lastpass', 'myki', 'nordpass', 'manageengine',
-                         '1password', 'bitwarden', 'thycotic', 'proton'],
+                         '1password', 'bitwarden', 'thycotic', 'proton', 'dashlane'],
     required=True, help='file format')
 import_parser.add_argument('--folder', dest='import_into', action='store',
                            help='import into a separate folder.')
@@ -622,3 +622,14 @@ class LoadRecordTypeCommand(EnterpriseCommand):
         if counter > 0:
             logging.info('Added %d custom record types', counter)
             api.sync_down(params, record_types=True)
+
+
+def importer_for_format(input_format):
+    full_name = 'keepercommander.importer.' + input_format
+    try:
+        module = importlib.import_module(full_name)
+        if hasattr(module, 'Importer'):
+            return module.Importer
+        raise Exception('Cannot resolve importer for format {}'.format(input_format))
+    except ModuleNotFoundError as e:
+        raise CommandError('', f'The required module is not installed:\n\tpip install {e.name}')
