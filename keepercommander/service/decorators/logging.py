@@ -12,8 +12,9 @@
 from functools import wraps
 from typing import Callable, Any
 import logging
-import sys
+import sys, os, yaml
 from enum import Enum
+from keepercommander import utils
 
 class LogLevel(Enum):
     ERROR = logging.ERROR
@@ -32,11 +33,44 @@ class GlobalLogger:
 
     def __init__(self):
         if not GlobalLogger._initialized:
+            self._creat_logging_config()
+            self._config = self._load_config()
             self._logger = logging.getLogger('keeper_service')
             self._setup_logger()
             GlobalLogger._initialized = True
 
+    def _creat_logging_config(self):
+        config_path = utils.get_default_path() / "logging_config.yaml"
+    
+        default_config = {
+            "logging": {
+                "enabled": True,
+                "level": "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
+            }
+        }
+        if not os.path.exists(config_path):
+        # Create the directory if it doesn't exist
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            # Write the default config
+            with open(config_path, "w") as f:
+                yaml.dump(default_config, f, sort_keys=False)
+        return default_config["logging"]
+    
+    def _load_config(self):
+        config_path = utils.get_default_path() / "logging_config.yaml";
+        
+        # config_path = os.getenv("LOGGING_CONFIG_PATH", "logging_config.yaml")
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                return yaml.safe_load(f).get("logging", {})
+        return {"enabled": True, "level": "INFO"}
+    
     def _setup_logger(self):
+        if not self._config.get("enabled", True):
+            # Disable logging if it's not enabled in the config
+            logging.disable(logging.CRITICAL)
+            return
+        
         if not self._logger.handlers:
             handler = logging.StreamHandler(sys.stderr)
             formatter = logging.Formatter(
@@ -45,7 +79,10 @@ class GlobalLogger:
             )
             handler.setFormatter(formatter)
             self._logger.addHandler(handler)
-            self._logger.setLevel(logging.INFO) # Change for debug
+            # self._logger.setLevel(logging.INFO) # Change for debug
+            log_level_str = self._config.get("level", "INFO").upper()
+            log_level = getattr(logging, log_level_str, logging.INFO)
+            self._logger.setLevel(log_level)
 
     def set_level(self, level: LogLevel):
         self._logger.setLevel(level.value)
@@ -77,7 +114,7 @@ def debug_decorator(fn: Callable) -> Callable:
         
         value = fn(*args, **kwargs)
         
-        if logger._logger.isEnabledFor(logging.DEBUG):
+        if logger._logger.isEnabledFor(logging.INFO):
             logger.debug(f"Return: {fn.__name__} → {value!r}")
         
         return value

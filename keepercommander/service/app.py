@@ -10,14 +10,18 @@
 #
 
 from flask import Flask
+import logging
 from werkzeug.middleware.proxy_fix import ProxyFix
 from .decorators.security import limiter
 from .api.routes import init_routes
 from .decorators.logging import logger
-
+    
 def create_app():
     """Create and configure the Keeper Commander Service."""
     logger.debug("Initializing Keeper Commander Service")
+
+    log = logging.getLogger('werkzeug')
+    log.setLevel(logging.ERROR)
     
     app = Flask(__name__)
     app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1, x_prefix=1)

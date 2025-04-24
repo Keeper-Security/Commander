@@ -9,7 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
-import io
+import io, html
 from pathlib import Path
 import sys
 import json
@@ -91,6 +91,7 @@ class CommandExecutor:
             params = get_current_params()
 
         try:
+            command = html.unescape(command)
             return_value, printed_output = cls.capture_output(params, command)
             response = return_value if return_value else printed_output
 
@@ -98,9 +99,10 @@ class CommandExecutor:
             
             response = parse_keeper_response(command, response)
             response = cls.encrypt_response(response)
-            
-            logger.debug("Command executed successfully")
-            return response, 200
-            
+            if response:
+                logger.debug("Command executed successfully")
+                return response, 200
+            else:
+                return "Internal Server Error", 500
         except Exception as e:
             raise CommandExecutionError(f"Command execution failed: {str(e)}")

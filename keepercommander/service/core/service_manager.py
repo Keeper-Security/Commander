@@ -83,7 +83,7 @@ class ServiceManager:
             
             
             is_running = True
-            print(f"Commander Service starting on http://localhost:{port}")
+            print(f"Commander Service starting on https://localhost:{port}")
             
             NgrokConfigurator.configure_ngrok(config_data, service_config)
             
@@ -95,16 +95,18 @@ class ServiceManager:
                 service_path = os.path.join(base_dir, "service_app.py")
 
                 if sys.platform == "win32":
-                    DETACHED_PROCESS = 0x00000008
-                    flask_process = subprocess.Popen(
-                        ["python", service_path],
-                        creationflags=DETACHED_PROCESS,
-                        stdout=log, stderr=log  # Redirect output to log file
+                    subprocess.DETACHED_PROCESS = 0x00000008
+                    cls = subprocess.Popen(
+                        ["py", service_path],
+                        creationflags= subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL  # Redirect output to log file
                     )
                 else:
                     cls = subprocess.Popen(
                         ["python3", service_path],
-                        preexec_fn=os.setsid
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        preexec_fn=os.setpgrp
                     )
 
                 print(f"Commander Service started with PID: {cls.pid}")
