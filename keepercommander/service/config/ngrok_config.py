@@ -24,7 +24,8 @@ class NgrokConfigurator:
             config_data["ngrok_public_url"] = generate_ngrok_url(
                 config_data["port"], 
                 config_data["ngrok_auth_token"],
-                config_data["ngrok_custom_domain"]
+                config_data["ngrok_custom_domain"],
+                config_data["run_mode"],
             )
-            print(f'Generated ngrok URL: {config_data["ngrok_public_url"]}')
+            print(f'Generated ngrok URL: https://{config_data["ngrok_custom_domain"]}.ngrok.io')
             service_config.save_config(config_data)

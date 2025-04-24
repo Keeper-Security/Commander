@@ -46,10 +46,18 @@ You'll be prompted to configure:
 
 ### Streamlined Configuration
 
-Configure the service with a single command:
+Configure the service with a streamline with TLS:
+
 ```bash
-My Vault> service-create -p 9090 -f <json-Or-yaml> -c 'tree,ls,search,record-add,mkdir' -ng <ngrok-token> rm <foreground-Or-background> –crtf <certificate-file-path> -crtp <certificate-password-key-path>
+  My Vault> service-create -p <port> -f <json-Or-yaml> -c 'tree,ls,search,record-add,mkdir' -rm <foreground-Or-background> -crtf <certificate-file-path> -crtp <certificate-password-key-path>
+  -aip <allwed-Ip-list> -dip <denied-Ip-list>
 ```
+
+Configure the service with a streamline wiht Ngrok:
+
+```bash
+  My Vault> service-create -p <port> -f <json-Or-yaml> -c 'tree,record-add,audit-report' -ng <ngrok-token> -cd <ngrok_custom_domain> -rm <foreground-Or-background> -aip <allwed-Ip-list> -dip <denied-Ip-list>
+``` 
 
 Parameters:
 - `-p, --port`: Port number for the service
@@ -59,9 +67,9 @@ Parameters:
 - `-f, --fileformat`: File Format.
 - `-crtf, --certfile`: Certificate file path.
 - `-crtp, --certpassword`: Certificate key path.
-- `-rm, --run_mode`: Mode of process
-- `-dip, --deniedip`: Denied ip to access service
-- `-aip, --allowedip'`: Allowed ip to access service
+- `-rm, --run_mode`: Mode of process (forground/background)
+- `-dip, --deniedip`: Denied ip list to access service
+- `-aip, --allowedip'`: Allowed ip list to access service
 
 ### Service Management
 

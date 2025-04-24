@@ -12,8 +12,39 @@
 from pyngrok import ngrok, conf
 import os
 import logging
+import subprocess
+import sys
 
-def generate_ngrok_url(port, auth_token, ngrok_custom_domain):
+
+def start_ngrok(port, auth_token=None, subdomain=None):
+    """
+    Start ngrok as a fully detached subprocess and return the public URL.
+    """
+    ngrok_cmd = ["ngrok", "http", str(port)]
+    
+    if subdomain:
+        ngrok_cmd += ["--subdomain", subdomain]
+    if auth_token:
+        ngrok_cmd += ["--authtoken", auth_token]
+
+    # Fully detach the process
+    if sys.platform == "win32":
+        DETACHED_PROCESS = 0x00000008
+        subprocess.Popen(
+            ngrok_cmd,
+            creationflags=DETACHED_PROCESS,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+    else:
+        subprocess.Popen(
+            ngrok_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            preexec_fn=os.setpgrp  # fully detached from shell and parent
+        )
+
+def generate_ngrok_url(port, auth_token, ngrok_custom_domain, run_mode):
     """
     Start an ngrok tunnel with complete log suppression.
     Returns only the public URL.
@@ -37,10 +68,16 @@ def generate_ngrok_url(port, auth_token, ngrok_custom_domain):
         
         try:
             if ngrok_custom_domain:
-                tunnel = ngrok.connect(port, subdomain=ngrok_custom_domain, pyngrok_config=ngrok_config)
+                if run_mode == "background":
+                    url = start_ngrok(port=port, auth_token=auth_token, subdomain=ngrok_custom_domain)
+                    return url
+                else:
+                    tunnel = ngrok.connect(port, subdomain=ngrok_custom_domain, pyngrok_config=ngrok_config)
+                    return tunnel.public_url
             else:
+                # url = start_ngrok(port=port, auth_token=auth_token)
                tunnel = ngrok.connect(port, pyngrok_config=ngrok_config)
-            return tunnel.public_url
+               return tunnel.public_url
             
         finally:
             os.dup2(old_stdout_fd, 1)
