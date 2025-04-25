@@ -109,7 +109,7 @@ class DashlaneImporter(importer.BaseFileImporter):
                 }
                 record.fields.append(importer.RecordField('paymentCard', '', card))
                 record.title = row.get('name', '').strip()
-            elif record_type == 'bank_account':
+            elif record_type == 'bank':
                 record.type = 'bankAccount'
                 account = {
                     'accountNumber': row.get('account_number', '').strip(),
