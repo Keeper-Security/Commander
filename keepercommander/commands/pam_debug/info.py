@@ -82,6 +82,45 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
             print(f"  {self._f('Cannot get gateway information. Gateway may not be up.')}")
         print("")
 
+        def _print_field(f):
+            if f.type == "password":
+                display_value = f"{bcolors.OKGREEN}Password is set{bcolors.ENDC}"
+                if f.value == 0 or len(f.value) == 0:
+                    display_value = f"{bcolors.WARNING}Password IS NOT set{bcolors.ENDC}"
+                print(f"   * Type: {f.type}, Label: {f.label or bcolors.OKBLUE + 'NO LABEL' + bcolors.ENDC}, "
+                      f"Value(s): {display_value}")
+            elif f.label == "privatePEMKey":
+                display_value = f"{bcolors.OKGREEN}Private Key is set{bcolors.ENDC}"
+                if field.value == 0 or len(f.value) == 0:
+                    display_value = f"{bcolors.WARNING}Private Key IS NOT set{bcolors.ENDC}"
+                print(f"   * Type: {f.type}, Label: {f.label or bcolors.OKBLUE + 'NO LABEL' + bcolors.ENDC}, "
+                      f"Value(s): {display_value}")
+            elif f.type == "secret":
+                display_value = f"{bcolors.OKGREEN}Secret value is set{bcolors.ENDC}"
+                if field.value == 0 or len(f.value) == 0:
+                    display_value = f"Secret value IS NOT set"
+                print(f"   * Type: {f.type}, Label: {f.label or bcolors.OKBLUE + 'NO LABEL' + bcolors.ENDC}, "
+                      f"Value(s): {display_value}")
+            else:
+                print(f"   * Type: {f.type}, Label: {f.label or bcolors.OKBLUE + 'NO LABEL' + bcolors.ENDC}, "
+                      f"Value(s): {f.value}")
+
+        print(self._h("Fields"))
+        print(self._b("  Record Type Fields"))
+        if record.fields is not None and len(record.fields) > 0:
+            for field in record.fields:
+                _print_field(field)
+        else:
+            print(f"{bcolors.FAIL}    Record does not have record type fields!{bcolors.ENDC}")
+        print("")
+        print(self._b("  Custom Fields"))
+        if record.custom is not None and len(record.custom) > 0:
+            for field in record.custom:
+                _print_field(field)
+        else:
+            print("    Record does not have custom fields.")
+        print("")
+
         discovery_vertices = infra.dag.search_content({"record_uid": record.record_uid})
         record_vertex = record_link.dag.get_vertex(record.record_uid)
 
@@ -101,7 +140,7 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
 
                     acl_edge = record_vertex.get_edge(record_parent_vertex, EdgeType.ACL)
                     if acl_edge is not None:
-                        acl_content = acl_edge.content_as_object(UserAcl)
+                        acl_content = acl_edge.content_as_object(UserAcl)  # type: UserAcl
                         print(f"    * ACL to {self._n(parent_record.record_type)}; {parent_record.title}; "
                               f"{record_parent_vertex.uid}")
                         if acl_content.is_admin is True:
@@ -110,6 +149,26 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
                             print(f"      . Belongs")
                         else:
                             print(f"      . Is {self._bl('Remote user')}")
+
+                        if acl_content.rotation_settings is None:
+                            print(f"{bcolors.FAIL}      . There are no rotation settings!{bcolors.ENDC}")
+                        else:
+                            if acl_content.rotation_settings.schedule is None or acl_content.rotation_settings.schedule == "":
+                                print(f"      . No Schedule")
+                            else:
+                                print(f"      . Schedule = {acl_content.rotation_settings.get_schedule()}")
+
+                            if acl_content.rotation_settings.pwd_complexity is None or acl_content.rotation_settings.pwd_complexity == "":
+                                print(f"      . No Password Complexity")
+                            else:
+                                key_bytes = record.record_key
+                                print(f"      . Password Complexity = {acl_content.rotation_settings.get_pwd_complexity(key_bytes)}")
+                            print(f"      . Disabled = {acl_content.rotation_settings.disabled}")
+                            print(f"      . NOOP = {acl_content.rotation_settings.noop}")
+                            print(f"      . SaaS Config Records = {acl_content.rotation_settings.saas_record_uid_list}")
+
+                    elif record.record_type == PAM_USER:
+                        print(f"{bcolors.FAIL}    * PAM User has NO acl!!!!!!{bcolors.ENDC}")
 
                     link_edge = record_vertex.get_edge(record_parent_vertex, EdgeType.LINK)
                     if link_edge is not None:
