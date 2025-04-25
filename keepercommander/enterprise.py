@@ -145,7 +145,8 @@ class _EnterpriseLoader(object):
                         keys['rsa_encrypted_private_key'] = \
                             utils.base64_url_encode(rs.enterpriseKeys.rsaEncryptedPrivateKey)
                     except:
-                        logging.warning('Error decrypting enterprise RSA key')
+                        if not params.forbid_rsa:
+                            logging.info('Error decrypting enterprise RSA key')
                         keys['rsa_encrypted_private_key'] = ''
                 if rs.enterpriseKeys.eccEncryptedPrivateKey:
                     keys['ecc_public_key'] = utils.base64_url_encode(rs.enterpriseKeys.eccPublicKey)
@@ -440,7 +441,7 @@ class _EnterpriseNodeEntity(_EnterpriseEntity):
                 data_json = self.fix_data(data_json)
                 data.update(json.loads(data_json.decode('utf-8')))
             except Exception as e:
-                logging.warning('Decrypt encryption data error: %s', e)
+                logging.info('Decrypt encrypted data error: %s', e)
         elif 'parent_id' not in keeper_entity:
             data['displayname'] = self.enterprise.enterprise_name
         keeper_entity['data'] = data
