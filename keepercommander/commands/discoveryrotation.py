@@ -1811,6 +1811,28 @@ class PAMRouterGetRotationInfo(Command):
                 print(f"Password Complexity: {bcolors.OKGREEN}[not set]{bcolors.ENDC}")
 
             print(f"Is Rotation Disabled: {bcolors.OKGREEN}{rri.disabled}{bcolors.ENDC}")
+            
+            # Get schedule information
+            rq = pam_pb2.PAMGenericUidsRequest()
+            schedules_proto = router_get_rotation_schedules(params, rq)
+            if schedules_proto:
+                schedules = list(schedules_proto.schedules)
+                for s in schedules:
+                    if s.recordUid == record_uid_bytes:
+                        if s.noSchedule is True:
+                            print(f"Schedule Type: {bcolors.OKBLUE}Manual Rotation{bcolors.ENDC}")
+                        else:
+                            if s.scheduleData:
+                                schedule_arr = s.scheduleData.replace('RotateActionJob|', '').split('.')
+                                if len(schedule_arr) == 4:
+                                    schedule_str = f'{schedule_arr[0]} on {schedule_arr[1]} at {schedule_arr[2]} UTC with interval count of {schedule_arr[3]}'
+                                elif len(schedule_arr) == 3:
+                                    schedule_str = f'{schedule_arr[0]} at {schedule_arr[1]} UTC with interval count of {schedule_arr[2]}'
+                                else:
+                                    schedule_str = s.scheduleData
+                                print(f"Schedule: {bcolors.OKBLUE}{schedule_str}{bcolors.ENDC}")
+                        break
+            
             print(f"\nCommand to manually rotate: {bcolors.OKGREEN}pam action rotate -r {record_uid}{bcolors.ENDC}")
         else:
             print(f'{bcolors.WARNING}Rotation Status: Not ready to rotate ({rri_status_name}){bcolors.ENDC}')
@@ -2422,10 +2444,10 @@ class PAMCreateGatewayCommand(Command):
         else:
             print(f'The one time token has been created in application [{bcolors.OKBLUE}{ksm_app}{bcolors.ENDC}].\n\n'
                   f'The new Gateway named {bcolors.OKBLUE}{gateway_name}{bcolors.ENDC} will show up in a list '
-                  f'of gateways once it is initialized on the Gateway.\n\n')
+                  f'of gateways once it is initialized.\n\n')
 
             if config_init:
-                print('Use following initialized config be used in the controller:')
+                print('Use the following initialized config in the Gateway:')
             else:
                 print(f'Following one time token will expire in {bcolors.OKBLUE}{ott_expire_in_min}{bcolors.ENDC} '
                       f'minutes):')

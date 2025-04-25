@@ -74,8 +74,7 @@ def register_commands(commands):
     commands['reset-password'] = ResetPasswordCommand()
     commands['sync-security-data'] = SyncSecurityDataCommand()
     commands['blank-records'] = BlankRecordCommand()
-    if is_windows:
-        commands['run-as'] = RunAsCommand()
+    commands['run-as'] = RunAsCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -1375,9 +1374,6 @@ class RunAsCommand(Command):
         return RunAsCommand.run_as_parser
 
     def execute(self, params, **kwargs):
-        if not is_windows:
-            raise CommandError('', f'run-as command is supported on Windows only')
-
         from .. import native
 
         record_name = kwargs.get('record')
@@ -1393,4 +1389,7 @@ class RunAsCommand(Command):
         if not password:
             raise CommandError('', f'Password not found on record \"{record.title}\"')
 
-        native.run_as(username, password, kwargs.get('application'))
+        try:
+            native.run_as(username, password, kwargs.get('application'))
+        except OSError as e:
+            raise CommandError('', str(e))
