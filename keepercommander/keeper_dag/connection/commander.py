@@ -49,9 +49,15 @@ class Connection(ConnectionBase):
 
     @property
     def hostname(self) -> str:
-        # The host is connect.keepersecurity.com, connect.dev.keepersecurity.com, etc. Append "connect" in front
-        # of host used for Commander.
-        return os.environ.get("ROUTER_HOST", f'connect.{self.params.config.get("server")}')
+        # The host is connect.keepersecurity.com, connect.dev.keepersecurity.com, etc.
+        # Append "connect" in front of host used for Commander.
+        configured_host = f'connect.{self.params.config.get("server")}'
+
+        # In GovCloud environments, the router service is not under the govcloud subdomain
+        if '.govcloud.' in configured_host:
+            configured_host = configured_host.replace('.govcloud.', '.')
+
+        return os.environ.get("ROUTER_HOST", configured_host)
 
     @property
     def dag_server_url(self) -> str:
