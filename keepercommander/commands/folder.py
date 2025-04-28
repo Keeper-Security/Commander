@@ -259,7 +259,7 @@ class FolderListCommand(Command, RecordMixin):
             if show_detail:
                 if len(folders) > 0:
                     table = []
-                    headers = ['folder_uid', 'name', 'flags']
+                    headers = ['folder_uid', 'name', 'flags', 'parent_uid']
 
                     def folder_flags(f):
                         if f.type == 'shared_folder':
@@ -271,7 +271,7 @@ class FolderListCommand(Command, RecordMixin):
                     for f in folders:
                         if f.color:
                             colors[f.name] = f.color
-                        row = [f.uid, f.name, folder_flags(f)]
+                        row = [f.uid, f.name, folder_flags(f), f.parent_uid or '/']
                         table.append(row)
                     table.sort(key=lambda x: (x[1] or '').lower())
                     for i in range(len(table)):
