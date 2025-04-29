@@ -81,10 +81,10 @@ class RecordHandler:
             file_args = " ".join(f"f.file='{file.as_posix()}'" for file in cert_files)
             command = (
                 f"record-update --force --record {record_uid} "
-                f"--title '{title}' --record-type legacy {file_args}"
+                f"--title '{title}' --record-type=login {file_args}"
             ) if record_uid else (
                 f"record-add --title='{title}' "
-                f"--record-type=legacy {file_args}"
+                f"--record-type=login {file_args}"
             )
 
             if record_uid:
