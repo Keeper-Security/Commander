@@ -54,8 +54,10 @@ class ConfigFormatHandler:
         if params := get_current_params():
             if self.cli_handler.download_config_from_vault(params, 'Commander Service Mode', self.config_dir):
                 if json_path.exists():
+                    self.encrypt_config_file(json_path, self.config_dir)
                     return 'json'
                 if yaml_path.exists():
+                    self.encrypt_config_file(yaml_path, self.config_dir)
                     return 'yaml'
         
         return self._get_format_input() if save_type == 'create' else 'json'
@@ -94,7 +96,7 @@ class ConfigFormatHandler:
         """Save configuration as JSON."""
         config_path.write_text(json.dumps(config_data, indent=4))
         logger.debug(f"Configuration saved to {config_path}")
-        self.encrypt_config_file(config_path, self.config_dir)
+        # self.encrypt_config_file(config_path, self.config_dir)
         return config_path
 
     def _save_yaml(self, config_data: Dict[str, Any], config_path) -> Path:
@@ -102,7 +104,7 @@ class ConfigFormatHandler:
         with open(config_path, 'w') as yaml_file:
             yaml.dump(config_data, yaml_file, default_flow_style=False)
         logger.debug(f"Configuration saved to {config_path}")
-        self.encrypt_config_file(config_path, self.config_dir)
+        # self.encrypt_config_file(config_path, self.config_dir)
         return config_path
 
     def load_config(self) -> Dict[str, Any]:
@@ -168,6 +170,7 @@ class ConfigFormatHandler:
         encrypted_content = ConfigFormatHandler.encrypted_content(config_path.read_text(), config_path, config_dir)
         with open(config_path, 'wb') as encrypted_file:
             encrypted_file.write(encrypted_content)
+        logger.info(f" {config_path} File encryption success. ")
         
         
     @staticmethod
