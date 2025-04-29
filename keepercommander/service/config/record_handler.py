@@ -47,10 +47,10 @@ class RecordHandler:
 
             command = (
                 f"record-update --force --record {record_uid} "
-                f"--title '{title}' --record-type legacy f.file={config_path_str}"
+                f"--title '{title}' --record-type=login f.file={config_path_str}"
             ) if record_uid else (
                 f"record-add --title='{title}' "
-                f"--record-type=legacy f.file={config_path_str}"
+                f"--record-type=login f.file={config_path_str}"
             )
             if record_uid:
                 self.cli_handler.execute_cli_command(params, f"delete-attachment {record_uid} --name service_config.json --name service_config.yaml")

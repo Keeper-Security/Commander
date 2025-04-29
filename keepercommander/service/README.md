@@ -35,22 +35,28 @@ My Vault> service-create
 ```
 
 You'll be prompted to configure:
-- Config format
 - Port number
-- Ngrok tunneling options
-- Enable TLS
-- File Format
-- Process run mode
-- Security settings
-- Command access controls
+- Ngrok tunneling (y/n)
+  - Ngrok auth token
+  - Ngrok custom domain
+- Enable TLS Certificate (y/n)
+  - TLS Certficate path 
+  - TLS Certficate password
+- Advance Security (y/n)
+  - Ralte Limit
+  - Allowed IP List (comma-separated)
+  - Denied IP List (comma-separated)
+  - Enable Encryption (y/n) 
+- List of supported commands (comma separated)
+- Toekn Expiration Time(Xm, Xh, Xd) or empty for no expiration
+- File format (yaml/json)
 
 ### Streamlined Configuration
 
 Configure the service with a streamline with TLS:
 
 ```bash
-  My Vault> service-create -p <port> -f <json-Or-yaml> -c 'tree,ls,search,record-add,mkdir' -rm <foreground-Or-background> -crtf <certificate-file-path> -crtp <certificate-password-key-path>
-  -aip <allwed-Ip-list> -dip <denied-Ip-list>
+  My Vault> service-create -p <port> -f <json-Or-yaml> -c 'tree,ls,search,record-add,mkdir' -rm <foreground-Or-background> -crtf <certificate-file-path> -crtp <certificate-password-key-path>  -aip <allwed-Ip-list> -dip <denied-Ip-list>
 ```
 
 Configure the service with a streamline wiht Ngrok:
@@ -105,14 +111,15 @@ curl --location 'http://localhost:<port>/api/v1/executecommand' \
 
 The service configuration is stored as an attachment to a vault record in JSON/YAML format and includes:
 
-- Port settings
+- Port Number
 - Ngrok configuration (optional)
+- TLS certificate path (optional)
 - Security settings
   - Rate limiting rules
   - IP restrictions
   - Encryption settings
   - Token expiration
-- API key(s)
+- API key(s) (Auto generated)
 - Command access controls
 
 ## Security Considerations
@@ -158,10 +165,14 @@ The service includes robust error handling for:
   1. Set two environment variables in your terminal window:
       1. `KEEPER_USERNAME` - This is the username that can login to Keeper Commander
       1. `KEEPER_PASSWORD` - This is the password for the above user
-  1. Run the keeper-commander docker image using command
+  1. Run the keeper-commander docker image with ngrok using command
       ```bash
         docker run -d -p <port>:<port> keeper-commander \
           service-create -p <port> -c '<comma separated commands like tree,ls>' \
+          -aip <allowed-ip-list-comma seprated>
+          -dip <denied-ip-list-comma seprated>
+          -ng <ngrok-auth-token>
+          -cd <ngrok-custom-domain>
           --user $KEEPER_USERNAME \
           --password $KEEPER_PASSWORD
       ```  
@@ -185,7 +196,14 @@ The service includes robust error handling for:
       "command": "<command>"
    }'
    ```
-
+## Logging configuration
+  Once service mode started the `logging_config.yaml` is generated at default path(~\.keeper) with default level `INFO`
+  User can disable logging by setting `enabled:false` or can change log level(INFO,DEBUG,ERROR,CRITICAL) using `logging_config.yaml`
+  ```bash
+    logging:
+      enabled: true
+      level: INFO
+  ```
 ## Contributing
 
 Please refer to Keeper Commander's contribution guidelines while making changes to this module.
