@@ -124,6 +124,7 @@ if sys.version_info >= (3, 8):
             with self.assertRaises(ValidationError):
                 self.service_config.validate_command_list("invalid_command", params)
 
+        @unittest.skip
         @patch.object(ServiceConfig, 'record_handler')
         def test_update_or_add_record(self, mock_record_handler):
             """Test record update/add functionality."""

@@ -156,7 +156,7 @@ class ServiceConfig:
             logging.info(f"Error updating service configuration: {e}")
 
     # decrypt the ecnrypted config file , and update configuration and encrypt agin
-    def read_decrypted_config_file(config_path: str, file_format: str, updates: Dict[str, str]):
+    def read_decrypted_config_file(self, config_path: str, file_format: str, updates: Dict[str, str]):
          """ decrypt the ecnrypted config file , and update configuration and encrypt agin """
          config_dir = utils.get_default_path()
          decrypted_content = ConfigFormatHandler.decrypt_config_file(config_path.read_bytes(), config_dir)
@@ -167,7 +167,7 @@ class ServiceConfig:
                f.write(encrypted_content)
     
     # Read plain text config file and update configuration
-    def read_plain_text_config_file(config_path: str, file_format: str, updates: Dict[str, str]) -> None:
+    def read_plain_text_config_file(self, config_path: str, file_format: str, updates: Dict[str, str]) -> None:
         """ Read plain text config file and update configuration """
         with open(config_path, "r") as f:
                      config_data = json.load(f) if file_format == "json" else yaml.safe_load(f) or {}
