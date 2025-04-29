@@ -148,18 +148,37 @@ class ServiceConfig:
                     break
 
             if config_path: 
-                decrypted_content = ConfigFormatHandler.decrypt_config_file(config_path.read_bytes(), config_dir)
-                config_data = json.loads(decrypted_content) if file_format == "json" else yaml.safe_load(decrypted_content) or {}
-                config_data.update(updates)
-                encrypted_content = ConfigFormatHandler.encrypted_content(config_data, config_path, config_dir)
-                with open(config_path, "wb") as f:
-                    f.write(encrypted_content)
+                self.read_plain_text_config_file(config_path, file_format, updates)
             else:
                 logging.info("No existing service_config file found.")
 
         except Exception as e:
             logging.info(f"Error updating service configuration: {e}")
 
+    # decrypt the ecnrypted config file , and update configuration and encrypt agin
+    def read_decrypted_config_file(config_path: str, file_format: str, updates: Dict[str, str]):
+         """ decrypt the ecnrypted config file , and update configuration and encrypt agin """
+         config_dir = utils.get_default_path()
+         decrypted_content = ConfigFormatHandler.decrypt_config_file(config_path.read_bytes(), config_dir)
+         config_data = json.loads(decrypted_content) if file_format == "json" else yaml.safe_load(decrypted_content) or {}
+         config_data.update(updates)
+         encrypted_content = ConfigFormatHandler.encrypted_content(config_data, config_path, config_dir)
+         with open(config_path, "wb") as f:
+               f.write(encrypted_content)
+    
+    # Read plain text config file and update configuration
+    def read_plain_text_config_file(config_path: str, file_format: str, updates: Dict[str, str]) -> None:
+        """ Read plain text config file and update configuration """
+        with open(config_path, "r") as f:
+                     config_data = json.load(f) if file_format == "json" else yaml.safe_load(f) or {}
+        # Save updated configuration
+        with open(config_path, "w") as f:
+            if file_format == "json":
+                    json.dump(config_data, f, indent=4)
+            else:
+                yaml.safe_dump(config_data, f, default_flow_style=False)
+ 
+        logging.info(f"Updated keys in {config_path.name}: {', '.join(updates.keys())}")
 
     def save_cert_data(self, config_data: Dict[str, Any], save_type: str = None) -> Path:
         """Save certificate and password files in the .keeper folder and update service_config.json/.yml."""
@@ -258,4 +277,8 @@ class ServiceConfig:
     def update_or_add_record(self, params: KeeperParams) -> None:
         """Update existing record or add new one."""
         self.record_handler.update_or_add_record(params, self.title, self.format_handler.config_path)
+        logger.debug(f" Uploaded file remote success.")
+        self.format_handler.encrypt_config_file(self.format_handler.config_path, self.format_handler.config_dir)
+        logger.debug(f" Local file encryption success.")
         self.record_handler.update_or_add_cert_record(params, self.title)
+        logger.debug(f" Uploaded TLS certificate at remote.")
