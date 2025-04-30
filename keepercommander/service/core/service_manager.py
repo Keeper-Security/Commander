@@ -47,8 +47,8 @@ class ServiceManager:
         """
         ssl_context = None
         if config_data.get("certfile") and config_data.get("certpassword"):
-            certfile = utils.get_default_path() / config_data.get("certfile")
-            certpassword = utils.get_default_path() / config_data.get("certpassword")
+            certfile = utils.get_default_path() / os.path.basename(config_data.get("certfile"))
+            certpassword = utils.get_default_path() / os.path.basename(config_data.get("certpassword"))
             
             if os.path.exists(certfile) and os.path.exists(certpassword):
                 logger.debug('Using SSL certificates')
