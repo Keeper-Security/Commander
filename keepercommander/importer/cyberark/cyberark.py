@@ -116,10 +116,10 @@ class CyberArkImporter(BaseImporter):
                     record.folders = [folder]
                     record.title = re.sub(rf"^.*{re.escape(r['platformId'])}[\-_ ]", "", r["name"])
                     record.type = "Password"
-                    if hasattr(r, "userName"):
+                    if "userName" in r:
                         record.type = "login"
                         record.login = r["userName"]
-                    if hasattr(r, "address"):
+                    if "address" in r:
                         record.type = "serverCredentials"
                         record.fields.append(RecordField(type="host", value={"hostName": r["address"]}))
                     retry = True
