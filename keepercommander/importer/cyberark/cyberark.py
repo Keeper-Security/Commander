@@ -1,3 +1,4 @@
+import re
 import urllib3
 import requests
 from http import HTTPStatus
@@ -9,7 +10,7 @@ from tabulate import tabulate
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
-from ..importer import BaseImporter, Record, RecordField
+from ..importer import BaseImporter, SharedFolder, Record, RecordField
 
 
 class CyberArkImporter(BaseImporter):
@@ -109,8 +110,11 @@ class CyberArkImporter(BaseImporter):
                 skip_all = {}
                 skipped_accounts = []
                 for r in pb(accounts, total=limit):
+                    folder = SharedFolder()
+                    folder.domain = r["safeName"]
                     record = Record()
-                    record.title = r["name"]
+                    record.folders = [folder]
+                    record.title = re.sub(rf"^.*{re.escape(r['platformId'])}[\-_ ]", "", r["name"])
                     record.type = "Password"
                     if hasattr(r, "userName"):
                         record.type = "login"
