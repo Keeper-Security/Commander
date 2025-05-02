@@ -29,6 +29,10 @@ if TYPE_CHECKING:
 
 
 class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
+
+    NO_RECORD = "NO RECORD"
+    OTHER = "OTHER"
+
     parser = argparse.ArgumentParser(prog='pam-action-debug-graph')
 
     # The record to base everything on.
@@ -180,23 +184,27 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
             group = {
                 PAM_USER: [],
                 PAM_DIRECTORY: [],
-                PAM_MACHINE: [],
                 PAM_DATABASE: [],
-                "NO_RECORD": []
+                PAM_MACHINE: [],
+                PAMDebugGraphCommand.NO_RECORD: [],
+                PAMDebugGraphCommand.OTHER: []
             }
 
             for vertex in configuration_vertex.has_vertices():
                 record = vault.KeeperRecord.load(params, vertex.uid)  # type: Optional[TypedRecord]
                 if record is None:
-                    group["NO_RECORD"].append({
+                    group[PAMDebugGraphCommand.NO_RECORD].append({
                         "v": vertex
                     })
                     continue
-                group[record.record_type].append({
+                rt = record.record_type
+                if rt not in group:
+                    rt = PAMDebugGraphCommand.OTHER
+                group[rt].append({
                     "v": vertex,
                     "r": record
                 })
-                
+
             return group
         
         group = _group(configuration)
@@ -224,6 +232,11 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                                 print(f"{pad}      . belongs to this resource")
                             else:
                                 print(f"{pad}      . looks like directory user")
+
+                            if acl.rotation_settings.noop is True:
+                                print(f"{pad}      . is a NOOP")
+                            if acl.rotation_settings.disabled is True:
+                                print(f"{pad}      . rotation is disabled")
                         continue
 
                     if vertex.has_data is True:
@@ -267,6 +280,25 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                                         print(f"{pad}          ! data not JSON")
                         for i in bad:
                             print("{pad}      " + i)
+
+        if len(group[PAMDebugGraphCommand.OTHER]) > 0:
+            print(f"{pad}  " + self._b("Other PAM Types"))
+            for item in group[PAMDebugGraphCommand.OTHER]:
+                vertex = item.get("v")  # type: DAGVertex
+                record = item.get("r")  # type: TypedRecord
+                text = self._gr(f"{record.record_type}; {record.title}; {record.record_uid}")
+                if vertex.active is False:
+                    text += " " + self._f("Inactive")
+                print(f"{pad}    * {text}")
+
+        if len(group[PAMDebugGraphCommand.NO_RECORD]) > 0:
+
+            # TODO: Check the infra graph for information
+            print(f"{pad}  " + self._b(self._n("In Graph, No Vault Record")))
+            for item in group[PAMDebugGraphCommand.NO_RECORD]:
+                vertex = item.get("v")  # type: DAGVertex
+                print(f"{pad}    * {vertex.uid}")
+
 
     def _do_text_list_service(self, params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0,
                               indent: int = 0):
