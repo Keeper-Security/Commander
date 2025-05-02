@@ -76,6 +76,8 @@ from .pam_debug.acl import PAMDebugACLCommand
 from .pam_debug.graph import PAMDebugGraphCommand
 from .pam_debug.info import PAMDebugInfoCommand
 from .pam_debug.gateway import PAMDebugGatewayCommand
+from .pam_debug.rotation_setting import PAMDebugRotationSettingsCommand
+from .pam_debug.link import PAMDebugLinkCommand
 from .pam_service.list import PAMActionServiceListCommand
 from .pam_service.add import PAMActionServiceAddCommand
 from .pam_service.remove import PAMActionServiceRemoveCommand
@@ -248,6 +250,9 @@ class PAMDebugCommand(GroupCommand):
         # Disable for now. Needs more work.
         # self.register_command('verify', PAMDebugVerifyCommand(), 'Verify graphs', 'v')
         self.register_command('acl', PAMDebugACLCommand(), 'Control ACL of PAM Users', 'c')
+        self.register_command('link', PAMDebugACLCommand(), 'Link resource to configuration', 'l')
+        self.register_command('rs-reset', PAMDebugRotationSettingsCommand(),
+                              'Create/reset rotation settings', 'rs')
 
 
 class PAMLegacyCommand(Command):
