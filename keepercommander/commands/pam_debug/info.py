@@ -2,7 +2,7 @@ from __future__ import annotations
 import argparse
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ...display import bcolors
-from ... import vault
+from ... import vault, vault_extensions
 from keepercommander.discovery_common.infrastructure import Infrastructure
 from keepercommander.discovery_common.record_link import RecordLink
 from keepercommander.discovery_common.user_service import UserService
@@ -48,20 +48,50 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
                 print(f"{bcolors.FAIL}The record is a {record.record_type}. This is not a PAM record.{bcolors.ENDC}")
                 return
 
-        record_rotation = params.record_rotation_cache.get(record_uid)
-        if record_rotation is None:
-            print(f"{bcolors.FAIL}PAM record does not have rotation settings.{bcolors.ENDC}")
-            return
+        resource_uid = None
+        controller_uid = None
 
-        # TODO: Not sure if this is going away. If not we are going to have to scan the graphs.
-        controller_uid = record_rotation.get("configuration_uid")
-        if controller_uid is None:
-            print(f"{bcolors.FAIL}Record does not have the PAM Configuration set.{bcolors.ENDC}")
-            return
+        record_rotation = params.record_rotation_cache.get(record_uid)
+
+        # Rotation setting don't exist, check each configuration for an active record.
+        if record_rotation is None:
+            print(f"{bcolors.WARNING}PAM record does not have protobuf rotation settings, "
+                  f"checking all configurations.{bcolors.ENDC}")
+
+            configuration_records = list(vault_extensions.find_records(params, "pam.*Configuration"))
+            if len(configuration_records) == 0:
+                print(f"{bcolors.FAIL}Cannot find any PAM configuration records in the Vault{bcolors.ENDC}")
+
+            for configuration_record in configuration_records:
+                record_link = RecordLink(record=configuration_record, params=params)
+                record_vertex = record_link.dag.get_vertex(record.record_uid)
+                if record_vertex is not None and record_vertex.active is True:
+                    controller_uid = configuration_record.record_uid
+                    break
+            if controller_uid is None:
+                print(f"{bcolors.FAIL}Could not find the record in any record linking graph; "
+                      f"checked all configuration records.{bcolors.ENDC}")
+                return
+
+        # Else just get information from the rotation settings
+        else:
+
+            controller_uid = record_rotation.get("configuration_uid")
+            if controller_uid is None:
+                print(f"{bcolors.FAIL}Record does not have the PAM Configuration set.{bcolors.ENDC}")
+                return
+
+            resource_uid = record_rotation.get("resource_uid")
 
         configuration_record = vault.KeeperRecord.load(params, controller_uid)  # type: Optional[TypedRecord]
+        if configuration_record is None:
+            print(f"{bcolors.FAIL}The configuration record {controller_uid} does not exist.{bcolors.ENDC}")
+            return
 
         gateway_context = GatewayContext.from_configuration_uid(params, controller_uid)
+        if gateway_context is None:
+            print(f"{bcolors.FAIL}Could not find the gateway for configuration record.{controller_uid}{bcolors.ENDC}")
+            return
 
         infra = Infrastructure(record=configuration_record, params=params)
         infra.load()
@@ -75,6 +105,9 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
         print(f"  {self._b('Record Type')}: {record.record_type}")
         print(f"  {self._b('Configuration UID')}: {configuration_record.record_uid}")
         print(f"  {self._b('Configuration Key Bytes Hex')}: {configuration_record.record_key.hex()}")
+        if resource_uid is not None:
+            print(f"  {self._b('Resource UID')}: {resource_uid}")
+
         if gateway_context is not None:
             print(f"  {self._b('Gateway Name')}: {gateway_context.gateway_name}")
             print(f"  {self._b('Gateway UID')}: {gateway_context.gateway_uid}")
@@ -153,16 +186,19 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
                         if acl_content.rotation_settings is None:
                             print(f"{bcolors.FAIL}      . There are no rotation settings!{bcolors.ENDC}")
                         else:
-                            if acl_content.rotation_settings.schedule is None or acl_content.rotation_settings.schedule == "":
+                            if (acl_content.rotation_settings.schedule is None
+                                    or acl_content.rotation_settings.schedule == ""):
                                 print(f"      . No Schedule")
                             else:
                                 print(f"      . Schedule = {acl_content.rotation_settings.get_schedule()}")
 
-                            if acl_content.rotation_settings.pwd_complexity is None or acl_content.rotation_settings.pwd_complexity == "":
+                            if (acl_content.rotation_settings.pwd_complexity is None
+                                    or acl_content.rotation_settings.pwd_complexity == ""):
                                 print(f"      . No Password Complexity")
                             else:
                                 key_bytes = record.record_key
-                                print(f"      . Password Complexity = {acl_content.rotation_settings.get_pwd_complexity(key_bytes)}")
+                                print(f"      . Password Complexity = "
+                                      f"{acl_content.rotation_settings.get_pwd_complexity(key_bytes)}")
                             print(f"      . Disabled = {acl_content.rotation_settings.disabled}")
                             print(f"      . NOOP = {acl_content.rotation_settings.noop}")
                             print(f"      . SaaS Config Records = {acl_content.rotation_settings.saas_record_uid_list}")
