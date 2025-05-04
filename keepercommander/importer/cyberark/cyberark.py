@@ -119,9 +119,13 @@ class CyberArkImporter(BaseImporter):
                     if "userName" in r:
                         record.type = "login"
                         record.login = r["userName"]
+                        if "address" in r:
+                            record.type = "serverCredentials"
                     if "address" in r:
-                        record.type = "serverCredentials"
-                        record.fields.append(RecordField(type="host", value={"hostName": r["address"]}))
+                        record.fields.append(RecordField("host", value={"hostName": r["address"]}))
+                    if r["platformAccountProperties"].get("URL"):
+                        record.title = r["platformAccountProperties"]["ItemName"]
+                        record.login_url = r["platformAccountProperties"]["URL"]
                     retry = True
                     while retry is True:
                         response = requests.post(
