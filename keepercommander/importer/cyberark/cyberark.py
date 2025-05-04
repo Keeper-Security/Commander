@@ -121,6 +121,8 @@ class CyberArkImporter(BaseImporter):
                         record.login = r["userName"]
                         if "address" in r:
                             record.type = "serverCredentials"
+                            if r["platformAccountProperties"].get("LogonDomain"):
+                                record.login = r["platformAccountProperties"]["LogonDomain"] + "\\" + r["userName"]
                     if "address" in r:
                         record.fields.append(RecordField("host", value={"hostName": r["address"]}))
                     if r["platformAccountProperties"].get("URL"):
