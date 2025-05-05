@@ -161,7 +161,15 @@ class CyberArkImporter(BaseImporter):
                                     skip_all[response.status_code] = True
                                     retry = False
                             if retry is False:
-                                skipped_accounts.append(r)
+                                error_response = response.json()
+                                skipped_accounts.append({
+                                    "ID": r["id"],
+                                    "Safe": r["safeName"],
+                                    "Account": r["name"],
+                                    "Status": response.status_code,
+                                    "Error": error_response.get("ErrorCode"),
+                                    "Message": error_response.get("ErrorMessage"),
+                                })
                         else:
                             print_formatted_text(HTML("\nImport <ansired>aborted</ansired>"))
                             return
@@ -173,7 +181,6 @@ class CyberArkImporter(BaseImporter):
         if len(skipped_accounts) > 0:
             print_formatted_text(
                 HTML(f"\nSkipped <b>{len(skipped_accounts)}</b> Accounts:\n"),
-                tabulate(
-                    [{"ID": x["id"], "Safe": x["safeName"], "Account": x["name"]} for x in skipped_accounts],
-                    headers="keys"),
-                end="\n\n")
+                tabulate(skipped_accounts, headers="keys"),
+                end="\n\n"
+            )
