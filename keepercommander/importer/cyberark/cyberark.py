@@ -155,30 +155,32 @@ class CyberArkImporter(BaseImporter):
                             retry = False
                             yield record
                         elif 400 <= response.status_code <= 500:
+                            error = response.json()
                             if response.status_code in skip_all:
                                 retry = False
                             else:
                                 retry = button_dialog(
                                     title=f"{HTTPStatus(response.status_code).phrase} ({response.status_code})",
                                     text=HTML(
-                                        "Getting password for Account "
+                                        "Error "
+                                        f"{error.get('ErrorCode')}: <ansired>{error.get('ErrorMessage')}</ansired>\n"
+                                        "Account "
                                         f"<i>{r['name']}</i> with ID <i>{r['id']}</i> in Safe <i>{r['safeName']}</i>"
                                     ),
                                     buttons=[("Retry", True), ("Skip", False), ("Skip All", None)],
-                                    style=Style.from_dict({"dialog": "bg:ansiblack"}
-                                )).run()
+                                    style=Style.from_dict({"dialog": "bg:ansiblack"})
+                                ).run()
                                 if retry is None:
                                     skip_all[response.status_code] = True
                                     retry = False
                             if retry is False:
-                                error_response = response.json()
                                 skipped_accounts.append({
                                     "ID": r["id"],
                                     "Safe": r["safeName"],
                                     "Account": r["name"],
                                     "Status": response.status_code,
-                                    "Error": error_response.get("ErrorCode"),
-                                    "Message": error_response.get("ErrorMessage"),
+                                    "Error": error.get("ErrorCode"),
+                                    "Message": error.get("ErrorMessage"),
                                 })
                         else:
                             print_formatted_text(HTML("\nImport <ansired>aborted</ansired>"))
