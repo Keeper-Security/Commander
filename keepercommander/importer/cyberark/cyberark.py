@@ -34,7 +34,6 @@ class CyberArkImporter(BaseImporter):
             },
             params=query_params,
             timeout=self.TIMEOUT,
-            verify=True if pvwa_host.endswith(".cyberark.cloud") else False,
         )
         if response.status_code == 200:
             return response
