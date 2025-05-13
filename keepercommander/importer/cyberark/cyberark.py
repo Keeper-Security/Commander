@@ -1,13 +1,11 @@
 import re
-import urllib3
 import requests
 from http import HTTPStatus
 from prompt_toolkit import HTML, print_formatted_text, prompt
 from prompt_toolkit.shortcuts import button_dialog, ProgressBar
 from prompt_toolkit.styles import Style
 from tabulate import tabulate
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from urllib.parse import parse_qsl
 
 
 from ..importer import BaseImporter, SharedFolder, Record, RecordField
@@ -45,12 +43,24 @@ class CyberArkImporter(BaseImporter):
         )
 
     def do_import(self, filename, **kwargs):
-        pvwa_host = filename.rstrip("/").lstrip("https://")
-        # The CyberArk API implements paging with a limit of 1000 records per page
-        query_params = {"limit": 1000, "offset": 0}
+        pvwa_host = filename.lstrip("https://")
+        query_params = {}
         if "?" in pvwa_host:
-            # Use what comes after the (optional) '?' as the search query
-            pvwa_host, query_params["search"] = pvwa_host.split("?", 1)
+            pvwa_host, query_string = pvwa_host.split("?", 1)
+            if "=" in query_string:
+                # Override the query parameters
+                query_params = dict(parse_qsl(query_string))
+            else:
+                # Use what comes after the (optional) '?' as the search query
+                query_params["search"] = query_string
+        if "limit" in query_params:
+            query_params["limit"] = int(query_params["limit"])
+        else:
+            query_params["limit"] = 1000
+        if "offset" in query_params:
+            query_params["offset"] = int(query_params["offset"])
+        else:
+            query_params["offset"] = 0
         # CyberArk Cloud uses an OAuth2 client_credentials grant for authentication
         if pvwa_host.endswith(".cyberark.cloud"):
             pvwa_host = f"{pvwa_host.split('.')[0]}.privilegecloud.cyberark.cloud"
