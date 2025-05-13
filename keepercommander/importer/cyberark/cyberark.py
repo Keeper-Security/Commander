@@ -50,7 +50,7 @@ class CyberArkImporter(BaseImporter):
                 # Override the query parameters
                 query_params = dict(parse_qsl(query_string))
             else:
-                # Use what comes after the (optional) '?' as the search query
+                # Treat the entire query string as the search query parameter
                 query_params["search"] = query_string
         if "limit" in query_params:
             query_params["limit"] = int(query_params["limit"])
@@ -60,7 +60,7 @@ class CyberArkImporter(BaseImporter):
             query_params["offset"] = int(query_params["offset"])
         else:
             query_params["offset"] = 0
-        # CyberArk Cloud uses an OAuth2 client_credentials grant for authentication
+        # CyberArk Privilege Cloud uses an OAuth2 client_credentials grant for authentication
         if pvwa_host.endswith(".cyberark.cloud"):
             pvwa_host = f"{pvwa_host.split('.')[0]}.privilegecloud.cyberark.cloud"
             id_tenant = prompt("CyberArk Identity Tenant ID: ")
@@ -108,11 +108,16 @@ class CyberArkImporter(BaseImporter):
             print_formatted_text(f"Listing up to {query_params['limit']} Accounts starting at {query_params['offset']}")
             response = self.get_accounts(pvwa_host, authorization_token, query_params)
             if response is None:
+                print_formatted_text(HTML("<ansired>Empty response</ansired>"))
                 break
             count = response.json().get("count", 0)
-            limit = count if count < query_params["limit"] else query_params["limit"]
+            if count == 0:
+                print_formatted_text(HTML("<ansiyellow>No accounts found</ansiyellow>"))
+                break
             accounts = response.json().get("value", [])
-            print_formatted_text(HTML(f"Importing <b>{limit}</b> Accounts:\n"))
+            if len(accounts) == 0:
+                break
+            print_formatted_text(HTML(f"Importing <b>{len(accounts)}</b> Accounts:\n"))
             print_formatted_text(
                 tabulate(
                     [{"ID": x["id"], "Safe": x["safeName"], "Account": x["name"]} for x in accounts],
@@ -121,7 +126,7 @@ class CyberArkImporter(BaseImporter):
             with ProgressBar() as pb:
                 skip_all = {}
                 skipped_accounts = []
-                for r in pb(accounts, total=limit):
+                for r in pb(accounts, total=len(accounts)):
                     folder = SharedFolder()
                     folder.domain = r["safeName"]
                     record = Record()
@@ -187,7 +192,7 @@ class CyberArkImporter(BaseImporter):
                         else:
                             print_formatted_text(HTML("\nImport <ansired>aborted</ansired>"))
                             return
-            if count > query_params["limit"]:
+            if count > len(accounts) + query_params["offset"]:
                 query_params["offset"] += query_params["limit"]
             else:
                 print_formatted_text(HTML("\nImport <ansigreen>completed</ansigreen>"))
