@@ -64,9 +64,12 @@ class CyberArkImporter(BaseImporter):
         # CyberArk Cloud uses an OAuth2 client_credentials grant for authentication
         if pvwa_host.endswith(".cyberark.cloud"):
             pvwa_host = f"{pvwa_host.split('.')[0]}.privilegecloud.cyberark.cloud"
-            tenant_id = prompt("CyberArk Identity Tenant ID: ").rstrip("/").lstrip("https://").split(".")[0]
+            id_tenant = prompt("CyberArk Identity Tenant ID: ")
+            if re.match(r"^[A-Za-z]{3}\d{4}$", id_tenant):
+                # Handle customized tenant ID URLs by removing the ".id" suffix
+                id_tenant += ".id"
             response = requests.post(
-                f"https://{tenant_id}.id.cyberark.cloud/oauth2/platformtoken",
+                f"https://{id_tenant}.cyberark.cloud/oauth2/platformtoken",
                 data={
                     "grant_type": "client_credentials",
                     "client_id": prompt("CyberArk service user name: "),
