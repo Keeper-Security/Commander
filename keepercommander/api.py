@@ -746,7 +746,7 @@ def communicate(params, request, retry_on_throttle=True):
 
 
 def execute_batch(params, requests):
-    # type: (KeeperParams, [dict]) -> [dict]
+    # type: (KeeperParams, List[dict]) -> List[dict]
     responses = []
     if not requests:
         return responses
