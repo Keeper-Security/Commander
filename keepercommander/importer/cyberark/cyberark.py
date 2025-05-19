@@ -42,7 +42,7 @@ class CyberArkImporter(BaseImporter):
         )
 
     def do_import(self, filename, **kwargs):
-        pvwa_host = filename.lstrip("https://")
+        pvwa_host = filename.removeprefix("https://")
         query_params = {}
         if "?" in pvwa_host:
             pvwa_host, query_string = pvwa_host.split("?", 1)
