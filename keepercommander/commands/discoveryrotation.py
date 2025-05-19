@@ -1115,6 +1115,7 @@ class PAMGatewayListCommand(Command):
         headers.append('Gateway Name')
         headers.append('Gateway UID')
         headers.append('Status')
+        headers.append('Gateway Version')
 
         if is_verbose:
             headers.append('Device Name')
@@ -1122,14 +1123,22 @@ class PAMGatewayListCommand(Command):
             headers.append('Created On')
             headers.append('Last Modified')
             headers.append('Node ID')
+            headers.append('OS')
+            headers.append('OS Release')
+            headers.append('Machine Type')
+            headers.append('OS Version')
+
+        # Create a lookup dictionary for connected controllers
+        connected_controllers_dict = {}
+        if enterprise_controllers_connected:
+            connected_controllers_dict = {controller.controllerUid: controller for controller in
+                                          list(enterprise_controllers_connected.controllers)}
 
         for c in enterprise_controllers_all:
 
             connected_controller = None
             if enterprise_controllers_connected:
-                router_controllers = {controller.controllerUid: controller for controller in
-                                      list(enterprise_controllers_connected.controllers)}
-                connected_controller = router_controllers.get(c.controllerUid)
+                connected_controller = connected_controllers_dict.get(c.controllerUid)
 
             row_color = ''
             if not is_router_down:
@@ -1166,12 +1175,33 @@ class PAMGatewayListCommand(Command):
 
             row.append(f'{row_color}{status}{bcolors.ENDC}')
 
+            # Version information
+            version = ""
+            version_parts = []
+            if connected_controller and hasattr(connected_controller, 'version') and connected_controller.version:
+                version_parts = connected_controller.version.split(';')
+                # In non-verbose mode, just show the Gateway Version part
+                version = version_parts[0] if version_parts else connected_controller.version
+
+            row.append(f'{row_color}{version}{bcolors.ENDC}')
+
             if is_verbose:
                 row.append(f'{row_color}{c.deviceName}{bcolors.ENDC}')
                 row.append(f'{row_color}{c.deviceToken}{bcolors.ENDC}')
                 row.append(f'{row_color}{datetime.fromtimestamp(c.created / 1000)}{bcolors.ENDC}')
                 row.append(f'{row_color}{datetime.fromtimestamp(c.lastModified / 1000)}{bcolors.ENDC}')
                 row.append(f'{row_color}{c.nodeId}{bcolors.ENDC}')
+                
+                # Add version components as separate columns in verbose mode
+                os_name = version_parts[1] if len(version_parts) > 1 else ""
+                os_release = version_parts[2] if len(version_parts) > 2 else ""
+                machine_type = version_parts[3] if len(version_parts) > 3 else ""
+                os_version = version_parts[4] if len(version_parts) > 4 else ""
+                
+                row.append(f'{row_color}{os_name}{bcolors.ENDC}')
+                row.append(f'{row_color}{os_release}{bcolors.ENDC}')
+                row.append(f'{row_color}{machine_type}{bcolors.ENDC}')
+                row.append(f'{row_color}{os_version}{bcolors.ENDC}')
 
             table.append(row)
         table.sort(key=lambda x: (x[3] or '', x[0].lower()))
