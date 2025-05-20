@@ -62,12 +62,22 @@ class ServiceManager:
         """Start the service if not already running."""
         process_info = ProcessInfo.load()
         
-        try:
-            if process_info.is_running:
-                print(f"Error: Commander Service is already running (PID: {process_info.pid})")
-                return
-        except psutil.NoSuchProcess:
-            pass
+        if process_info.pid:
+            try:
+                process = psutil.Process(process_info.pid)
+
+                if "python" in process.name().lower() or "py" in process.name().lower():
+                    cmdline = process.cmdline()
+                    if any("service_app.py" in arg for arg in cmdline if isinstance(arg, str)):
+                        print(f"Error: Commander Service is already running (PID: {process_info.pid})")
+                        return                
+                # Clear the stored process info
+                ProcessInfo.clear()
+            except psutil.NoSuchProcess:
+                ProcessInfo.clear()
+            except Exception as e:
+                logger.error(f"Error checking process: {str(e)}")
+                ProcessInfo.clear()
             
         SignalHandler.setup_signal_handlers(cls._handle_shutdown)
             

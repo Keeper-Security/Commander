@@ -11,6 +11,7 @@
 
 import argparse
 from typing import Dict, Any
+from keepercommander import cli
 from keepercommander.params import KeeperParams
 from keepercommander.commands.base import report_output_parser, Command
 from ..config.service_config import ServiceConfig
@@ -114,5 +115,6 @@ class CreateService(Command):
         
     def _upload_and_start_service(self, params: KeeperParams) -> None:
         self.service_config.update_or_add_record(params)
+        cli.do_command(params, 'this-device persistent-login on')
         from ..core.service_manager import ServiceManager
         ServiceManager.start_service()
