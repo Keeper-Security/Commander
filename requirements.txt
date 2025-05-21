@@ -8,7 +8,7 @@ pyperclip
 PySocks
 tabulate
 websockets
-fido2
+fido2>=2.0.0
 requests; python_version<'3.7'
 requests>=2.30.0; python_version>='3.7'
 cryptography>=39.0.1

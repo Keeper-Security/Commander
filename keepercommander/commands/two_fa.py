@@ -192,17 +192,17 @@ class TfaAddCommand(Command):
                 request = json.loads(rs.challenge)
                 force_pin = kwargs.get('key_pin') is True
                 response = yubikey_register(request, force_pin)
-                credential_id = response.attestation_object.auth_data.credential_data.credential_id
+                credential_id = response.id
                 attestation = {
-                    'id': utils.base64_url_encode(credential_id),
-                    'rawId': utils.base64_url_encode(credential_id),
+                    'id': credential_id,
+                    'rawId': utils.base64_url_encode(response.raw_id),
                     'response': {
-                        'attestationObject': utils.base64_url_encode(response.attestation_object),
-                        'clientDataJSON': response.client_data.b64
+                        'attestationObject': utils.base64_url_encode(response.response.attestation_object),
+                        'clientDataJSON': response.response.client_data.b64
                     },
                     'type': 'public-key',
                     # 'transports': ['usb'],
-                    'clientExtensionResults': response.extension_results or {}
+                    'clientExtensionResults': response.client_extension_results or {}
                 }
                 rq_yubikey = APIRequest_pb2.TwoFactorValidateRequest()
                 rq_yubikey.valueType = APIRequest_pb2.TWO_FA_RESP_WEBAUTHN
