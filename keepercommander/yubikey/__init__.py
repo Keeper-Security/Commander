@@ -9,13 +9,13 @@
 # Contact: ops@keepersecurity.com
 #
 import logging
-from ..display import bcolors
 
 warned_on_fido_package = False
-install_fido_package_warning = 'You can use Security Key with Commander:\n' + \
-                               'Install fido2 package ' + bcolors.OKGREEN + \
-                               '\'pip install fido2\'\n' + bcolors.ENDC
-
+install_fido_package_warning = """
+    You can use Security Key with Commander:
+    Upgrade your Python interpreter to 3.10 or newer
+    and make sure fido2 package is 2.0.0 or newer
+"""
 
 def display_fido2_warning():
     global warned_on_fido_package
