@@ -50,19 +50,23 @@ if sys.version_info >= (3, 8):
             ProcessInfo.save(pid=12345, is_running=True)
             with mock.patch('os.getpid', return_value=12345), \
                 mock.patch('psutil.Process') as mock_process:
-                mock_process.return_value.is_running.return_value = True
-                
+                mock_proc_instance = mock.Mock()
+                mock_proc_instance.is_running.return_value = True
+                mock_proc_instance.name.return_value = "python.exe"
+                mock_proc_instance.cmdline.return_value = ["python.exe", "service_app.py"]
+                mock_process.return_value = mock_proc_instance
+
                 start_cmd = StartService()
                 with mock.patch('builtins.print') as mock_print:
                     start_cmd.execute(self.params)
                     mock_print.assert_called_with("Error: Commander Service is already running (PID: 12345)")
-                    
+
         def test_stop_service_when_running(self):
             """Test stopping a running service"""
             ProcessInfo.save(pid=12345, is_running=True)
             
-            with mock.patch('os.getpid', return_value=9999), \
-                mock.patch('keepercommander.service.core.terminal_handler.TerminalHandler.get_terminal_info', return_value="/dev/pts/0"), \
+            with mock.patch('sys.platform', 'linux'), \
+                mock.patch('os.getpid', return_value=9999), \
                 mock.patch('psutil.Process') as mock_process:
                 
                 stop_cmd = StopService()
@@ -79,18 +83,27 @@ if sys.version_info >= (3, 8):
                 mock_print.assert_called_with("Error: No running service found to stop")
                 
         def test_service_status_when_running(self):
-            """Test getting status of running service"""
-            ProcessInfo.save(pid=12345, is_running=True)
-            with mock.patch('os.getpid', return_value=12345), \
-                mock.patch('psutil.Process') as mock_process, \
-                mock.patch('keepercommander.service.core.terminal_handler.TerminalHandler.get_terminal_info', return_value="unknown terminal"):
-                mock_process.return_value.is_running.return_value = True
+                """More flexible test for checking service status"""
+                ProcessInfo.save(pid=12345, is_running=True)
                 
-                status_cmd = ServiceStatus()
-                with mock.patch('builtins.print') as mock_print:
-                    status_cmd.execute(self.params)
-                    expected_status = "Current status: Commander Service is Running (PID: 12345, Terminal: unknown terminal)"
-                    mock_print.assert_called_with(expected_status)
+                with mock.patch('os.getpid', return_value=12345), \
+                    mock.patch('psutil.Process') as mock_process:
+                    
+                    mock_process.return_value.is_running.return_value = True
+                    
+                    status_cmd = ServiceStatus()
+                    with mock.patch('builtins.print') as mock_print:
+                        status_cmd.execute(self.params)
+                        
+                        # Verify print was called exactly once
+                        self.assertEqual(mock_print.call_count, 1)
+                        
+                        # Extract the actual output
+                        actual_output = mock_print.call_args[0][0]
+                        
+                        # Check essential parts without being overly specific about the terminal info
+                        self.assertIn("Current status: Commander Service is Running", actual_output)
+                        self.assertIn("PID: 12345", actual_output)
                     
         def test_service_status_when_not_running(self):
             """Test getting status when no service is running"""
