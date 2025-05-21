@@ -15,6 +15,7 @@ from datetime import datetime
 from ..util.str_util import split_to_list
 from ..util.config_reader import ConfigReader
 from ..decorators.logging import debug_decorator, logger
+from keepercommander.service.util.verified_command import Verifycommand
 
 def auth_check(fn):
     @wraps(fn)
@@ -78,6 +79,13 @@ def policy_check(fn):
                 'status': 'fail',
                 'message': 'Not permitted to perform this function'
             }, 403
+        
+        if Verifycommand.is_append_command(command):
+            logger.debug(f"Command : {command[0]}")
+            return {
+                'status': 'fail',
+                'message': 'Invalid command'
+            }, 400
             
         return fn(*args, **kwargs)
     return wrapper
