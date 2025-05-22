@@ -99,31 +99,19 @@ search_parser.add_argument('-c', '--categories', dest='categories', action='stor
                                 '"s" = shared folders, "t" = teams')
 
 
-list_parser = argparse.ArgumentParser(prog='list', description='List records.')
+list_parser = argparse.ArgumentParser(prog='list', description='List records.', parents=[base.report_output_parser])
 list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
-list_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'], default='table',
-                         help='output format')
-list_parser.add_argument('--output', dest='output', action='store',
-                         help='output file name. (ignored for table format)')
 list_parser.add_argument('-t', '--type', dest='record_type', action='append',
                          help='List records of certain types. Can be repeated')
 list_parser.add_argument('--field', dest='field', action='append', help='Filter records by specific field(s). Can be specified multiple times.')
 list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 
 
-list_sf_parser = argparse.ArgumentParser(prog='list-sf', description='List shared folders.')
-list_sf_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'],
-                            default='table', help='output format')
-list_sf_parser.add_argument('--output', dest='output', action='store',
-                            help='output file name. (ignored for table format)')
+list_sf_parser = argparse.ArgumentParser(prog='list-sf', description='List shared folders.', parents=[base.report_output_parser])
 list_sf_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 
 
-list_team_parser = argparse.ArgumentParser(prog='list-team', description='List teams.')
-list_team_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'],
-                              default='table', help='output format')
-list_team_parser.add_argument('--output', dest='output', action='store',
-                              help='output file name. (ignored for table format)')
+list_team_parser = argparse.ArgumentParser(prog='list-team', description='List teams.', parents=[base.report_output_parser])
 list_team_parser.add_argument('-v', '--verbose', action='store_true', help="verbose output (include team membership info)")
 list_team_parser.add_argument('-a', '--all', action='store_true',
                               help="show all teams in your contacts (including those outside your primary organization)")
@@ -810,11 +798,8 @@ class RecordListTeamCommand(Command):
 
 
 
-trash_list_parser = argparse.ArgumentParser(prog='trash list', description='Displays a list of deleted records.')
-trash_list_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'],
-                               default='table', help='output format')
-trash_list_parser.add_argument('--output', dest='output', action='store',
-                               help='output file name. (ignored for table format)')
+trash_list_parser = argparse.ArgumentParser(prog='trash list', description='Displays a list of deleted records.',
+                                            parents=[base.report_output_parser])
 trash_list_parser.add_argument('--reload', dest='reload', action='store_true', help='reload deleted records')
 trash_list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help="verbose output")
 trash_list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')

@@ -21,3 +21,4 @@ pyngrok; python_version>='3.8'
 flask-limiter; python_version>='3.8'
 psutil; python_version>='3.8'
 python-dotenv
+fpdf2>=2.8.3
