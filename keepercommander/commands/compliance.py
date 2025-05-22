@@ -7,7 +7,7 @@ import operator
 from functools import partial
 from typing import Optional, Dict, Tuple, List, Any, Iterable, Union
 
-from .base import GroupCommand, dump_report_data, field_to_title
+from .base import GroupCommand, dump_report_data, field_to_title, report_output_parser
 from .enterprise_common import EnterpriseCommand
 from ..sox.sox_types import RecordPermissions
 from .helpers.reporting import filter_rows
@@ -17,7 +17,7 @@ from ..params import KeeperParams
 from ..sox import sox_types, get_node_id
 from ..sox.sox_data import SoxData
 
-compliance_parser = argparse.ArgumentParser(add_help=False)
+compliance_parser = argparse.ArgumentParser(add_help=False, parents=[report_output_parser])
 rebuild_group = compliance_parser.add_mutually_exclusive_group()
 rebuild_group.add_argument('--rebuild', '-r', action='store_true', help='rebuild local data from source')
 nr_help = 'prevent remote data fetching if local cache present (invalid with --rebuild flag)'
@@ -25,10 +25,6 @@ rebuild_group.add_argument('--no-rebuild', '-nr', action='store_true', help=nr_h
 compliance_parser.add_argument('--no-cache', '-nc', action='store_true',
                                help='remove any local non-memory storage of data after report is generated')
 compliance_parser.add_argument('--node', action='store', help='ID or name of node (defaults to root node)')
-compliance_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
-                               default='table', help='format of output')
-compliance_parser.add_argument('--output', dest='output', action='store',
-                               help='path to resulting output file (ignored for "table" format)')
 compliance_parser.add_argument('--regex', action='store_true', help='Allow use of regular expressions in search criteria')
 compliance_parser.add_argument('pattern', type=str, nargs='*', help='Search string / pattern to filter results by. Multiple values allowed.')
 
@@ -190,7 +186,7 @@ class ComplianceReportCommand(BaseComplianceReportCommand):
         help_txt = "\nGet record and sharing information from all vaults in the enterprise\n" \
                    "Format:\ncompliance-report [-h] [--rebuild] [--no-cache] [--node NODE] [--username USERNAME] " \
                    "[--job-title JOB_TITLE] [--team TEAM] [--record RECORD] [--url DOMAIN] [--shared] " \
-                   "[--format {table,csv,json}] [--output OUTPUT] " \
+                   "[--format {table,csv,json,pdf}] [--output OUTPUT] " \
                    "\n\nExamples:" \
                    "\nSee all records for a user" \
                    "\n\t'compliance-report --username USERNAME'" \
