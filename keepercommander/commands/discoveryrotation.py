@@ -244,7 +244,7 @@ class PAMDebugCommand(GroupCommand):
     def __init__(self):
         super(PAMDebugCommand, self).__init__()
         self.register_command('info', PAMDebugInfoCommand(), 'Debug a record', 'i')
-        self.register_command('gateway', PAMDebugGatewayCommand(), 'Debug a getway', 'g')
+        self.register_command('gateway', PAMDebugGatewayCommand(), 'Debug a gateway', 'g')
         self.register_command('graph', PAMDebugGraphCommand(), 'Render graphs', 'r')
 
         # Disable for now. Needs more work.
@@ -2176,18 +2176,138 @@ class PAMGatewayActionJobCommand(Command):
 
 
 class PAMGatewayActionRotateCommand(Command):
-    parser = argparse.ArgumentParser(prog='dr-rotate-command')
-    parser.add_argument('--record-uid', '-r', required=True, dest='record_uid', action='store',
-                        help='Record UID to rotate')
-
-    # parser.add_argument('--config', '-c', required=True, dest='configuration_uid', action='store',
-    #                                           help='Rotation configuration UID')
+    parser = argparse.ArgumentParser(prog='pam action rotate')
+    parser.add_argument('--record-uid', '-r', dest='record_uid', action='store', help='Record UID to rotate')
+    parser.add_argument('--folder', '-f', dest='folder', action='store', help='Shared folder UID or title pattern to rotate')
+    # parser.add_argument('--recursive', '-a', dest='recursive', default=False, action='store', help='Enable recursion to rotate sub-folders too')
+    # parser.add_argument('--record-pattern', '-p', dest='pattern', action='store', help='Record title match pattern')
+    parser.add_argument('--dry-run', '-n', dest='dry_run', default=False, action='store_true', help='Enable dry-run mode')
+    # parser.add_argument('--config', '-c', dest='configuration_uid', action='store', help='Rotation configuration UID')
 
     def get_parser(self):
         return PAMGatewayActionRotateCommand.parser
 
     def execute(self, params, **kwargs):
-        record_uid = kwargs.get('record_uid')
+        record_uid = kwargs.get('record_uid', '')
+        folder = kwargs.get('folder', '')
+        recursive = kwargs.get('recursive', False)
+        pattern = kwargs.get('pattern', '')  # additional record title match pattern
+        dry_run = kwargs.get('dry_run', False)
+
+        # record, folder or pattern - at least one required
+        if not record_uid and not folder:
+            print(f'the following arguments are required: {bcolors.OKBLUE}--record-uid/-r{bcolors.ENDC} or {bcolors.OKBLUE}--folder/-f{bcolors.ENDC}')
+            return
+
+        # single record UID - ignore all folder options
+        if not folder:
+            self.record_rotate(params, record_uid)
+            return
+
+        # folder UID or pattern (ignore --record-uid/-r option)
+        folders = []  # root folders matching UID or title pattern
+        records = []  # record UIDs of all v3/pamUser records
+
+        # 1. find all shared_folder/shared_folder_folder matching --folder=UID/pattern
+        if folder in params.folder_cache:  # folder UID
+            fldr = params.folder_cache.get(folder)
+            # only shared_folder can be shared to KSM App/Gateway for rotation
+            # but its children shared_folder_folder can contain rotation records too
+            if fldr.type in (BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType):
+                folders.append(folder)
+            else:
+                logging.debug(f'Folder skipped (not a shared folder/subfolder) - {folder} {fldr.name}')
+        else:
+            rx_name = self.str_to_regex(folder)
+            for fuid in params.folder_cache:
+                fldr = params.folder_cache.get(fuid)
+                # requirement - shared folder only (not for user_folder containing shf w/ recursion)
+                if fldr.type in (BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType):
+                    if fldr.name and rx_name.search(fldr.name):
+                        folders.append(fldr.uid)
+
+        folders = list(set(folders))  # Remove duplicate UIDs
+        # 2. pattern could match both parent and child - drop all children (w/ a matching parent)
+        if recursive and len(folders) > 1:
+            roots: Dict[str, list] = {}  # group by shared_folder_uid
+            for fuid in folders:  # no shf inside shf yet
+                roots.setdefault(params.folder_cache.get(fuid).shared_folder_uid, []).append(fuid)
+            uniq = []
+            for fuid in roots:
+                fldrs = list(set(roots[fuid]))
+                if len(fldrs) == 1:  # no siblings
+                    uniq.append(fldrs[0])
+                elif fuid in fldrs:  # parent shf is topmost
+                    uniq.append(fuid)
+                else:  # topmost sibling(s)
+                    fldrset = set(fldrs)
+                    for fldr in fldrs:
+                        path = []
+                        child = fldr
+                        while params.folder_cache[child].uid != fuid:
+                            path.append(child)
+                            child = params.folder_cache[child].parent_uid
+                        path.append(child)  # add root shf
+                        path = path[1:] if path else [] # skip child uid
+                        if not set(path) & fldrset:  # no intersect
+                            uniq.append(fldr)
+            folders = list(set(uniq))
+
+        # 3. collect all recs pamUsers w/ rotation set-up --recursive or not
+        for fldr in folders:
+            if recursive:
+                logging.warning('--recursive/-a option not implemented (ignored)')
+                # params.folder_cache: type=shared_folder_folder, uid=shffUID, shared_folder_uid ='shfUID'
+                # params.subfolder_cache/subfolder_record_cache
+
+            if fldr not in params.subfolder_record_cache:
+                logging.debug(f"folder {fldr} empty - not in subfolder_record_cache (skipped)")
+                continue
+            for ruid in params.subfolder_record_cache[fldr]:
+                if ruid in params.record_cache:
+                    if params.record_cache[ruid].get('version') == 3:
+                        data = params.record_cache[ruid].get('data_unencrypted', '')
+                        ddict = json.loads(data) if data else {}
+                        if str(ddict.get("type", '')).lower() == 'pamUser'.lower() and ruid not in records:
+                            records.append(ruid)
+        records = list(set(records))  # Remove duplicate UIDs
+
+        # 4. print number of folders and records to rotate - folders: 2+0/16, records 50,000
+        print(f'Selected for rotation - folders: {len(folders)}, records: {len(records)}, recursive={recursive}')
+
+        # 5. in debug - print actual folders and records selected for rotation
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            for fldr in folders:
+                fobj = params.folder_cache.get(fldr, None)
+                title = fobj.name if isinstance(fobj, BaseFolderNode) else ''
+                logging.debug(f'Rotation Folder UID: {fldr} {title}')
+            for rec in records:
+                title = json.loads(params.record_cache.get(rec, {}).get('data_unencrypted', '')).get('title', '')
+                logging.debug(f'Rotation Record UID: {rec} {title}')
+
+        # 6. exit if --dry-run
+        if dry_run:
+            return
+
+        # 7. rotate and handle any throttles (to work with 50,000 records)
+        for record_uid in records:
+            delay = 0
+            while True:
+                try:
+                    # Handle throttles in-loop on in-record_rotate
+                    self.record_rotate(params, record_uid, True)
+                    break
+                except Exception as e:
+                    msg = str(e)  # what is considered a throttling error...
+                    if re.search(r"throttle", msg, re.IGNORECASE):
+                        delay = (delay+10) % 100  # reset every 1.5 minutes
+                        logging.debug(f'Record UID: {record_uid} was throttled (retry in {delay} sec)')
+                        time.sleep(1+delay)
+                    else:
+                        logging.error(f'Record UID: {record_uid} skipped: non-throttling, non-recoverable error: {msg}')
+                        break
+
+    def record_rotate(self, params, record_uid, slient:bool = False):
         record = vault.KeeperRecord.load(params, record_uid)
         if not isinstance(record, vault.TypedRecord):
             print(f'{bcolors.FAIL}Record [{record_uid}] is not available.{bcolors.ENDC}')
@@ -2313,8 +2433,17 @@ class PAMGatewayActionRotateCommand(Command):
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token)
 
-        print_router_response(router_response, 'job_info', conversation_id, gateway_uid=gateway_uid)
+        if not slient:
+            print_router_response(router_response, 'job_info', conversation_id, gateway_uid=gateway_uid)
 
+    def str_to_regex(self, text):
+        text = str(text)
+        try:
+            pattern = re.compile(text, re.IGNORECASE)
+        except: # re.error: yet maybe TypeError, MemoryError, RecursionError etc.
+            pattern = re.compile(re.escape(text), re.IGNORECASE)
+            logging.debug(f"regex pattern {text} failed to compile (using it as plaintext pattern)")
+        return pattern
 
 class PAMGatewayActionServerInfoCommand(Command):
     parser = argparse.ArgumentParser(prog='dr-info-command')
