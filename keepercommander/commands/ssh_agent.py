@@ -25,17 +25,14 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, padding, utils
 
-from .base import GroupCommand, Command, dump_report_data, user_choice
+from .base import GroupCommand, Command, dump_report_data, user_choice, report_output_parser
 from .. import vault, attachment
 from ..params import KeeperParams
 
 ssh_agent_info_parser = argparse.ArgumentParser(prog='ssh-agent info', description='Display ssh agent status')
 ssh_agent_start_parser = argparse.ArgumentParser(prog='ssh-agent start', description='Start ssh agent')
 ssh_agent_stop_parser = argparse.ArgumentParser(prog='ssh-agent stop', description='Stop ssh agent')
-
-ssh_agent_log_parser = argparse.ArgumentParser(prog='ssh-agent log', description='Display ssh agent logs')
-ssh_agent_log_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'], default='table', help='output format.')
-ssh_agent_log_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
+ssh_agent_log_parser = argparse.ArgumentParser(prog='ssh-agent log', description='Display ssh agent logs', parents=[report_output_parser])
 
 
 class ConnectSshAgent:

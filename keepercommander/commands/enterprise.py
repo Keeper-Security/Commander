@@ -271,9 +271,7 @@ scim_parser.add_argument('--unique-groups', dest='unique_groups', action='store_
 scim_parser.error = raise_parse_exception
 scim_parser.exit = suppress_exit
 
-user_report_parser = argparse.ArgumentParser(prog='user-report', description='Run a user report.')
-user_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json', 'csv'], default='table', help='output format.')
-user_report_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
+user_report_parser = argparse.ArgumentParser(prog='user-report', description='Run a user report.', parents=[report_output_parser])
 user_report_parser.add_argument('--days', dest='days', action='store', type=int, default=365,
                                 help='number of days to look back for last login (set to <= 0 to disable limit).')
 user_report_parser.add_argument('-l', '--last-login', dest='last_login', action='store_true',

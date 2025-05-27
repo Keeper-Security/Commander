@@ -16,28 +16,20 @@ import logging
 import re
 from typing import Optional, Set
 
-from .base import GroupCommand, dump_report_data
+from .base import GroupCommand, dump_report_data, report_output_parser
 from .enterprise import EnterpriseCommand
 from .. import api, constants
 from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
 
-distributor_info_parser = argparse.ArgumentParser(prog='distributor info')
+distributor_info_parser = argparse.ArgumentParser(prog='distributor info', parents=[report_output_parser])
 distributor_info_parser.add_argument('--reload', dest='reload', action='store_true', help='reload distributors')
 distributor_info_parser.add_argument('--mc-details', dest='mc_details', action='store_true', help='Display MC details')
 distributor_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='Display verbose information')
-distributor_info_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
-                                     default='table', help='output format.')
-distributor_info_parser.add_argument('--output', dest='output', action='store',
-                                     help='output file name. (ignored for table format)')
 
-distributor_msp_info_parser = argparse.ArgumentParser(prog='distributor msp-info')
+distributor_msp_info_parser = argparse.ArgumentParser(prog='distributor msp-info', parents=[report_output_parser])
 distributor_msp_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='Display verbose information')
-distributor_msp_info_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
-                                         default='table', help='output format.')
-distributor_msp_info_parser.add_argument('--output', dest='output', action='store',
-                                         help='output file name. (ignored for table format)')
 distributor_msp_info_parser.add_argument('msp', action='store', metavar='MSP_NAME',
                                          help='Managed Company Provider identifier (name or ID).')
 

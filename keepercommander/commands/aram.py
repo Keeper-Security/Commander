@@ -32,7 +32,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title
+from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title, report_output_parser
 from .enterprise_common import EnterpriseCommand
 from .helpers import audit_report
 from .transfer_account import EnterpriseTransferUserCommand
@@ -49,12 +49,8 @@ from ..sox.sox_types import SharedFolder
 from ..sox.storage_types import StorageRecordAging
 from ..subfolder import get_contained_record_uids
 
-audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run an audit trail report.')
+audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run an audit trail report.', parents=[report_output_parser])
 audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
-audit_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'], default='table',
-                                 help='output format.')
-audit_report_parser.add_argument('--output', dest='output', action='store',
-                                 help='output file name. (ignored for table format)')
 audit_report_parser.add_argument('--report-type', dest='report_type', action='store', choices=['raw', 'dim', 'hour', 'day', 'week', 'month', 'span'],
                                  help='report type. (Default value: raw)', default='raw')
 audit_report_parser.add_argument('--report-format', dest='report_format', action='store', choices=['message', 'fields'],
@@ -118,7 +114,7 @@ audit_log_parser.error = raise_parse_exception
 audit_log_parser.exit = suppress_exit
 
 
-aging_report_parser = argparse.ArgumentParser(prog='aging-report', description='Run an aging report.')
+aging_report_parser = argparse.ArgumentParser(prog='aging-report', description='Run an aging report.', parents=[report_output_parser])
 aging_report_parser.add_argument('-r', '--rebuild', dest='rebuild', action='store_true',
                                  help='Rebuild record database')
 aging_report_parser.add_argument('--delete', dest='delete', action='store_true',
@@ -127,10 +123,6 @@ aging_report_parser.add_argument('--no-cache', '-nc', dest="no_cache", action='s
                                  help='remove any local non-memory storage of data upon command completion')
 aging_report_parser.add_argument('-s', '--sort', dest='sort_by', action='store', default='last_changed',
                                  choices=['owner', 'title', 'last_changed', 'shared'], help='sort output')
-aging_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
-                                 default='table', help='output format.')
-aging_report_parser.add_argument('--output', dest='output', action='store',
-                                 help='output file name. (ignored for table format)')
 temporal_group = aging_report_parser.add_mutually_exclusive_group()
 period_opt_help = 'Period the password has not been modified. Not valid with --cutoff-date flag'
 cutoff_opt_help = 'Date since which the password has not been modified. Not valid with --period flag'
@@ -145,7 +137,7 @@ aging_report_parser.add_argument('--in-shared-folder', action='store_true', help
 aging_report_parser.error = raise_parse_exception
 aging_report_parser.exit = suppress_exit
 
-action_report_parser = argparse.ArgumentParser(prog='action-report', description='Run a user action report.')
+action_report_parser = argparse.ArgumentParser(prog='action-report', description='Run a user action report.', parents=[report_output_parser])
 action_report_target_statuses = ['no-logon', 'no-update', 'locked', 'invited', 'no-security-question-update', 'blocked']
 action_report_parser.add_argument('--target', '-t', dest='target_user_status', action='store',
                                   choices=action_report_target_statuses, default='no-logon',
@@ -158,9 +150,6 @@ columns_help = f'comma-separated list of columns to show on report. Supported co
 columns_help = re.sub('\'', '', columns_help)
 action_report_parser.add_argument('--columns',  dest='columns', action='store', type=str,
                                   help=columns_help)
-action_report_parser.add_argument('--output', dest='output', action='store', help='path to resulting output file')
-action_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
-                                  default='table', help='format of output')
 action_report_parser.add_argument('--apply-action', '-a', dest='apply_action', action='store',
                                   choices=['lock', 'delete', 'transfer', 'none'], default='none',
                                   help='admin action to apply to each user in the report')
