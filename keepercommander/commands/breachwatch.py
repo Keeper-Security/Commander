@@ -18,24 +18,20 @@ from typing import Optional, Any, Dict, List, Union
 from .enterprise_common import EnterpriseCommand
 from .security_audit import SecurityAuditReportCommand
 from .. import api, crypto, utils, vault, vault_extensions
-from .base import GroupCommand, Command, dump_report_data, fields_to_titles
+from .base import GroupCommand, Command, dump_report_data, fields_to_titles, report_output_parser
 from ..breachwatch import BreachWatch
 from ..params import KeeperParams
 from ..error import CommandError
 from ..proto import breachwatch_pb2, client_pb2
 
 
-breachwatch_list_parser = argparse.ArgumentParser(prog='breachwatch-list')
+breachwatch_list_parser = argparse.ArgumentParser(prog='breachwatch-list', parents=[report_output_parser])
 breachwatch_list_parser.add_argument('--all', '-a', dest='all', action='store_true',
                                      help='Display all breached records (default is to show only first 30 records)')
 breachwatch_list_parser.add_argument('--owned', '-o', dest='owned', action='store_true',
                                      help='Display only breached records owned by user (omits records shared to user)')
 breachwatch_list_parser.add_argument('--numbered', '-n', action='store_true',
                                      help='Display records as a numbered list')
-breachwatch_list_parser.add_argument('--format', dest='format', action='store',
-                                       choices=['table', 'csv', 'json'], default='table', help='output format.')
-breachwatch_list_parser.add_argument('--output', dest='output', action='store',
-                                       help='output file name. (ignored for table format)')
 
 #breachwatch_list_parser.add_argument('--ignored', '-i', dest='ignored', action='store_true', help='Display ignored records')
 
@@ -49,11 +45,7 @@ breachwatch_scan_parser = argparse.ArgumentParser(prog='breachwatch-scan')
 breachwatch_ignore_parser = argparse.ArgumentParser(prog='breachwatch-ignore')
 breachwatch_ignore_parser.add_argument('records', type=str, nargs='+', help='Record UID to ignore')
 
-breachwatch_report_parser = argparse.ArgumentParser(prog='breachwatch-report')
-breachwatch_report_parser.add_argument('--format', dest='format', action='store',
-                                       choices=['table', 'csv', 'json'], default='table', help='output format.')
-breachwatch_report_parser.add_argument('--output', dest='output', action='store',
-                                       help='output file name. (ignored for table format)')
+breachwatch_report_parser = argparse.ArgumentParser(prog='breachwatch-report', parents=[report_output_parser])
 
 
 def register_commands(commands):

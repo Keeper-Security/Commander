@@ -495,10 +495,10 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
             # --- Create Table using fpdf2's table context manager ---
             grayscale = 245
             with pdf.table(
-                col_widths=widths,
-                text_align=col_alignments,
-                width=pdf.epw,
-                line_height=pdf.font_size * 1.8,
+                col_widths=tuple(widths),
+                text_align=tuple(col_alignments),
+                width=int(pdf.epw),
+                line_height=int(pdf.font_size * 1.8),
                 borders_layout='ALL',
                 padding=0.5,
                 headings_style=header_style_font_face, # Apply the defined FontFace for headings
@@ -518,6 +518,8 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
                             cell_value = cell
                         elif isinstance(cell, list):
                             cell_value = '\n'.join((str(x) for x in cell))
+                        elif cell is None:
+                            cell_value = ''
                         else:
                             cell_value = str(cell)
 

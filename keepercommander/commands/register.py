@@ -116,11 +116,8 @@ expiration.add_argument('--expire-in', dest='expire_in', action='store', metavar
                         help='share expiration: never or period (<NUMBER>[(y)ears|(mo)nths|(d)ays|(h)ours(mi)nutes]')
 share_folder_parser.add_argument('folder', nargs='+', type=str, action='store', help='shared folder path or UID')
 
-share_report_parser = argparse.ArgumentParser(prog='share-report', description='Display report of shared records.')
-share_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json', 'csv'],
-                                 default='table', help='output format.')
-share_report_parser.add_argument('--output', dest='output', action='store',
-                                 help='output file name. (ignored for table format)')
+share_report_parser = argparse.ArgumentParser(prog='share-report', description='Display report of shared records.',
+                                              parents=[base.report_output_parser])
 share_report_parser.add_argument('-r', '--record', dest='record', action='append', help='record name or UID')
 share_report_parser.add_argument('-e', '--email', dest='user', action='append', help='user email or team name')
 share_report_parser.add_argument('-o', '--owner', dest='owner', action='store_true',
@@ -163,11 +160,8 @@ record_permission_parser.error = raise_parse_exception
 record_permission_parser.exit = suppress_exit
 
 find_ownerless_desc = 'List (and, optionally, claim) records in the user\'s vault that currently do not have an owner'
-find_ownerless_parser = argparse.ArgumentParser(prog='find-ownerless', description=find_ownerless_desc)
-find_ownerless_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'],
-                                   default='table', help='output format')
-find_ownerless_parser.add_argument('--output', dest='output', action='store',
-                                   help='output file name (ignored for table format)')
+find_ownerless_parser = argparse.ArgumentParser(prog='find-ownerless', description=find_ownerless_desc,
+                                                parents=[base.report_output_parser])
 find_ownerless_parser.add_argument('--claim', dest='claim', action='store_true', help='claim records found')
 find_ownerless_parser.add_argument('-v', '--verbose', action='store_true', help='output details for each record found')
 folder_help = 'path or UID of folder to search (optional, with multiple values allowed)'
@@ -175,7 +169,8 @@ find_ownerless_parser.add_argument('folder', nargs='*', type=str, action='store'
 find_ownerless_parser.error = raise_parse_exception
 find_ownerless_parser.exit = suppress_exit
 
-find_duplicate_parser = argparse.ArgumentParser(prog='find-duplicate', description='List duplicated records.')
+find_duplicate_parser = argparse.ArgumentParser(prog='find-duplicate', description='List duplicated records.',
+                                                parents=[base.report_output_parser])
 find_duplicate_parser.add_argument('--title', dest='title', action='store_true', help='Match duplicates by title.')
 find_duplicate_parser.add_argument('--login', dest='login', action='store_true', help='Match duplicates by login.')
 find_duplicate_parser.add_argument('--password', dest='password', action='store_true', help='Match duplicates by password.')
@@ -198,11 +193,6 @@ find_duplicate_parser.add_argument('-s', '--scope', action='store', choices=['va
                                    help=scope_help)
 refresh_help = 'Populate local cache with latest compliance data . Valid only w/ --scope=enterprise option.'
 find_duplicate_parser.add_argument('-r', '--refresh-data', action='store_true', help=refresh_help)
-find_duplicate_parser.add_argument('--format', action='store', choices=['table', 'csv', 'json'], default='table',
-                                   help='output format.')
-find_duplicate_parser.add_argument('--output', action='store', help='output file name. (ignored for table format)')
-find_duplicate_parser.error = raise_parse_exception
-find_duplicate_parser.exit = suppress_exit
 
 one_time_share_create_parser = argparse.ArgumentParser(prog='one-time-share-create', description='Creates one-time share URL for a record')
 one_time_share_create_parser.add_argument('--output', dest='output', choices=['clipboard', 'stdout'],
@@ -212,15 +202,12 @@ one_time_share_create_parser.add_argument('-e', '--expire', dest='expire', actio
                                           help='Time period record share URL is valid.')
 one_time_share_create_parser.add_argument('record', nargs='+', type=str, action='store', help='record path or UID. Can be repeated')
 
-one_time_share_list_parser = argparse.ArgumentParser(prog='one-time-share-list', description='Displays a list of one-time shares for a records')
+one_time_share_list_parser = argparse.ArgumentParser(prog='one-time-share-list', description='Displays a list of one-time shares for a records',
+                                                     parents=[base.report_output_parser])
 one_time_share_list_parser.add_argument('-R', '--recursive', dest='recursive', action='store_true',
                                       help='Traverse recursively through subfolders')
 one_time_share_list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output.')
 one_time_share_list_parser.add_argument('-a', '--all', dest='show_all', action='store_true', help='show all one-time shares including expired.')
-one_time_share_list_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
-                                        default='table', help='output format.')
-one_time_share_list_parser.add_argument('--output', dest='output', action='store',
-                                        help='output file name. (ignored for table format)')
 one_time_share_list_parser.add_argument('record', nargs='+', type=str, action='store', help='record/folder path/UID')
 
 one_time_share_remove_parser = argparse.ArgumentParser(prog='one-time-share-remove', description='Removes one-time share URL for a record')

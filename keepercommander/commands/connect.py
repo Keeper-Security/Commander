@@ -23,7 +23,7 @@ import sys
 import tempfile
 from typing import Optional, Callable, List, Iterable, Tuple
 
-from .base import Command, RecordMixin, dump_report_data, field_to_title
+from .base import Command, RecordMixin, dump_report_data, field_to_title, report_output_parser
 from .record import find_record, RecordListCommand
 from .ssh_agent import add_ssh_key, try_extract_private_key, SshAgentCommand
 from ..attachment import prepare_attachment_download
@@ -32,12 +32,8 @@ from ..params import KeeperParams
 from ..subfolder import find_folders, get_folder_path, try_resolve_path
 from ..vault import TypedRecord, KeeperRecord, PasswordRecord
 
-ssh_parser = argparse.ArgumentParser(prog='ssh',
-                                     description='Establishes connection to external server using SSH. ')
-ssh_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'], default='table',
-                        help='output format.')
-ssh_parser.add_argument('--output', dest='output', action='store',
-                        help='output file name. (ignored for table format)')
+ssh_parser = argparse.ArgumentParser(prog='ssh', description='Establishes connection to external server using SSH.',
+                                     parents=[report_output_parser])
 ssh_parser.add_argument('-d', '--destination', action='store', metavar='LOGIN@HOST[:PORT]',
                         help='SSH endpoint')
 ssh_parser.add_argument('record', nargs='?', type=str, action='store',
@@ -45,22 +41,15 @@ ssh_parser.add_argument('record', nargs='?', type=str, action='store',
 ssh_parser.add_argument('command', nargs='*', type=str, action='store',
                         help='Remote command')
 
-mysql_parser = argparse.ArgumentParser(prog='mysql', description='Establishes connection to MySQL server.')
-mysql_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'], default='table',
-                          help='output format.')
-mysql_parser.add_argument('--output', dest='output', action='store',
-                          help='output file name. (ignored for table format)')
+mysql_parser = argparse.ArgumentParser(prog='mysql', description='Establishes connection to MySQL server.',
+                                       parents=[report_output_parser])
 mysql_parser.add_argument('record', nargs='?', type=str, action='store',
                           help='record path or UID. Record types: "Database"')
 mysql_parser.add_argument('query', nargs='*', type=str, action='store',
                           help='SQL query')
 
-postgres_parser = argparse.ArgumentParser(prog='postgresql',
-                                          description='Establishes connection to Postgres/Redshift servers.')
-postgres_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'], default='table',
-                             help='output format.')
-postgres_parser.add_argument('--output', dest='output', action='store',
-                             help='output file name. (ignored for table format)')
+postgres_parser = argparse.ArgumentParser(prog='postgresql', description='Establishes connection to Postgres/Redshift servers.',
+                                          parents=[report_output_parser])
 postgres_parser.add_argument('record', nargs='?', type=str, action='store',
                              help='record path or UID. Record types: "Database"')
 postgres_parser.add_argument('database', nargs='?', type=str, action='store',
@@ -72,13 +61,10 @@ rdp_parser.add_argument('record', nargs='?', type=str, action='store',
                         help='record path or UID. Record types: "Server"')
 
 
-connect_parser = argparse.ArgumentParser(prog='connect', description='Establishes connection to external server')
+connect_parser = argparse.ArgumentParser(prog='connect', description='Establishes connection to external server.',
+                                         parents=[report_output_parser])
 connect_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true',
                             help='display help on command format and template parameters')
-connect_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'], default='table',
-                            help='output format.')
-connect_parser.add_argument('--output', dest='output', action='store',
-                            help='output file name. (ignored for table format)')
 connect_parser.add_argument('-s', '--sort', dest='sort_by', action='store', choices=['endpoint', 'title', 'folder'],
                             help='sort output')
 connect_parser.add_argument('-n', '--new', dest='new_data', action='store_true', help='request per-user data')

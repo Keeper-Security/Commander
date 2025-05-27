@@ -150,11 +150,7 @@ ln_parser.error = raise_parse_exception
 ln_parser.exit = suppress_exit
 
 
-shortcut_list_parser = argparse.ArgumentParser(prog='shortcut-list')
-shortcut_list_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'],
-                                  default='table', help='output format')
-shortcut_list_parser.add_argument('--output', dest='output', action='store',
-                                  help='output file name. (ignored for table format)')
+shortcut_list_parser = argparse.ArgumentParser(prog='shortcut-list', parents=[base.report_output_parser])
 shortcut_list_parser.add_argument('target', nargs='?', help='Full record or folder path')
 
 shortcut_keep_parser = argparse.ArgumentParser(prog='shortcut-keep')

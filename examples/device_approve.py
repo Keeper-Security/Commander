@@ -4,17 +4,13 @@ import sys
 
 from keepercommander import api
 from keepercommander.__main__ import get_params_from_config
-from keepercommander.commands import enterprise
+from keepercommander.commands import enterprise, base
 
-parser = argparse.ArgumentParser(description='Approves pending SSO devices')
+parser = argparse.ArgumentParser(description='Approves pending SSO devices', parents=[base.report_output_parser])
 parser.add_argument('--debug', action='store_true', help='Enables debug logging')
 parser.add_argument('--reload', '-r', dest='reload', action='store_true', help='reload list of pending approval requests')
 parser.add_argument('--approve', '-a', dest='approve', action='store_true', help='approve user devices')
 parser.add_argument('--deny', '-d', dest='deny', action='store_true', help='deny user devices')
-parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
-                                   default='table', help='Output format. Applicable to list of devices in the queue.')
-parser.add_argument('--output', dest='output', action='store',
-                                   help='Output file name (ignored for table format)')
 parser.add_argument('device', type=str, nargs='?', action="append", help='User email or device ID')
 opts, flags = parser.parse_known_args(sys.argv[1:])
 
