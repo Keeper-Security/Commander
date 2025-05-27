@@ -1,6 +1,7 @@
 import re
 import requests
 from http import HTTPStatus
+from os import environ
 from prompt_toolkit import HTML, print_formatted_text, prompt
 from prompt_toolkit.shortcuts import button_dialog, ProgressBar
 from prompt_toolkit.styles import Style
@@ -63,16 +64,18 @@ class CyberArkImporter(BaseImporter):
         # CyberArk Privilege Cloud uses an OAuth2 client_credentials grant for authentication
         if pvwa_host.endswith(".cyberark.cloud"):
             pvwa_host = f"{pvwa_host.split('.')[0]}.privilegecloud.cyberark.cloud"
-            id_tenant = prompt("CyberArk Identity Tenant ID: ")
+            id_tenant = environ.get("KEEPER_CYBERARK_ID_TENANT") or prompt("CyberArk Identity Tenant ID: ")
             if re.match(r"^[A-Za-z]{3}\d{4}$", id_tenant):
-                # Handle customized tenant ID URLs by removing the ".id" suffix
+                # Append the ".id" suffix to the tenant ID if it matches the expected format
                 id_tenant += ".id"
+            client_id = environ.get("KEEPER_CYBERARK_USERNAME") or prompt("CyberArk service user name: ")
+            client_secret = environ.get("KEEPER_CYBERARK_PASSWORD") or prompt("CyberArk service user password: ", is_password=True)
             response = requests.post(
                 f"https://{id_tenant}.cyberark.cloud/oauth2/platformtoken",
                 data={
                     "grant_type": "client_credentials",
-                    "client_id": prompt("CyberArk service user name: "),
-                    "client_secret": prompt("CyberArk service user password: ", is_password=True),
+                    "client_id": client_id,
+                    "client_secret": client_secret,
                 },
                 timeout=self.TIMEOUT,
             )
@@ -86,13 +89,16 @@ class CyberArkImporter(BaseImporter):
             access_token = response.json()["access_token"]
             authorization_token = f"Bearer {access_token}"
         else:
+            login_type = environ.get("KEEPER_CYBERARK_LOGON_TYPE") or prompt(
+                "CyberArk logon type (Cyberark, LDAP, RADIUS or Windows): "
+            )
+            username = environ.get("KEEPER_CYBERARK_USERNAME") or prompt("CyberArk username: ")
+            password = environ.get("KEEPER_CYBERARK_PASSWORD") or prompt("CyberArk password: ", is_password=True)
             response = requests.post(
-                self.get_url(pvwa_host, "logon").format(
-                    type=prompt("CyberArk logon type (Cyberark, LDAP, RADIUS or Windows): ")
-                ),
+                self.get_url(pvwa_host, "logon").format(type=login_type),
                 json={
-                    "username": prompt("CyberArk username: "),
-                    "password": prompt("CyberArk password: ", is_password=True),
+                    "username": username,
+                    "password": password,
                 },
                 timeout=self.TIMEOUT,
                 verify=False,
