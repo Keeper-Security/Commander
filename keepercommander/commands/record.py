@@ -707,7 +707,8 @@ class RecordListCommand(Command):
                        vault_extensions.get_record_description(record), record.shared]
                 table.append(row)
             table.sort(key=lambda x: (x[2] or '').lower())
-
+            if fmt != 'json':
+                headers = [base.field_to_title(x) for x in headers]
             return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
                                          row_number=True, column_width=None if verbose else 40)
         else:

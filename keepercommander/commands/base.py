@@ -27,7 +27,7 @@ from typing import Optional, Sequence, Callable, List, Any, Iterable, Dict, Set
 import sys
 from tabulate import tabulate
 
-from .. import api, crypto, utils, vault
+from .. import api, crypto, utils, vault, resources
 from ..params import KeeperParams
 from ..subfolder import try_resolve_path, BaseFolderNode
 
@@ -399,9 +399,8 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
 
         # --- Determine Font Path ---
         try:
-            current_script_path = os.path.dirname(os.path.abspath(__file__))
-            fonts_dir = os.path.join(current_script_path, '..', 'fonts')
-
+            fonts_dir = os.path.dirname(os.path.abspath(resources.__file__))
+            
             font_path_regular = os.path.join(fonts_dir, 'JetBrainsMono-Regular.ttf')
             font_path_bold = os.path.join(fonts_dir, 'JetBrainsMono-Bold.ttf')
             font_path_italic = os.path.join(fonts_dir, 'JetBrainsMono-Italic.ttf')
