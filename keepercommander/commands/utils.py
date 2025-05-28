@@ -42,8 +42,8 @@ from ..breachwatch import BreachWatch
 from ..display import bcolors
 from ..error import CommandError
 from ..generator import KeeperPasswordGenerator, DicewarePasswordGenerator, CryptoPassphraseGenerator
-from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID, RecordOwner
-from ..proto import ssocloud_pb2, enterprise_pb2, APIRequest_pb2, client_pb2
+from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
+from ..proto import ssocloud_pb2, enterprise_pb2, APIRequest_pb2
 from ..security_audit import needs_security_audit, update_security_audit_data
 from ..utils import password_score
 from ..vault import KeeperRecord
@@ -649,10 +649,24 @@ class VersionCommand(Command):
             print('{0:>20s}: {1}'.format('Executable', sys.executable))
 
         if logging.getLogger().isEnabledFor(logging.DEBUG) or show_packages:
-            import pkg_resources
-            installed_packages = pkg_resources.working_set
-            installed_packages_list = sorted(["%s==%s" % (i.key, i.version) for i in installed_packages])
-            print('{0:>20s}: {1}'.format('Packages', installed_packages_list))
+            ver = sys.version_info
+            if ver.major >= 3 and ver.minor >= 8:
+                import importlib.metadata
+                dist = importlib.metadata.packages_distributions()
+                packages = {}
+                for pack in dist.values():
+                    if isinstance(pack, list) and len(pack) > 0:
+                        name = pack[0]
+                        if name in packages:
+                            continue
+                        try:
+                            version = importlib.metadata.version(name)
+                            packages[name] = version
+                        except Exception as e:
+                            logging.debug('Get package %s version error: %s', name, e)
+                installed_packages_list = [f'{x[0]}=={x[1]}' for x in packages.items()]
+                installed_packages_list.sort(key=lambda x: x.lower())
+                print('{0:>20s}: {1}'.format('Packages', installed_packages_list))
 
         if version_details.get('is_up_to_date') is None:
             logging.debug("It appears that Commander is up to date")
