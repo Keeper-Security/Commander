@@ -17,10 +17,11 @@ import logging
 import os
 import time
 import urllib.parse
+from itertools import product, groupby
 
 from keeper_secrets_manager_core.utils import bytes_to_base64, url_safe_str_to_bytes
 
-from typing import Sequence, List
+from typing import Sequence, List, Optional
 
 from .base import Command, dump_report_data, user_choice, as_boolean
 from . import record
@@ -326,41 +327,103 @@ class KSMCommand(Command):
 
     @staticmethod
     def share_app(params, app_name_or_uid, email, is_admin=False, unshare=False):
+        # type: (KeeperParams, str, List[str], Optional[bool], Optional[bool]) -> None
         app_rec = KSMCommand.get_app_record(params, app_name_or_uid)
         if app_rec is None:
             logging.warning('Application "%s" not found.' % app_name_or_uid)
             return
         app_uid = app_rec.get('record_uid', '')
-        app_info = KSMCommand.get_app_info(params, app_uid)
-        sf_action = 'remove' if unshare else 'grant'
         sr_action = 'revoke' if unshare else 'grant'
-        sf_perm_keys = ('manage_users', 'manage_records', 'can_edit', 'can_share')
-        sf_perms = {k: is_admin and not unshare and 'on' or 'off' for k in sf_perm_keys}
         rec_perms = dict(can_edit=is_admin and not unshare, can_share=is_admin and not unshare)
         users = [email]
-        share_folder_args = dict(**sf_perms, action=sf_action, user=users)
         share_rec_args = dict(**rec_perms, action=sr_action, email=users)
 
-        from keepercommander.commands.register import ShareRecordCommand
-        from keepercommander.commands.register import ShareFolderCommand
-
         # (Un)Share application record
+        from keepercommander.commands.register import ShareRecordCommand
         share_rec_cmd = ShareRecordCommand()
         share_rec_cmd.execute(params, record=app_uid, **share_rec_args)
 
-        get_share_uid = lambda share: utils.base64_url_encode(share.secretUid)
+        api.sync_down(params)
+        KSMCommand.update_shares_user_permissions(params, app_uid, removed=unshare and email or None)
 
-        # (Un)Share shared-folders associated w/ application
-        is_sf = lambda share: APIRequest_pb2.ApplicationShareType.Name(share.shareType) == 'SHARE_TYPE_FOLDER'
-        shared_folders = [get_share_uid(s) for ai in app_info for s in ai.shares or [] if is_sf(s)]
-        share_folder_cmd = ShareFolderCommand()
-        share_folder_cmd.execute(params, folder=shared_folders, **share_folder_args)
+    @staticmethod
+    def update_shares_user_permissions(params, app_uid, removed=None):   # type: (KeeperParams, str, Optional[str] ) -> None
+        # Get app user-permissions
+        api.get_record_shares(params, [app_uid])
+        app_rec = KSMCommand.get_app_record(params, app_uid)
+        if app_rec is None:
+            logging.warning('Application "%s" not found.' % app_uid)
+            return
 
-        # (Un)Share records associated w/ the application
-        is_rec = lambda share: APIRequest_pb2.ApplicationShareType.Name(share.shareType) == 'SHARE_TYPE_RECORD'
-        shared_recs = [get_share_uid(s) for ai in app_info for s in ai.shares or [] if is_rec(s)]
-        for rec in shared_recs:
-            share_rec_cmd.execute(params, **share_rec_args, record=rec)
+        user_perms = app_rec.get('shares', {}).get('user_permissions', [])
+        sf_perm_keys = ('manage_users', 'manage_records')
+        rec_perm_keys = ('can_edit', 'can_share')
+        rec_user_permissions = ('editable', 'shareable')
+
+        # Apply app user-permissions to app shares
+        app_info = KSMCommand.get_app_info(params, app_uid)
+        share_uids = [utils.base64_url_encode(s.secretUid) for ai in app_info for s in (ai.shares or [])]
+        shared_recs = [uid for uid in share_uids if uid in params.record_cache]
+        shared_folders = [uid for uid in share_uids if uid not in shared_recs]
+
+        api.get_record_shares(params, shared_recs)
+
+        def share_needs_update(user, share_uid, elevated):
+            if is_removed:
+                return True
+
+            is_rec_share = share_uid in params.record_cache
+            perm_keys, share_cache = (rec_user_permissions, params.record_cache) if is_rec_share \
+                else (sf_perm_keys, params.shared_folder_cache)
+            get_user_permissions = lambda cached_share: cached_share.get('shares', {}).get('user_permissions',{}) if is_rec_share else cached_share.get('users')
+
+            share_user_permissions = get_user_permissions(share_cache.get(share_uid, {}))
+            user_permissions = next((up for up in share_user_permissions if up.get('username') == user), {})
+            return any(permission for permission in perm_keys if user_permissions.get(permission) != elevated)
+
+
+        admins = [up.get('username') for up in user_perms if up.get('editable')]
+        admins = [x for x in admins if x != params.user]
+        viewers = [up.get('username') for up in user_perms if not up.get('editable')]
+        removed = [removed] if removed is not None else []
+        app_users_map = dict(admins=admins,viewers=viewers, removed=removed)
+
+        from keepercommander.commands.register import ShareRecordCommand, ShareFolderCommand
+
+        get_sf = lambda uid: params.shared_folder_cache.get(uid, {})
+        user_needs_update = lambda u, adm: any(share_needs_update(u, uid, adm) for uid in share_uids)
+
+        def group_by_app_share(products):
+            first_element = lambda x: x[0]
+            products = sorted(products, key=first_element)
+            products = groupby(products, key=first_element)
+            return {uid: [user for _, user in pair] for uid, pair in products}
+
+        sf_requests = []
+        rec_requests = []
+        for group, users in app_users_map.items():
+            is_admin, is_removed = group == 'admins', group == 'removed'
+            users = [u for u in users if user_needs_update(u, is_admin)]
+            sf_action = 'remove' if is_removed else 'grant'
+            rec_action = 'revoke' if is_removed else 'grant'
+
+            # Update user-permissions for folder shares
+            get_sf_args = lambda u: dict(action=sf_action, user=u, **{perm: is_admin and 'on' or 'off' for perm in sf_perm_keys})
+            prep_sf_rq = lambda u, uid: ShareFolderCommand.prepare_request(params, get_sf_args(u), get_sf(uid), u, [], [])
+            sf_updates = {(sf, user) for sf, user in product(shared_folders, users) if share_needs_update(user, sf, is_admin)}
+            sf_updates = group_by_app_share(sf_updates)
+            sf_requests.append([prep_sf_rq(users, uid) for uid, users in sf_updates.items() if users])
+
+            # Update user-permissions for record shares
+            get_rec_args = lambda user, uid: dict(action=rec_action, email=user, record=uid, **{perm: is_admin for perm in rec_perm_keys})
+            prep_rec_rq = lambda user, uid: ShareRecordCommand.prep_request(params, get_rec_args(user, uid))
+            rec_updates = {(rec, user) for rec, user in product(shared_recs, users) if share_needs_update(user, rec, is_admin)}
+            rec_updates = group_by_app_share(rec_updates)
+            rec_requests.extend([prep_rec_rq(users, rec) for rec, users in rec_updates.items() if users])
+
+        ShareFolderCommand.send_requests(params, sf_requests)
+        ShareRecordCommand.send_requests(params, rec_requests)
+
 
     @staticmethod
     def add_app_share(params, secret_uids, app_name_or_uid, is_editable):
@@ -380,6 +443,10 @@ class KSMCommand(Command):
             secret_uids=secret_uids,
             is_editable=is_editable
         )
+
+        # Update user-permissions for new app share
+        api.sync_down(params)
+        KSMCommand.update_shares_user_permissions(params, app_record_uid)
 
     @staticmethod
     def record_data_as_dict(record_dict):
