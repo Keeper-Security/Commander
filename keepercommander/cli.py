@@ -20,7 +20,6 @@ import time
 from collections import OrderedDict
 from typing import Union
 
-from keepercommander.commands.utils import LoginCommand
 from prompt_toolkit import PromptSession
 from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.shortcuts import CompleteStyle
@@ -33,6 +32,7 @@ from .commands import (
     aliases, commands, command_info, enterprise_commands, msp_commands
 )
 from .commands.base import dump_report_data, CliCommand, GroupCommand
+from .commands.utils import LoginCommand
 from .commands import msp
 from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS
 from .error import CommandError, Error
