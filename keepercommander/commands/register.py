@@ -20,7 +20,7 @@ import math
 import re
 import time
 import urllib.parse
-from typing import Optional, Dict, Iterable, Any, Set, List
+from typing import Optional, Dict, Iterable, Any, Set, List, Union
 from urllib.parse import urlunparse
 
 from tabulate import tabulate
@@ -635,65 +635,15 @@ class ShareRecordCommand(Command):
     def get_parser(self):
         return share_record_parser
 
-    def execute(self, params, **kwargs):
+    @staticmethod
+    def prep_request(params, kwargs):   # type: (KeeperParams, Dict[str, Any]) -> Union[None, record_pb2.RecordShareUpdateRequest]
+        name = kwargs.get('record')
         emails = kwargs.get('email') or []
         if not emails:
             raise CommandError('share-record', '\'email\' parameter is missing')
 
-        dry_run = kwargs.get('dry_run') is True
-        force = kwargs.get('force') is True
         action = kwargs.get('action') or 'grant'
-        use_contacts = kwargs.get('contacts_only')
-
-        def get_contact(user, contacts):
-            get_username = lambda addr: next(iter(addr.split('@')), '').casefold()
-            matches = [c for c in contacts if get_username(user) == get_username(c)]
-            if len(matches) > 1:
-                raise CommandError('More than 1 matching usernames found. Aborting')
-            return next(iter(matches), None)
-
-        if use_contacts:
-            known_users = api.get_share_objects(params).get('users', {})
-            known_emails = [u.casefold() for u in known_users.keys()]
-            is_unknown = lambda e: e.casefold() not in known_emails and is_email(e)
-            unknowns = [e for e in emails if is_unknown(e)]
-            if unknowns:
-                username_map = {e: get_contact(e, known_users) for e in unknowns}
-                table = [[k, v] for k, v in username_map.items()]
-                logging.info(f'{len(unknowns)} unrecognized share recipient(s) and closest matching contact(s)')
-                dump_report_data(table, ['Username', 'From Contacts'])
-                confirmed = force or user_choice('\tReplace with known matching contact(s)?', 'yn', default='n') == 'y'
-                if confirmed:
-                    good_emails = [e for e in emails if e not in unknowns]
-                    replacements = [e for e in username_map.values() if e]
-                    emails = [*good_emails, *replacements]
-
-        if action == 'cancel':
-            answer = base.user_choice(
-                bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC + 'This action cannot be undone.\n\n' +
-                'Do you want to cancel all shares with user(s): ' + ', '.join(emails) + ' ?', 'yn', 'n')
-            if answer.lower() in {'y', 'yes'}:
-                for email in emails:
-                    rq = {
-                        'command': 'cancel_share',
-                        'to_email': email
-                    }
-                    try:
-                        api.communicate(params, rq)
-                    except KeeperApiError as kae:
-                        if kae.result_code == 'share_not_found':
-                            logging.info('{0}: No shared records are found.'.format(email))
-                        else:
-                            logging.warning('{0}: {1}.'.format(email, kae.message))
-                    except Exception as e:
-                        logging.warning('{0}: {1}.'.format(email, e))
-                params.sync_data = True
-            return
-
-        name = kwargs.get('record')
-        if not name:
-            self.get_parser().print_help()
-            return
+        dry_run = kwargs.get('dry_run') is True
 
         share_expiration = None
         if action == 'grant':
@@ -906,7 +856,6 @@ class ShareRecordCommand(Command):
                         rq.updateSharedRecord.append(ro)
                     else:
                         rq.removeSharedRecord.append(ro)
-
         if dry_run:
             headers = ['Username', 'Record UID', 'Title', 'Share Action', 'Expiration']
             table = []
@@ -937,9 +886,76 @@ class ShareRecordCommand(Command):
                             row.append(None)
                         table.append(row)
             dump_report_data(table, headers, row_number=True, group_by=0)
+        return rq
+
+
+    def execute(self, params, **kwargs):
+        name = kwargs.get('record')
+        if not name:
+            self.get_parser().print_help()
             return
 
-        while len(rq.addSharedRecord) > 0 or len(rq.updateSharedRecord) > 0 or len(rq.removeSharedRecord) > 0:
+        emails = kwargs.get('email') or []
+        if not emails:
+            raise CommandError('share-record', '\'email\' parameter is missing')
+
+        force = kwargs.get('force') is True
+        action = kwargs.get('action') or 'grant'
+        use_contacts = kwargs.get('contacts_only')
+
+        def get_contact(user, contacts):
+            get_username = lambda addr: next(iter(addr.split('@')), '').casefold()
+            matches = [c for c in contacts if get_username(user) == get_username(c)]
+            if len(matches) > 1:
+                raise CommandError('More than 1 matching usernames found. Aborting')
+            return next(iter(matches), None)
+
+        if use_contacts:
+            known_users = api.get_share_objects(params).get('users', {})
+            known_emails = [u.casefold() for u in known_users.keys()]
+            is_unknown = lambda e: e.casefold() not in known_emails and is_email(e)
+            unknowns = [e for e in emails if is_unknown(e)]
+            if unknowns:
+                username_map = {e: get_contact(e, known_users) for e in unknowns}
+                table = [[k, v] for k, v in username_map.items()]
+                logging.info(f'{len(unknowns)} unrecognized share recipient(s) and closest matching contact(s)')
+                dump_report_data(table, ['Username', 'From Contacts'])
+                confirmed = force or user_choice('\tReplace with known matching contact(s)?', 'yn', default='n') == 'y'
+                if confirmed:
+                    good_emails = [e for e in emails if e not in unknowns]
+                    replacements = [e for e in username_map.values() if e]
+                    emails = [*good_emails, *replacements]
+
+        if action == 'cancel':
+            answer = base.user_choice(
+                bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC + 'This action cannot be undone.\n\n' +
+                'Do you want to cancel all shares with user(s): ' + ', '.join(emails) + ' ?', 'yn', 'n')
+            if answer.lower() in {'y', 'yes'}:
+                for email in emails:
+                    rq = {
+                        'command': 'cancel_share',
+                        'to_email': email
+                    }
+                    try:
+                        api.communicate(params, rq)
+                    except KeeperApiError as kae:
+                        if kae.result_code == 'share_not_found':
+                            logging.info('{0}: No shared records are found.'.format(email))
+                        else:
+                            logging.warning('{0}: {1}.'.format(email, kae.message))
+                    except Exception as e:
+                        logging.warning('{0}: {1}.'.format(email, e))
+                params.sync_data = True
+            return
+
+        rq = ShareRecordCommand.prep_request(params, kwargs)
+        rq and ShareRecordCommand.send_requests(params, [rq])
+
+    @staticmethod
+    def send_requests(params, requests):
+        requests = iter(requests)
+        rq = next(requests, None)
+        while rq and (len(rq.addSharedRecord) > 0 or len(rq.updateSharedRecord) > 0 or len(rq.removeSharedRecord) > 0):
             rq1 = record_pb2.RecordShareUpdateRequest()
             left = 990
             if left > 0 and len(rq.addSharedRecord) > 0:
@@ -971,10 +987,9 @@ class ShareRecordCommand(Command):
                             logging.info('Record \"%s\" access permissions has been %s user \'%s\'', record_uid, verb, email)
                         else:
                             verb = 'grant' if attr == 'addSharedRecordStatus' else 'change' if attr == 'updateSharedRecordStatus' else 'revoke'
+
                             logging.info('Failed to %s record \"%s\" access permissions for user \'%s\': %s', verb, record_uid, email, status_rs.message)
-        if transfer_ruids:
-            from keepercommander.breachwatch import BreachWatch
-            BreachWatch.save_reused_pw_count(params)
+            rq = next(requests, None)
 
 
 class ShareReportCommand(Command):
