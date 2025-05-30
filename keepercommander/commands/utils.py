@@ -741,7 +741,7 @@ class LoginCommand(Command):
             msp.current_mc_id = None
             msp.mc_params_dict.clear()
 
-        new_login = kwargs.get('new_login', True)
+        new_login = kwargs.get('new_login') is True
         if new_login:
             params.clear_session()
 
