@@ -21,9 +21,8 @@ from ..params import KeeperParams
 from .. import config_storage, utils
 
 CONFIG_STORAGE_URL = 'config_storage'
-PROTECTED_PROPERTIES = [
-    'user', 'server', 'device_token', ('private_key', 'device_private_key'),
-    'clone_code']   # type: List[Union[str, Tuple[str, str]]]
+PROTECTED_PROPERTIES = ['server', 'device_token', ('private_key', 'device_private_key')]   # type: List[Union[str, Tuple[str, str]]]
+PROTECTED_CONNECTED_PROPERTIES = ['user', 'clone_code']   # type: List[Union[str, Tuple[str, str]]]
 PROTECTED_READONLY_PROPERTIES = ['password']
 EDITABLE_PROPERTIES = ['proxy']
 BOOL_PROPERTIES = ['debug', 'batch_mode', 'unmask_all']
@@ -85,8 +84,11 @@ def store_config_properties(params):
     if not isinstance(params.config, dict):
         params.config = {}
 
+    protected_properties = PROTECTED_PROPERTIES
+    if params.session_token:
+        protected_properties += PROTECTED_CONNECTED_PROPERTIES
     # commit changes from params to config
-    for name in PROTECTED_PROPERTIES + EDITABLE_PROPERTIES:
+    for name in protected_properties + EDITABLE_PROPERTIES:
         config_name, params_name = split_name(name)
         if hasattr(params, params_name):
             value = getattr(params, params_name)
@@ -101,7 +103,7 @@ def store_config_properties(params):
         url = config_json[CONFIG_STORAGE_URL]
         storage = _get_plugin(url)
         conf_protected = {}
-        for name in PROTECTED_PROPERTIES + PROTECTED_READONLY_PROPERTIES:
+        for name in protected_properties + PROTECTED_READONLY_PROPERTIES:
             config_name, _ = split_name(name)
             if config_name in config_json:
                 value = config_json[config_name] or ''
@@ -142,7 +144,7 @@ def load_config_properties(params):
         if isinstance(conf, dict):
             params.config.update(conf)
 
-    for name in PROTECTED_PROPERTIES + PROTECTED_READONLY_PROPERTIES:
+    for name in PROTECTED_PROPERTIES + PROTECTED_CONNECTED_PROPERTIES + PROTECTED_READONLY_PROPERTIES:
         config_name, params_name = split_name(name)
         if config_name in params.config:
             value = params.config.get(config_name) or ''
