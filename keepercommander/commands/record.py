@@ -751,6 +751,15 @@ class RecordListTeamCommand(Command):
         enterprise_id = params.license.get('enterprise_id') if params.license else None
         is_included = lambda t: show_all_teams or t.get('enterprise_id') == enterprise_id
         teams = [Team(team_uid=uid, enterprise_id=t.get('enterprise_id'), name=t.get('name')) for uid, t in teams.items() if is_included(t)]
+
+        # The endpoint above returns max 500 teams; Fill in the missing teams using a different endpoint if necessary
+        if len(teams)  >= 500:
+            team_uids = [uid for uid in share_targets.get('teams', {}).keys()]
+            api.load_available_teams(params)
+            teams.extend(
+                 [Team(team_uid=team.get('team_uid'), name=team.get('team_name'), enterprise_id=enterprise_id) for team in params.available_team_cache if team.get('uid') not in team_uids]
+            )
+
         teams = self.get_team_members(params, teams) if show_team_users else teams
         if teams:
             table = []
