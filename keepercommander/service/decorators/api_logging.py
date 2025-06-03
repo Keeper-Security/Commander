@@ -25,7 +25,7 @@ def sanitize_password_in_command(data):
     command = sanitized['command']
     
     # Pattern to match password=value (with or without quotes)
-    password_pattern = r"password=(['\"]?)([^'\"\s]+)\1"
+    password_pattern = r"password=(['\"]?)([^'\"\s]{1,1024})\1"
     sanitized['command'] = re.sub(password_pattern, r"password=\1***\1", command)
     
     return sanitized

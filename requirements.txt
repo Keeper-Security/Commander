@@ -1,4 +1,3 @@
-setuptools
 asciitree
 bcrypt
 colorama
