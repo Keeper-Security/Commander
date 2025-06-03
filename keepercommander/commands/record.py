@@ -112,7 +112,9 @@ list_sf_parser.add_argument('pattern', nargs='?', type=str, action='store', help
 
 
 list_team_parser = argparse.ArgumentParser(prog='list-team', description='List teams.', parents=[base.report_output_parser])
-list_team_parser.add_argument('-v', '--verbose', action='store_true', help="verbose output (include team membership info)")
+verbose_group = list_team_parser.add_mutually_exclusive_group()
+verbose_group.add_argument('-v', '--verbose', action='store_true', help="verbose output (include team membership info)")
+verbose_group.add_argument('-vv', '--very-verbose', action='store_true', help="more verbose output (fetches team membership info not in cache)")
 list_team_parser.add_argument('-a', '--all', action='store_true',
                               help="show all teams in your contacts (including those outside your primary organization)")
 
@@ -744,7 +746,8 @@ class RecordListTeamCommand(Command):
     def execute(self, params, **kwargs):
         fmt = kwargs.get('format', 'table')
         show_all_teams = kwargs.get('all')
-        show_team_users = kwargs.get('verbose')
+        show_team_users = kwargs.get('verbose') or kwargs.get('very_verbose', False)
+        fetch_missing_users = kwargs.get('very_verbose', False)
         share_targets = api.get_share_objects(params)
         teams = share_targets.get('teams', {})
         orgs = share_targets.get('enterprises', {})
@@ -760,7 +763,7 @@ class RecordListTeamCommand(Command):
                  [Team(team_uid=team.get('team_uid'), name=team.get('team_name'), enterprise_id=enterprise_id) for team in params.available_team_cache if team.get('uid') not in team_uids]
             )
 
-        teams = self.get_team_members(params, teams) if show_team_users else teams
+        teams = self.get_team_members(params, teams, fetch_missing_users) if show_team_users else teams
         if teams:
             table = []
             headers = ['company', 'team_uid', 'name']
@@ -780,7 +783,8 @@ class RecordListTeamCommand(Command):
             logging.info('No teams are found')
 
     @classmethod
-    def get_team_members(self, params, teams):    # type: (KeeperParams, List[Team]) -> List[Team]
+    def get_team_members(self, params, teams, allow_fetch):
+        # type: (KeeperParams, List[Team], bool) -> List[Team]
         if not params.enterprise_ec_key:
             return teams
 
@@ -795,6 +799,8 @@ class RecordListTeamCommand(Command):
             )
 
         def fetch_members(team_uid):    # type: (str) -> List[str]
+            if not allow_fetch:
+                return []
             rq = enterprise_pb2.GetTeamMemberRequest()
             rq.teamUid = utils.base64_url_decode(team_uid)
             rs = api.communicate_rest(params, rq, 'vault/get_team_members', rs_type=enterprise_pb2.GetTeamMemberResponse)
