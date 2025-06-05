@@ -1,7 +1,7 @@
 import re
 import requests
 from http import HTTPStatus
-from os import environ
+from os import environ, path
 from prompt_toolkit import HTML, print_formatted_text, prompt
 from prompt_toolkit.shortcuts import button_dialog, ProgressBar
 from prompt_toolkit.styles import Style
@@ -220,14 +220,11 @@ class CyberArkImporter(BaseImporter):
                         else:
                             print_formatted_text(HTML("\nImport <ansired>aborted</ansired>"))
                             return
-            if count > len(accounts) + query_params["offset"]:
-                query_params["offset"] += query_params["limit"]
-            else:
-                print_formatted_text(HTML("\nImport <ansigreen>completed</ansigreen>"))
-                break
-        if len(skipped_accounts) > 0:
-            print_formatted_text(
-                HTML(f"\nSkipped <b>{len(skipped_accounts)}</b> Accounts:\n"),
-                tabulate(skipped_accounts, headers="keys"),
-                end="\n\n"
-            )
+                print_formatted_text(HTML(f"\nImported safe <b>{safe}</b>"))
+                if len(skipped_accounts) > 0:
+                    print_formatted_text(
+                        HTML(f"\nSkipped <b>{len(skipped_accounts)}</b> Accounts:\n"),
+                        tabulate(skipped_accounts, headers="keys"),
+                        end="\n\n"
+                    )
+        print_formatted_text(HTML("\nImport <ansigreen>completed</ansigreen>"))
