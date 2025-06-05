@@ -189,7 +189,7 @@ class CyberArkImporter(BaseImporter):
                             yield record
                         elif 400 <= response.status_code <= 500:
                             error = response.json()
-                            if response.status_code in skip_all:
+                            if error.get('ErrorCode') in skip_all:
                                 retry = False
                             else:
                                 retry = button_dialog(
@@ -204,7 +204,7 @@ class CyberArkImporter(BaseImporter):
                                     style=Style.from_dict({"dialog": "bg:ansiblack"}),
                                 ).run()
                                 if retry is None:
-                                    skip_all[response.status_code] = True
+                                    skip_all[error.get('ErrorCode')] = True
                                     retry = False
                             if retry is False:
                                 skipped_accounts.append(
