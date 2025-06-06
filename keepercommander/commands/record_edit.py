@@ -33,6 +33,7 @@ from ..error import CommandError
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..subfolder import try_resolve_path, find_folders, get_folder_path
 from ..proto import APIRequest_pb2
+from ..recordv3 import RecordV3
 
 
 record_add_parser = argparse.ArgumentParser(prog='record-add', description='Add a record to folder.')
@@ -753,6 +754,9 @@ class RecordAddCommand(Command, RecordEditMixin):
                 record.fields.append(field)
             self.assign_typed_fields(record, record_fields)
 
+        record_uid = str(kwargs.get('record_uid', ''))
+        if RecordV3.is_valid_ref_uid(record_uid):
+            record.record_uid = record_uid
         record.title = title
         record.notes = self.validate_notes(kwargs.get('notes') or '')
 
