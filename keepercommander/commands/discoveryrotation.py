@@ -78,6 +78,7 @@ from .pam_debug.info import PAMDebugInfoCommand
 from .pam_debug.gateway import PAMDebugGatewayCommand
 from .pam_debug.rotation_setting import PAMDebugRotationSettingsCommand
 from .pam_debug.link import PAMDebugLinkCommand
+from .pam_import.edit import PAMProjectCommand
 from .pam_service.list import PAMActionServiceListCommand
 from .pam_service.add import PAMActionServiceAddCommand
 from .pam_service.remove import PAMActionServiceRemoveCommand
@@ -111,6 +112,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('split', PAMSplitCommand(), 'Split credentials from legacy PAM Machine', 's')
         self.register_command('legacy', PAMLegacyCommand(), 'Switch to legacy PAM commands')
         self.register_command('connection', PAMConnectionCommand(), 'Manage Connections', 'n')
+        self.register_command('project', PAMProjectCommand(), 'PAM Project Import/Export', 'p')
 
 
 class PAMGatewayCommand(GroupCommand):
@@ -406,7 +408,8 @@ class PAMCreateRecordRotationCommand(Command):
             rts = ', '.join(valid_record_types)
             raise CommandError('', f'No PAM record is found. Valid PAM record types: {rts}')
         else:
-            logging.info('Selected %d PAM record(s) for rotation', len(pam_records))
+            if not kwargs.get('silent'):
+                logging.info('Selected %d PAM record(s) for rotation', len(pam_records))
 
         pam_configurations = {x.record_uid: x for x in vault_extensions.find_records(params, record_version=6) if isinstance(x, vault.TypedRecord)}
 
@@ -481,7 +484,7 @@ class PAMCreateRecordRotationCommand(Command):
 
         r_requests = []   # type: List[router_pb2.RouterRecordRotationRequest]
 
-        def config_resource(_dag, target_record, target_config_uid):
+        def config_resource(_dag, target_record, target_config_uid, silent=None):
             if not _dag.linking_dag.has_graph:
                 # Add DAG for resource
                 if target_config_uid:
@@ -517,7 +520,8 @@ class PAMCreateRecordRotationCommand(Command):
                 # TODO: Make sure this doesn't remove everything from the new dag too
                 resource_dag.remove_from_dag(target_record.record_uid)
 
-            _dag.print_tunneling_config(target_record .record_uid, config_uid=target_config_uid)
+            if not silent:
+                _dag.print_tunneling_config(target_record .record_uid, config_uid=target_config_uid)
 
         def config_iam_aad_user(_dag, target_record, target_iam_aad_config_uid):
             if _dag and not _dag.linking_dag.has_graph:
@@ -656,7 +660,7 @@ class PAMCreateRecordRotationCommand(Command):
             rq.disabled = disabled
             r_requests.append(rq)
 
-        def config_user(_dag, target_record, target_resource_uid, target_config_uid=None):
+        def config_user(_dag, target_record, target_resource_uid, target_config_uid=None, silent=None):
 
             # NOOP rotation
             noop_rotation = str(kwargs.get('noop', False) or False).upper() == 'TRUE'
@@ -685,7 +689,7 @@ class PAMCreateRecordRotationCommand(Command):
                 _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_resource_uid)
                 if not _dag or not _dag.linking_dag.has_graph:
                     if target_config_uid and target_resource_uid:
-                        config_resource(_dag, target_record, target_config_uid)
+                        config_resource(_dag, target_record, target_config_uid, silent=silent)
                     if not _dag or not _dag.linking_dag.has_graph:
                         raise CommandError('', f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated '
                                                f'with any configuration. '
@@ -864,7 +868,7 @@ class PAMCreateRecordRotationCommand(Command):
         for _record in pam_records:
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, _record.record_uid)
             if _record.record_type in ['pamMachine', 'pamDatabase', 'pamDirectory', 'pamRemoteBrowser']:
-                config_resource(tmp_dag, _record, config_uid)
+                config_resource(tmp_dag, _record, config_uid, silent=kwargs.get('silent'))
             elif _record.record_type == 'pamUser':
                 iam_aad_config_uid = kwargs.get('iam_aad_config_uid')
 
@@ -879,7 +883,7 @@ class PAMCreateRecordRotationCommand(Command):
                 if iam_aad_config_uid:
                     config_iam_aad_user(tmp_dag, _record, iam_aad_config_uid)
                 else:
-                    config_user(tmp_dag, _record, resource_uid, config_uid)
+                    config_user(tmp_dag, _record, resource_uid, config_uid, silent=kwargs.get('silent'))
 
         force = kwargs.get('force') is True
 
@@ -894,7 +898,8 @@ class PAMCreateRecordRotationCommand(Command):
 
         if len(r_requests) > 0:
             valid_header = [field_to_title(x) for x in valid_header]
-            dump_report_data(valid_records, valid_header, title='The following record(s) will be updated')
+            if not kwargs.get('silent'):
+                dump_report_data(valid_records, valid_header, title='The following record(s) will be updated')
             if not force:
                 answer = user_choice('\nDo you want to update password rotation?', 'Yn', 'Y')
                 if answer.lower().startswith('n'):
@@ -2966,7 +2971,8 @@ class PAMTunnelEditCommand(Command):
                 tmp_dag.set_resource_allowed(resource_uid=record_uid, tunneling=_tunneling, allowed_settings_name=allowed_settings_name)
 
             # Print out the tunnel settings
-            tmp_dag.print_tunneling_config(record_uid, record.get_typed_field('pamSettings'), config_uid)
+            if not kwargs.get('silent'):
+                tmp_dag.print_tunneling_config(record_uid, record.get_typed_field('pamSettings'), config_uid)
 
 
 class PAMTunnelStartCommand(Command):
