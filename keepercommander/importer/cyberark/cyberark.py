@@ -1,11 +1,12 @@
 import re
 import requests
 from http import HTTPStatus
-from os import environ
+from os import environ, path
 from prompt_toolkit import HTML, print_formatted_text, prompt
 from prompt_toolkit.shortcuts import button_dialog, ProgressBar
 from prompt_toolkit.styles import Style
 from tabulate import tabulate
+from time import sleep
 from urllib.parse import parse_qsl
 
 
@@ -13,6 +14,8 @@ from ..importer import BaseImporter, SharedFolder, Record, RecordField
 
 
 class CyberArkImporter(BaseImporter):
+    # Delay between requests to avoid hitting the API rate limits
+    DELAY = 0.025
     # CyberArk REST API endpoints (relative to the base URL)
     ENDPOINTS = {
         "accounts": "Accounts",
@@ -136,6 +139,7 @@ class CyberArkImporter(BaseImporter):
                 print_formatted_text(HTML(f"Safes: <b>{', '.join(safes)}</b>"))
         # Get the accounts out of each safe
         for safe in safes:
+            sleep(self.DELAY)
             response = self.get_response(
                 self.get_url(pvwa_host, "accounts"), authorization_token, query_params | {"filter": f"safeName eq {safe}"}
             )
@@ -220,14 +224,11 @@ class CyberArkImporter(BaseImporter):
                         else:
                             print_formatted_text(HTML("\nImport <ansired>aborted</ansired>"))
                             return
-            if count > len(accounts) + query_params["offset"]:
-                query_params["offset"] += query_params["limit"]
-            else:
-                print_formatted_text(HTML("\nImport <ansigreen>completed</ansigreen>"))
-                break
-        if len(skipped_accounts) > 0:
-            print_formatted_text(
-                HTML(f"\nSkipped <b>{len(skipped_accounts)}</b> Accounts:\n"),
-                tabulate(skipped_accounts, headers="keys"),
-                end="\n\n"
-            )
+                print_formatted_text(HTML(f"\nImported safe <b>{safe}</b>"))
+                if len(skipped_accounts) > 0:
+                    print_formatted_text(
+                        HTML(f"\nSkipped <b>{len(skipped_accounts)}</b> Accounts:\n"),
+                        tabulate(skipped_accounts, headers="keys"),
+                        end="\n\n"
+                    )
+        print_formatted_text(HTML("\nImport <ansigreen>completed</ansigreen>"))
