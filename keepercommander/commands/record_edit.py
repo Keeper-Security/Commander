@@ -404,7 +404,9 @@ class RecordEditMixin:
     @staticmethod
     def validate_notes(notes):    # type: (str) -> str
         if isinstance(notes, str):
+            notes = notes.replace('\\\\n', '\x00')
             notes = notes.replace('\\n', '\n')
+            notes = notes.replace('\x00', '\\n')
         return notes
 
     @staticmethod
