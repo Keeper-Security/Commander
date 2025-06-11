@@ -83,9 +83,10 @@ from .pam_service.list import PAMActionServiceListCommand
 from .pam_service.add import PAMActionServiceAddCommand
 from .pam_service.remove import PAMActionServiceRemoveCommand
 from .pam_saas.add import PAMActionSaasAddCommand
-from .pam_saas.info import PAMActionSaasInfoCommand
+from .pam_saas.user import PAMActionSaasUserCommand
 from .pam_saas.remove import PAMActionSaasRemoveCommand
 from .pam_saas.config import PAMActionSaasConfigCommand
+from .pam_saas.update import PAMActionSaasUpdateCommand
 
 
 # These characters are based on the Vault
@@ -213,14 +214,16 @@ class PAMActionSaasCommand(GroupCommand):
 
     def __init__(self):
         super(PAMActionSaasCommand, self).__init__()
-        self.register_command('info', PAMActionSaasInfoCommand(),
-                              'Information of SaaS service rotation for a PAM User record.', 'i')
+        self.register_command('config', PAMActionSaasConfigCommand(),
+                              'Create a configuration for a SaaS rotation.', 'c')
         self.register_command('add', PAMActionSaasAddCommand(),
                               'Add a SaaS rotation to a PAM User record.', 'a')
         self.register_command('remove', PAMActionSaasRemoveCommand(),
                               'Remove a SaaS rotation from a PAM User record', 'r')
-        self.register_command('config', PAMActionSaasConfigCommand(),
-                              'Create a configuration for a SaaS rotation.', 'c')
+        self.register_command('user', PAMActionSaasUserCommand(),
+                              "Get user's SaaS rotations", 'i')
+        self.register_command('update', PAMActionSaasUpdateCommand(),
+                              'Update existing configuration.', 'u')
 
 
 class GatewayActionCommand(GroupCommand):
@@ -252,7 +255,7 @@ class PAMDebugCommand(GroupCommand):
         # Disable for now. Needs more work.
         # self.register_command('verify', PAMDebugVerifyCommand(), 'Verify graphs', 'v')
         self.register_command('acl', PAMDebugACLCommand(), 'Control ACL of PAM Users', 'c')
-        self.register_command('link', PAMDebugACLCommand(), 'Link resource to configuration', 'l')
+        self.register_command('link', PAMDebugLinkCommand(), 'Link resource to configuration', 'l')
         self.register_command('rs-reset', PAMDebugRotationSettingsCommand(),
                               'Create/reset rotation settings', 'rs')
 
