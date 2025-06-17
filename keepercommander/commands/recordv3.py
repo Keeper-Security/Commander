@@ -22,7 +22,7 @@ from Cryptodome.Cipher import AES
 from keepercommander.breachwatch import BreachWatch
 
 from . import recordv2 as recordv2
-from .base import suppress_exit, raise_parse_exception, dump_report_data, Command
+from .base import suppress_exit, raise_parse_exception, dump_report_data, Command, report_output_parser
 from .. import api, crypto, generator
 from .. import recordv3, loginv3
 from ..display import bcolors
@@ -105,14 +105,10 @@ command_group.add_argument('-v3f', '--from-file', dest='data_file', action='stor
 # command_group.add_argument('-o', '--option', dest='option', action='append', help='load record type data from string with dot notation')
 edit_parser.add_argument('option', nargs='*', type=str, action='store', help='load record type data from strings with dot notation')
 edit_parser.add_argument('-r', '--record', dest='record', required=True, type=str, action='store', help='record path or UID')
-edit_parser.error = raise_parse_exception
-edit_parser.exit = suppress_exit
 
 
-record_type_info_parser = argparse.ArgumentParser(prog='record-type-info', description='Get record type info')
+record_type_info_parser = argparse.ArgumentParser(prog='record-type-info', description='Get record type info', parents=[report_output_parser])
 record_type_info_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display extended help on record types parameters')
-record_type_info_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'], default='table', help='output format')
-record_type_info_parser.add_argument('--output', dest='output', action='store', help='output file name. (ignored for table format)')
 command_group = record_type_info_parser.add_mutually_exclusive_group()
 # command_group.add_argument('-d', '--description', dest='description', action='store_true', help='generate descriptive sample JSON')
 command_group.add_argument('-e', '--example', dest='example', action='store_true', help='generate example JSON')
@@ -120,8 +116,6 @@ command_group = record_type_info_parser.add_mutually_exclusive_group()
 # command_group.add_argument('-lc', '--category', dest='category', action='store', default=None, const = '*', nargs='?', help='list categories or record types in a category')
 command_group.add_argument('-lr', '--list-record', dest='record_name', action='store', default=None, const = '*', nargs='?', help='list record type by name or use * to list all')
 command_group.add_argument('-lf', '--list-field', type=str, dest='field_name', action='store', default=None, help='list field type by name or use * to list all')
-record_type_info_parser.error = raise_parse_exception
-record_type_info_parser.exit = suppress_exit
 
 
 record_type_parser = argparse.ArgumentParser(prog='record-type', description='Add, modify or delete record type definition')
@@ -132,8 +126,6 @@ record_type_parser.add_argument('-a', '--action', dest='action', action='store',
 # command_group.add_argument('-a', '--add-type', dest='add_type', action='store_true', help='add new custom record type')
 # command_group.add_argument('-u', '--update-type', dest='update_type', action='store_true', help='update existing custom record type')
 # command_group.add_argument('-r', '--remove-type', dest='remove_type', action='store_true', help='delete custom record type')
-record_type_parser.error = raise_parse_exception
-record_type_parser.exit = suppress_exit
 
 
 def get_password_from_rules(generate_rules, generate_length):

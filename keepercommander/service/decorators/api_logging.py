@@ -13,7 +13,22 @@ from functools import wraps
 from typing import Callable, Any
 from flask import request
 import time
+import re
 from .logging import logger
+
+def sanitize_password_in_command(data):
+    """Sanitize password values in command string"""
+    if not data or 'command' not in data:
+        return data
+    
+    sanitized = data.copy()
+    command = sanitized['command']
+    
+    # Pattern to match password=value (with or without quotes)
+    password_pattern = r"password=(['\"]?)([^'\"\s]{1,1024})\1"
+    sanitized['command'] = re.sub(password_pattern, r"password=\1***\1", command)
+    
+    return sanitized
 
 def api_log_handler(fn: Callable) -> Callable:
     """Log API request information in a single line with color-coded status"""
@@ -42,11 +57,15 @@ def api_log_handler(fn: Callable) -> Callable:
             else:
                 status_color = "\033[93m"  # Yellow for server errors
             
+            # Sanitize request data to hide passwords
+            sanitized_data = sanitize_password_in_command(request.json)
+            data_str = f"data={sanitized_data}" if sanitized_data else "no-data"
+            
             log_parts = [
                 f"\033[94m{request.method}\033[0m",  # Blue method
                 f"\033[96m{request.path}\033[0m",    # Cyan path
                 f"\033[95m{ip}\033[0m",              # Magenta IP
-                f"data={request.json}" if request.json else "no-data",
+                data_str,
                 str(status_code),
                 f"{duration:.2f}s"
             ]
@@ -56,11 +75,16 @@ def api_log_handler(fn: Callable) -> Callable:
             
         except Exception as ex:
             duration = time.time() - start_time
+            
+            # Sanitize request data for error logs too
+            sanitized_data = sanitize_password_in_command(request.json)
+            data_str = f"data={sanitized_data}" if sanitized_data else "no-data"
+            
             log_parts = [
                 request.method,
                 request.path,
                 ip,
-                f"data={request.json}" if request.json else "no-data",
+                data_str,
                 "500",
                 f"{duration:.2f}s",
                 f"error='{str(ex)}'"

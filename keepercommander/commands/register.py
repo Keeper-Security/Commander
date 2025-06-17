@@ -20,7 +20,7 @@ import math
 import re
 import time
 import urllib.parse
-from typing import Optional, Dict, Iterable, Any, Set, List
+from typing import Optional, Dict, Iterable, Any, Set, List, Union
 from urllib.parse import urlunparse
 
 from tabulate import tabulate
@@ -116,11 +116,8 @@ expiration.add_argument('--expire-in', dest='expire_in', action='store', metavar
                         help='share expiration: never or period (<NUMBER>[(y)ears|(mo)nths|(d)ays|(h)ours(mi)nutes]')
 share_folder_parser.add_argument('folder', nargs='+', type=str, action='store', help='shared folder path or UID')
 
-share_report_parser = argparse.ArgumentParser(prog='share-report', description='Display report of shared records.')
-share_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json', 'csv'],
-                                 default='table', help='output format.')
-share_report_parser.add_argument('--output', dest='output', action='store',
-                                 help='output file name. (ignored for table format)')
+share_report_parser = argparse.ArgumentParser(prog='share-report', description='Display report of shared records.',
+                                              parents=[base.report_output_parser])
 share_report_parser.add_argument('-r', '--record', dest='record', action='append', help='record name or UID')
 share_report_parser.add_argument('-e', '--email', dest='user', action='append', help='user email or team name')
 share_report_parser.add_argument('-o', '--owner', dest='owner', action='store_true',
@@ -163,11 +160,8 @@ record_permission_parser.error = raise_parse_exception
 record_permission_parser.exit = suppress_exit
 
 find_ownerless_desc = 'List (and, optionally, claim) records in the user\'s vault that currently do not have an owner'
-find_ownerless_parser = argparse.ArgumentParser(prog='find-ownerless', description=find_ownerless_desc)
-find_ownerless_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'],
-                                   default='table', help='output format')
-find_ownerless_parser.add_argument('--output', dest='output', action='store',
-                                   help='output file name (ignored for table format)')
+find_ownerless_parser = argparse.ArgumentParser(prog='find-ownerless', description=find_ownerless_desc,
+                                                parents=[base.report_output_parser])
 find_ownerless_parser.add_argument('--claim', dest='claim', action='store_true', help='claim records found')
 find_ownerless_parser.add_argument('-v', '--verbose', action='store_true', help='output details for each record found')
 folder_help = 'path or UID of folder to search (optional, with multiple values allowed)'
@@ -175,7 +169,8 @@ find_ownerless_parser.add_argument('folder', nargs='*', type=str, action='store'
 find_ownerless_parser.error = raise_parse_exception
 find_ownerless_parser.exit = suppress_exit
 
-find_duplicate_parser = argparse.ArgumentParser(prog='find-duplicate', description='List duplicated records.')
+find_duplicate_parser = argparse.ArgumentParser(prog='find-duplicate', description='List duplicated records.',
+                                                parents=[base.report_output_parser])
 find_duplicate_parser.add_argument('--title', dest='title', action='store_true', help='Match duplicates by title.')
 find_duplicate_parser.add_argument('--login', dest='login', action='store_true', help='Match duplicates by login.')
 find_duplicate_parser.add_argument('--password', dest='password', action='store_true', help='Match duplicates by password.')
@@ -198,11 +193,6 @@ find_duplicate_parser.add_argument('-s', '--scope', action='store', choices=['va
                                    help=scope_help)
 refresh_help = 'Populate local cache with latest compliance data . Valid only w/ --scope=enterprise option.'
 find_duplicate_parser.add_argument('-r', '--refresh-data', action='store_true', help=refresh_help)
-find_duplicate_parser.add_argument('--format', action='store', choices=['table', 'csv', 'json'], default='table',
-                                   help='output format.')
-find_duplicate_parser.add_argument('--output', action='store', help='output file name. (ignored for table format)')
-find_duplicate_parser.error = raise_parse_exception
-find_duplicate_parser.exit = suppress_exit
 
 one_time_share_create_parser = argparse.ArgumentParser(prog='one-time-share-create', description='Creates one-time share URL for a record')
 one_time_share_create_parser.add_argument('--output', dest='output', choices=['clipboard', 'stdout'],
@@ -212,15 +202,12 @@ one_time_share_create_parser.add_argument('-e', '--expire', dest='expire', actio
                                           help='Time period record share URL is valid.')
 one_time_share_create_parser.add_argument('record', nargs='+', type=str, action='store', help='record path or UID. Can be repeated')
 
-one_time_share_list_parser = argparse.ArgumentParser(prog='one-time-share-list', description='Displays a list of one-time shares for a records')
+one_time_share_list_parser = argparse.ArgumentParser(prog='one-time-share-list', description='Displays a list of one-time shares for a records',
+                                                     parents=[base.report_output_parser])
 one_time_share_list_parser.add_argument('-R', '--recursive', dest='recursive', action='store_true',
                                       help='Traverse recursively through subfolders')
 one_time_share_list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output.')
 one_time_share_list_parser.add_argument('-a', '--all', dest='show_all', action='store_true', help='show all one-time shares including expired.')
-one_time_share_list_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
-                                        default='table', help='output format.')
-one_time_share_list_parser.add_argument('--output', dest='output', action='store',
-                                        help='output file name. (ignored for table format)')
 one_time_share_list_parser.add_argument('record', nargs='+', type=str, action='store', help='record/folder path/UID')
 
 one_time_share_remove_parser = argparse.ArgumentParser(prog='one-time-share-remove', description='Removes one-time share URL for a record')
@@ -327,8 +314,15 @@ class ShareFolderCommand(Command):
                     if em is not None:
                         as_users.add(u.lower())
                     else:
-                        teams = api.get_share_objects(params).get('teams', {})
-                        matches = [uid for uid, t in teams.items() if uid == u or t.get('name', '').lower() == u.lower()]
+                        teams = api.get_share_objects(params).get('teams', [])
+                        teams_map = {uid: team.get('name') for uid, team in teams.items()}
+                        # Retrieve all teams (using a different endpoint) if we've hit the limit on this one
+                        if len(teams) >= 500:
+                            api.load_available_teams(params)
+                            teams = {t.get('team_uid'): t.get('team_name') for t in params.available_team_cache}
+                            teams_map.update(teams)
+
+                        matches = [uid for uid, name in teams_map.items() if u in (name, uid)]
                         if len(matches) != 1:
                             logging.warning(f'User "{u}" could not be resolved as email or team' if not matches
                                             else f'Multiple matches were found for team "{u}". Try using its UID -- which can be found via `list-team` -- instead')
@@ -648,65 +642,15 @@ class ShareRecordCommand(Command):
     def get_parser(self):
         return share_record_parser
 
-    def execute(self, params, **kwargs):
+    @staticmethod
+    def prep_request(params, kwargs):   # type: (KeeperParams, Dict[str, Any]) -> Union[None, record_pb2.RecordShareUpdateRequest]
+        name = kwargs.get('record')
         emails = kwargs.get('email') or []
         if not emails:
             raise CommandError('share-record', '\'email\' parameter is missing')
 
-        dry_run = kwargs.get('dry_run') is True
-        force = kwargs.get('force') is True
         action = kwargs.get('action') or 'grant'
-        use_contacts = kwargs.get('contacts_only')
-
-        def get_contact(user, contacts):
-            get_username = lambda addr: next(iter(addr.split('@')), '').casefold()
-            matches = [c for c in contacts if get_username(user) == get_username(c)]
-            if len(matches) > 1:
-                raise CommandError('More than 1 matching usernames found. Aborting')
-            return next(iter(matches), None)
-
-        if use_contacts:
-            known_users = api.get_share_objects(params).get('users', {})
-            known_emails = [u.casefold() for u in known_users.keys()]
-            is_unknown = lambda e: e.casefold() not in known_emails and is_email(e)
-            unknowns = [e for e in emails if is_unknown(e)]
-            if unknowns:
-                username_map = {e: get_contact(e, known_users) for e in unknowns}
-                table = [[k, v] for k, v in username_map.items()]
-                logging.info(f'{len(unknowns)} unrecognized share recipient(s) and closest matching contact(s)')
-                dump_report_data(table, ['Username', 'From Contacts'])
-                confirmed = force or user_choice('\tReplace with known matching contact(s)?', 'yn', default='n') == 'y'
-                if confirmed:
-                    good_emails = [e for e in emails if e not in unknowns]
-                    replacements = [e for e in username_map.values() if e]
-                    emails = [*good_emails, *replacements]
-
-        if action == 'cancel':
-            answer = base.user_choice(
-                bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC + 'This action cannot be undone.\n\n' +
-                'Do you want to cancel all shares with user(s): ' + ', '.join(emails) + ' ?', 'yn', 'n')
-            if answer.lower() in {'y', 'yes'}:
-                for email in emails:
-                    rq = {
-                        'command': 'cancel_share',
-                        'to_email': email
-                    }
-                    try:
-                        api.communicate(params, rq)
-                    except KeeperApiError as kae:
-                        if kae.result_code == 'share_not_found':
-                            logging.info('{0}: No shared records are found.'.format(email))
-                        else:
-                            logging.warning('{0}: {1}.'.format(email, kae.message))
-                    except Exception as e:
-                        logging.warning('{0}: {1}.'.format(email, e))
-                params.sync_data = True
-            return
-
-        name = kwargs.get('record')
-        if not name:
-            self.get_parser().print_help()
-            return
+        dry_run = kwargs.get('dry_run') is True
 
         share_expiration = None
         if action == 'grant':
@@ -919,7 +863,6 @@ class ShareRecordCommand(Command):
                         rq.updateSharedRecord.append(ro)
                     else:
                         rq.removeSharedRecord.append(ro)
-
         if dry_run:
             headers = ['Username', 'Record UID', 'Title', 'Share Action', 'Expiration']
             table = []
@@ -950,9 +893,76 @@ class ShareRecordCommand(Command):
                             row.append(None)
                         table.append(row)
             dump_report_data(table, headers, row_number=True, group_by=0)
+        return rq
+
+
+    def execute(self, params, **kwargs):
+        name = kwargs.get('record')
+        if not name:
+            self.get_parser().print_help()
             return
 
-        while len(rq.addSharedRecord) > 0 or len(rq.updateSharedRecord) > 0 or len(rq.removeSharedRecord) > 0:
+        emails = kwargs.get('email') or []
+        if not emails:
+            raise CommandError('share-record', '\'email\' parameter is missing')
+
+        force = kwargs.get('force') is True
+        action = kwargs.get('action') or 'grant'
+        use_contacts = kwargs.get('contacts_only')
+
+        def get_contact(user, contacts):
+            get_username = lambda addr: next(iter(addr.split('@')), '').casefold()
+            matches = [c for c in contacts if get_username(user) == get_username(c)]
+            if len(matches) > 1:
+                raise CommandError('More than 1 matching usernames found. Aborting')
+            return next(iter(matches), None)
+
+        if use_contacts:
+            known_users = api.get_share_objects(params).get('users', {})
+            known_emails = [u.casefold() for u in known_users.keys()]
+            is_unknown = lambda e: e.casefold() not in known_emails and is_email(e)
+            unknowns = [e for e in emails if is_unknown(e)]
+            if unknowns:
+                username_map = {e: get_contact(e, known_users) for e in unknowns}
+                table = [[k, v] for k, v in username_map.items()]
+                logging.info(f'{len(unknowns)} unrecognized share recipient(s) and closest matching contact(s)')
+                dump_report_data(table, ['Username', 'From Contacts'])
+                confirmed = force or user_choice('\tReplace with known matching contact(s)?', 'yn', default='n') == 'y'
+                if confirmed:
+                    good_emails = [e for e in emails if e not in unknowns]
+                    replacements = [e for e in username_map.values() if e]
+                    emails = [*good_emails, *replacements]
+
+        if action == 'cancel':
+            answer = base.user_choice(
+                bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC + 'This action cannot be undone.\n\n' +
+                'Do you want to cancel all shares with user(s): ' + ', '.join(emails) + ' ?', 'yn', 'n')
+            if answer.lower() in {'y', 'yes'}:
+                for email in emails:
+                    rq = {
+                        'command': 'cancel_share',
+                        'to_email': email
+                    }
+                    try:
+                        api.communicate(params, rq)
+                    except KeeperApiError as kae:
+                        if kae.result_code == 'share_not_found':
+                            logging.info('{0}: No shared records are found.'.format(email))
+                        else:
+                            logging.warning('{0}: {1}.'.format(email, kae.message))
+                    except Exception as e:
+                        logging.warning('{0}: {1}.'.format(email, e))
+                params.sync_data = True
+            return
+
+        rq = ShareRecordCommand.prep_request(params, kwargs)
+        rq and ShareRecordCommand.send_requests(params, [rq])
+
+    @staticmethod
+    def send_requests(params, requests):
+        requests = iter(requests)
+        rq = next(requests, None)
+        while rq and (len(rq.addSharedRecord) > 0 or len(rq.updateSharedRecord) > 0 or len(rq.removeSharedRecord) > 0):
             rq1 = record_pb2.RecordShareUpdateRequest()
             left = 990
             if left > 0 and len(rq.addSharedRecord) > 0:
@@ -984,10 +994,9 @@ class ShareRecordCommand(Command):
                             logging.info('Record \"%s\" access permissions has been %s user \'%s\'', record_uid, verb, email)
                         else:
                             verb = 'grant' if attr == 'addSharedRecordStatus' else 'change' if attr == 'updateSharedRecordStatus' else 'revoke'
+
                             logging.info('Failed to %s record \"%s\" access permissions for user \'%s\': %s', verb, record_uid, email, status_rs.message)
-        if transfer_ruids:
-            from keepercommander.breachwatch import BreachWatch
-            BreachWatch.save_reused_pw_count(params)
+            rq = next(requests, None)
 
 
 class ShareReportCommand(Command):

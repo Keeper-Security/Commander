@@ -27,7 +27,7 @@ from typing import Optional, Sequence, Callable, List, Any, Iterable, Dict, Set
 import sys
 from tabulate import tabulate
 
-from .. import api, crypto, utils, vault
+from .. import api, crypto, utils, vault, resources
 from ..params import KeeperParams
 from ..subfolder import try_resolve_path, BaseFolderNode
 
@@ -39,7 +39,7 @@ command_info = OrderedDict()
 
 
 report_output_parser = argparse.ArgumentParser(add_help=False)
-report_output_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
+report_output_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json', 'pdf'],
                                   default='table', help='format of output')
 report_output_parser.add_argument('--output', dest='output', action='store',
                                   help='path to resulting output file (ignored for "table" format)')
@@ -114,12 +114,12 @@ def register_commands(commands, aliases, command_info):
     commands['2fa'] = TwoFaCommand()
     command_info['2fa'] = '2FA management'
 
-    if sys.version_info.major == 3 and 8 <= sys.version_info.minor < 13:
+    if sys.version_info.major == 3 and sys.version_info.minor >= 8:
         from .start_service import register_commands as service_commands, register_command_info as service_command_info
         service_commands(commands)
         service_command_info(aliases, command_info)
 
-    if sys.version_info.major == 3 and 8 <= sys.version_info.minor < 14:
+    if sys.version_info.major == 3 and sys.version_info.minor >= 8:
         from . import discoveryrotation
         discoveryrotation.register_commands(commands)
         discoveryrotation.register_command_info(aliases, command_info)
@@ -294,6 +294,7 @@ def detect_column_type(values):  # type: (Iterable[Any]) -> Optional[Callable[[A
             return get_num_key
         if column_type == 'bool':
             return get_bool_key
+    return None
 
 
 def dump_report_data(data, headers, title=None, fmt='', filename=None, append=False, **kwargs):
@@ -306,6 +307,8 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
     #           sort_by: int               - Sort by columnNo
     #           sort_desc: bool            - Descending Sort
     #           right_align: Sequence[int] - Force right align
+    #           footer: str                - Footer text
+    # PDF format requires reportlab library to be installed
 
     sort_by = kwargs.get('sort_by')
     group_by = kwargs.get('group_by')
@@ -372,6 +375,164 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
                 logging.info(report)
             else:
                 return report
+    elif fmt == 'pdf':
+        from fpdf import FPDF
+        from fpdf.enums import Align
+        from fpdf.fonts import FontFace
+        from fpdf.errors import FPDFException
+
+        fontTools_logger = logging.getLogger("fontTools")
+        fontTools_logger.setLevel(logging.WARNING) # Or logging.ERROR
+
+        if not filename:
+            logging.error('PDF format requires an output filename')
+            return None
+
+        _, ext = os.path.splitext(filename)
+        if not ext:
+            filename += '.pdf'
+        logging.info('Report path: %s', os.path.abspath(filename))
+
+        pdf = FPDF(orientation='L', unit='mm', format='Letter')
+        pdf.set_auto_page_break(auto=True, margin=6)
+        pdf.add_page()
+
+        # --- Determine Font Path ---
+        try:
+            fonts_dir = os.path.dirname(os.path.abspath(resources.__file__))
+            
+            font_path_regular = os.path.join(fonts_dir, 'JetBrainsMono-Regular.ttf')
+            font_path_bold = os.path.join(fonts_dir, 'JetBrainsMono-Bold.ttf')
+            font_path_italic = os.path.join(fonts_dir, 'JetBrainsMono-Italic.ttf')
+            font_path_bold_italic = os.path.join(fonts_dir, 'JetBrainsMono-BoldItalic.ttf')
+
+            unicode_font_family_to_use = "JetBrainsMono"
+            pdf.add_font(unicode_font_family_to_use, "", fname=font_path_regular, uni=True)
+            pdf.add_font(unicode_font_family_to_use, "B", fname=font_path_bold, uni=True)
+            pdf.add_font(unicode_font_family_to_use, "I", fname=font_path_italic, uni=True)
+            pdf.add_font(unicode_font_family_to_use, "BI", fname=font_path_bold_italic, uni=True)
+        except (RuntimeError, FPDFException, FileNotFoundError) as e:
+            logging.warning(f"Could not add custom JetBrainsMono font variants: {e}. Falling back to Helvetica. Unicode characters may not display correctly.")
+            unicode_font_family_to_use = "Helvetica" # Fallback family
+
+        # --- Document Setup ---
+        header_font_family = unicode_font_family_to_use
+        data_font_family = unicode_font_family_to_use
+
+        header_font_size = 7
+        data_font_size = 6
+
+        pdf.set_left_margin(6) # Reduced page margins
+        pdf.set_right_margin(6)
+        pdf.set_top_margin(8)
+        pdf.set_line_width(.1)
+
+        # --- Report Title ---
+        if title:
+            pdf.set_font(header_font_family, 'B', 10)
+            pdf.cell(0, 8, title, 0, 1, Align.C)
+            pdf.ln(2)
+
+        if not data and not headers:
+            pdf.set_font(data_font_family, '', 10)
+            pdf.cell(0, 10, "No data available for this report.", 0, 1, Align.C)
+        else:
+            # Calculate column widths
+            def get_width(c_value):
+                l = 0
+                if c_value:
+                    if isinstance(c_value, str):
+                        l = len(c_value)
+                    elif isinstance(c_value, list):
+                        l = max((len(str(x)) for x in c_value if x), default=0)
+                    else:
+                        l = len(str(c_value))
+                if l > 50:
+                    l = 50
+                return l
+
+            if headers:
+                widths = [max(len(x), 10) if x else 0 for x in headers]
+                col_alignments = [Align.L] * len(headers)
+                right_align = kwargs.get('right_align')
+                if isinstance(right_align, int):
+                    right_align = [right_align]
+                if isinstance(right_align, list):
+                    for ra in right_align:
+                        if isinstance(ra, int):
+                            if 0 <= ra < len(headers):
+                                col_alignments[ra] = Align.R
+            else:
+                widths = [get_width(x) for x in data[0]]
+                col_alignments = None
+
+            for row in data[:100]:
+                if row:
+                    for i, cell in enumerate(row):
+                        if i < len(widths):
+                            ll = get_width(cell)
+                            if ll > widths[i]:
+                                widths[i] = ll
+
+            # --- Define Heading Style ---
+            header_style_font_face = FontFace(emphasis="BOLD", color=(0,0,0), fill_color=(220, 220, 220))
+            try:
+                pdf.set_font(header_font_family, 'B', header_font_size)
+            except FPDFException as e:
+                logging.warning(f"Failed to set header font '{header_font_family}' (Bold): {e}. Falling back to Helvetica.")
+                header_font_family = "Helvetica" # Fallback for header
+                pdf.set_font(header_font_family, 'B', header_font_size)
+
+            # --- Default Font for Table Content ---
+            try:
+                pdf.set_font(data_font_family, '', data_font_size)
+            except FPDFException as e:
+                logging.warning(f"Failed to set data font '{data_font_family}': {e}. Falling back to Courier.")
+                data_font_family = "Courier" # Fallback for data
+                pdf.set_font(data_font_family, '', data_font_size)
+
+            # --- Create Table using fpdf2's table context manager ---
+            grayscale = 245
+            with pdf.table(
+                col_widths=tuple(widths),
+                text_align=tuple(col_alignments),
+                width=int(pdf.epw),
+                line_height=int(pdf.font_size * 1.8),
+                borders_layout='ALL',
+                padding=0.5,
+                headings_style=header_style_font_face, # Apply the defined FontFace for headings
+                first_row_as_headings=bool(headers),
+                cell_fill_color=grayscale,
+                cell_fill_mode='ROWS'
+            ) as table:
+                if headers:
+                    pdf_row = table.row()
+                    for header in headers:
+                        pdf_row.cell(header)
+
+                for row_no, data_row in enumerate(data):
+                    pdf_row = table.row()
+                    for cell in data_row:
+                        if isinstance(cell, str):
+                            cell_value = cell
+                        elif isinstance(cell, list):
+                            cell_value = '\n'.join((str(x) for x in cell))
+                        elif cell is None:
+                            cell_value = ''
+                        else:
+                            cell_value = str(cell)
+
+                        pdf_row.cell(cell_value)
+
+
+            # --- Footer Text ---
+            footer_text = kwargs.get('footer_text')
+            if isinstance(footer_text, str):
+                pdf.set_y(-(pdf.b_margin + 5)) # Position above bottom margin
+                pdf.set_font(header_font_family, 'I', 8)
+                pdf.cell(0, 10, footer_text, 0, 0, Align.C)
+
+        pdf.output(filename)
     else:
         if title:
             print('\n{0}\n'.format(title))
@@ -447,7 +608,7 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
             tablefmt = 'plain'
 
         print(tabulate(expanded_data, headers=headers, tablefmt=tablefmt, colalign=colalign if expanded_data else None))
-
+    return None
 
 parameter_pattern = re.compile(r'\${(\w+)}')
 

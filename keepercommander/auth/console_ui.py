@@ -134,18 +134,16 @@ class ConsoleLoginUi(login_steps.LoginUi):
                 response = yubikey_authenticate(challenge)
 
                 if response:
-                    credential_id = response.credential_id
-                    extensions = dict(response.extension_results) if response.extension_results else {}
                     signature = {
-                        "id": utils.base64_url_encode(credential_id),
-                        "rawId": utils.base64_url_encode(credential_id),
+                        "id": response.id,
+                        "rawId": utils.base64_url_encode(response.raw_id),
                         "response": {
-                            "authenticatorData": utils.base64_url_encode(response.authenticator_data),
-                            "clientDataJSON": response.client_data.b64,
-                            "signature": utils.base64_url_encode(response.signature),
+                            "authenticatorData": utils.base64_url_encode(response.response.authenticator_data),
+                            "clientDataJSON": response.response.client_data.b64,
+                            "signature": utils.base64_url_encode(response.response.signature),
                         },
                         "type": "public-key",
-                        "clientExtensionResults": extensions
+                        "clientExtensionResults": dict(response.client_extension_results) if response.client_extension_results else {}
                     }
                     step.duration = login_steps.TwoFactorDuration.EveryLogin
                     step.send_code(channel.channel_uid, json.dumps(signature))

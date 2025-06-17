@@ -11,7 +11,7 @@ from .helpers.enterprise import get_enterprise_key, try_enterprise_decrypt
 from .. import api, crypto, utils
 from ..breachwatch import BreachWatch
 from .base import GroupCommand, raise_parse_exception, suppress_exit, field_to_title, \
-    dump_report_data
+    dump_report_data, report_output_parser
 from .enterprise_common import EnterpriseCommand
 from ..params import KeeperParams
 from ..proto import enterprise_pb2, APIRequest_pb2
@@ -29,7 +29,8 @@ def register_command_info(aliases, command_info):
     command_info['security-audit'] = 'Security Audit.'
 
 
-report_parser = argparse.ArgumentParser(prog='security-audit-report', description='Run a security audit report.')
+report_parser = argparse.ArgumentParser(prog='security-audit-report', description='Run a security audit report.',
+                                        parents=[report_output_parser])
 report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
 node_filter_help = 'name(s) or UID(s) of node(s) to filter results of the report by'
 report_parser.add_argument('-n', '--node', action='append', help=node_filter_help)
@@ -40,20 +41,14 @@ report_parser.add_argument('-s', '--save', action='store_true', help=save_help)
 report_parser.add_argument('-su', '--show-updated', action='store_true', help='show updated data')
 report_parser.add_argument('-st', '--score-type', action='store', choices=['strong_passwords', 'default'],
                            default='default', help='define how score is calculated')
-report_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'], default='table',
-                           help='output format.')
-report_parser.add_argument('--output', dest='output', action='store',
-                           help='output file name. (ignored for table format)')
 attempt_fix_help = ('do a "hard" sync for vaults with invalid security-data. Associated security scores are reset and '
                     'will be inaccurate until affected vaults can re-calculate and update their security-data')
 report_parser.add_argument('--attempt-fix', action='store_true', help=attempt_fix_help)
 report_parser.add_argument('-f', '--force', action='store_true', help='skip confirmation prompts (non-interactive mode)')
 report_parser.add_argument('--debug', action='store_true', help=argparse.SUPPRESS)
-report_parser.error = raise_parse_exception
-report_parser.exit = suppress_exit
 
 sync_desc = 'Sync security audit data for enterprise vault(s).'
-sync_parser = argparse.ArgumentParser(prog='security-audit-sync', description=sync_desc)
+sync_parser = argparse.ArgumentParser(prog='security-audit-sync', description=sync_desc, parents=[report_output_parser])
 type_group = sync_parser.add_mutually_exclusive_group()
 soft_sync_help = 'do "soft" sync of security data. Does not require corresponding vault login. This is the ' \
                  'default sync-type.'
@@ -68,13 +63,6 @@ sync_parser.add_argument('email', type=str, nargs='+', help=sync_email_help)
 sync_verbose_help = 'run and show the latest security-audit report immediately after sync'
 sync_parser.add_argument('-v', '--verbose', action='store_true', help=sync_verbose_help)
 sync_parser.add_argument('-f', '--force', action='store_true', help='do sync non-interactively')
-sync_parser.add_argument('--format', dest='format', action='store', choices=['csv', 'json', 'table'], default='table',
-                           help='output format. Valid only with --verbose.')
-sync_parser.add_argument('--output', dest='output', action='store',
-                           help='output file name. Ignore for table format, valid only with --verbose')
-
-sync_parser.error = raise_parse_exception
-sync_parser.exit = suppress_exit
 
 
 class SecurityAuditCommand(GroupCommand):

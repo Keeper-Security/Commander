@@ -76,6 +76,9 @@ from .pam_debug.acl import PAMDebugACLCommand
 from .pam_debug.graph import PAMDebugGraphCommand
 from .pam_debug.info import PAMDebugInfoCommand
 from .pam_debug.gateway import PAMDebugGatewayCommand
+from .pam_debug.rotation_setting import PAMDebugRotationSettingsCommand
+from .pam_debug.link import PAMDebugLinkCommand
+from .pam_import.edit import PAMProjectCommand
 from .pam_service.list import PAMActionServiceListCommand
 from .pam_service.add import PAMActionServiceAddCommand
 from .pam_service.remove import PAMActionServiceRemoveCommand
@@ -109,6 +112,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('split', PAMSplitCommand(), 'Split credentials from legacy PAM Machine', 's')
         self.register_command('legacy', PAMLegacyCommand(), 'Switch to legacy PAM commands')
         self.register_command('connection', PAMConnectionCommand(), 'Manage Connections', 'n')
+        self.register_command('project', PAMProjectCommand(), 'PAM Project Import/Export', 'p')
 
 
 class PAMGatewayCommand(GroupCommand):
@@ -242,12 +246,15 @@ class PAMDebugCommand(GroupCommand):
     def __init__(self):
         super(PAMDebugCommand, self).__init__()
         self.register_command('info', PAMDebugInfoCommand(), 'Debug a record', 'i')
-        self.register_command('gateway', PAMDebugGatewayCommand(), 'Debug a getway', 'g')
+        self.register_command('gateway', PAMDebugGatewayCommand(), 'Debug a gateway', 'g')
         self.register_command('graph', PAMDebugGraphCommand(), 'Render graphs', 'r')
 
         # Disable for now. Needs more work.
         # self.register_command('verify', PAMDebugVerifyCommand(), 'Verify graphs', 'v')
         self.register_command('acl', PAMDebugACLCommand(), 'Control ACL of PAM Users', 'c')
+        self.register_command('link', PAMDebugACLCommand(), 'Link resource to configuration', 'l')
+        self.register_command('rs-reset', PAMDebugRotationSettingsCommand(),
+                              'Create/reset rotation settings', 'rs')
 
 
 class PAMLegacyCommand(Command):
@@ -401,7 +408,8 @@ class PAMCreateRecordRotationCommand(Command):
             rts = ', '.join(valid_record_types)
             raise CommandError('', f'No PAM record is found. Valid PAM record types: {rts}')
         else:
-            logging.info('Selected %d PAM record(s) for rotation', len(pam_records))
+            if not kwargs.get('silent'):
+                logging.info('Selected %d PAM record(s) for rotation', len(pam_records))
 
         pam_configurations = {x.record_uid: x for x in vault_extensions.find_records(params, record_version=6) if isinstance(x, vault.TypedRecord)}
 
@@ -476,7 +484,7 @@ class PAMCreateRecordRotationCommand(Command):
 
         r_requests = []   # type: List[router_pb2.RouterRecordRotationRequest]
 
-        def config_resource(_dag, target_record, target_config_uid):
+        def config_resource(_dag, target_record, target_config_uid, silent=None):
             if not _dag.linking_dag.has_graph:
                 # Add DAG for resource
                 if target_config_uid:
@@ -512,7 +520,8 @@ class PAMCreateRecordRotationCommand(Command):
                 # TODO: Make sure this doesn't remove everything from the new dag too
                 resource_dag.remove_from_dag(target_record.record_uid)
 
-            _dag.print_tunneling_config(target_record .record_uid, config_uid=target_config_uid)
+            if not silent:
+                _dag.print_tunneling_config(target_record .record_uid, config_uid=target_config_uid)
 
         def config_iam_aad_user(_dag, target_record, target_iam_aad_config_uid):
             if _dag and not _dag.linking_dag.has_graph:
@@ -651,7 +660,7 @@ class PAMCreateRecordRotationCommand(Command):
             rq.disabled = disabled
             r_requests.append(rq)
 
-        def config_user(_dag, target_record, target_resource_uid, target_config_uid=None):
+        def config_user(_dag, target_record, target_resource_uid, target_config_uid=None, silent=None):
 
             # NOOP rotation
             noop_rotation = str(kwargs.get('noop', False) or False).upper() == 'TRUE'
@@ -680,7 +689,7 @@ class PAMCreateRecordRotationCommand(Command):
                 _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_resource_uid)
                 if not _dag or not _dag.linking_dag.has_graph:
                     if target_config_uid and target_resource_uid:
-                        config_resource(_dag, target_record, target_config_uid)
+                        config_resource(_dag, target_record, target_config_uid, silent=silent)
                     if not _dag or not _dag.linking_dag.has_graph:
                         raise CommandError('', f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated '
                                                f'with any configuration. '
@@ -859,7 +868,7 @@ class PAMCreateRecordRotationCommand(Command):
         for _record in pam_records:
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, _record.record_uid)
             if _record.record_type in ['pamMachine', 'pamDatabase', 'pamDirectory', 'pamRemoteBrowser']:
-                config_resource(tmp_dag, _record, config_uid)
+                config_resource(tmp_dag, _record, config_uid, silent=kwargs.get('silent'))
             elif _record.record_type == 'pamUser':
                 iam_aad_config_uid = kwargs.get('iam_aad_config_uid')
 
@@ -874,7 +883,7 @@ class PAMCreateRecordRotationCommand(Command):
                 if iam_aad_config_uid:
                     config_iam_aad_user(tmp_dag, _record, iam_aad_config_uid)
                 else:
-                    config_user(tmp_dag, _record, resource_uid, config_uid)
+                    config_user(tmp_dag, _record, resource_uid, config_uid, silent=kwargs.get('silent'))
 
         force = kwargs.get('force') is True
 
@@ -889,7 +898,8 @@ class PAMCreateRecordRotationCommand(Command):
 
         if len(r_requests) > 0:
             valid_header = [field_to_title(x) for x in valid_header]
-            dump_report_data(valid_records, valid_header, title='The following record(s) will be updated')
+            if not kwargs.get('silent'):
+                dump_report_data(valid_records, valid_header, title='The following record(s) will be updated')
             if not force:
                 answer = user_choice('\nDo you want to update password rotation?', 'Yn', 'Y')
                 if answer.lower().startswith('n'):
@@ -1110,6 +1120,7 @@ class PAMGatewayListCommand(Command):
         headers.append('Gateway Name')
         headers.append('Gateway UID')
         headers.append('Status')
+        headers.append('Gateway Version')
 
         if is_verbose:
             headers.append('Device Name')
@@ -1117,14 +1128,22 @@ class PAMGatewayListCommand(Command):
             headers.append('Created On')
             headers.append('Last Modified')
             headers.append('Node ID')
+            headers.append('OS')
+            headers.append('OS Release')
+            headers.append('Machine Type')
+            headers.append('OS Version')
+
+        # Create a lookup dictionary for connected controllers
+        connected_controllers_dict = {}
+        if enterprise_controllers_connected:
+            connected_controllers_dict = {controller.controllerUid: controller for controller in
+                                          list(enterprise_controllers_connected.controllers)}
 
         for c in enterprise_controllers_all:
 
             connected_controller = None
             if enterprise_controllers_connected:
-                router_controllers = {controller.controllerUid: controller for controller in
-                                      list(enterprise_controllers_connected.controllers)}
-                connected_controller = router_controllers.get(c.controllerUid)
+                connected_controller = connected_controllers_dict.get(c.controllerUid)
 
             row_color = ''
             if not is_router_down:
@@ -1161,12 +1180,33 @@ class PAMGatewayListCommand(Command):
 
             row.append(f'{row_color}{status}{bcolors.ENDC}')
 
+            # Version information
+            version = ""
+            version_parts = []
+            if connected_controller and hasattr(connected_controller, 'version') and connected_controller.version:
+                version_parts = connected_controller.version.split(';')
+                # In non-verbose mode, just show the Gateway Version part
+                version = version_parts[0] if version_parts else connected_controller.version
+
+            row.append(f'{row_color}{version}{bcolors.ENDC}')
+
             if is_verbose:
                 row.append(f'{row_color}{c.deviceName}{bcolors.ENDC}')
                 row.append(f'{row_color}{c.deviceToken}{bcolors.ENDC}')
                 row.append(f'{row_color}{datetime.fromtimestamp(c.created / 1000)}{bcolors.ENDC}')
                 row.append(f'{row_color}{datetime.fromtimestamp(c.lastModified / 1000)}{bcolors.ENDC}')
                 row.append(f'{row_color}{c.nodeId}{bcolors.ENDC}')
+                
+                # Add version components as separate columns in verbose mode
+                os_name = version_parts[1] if len(version_parts) > 1 else ""
+                os_release = version_parts[2] if len(version_parts) > 2 else ""
+                machine_type = version_parts[3] if len(version_parts) > 3 else ""
+                os_version = version_parts[4] if len(version_parts) > 4 else ""
+                
+                row.append(f'{row_color}{os_name}{bcolors.ENDC}')
+                row.append(f'{row_color}{os_release}{bcolors.ENDC}')
+                row.append(f'{row_color}{machine_type}{bcolors.ENDC}')
+                row.append(f'{row_color}{os_version}{bcolors.ENDC}')
 
             table.append(row)
         table.sort(key=lambda x: (x[3] or '', x[0].lower()))
@@ -2141,18 +2181,138 @@ class PAMGatewayActionJobCommand(Command):
 
 
 class PAMGatewayActionRotateCommand(Command):
-    parser = argparse.ArgumentParser(prog='dr-rotate-command')
-    parser.add_argument('--record-uid', '-r', required=True, dest='record_uid', action='store',
-                        help='Record UID to rotate')
-
-    # parser.add_argument('--config', '-c', required=True, dest='configuration_uid', action='store',
-    #                                           help='Rotation configuration UID')
+    parser = argparse.ArgumentParser(prog='pam action rotate')
+    parser.add_argument('--record-uid', '-r', dest='record_uid', action='store', help='Record UID to rotate')
+    parser.add_argument('--folder', '-f', dest='folder', action='store', help='Shared folder UID or title pattern to rotate')
+    # parser.add_argument('--recursive', '-a', dest='recursive', default=False, action='store', help='Enable recursion to rotate sub-folders too')
+    # parser.add_argument('--record-pattern', '-p', dest='pattern', action='store', help='Record title match pattern')
+    parser.add_argument('--dry-run', '-n', dest='dry_run', default=False, action='store_true', help='Enable dry-run mode')
+    # parser.add_argument('--config', '-c', dest='configuration_uid', action='store', help='Rotation configuration UID')
 
     def get_parser(self):
         return PAMGatewayActionRotateCommand.parser
 
     def execute(self, params, **kwargs):
-        record_uid = kwargs.get('record_uid')
+        record_uid = kwargs.get('record_uid', '')
+        folder = kwargs.get('folder', '')
+        recursive = kwargs.get('recursive', False)
+        pattern = kwargs.get('pattern', '')  # additional record title match pattern
+        dry_run = kwargs.get('dry_run', False)
+
+        # record, folder or pattern - at least one required
+        if not record_uid and not folder:
+            print(f'the following arguments are required: {bcolors.OKBLUE}--record-uid/-r{bcolors.ENDC} or {bcolors.OKBLUE}--folder/-f{bcolors.ENDC}')
+            return
+
+        # single record UID - ignore all folder options
+        if not folder:
+            self.record_rotate(params, record_uid)
+            return
+
+        # folder UID or pattern (ignore --record-uid/-r option)
+        folders = []  # root folders matching UID or title pattern
+        records = []  # record UIDs of all v3/pamUser records
+
+        # 1. find all shared_folder/shared_folder_folder matching --folder=UID/pattern
+        if folder in params.folder_cache:  # folder UID
+            fldr = params.folder_cache.get(folder)
+            # only shared_folder can be shared to KSM App/Gateway for rotation
+            # but its children shared_folder_folder can contain rotation records too
+            if fldr.type in (BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType):
+                folders.append(folder)
+            else:
+                logging.debug(f'Folder skipped (not a shared folder/subfolder) - {folder} {fldr.name}')
+        else:
+            rx_name = self.str_to_regex(folder)
+            for fuid in params.folder_cache:
+                fldr = params.folder_cache.get(fuid)
+                # requirement - shared folder only (not for user_folder containing shf w/ recursion)
+                if fldr.type in (BaseFolderNode.SharedFolderType, BaseFolderNode.SharedFolderFolderType):
+                    if fldr.name and rx_name.search(fldr.name):
+                        folders.append(fldr.uid)
+
+        folders = list(set(folders))  # Remove duplicate UIDs
+        # 2. pattern could match both parent and child - drop all children (w/ a matching parent)
+        if recursive and len(folders) > 1:
+            roots: Dict[str, list] = {}  # group by shared_folder_uid
+            for fuid in folders:  # no shf inside shf yet
+                roots.setdefault(params.folder_cache.get(fuid).shared_folder_uid, []).append(fuid)
+            uniq = []
+            for fuid in roots:
+                fldrs = list(set(roots[fuid]))
+                if len(fldrs) == 1:  # no siblings
+                    uniq.append(fldrs[0])
+                elif fuid in fldrs:  # parent shf is topmost
+                    uniq.append(fuid)
+                else:  # topmost sibling(s)
+                    fldrset = set(fldrs)
+                    for fldr in fldrs:
+                        path = []
+                        child = fldr
+                        while params.folder_cache[child].uid != fuid:
+                            path.append(child)
+                            child = params.folder_cache[child].parent_uid
+                        path.append(child)  # add root shf
+                        path = path[1:] if path else [] # skip child uid
+                        if not set(path) & fldrset:  # no intersect
+                            uniq.append(fldr)
+            folders = list(set(uniq))
+
+        # 3. collect all recs pamUsers w/ rotation set-up --recursive or not
+        for fldr in folders:
+            if recursive:
+                logging.warning('--recursive/-a option not implemented (ignored)')
+                # params.folder_cache: type=shared_folder_folder, uid=shffUID, shared_folder_uid ='shfUID'
+                # params.subfolder_cache/subfolder_record_cache
+
+            if fldr not in params.subfolder_record_cache:
+                logging.debug(f"folder {fldr} empty - not in subfolder_record_cache (skipped)")
+                continue
+            for ruid in params.subfolder_record_cache[fldr]:
+                if ruid in params.record_cache:
+                    if params.record_cache[ruid].get('version') == 3:
+                        data = params.record_cache[ruid].get('data_unencrypted', '')
+                        ddict = json.loads(data) if data else {}
+                        if str(ddict.get("type", '')).lower() == 'pamUser'.lower() and ruid not in records:
+                            records.append(ruid)
+        records = list(set(records))  # Remove duplicate UIDs
+
+        # 4. print number of folders and records to rotate - folders: 2+0/16, records 50,000
+        print(f'Selected for rotation - folders: {len(folders)}, records: {len(records)}, recursive={recursive}')
+
+        # 5. in debug - print actual folders and records selected for rotation
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            for fldr in folders:
+                fobj = params.folder_cache.get(fldr, None)
+                title = fobj.name if isinstance(fobj, BaseFolderNode) else ''
+                logging.debug(f'Rotation Folder UID: {fldr} {title}')
+            for rec in records:
+                title = json.loads(params.record_cache.get(rec, {}).get('data_unencrypted', '')).get('title', '')
+                logging.debug(f'Rotation Record UID: {rec} {title}')
+
+        # 6. exit if --dry-run
+        if dry_run:
+            return
+
+        # 7. rotate and handle any throttles (to work with 50,000 records)
+        for record_uid in records:
+            delay = 0
+            while True:
+                try:
+                    # Handle throttles in-loop on in-record_rotate
+                    self.record_rotate(params, record_uid, True)
+                    break
+                except Exception as e:
+                    msg = str(e)  # what is considered a throttling error...
+                    if re.search(r"throttle", msg, re.IGNORECASE):
+                        delay = (delay+10) % 100  # reset every 1.5 minutes
+                        logging.debug(f'Record UID: {record_uid} was throttled (retry in {delay} sec)')
+                        time.sleep(1+delay)
+                    else:
+                        logging.error(f'Record UID: {record_uid} skipped: non-throttling, non-recoverable error: {msg}')
+                        break
+
+    def record_rotate(self, params, record_uid, slient:bool = False):
         record = vault.KeeperRecord.load(params, record_uid)
         if not isinstance(record, vault.TypedRecord):
             print(f'{bcolors.FAIL}Record [{record_uid}] is not available.{bcolors.ENDC}')
@@ -2278,8 +2438,17 @@ class PAMGatewayActionRotateCommand(Command):
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token)
 
-        print_router_response(router_response, 'job_info', conversation_id, gateway_uid=gateway_uid)
+        if not slient:
+            print_router_response(router_response, 'job_info', conversation_id, gateway_uid=gateway_uid)
 
+    def str_to_regex(self, text):
+        text = str(text)
+        try:
+            pattern = re.compile(text, re.IGNORECASE)
+        except: # re.error: yet maybe TypeError, MemoryError, RecursionError etc.
+            pattern = re.compile(re.escape(text), re.IGNORECASE)
+            logging.debug(f"regex pattern {text} failed to compile (using it as plaintext pattern)")
+        return pattern
 
 class PAMGatewayActionServerInfoCommand(Command):
     parser = argparse.ArgumentParser(prog='dr-info-command')
@@ -2802,7 +2971,8 @@ class PAMTunnelEditCommand(Command):
                 tmp_dag.set_resource_allowed(resource_uid=record_uid, tunneling=_tunneling, allowed_settings_name=allowed_settings_name)
 
             # Print out the tunnel settings
-            tmp_dag.print_tunneling_config(record_uid, record.get_typed_field('pamSettings'), config_uid)
+            if not kwargs.get('silent'):
+                tmp_dag.print_tunneling_config(record_uid, record.get_typed_field('pamSettings'), config_uid)
 
 
 class PAMTunnelStartCommand(Command):

@@ -15,17 +15,17 @@ import os
 import threading
 from typing import Optional
 
-from fido2.client import Fido2Client, WindowsClient, ClientError, UserInteraction
+from fido2.client import ClientError, DefaultClientDataCollector, UserInteraction, WebAuthnClient
+
 from fido2.ctap import CtapError
 from fido2.hid import CtapHidDevice
-from fido2.webauthn import (PublicKeyCredentialRequestOptions, AuthenticatorAssertionResponse,
-                            PublicKeyCredentialCreationOptions, AuthenticatorAttestationResponse,
+from fido2.webauthn import (PublicKeyCredentialRequestOptions, AuthenticationResponse,
+                            PublicKeyCredentialCreationOptions, RegistrationResponse,
                             UserVerificationRequirement)
 from fido2.ctap2.pin import ClientPin, Ctap2
 from prompt_toolkit import PromptSession
 
 from .. import utils
-
 
 def verify_rp_id_none(rp_id, origin):
     return True
@@ -54,7 +54,7 @@ class CliInteraction(UserInteraction):
         return True
 
 
-def yubikey_register(request, force_pin=False):    # type: (dict, bool) -> Optional[AuthenticatorAttestationResponse]
+def yubikey_register(request, force_pin=False):    # type: (dict, bool) -> Optional[RegistrationResponse]
     rq = request.copy()
     user_id = rq['user']['id']
     if isinstance(user_id, str):
@@ -71,16 +71,20 @@ def yubikey_register(request, force_pin=False):    # type: (dict, bool) -> Optio
     options = PublicKeyCredentialCreationOptions.from_dict(rq)   # type: PublicKeyCredentialCreationOptions
     origin = options.extensions.get('appidExclude') or options.rp.id
 
-    if WindowsClient.is_available():
-        client = WindowsClient(origin, verify=verify_rp_id_none)
+    client = None   # type: Optional[WebAuthnClient]
+    data_collector = DefaultClientDataCollector(origin, verify=verify_rp_id_none)
+    if os.name == 'nt':
+        from fido2.client.windows import WindowsClient
+        client = WindowsClient(client_data_collector=data_collector)
     else:
         dev = next(CtapHidDevice.list_devices(), None)
         if not dev:
             logging.warning("No Security Key detected")
             return
 
-        client = Fido2Client(dev, origin, verify=verify_rp_id_none, user_interaction=CliInteraction())
-        uv_configured = any(client.info.options.get(k) for k in ("uv", "clientPin", "bioEnroll"))
+        from fido2.client import Fido2Client
+        fido_client = Fido2Client(dev, client_data_collector=data_collector, user_interaction=CliInteraction())
+        uv_configured = any(fido_client.info.options.get(k) for k in ("uv", "clientPin", "bioEnroll"))
         uv = options.authenticator_selection.user_verification
         if uv == UserVerificationRequirement.REQUIRED:
             if not uv_configured:
@@ -110,6 +114,7 @@ def yubikey_register(request, force_pin=False):    # type: (dict, bool) -> Optio
             if not uv_configured:
                 rq['authenticatorSelection']['userVerification'] = UserVerificationRequirement.DISCOURAGED
                 options = PublicKeyCredentialCreationOptions.from_dict(rq)
+        client = fido_client
 
     evt = threading.Event()
     try:
@@ -130,7 +135,7 @@ def yubikey_register(request, force_pin=False):    # type: (dict, bool) -> Optio
         evt.set()
 
 
-def yubikey_authenticate(request):  # type: (dict) -> Optional[AuthenticatorAssertionResponse]
+def yubikey_authenticate(request):  # type: (dict) -> Optional[AuthenticationResponse]
     if 'publicKeyCredentialRequestOptions' not in request:
         return
 
@@ -149,24 +154,34 @@ def yubikey_authenticate(request):  # type: (dict) -> Optional[AuthenticatorAsse
     if isinstance(challenge, str):
         options['challenge'] = utils.base64_url_decode(challenge)
 
-    if WindowsClient.is_available():
-        client = WindowsClient(origin, verify=verify_rp_id_none)
+    client = None   # type: Optional[WebAuthnClient]
+    data_collector = DefaultClientDataCollector(origin, verify=verify_rp_id_none)
+    if os.name == 'nt':
+        from fido2.client.windows import WindowsClient
+        client = WindowsClient(client_data_collector=data_collector)
     else:
         dev = next(CtapHidDevice.list_devices(), None)
         if not dev:
             logging.warning("No Security Key detected")
             return
-        client = Fido2Client(dev, origin, verify=verify_rp_id_none, user_interaction=CliInteraction())
-        uv_configured = any(client.info.options.get(k) for k in ("uv", "clientPin", "bioEnroll"))
+
+        from fido2.client import Fido2Client
+        fido_client = Fido2Client(dev, client_data_collector=data_collector, user_interaction=CliInteraction())
+
+        uv_configured = any(fido_client.info.options.get(k) for k in ("uv", "clientPin", "bioEnroll"))
         if not uv_configured:
             uv = options['userVerification']
             if uv == UserVerificationRequirement.PREFERRED:
                 options['userVerification'] = UserVerificationRequirement.DISCOURAGED
+        client = fido_client
+
+    if client is None:
+        return
 
     evt = threading.Event()
     try:
         try:
-            rq_options = PublicKeyCredentialRequestOptions.from_dict(options)
+            rq_options = PublicKeyCredentialRequestOptions.from_dict(options)  # type: PublicKeyCredentialRequestOptions
             rs = client.get_assertion(rq_options, event=evt)
             return rs.get_response(0)
         except ClientError as err:

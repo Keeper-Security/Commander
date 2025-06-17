@@ -32,7 +32,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title
+from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title, report_output_parser
 from .enterprise_common import EnterpriseCommand
 from .helpers import audit_report
 from .transfer_account import EnterpriseTransferUserCommand
@@ -45,14 +45,12 @@ from ..proto import enterprise_pb2
 from ..sox import sox_data, get_prelim_data, is_compliance_reporting_enabled, get_sox_database_name, \
     get_compliance_data, get_node_id
 from ..sox.sox_data import RebuildTask
+from ..sox.sox_types import SharedFolder
 from ..sox.storage_types import StorageRecordAging
+from ..subfolder import get_contained_record_uids
 
-audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run an audit trail report.')
+audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run an audit trail report.', parents=[report_output_parser])
 audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
-audit_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'], default='table',
-                                 help='output format.')
-audit_report_parser.add_argument('--output', dest='output', action='store',
-                                 help='output file name. (ignored for table format)')
 audit_report_parser.add_argument('--report-type', dest='report_type', action='store', choices=['raw', 'dim', 'hour', 'day', 'week', 'month', 'span'],
                                  help='report type. (Default value: raw)', default='raw')
 audit_report_parser.add_argument('--report-format', dest='report_format', action='store', choices=['message', 'fields'],
@@ -116,7 +114,7 @@ audit_log_parser.error = raise_parse_exception
 audit_log_parser.exit = suppress_exit
 
 
-aging_report_parser = argparse.ArgumentParser(prog='aging-report', description='Run an aging report.')
+aging_report_parser = argparse.ArgumentParser(prog='aging-report', description='Run an aging report.', parents=[report_output_parser])
 aging_report_parser.add_argument('-r', '--rebuild', dest='rebuild', action='store_true',
                                  help='Rebuild record database')
 aging_report_parser.add_argument('--delete', dest='delete', action='store_true',
@@ -125,10 +123,6 @@ aging_report_parser.add_argument('--no-cache', '-nc', dest="no_cache", action='s
                                  help='remove any local non-memory storage of data upon command completion')
 aging_report_parser.add_argument('-s', '--sort', dest='sort_by', action='store', default='last_changed',
                                  choices=['owner', 'title', 'last_changed', 'shared'], help='sort output')
-aging_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
-                                 default='table', help='output format.')
-aging_report_parser.add_argument('--output', dest='output', action='store',
-                                 help='output file name. (ignored for table format)')
 temporal_group = aging_report_parser.add_mutually_exclusive_group()
 period_opt_help = 'Period the password has not been modified. Not valid with --cutoff-date flag'
 cutoff_opt_help = 'Date since which the password has not been modified. Not valid with --period flag'
@@ -143,7 +137,7 @@ aging_report_parser.add_argument('--in-shared-folder', action='store_true', help
 aging_report_parser.error = raise_parse_exception
 aging_report_parser.exit = suppress_exit
 
-action_report_parser = argparse.ArgumentParser(prog='action-report', description='Run a user action report.')
+action_report_parser = argparse.ArgumentParser(prog='action-report', description='Run a user action report.', parents=[report_output_parser])
 action_report_target_statuses = ['no-logon', 'no-update', 'locked', 'invited', 'no-security-question-update', 'blocked']
 action_report_parser.add_argument('--target', '-t', dest='target_user_status', action='store',
                                   choices=action_report_target_statuses, default='no-logon',
@@ -156,9 +150,6 @@ columns_help = f'comma-separated list of columns to show on report. Supported co
 columns_help = re.sub('\'', '', columns_help)
 action_report_parser.add_argument('--columns',  dest='columns', action='store', type=str,
                                   help=columns_help)
-action_report_parser.add_argument('--output', dest='output', action='store', help='path to resulting output file')
-action_report_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json'],
-                                  default='table', help='format of output')
 action_report_parser.add_argument('--apply-action', '-a', dest='apply_action', action='store',
                                   choices=['lock', 'delete', 'transfer', 'none'], default='none',
                                   help='admin action to apply to each user in the report')
@@ -1045,7 +1036,7 @@ class AuditReportCommand(Command):
 
     def get_sox_data(self, params):
         if not self.sox_data and is_compliance_reporting_enabled(params):
-            self.sox_data = get_prelim_data(params, 0, False, min_updated=0, cache_only=not self.allow_sox_data_fetch)
+            self.sox_data = get_compliance_data(params, 0, 0,False, min_updated=0, no_cache=False)
         return self.sox_data
 
     def get_value(self, params, field, event):
@@ -1371,6 +1362,11 @@ class AuditReportCommand(Command):
         if kwargs.get('order'):
             rq['order'] = 'ascending' if kwargs['order'] == 'asc' else 'descending'
 
+        self.allow_sox_data_fetch = bool(kwargs.get('shared_folder_uid') or kwargs.get('max_record_details', False))
+        if self.allow_sox_data_fetch:
+            self.sox_data = None
+            self.lookup = {}
+
         audit_filter = {}
         if 'created' in kwargs and kwargs['created']:
             if kwargs['created'] in ['today', 'yesterday', 'last_7_days', 'last_30_days', 'month_to_date', 'last_month', 'year_to_date', 'last_year']:
@@ -1421,14 +1417,27 @@ class AuditReportCommand(Command):
                 audit_filter['record_uid'] = list(record_uids)
         if 'shared_folder_uid' in kwargs and kwargs['shared_folder_uid']:
             shared_uids = set()
+            record_uids = set(audit_filter.get('record_uid', []))
+
+            get_sf_recs = lambda uid: (
+                {r for recs in get_contained_record_uids(params, uid, children_only=False).values() for r in
+                 recs} if uid in params.shared_folder_cache else {rp.record_uid for rp in
+                                                                  self.get_sox_data(params).get_shared_folders().get(
+                                                                      uid, SharedFolder(uid)).record_permissions}
+            )
+
             for sf_uid in kwargs['shared_folder_uid']:
                 sf_uids = self.get_filter(sf_uid, AuditReportCommand.convert_str)
                 if isinstance(sf_uids, list):
                     shared_uids.update(sf_uids)
+                    record_uids.update({get_sf_recs(sf_uid) for sf_uid in sf_uids})
                 elif isinstance(sf_uids, str):
                     shared_uids.add(sf_uids)
+                    record_uids.update(get_sf_recs(sf_uids))
             if len(shared_uids) > 0:
                 audit_filter['shared_folder_uid'] = list(shared_uids)
+            if record_uids:
+                audit_filter['record_uid'] = list(record_uids)
         ip_filter = set()
         if 'geo_location' in kwargs and kwargs['geo_location']:
             geo_location_comps = kwargs['geo_location'].split(',')
@@ -1504,70 +1513,82 @@ class AuditReportCommand(Command):
         if audit_filter:
             rq['filter'] = audit_filter
 
-        rs = api.communicate(params, rq)
+        # Split into 2 separate requests with corresponding filters if filters for record(s) AND shared folder(s) are specified
+        reqs = [rq] if not (audit_filter.get('record_uid') and audit_filter.get('shared_folder_uid')) \
+            else [{**rq,
+                   'filter': {k: v if k != 'audit_event_type' else [e for e in v if not str(e).startswith('folder_')]
+                              for k, v in audit_filter.items() if k != 'shared_folder_uid'},
+                   },
+                  {**rq,
+                   'filter': {k: v if k != 'audit_event_type' else [e for e in v if str(e).startswith('folder_')] for
+                              k, v in audit_filter.items() if k != 'record_uid'}
+                   }]
+
+        # Send only requests that apply event-type filters in the case where the user specifies at least one such filter
+        reqs = [req for req in reqs if req.get('filter', {}).get('audit_event_type')] if audit_filter.get('audit_event_type') \
+            else reqs
+        rss = api.execute_batch(params, reqs)
         fields = []
         table = []
 
-        self.allow_sox_data_fetch = kwargs.get('max_record_details', False)
-        if self.allow_sox_data_fetch:
-            self.sox_data = None
-            self.lookup = {}
         details = kwargs.get('details') or False
         if report_type == 'raw':
             fields.extend(audit_report.RAW_FIELDS)
             misc_fields = list(audit_report.MISC_FIELDS) if kwargs.get('report_format') == 'fields' else ['message']
-            incomplete = True
-            while incomplete:
-                events = rs.get('audit_event_overview_report_rows')
-                for event in events:
-                    if misc_fields:
-                        lenf = len(fields)
-                        for mf in misc_fields:
-                            if mf == 'message':
-                                fields.append(mf)
-                            elif mf in event:
-                                val = event.get(mf)
-                                if val:
+            while reqs:
+                reqs = []
+                for rs in rss:
+                    events = rs.get('audit_event_overview_report_rows')
+                    for event in events:
+                        if misc_fields:
+                            lenf = len(fields)
+                            for mf in misc_fields:
+                                if mf == 'message':
                                     fields.append(mf)
-                                    if mf in audit_report.lookup_types:
-                                        fields.extend(audit_report.lookup_types[mf].fields)
-                        if len(fields) > lenf:
-                            for f in fields[lenf:]:
-                                if f not in audit_report.fields_to_uid_name:
-                                    misc_fields.remove(f)
+                                elif mf in event:
+                                    val = event.get(mf)
+                                    if val:
+                                        fields.append(mf)
+                                        if mf in audit_report.lookup_types:
+                                            fields.extend(audit_report.lookup_types[mf].fields)
+                            if len(fields) > lenf:
+                                for f in fields[lenf:]:
+                                    if f not in audit_report.fields_to_uid_name:
+                                        misc_fields.remove(f)
 
-                    row = []
-                    for field in fields:
-                        value = self.get_value(params, field, event)
-                        row.append(self.convert_value(field, value, details=details, params=params))
-                    table.append(row)
-                incomplete = len(events) >= API_EVENT_RAW_ROW_LIMIT
-                if incomplete:
-                    asc = rq.get('order') == 'ascending'
-                    first_key, last_key = ('min', 'max') if asc else ('max', 'min')
-                    rq_filter = rq.get('filter', {})
-                    rq_period = rq_filter.get('created', {})
-                    period = {first_key: int(events[-1]['created'])}
-                    if not isinstance(rq_period, dict) or rq_period.get(last_key) is None:
-                        last_rq = {**rq}
-                        reverse = 'descending' if asc else 'ascending'
-                        last_rq['order'] = reverse
-                        last_rq['limit'] = 1
-                        rs = api.communicate(params, last_rq)
-                        last_row = rs.get('audit_event_overview_report_rows')[0]
-                        period[last_key] = int(last_row['created'])
-                    else:
-                        period[last_key] = rq_period.get(last_key)
-                    rq_filter['created'] = period
-                    rq['filter'] = rq_filter
-                    if user_limit and user_limit >= API_EVENT_RAW_ROW_LIMIT:
-                        missing = user_limit - len(table)
-                        if missing < API_EVENT_RAW_ROW_LIMIT:
-                            if missing > 0:
-                                rq['limit'] = missing
-                            else:
-                                break
-                    rs = api.communicate(params, rq)
+                        row = []
+                        for field in fields:
+                            value = self.get_value(params, field, event)
+                            row.append(self.convert_value(field, value, details=details, params=params))
+                        table.append(row)
+                    if len(events) >= API_EVENT_RAW_ROW_LIMIT:
+                        asc = rq.get('order') == 'ascending'
+                        first_key, last_key = ('min', 'max') if asc else ('max', 'min')
+                        rq_filter = rq.get('filter', {})
+                        rq_period = rq_filter.get('created', {})
+                        period = {first_key: int(events[-1]['created'])}
+                        if not isinstance(rq_period, dict) or rq_period.get(last_key) is None:
+                            last_rq = {**rq}
+                            reverse = 'descending' if asc else 'ascending'
+                            last_rq['order'] = reverse
+                            last_rq['limit'] = 1
+                            rs = api.communicate(params, last_rq)
+                            last_row = rs.get('audit_event_overview_report_rows')[0]
+                            period[last_key] = int(last_row['created'])
+                        else:
+                            period[last_key] = rq_period.get(last_key)
+                        rq_filter['created'] = period
+                        rq['filter'] = rq_filter
+                        if user_limit and user_limit >= API_EVENT_RAW_ROW_LIMIT:
+                            missing = user_limit - len(table)
+                            if missing < API_EVENT_RAW_ROW_LIMIT:
+                                if missing > 0:
+                                    rq['limit'] = missing
+                                else:
+                                    break
+                        reqs.append(rq)
+                if reqs:
+                    rss = api.execute_batch(params, reqs)
             table = filter_rows(table, pattern)
             return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
         else:
@@ -1579,18 +1600,19 @@ class AuditReportCommand(Command):
                 fields.append('created')
             if columns:
                 fields.extend(columns)
-            for event in rs['audit_event_overview_report_rows']:
-                row = []
-                for f in fields:
-                    if f in event:
-                        row.append(
-                            self.convert_value(f, event[f], report_type=report_type, details=details, params=params)
-                        )
-                    elif f in audit_report.fields_to_uid_name:
-                        row.append(self.resolve_lookup(params, f, event))
-                    else:
-                        row.append('')
-                table.append(row)
+            for rs in rss:
+                for event in rs.get('audit_event_overview_report_rows', []):
+                    row = []
+                    for f in fields:
+                        if f in event:
+                            row.append(
+                                self.convert_value(f, event[f], report_type=report_type, details=details, params=params)
+                            )
+                        elif f in audit_report.fields_to_uid_name:
+                            row.append(self.resolve_lookup(params, f, event))
+                        else:
+                            row.append('')
+                    table.append(row)
             table = filter_rows(table, pattern)
             return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
