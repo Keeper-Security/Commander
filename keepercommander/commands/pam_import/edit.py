@@ -1448,12 +1448,16 @@ class PAMProjectImportCommand(Command):
 
             # userRecordUid could reference local or users[] - resolved from userRecords
             if admin_cred:
+                is_external = False
                 ruids = find_user(mach, users, admin_cred)
+                if not ruids:  # search all pamDirectory for external AD admin user
+                    ruids = find_external_user(mach, machines, admin_cred)
+                    is_external = True
                 if len(ruids) != 1:
                     logging.warning(f"{bcolors.WARNING}{len(ruids)} matches found for userRecords in {mach.title}.{bcolors.ENDC} ")
                 ruid = getattr(ruids[0], "uid", "") if ruids else ""
                 if ruid:
-                    set_user_record_uid(mach, ruid)
+                    set_user_record_uid(mach, ruid, is_external)
 
             # resolve machine PRS creds: additional_credentials[] -> recordRef[]
             resolve_script_creds(mach, users, resources)
@@ -1540,6 +1544,8 @@ class PAMProjectImportCommand(Command):
         for user in users:  # standalone users
             user.create_record(params, shfusr)
 
+        # we need pamDirectory first in case AD Admin user is used in Local pamMachine
+        resources.sort(key=lambda r: r.type != "pamDirectory")
         for mach in resources:
             # Machine - create machine first to avoid error:
             # 'Resource <UID> does not belong to the configuration'
@@ -1558,6 +1564,8 @@ class PAMProjectImportCommand(Command):
                 args = parse_command_options(mach, True)
                 if admin_uid: args["admin"] = admin_uid
                 pte.execute(params, config=pam_cfg_uid, silent=True, **args)
+                if admin_uid and is_admin_external(mach):
+                    tdag.link_user_to_resource(admin_uid, mach.uid, is_admin=True, belongs_to=False)
                 args = parse_command_options(mach, False)
                 tdag.set_resource_allowed(**args)
 
@@ -2330,6 +2338,9 @@ class PamMachineObject():
 
         self.pam_settings : Optional[PamSettingsFieldData] = None
         self.users = None # List[PamUserObject] - one is admin(istrative credential)
+
+        self.is_admin_external: bool = False  # (True<=>found:pamDirectory#Title.pamUser#Title)
+        self.administrative_credentials_uid: str = ""  # external or internal user UID
 
     @classmethod
     def load(cls, data: Union[str, dict], rotation_params: Optional[PamRotationParams] = None):
@@ -4131,6 +4142,12 @@ def set_sftp_uid(obj, name: str, uid: str) -> bool:
             logging.debug(f"Unknown sftp UID attribute '{name}' (skipped)")
     return False
 
+def is_admin_external(mach) -> bool:
+    res = False
+    if (mach and hasattr(mach, "is_admin_external") and mach.is_admin_external is True):
+        res = True
+    return res
+
 def get_admin_credential(obj, uid:bool=False) -> str:
     # Get one of pam_settings.connection.{userRecords,userRecordUid}
     value: str = ""
@@ -4146,7 +4163,7 @@ def get_admin_credential(obj, uid:bool=False) -> str:
             value = value if isinstance(value, str) else ""
     return value
 
-def set_user_record_uid(obj, uid: str) -> bool:
+def set_user_record_uid(obj, uid: str, is_external: bool = False) -> bool:
     if not(uid and isinstance(uid, str) and RecordV3.is_valid_ref_uid(uid)):
         logging.debug(f"Invalid userRecordUid '{uid}' (skipped)")
         return False
@@ -4155,10 +4172,27 @@ def set_user_record_uid(obj, uid: str) -> bool:
         hasattr(obj.pam_settings, "connection") and
         hasattr(obj.pam_settings.connection, "userRecordUid")):
             obj.pam_settings.connection.userRecordUid = uid
+            if is_external is True:
+                if hasattr(obj, "is_admin_external"):
+                    obj.is_admin_external = True
+                if hasattr(obj, "administrative_credentials_uid"):
+                    obj.administrative_credentials_uid = uid
             return True
     else:
         logging.debug("Object has no attribute 'userRecordUid' (skipped)")
     return False
+
+def find_external_user(mach, machines, title: str) -> list:
+    # Local pamMachine could reference pamDirectory AD user as its admin
+    res = []
+    if title and machines and mach.type == "pamMachine":
+        mu = title.split(".", 1)  # machine/user titles
+        mname = mu[0] if len(mu) > 1 else ""
+        uname = mu[1] if len(mu) > 1 else mu[0]
+        for m in machines:
+            if m.type == "pamDirectory" and (not mname or mname == m.title):
+                res.extend(search_machine(m, uname) or [])
+    return res
 
 def find_user(mach, users, title: str) -> list:
     if not isinstance(mach, list):
@@ -4323,7 +4357,7 @@ def add_pam_scripts(params, record, scripts):
             rec.fields.append(script_field)
         for script in scripts:
             file_name = script.file
-            full_name = os.path.expanduser(file_name)
+            full_name = os.path.abspath(os.path.expanduser(file_name))
             if not os.path.isfile(full_name):
                 logging.warning(f'{bcolors.WARNING}Warning: {bcolors.ENDC} Add rotation script - File "{file_name}" not found (skipped).')
                 continue
