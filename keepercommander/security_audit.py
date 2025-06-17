@@ -21,7 +21,8 @@ def _get_pass(record):  # type: (KeeperRecord) -> Union[str, None]
 
 def get_security_score(record): # type: (KeeperRecord) -> Union[int, None]
     password = _get_pass(record)
-    return utils.password_score(password) or has_passkey(record) and 100 or 0
+    return None if not password \
+        else utils.password_score(password) or has_passkey(record) and 100 or 0
 
 def encrypt_security_data(params, data):
     if params.forbid_rsa and not params.enterprise_ec_key:
@@ -44,7 +45,7 @@ def prep_security_data(params, record):
     score = get_security_score(record)
     # Send empty object to remove old security data (when password and/or passkey are removed)
     sec_data = b''
-    if score:
+    if score is not None:
         sec_data = {'strength': score}
         password = _get_pass(record)
         login_url = BreachWatch.extract_url(record)
@@ -83,7 +84,7 @@ def prep_security_data_update(params, record): # type: (KeeperParams, KeeperReco
 def prep_score_data(record):
     empty_score_data = crypto.encrypt_aes_v2(json.dumps(dict()).encode('utf8'), record.record_key)
     score = get_security_score(record)
-    if not score:
+    if score is None:
         return empty_score_data
 
     try:
@@ -118,7 +119,7 @@ def needs_security_audit(params, record):  # type: (KeeperParams, KeeperRecord) 
     if current_password != score_data.get('password') or None:
         return True
 
-    scores = dict(new=get_security_score(record), old=score_data.get('score', 0))
+    scores = dict(new=get_security_score(record) or 0, old=score_data.get('score', 0))
     score_changed_on_passkey = any(x >= 100 for x in scores.values()) and any(x < 100 for x in scores.values())
     creds_removed = bool(scores.get('old') and not scores.get('new'))
     needs_alignment = bool(scores.get('new')) and not saved_sec_data
