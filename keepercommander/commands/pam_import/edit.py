@@ -2417,7 +2417,7 @@ class PamMachineObject():
             fields.append(f'f.pamHostname=$JSON:{val}')
 
         sslv = utils.value_to_boolean(self.sslVerification)
-        if sslv is not None: fields.append(f"f.checkbox.sslVerification={str(sslv).lower()}")
+        if sslv is not None: fields.append(f"checkbox.sslVerification={str(sslv).lower()}")
         if self.operatingSystem: fields.append(f"f.text.operatingSystem={self.operatingSystem}")
         if self.instanceName: fields.append(f"f.text.instanceName={self.instanceName}")
         if self.instanceId: fields.append(f"f.text.instanceId={self.instanceId}")
