@@ -216,6 +216,9 @@ class PAMProjectImportCommand(Command):
             "note": "Ensure that the team or users have role permission to access connections or tunnels"
         }
         print(json.dumps(res, indent=2))
+        print("Follow the official Keeper documentation on how to use "
+              "the access_token during a Gateway install or reconfiguration: "
+              "https://docs.keeper.io/en/keeperpam/privileged-access-manager/getting-started/gateways")
 
     PAM_ROOT_FOLDER_NAME = 'PAM Environments'
 
@@ -1540,13 +1543,26 @@ class PAMProjectImportCommand(Command):
         pte = PAMTunnelEditCommand()
         prc = PAMCreateRecordRotationCommand()
 
+        pdelta = 10  # progress delta (update progress stats every pdelta items)
+        msg = "Start data processing "
+        msg += f" {len(resources)} resources" if resources else ""
+        msg += f" {len(users)} external users" if users else ""
+        msg += " - This could take a while..." if len(resources) + len(users) > 0 else ""
+        logging.warning(msg)
+
         # Create records
-        for user in users:  # standalone users
-            user.create_record(params, shfusr)
+        if users:
+            logging.warning(f"Processing external users: {len(users)}")
+            for n, user in enumerate(users):  # standalone users
+                user.create_record(params, shfusr)
+                if n % pdelta == 0: print(f"{n}/{len(users)}")
+            print(f"{len(users)}/{len(users)}\n")
 
         # we need pamDirectory first in case AD Admin user is used in Local pamMachine
         resources.sort(key=lambda r: r.type != "pamDirectory")
-        for mach in resources:
+        if resources: logging.warning(f"Processing resources: {len(resources)}")
+        for n, mach in enumerate(resources):
+            if n % pdelta == 0: print(f"{n}/{len(resources)}")
             # Machine - create machine first to avoid error:
             # 'Resource <UID> does not belong to the configuration'
             admin_uid = get_admin_credential(mach, True)
@@ -1595,6 +1611,7 @@ class PAMProjectImportCommand(Command):
                         if user.rotation_settings.password_complexity:
                             args["pwd_complexity"]=user.rotation_settings.password_complexity
                         prc.execute(params, silent=True, **args)
+        if resources: print(f"{len(resources)}/{len(resources)}\n")
 
         # add scripts with resolved additional credentials - owner records must exist
         if pce and pce.scripts and pce.scripts.scripts:
