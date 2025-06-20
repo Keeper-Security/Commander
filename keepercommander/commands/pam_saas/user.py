@@ -126,7 +126,7 @@ class PAMActionSaasUserCommand(PAMGatewayActionDiscoverCommandBase):
 
                     if plugin is not None:
 
-                        for field in plugin.schema:
+                        for field in plugin.fields:
                             value = next((x.value for x in config_record.custom if x.label == field.label), None)
                             if value is not None:
                                 if len(value) > 0:
