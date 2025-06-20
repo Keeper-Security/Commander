@@ -120,7 +120,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
         print(f"  {bcolors.HEADER}Fields{bcolors.ENDC}")
         req_field = []
         opt_field = []
-        for field in plugin.schema:
+        for field in plugin.fields:
             if field.required is True:
                 req_field.append(f"   * {bcolors.FAIL}Required{bcolors.ENDC}: {field.label} - "
                                  f"{field.desc}")
@@ -152,7 +152,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
         ]
 
         # Do require first
-        for item in plugin.schema:
+        for item in plugin.fields:
             if not item.required:
                 continue
             print("")
@@ -168,7 +168,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
                 custom_fields.append(record_field)
 
         # Do optional
-        for item in plugin.schema:
+        for item in plugin.fields:
             if item.required:
                 continue
             print("")
