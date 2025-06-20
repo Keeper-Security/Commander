@@ -17,7 +17,7 @@ from ... import crypto, utils, rest_api
 from ...display import bcolors
 from ...error import KeeperApiError
 from ...params import KeeperParams
-from ...proto import pam_pb2, router_pb2, connect_pb2
+from ...proto import pam_pb2, router_pb2
 
 VERIFY_SSL = bool(os.environ.get("VERIFY_SSL", "TRUE") == "TRUE")
 
@@ -94,7 +94,7 @@ def router_get_relay_access_creds(params, expire_sec=None):
     query_params = {
         'expire-sec': expire_sec
     }
-    return _post_request_to_router(params, 'relay_access_creds', query_params=query_params, rs_type=connect_pb2.RelayAccessCreds)
+    return _post_request_to_router(params, 'relay_access_creds', query_params=query_params, rs_type=pam_pb2.RelayAccessCreds)
 
 
 def _post_request_to_router(params, path, rq_proto=None, rs_type=None, method='post',
