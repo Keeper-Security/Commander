@@ -118,7 +118,7 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
             records_field_map[field.label] = field
 
         missing_fields = []
-        for field in plugin.schema:
+        for field in plugin.fields:
 
             # We only care about required fields.
             if not field.required or field.default_value is not None:
@@ -297,7 +297,7 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
                         config_record = vault.TypedRecord.load(params, config_record_uid)  # type: vault.TypedRecord
 
                         for required in [True, False]:
-                            for field in plugin.schema:
+                            for field in plugin.fields:
                                 if field.required is required:
                                     current_value = get_record_field_value(
                                         record=config_record,

@@ -100,7 +100,7 @@ class PAMActionSaasAddCommand(PAMGatewayActionDiscoverCommandBase):
 
         # Make sure the SaaS configuration record has correct custom fields.
         missing_fields = []
-        for field in plugin.schema:
+        for field in plugin.fields:
             if field.required is True:
                 found = next((x for x in config_record.custom if x.label == field.label), None)
                 if not found:
