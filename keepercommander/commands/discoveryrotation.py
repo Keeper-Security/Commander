@@ -710,7 +710,7 @@ class PAMCreateRecordRotationCommand(Command):
                 _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_resource_uid)
                 if not _dag.linking_dag.has_graph:
                     raise CommandError('', f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated '
-                                           f'with any configuration.'
+                                           f'with any configuration. '
                                            f'{bcolors.OKBLUE}pam rotation edit -rs {target_resource_uid} '
                                            f'--config CONFIG{bcolors.ENDC}')
             # Noop and resource cannot be both assigned
@@ -734,11 +734,13 @@ class PAMCreateRecordRotationCommand(Command):
                     target_resource_uid = resource_uids[0]
 
                 if not _dag.resource_belongs_to_config(target_resource_uid):
-                    raise CommandError('',
-                                    f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated with the '
-                                    f'configuration of the user "{target_record.record_uid}". To associated the resources '
-                                    f'to this config run {bcolors.OKBLUE}"pam rotation resource {target_resource_uid} '
-                                    f'--config {_dag.record.record_uid}"{bcolors.ENDC}')
+                    # some rotations (iam_user/noop) link straight to pamConfiguration
+                    if target_resource_uid != _dag.record.record_uid:
+                        raise CommandError('',
+                            f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated with the '
+                            f'configuration of the user "{target_record.record_uid}". To associated the resources '
+                            f'to this config run {bcolors.OKBLUE}"pam rotation resource {target_resource_uid} '
+                            f'--config {_dag.record.record_uid}"{bcolors.ENDC}')
                 if not _dag.user_belongs_to_resource(target_record.record_uid, target_resource_uid):
                     old_resource_uid = _dag.get_resource_uid(target_record.record_uid)
                     if old_resource_uid is not None and old_resource_uid != target_resource_uid:
