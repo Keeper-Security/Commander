@@ -1295,7 +1295,8 @@ class PAMConfigurationListCommand(Command):
         configurations = list(vault_extensions.find_records(params, record_version=6))
         facade = PamConfigurationRecordFacade()
         for c in configurations:  # type: vault.TypedRecord
-            if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamNetworkConfiguration'):
+            if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamNetworkConfiguration',
+                                 'pamGcpConfiguration'):
                 facade.record = c
                 shared_folder_parents = find_parent_top_folder(params, c.record_uid)
                 if shared_folder_parents:
@@ -1327,7 +1328,7 @@ class PAMConfigurationListCommand(Command):
 
 common_parser = argparse.ArgumentParser(add_help=False)
 common_parser.add_argument('--environment', '-env', dest='config_type', action='store',
-                           choices=['local', 'aws', 'azure'], help='PAM Configuration Type', )
+                           choices=['local', 'aws', 'azure', 'gcp'], help='PAM Configuration Type')
 common_parser.add_argument('--title', '-t', dest='title', action='store', help='Title of the PAM Configuration')
 common_parser.add_argument('--gateway', '-g', dest='gateway_uid', action='store', help='Gateway UID or Name')
 common_parser.add_argument('--shared-folder', '-sf', dest='shared_folder_uid', action='store',
@@ -1351,7 +1352,11 @@ azure_group.add_argument('--subscription_id', dest='subscription_id', action='st
                          help='Subscription Id')
 azure_group.add_argument('--tenant-id', dest='tenant_id', action='store', help='Tenant Id')
 azure_group.add_argument('--resource-group', dest='resource_group', action='append', help='Resource Group')
-
+gcp_group = common_parser.add_argument_group('gcp', 'GCP configuration')
+gcp_group.add_argument('--gcp-id', dest='gcp_id', action='store', help='GCP Id')
+gcp_group.add_argument('--service-account-key', dest='service_account_key', action='store',
+                         help='Service Account Key (JSON format)')
+gcp_group.add_argument('--gcp-region', dest='region_names', action='append', help='GCP Region Names')
 
 class PamConfigurationEditMixin(RecordEditMixin):
     pam_record_types = None
@@ -1482,6 +1487,17 @@ class PamConfigurationEditMixin(RecordEditMixin):
             if region_names:
                 regions = '\n'.join(region_names)
                 extra_properties.append(f'multiline.regionNames={regions}')
+        elif record.record_type == 'pamGcpConfiguration':
+            gcp_id = kwargs.get('gcp_id')
+            if gcp_id:
+                extra_properties.append(f'text.gcpId={gcp_id}')
+            service_account_key = kwargs.get('service_account_key')
+            if service_account_key:
+                extra_properties.append(f'multiline.serviceAccountKeyJson={service_account_key}')
+            gcp_region = kwargs.get('gcp_region')
+            if gcp_region:
+                regions = '\n'.join(gcp_region)
+                extra_properties.append(f'multiline.regionNames={regions}')
         elif record.record_type == 'pamAzureConfiguration':
             azure_id = kwargs.get('azure_id')
             if azure_id:
@@ -1554,9 +1570,11 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
             record_type = 'pamAzureConfiguration'
         elif config_type == 'local':
             record_type = 'pamNetworkConfiguration'
+        elif config_type == 'gcp':
+            record_type = 'pamGcpConfiguration'
         else:
             raise CommandError('pam-config-new', f'--environment {config_type} is not supported'
-                                                 f' supported options are aws, azure, or local')
+                                                 f' supported options are aws, azure, gcp, or local')
 
         title = kwargs.get('title')
         if not title:
@@ -1689,6 +1707,8 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
                 record_type = 'pamAzureConfiguration'
             elif config_type == 'local':
                 record_type = 'pamNetworkConfiguration'
+            elif config_type == 'gcp':
+                record_type = 'pamGcpConfiguration'
             else:
                 record_type = configuration.record_type
 
@@ -2866,15 +2886,16 @@ class PAMTunnelEditCommand(Command):
 
         record_uid = record.record_uid
         record_type = record.record_type
-        if record_type not in ("pamMachine pamDatabase pamDirectory pamNetworkConfiguration pamAwsConfiguration "
-                               "pamRemoteBrowser pamAzureConfiguration").split():
+        if record_type not in ["pamMachine", "pamDatabase", "pamDirectory", "pamNetworkConfiguration",
+                               "pamAwsConfiguration", "pamGcpConfiguration", "pamRemoteBrowser", "pamAzureConfiguration"]:
             raise CommandError('', f"{bcolors.FAIL}This record's type is not supported for tunnels. "
                                    f"Tunnels are only supported on pamMachine, pamDatabase, pamDirectory, "
-                                   f"pamRemoteBrowser, pamNetworkConfiguration pamAwsConfiguration, and "
-                                   f"pamAzureConfiguration records{bcolors.ENDC}")
+                                   f"pamRemoteBrowser, pamNetworkConfiguration pamAwsConfiguration, pamGcpConfiguration, "
+                                   f"and pamAzureConfiguration records{bcolors.ENDC}")
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
-        if record_type in "pamNetworkConfiguration pamAwsConfiguration pamAzureConfiguration".split():
+        if record_type in ["pamNetworkConfiguration", "pamAwsConfiguration", "pamGcpConfiguration",
+                           "pamAzureConfiguration"]:
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid, is_config=True)
             tmp_dag.edit_tunneling_config(tunneling=_tunneling)
             tmp_dag.print_tunneling_config(record_uid, None)
@@ -3456,15 +3477,17 @@ class PAMConnectionEditCommand(Command):
 
         record_uid = record.record_uid
         record_type = record.record_type
-        if record_type not in ("pamMachine pamDatabase pamDirectory pamNetworkConfiguration pamAwsConfiguration "
-                               "pamRemoteBrowser pamAzureConfiguration").split():
+        if record_type not in ["pamMachine", "pamDatabase", "pamDirectory", "pamNetworkConfiguration",
+                               "pamAwsConfiguration", "pamGcpConfiguration", "pamRemoteBrowser",
+                               "pamAzureConfiguration"]:
             raise CommandError('', f"{bcolors.FAIL}This record's type is not supported for connections. "
                                    f"Connectins are only supported on pamMachine, pamDatabase, pamDirectory, "
-                                   f"pamRemoteBrowser, pamNetworkConfiguration pamAwsConfiguration, and "
-                                   f"pamAzureConfiguration records{bcolors.ENDC}")
+                                   f"pamRemoteBrowser, pamNetworkConfiguration pamAwsConfiguration, pamGcpConfiguration, "
+                                   f"and pamAzureConfiguration records{bcolors.ENDC}")
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
-        if record_type in "pamNetworkConfiguration pamAwsConfiguration pamAzureConfiguration".split():
+        if record_type in ["pamNetworkConfiguration", "pamAwsConfiguration", "pamGcpConfiguration",
+                           "pamAzureConfiguration"]:
             tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid, is_config=True)
             tdag.edit_tunneling_config(connections=_connections, session_recording=_recording, typescript_recording=_typescript_recording)
             if not kwargs.get("silent", False): tdag.print_tunneling_config(record_uid, None)
