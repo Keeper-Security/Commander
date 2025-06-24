@@ -61,6 +61,7 @@ class SaasConfigItem(BaseModel):
     id: str
     label: str
     desc: str
+    is_secret: bool = False
     desc_code: Optional[str] = None
     type: Optional[str] = "text"
     code: Optional[str] = None
@@ -293,6 +294,8 @@ def get_field_input(field, current_value: Optional[str] = None):
     print(f"Description: {field.desc}")
     if field.required is True:
         print(f"{bcolors.WARNING}Field is required.{bcolors.ENDC}")
+    if field.type == "multiline":
+        print(f"Enter a file path to load value from file.")
 
     while True:
         prompt = "Enter value"
@@ -315,6 +318,10 @@ def get_field_input(field, current_value: Optional[str] = None):
                 value = current_value
             elif field.default_value is not None:
                 value = field.default_value
+        elif os.path.exists(value):
+            with open(value, "r") as fh:
+                value = fh.read()
+                fh.close()
         if len(valid_values) > 0 and value not in valid_values:
             print(f"{bcolors.FAIL}{value} is not a valid value.{bcolors.ENDC}")
             continue
