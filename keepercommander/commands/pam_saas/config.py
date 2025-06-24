@@ -121,7 +121,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
         req_field = []
         opt_field = []
         for field in plugin.fields:
-            if field.required is True:
+            if field.required:
                 req_field.append(f"   * {bcolors.FAIL}Required{bcolors.ENDC}: {field.label} - "
                                  f"{field.desc}")
             else:
@@ -151,37 +151,27 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
             )
         ]
 
-        # Do require first
-        for item in plugin.fields:
-            if not item.required:
-                continue
-            print("")
-            value = get_field_input(item)
-            if value is not None:
-                field_args = {
-                    "field_type": "secret" if item.type == "secret" else "text",
-                    "field_label": item.label,
-                    "field_value": value
-                }
-                record_field = vault.TypedField.new_field(**field_args)
-                record_field.required = True
-                custom_fields.append(record_field)
+        for is_required in [True, False]:
+            for item in plugin.fields:
+                if item.required is is_required:
+                    print("")
+                    value = get_field_input(item)
+                    if value is not None:
+                        field_type = item.type
+                        if field_type in ["url", "int", "number", "bool", "enum"]:
+                            field_type = "text"
 
-        # Do optional
-        for item in plugin.fields:
-            if item.required:
-                continue
-            print("")
-            value = get_field_input(item)
-            if value is not None:
-                field_args = {
-                    "field_type": "secret" if item.type == "secret" else "text",
-                    "field_label": item.label,
-                    "field_value": value
-                }
-                record_field = vault.TypedField.new_field(**field_args)
-                record_field.required = False
-                custom_fields.append(record_field)
+                        field_args = {
+                            "field_type": field_type,
+                            "field_label": item.label,
+                            "field_value": value
+                        }
+                        record_field = vault.TypedField.new_field(**field_args)
+                        # if item.is_secret:
+                        #    record_field.privacyScreen = True
+
+                        record_field.required = True
+                        custom_fields.append(record_field)
 
         print("")
         while True:
@@ -321,10 +311,10 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
 
             plugin = plugins[use_plugin]
 
-            if do_info is True:
+            if do_info:
                 self._show_plugin_info(plugin=plugin)
 
-            elif do_create is True:
+            elif do_create:
 
                 shared_folders = gateway_context.get_shared_folders(params)
                 if shared_folder_uid is None:
