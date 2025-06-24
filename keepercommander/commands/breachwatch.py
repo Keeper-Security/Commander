@@ -54,18 +54,18 @@ def register_commands(commands):
 
 def register_command_info(aliases, command_info):
     aliases['bw'] = 'breachwatch'
-    command_info['breachwatch'] = 'BreachWatch.'
+    command_info['breachwatch'] = 'Manager vault scan results or perform a one-time check'
 
 
 class BreachWatchCommand(GroupCommand):
     def __init__(self):
         super(BreachWatchCommand, self).__init__()
         self.register_command('list', BreachWatchListCommand(), 'Displays a list of breached passwords.')
-        self.register_command('ignore', BreachWatchIgnoreCommand(), 'Ignores breached passwords.')
+        self.register_command('ignore', BreachWatchIgnoreCommand(), 'Ignores a record marked as a breached password.')
         self.register_command('password', BreachWatchPasswordCommand(),
-                              'Check a password against our database of breached accounts.')
-        self.register_command('scan', BreachWatchScanCommand(), 'Scan vault passwords.')
-        report_desc = 'Run report on BreachWatch scan results across all vaults (must be an admin).'
+                              'Performs a quick check of a password against the BreachWatch database.')
+        self.register_command('scan', BreachWatchScanCommand(), 'Generate enterprise security audit data for records not previously scanned.')
+        report_desc = 'Run report on BreachWatch audit data across all enterprise vaults (must be an admin).'
         self.register_command('report', BreachWatchReportCommand(), report_desc)
 
         self.default_verb = 'list'
@@ -73,7 +73,7 @@ class BreachWatchCommand(GroupCommand):
     def validate(self, params):  # type: (KeeperParams) -> None
         if not params.breach_watch and not params.msp_tree_key:
             raise CommandError('breachwatch',
-                               'BreachWatch is not active. Please visit the Web Vault at https://keepersecurity.com/vault')
+                               'BreachWatch is not active. Please contact Keeper Support or visit the Web Vault at https://keepersecurity.com/vault')
 
 
 class BreachWatchListCommand(Command):
@@ -105,9 +105,8 @@ class BreachWatchListCommand(Command):
 
         has_records_to_scan = any(params.breach_watch.get_records_to_scan(params))
         if has_records_to_scan:
-            logging.info('Some passwords in your vault has not been scanned.\n'
-                         'Use "breachwatch scan" command to scan your passwords against our database '
-                         'of breached accounts on the Dark Web.')
+            logging.info('Some passwords in your vault are missing security audit data.\n'
+                         'Use "breachwatch scan" command to report security audit data for any unscanned passwords')
         return report_data
 
 class BreachWatchPasswordCommand(Command):
@@ -201,7 +200,7 @@ class BreachWatchScanCommand(Command):
             if euid_to_delete:
                 params.breach_watch.delete_euids(params, euid_to_delete)
         if not kwargs.get('suppress_no_op') or record_passwords:
-            logging.info(f'Scanned {len(record_passwords)} passwords.')
+            logging.info(f'Reported security audit data for {len(record_passwords)} records.')
             if record_passwords:
                 api.sync_down(params)
 

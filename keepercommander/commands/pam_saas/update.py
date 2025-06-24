@@ -4,7 +4,7 @@ import logging
 import traceback
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ...display import bcolors
-from ... import api, vault, vault_extensions, attachment, record_management
+from ... import api, vault, vault_extensions, attachment, record_management, utils
 from . import (get_plugins_map, make_script_signature, SaasCatalog, get_field_input, get_record_field_value,
                set_record_field_value)
 from tempfile import TemporaryDirectory
@@ -55,17 +55,24 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
         if plugin.type != "catalog":
             raise ValueError("Cannot download script for non-catalog plugin.")
 
+        if not plugin.file:
+            raise ValueError("Plugin does not have a file URL.")
+
+        if not plugin.file_name:
+            raise ValueError("Plugin does not have a file name.")
+
         print("  * downloading updated plugin script")
-        res = requests.get(plugin.file)
+        res = utils.ssl_aware_get(plugin.file)
         if res.ok is False:
             raise ValueError("Could download updated script from GitHub")
         plugin_code_bytes = res.content
 
         new_script_sig = make_script_signature(plugin_code_bytes=plugin_code_bytes)
 
-        logging.debug(f"downloaded {new_script_sig} vs catalog {plugin.file_sig}")
-        if new_script_sig != plugin.file_sig:
-            raise ValueError("The plugin signature in catalog does not match what was downloaded.")
+        if plugin.file_sig:
+            logging.debug(f"downloaded {new_script_sig} vs catalog {plugin.file_sig}")
+            if new_script_sig != plugin.file_sig:
+                raise ValueError("The plugin signature in catalog does not match what was downloaded.")
 
         with TemporaryDirectory() as temp_dir:
             temp_file = os.path.join(temp_dir, plugin.file_name)
@@ -185,7 +192,11 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
 
             for atta in attachments:
                 with TemporaryDirectory() as temp_dir:
-                    temp_file = str(os.path.join(temp_dir, plugin.file_name))
+                    if not plugin.file_name:
+                        logging.debug("plugin does not have a file name, using default")
+                        temp_file = str(os.path.join(temp_dir, f"{plugin.name}_script.py"))
+                    else:
+                        temp_file = str(os.path.join(temp_dir, plugin.file_name))
                     logging.debug(f"download to {temp_file}")
 
                     # download_to_file prints to the screen, we don't want that.
@@ -201,8 +212,15 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
                         fh.close()
 
                     attach_file_sig = make_script_signature(plugin_code_bytes=plugin_code_bytes)
-                logging.debug(f"attached {attach_file_sig} vs catalog {plugin.file_sig}")
-                if attach_file_sig != plugin.file_sig:
+                
+                if plugin.file_sig:
+                    logging.debug(f"attached {attach_file_sig} vs catalog {plugin.file_sig}")
+                    sig_matches = attach_file_sig == plugin.file_sig
+                else:
+                    logging.debug("plugin does not have a file signature, skipping verification")
+                    sig_matches = True
+                
+                if not sig_matches:
                     print(f"  {bcolors.WARNING}* the plugin script have changed.{bcolors.ENDC}")
                     logging.debug("the script has changed, update")
 

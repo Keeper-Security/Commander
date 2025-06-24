@@ -32,7 +32,7 @@ class SqliteEntityStorage(sqlite_dao.SqliteStorage, IEntityStorage):
         for value in pk_values:
             yield self.get_entity(value)
 
-    def get_all(self):
+    def get_all_entities(self):
         for entity in self.select_all():
             yield entity
 
@@ -97,6 +97,11 @@ class SqliteLinkStorage(sqlite_dao.SqliteStorage, ILinkStorage):
     def get_all_links(self):
         for link in self.select_all():
             yield link
+
+    def get_link(self, subject_uid, object_uid):
+        for link in self.select_by_filter(self.schema.primary_key, (subject_uid, object_uid)):
+            return link
+        return None
 
 
 class SqliteRecordStorage(sqlite_dao.SqliteStorage, IRecordStorage):

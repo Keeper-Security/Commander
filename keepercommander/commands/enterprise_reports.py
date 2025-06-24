@@ -62,7 +62,7 @@ def get_feature_enforcements_from_constants():
     }
 
 
-ext_shares_report_desc = 'Run an external shares report.'
+ext_shares_report_desc = 'Run an external record sharing report'
 external_share_report_parser = argparse.ArgumentParser(prog='external-shares-report', description=ext_shares_report_desc,
                                                        parents=[base.report_output_parser])
 external_share_report_parser.add_argument('-a', '--action', action='store', choices=['remove', 'none'], default='none',
@@ -73,7 +73,7 @@ external_share_report_parser.add_argument('-t', '--share-type', action='store', 
 external_share_report_parser.add_argument('-f', '--force', action='store_true', help='apply action w/o confirmation')
 external_share_report_parser.add_argument('-r', '--refresh-data', action='store_true', help='retrieve fresh data')
 
-license_consumption_report_desc = 'Generate a report of users consuming feature licenses based on role enforcement policies.'
+license_consumption_report_desc = 'Report of users consuming feature licenses based on policy'
 license_consumption_report_parser = argparse.ArgumentParser(prog='license-consumption-report', description=license_consumption_report_desc,
                                                            parents=[base.report_output_parser])
 license_consumption_report_parser.add_argument('--feature', dest='feature', action='store', 
@@ -95,7 +95,7 @@ class ExternalSharesReportCommand(enterprise_common.EnterpriseCommand):
 
     def get_sox_data(self, params, refresh_data):
         if not self.sox_data or refresh_data:
-            from keepercommander.sox import get_compliance_data
+            from ..sox import get_compliance_data
             node_id = params.enterprise['nodes'][0].get('node_id', 0)
             enterprise_id = node_id >> 32
             now_ts = datetime.datetime.now().timestamp()

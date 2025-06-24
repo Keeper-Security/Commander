@@ -19,6 +19,8 @@ import os
 import re
 import shlex
 import sys
+import ssl
+import platform
 
 from pathlib import Path
 from typing import Optional
@@ -96,7 +98,7 @@ def get_params_from_config(config_filename=None, launched_with_shortcut=False): 
 def usage(m):
     print(m)
     parser.print_help()
-    cli.display_command_help(show_enterprise=True, show_shell=True)
+    cli.display_command_help(show_enterprise=True, show_shell=True, show_legacy=True)
     sys.exit(1)
 
 
@@ -129,15 +131,90 @@ def handle_exceptions(exc_type, exc_value, exc_traceback):
     sys.exit(-1)
 
 
+def get_ssl_cert_file():
+    """Get SSL certificate file path, preferring system CA store for corporate environments like Zscaler"""
+    
+    # Allow user to override via environment variable
+    user_cert_file = os.getenv('KEEPER_SSL_CERT_FILE')
+    if user_cert_file:
+        if user_cert_file.lower() == 'system':
+            # User explicitly wants system certs
+            pass  # Continue with system detection below
+        elif user_cert_file.lower() == 'certifi':
+            # User explicitly wants certifi
+            return certifi.where()
+        elif user_cert_file.lower() == 'none' or user_cert_file.lower() == 'false':
+            # User wants to disable SSL verification (not recommended)
+            return None
+        elif os.path.exists(user_cert_file):
+            # User provided specific cert file
+            return user_cert_file
+        else:
+            logging.warning(f"SSL cert file specified in KEEPER_SSL_CERT_FILE not found: {user_cert_file}")
+    
+    # Try to use system CA store first for corporate environments
+    try:
+        # On macOS, try Homebrew certificates first (better for corporate environments like Zscaler)
+        if platform.system() == 'Darwin':
+            system_ca_paths = [
+                '/opt/homebrew/etc/ca-certificates/cert.pem',  # Homebrew CA bundle (best for Zscaler)
+                '/usr/local/etc/ssl/cert.pem',  # Homebrew SSL (older location)
+                '/etc/ssl/cert.pem',  # macOS system CA bundle
+            ]
+            for ca_path in system_ca_paths:
+                if os.path.exists(ca_path):
+                    return ca_path
+        
+        # On Linux/Unix systems
+        elif platform.system() == 'Linux':
+            system_ca_paths = [
+                '/etc/ssl/certs/ca-certificates.crt',  # Debian/Ubuntu
+                '/etc/pki/tls/certs/ca-bundle.crt',    # RHEL/CentOS
+                '/etc/ssl/ca-bundle.pem',              # OpenSUSE
+                '/etc/ssl/cert.pem',                   # Generic
+            ]
+            for ca_path in system_ca_paths:
+                if os.path.exists(ca_path):
+                    return ca_path
+        
+        # Try to get default SSL context locations
+        try:
+            default_locations = ssl.get_default_verify_paths()
+            if default_locations.cafile and os.path.exists(default_locations.cafile):
+                return default_locations.cafile
+            if default_locations.capath and os.path.exists(default_locations.capath):
+                return default_locations.capath
+        except:
+            pass
+            
+    except Exception:
+        pass
+    
+    # Fall back to certifi if system CA not available
+    return certifi.where()
+
+
 def main(from_package=False):
-    if sys.platform == 'win32' and sys.version_info >= (3, 7):
+    if sys.platform == 'win32':
         try:
             sys.stdout.reconfigure(encoding='utf-8')
             sys.stderr.reconfigure(encoding='utf-8')
         except:
             pass
-    os.environ['SSL_CERT_FILE'] = certifi.where()
-    logging.basicConfig(format='%(message)s')
+    logging.basicConfig(format='%(message)s', force=True)
+    logger = logging.getLogger()
+    if logger:
+        logger.name = 'keepercommander'
+
+    # Use system CA certificates when available (supports Zscaler), fallback to certifi
+    ssl_cert_file = get_ssl_cert_file()
+    if ssl_cert_file:
+        os.environ['SSL_CERT_FILE'] = ssl_cert_file
+    else:
+        # User explicitly disabled SSL verification
+        logging.warning("Warning: SSL certificate verification has been disabled. This is not recommended for production use.")
+        if 'SSL_CERT_FILE' in os.environ:
+            del os.environ['SSL_CERT_FILE']
 
     errno = 0
 
@@ -146,6 +223,45 @@ def main(from_package=False):
 
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
     opts, flags = parser.parse_known_args(sys.argv[1:])
+    
+    # Store the original command arguments for proper reconstruction
+    if opts.command:
+        # Find where the command starts in the original args and take everything after it
+        try:
+            cmd_index = sys.argv[1:].index(opts.command)
+            original_args_after_command = sys.argv[1:][cmd_index+1:]
+            
+            # Filter out arguments that were consumed by the main parser
+            filtered_args = []
+            skip_next = False
+            for arg in original_args_after_command:
+                if skip_next:
+                    skip_next = False
+                    continue
+                    
+                # Skip arguments that were handled by main parser
+                main_parser_args = ['--config', '--server', '--user', '--password', '--version', '--debug', 
+                                  '--batch-mode', '--launched-with-shortcut', '--proxy', '--unmask-all', '--fail-on-throttle',
+                                  '-ks', '-ku', '-kp', '-lwsc']
+                
+                is_main_parser_arg = False
+                for main_arg in main_parser_args:
+                    if arg.startswith(main_arg + '=') or arg == main_arg:
+                        is_main_parser_arg = True
+                        if arg == main_arg:
+                            skip_next = True  # Skip the next argument too (the argument value)
+                        break
+                
+                if is_main_parser_arg:
+                    continue
+                    
+                filtered_args.append(arg)
+            
+            original_args_after_command = filtered_args
+        except ValueError:
+            original_args_after_command = []
+    else:
+        original_args_after_command = []
     if opts.launched_with_shortcut:
         os.chdir(Path.home())
 
@@ -158,6 +274,12 @@ def main(from_package=False):
         params.debug = opts.debug
 
     logging.getLogger().setLevel(logging.WARNING if params.batch_mode else logging.DEBUG if opts.debug else logging.INFO)
+
+    # Log SSL certificate selection in debug mode (after logging is configured)
+    if opts.debug:
+        ssl_cert_from_env = os.environ.get('SSL_CERT_FILE')
+        if ssl_cert_from_env:
+            logging.debug(f"Using SSL certificate file: {ssl_cert_from_env}")
 
     if opts.proxy:
         params.proxy = opts.proxy
@@ -210,11 +332,10 @@ def main(from_package=False):
             params.commands.append('q')
             params.batch_mode = True
         else:
-            flags = ' '.join([shlex.quote(x) for x in flags]) if flags is not None else ''
-            options = ' '.join([shlex.quote(x) for x in opts.options]) if opts.options is not None else ''
             if opts.command:
-                options = ' -- ' + options if options.startswith('-') else options
-                command = ' '.join([opts.command or '', options, flags])
+                # Use the filtered original argument order to preserve proper flag/value pairing
+                options = ' '.join([shlex.quote(x) for x in original_args_after_command]) if original_args_after_command else ''
+                command = ' '.join([opts.command or '', options]).strip()
                 params.commands.append(command)
             params.commands.append('q')
             params.batch_mode = True

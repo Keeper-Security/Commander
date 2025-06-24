@@ -79,7 +79,9 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
     @staticmethod
     def _show_list(plugins: dict[str, SaasCatalog]):
 
-        sorted_catalog = dict(sorted(plugins.items(), key=lambda i: i[1].name))
+        sorted_catalog = {}  # type: dict[str, SaasCatalog]
+        if plugins:
+            sorted_catalog = dict(sorted(plugins.items(), key=lambda i: i[1].name))
 
         sort_results = {
             "custom": {"title": "Custom", "using": [], "not_using": [], "color": bcolors.WARNING},
@@ -89,7 +91,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
 
         print("")
         print(f"{bcolors.HEADER}Available SaaS Plugins{bcolors.ENDC}")
-        for key, plugin in sorted_catalog.items():  # type: SaasCatalog
+        for _, plugin in sorted_catalog.items():
             plugin_type = plugin.type
             status = "using" if len(plugin.used_by) is True else "not_using"
             sort_results[plugin_type][status].append(plugin)
@@ -99,7 +101,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
                 color = sort_results[plugin_type]["color"]
                 title = sort_results[plugin_type]["title"]
                 for plugin in sort_results[plugin_type][status]:
-                    summary = plugin.summary
+                    summary = plugin.summary or "No description available"
                     name = plugin.name
                     desc = f" ({color}{title}"
                     if status == "using":
@@ -113,15 +115,19 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
         print("")
         print(f"{bcolors.HEADER}{plugin.name}{bcolors.ENDC}")
         print(f"{bcolors.BOLD}  Type{bcolors.ENDC}: {plugin.type}")
-        print(f"{bcolors.BOLD}  Author{bcolors.ENDC}: {plugin.author} ({plugin.email})")
-        print(f"{bcolors.BOLD}  Summary{bcolors.ENDC}: {plugin.summary}")
-        print(f"{bcolors.BOLD}  Documents{bcolors.ENDC}: {plugin.readme}")
+        if plugin.author and plugin.email:
+            print(f"{bcolors.BOLD}  Author{bcolors.ENDC}: {plugin.author} ({plugin.email})")
+        elif plugin.author:
+            print(f"{bcolors.BOLD}  Author{bcolors.ENDC}: {plugin.author}")
+        print(f"{bcolors.BOLD}  Summary{bcolors.ENDC}: {plugin.summary or 'No description available'}")
+        if plugin.readme:
+            print(f"{bcolors.BOLD}  Documents{bcolors.ENDC}: {plugin.readme}")
         print("")
         print(f"  {bcolors.HEADER}Fields{bcolors.ENDC}")
         req_field = []
         opt_field = []
         for field in plugin.fields:
-            if field.required is True:
+            if field.required:
                 req_field.append(f"   * {bcolors.FAIL}Required{bcolors.ENDC}: {field.label} - "
                                  f"{field.desc}")
             else:
@@ -151,37 +157,27 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
             )
         ]
 
-        # Do require first
-        for item in plugin.fields:
-            if not item.required:
-                continue
-            print("")
-            value = get_field_input(item)
-            if value is not None:
-                field_args = {
-                    "field_type": "secret" if item.type == "secret" else "text",
-                    "field_label": item.label,
-                    "field_value": value
-                }
-                record_field = vault.TypedField.new_field(**field_args)
-                record_field.required = True
-                custom_fields.append(record_field)
+        for is_required in [True, False]:
+            for item in plugin.fields:
+                if item.required is is_required:
+                    print("")
+                    value = get_field_input(item)
+                    if value is not None:
+                        field_type = item.type
+                        if field_type in ["url", "int", "number", "bool", "enum"]:
+                            field_type = "text"
 
-        # Do optional
-        for item in plugin.fields:
-            if item.required:
-                continue
-            print("")
-            value = get_field_input(item)
-            if value is not None:
-                field_args = {
-                    "field_type": "secret" if item.type == "secret" else "text",
-                    "field_label": item.label,
-                    "field_value": value
-                }
-                record_field = vault.TypedField.new_field(**field_args)
-                record_field.required = False
-                custom_fields.append(record_field)
+                        field_args = {
+                            "field_type": field_type,
+                            "field_label": item.label,
+                            "field_value": value
+                        }
+                        record_field = vault.TypedField.new_field(**field_args)
+                        # if item.is_secret:
+                        #    record_field.privacyScreen = True
+
+                        record_field.required = True
+                        custom_fields.append(record_field)
 
         print("")
         while True:
@@ -248,7 +244,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
         params.sync_data = True
 
         # If this is not a built-in or custom script, we need to attach it to the config record.
-        if plugin_code_bytes is not None:
+        if plugin_code_bytes is not None and plugin.file_name:
 
             with TemporaryDirectory() as temp_dir:
                 sync_down(params)
@@ -266,9 +262,10 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
                 task.title = f"{plugin.name} Script"
                 task.mime_type = "text/x-python"
 
-                script_signature = make_script_signature(plugin_code_bytes)
-                if script_signature != plugin.file_sig:
-                    raise ValueError("The plugin signature in catalog does not match what was downloaded.")
+                if plugin.file_sig:
+                    script_signature = make_script_signature(plugin_code_bytes)
+                    if script_signature != plugin.file_sig:
+                        raise ValueError("The plugin signature in catalog does not match what was downloaded.")
 
                 attachment.upload_attachments(params, existing_record, [task])
 
@@ -321,10 +318,10 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
 
             plugin = plugins[use_plugin]
 
-            if do_info is True:
+            if do_info:
                 self._show_plugin_info(plugin=plugin)
 
-            elif do_create is True:
+            elif do_create:
 
                 shared_folders = gateway_context.get_shared_folders(params)
                 if shared_folder_uid is None:
@@ -341,8 +338,8 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
 
                 # For catalog plugins, we need to download the python file from GitHub.
                 plugin_code_bytes = None
-                if plugin.type == "catalog":
-                    res = requests.get(plugin.file)
+                if plugin.type == "catalog" and plugin.file:
+                    res = utils.ssl_aware_get(plugin.file)
                     if res.ok is False:
                         print("")
                         print(f"{bcolors.FAIL}Could download the script from GitHub.{bcolors.ENDC}")

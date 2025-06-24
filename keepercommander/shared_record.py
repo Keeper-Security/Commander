@@ -1,10 +1,10 @@
 from enum import Enum
 from typing import Dict, List
 
-from keepercommander import api, utils
-from keepercommander.proto import enterprise_pb2
-from keepercommander.record import Record
-from keepercommander.subfolder import find_folders, get_folder_path
+from . import api, utils
+from .proto import enterprise_pb2
+from .record import Record
+from .subfolder import find_folders, get_folder_path
 
 
 def get_shared_records(params, record_uids, cache_only=False):

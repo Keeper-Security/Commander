@@ -19,7 +19,7 @@ from ..decorators.logging import logger
 
 limiter = Limiter(
     key_func=get_remote_address,
-    default_limits=["10/minute", "100 per hour", "1000/day"],
+    default_limits=["60/minute", "600 per hour", "6000/day"],
     storage_uri="memory://"
 )
     
@@ -81,7 +81,21 @@ def is_ip_in_range(ip, ip_range):
     
 def security_check(fn):
     @wraps(fn)
-    @limiter.limit(lambda: ConfigReader.read_config("rate_limiting")) 
+    def get_multiplied_rate_limit():
+        """Get rate limit with appropriate multiplier based on API version"""
+        from flask import request
+        base_limit = ConfigReader.read_config("rate_limiting")
+        if base_limit:
+            import re
+            match = re.match(r'(\d+)(/\w+)', base_limit)
+            if match:
+                number, unit = match.groups()
+                # v2 API has 4 endpoints sharing the limit, v1 API has only 1
+                multiplier = 1 if request.path.startswith('/api/v1') else 4
+                return f"{int(number) * multiplier}{unit}"
+        return base_limit
+    
+    @limiter.limit(get_multiplied_rate_limit)
     def wrapper(*args, **kwargs):
         client_ip = request.remote_addr
         try:
@@ -90,7 +104,8 @@ def security_check(fn):
             if is_allowed_ip(client_ip, allowed_ips_str, denied_ips_str):
                 return fn(*args, **kwargs)
                 
-            return jsonify({"error": "IP is not allowed to call API service"}), 403
+            return jsonify({"status": "error", "error": "IP is not allowed to call API service"}), 403
         except Exception as e:
-            return jsonify({"error": "Access denied"}), 403
+            logger.error(f"Security check error: {e}")
+            return jsonify({"status": "error", "error": "Access denied"}), 403
     return wrapper

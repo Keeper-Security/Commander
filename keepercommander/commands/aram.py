@@ -34,7 +34,7 @@ import requests
 
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title, report_output_parser
 from .enterprise_common import EnterpriseCommand
-from .helpers import audit_report
+from .helpers import audit_report, reporting
 from .transfer_account import EnterpriseTransferUserCommand
 from .. import api, vault, record_management
 from ..constants import EMAIL_PATTERN
@@ -49,7 +49,7 @@ from ..sox.sox_types import SharedFolder
 from ..sox.storage_types import StorageRecordAging
 from ..subfolder import get_contained_record_uids
 
-audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run an audit trail report.', parents=[report_output_parser])
+audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run an audit trail report', parents=[report_output_parser])
 audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
 audit_report_parser.add_argument('--report-type', dest='report_type', action='store', choices=['raw', 'dim', 'hour', 'day', 'week', 'month', 'span'],
                                  help='report type. (Default value: raw)', default='raw')
@@ -89,13 +89,15 @@ help_text = 'allow retrieval of additional record-detail data if not in cache'
 audit_report_parser.add_argument('--max-record-details', dest='max_record_details', action='store_true', help=help_text)
 # Ignored / superfluous flag (kept for backward-compatibility)
 audit_report_parser.add_argument('--minimal', action='store_true', help=argparse.SUPPRESS)
-search_help = 'limit results to rows that contain the specified string'
-audit_report_parser.add_argument('pattern', nargs='?', type=str, help=search_help)
+audit_report_parser.add_argument('--regex', action='store_true', help='use regular expressions as row filter')
+search_help = ('limit results to rows that contain the specified string(s)/pattern(s). A union of keywords'
+               ' (using OR to combine the criteria) is used to filter rows when multiple keywords are specified')
+audit_report_parser.add_argument('pattern', nargs='*', type=str, help=search_help)
 
 audit_report_parser.error = raise_parse_exception
 audit_report_parser.exit = suppress_exit
 
-audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export the enterprise audit log.')
+audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export the enterprise audit log')
 audit_log_parser.add_argument('--anonymize', dest='anonymize', action='store_true',
                               help='Anonymizes audit log by replacing email and user name with corresponding enterprise user id. '
                                    'If user was removed or if user\'s email was changed then the audit report will show that particular entry as deleted user.')
@@ -114,7 +116,7 @@ audit_log_parser.error = raise_parse_exception
 audit_log_parser.exit = suppress_exit
 
 
-aging_report_parser = argparse.ArgumentParser(prog='aging-report', description='Run an aging report.', parents=[report_output_parser])
+aging_report_parser = argparse.ArgumentParser(prog='aging-report', description='Run a password aging report', parents=[report_output_parser])
 aging_report_parser.add_argument('-r', '--rebuild', dest='rebuild', action='store_true',
                                  help='Rebuild record database')
 aging_report_parser.add_argument('--delete', dest='delete', action='store_true',
@@ -137,8 +139,8 @@ aging_report_parser.add_argument('--in-shared-folder', action='store_true', help
 aging_report_parser.error = raise_parse_exception
 aging_report_parser.exit = suppress_exit
 
-action_report_parser = argparse.ArgumentParser(prog='action-report', description='Run a user action report.', parents=[report_output_parser])
-action_report_target_statuses = ['no-logon', 'no-update', 'locked', 'invited', 'no-security-question-update', 'blocked']
+action_report_parser = argparse.ArgumentParser(prog='action-report', description='Run an action based on user activity', parents=[report_output_parser])
+action_report_target_statuses = ['no-logon', 'no-update', 'locked', 'invited', 'no-security-question-update']
 action_report_parser.add_argument('--target', '-t', dest='target_user_status', action='store',
                                   choices=action_report_target_statuses, default='no-logon',
                                   help='user status to report on')
@@ -1261,7 +1263,23 @@ class AuditReportCommand(Command):
     def execute(self, params, **kwargs):
         load_syslog_templates(params)
 
-        if kwargs.get('syntax_help') or not kwargs['report_type']:
+        def normalize_param(param_value):
+            """Convert single values to lists to maintain consistent processing"""
+            if param_value is None:
+                return None
+            if isinstance(param_value, str):
+                return [param_value]
+            elif isinstance(param_value, list):
+                return param_value
+            else:
+                return [param_value]
+
+        list_params = ['event_type', 'username', 'to_username', 'record_uid', 'shared_folder_uid', 'ip_address', 'aggregate']
+        for param in list_params:
+            if param in kwargs and kwargs[param] is not None:
+                kwargs[param] = normalize_param(kwargs[param])
+
+        if kwargs.get('syntax_help'):
             logging.info(audit_report_description)
             if kwargs.get('syntax_help'):
                 events = AuditReportCommand.load_audit_dimension(params, 'audit_event_type')
@@ -1277,13 +1295,8 @@ class AuditReportCommand(Command):
             has_aram = any((True for x in licenses[0].get('add_ons', [])
                             if x.get('name') == 'enterprise_audit_and_reporting'))
 
-        def filter_rows(rows, search_pattern):
-            if not search_pattern:
-                return rows
-            else:
-                return [r for r in rows if any(1 for f in r if f and str(f).lower().find(search_pattern) >= 0)]
-
-        pattern = (kwargs.get('pattern') or '').lower()
+        patterns = kwargs.get('pattern', '')
+        use_regex = kwargs.get('regex', False)
         report_type = kwargs.get('report_type', 'raw')
         if report_type == 'dim':
             columns = kwargs['columns']
@@ -1310,7 +1323,7 @@ class AuditReportCommand(Command):
                             table.append([row.get(x) for x in fields])
                         else:
                             table.append([row])
-                    table = filter_rows(table, pattern)
+                    table = reporting.filter_rows(table, patterns, use_regex)
                     return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
             return
@@ -1589,7 +1602,7 @@ class AuditReportCommand(Command):
                         reqs.append(rq)
                 if reqs:
                     rss = api.execute_batch(params, reqs)
-            table = filter_rows(table, pattern)
+            table = reporting.filter_rows(table, patterns, use_regex)
             return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
         else:
             if aggregates:
@@ -1613,7 +1626,7 @@ class AuditReportCommand(Command):
                         else:
                             row.append('')
                     table.append(row)
-            table = filter_rows(table, pattern)
+            table = reporting.filter_rows(table, patterns, use_regex)
             return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
     @staticmethod
@@ -2049,7 +2062,7 @@ class ActionReportCommand(EnterpriseCommand):
                                  f'value must be one of {actions_allowed})'
             is_valid_action = action in actions_allowed
 
-            from keepercommander.commands.enterprise import EnterpriseUserCommand
+            from .enterprise import EnterpriseUserCommand
             exec_fn = EnterpriseUserCommand().execute
             emails = [u.get('username') for u in targets]
             action_handlers = {
@@ -2087,7 +2100,7 @@ class ActionReportCommand(EnterpriseCommand):
             return data, headers
 
         users = params.enterprise['users']
-        from keepercommander.commands.enterprise import EnterpriseInfoCommand
+        from .enterprise import EnterpriseInfoCommand
         ei_cmd = EnterpriseInfoCommand()
         columns = ['status', 'transfer_status']
         cmd_output = ei_cmd.execute(params, users=True, quiet=True, format='json', columns=','.join(columns))
@@ -2098,8 +2111,6 @@ class ActionReportCommand(EnterpriseCommand):
         locked = [u for u in users if u.get('username') in emails_locked]
         emails_invited = {c.get('email') for c in candidates if c.get('status', '').lower() == 'invited'}
         invited = [u for u in users if u.get('username') in emails_invited]
-        emails_blocked = {c.get('email') for c in candidates if c.get('transfer_status', '').lower() == 'blocked'}
-        blocked = [u for u in users if u.get('username') in emails_blocked]
 
         target_status = kwargs.get('target_user_status', 'no-logon')
         days = kwargs.get('days_since')
@@ -2111,8 +2122,7 @@ class ActionReportCommand(EnterpriseCommand):
             'no-update': [active, days, ['record_add', 'record_update']],
             'locked': [locked, days, ['lock_user'], 'to_username'],
             'invited': [invited, days, ['send_invitation', 'auto_invite_user'], 'email'],
-            'no-security-question-update': [active, days, ['change_security_question']],
-            'blocked': [blocked, days, ['accept_transfer']]
+            'no-security-question-update': [active, days, ['change_security_question']]
         }
         args = args_by_status.get(target_status)
 
@@ -2132,7 +2142,7 @@ class ActionReportCommand(EnterpriseCommand):
 
         # Sync local enterprise data if changes were made
         if admin_action != 'none' and not dry_run:
-            from keepercommander.commands.enterprise import GetEnterpriseDataCommand
+            from .enterprise import GetEnterpriseDataCommand
             get_enterprise_data_cmd = GetEnterpriseDataCommand()
             get_enterprise_data_cmd.execute(params)
 

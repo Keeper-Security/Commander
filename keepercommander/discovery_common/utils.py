@@ -2,11 +2,11 @@ from __future__ import annotations
 import os
 from .constants import PAM_USER
 from .types import DiscoveryObject
-from keepercommander.keeper_dag.vertex import DAGVertex
+from ..keeper_dag.vertex import DAGVertex
 from typing import List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from keepercommander.keeper_dag.dag import DAG
+    from ..keeper_dag.dag import DAG
 
 
 def value_to_boolean(value):
@@ -38,14 +38,14 @@ def get_connection(**kwargs):
     ksm = kwargs.get("ksm")
     params = kwargs.get("params")
     if value_to_boolean(os.environ.get("USE_LOCAL_DAG")) is True:
-        from keepercommander.keeper_dag.connection.local import Connection
+        from ..keeper_dag.connection.local import Connection
         conn = Connection()
     else:
         if ksm is not None:
-            from keepercommander.keeper_dag.connection.ksm import Connection
+            from ..keeper_dag.connection.ksm import Connection
             conn = Connection(config=ksm.storage_config)
         elif params is not None:
-            from keepercommander.keeper_dag.connection.commander import Connection
+            from ..keeper_dag.connection.commander import Connection
             conn = Connection(params=params)
         else:
             raise ValueError("Must pass 'ksm' for KSK, 'params' for Commander. Found neither.")
@@ -79,18 +79,22 @@ def user_check_list(user: str, name: Optional[str] = None, source: Optional[str]
         name = name.lower()
         check_list += [name, f".\\{name}"]
     if source is not None:
-        check_list.append(f"{source.lower()}\\{user}")
-        domain_parts = source.split(".")
-        if len(domain_parts) > 1:
-            check_list.append(f"{domain_parts[0]}\\{user}")
+        check_list.append(f"{source.lower()[:15]}\\{user}")
+        check_list.append(f"{user}@{source.lower()}")
+        netbios_parts = source.split(".")
+        if len(netbios_parts) > 1:
+            check_list.append(f"{netbios_parts[0][:15]}\\{user}")
+            check_list.append(f"{user}@{netbios_parts[0]}")
     if domain is not None:
         domain = domain.lower()
-        check_list.append(f"{domain}\\{user}")
+        check_list.append(f"{domain}[:15]\\{user}")
+        check_list.append(f"{user}@{domain}")
         domain_parts = domain.split(".")
         if len(domain_parts) > 1:
-            check_list.append(f"{domain_parts[0]}\\{user}")
+            check_list.append(f"{domain_parts[0][:15]}\\{user}")
+            check_list.append(f"\\{user}@{domain_parts[0]}")
 
-    return check_list
+    return list(set(check_list))
 
 
 def user_in_lookup(user: str, lookup: dict, name: Optional[str] = None, source: Optional[str] = None) -> bool:
@@ -121,3 +125,7 @@ def find_user_vertex(graph: DAG, user: str, domain: Optional[str] = None) -> Opt
             return user_vertex
 
     return None
+
+
+def make_agent(text) -> str:
+    return f"{text}/{__version__}"

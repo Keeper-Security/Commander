@@ -9,19 +9,9 @@
 # Contact: ops@keepersecurity.com
 #
 
-import json
-import os
-import sys
-from flask import Flask, jsonify, request
-from html import escape
-from keepercommander import api, utils
-from keepercommander.__main__ import get_params_from_config
-from keepercommander.service.app import create_app
-from keepercommander.service.config.service_config import ServiceConfig
-from keepercommander.service.core.process_info import ProcessInfo
-from keepercommander.service.core.service_manager import ServiceManager
-from keepercommander.service.decorators.unified import unified_api_decorator
-from keepercommander.service.util.command_util import CommandExecutor
+from ...service.app import create_app
+from ...service.config.service_config import ServiceConfig
+from ...service.core.service_manager import ServiceManager
 
 flask_app = create_app()
 
@@ -29,6 +19,16 @@ flask_app = create_app()
 if __name__ == '__main__':
     service_config = ServiceConfig()
     config_data = service_config.load_config()
+    
+    try:
+        from ...service.core.globals import ensure_params_loaded
+        print("Pre-loading Keeper parameters for background mode...")
+        ensure_params_loaded()
+        print("Keeper parameters loaded successfully")
+    except Exception as e:
+        print(f"Warning: Failed to pre-load parameters during startup: {e}")
+        print("Parameters will be loaded on first API call if needed")
+    
     ssl_context = None
     
     if not (port := config_data.get("port")):

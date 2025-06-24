@@ -31,7 +31,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
-from keepercommander.attachment import FileUploadTask
+from ..attachment import FileUploadTask
 
 from . import aram, audit_alerts, security_audit
 from . import compliance
@@ -91,6 +91,8 @@ def register_command_info(aliases, command_info):
               user_report_parser]:
         command_info[p.prog] = p.description
 
+    command_info['audit-alert'] = 'Manage audit alerts and notifications'
+
     compliance.register_command_info(aliases, command_info)
     security_audit.register_command_info(aliases, command_info)
 
@@ -107,7 +109,7 @@ enterprise_data_parser = argparse.ArgumentParser(prog='enterprise-down',
 enterprise_data_parser.add_argument('-f', '--force', dest='force', action='store_true', help='full data sync')
 
 enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info', parents=[report_output_parser],
-                                                 description='Display a tree structure of your enterprise.',
+                                                 description='Display a tree structure of the enterprise tenant',
                                                  formatter_class=RawTextHelpFormatter)
 enterprise_info_parser.add_argument('-n', '--nodes', dest='nodes', action='store_true', help='print node tree')
 enterprise_info_parser.add_argument('-u', '--users', dest='users', action='store_true', help='print user list')
@@ -127,7 +129,7 @@ enterprise_info_parser.add_argument('pattern', nargs='?', type=str,
                                     help='search pattern. applicable to users, teams, and roles.')
 
 
-enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node', description='Manage an enterprise node(s).')
+enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node', description='Manage an enterprise node')
 enterprise_node_parser.add_argument('--wipe-out', dest='wipe_out', action='store_true', help='wipe out node content')
 enterprise_node_parser.add_argument('--add', dest='add', action='store_true', help='create node')
 enterprise_node_parser.add_argument('--parent', dest='parent', action='store', help='Parent Node Name or ID')
@@ -143,7 +145,7 @@ enterprise_node_parser.error = raise_parse_exception
 enterprise_node_parser.exit = suppress_exit
 
 
-enterprise_user_parser = argparse.ArgumentParser(prog='enterprise-user', description='Manage an enterprise user(s).')
+enterprise_user_parser = argparse.ArgumentParser(prog='enterprise-user', description='Manage an enterprise user')
 enterprise_user_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_user_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_user_parser.add_argument('--expire', dest='expire', action='store_true', help='expire master password')
@@ -173,7 +175,7 @@ enterprise_user_parser.error = raise_parse_exception
 enterprise_user_parser.exit = suppress_exit
 
 
-enterprise_role_parser = argparse.ArgumentParser(prog='enterprise-role', description='Manage an enterprise role(s).')
+enterprise_role_parser = argparse.ArgumentParser(prog='enterprise-role', description='Manage an enterprise role policy')
 enterprise_role_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_role_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_role_parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'],
@@ -207,7 +209,7 @@ enterprise_role_parser.error = raise_parse_exception
 enterprise_role_parser.exit = suppress_exit
 
 
-enterprise_team_parser = argparse.ArgumentParser(prog='enterprise-team', description='Manage an enterprise team(s).')
+enterprise_team_parser = argparse.ArgumentParser(prog='enterprise-team', description='Manage an enterprise team')
 enterprise_team_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_team_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_team_parser.add_argument('--add', dest='add', action='store_true', help='create team')
@@ -232,7 +234,7 @@ enterprise_team_parser.error = raise_parse_exception
 enterprise_team_parser.exit = suppress_exit
 
 team_approve_parser = argparse.ArgumentParser(prog='team-approve', parents=[report_output_parser],
-                                              description='Enable or disable automated team and user approval.')
+                                              description='Enable or disable automated team and user approvals')
 team_approve_parser.add_argument('--team', dest='team', action='store_true', help='Approve teams only.')
 team_approve_parser.add_argument('--email', dest='user', action='store_true', help='Approve team users only.')
 team_approve_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store',
@@ -306,7 +308,7 @@ _DEFAULT_PASSWORD_COMPLEXITY = """[
 def get_user_status_dict(user):
 
     def lock_text(lock):
-        return 'Locked' if lock == 1 else 'Disabled' if lock == 2 else ''
+        return 'Locked' if lock == 1 else 'Locked by IdP' if lock == 2 else ''
 
     account_status = 'Invited' if user['status'] == 'invited' else 'Active'
 
@@ -314,13 +316,16 @@ def get_user_status_dict(user):
         account_status = lock_text(user['lock'])
 
     acct_transfer_status = ''
+    ta_status = user.get('transfer_acceptance_status') or 0
+    if ta_status == enterprise_pb2.NOT_REQUIRED:
+        acct_transfer_status = 'Not required'
+    elif ta_status == enterprise_pb2.NOT_ACCEPTED:
+        acct_transfer_status = 'Pending transfer'
+    elif ta_status == enterprise_pb2.PARTIALLY_ACCEPTED:
+        acct_transfer_status = 'Partially accepted'
+    elif ta_status == enterprise_pb2.ACCEPTED:
+        acct_transfer_status = 'Transfer accepted'
 
-    if 'account_share_expiration' in user:
-        expire_at = datetime.datetime.fromtimestamp(user['account_share_expiration']/1000.0)
-        if expire_at < datetime.datetime.now():
-            acct_transfer_status = 'Blocked'
-        else:
-            acct_transfer_status = 'Pending Transfer'
     return {
         'acct_status': account_status,
         'acct_transfer_status': acct_transfer_status
@@ -413,7 +418,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     'name': user['data'].get('displayname') or '',
                     'status': user['status'],
                     'lock': user['lock'],
-                    'tfa_enabled': user['tfa_enabled']
+                    'tfa_enabled': user['tfa_enabled'],
+                    'transfer_acceptance_status': user['transfer_acceptance_status']
                 }
                 if 'account_share_expiration' in user:
                     u['account_share_expiration'] = user['account_share_expiration']
@@ -1019,6 +1025,10 @@ class EnterpriseNodeCommand(EnterpriseCommand):
         unmatched_nodes = set()
 
         for node_name in kwargs['node']:
+            if not node_name or not node_name.strip():
+                logging.warning('Empty node name provided. Skipping.')
+                continue
+                
             n = node_lookup.get(node_name)
             if not n:
                 n = node_lookup.get(node_name.lower())
@@ -3462,13 +3472,7 @@ class UserReportCommand(EnterpriseCommand):
         if lock == 1:
             status = 'Locked'
         elif lock == 2:
-            status = 'Disabled'
-        if 'account_share_expiration' in user:
-            expire_at = datetime.datetime.fromtimestamp(user['account_share_expiration']/1000.0)
-            if expire_at < datetime.datetime.now():
-                status = 'Blocked'
-            else:
-                status = 'Pending Transfer'
+            status = 'Locked by IdP'
         return status
 
 

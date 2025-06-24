@@ -13,16 +13,17 @@ import io, html
 from pathlib import Path
 import sys
 import json
+import logging
 from typing import Any, Tuple, Optional
-from keepercommander import cli, utils
-from keepercommander.__main__ import get_params_from_config
-from keepercommander.service.config.service_config import ServiceConfig
-from .exceptions import CommandExecutionError
 from .config_reader import ConfigReader
-from ..core.globals import get_current_params
+from .exceptions import CommandExecutionError
 from .parse_keeper_response import parse_keeper_response
-from keepercommander.crypto import encrypt_aes_v2
-from ..decorators.logging import logger, debug_decorator
+from ..core.globals import get_current_params
+from ..decorators.logging import logger, debug_decorator, sanitize_debug_data
+from ... import cli, utils
+from ...__main__ import get_params_from_config
+from ...service.config.service_config import ServiceConfig
+from ...crypto import encrypt_aes_v2
 
 class CommandExecutor:
     @staticmethod
@@ -42,16 +43,66 @@ class CommandExecutor:
 
     @staticmethod
     @debug_decorator
-    def capture_output(params: Any, command: str) -> Tuple[Any, str]:
-        captured_output = io.StringIO()
-        sys.stdout = captured_output
+    def capture_output_and_logs(params: Any, command: str) -> Tuple[Any, str, str]:
+        """Capture both stdout/stderr and logging output from command execution."""
+        captured_stdout = io.StringIO()
+        captured_stderr = io.StringIO()
+        captured_logs = io.StringIO()
+        
+        # Create a temporary log handler to capture command logs
+        temp_handler = logging.StreamHandler(captured_logs)
+        temp_handler.setFormatter(logging.Formatter('%(message)s'))
+        
+        # Get the root logger to capture all logging output
+        root_logger = logging.getLogger()
+        original_level = root_logger.level
+        original_handlers = root_logger.handlers[:]
+        
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+        
+        sys.stdout = captured_stdout
+        sys.stderr = captured_stderr
+        
         try:
+            # Add our temporary handler and set appropriate level
+            root_logger.addHandler(temp_handler)
+            root_logger.setLevel(logging.INFO)
+            
             return_value = cli.do_command(params, command)
-            return return_value, captured_output.getvalue()
+            
+            stdout_content = captured_stdout.getvalue()
+            stderr_content = captured_stderr.getvalue()
+            log_content = captured_logs.getvalue()
+            
+            # Combine stdout and stderr
+            stdout_clean = stdout_content.strip()
+            stderr_clean = stderr_content.strip()
+            log_clean = log_content.strip()
+            
+            if stderr_clean and stdout_clean:
+                combined_output = stderr_clean + '\n' + stdout_clean
+            else:
+                combined_output = stderr_clean or stdout_clean
+            
+            return return_value, combined_output, log_clean
         except Exception as e:
+            # If there's an exception, capture any error output
+            stderr_content = captured_stderr.getvalue()
+            log_content = captured_logs.getvalue()
+            error_output = stderr_content.strip()
+            
+            if error_output:
+                raise CommandExecutionError(f"Command failed: {error_output}")
             raise
         finally:
-            sys.stdout = sys.__stdout__
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+            # Restore original logging configuration
+            root_logger.removeHandler(temp_handler)
+            root_logger.setLevel(original_level)
+            temp_handler.close()
+
 
     @staticmethod
     @debug_decorator
@@ -74,35 +125,45 @@ class CommandExecutor:
         if validation_error:
             return validation_error
         
-        service_config = ServiceConfig()
-        config_data = service_config.load_config()
-
-        if config_data.get("run_mode") == "background":
-            try:
-                config_path = utils.get_default_path() / "config.json"
-                params = get_params_from_config(config_path)
-            except FileNotFoundError:
-                logger.error(f"Config file not found at {config_path}")
-                raise
-            except Exception as e:
-                logger.error(f"Failed to load params from config file: {e}")
-                raise
-        else:
-            params = get_current_params()
-
+        from ..core.globals import ensure_params_loaded
         try:
+            params = ensure_params_loaded()
+            # Set service mode flag to bypass master password enforcement
+            if params:
+                params.service_mode = True
+
             command = html.unescape(command)
-            return_value, printed_output = cls.capture_output(params, command)
+            return_value, printed_output, log_output = CommandExecutor.capture_output_and_logs(params, command)
             response = return_value if return_value else printed_output
+
+            # Debug logging with sanitization
+            sanitized_output = sanitize_debug_data(printed_output)
+            sanitized_logs = sanitize_debug_data(log_output)
+            logger.debug(f"After capture_output - return_value: '{return_value}', printed_output: '{sanitized_output}', log_output: '{sanitized_logs}'")
+            sanitized_response = sanitize_debug_data(str(response))
+            logger.debug(f"Final response: '{sanitized_response}', response type: {type(response)}")
 
             cli.do_command(params, 'sync-down')
             
-            response = parse_keeper_response(command, response)
-            response = cls.encrypt_response(response)
-            if response:
-                logger.debug("Command executed successfully")
-                return response, 200
-            else:
-                return "Internal Server Error", 500
+            # Always let the parser handle the response (including empty responses and logs)
+            response = parse_keeper_response(command, response, log_output)
+            
+            response = CommandExecutor.encrypt_response(response)
+            logger.debug("Command executed successfully")
+            return response, 200
+        except CommandExecutionError as e:
+            # Return the actual command error instead of generic "server busy"
+            logger.error(f"Command execution error: {e}")
+            error_response = {
+                "status": "error",
+                "error": str(e)
+            }
+            return error_response, 400
         except Exception as e:
-            raise CommandExecutionError(f"Command execution failed: {str(e)}")
+            # Log unexpected errors and return a proper error response
+            logger.error(f"Unexpected error during command execution: {e}")
+            error_response = {
+                "status": "error",
+                "error": f"Unexpected error: {str(e)}"
+            }
+            return error_response, 500

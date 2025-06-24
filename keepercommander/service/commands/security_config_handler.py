@@ -14,9 +14,9 @@ from configparser import ConfigParser
 from pathlib import Path
 from ..decorators.logging import logger, debug_decorator
 from ..config.service_config import ServiceConfig
-from keepercommander.commands.base import Command
 from ..util.exceptions import ValidationError
-from keepercommander import resources
+from ...commands.base import Command
+from ... import resources
 
 class SecurityConfigHandler(Command):
     def __init__(self, service_config: ServiceConfig):
@@ -32,7 +32,7 @@ class SecurityConfigHandler(Command):
         config_data["is_advanced_security_enabled"] = (
             self.service_config._get_yes_no_input(self.messages['advanced_security_prompt'])
         )
-        config_data["ip_allowed_list"] = '0.0.0.0/0'
+        config_data["ip_allowed_list"] = '0.0.0.0/0,::/0'
         if config_data["is_advanced_security_enabled"] == "y":
             self._configure_advanced_security(config_data)
 

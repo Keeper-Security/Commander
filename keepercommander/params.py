@@ -7,6 +7,10 @@
 # Keeper Commander 
 # Contact: ops@keepersecurity.com
 #
+from __future__ import annotations
+import os
+import sqlite3
+import threading
 import warnings
 from datetime import datetime
 from typing import Dict, NamedTuple, Optional, Set
@@ -161,13 +165,15 @@ class KeeperParams:
         self.ssh_agent = None
         self.unmask_all = False
         self.ws = None
-        self.tunnel_threads = {}
-        self.tunnel_threads_queue = {} # add ability to tail tunnel process
+        self.tube_registry = None  # Rust WebRTC tube registry instance
         self.forbid_rsa = False
         # TODO check if it can be deleted
         self.salt = None
         self.iterations = 0
-
+        self.biometric = None
+        self.service_mode = False  # Flag to indicate if running in service mode
+        self.thread_local = threading.local()
+        self._pedm_plugin = None    # type:
 
     def clear_session(self):
         self.auth_verifier = None
@@ -230,9 +236,15 @@ class KeeperParams:
         if self.ssh_agent:
             self.ssh_agent.close()
             self.ssh_agent = None
-        self.tunnel_threads.clear()
-        self.tunnel_threads_queue = {}
+        if self.tube_registry:
+            try:
+                self.tube_registry.cleanup_all()
+            except Exception:
+                pass  # Ignore cleanup errors during session clear
+            self.tube_registry = None
         self.forbid_rsa = False
+        self.biometric = None
+        self._pedm_plugin = None
 
     def __get_rest_context(self):   # type: () -> RestApiContext
         return self.__rest_context
@@ -275,3 +287,14 @@ class KeeperParams:
                 if isinstance(must_perform_account_share_by, int) and must_perform_account_share_by > 0:
                     return datetime.fromtimestamp(must_perform_account_share_by // 1000)
         return None
+
+    def get_connection(self) -> sqlite3.Connection:
+        if not hasattr(self.thread_local, 'sqlite_connection'):
+            if self.config_filename:
+                file_path = os.path.abspath(self.config_filename)
+                file_path = os.path.dirname(file_path)
+                file_path = os.path.join(file_path, 'keeper_db.sqlite')
+            else:
+                file_path = ':memory:'
+            self.thread_local.sqlite_connection = sqlite3.Connection(file_path)
+        return self.thread_local.sqlite_connection

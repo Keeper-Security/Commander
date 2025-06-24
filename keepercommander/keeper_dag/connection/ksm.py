@@ -124,6 +124,7 @@ class Connection(ConnectionBase):
         return router_http_host.replace('ws', 'http')
 
     def authenticate(self,
+                     agent: str,
                      refresh: bool = False,
                      retry: int = 5,
                      retry_wait: float = 10.0,
@@ -145,7 +146,10 @@ class Connection(ConnectionBase):
                     attempt += 1
                     response = requests.get(url,
                                             verify=self.verify_ssl,
-                                            timeout=timeout)
+                                            timeout=timeout,
+                                            headers={
+                                                "User-Agent": agent
+                                            })
                     response.raise_for_status()
 
                     self._challenge_str = response.text
@@ -166,7 +170,16 @@ class Connection(ConnectionBase):
                     break
 
                 except requests.exceptions.HTTPError as http_err:
-                    err_msg = f"{http_err.response.status_code}, {http_err.response.text}"
+
+                    msg = http_err.response.reason
+                    try:
+                        content = http_err.response.content.decode()
+                        if content is not None and content != "":
+                            msg = "; " + content
+                    except (Exception,):
+                        pass
+
+                    err_msg = f"{http_err.response.status_code}, {msg}"
 
                     if http_err.response.status_code == 429:
                         retry_wait *= throttle_inc_factor
@@ -188,7 +201,10 @@ class Connection(ConnectionBase):
 
         return self._signature, self._challenge_str
 
-    def rest_call_to_router(self, http_method: str, endpoint: str,
+    def rest_call_to_router(self,
+                            http_method: str,
+                            endpoint: str,
+                            agent: str,
                             payload_json: Optional[Union[bytes, str]] = None,
                             retry: int = 5,
                             retry_wait: float = 10.0,
@@ -211,13 +227,14 @@ class Connection(ConnectionBase):
             # Keep authenticate outside the call router try.
             # This is to prevent too many retries.
             # For example, 3 retry of the auth, 3 retry of the request, will be 9 retries.
-            signature, challenge_str = self.authenticate(refresh=refresh)
-            headers = dict(
-                Signature=signature,
-                ClientVersion=Connection.KEEPER_CLIENT,
-                Authorization=f'KeeperDevice {self.client_id}',
-                Challenge=challenge_str
-            )
+            signature, challenge_str = self.authenticate(refresh=refresh, agent=agent)
+            headers = {
+                "Signature": signature,
+                "ClientVersion": Connection.KEEPER_CLIENT,
+                "Authorization": f'KeeperDevice {self.client_id}',
+                "Challenge": challenge_str,
+                "User-Agent": agent
+            }
             self.logger.debug(f'connecting with headers: {headers}')
 
             try:
@@ -250,8 +267,8 @@ class Connection(ConnectionBase):
             # Handle errors outside of requests
             except requests.exceptions.HTTPError as http_err:
 
-                err_msg = f"{http_err.response.status_code}, {http_err.response.text}"
-                content = http_err.response.text
+                err_msg = f"{http_err.response.status_code}, {http_err.response.reason}, {http_err.response.content}"
+                content = http_err.response.reason
 
                 if http_err.response.status_code == 429:
                     retry_wait *= throttle_inc_factor
@@ -263,10 +280,10 @@ class Connection(ConnectionBase):
                 err_msg = str(err)
                 content = None
 
-            self.logger.info(f"call to DAG web service had a problem: {err_msg}, {content}")
+            self.logger.info(f"call to graph web service had a problem: {err_msg}, {content}")
             if attempt >= retry:
                 self.logger.info(f"payload: {payload_json}")
-                raise DAGConnectionException(f"Call to DAG web service {url}, after {retry} "
+                raise DAGConnectionException(f"Call to graph web service {url}, after {retry} "
                                              f"attempts, failed!: {err_msg}: {content} : {payload_json}")
 
             self.logger.info(f"will retry call after {retry_wait} seconds.")

@@ -5,7 +5,7 @@ import argparse
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ...display import bcolors
 from ...vault import TypedRecord
-from keepercommander.discovery_common.verify import Verify
+from ...discovery_common.verify import Verify
 import sys
 from typing import TYPE_CHECKING
 

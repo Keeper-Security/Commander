@@ -26,17 +26,33 @@ from ..params import KeeperParams
 from ..error import CommandError
 
 
+PUT_ENTERPRISE_SETTING = 'put_enterprise_setting'
+AUDIT_ALERT_CONTEXT = 'AuditAlertContext'
+
 alert_list_parser = argparse.ArgumentParser(prog='audit-alert list', parents=[report_output_parser])
 alert_list_parser.add_argument('--reload', dest='reload', action='store_true', help='reload alert information')
 
 alert_target_parser = argparse.ArgumentParser(add_help=False)
 alert_target_parser.add_argument('target', metavar='ALERT', help='Alert ID or Name.')
-
-alert_view_parser = argparse.ArgumentParser(prog='audit-alert view', parents=[alert_target_parser])
+alert_view_parser = argparse.ArgumentParser(prog='audit-alert view')
+alert_view_parser.add_argument('target', metavar='ALERT', nargs='?', help='Alert ID or Name')
+alert_view_parser.add_argument('--all', dest='all', action='store_true', help='View all alerts')
+alert_view_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json', 'pdf'],
+                                  default='table', help='format of output')
+alert_view_parser.add_argument('--output', dest='output', action='store',
+                                  help='path to resulting output file (ignored for "table" format)')
 alert_history_parser = argparse.ArgumentParser(
     prog='audit-alert history', parents=[report_output_parser, alert_target_parser])
 alert_reset_counts_parser = argparse.ArgumentParser(prog='audit-alert reset-counts', parents=[alert_target_parser])
-alert_delete_parser = argparse.ArgumentParser(prog='audit-alert remove', parents=[alert_target_parser])
+alert_delete_parser = argparse.ArgumentParser(prog='audit-alert remove')
+alert_delete_parser.add_argument('target', metavar='ALERT', nargs='?', help='Alert ID or Name.')
+alert_delete_parser.add_argument('--all', dest='delete_all', action='store_true', help='Delete all alerts')
+alert_delete_parser.add_argument('--from', dest='from_id', metavar='ALERT ID', type=int,
+                                help='Starting alert ID for range deletion')
+alert_delete_parser.add_argument('--to', dest='to_id', metavar='ALERT ID', type=int,
+                                help='Ending alert ID for range deletion')
+alert_delete_parser.add_argument('--force', dest='force', action='store_true', 
+                                help='Force deletion without confirmation prompt')
 
 alert_recipient_edit_options = argparse.ArgumentParser(add_help=False)
 alert_recipient_edit_options.add_argument(
@@ -109,6 +125,12 @@ alert_edit_options.add_argument(
 
 alert_add_parser = argparse.ArgumentParser(prog='audit-alert add', parents=[alert_edit_options])
 alert_edit_parser = argparse.ArgumentParser(prog='audit-alert edit', parents=[alert_target_parser, alert_edit_options])
+
+alert_action_parser = argparse.ArgumentParser(prog='audit-alert action')
+alert_action_parser.add_argument('target', metavar='ALERT', nargs='?', help='Alert ID or Name')
+alert_action_parser.add_argument('--all', dest='apply_all', action='store_true', help='Apply action to all alerts')
+alert_action_parser.error = raise_parse_exception
+alert_action_parser.exit = suppress_exit
 
 
 class AuditSettingMixin:
@@ -396,17 +418,121 @@ class AuditAlertDelete(EnterpriseCommand, AuditSettingMixin):
         return alert_delete_parser
 
     def execute(self, params, **kwargs):
-        alert = AuditSettingMixin.get_alert_configuration(params, kwargs.get('target'))
+        target = kwargs.get('target')
+        delete_all = kwargs.get('delete_all')
+        from_id = kwargs.get('from_id')
+        to_id = kwargs.get('to_id')
+        
+        # Load settings to get all alerts
+        settings = self.load_settings(params)
+        if not settings:
+            logging.info('No alerts found')
+            return
+        alert_filter = settings.get('AuditAlertFilter')
+        if not isinstance(alert_filter, list) or len(alert_filter) == 0:
+            logging.info('No alerts found')
+            return
 
-        rq = {
-            'command': 'delete_enterprise_setting',
-            'type': 'AuditAlertFilter',
-            'id': alert['id'],
-        }
-        api.communicate(params, rq)
+        # Determine which deletion method to use and get alerts to delete
+        if from_id is not None or to_id is not None:
+            alerts_to_delete = self._delete_by_range(params, from_id, to_id, alert_filter)
+        elif delete_all:
+            alerts_to_delete = self._delete_all(params, alert_filter)
+        elif target:
+            alerts_to_delete = self._delete_single(params, target)
+        else:
+            raise CommandError('alert delete', 'Either target, --all, or --from/--to parameters are required.')
+
+        # Confirm deletion unless --force is used
+        force = kwargs.get('force', False)
+        if not force and not self._confirm_deletion(alerts_to_delete):
+            logging.info('Deletion cancelled by user.')
+            return
+
+        # Execute the deletion
+        deleted_count = self._execute_deletion(params, alerts_to_delete)
+        
         self.invalidate_alerts()
-        command = AuditAlertList()
-        command.execute(params, reload=True)
+        
+        if deleted_count > 0:
+            # Show remaining alerts
+            command = AuditAlertList()
+            command.execute(params, reload=True)
+        else:
+            logging.warning('No alerts were deleted.')
+
+    def _delete_by_range(self, params, from_id, to_id, alert_filter):
+        """Handle range deletion with --from and --to parameters."""
+        if from_id is None or to_id is None:
+            raise CommandError('alert delete', 'Both --from and --to parameters are required for range deletion.')
+        
+        # Validation: both values should not be zero or negative
+        if from_id <= 0 or to_id <= 0:
+            raise CommandError('alert delete', 'Alert IDs must be positive integers. Please specify valid alert IDs.')
+        
+        # Validation: from value should be less than to value
+        if from_id >= to_id:
+            raise CommandError('alert delete', f'Invalid range: --from ({from_id}) must be less than --to ({to_id}).')
+        
+        # Find alerts in range
+        alerts_to_delete = []
+        for alert in alert_filter:
+            alert_id = alert.get('id')
+            if isinstance(alert_id, int) and from_id <= alert_id <= to_id:
+                alerts_to_delete.append(alert)
+        
+        if not alerts_to_delete:
+            raise CommandError('alert delete', f'No alerts found in range {from_id}-{to_id}')
+        
+        return alerts_to_delete
+
+    def _delete_all(self, params, alert_filter):
+        """Handle delete all with --all flag."""
+        return alert_filter
+
+    def _delete_single(self, params, target):
+        """Handle single target deletion."""
+        alert = AuditSettingMixin.get_alert_configuration(params, target)
+        return [alert]
+
+    def _confirm_deletion(self, alerts_to_delete):
+        """Prompt user for confirmation before deleting alerts."""
+        if not alerts_to_delete:
+            return False
+        
+        print(f"\nThe following {len(alerts_to_delete)} alert(s) will be deleted:")
+        print("-" * 60)
+        for alert in alerts_to_delete:
+            alert_id = alert.get('id', 'N/A')
+            alert_name = alert.get('name', 'N/A')
+            print(f"  ID: {alert_id} | Name: {alert_name}")
+        print("-" * 60)
+        
+        try:
+            response = input(f"Are you sure you want to delete {len(alerts_to_delete)} alert(s)? (y/n): ").strip().lower()
+            return response in ('y', 'yes')
+        except (KeyboardInterrupt, EOFError):
+            print("\nOperation cancelled.")
+            return False
+
+    def _execute_deletion(self, params, alerts_to_delete):
+        """Execute the actual deletion of alerts and return count of successfully deleted alerts."""
+        deleted_count = 0
+        for alert in alerts_to_delete:
+            alert_id = alert.get('id')
+            alert_name = alert.get('name', f'ID {alert_id}')
+            try:
+                rq = {
+                    'command': 'delete_enterprise_setting',
+                    'type': 'AuditAlertFilter',
+                    'id': alert_id,
+                }
+                api.communicate(params, rq)
+                deleted_count += 1
+            except Exception as e:
+                logging.error(f'Failed to delete alert: {alert_name} (ID: {alert_id}): {str(e)}')
+        
+        return deleted_count
 
 
 class AuditAlertView(EnterpriseCommand, AuditSettingMixin):
@@ -414,26 +540,246 @@ class AuditAlertView(EnterpriseCommand, AuditSettingMixin):
         return alert_view_parser
 
     def execute(self, params, **kwargs):
-        show_recipient = True
-        show_filter = True
-        show_stat = True
-        if kwargs.get('recipient_only'):
-            show_recipient = True
-            show_filter = False
-            show_stat = False
+        fmt = kwargs.get('format', '')
+        view_all = kwargs.get('all') or not kwargs.get('target')
+        
+        if view_all:
+            self._execute_view_all(params, kwargs, fmt)
+        else:
+            self._execute_view_single(params, kwargs, fmt)
 
-        alert = AuditSettingMixin.get_alert_configuration(params, kwargs.get('target'))
+    def _get_display_options(self, kwargs):
+        """Determine what sections to show based on kwargs."""
+        if kwargs.get('recipient_only'):
+            return {'recipient': True, 'filter': False, 'stat': False}
+        return {'recipient': True, 'filter': True, 'stat': True}
+
+    def _get_headers(self, show_options, fmt):
+        """Get appropriate headers based on display options."""
+        if show_options['recipient'] and not show_options['filter'] and not show_options['stat']:
+            headers = ['alert_id', 'alert_name', 'status', 'recipients']
+        elif show_options['stat']:
+            headers = ['alert_id', 'alert_name', 'status', 'frequency', 'occurrences', 
+                      'sent_counter', 'last_sent', 'event_types', 'users', 'shared_folders', 
+                      'records', 'recipients']
+        else:
+            headers = ['alert_id', 'alert_name', 'status', 'event_types', 'users', 
+                      'shared_folders', 'records', 'recipients']
+        
+        return headers if fmt == 'json' else [field_to_title(x) for x in headers]
+
+    def _format_datetime(self, date_str):
+        """Format datetime string to local time."""
+        if not date_str:
+            return ''
+        try:
+            dt = datetime.datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S.%fZ')
+            dt = dt.replace(microsecond=0, tzinfo=datetime.timezone.utc).astimezone()
+            return dt.isoformat()
+        except ValueError:
+            return ''
+
+    def _get_event_names(self, event_ids):
+        """Convert event IDs to names."""
+        if not event_ids:
+            return []
+        event_lookup = {i: n for i, n in self.EVENT_TYPES or []}
+        return [event_lookup[x] for x in event_ids if x in event_lookup]
+
+    def _get_usernames(self, user_ids, params):
+        """Convert user IDs to usernames."""
+        if not user_ids:
+            return []
+        user_lookup = {x['user_id']: x['username'] for x in params.enterprise.get('users', [])}
+        return [user_lookup[x] for x in user_ids if x in user_lookup]
+
+    def _get_selected_ids(self, items):
+        """Get IDs of selected items."""
+        if not items:
+            return []
+        return [x['id'] for x in items if x.get('selected')]
+
+    def _build_recipient_data(self, recipient):
+        """Build recipient data dictionary."""
+        data = {
+            "Recipient ID": recipient.get('id', ''),
+            "Name": recipient.get('name', ''),
+            "Status": 'Disabled' if recipient.get('disabled') else 'Enabled'
+        }
+        
+        if 'webhook' in recipient:
+            wh = recipient['webhook']
+            data["Webhook URL"] = wh.get('url', '')
+            if wh.get('template'):
+                data["HTTP Body"] = wh.get('template', '')
+            if wh.get('token'):
+                data["Webhook Token"] = wh.get('token', '')
+            data["Certificate Errors"] = 'Ignore' if wh.get('allowUnverifiedCertificate') else 'Enforce'
+        
+        if recipient.get('email'):
+            data["Email To"] = recipient.get('email')
+        
+        if recipient.get('phone'):
+            phone_country = recipient.get('phoneCountry')
+            phone_display = f"(+{phone_country}) {recipient.get('phone')}" if phone_country else recipient.get('phone')
+            data["Text To"] = phone_display
+        
+        return data
+
+    def _format_list_for_cell(self, items, fmt, max_lines=5):
+        """Format a list of items for display in a table cell, with line limits for PDF."""
+        if not items:
+            return ''
+        
+        if fmt == 'pdf' and len(items) > max_lines:
+            displayed_items = items[:max_lines]
+            additional_count = len(items) - max_lines
+            return '\n'.join(displayed_items) + f'\n+ {additional_count} more'
+        
+        return '\n'.join(items)
+
+    def _format_recipients_for_cell(self, recipients_complete, fmt):
+        """Format recipients data for display in a table cell, with limits for PDF."""
+        recipients_json = json.dumps(recipients_complete, indent=2)
+        
+        if fmt == 'pdf':
+            lines = recipients_json.split('\n')
+            if len(lines) > 5:
+                truncated_lines = lines[:5]
+                additional_count = len(lines) - 5
+                return '\n'.join(truncated_lines) + f'\n+ {additional_count} more lines'
+        
+        return recipients_json
+
+    def _build_alert_row(self, alert, show_options, params, fmt=''):
+        """Build a single alert row for the table."""
+        alert_id = alert.get('id', '')
+        ctx = AuditSettingMixin.get_alert_context(alert_id) or alert
+        alert_filter_data = alert.get('filter', {})
+        
+        row = [
+            alert_id,
+            alert.get('name', ''),
+            'Disabled' if ctx.get('disabled') else 'Enabled'
+        ]
+        
+        if show_options['stat'] and not show_options.get('recipient_only'):
+            row.extend([
+                self.frequency_to_text(alert.get('frequency')) or '',
+                ctx.get('counter', ''),
+                ctx.get('sentCounter', ''),
+                self._format_datetime(ctx.get('lastSent'))
+            ])
+        
+        if not show_options.get('recipient_only'):
+            events = self._get_event_names(alert_filter_data.get('events'))
+            row.append(self._format_list_for_cell(events, fmt))
+            
+            users = self._get_usernames(alert_filter_data.get('userIds'), params)
+            row.append(self._format_list_for_cell(users, fmt))
+            
+            folders = self._get_selected_ids(alert_filter_data.get('sharedFolderUids'))
+            row.append(self._format_list_for_cell(folders, fmt))
+            
+            records = self._get_selected_ids(alert_filter_data.get('recordUids'))
+            row.append(self._format_list_for_cell(records, fmt))
+        
+        recipients_data = [self._build_recipient_data(r) for r in alert.get('recipients', [])]
+        recipients_complete = {
+            "Send To Originator": alert.get('sendToOriginator', False),
+            "Recipients": recipients_data
+        }
+        row.append(self._format_recipients_for_cell(recipients_complete, fmt))
+        
+        return row
+
+    def _execute_view_all(self, params, kwargs, fmt):
+        """Execute view all alerts functionality."""
+        show_options = self._get_display_options(kwargs)
+        
+        alerts = self.load_settings(params, kwargs.get('reload', False))
+        if not isinstance(alerts, dict):
+            logging.info('No alerts found')
+            return
+        
+        alert_filter = alerts.get('AuditAlertFilter')
+        if not isinstance(alert_filter, list):
+            logging.info('No alerts found')
+            return
+        
+        headers = self._get_headers(show_options, fmt)
+        table = [self._build_alert_row(alert, show_options, params, fmt) for alert in alert_filter]
+        
+        dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'), sort_by=None)
+
+    def _add_filter_data_to_table(self, table, alert_filter, params):
+        """Add filter data to table for single alert view."""
+        table.extend([['', ''], ['Alert Filter:', '']])
+        
+        if 'events' in alert_filter:
+            events = self._get_event_names(alert_filter.get('events'))
+            table.append(['Event Types', events])
+        
+        if 'userIds' in alert_filter:
+            users = self._get_usernames(alert_filter.get('userIds'), params)
+            table.append(['User', users])
+        
+        if 'sharedFolderUids' in alert_filter:
+            folders = self._get_selected_ids(alert_filter['sharedFolderUids'])
+            table.append(['Shared Folder', folders])
+        
+        if 'recordUids' in alert_filter:
+            records = self._get_selected_ids(alert_filter['recordUids'])
+            table.append(['Record', records])
+
+    def _add_recipient_data_to_table(self, table, alert):
+        """Add recipient data to table for single alert view."""
+        table.extend([['', ''], ['Recipients:', ''], 
+                     ['Send To Originator (*)', alert.get('sendToOriginator', False)]])
+        
+        for recipient in alert.get('recipients', []):
+            table.extend([
+                ['', ''],
+                ['Recipient ID', recipient.get('id')],
+                ['Name', recipient.get('name')],
+                ['Status', 'Disabled' if recipient.get('disabled') else 'Enabled']
+            ])
+            
+            if 'webhook' in recipient:
+                wh = recipient['webhook']
+                table.append(['Webhook URL', wh.get('url')])
+                if wh.get('template'):
+                    table.append(['HTTP Body', wh.get('template')])
+                table.append(['Webhook Token', wh.get('token')])
+                table.append(['Certificate Errors', 'Ignore' if wh.get('allowUnverifiedCertificate') else 'Enforce'])
+            
+            if recipient.get('email'):
+                table.append(['Email To', recipient.get('email')])
+            
+            if recipient.get('phone'):
+                phone_country = recipient.get('phoneCountry')
+                phone_display = (f'(+{phone_country}) {recipient.get("phone")}' 
+                               if phone_country else recipient.get('phone'))
+                table.append(['Text To', phone_display])
+
+    def _execute_view_single(self, params, kwargs, fmt):
+        """Execute view single alert functionality."""
+        show_options = self._get_display_options(kwargs)
+        target = kwargs.get('target')
+        
+        alert = AuditSettingMixin.get_alert_configuration(params, target)
         alert_id = alert.get('id')
         ctx = AuditSettingMixin.get_alert_context(alert_id) or alert
-        table = []
-        header = ['name', 'value']
-        table.append(['Alert ID', alert_id])
-        table.append(['Alert name', alert.get('name')])
-        table.append(['Status', 'Disabled' if ctx.get('disabled') is True else 'Enabled'])
-        if show_stat:
-            table.append(['Frequency', self.frequency_to_text(alert.get('frequency'))])
-            table.append(['Occurrences', ctx.get('counter')])
-            table.append(['Sent Counter', ctx.get('sentCounter')])
+        
+        header = ['name', 'value'] if fmt == 'json' else [field_to_title(x) for x in ['name', 'value']]
+        
+        table = [
+            ['Alert ID', alert_id],
+            ['Alert name', alert.get('name')],
+            ['Status', 'Disabled' if ctx.get('disabled') else 'Enabled']
+        ]
+        
+        if show_options['stat']:
             last_sent = ctx.get('lastSent')
             if last_sent:
                 try:
@@ -441,57 +787,23 @@ class AuditAlertView(EnterpriseCommand, AuditSettingMixin):
                     last_sent = last_sent.replace(microsecond=0, tzinfo=datetime.timezone.utc).astimezone()
                 except ValueError:
                     pass
-            table.append(['Last Sent', last_sent.isoformat() if last_sent else ''])
-
-        if show_filter:
-            alert_filter = alert.get('filter') or {}
-            table.append(['', ''])
-            table.append(['Alert Filter:', ''])
-            if 'events' in alert_filter:
-                event_lookup = {i: n for i, n in self.EVENT_TYPES or []}
-                events = [event_lookup[x] for x in alert_filter.get('events') or [] if x in event_lookup]
-                table.append(['Event Types', events])
-            if 'userIds' in alert_filter:
-                user_lookup = {x['user_id']: x['username'] for x in params.enterprise.get('users') or []}
-                users = [user_lookup[x] for x in alert_filter.get('userIds') or [] if x in user_lookup]
-                table.append(['User', users])
-            if 'sharedFolderUids' in alert_filter:
-                table.append(['Shared Folder', [x['id'] for x in alert_filter['sharedFolderUids'] if x['selected']]])
-            if 'recordUids' in alert_filter:
-                table.append(['Record', [x['id'] for x in alert_filter['recordUids'] if x['selected']]])
-
-        if show_recipient:
-            recipients = []
-            for r in alert.get('recipients') or []:
-                recipients.append(['', ''])
-                recipients.append(['Recipient ID', r.get('id')])
-                recipients.append(['Name', r.get('name')])
-                recipients.append(['Status', 'Disabled' if r.get('disabled') is True else 'Enabled'])
-                if 'webhook' in r:
-                    wh = r['webhook']
-                    recipients.append(['Webhook URL', wh.get('url')])
-                    http_body = wh.get('template')
-                    if http_body:
-                        recipients.append(['HTTP Body', http_body])
-                    recipients.append(['Webhook Token', wh.get('token')])
-                    recipients.append(['Certificate Errors', 'Ignore' if wh.get('allowUnverifiedCertificate') else 'Enforce'])
-                email = r.get('email')
-                if email:
-                    recipients.append(['Email To', email])
-                phone = r.get('phone')
-                if phone:
-                    phone_country = r.get('phoneCountry')
-                    if phone_country:
-                        recipients.append(['Text To', f'(+{r.get("phoneCountry")}) {phone}'])
-                    else:
-                        recipients.append(['Text To', phone])
-            table.append(['', ''])
-            table.append(['Recipients:', ''])
-            table.append(['Send To Originator (*)', alert.get('sendToOriginator') or False])
-            table.extend(recipients)
-
-        dump_report_data(table, header, no_header=True, right_align=(0,))
-
+            
+            table.extend([
+                ['Frequency', self.frequency_to_text(alert.get('frequency'))],
+                ['Occurrences', ctx.get('counter')],
+                ['Sent Counter', ctx.get('sentCounter')],
+                ['Last Sent', last_sent.isoformat() if last_sent else '']
+            ])
+        
+        if show_options['filter']:
+            alert_filter = alert.get('filter', {})
+            self._add_filter_data_to_table(table, alert_filter, params)
+        
+        if show_options['recipient']:
+            self._add_recipient_data_to_table(table, alert)
+        
+        dump_report_data(table, header, no_header=True, right_align=(0,), 
+                        fmt=fmt, filename=kwargs.get('output'), sort_by=None)
 
 class AuditAlertHistory(EnterpriseCommand, AuditSettingMixin):
     def get_parser(self):
@@ -539,6 +851,89 @@ class AuditAlertResetCount(EnterpriseCommand, AuditSettingMixin):
         api.communicate(params, rq)
         AuditSettingMixin.invalidate_alerts()
         logging.info('Alert counts reset to zero')
+
+class AuditAlertSent(EnterpriseCommand, AuditSettingMixin):    
+    def __init__(self, action=None):
+        super().__init__()
+        self.action = action
+    
+    def get_parser(self):
+        return alert_action_parser
+
+    def execute(self, params, **kwargs):
+        """Execute enable or disable action based on the command used"""
+        apply_all = kwargs.get('apply_all', False)
+        target = kwargs.get('target')
+        action = self.action
+        command_name = f'alert {action}'
+        
+        if apply_all and target:
+            raise CommandError(command_name, 'Cannot specify both alert target and --all flag')
+        elif apply_all:
+            self._apply_to_all_alerts(params, action)
+        elif not target:
+            raise CommandError(command_name, 'Alert ID/Name is required unless using --all flag')
+        else:
+            self._apply_to_single_alert(params, target, action)
+    
+    def _apply_to_single_alert(self, params, target, action):
+        alert = AuditSettingMixin.get_alert_configuration(params, target)
+        disabled_value = action == 'disable'
+
+        rq = {
+            'command': PUT_ENTERPRISE_SETTING,
+            'type': AUDIT_ALERT_CONTEXT,
+            'settings': {
+                'id': alert.get('id'),
+                'disabled': disabled_value
+            }
+        }
+        api.communicate(params, rq)
+        AuditSettingMixin.invalidate_alerts()
+        
+        alert_name = alert.get('name') or f"Alert ID {alert.get('id')}"
+        action_past = 'enabled' if action == 'enable' else 'disabled'
+        logging.info(f'Alert "{alert_name}" has been {action_past}')
+        command = AuditAlertView()
+        command.execute(params, target=target)
+    
+    def _apply_to_all_alerts(self, params, action):
+        alerts = self.load_settings(params)
+        if not isinstance(alerts, dict):
+            logging.info('No alerts found')
+            return
+        alert_filter = alerts.get('AuditAlertFilter')
+        if not isinstance(alert_filter, list):
+            logging.info('No alerts found')
+            return
+        
+        disabled_value = action == 'disable'
+        requests = []
+        for alert in alert_filter:
+            alert_id = alert.get('id')
+            if alert_id:
+                rq = {
+                    'command': PUT_ENTERPRISE_SETTING,
+                    'type': AUDIT_ALERT_CONTEXT,
+                    'settings': {
+                        'id': alert_id,
+                        'disabled': disabled_value
+                    }
+                }
+                requests.append(rq)
+        
+        if not requests:
+            action_verb = 'enable' if action == 'enable' else 'disable'
+            logging.info(f'No valid alerts found to {action_verb}')
+            return
+        
+        api.execute_batch(params, requests)
+        action_past = 'Enabled' if action == 'enable' else 'Disabled'
+        logging.info(f'{action_past} {len(requests)} alert(s)')
+  
+        AuditSettingMixin.invalidate_alerts()
+        command = AuditAlertList()
+        command.execute(params)
 
 
 class AuditAlertRecipients(EnterpriseCommand, AuditSettingMixin):
@@ -779,9 +1174,11 @@ class AuditAlerts(GroupCommand):
         self.register_command('list', AuditAlertList(), 'Display alert list', 'l')
         self.register_command('view', AuditAlertView(), 'View alert configuration', 'v')
         self.register_command('history', AuditAlertHistory(), 'View alert history', 'h')
-        self.register_command('delete', AuditAlertDelete(), 'Delete audit alert', 'd')
+        self.register_command('delete', AuditAlertDelete(), 'Delete audit alert(s) - single, range, or all', 'd')
         self.register_command('add', AuditAlertAdd(), 'Add audit alert', 'a')
         self.register_command('edit', AuditAlertEdit(), 'Edit audit alert', 'e')
         self.register_command('reset-counts', AuditAlertResetCount(), 'Reset alert counts')
+        self.register_command('enable', AuditAlertSent('enable'), 'Enable audit alert')
+        self.register_command('disable', AuditAlertSent('disable'), 'Disable audit alert')
         self.register_command('recipient', AuditAlertRecipients(), 'Modify alert recipients', 'r')
         self.default_verb = 'list'

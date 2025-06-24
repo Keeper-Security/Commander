@@ -27,7 +27,7 @@ from typing import Optional, Sequence, Callable, List, Any, Iterable, Dict, Set
 import sys
 from tabulate import tabulate
 
-from .. import api, crypto, utils, vault, resources
+from .. import api, crypto, utils, vault, resources, error
 from ..params import KeeperParams
 from ..subfolder import try_resolve_path, BaseFolderNode
 
@@ -38,11 +38,23 @@ msp_commands = {}            # type: Dict[str, Command]
 command_info = OrderedDict()
 
 
+json_output_parser = argparse.ArgumentParser(add_help=False)
+json_output_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
+                                default='table', help='format of output')
+json_output_parser.add_argument('--output', dest='output', action='store',
+                                help='path to resulting output file (ignored for "table" format)')
+
+
 report_output_parser = argparse.ArgumentParser(add_help=False)
 report_output_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json', 'pdf'],
                                   default='table', help='format of output')
 report_output_parser.add_argument('--output', dest='output', action='store',
                                   help='path to resulting output file (ignored for "table" format)')
+
+
+class CommandError(error.CommandError):
+    def __init__(self, message):
+        super().__init__('', message)
 
 
 class ParseError(Exception):
@@ -86,9 +98,11 @@ def register_commands(commands, aliases, command_info):
     misc_commands(commands)
     misc_command_info(aliases, command_info)
 
-    from .verify_records import VerifyRecordsCommand, VerifySharedFoldersCommand
+    from .verify_records import VerifyRecordsCommand, VerifySharedFoldersCommand, verify_shared_folders_parser
     commands['verify-records'] = VerifyRecordsCommand()
     commands['verify-shared-folders'] = VerifySharedFoldersCommand()
+    command_info['verify-records'] = 'Verify record data integrity and fix issues'
+    command_info[verify_shared_folders_parser.prog] = verify_shared_folders_parser.description
 
     from .. import importer
     importer.register_commands(commands)
@@ -114,21 +128,35 @@ def register_commands(commands, aliases, command_info):
     commands['2fa'] = TwoFaCommand()
     command_info['2fa'] = '2FA management'
 
+    from . import device_management
+    device_management.register_commands(commands)
+    device_management.register_command_info(aliases, command_info)
+
+    if sys.version_info.major == 3 and sys.version_info.minor >= 10 and (utils.is_windows_11() or sys.platform == 'darwin'):
+        from ..biometric import BiometricCommand
+        commands['biometric'] = BiometricCommand()
+        command_info['biometric'] = 'Biometric (Passkey) login management'
+
     if sys.version_info.major == 3 and sys.version_info.minor >= 8:
         from .start_service import register_commands as service_commands, register_command_info as service_command_info
         service_commands(commands)
         service_command_info(aliases, command_info)
 
-    if sys.version_info.major == 3 and sys.version_info.minor >= 8:
+    toggle_pam_legacy_commands(legacy=False)
+
+
+def toggle_pam_legacy_commands(legacy: bool):
+    if sys.version_info.major > 3 or (sys.version_info.major == 3 and sys.version_info.minor >= 8):
         from . import discoveryrotation
-        discoveryrotation.register_commands(commands)
-        discoveryrotation.register_command_info(aliases, command_info)
-
-
-def register_pam_legacy_commands():
-    from . import discoveryrotation_v1
-    discoveryrotation_v1.register_commands(commands)
-    discoveryrotation_v1.register_command_info(aliases, command_info)
+        from . import discoveryrotation_v1
+        if legacy is True:
+            discoveryrotation_v1.register_commands(commands)
+            discoveryrotation_v1.register_command_info(aliases, command_info)
+        else:
+            discoveryrotation.register_commands(commands)
+            discoveryrotation.register_command_info(aliases, command_info)
+    else:
+        logging.debug('pam commands require Python 3.8 or newer')
 
 
 def register_enterprise_commands(commands, aliases, command_info):
@@ -146,6 +174,9 @@ def register_enterprise_commands(commands, aliases, command_info):
     from . import scim
     scim.register_commands(commands)
     scim.register_command_info(aliases, command_info)
+    from . import enterprise_api_keys
+    enterprise_api_keys.register_commands(commands)
+    enterprise_api_keys.register_command_info(aliases, command_info)
     from .msp import switch_to_msp_parser, SwitchToMspCommand
     commands[switch_to_msp_parser.prog] = SwitchToMspCommand()
     command_info[switch_to_msp_parser.prog] = switch_to_msp_parser.description
@@ -156,6 +187,16 @@ def register_enterprise_commands(commands, aliases, command_info):
     commands['risk-management'] = RiskManagementReportCommand()
     command_info['risk-management'] = 'Risk Management Reports'
     aliases['rmd'] = 'risk-management'
+    
+    from . import device_management
+    device_management.register_enterprise_commands(commands)
+    device_management.register_enterprise_command_info(aliases, command_info)
+
+    if sys.version_info.major > 3 or (sys.version_info.major == 3 and sys.version_info.minor >= 9):
+        from.pedm import pedm_admin
+        pedm_command = pedm_admin.PedmCommand()
+        commands['pedm'] = pedm_command
+        command_info['pedm'] = pedm_command.description
 
 
 def register_msp_commands(commands, aliases, command_info):
@@ -164,7 +205,7 @@ def register_msp_commands(commands, aliases, command_info):
     msp_command_info(aliases, command_info)
     from . import distributor
     commands['distributor'] = distributor.DistributorCommand()
-    command_info['distributor'] = 'Manage distributors'
+    command_info['distributor'] = 'Manage distributor-specific features'
     aliases['ds'] = 'distributor'
 
 
@@ -729,6 +770,15 @@ class Command(CliCommand):
     _ensure_parser = staticmethod(_ensure_parser)
 
 
+class ArgparseCommand(Command):
+    def __init__(self, parser):
+        super().__init__()
+        self.parser = parser
+
+    def get_parser(self):
+        return self.parser
+
+
 class GroupCommand(CliCommand):
     def __init__(self):
         self._commands = collections.OrderedDict()     # type: dict[str, CliCommand]
@@ -809,6 +859,15 @@ class GroupCommand(CliCommand):
     @property
     def subcommands(self):
         return self._commands
+
+
+class GroupCommandNew(GroupCommand):
+    def __init__(self, description):
+        super().__init__()
+        self.description = description
+
+    def register_command_new(self, command, verb, alias=None):
+        super().register_command(verb, command, None, alias)
 
 
 class RecordMixin:

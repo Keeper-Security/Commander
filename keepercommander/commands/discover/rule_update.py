@@ -4,7 +4,7 @@ from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from .rule_add import PAMGatewayActionDiscoverRuleAddCommand
 from ..pam.router_helper import router_get_connected_gateways
 from ...display import bcolors
-from keepercommander.discovery_common.rule import Rules, RuleTypeEnum
+from ...discovery_common.rule import Rules, RuleTypeEnum
 
 
 class PAMGatewayActionDiscoverRuleUpdateCommand(PAMGatewayActionDiscoverCommandBase):

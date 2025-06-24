@@ -12,17 +12,18 @@
 import os
 from dataclasses import dataclass
 from typing import Optional
-from pathlib import Path
 from dotenv import load_dotenv, set_key, dotenv_values
 from ..decorators.logging import logger
 from .terminal_handler import TerminalHandler
-from keepercommander import utils
+from ... import utils
 
 @dataclass
 class ProcessInfo:
     pid: Optional[int]
     terminal: Optional[str]
     is_running: bool
+    ngrok_pid: Optional[int] = None
+    cloudflare_pid: Optional[int] = None
     
     _env_file = utils.get_default_path() / ".service.env"
     
@@ -31,7 +32,7 @@ class ProcessInfo:
         return value.lower() in ('true', '1', 'yes', 'on')
     
     @classmethod
-    def save(cls, pid, is_running: bool) -> None:
+    def save(cls, pid, is_running: bool, ngrok_pid: Optional[int] = None, cloudflare_pid: Optional[int] = None) -> None:
         """Save current process information to .env file."""
         
         env_path = str(cls._env_file)
@@ -45,6 +46,12 @@ class ProcessInfo:
             'KEEPER_SERVICE_TERMINAL': TerminalHandler.get_terminal_info() or '',
             'KEEPER_SERVICE_IS_RUNNING': str(is_running).lower()
         }
+        
+        if ngrok_pid is not None:
+            process_info['KEEPER_SERVICE_NGROK_PID'] = str(ngrok_pid)
+        
+        if cloudflare_pid is not None:
+            process_info['KEEPER_SERVICE_CLOUDFLARE_PID'] = str(cloudflare_pid)
         
         try:
             for key, value in process_info.items():
@@ -70,20 +77,27 @@ class ProcessInfo:
                 terminal = os.getenv('KEEPER_SERVICE_TERMINAL') or None
                 
                 is_running_str = os.getenv('KEEPER_SERVICE_IS_RUNNING', 'false')
-
                 is_running = ProcessInfo._str_to_bool(is_running_str)
+                
+                ngrok_pid_str = os.getenv('KEEPER_SERVICE_NGROK_PID')
+                ngrok_pid = int(ngrok_pid_str) if ngrok_pid_str else None
+                
+                cloudflare_pid_str = os.getenv('KEEPER_SERVICE_CLOUDFLARE_PID')
+                cloudflare_pid = int(cloudflare_pid_str) if cloudflare_pid_str else None
                 
                 logger.debug("Process information loaded successfully from .env")
                 return ProcessInfo(
                     pid=pid,
                     terminal=terminal,
-                    is_running=is_running
+                    is_running=is_running,
+                    ngrok_pid=ngrok_pid,
+                    cloudflare_pid=cloudflare_pid
                 )
         except Exception as e:
             logger.error(f"Failed to load process information: {e}")
             pass
         
-        return ProcessInfo(pid=None, terminal=None, is_running=False)
+        return ProcessInfo(pid=None, terminal=None, is_running=False, ngrok_pid=None, cloudflare_pid=None)
     
     @classmethod
     def clear(cls) -> None:

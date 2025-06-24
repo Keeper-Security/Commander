@@ -16,7 +16,7 @@ from tabulate import tabulate
 
 from prompt_toolkit.styles.named_colors import NAMED_COLORS
 
-from keepercommander import __version__
+from . import __version__
 from .subfolder import BaseFolderNode
 
 init()
@@ -26,7 +26,7 @@ class bcolors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
     OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
+    WARNING = '\033[33m'
     FAIL = '\033[91m'
     ENDC = '\033[0m'
     BOLD = '\033[1m'

@@ -1,24 +1,24 @@
 from __future__ import annotations
 import logging
 from .constants import USER_SERVICE_GRAPH_ID, PAM_MACHINE, PAM_USER
-from .utils import get_connection, user_in_lookup, user_check_list
+from .utils import get_connection, user_in_lookup, user_check_list, make_agent
 from .types import DiscoveryObject, ServiceAcl, FactsNameUser
 from .infrastructure import Infrastructure
 
-from keepercommander.keeper_dag import DAG, EdgeType
+from ..keeper_dag import DAG, EdgeType
 import importlib
 from typing import Any, Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from keepercommander.keeper_dag.vertex import DAGVertex
-    from keepercommander.keeper_dag.edge import DAGEdge
+    from ..keeper_dag.vertex import DAGVertex
+    from ..keeper_dag.edge import DAGEdge
 
 
 class UserService:
 
     def __init__(self, record: Any, logger: Optional[Any] = None, history_level: int = 0,
                  debug_level: int = 0, fail_on_corrupt: bool = True, log_prefix: str = "GS Services/Tasks",
-                 save_batch_count: int = 200,
+                 save_batch_count: int = 200, agent: Optional[str] = None,
                  **kwargs):
 
         self.conn = get_connection(**kwargs)
@@ -35,6 +35,10 @@ class UserService:
         self.fail_on_corrupt = fail_on_corrupt
         self.save_batch_count = save_batch_count
 
+        self.agent = make_agent("user_service")
+        if agent is not None:
+            self.agent += "; " + agent
+
         self.auto_save = False
         self.last_sync_point = -1
 
@@ -46,7 +50,7 @@ class UserService:
                             auto_save=False, logger=self.logger, history_level=self.history_level,
                             debug_level=self.debug_level, name="Discovery Service/Tasks",
                             fail_on_corrupt=self.fail_on_corrupt, log_prefix=self.log_prefix,
-                            save_batch_count=self.save_batch_count)
+                            save_batch_count=self.save_batch_count, agent=self.agent)
 
             self._dag.load(sync_point=0)
 
@@ -170,7 +174,7 @@ class UserService:
             vertex.delete()
 
     def save(self):
-        if self.dag.has_graph is True:
+        if self.dag.has_graph:
             self.logger.debug("saving the service user.")
             self.dag.save(delta_graph=False)
         else:
@@ -208,10 +212,10 @@ class UserService:
                 style = "solid"
 
                 # To reduce the number of edges, only show the active edges
-                if edge.active is True:
+                if edge.active:
                     color = "black"
                     style = "bold"
-                elif show_only_active_edges is True:
+                elif show_only_active_edges:
                     continue
 
                 # If the vertex is not active, gray out the DATA edge
@@ -224,13 +228,20 @@ class UserService:
                 edge_tip = ""
                 if edge.edge_type == EdgeType.ACL and v.active is True:
                     content = edge.content_as_dict
-                    if content.get("is_service") is True:
-                        color = "red"
-                    if content.get("is_task") is True:
-                        if color == "red":
-                            color = "purple"
-                        else:
-                            color = "blue"
+                    red = "00"
+                    green = "00"
+                    blue = "00"
+                    if content.get("is_service"):
+                        red = "FF"
+                    if content.get("is_task"):
+                        blue = "FF"
+                    if content.get("is_iis_pool"):
+                        green = "FF"
+                    if red == "FF" and blue == "FF" and green == "FF":
+                        color = "#808080"
+                    else:
+                        color = f"#{red}{green}{blue}"
+                        style = "bold"
 
                     tooltip += f"TO {edge.head_uid}\\n"
                     for k, val in content.items():
@@ -242,7 +253,7 @@ class UserService:
                     label = "UNK"
                 if edge.path is not None and edge.path != "":
                     label += f"\\npath={edge.path}"
-                if show_version is True:
+                if show_version:
                     label += f"\\nv={edge.version}"
 
                 # tail, head (arrow side), label, ...
@@ -251,7 +262,7 @@ class UserService:
             shape = "ellipse"
             fillcolor = "white"
             color = "black"
-            if v.active is False:
+            if not v.active:
                 fillcolor = "grey"
 
             label = f"uid={v.uid}"
@@ -325,6 +336,40 @@ class UserService:
                     user_name=infra_user_content.uid,
                     acl=acl)
 
+    def _connect_iis_pool_users(self,
+                                infra_resource_content: DiscoveryObject,
+                                infra_resource_vertex: DAGVertex,
+                                tasks: List[FactsNameUser]):
+
+        self.logger.debug(f"processing iis pools for "
+                          f"{infra_resource_content.description} ({infra_resource_vertex.uid})")
+
+        # We don't care about the name of the tasks, we just need a list users.
+        lookup = {}
+        for task in tasks:
+            lookup[task.user.lower()] = True
+
+        for infra_user_vertex in infra_resource_vertex.has_vertices():
+            infra_user_content = DiscoveryObject.get_discovery_object(infra_user_vertex)
+            if infra_user_content.record_uid is None:
+                continue
+            if user_in_lookup(
+                    lookup=lookup,
+                    user=infra_user_content.item.user,
+                    name=infra_user_content.name,
+                    source=infra_user_content.item.source):
+                self.logger.debug(f"  * found user for iis pool: {infra_user_content.item.user}")
+                acl = self.get_acl(infra_resource_content.record_uid, infra_user_content.record_uid)
+                if acl is None:
+                    acl = ServiceAcl()
+                acl.is_iis_pool = True
+                self.belongs_to(
+                    resource_uid=infra_resource_content.record_uid,
+                    resource_name=infra_resource_content.uid,
+                    user_uid=infra_user_content.record_uid,
+                    user_name=infra_user_content.uid,
+                    acl=acl)
+
     def _validate_users(self,
                         infra_resource_content: DiscoveryObject,
                         infra_resource_vertex: DAGVertex):
@@ -363,6 +408,7 @@ class UserService:
 
             found_service_acl = False
             found_task_acl = False
+            found_iis_pool_acl = False
             changed = False
 
             acl = acl_edge.content_as_object(ServiceAcl)
@@ -370,14 +416,14 @@ class UserService:
             user = infra_dag.search_content({"record_type": PAM_USER, "record_uid": user_service_user_vertex.uid})
             infra_user_content = None
             found_user = len(user) > 0
-            if found_user is True:
+            if found_user:
                 infra_user_vertex = user[0]
                 if infra_user_vertex.active is False:
                     found_user = False
                 else:
                     infra_user_content = DiscoveryObject.get_discovery_object(infra_user_vertex)
 
-            if found_user is False:
+            if not found_user:
                 self.disconnect_from(user_service_resource_vertex.uid, user_service_user_vertex.uid)
                 continue
 
@@ -387,29 +433,40 @@ class UserService:
                 source=infra_user_content.item.source
             )
 
-            if acl.is_service is True:
+            if acl.is_service:
                 for check_user in check_list:
                     if check_user in service_lookup:
                         found_service_acl = True
                         break
-                if found_service_acl is False:
+                if not found_service_acl:
                     acl.is_service = False
                     changed = True
 
-            if acl.is_task is True:
+            if acl.is_task:
                 for check_user in check_list:
                     if check_user in task_lookup:
                         found_task_acl = True
                         break
-                if found_task_acl is False:
+                if not found_task_acl:
                     acl.is_task = False
                     changed = True
 
-            if found_service_acl is True or found_task_acl is True and changed is True:
-                self.logger.debug(f"user {user_service_user_vertex.uid}(US) to {user_service_resource_vertex.uid} updated")
+            if acl.is_iis_pool:
+                for check_user in check_list:
+                    if check_user in task_lookup:
+                        found_iis_pool_acl = True
+                        break
+                if not found_iis_pool_acl:
+                    acl.is_iis_pool = False
+                    changed = True
+
+            if (found_service_acl is True or found_task_acl is True or found_iis_pool_acl is True) or changed is True:
+                self.logger.debug(f"user {user_service_user_vertex.uid}(US) to "
+                                  f"{user_service_resource_vertex.uid} updated")
                 self.belongs_to(user_service_resource_vertex.uid, user_service_user_vertex.uid, acl)
-            elif found_service_acl is False and found_task_acl is False:
-                self.logger.debug(f"user {user_service_user_vertex.uid}(US) to {user_service_resource_vertex.uid} disconnected")
+            elif found_service_acl is False and found_task_acl is False and found_iis_pool_acl is False:
+                self.logger.debug(f"user {user_service_user_vertex.uid}(US) to "
+                                  f"{user_service_resource_vertex.uid} disconnected")
                 self.disconnect_from(user_service_resource_vertex.uid, user_service_user_vertex.uid)
 
         self.logger.debug(f"DONE validate existing user")
@@ -427,7 +484,7 @@ class UserService:
             # Get ksm from the connection.
             # However, this might be a local connection, so check first.
             # Local connections don't need ksm.
-            if hasattr(self.conn, "ksm") is True:
+            if hasattr(self.conn, "ksm"):
                 kwargs["ksm"] = getattr(self.conn, "ksm")
 
             # Get the entire infrastructure graph; sync point = 0
@@ -451,8 +508,8 @@ class UserService:
                 # Check the user on the resource if they still are part of a service or task.
                 self._validate_users(infra_resource_content, infra_resource_vertex)
 
-                # Do we have services or tasks that are run as a user with a password?
-                if infra_resource_content.item.facts.has_services_or_tasks is True:
+                # Do we have services, tasks, iis_pools that are run as a user with a password?
+                if infra_resource_content.item.facts.has_service_items is True:
 
                     # If the resource does not exist in the user service graph, add a vertex and link it to the
                     #  user service root/configuration vertex.
@@ -460,7 +517,7 @@ class UserService:
                     if user_service_resource_vertex is None:
                         user_service_resource_vertex = self.dag.add_vertex(uid=infra_resource_content.record_uid,
                                                                            name=infra_resource_content.description)
-                    if user_service_config_vertex.has(user_service_resource_vertex) is False:
+                    if not user_service_config_vertex.has(user_service_resource_vertex):
                         user_service_resource_vertex.belongs_to_root(EdgeType.LINK)
 
                     # Do we have services that are run as a user with a password?
@@ -476,5 +533,12 @@ class UserService:
                             infra_resource_content,
                             infra_resource_vertex,
                             infra_resource_content.item.facts.tasks)
+
+                    # Do we have tasks that are run as a user with a password?
+                    if infra_resource_content.item.facts.has_iis_pools is True:
+                        self._connect_iis_pool_users(
+                            infra_resource_content,
+                            infra_resource_vertex,
+                            infra_resource_content.item.facts.iis_pools)
 
         self.save()

@@ -10,8 +10,8 @@
 #
 
 import argparse
-from keepercommander.params import KeeperParams
-from keepercommander.commands.base import report_output_parser, Command
+from ...params import KeeperParams
+from ...commands.base import report_output_parser, Command
 from ..core.service_manager import ServiceManager
 from ..core.globals import init_globals
 from ..decorators.logging import debug_decorator
@@ -41,7 +41,7 @@ class ServiceStatus(Command):
     """Command to get service status."""
     @debug_decorator
     def get_parser(self):
-        parser = argparse.ArgumentParser(prog='service-status', parents=[report_output_parser], description='Displays if the Commander API service is running or stopped.')
+        parser = argparse.ArgumentParser(prog='service-status', parents=[report_output_parser], description='Displays if the Commander API service is running or stopped')
         return parser
     
     def execute(self, params: KeeperParams, **kwargs) -> str:

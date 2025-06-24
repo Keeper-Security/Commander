@@ -10,9 +10,9 @@ from ..pam.router_helper import router_get_connected_gateways, router_set_record
 from ... import api, subfolder, utils, crypto, vault, vault_extensions
 from ...display import bcolors
 from ...proto import router_pb2, record_pb2
-from keepercommander.discovery_common.jobs import Jobs
-from keepercommander.discovery_common.process import Process, QuitException, NoDiscoveryDataException
-from keepercommander.discovery_common.types import (
+from ...discovery_common.jobs import Jobs
+from ...discovery_common.process import Process, QuitException, NoDiscoveryDataException
+from ...discovery_common.types import (
     DiscoveryObject, UserAcl, PromptActionEnum, PromptResult, BulkRecordAdd, BulkRecordConvert, BulkProcessResults,
     BulkRecordSuccess, BulkRecordFail, DirectoryInfo, NormalizedRecord, RecordField)
 from pydantic import BaseModel
@@ -23,8 +23,8 @@ from ...api import get_records_add_request
 if TYPE_CHECKING:
     from ...params import KeeperParams
     from ...vault import TypedRecord, KeeperRecord
-    from keepercommander.keeper_dag.vertex import DAGVertex
-    from keepercommander.discovery_common.record_link import RecordLink
+    from ...keeper_dag.vertex import DAGVertex
+    from ...discovery_common.record_link import RecordLink
 
 
 def _h(value: str) -> str:

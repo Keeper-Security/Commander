@@ -293,7 +293,7 @@ class EnterpriseCommand(Command):
     def get_node_path(self, params, node_id, omit_root=False):
         if self._node_map is None:
             self._node_map = {
-                x['node_id']: (x['data'].get('displayname') if x.get('parent_id', 0) > 0 else params.enterprise['enterprise_name'], x.get('parent_id', 0))
+                x['node_id']: (x['data'].get('displayname') or x['name'] or str(x['node_id']) if x.get('parent_id', 0) > 0 else params.enterprise['enterprise_name'], x.get('parent_id', 0))
                 for x in params.enterprise['nodes']}
         path = ''
         node = self._node_map.get(node_id)

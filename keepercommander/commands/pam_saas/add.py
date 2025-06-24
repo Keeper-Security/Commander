@@ -3,9 +3,9 @@ import argparse
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ... import vault
 from . import get_plugins_map
-from keepercommander.discovery_common.record_link import RecordLink
-from keepercommander.discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
-from keepercommander.discovery_common.types import UserAclRotationSettings
+from ...discovery_common.record_link import RecordLink
+from ...discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
+from ...discovery_common.types import UserAclRotationSettings
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -101,7 +101,7 @@ class PAMActionSaasAddCommand(PAMGatewayActionDiscoverCommandBase):
         # Make sure the SaaS configuration record has correct custom fields.
         missing_fields = []
         for field in plugin.fields:
-            if field.required is True:
+            if field.required is True and field.default_value is None:
                 found = next((x for x in config_record.custom if x.label == field.label), None)
                 if not found:
                     missing_fields.append(field.label.strip())
@@ -147,7 +147,7 @@ class PAMActionSaasAddCommand(PAMGatewayActionDiscoverCommandBase):
             return
 
         # If there is a resource record, it not NOOP.
-        # If there is NO resource record, it is NOOP.\
+        # If there is NO resource record, it is NOOP.
         # However, if this is an IAM User, don't set the NOOP
         if acl.is_iam_user is False:
             acl.rotation_settings.noop = resource_uid is None

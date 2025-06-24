@@ -11,17 +11,22 @@
 
 import base64
 import json
+import logging
 import math
 import re
 import time
 from urllib.parse import urlparse, parse_qs, unquote
 from pathlib import Path
+import sys
 
 from . import crypto
 from .constants import EMAIL_PATTERN
 
 
 VALID_URL_SCHEME_CHARS = '+-.:'
+
+def get_logger():
+    return logging.getLogger('keeper')
 
 def get_default_path():
     default_path = Path.home().joinpath('.keeper')
@@ -380,3 +385,93 @@ def value_to_boolean(value):
         return False
     else:
         return None
+
+def get_ssl_cert_file():
+    """Get SSL certificate file path, preferring system CA store for corporate environments like Zscaler"""
+    import ssl
+    import platform
+    import certifi
+    import os
+    
+    # Allow user to override via environment variable
+    user_cert_file = os.getenv('KEEPER_SSL_CERT_FILE')
+    if user_cert_file:
+        if user_cert_file.lower() == 'system':
+            pass  # Continue with system detection below
+        elif user_cert_file.lower() == 'certifi':
+            return certifi.where()
+        elif user_cert_file.lower() == 'none' or user_cert_file.lower() == 'false':
+            return False  # Disable SSL verification
+        elif os.path.exists(user_cert_file):
+            return user_cert_file
+        else:
+            # Don't use logging here as it can interfere with main logging config
+            print(f"Warning: SSL cert file specified in KEEPER_SSL_CERT_FILE not found: {user_cert_file}", file=sys.stderr)
+    
+    # Try to use system CA store first for corporate environments
+    try:
+        # On macOS, try Homebrew certificates first (better for corporate environments like Zscaler)
+        if platform.system() == 'Darwin':
+            system_ca_paths = [
+                '/opt/homebrew/etc/ca-certificates/cert.pem',  # Homebrew CA bundle (best for Zscaler)
+                '/usr/local/etc/ssl/cert.pem',  # Homebrew SSL (older location)
+                '/etc/ssl/cert.pem',  # macOS system CA bundle
+            ]
+            for ca_path in system_ca_paths:
+                if os.path.exists(ca_path):
+                    return ca_path
+        
+        # On Linux/Unix systems
+        elif platform.system() == 'Linux':
+            system_ca_paths = [
+                '/etc/ssl/certs/ca-certificates.crt',  # Debian/Ubuntu
+                '/etc/pki/tls/certs/ca-bundle.crt',    # RHEL/CentOS
+                '/etc/ssl/ca-bundle.pem',              # OpenSUSE
+                '/etc/ssl/cert.pem',                   # Generic
+            ]
+            for ca_path in system_ca_paths:
+                if os.path.exists(ca_path):
+                    return ca_path
+        
+        # Try to get default SSL context locations
+        try:
+            default_locations = ssl.get_default_verify_paths()
+            if default_locations.cafile and os.path.exists(default_locations.cafile):
+                return default_locations.cafile
+            if default_locations.capath and os.path.exists(default_locations.capath):
+                return default_locations.capath
+        except:
+            pass
+            
+    except Exception:
+        pass
+    
+    # Fall back to certifi if system CA not available
+    return certifi.where()
+
+
+def ssl_aware_request(method, url, **kwargs):
+    """Make an SSL-aware HTTP request using system CA certificates when available"""
+    import requests
+    
+    # Only set verify if not already specified
+    if 'verify' not in kwargs:
+        cert_file = get_ssl_cert_file()
+        if cert_file is False:
+            kwargs['verify'] = False
+        elif cert_file:
+            kwargs['verify'] = cert_file
+        # If cert_file is None, let requests use its default
+    
+    return requests.request(method, url, **kwargs)
+
+
+def ssl_aware_get(url, **kwargs):
+    """SSL-aware GET request using system CA certificates when available"""
+    return ssl_aware_request('GET', url, **kwargs)
+
+def is_windows_11():
+    if sys.platform != "win32":
+        return False
+    version = sys.getwindowsversion()
+    return version.major >= 10 and version.build >= 22000

@@ -10,17 +10,17 @@
 #
 
 import argparse
-from keepercommander.params import KeeperParams
 from ..config.service_config import ServiceConfig
-from keepercommander.commands.base import report_output_parser, Command
 from ..core.globals import init_globals
 from ..decorators.logging import logger, debug_decorator
+from ...commands.base import report_output_parser, Command
+from ...params import KeeperParams
 
 class AddConfigService(Command):
     """Command to add a new configuration to an existing service."""   
     @debug_decorator
     def get_parser(self):
-        parser = argparse.ArgumentParser(prog='service-config-add', parents=[report_output_parser], description='Adds new record to the Commander API service configuration.')
+        parser = argparse.ArgumentParser(prog='service-config-add', parents=[report_output_parser], description='Adds new record to the Commander API service configuration')
         return parser
         
     def execute(self, params: KeeperParams, **kwargs) -> str:

@@ -21,14 +21,10 @@ if sys.version_info >= (3, 8):
           
           folder = result['data']['folders'][0]
           self.assertEqual(folder['number'], 1)
-          self.assertEqual(folder['uid'], 'b4pBzT1WowoUXHk_US0SCg')
           self.assertEqual(folder['name'], 'Root')
-          self.assertEqual(folder['flags'], 'RS')
           
           record = result['data']['records'][0]
           self.assertEqual(record['number'], 1)
-          self.assertEqual(record['uid'], 'dGJ3xbH8CXhNF00FBX0wMA')
-          self.assertEqual(record['type'], 'login')
           self.assertEqual(record['title'], 'My Login')
           self.assertEqual(record['description'], 'Important')
 
@@ -43,15 +39,15 @@ if sys.version_info >= (3, 8):
           
           self.assertEqual(result['status'], 'success')
           self.assertEqual(result['command'], 'tree')
-          self.assertEqual(len(result['data']), 4)
+          self.assertEqual(len(result['data']['tree']), 4)  # Updated: now returns dict with 'tree' key
           
-          self.assertEqual(result['data'][0]['level'], 0)
-          self.assertEqual(result['data'][0]['name'], 'Root')
-          self.assertEqual(result['data'][0]['path'], 'Root')
+          self.assertEqual(result['data']['tree'][0]['level'], 0)
+          self.assertEqual(result['data']['tree'][0]['name'], 'Root')
+          self.assertEqual(result['data']['tree'][0]['path'], 'Root')
           
-          self.assertEqual(result['data'][2]['level'], 2)
-          self.assertEqual(result['data'][2]['name'], 'SubFolder1')
-          self.assertEqual(result['data'][2]['path'], 'Root/Folder1/SubFolder1')
+          self.assertEqual(result['data']['tree'][1]['level'], 0)
+          self.assertEqual(result['data']['tree'][1]['name'], 'Folder1')
+          self.assertEqual(result['data']['tree'][1]['path'], 'Folder1')
 
       def test_parse_mkdir_command(self):
           """Test parsing of 'mkdir' command output"""

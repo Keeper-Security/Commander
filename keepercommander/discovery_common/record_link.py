@@ -1,20 +1,21 @@
 from __future__ import annotations
 import logging
 from .constants import RECORD_LINK_GRAPH_ID
-from .utils import get_connection
+from .utils import get_connection, make_agent
 from .types import UserAcl, DiscoveryObject
-from keepercommander.keeper_dag import DAG, EdgeType
+from ..keeper_dag import DAG, EdgeType
 import importlib
 from typing import Any, Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from keepercommander.keeper_dag.vertex import DAGVertex
+    from ..keeper_dag.vertex import DAGVertex
 
 
 class RecordLink:
 
     def __init__(self, record: Any, logger: Optional[Any] = None, debug_level: int = 0, fail_on_corrupt: bool = True,
-                 log_prefix: str = "GS Record Linking", save_batch_count: int = 200, **kwargs):
+                 log_prefix: str = "GS Record Linking", save_batch_count: int = 200, agent: Optional[str] = None,
+                 **kwargs):
 
         self.conn = get_connection(**kwargs)
 
@@ -27,6 +28,10 @@ class RecordLink:
         self.log_prefix = log_prefix
         self.debug_level = debug_level
         self.save_batch_count = save_batch_count
+
+        self.agent = make_agent("record_linking")
+        if agent is not None:
+            self.agent += "; " + agent
 
         # Technically, since there is no encryption in this graph, there should be no corruption.
         # Allow it to be set regardlessly.
@@ -41,7 +46,7 @@ class RecordLink:
             self._dag = DAG(conn=self.conn, record=self.record, graph_id=RECORD_LINK_GRAPH_ID, auto_save=False,
                             logger=self.logger, debug_level=self.debug_level, name="Record Linking",
                             fail_on_corrupt=self.fail_on_corrupt, log_prefix=self.log_prefix,
-                            save_batch_count=self.save_batch_count)
+                            save_batch_count=self.save_batch_count, agent=self.agent)
             sync_point = self._dag.load(sync_point=0)
             self.logger.debug(f"the record linking sync point is {sync_point or 0}")
             if self.dag.has_graph is False:
