@@ -117,6 +117,8 @@ verbose_group.add_argument('-v', '--verbose', action='store_true', help="verbose
 verbose_group.add_argument('-vv', '--very-verbose', action='store_true', help="more verbose output (fetches team membership info not in cache)")
 list_team_parser.add_argument('-a', '--all', action='store_true',
                               help="show all teams in your contacts (including those outside your primary organization)")
+list_team_parser.add_argument('--sort', dest='sort', choices=['company', 'team_uid', 'name'], default='company',
+                              help="sort teams by column (default: company)")
 
 
 record_history_parser = argparse.ArgumentParser(prog='record-history', parents=[base.report_output_parser],
@@ -893,7 +895,7 @@ class RecordListTeamCommand(Command):
             team_uids = [uid for uid in share_targets.get('teams', {}).keys()]
             api.load_available_teams(params)
             teams.extend(
-                 [Team(team_uid=team.get('team_uid'), name=team.get('team_name'), enterprise_id=enterprise_id) for team in params.available_team_cache if team.get('uid') not in team_uids]
+                 [Team(team_uid=team.get('team_uid'), name=team.get('team_name'), enterprise_id=enterprise_id) for team in params.available_team_cache if team.get('team_uid') not in team_uids]
             )
 
         teams = self.get_team_members(params, teams, fetch_missing_users) if show_team_users else teams
@@ -908,7 +910,15 @@ class RecordListTeamCommand(Command):
                 if show_team_users:
                     row.append(team.members)
                 table.append(row)
-            table.sort(key=lambda x: (x[0] or '').lower())
+            
+            # Sort by the specified column
+            sort_column = kwargs.get('sort', 'company')
+            if sort_column == 'company':
+                table.sort(key=lambda x: (x[0] or '').lower())
+            elif sort_column == 'team_uid':
+                table.sort(key=lambda x: x[1].lower())
+            elif sort_column == 'name':
+                table.sort(key=lambda x: x[2].lower())
 
             return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
                                     row_number=True)
