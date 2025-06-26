@@ -98,7 +98,10 @@ class JobItem(BaseModel):
     conversation_id: Optional[str] = None
     error: Optional[str] = None
     stacktrace: Optional[str] = None
+
     sync_point: Optional[int] = None
+
+    # Stored chunked, in multiple DATA edges
     delta: Optional[DiscoveryDelta] = None
 
     @property

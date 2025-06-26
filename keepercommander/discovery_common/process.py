@@ -171,7 +171,7 @@ class Process:
 
             # Skip if the vertex is not active.
             # It won't have a DATA edge.
-            if vertex.active is False:
+            if vertex.active is False or vertex.has_data is False:
                 continue
 
             # Don't worry about "item" class type

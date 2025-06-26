@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
 from .constants import USER_SERVICE_GRAPH_ID, PAM_MACHINE, PAM_USER
-from .utils import get_connection, user_in_lookup, user_check_list
+from .utils import get_connection, user_in_lookup, user_check_list, make_agent
 from .types import DiscoveryObject, ServiceAcl, FactsNameUser
 from .infrastructure import Infrastructure
 
@@ -18,7 +18,7 @@ class UserService:
 
     def __init__(self, record: Any, logger: Optional[Any] = None, history_level: int = 0,
                  debug_level: int = 0, fail_on_corrupt: bool = True, log_prefix: str = "GS Services/Tasks",
-                 save_batch_count: int = 200,
+                 save_batch_count: int = 200, agent: Optional[str] = None,
                  **kwargs):
 
         self.conn = get_connection(**kwargs)
@@ -35,6 +35,10 @@ class UserService:
         self.fail_on_corrupt = fail_on_corrupt
         self.save_batch_count = save_batch_count
 
+        self.agent = make_agent("user_service")
+        if agent is not None:
+            self.agent += "; " + agent
+
         self.auto_save = False
         self.last_sync_point = -1
 
@@ -46,7 +50,7 @@ class UserService:
                             auto_save=False, logger=self.logger, history_level=self.history_level,
                             debug_level=self.debug_level, name="Discovery Service/Tasks",
                             fail_on_corrupt=self.fail_on_corrupt, log_prefix=self.log_prefix,
-                            save_batch_count=self.save_batch_count)
+                            save_batch_count=self.save_batch_count, agent=self.agent)
 
             self._dag.load(sync_point=0)
 
