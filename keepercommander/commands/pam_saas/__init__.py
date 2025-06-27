@@ -79,10 +79,10 @@ class SaasPluginUsage(BaseModel):
 class SaasCatalog(BaseModel):
     name: str
     type: str = "catalog"
-    author: str
-    email: str
-    summary: str
-    file: str
+    author: Optional[str] = None
+    email: Optional[str] = None
+    summary: Optional[str] = None
+    file: Optional[str] = None
     file_sig: Optional[str] = None
     allows_remote_management: Optional[bool] = False
     readme: Optional[str] = None
@@ -92,7 +92,7 @@ class SaasCatalog(BaseModel):
 
     @property
     def file_name(self):
-        return self.file.split(os.sep)[-1]
+        return self.file.split(os.sep)[-1] if self.file else None
 
 
 def get_gateway_saas_schema(params: KeeperParams, gateway_context: GatewayContext) -> Optional[List[dict]]:
