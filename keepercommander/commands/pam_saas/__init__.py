@@ -84,7 +84,7 @@ class SaasCatalog(BaseModel):
     summary: str
     file: str
     file_sig: Optional[str] = None
-    allows_remote_management: bool = False
+    allows_remote_management: Optional[bool] = False
     readme: Optional[str] = None
     fields: List[SaasConfigItem] = []
     installed: bool = False
