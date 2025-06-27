@@ -99,7 +99,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
                 color = sort_results[plugin_type]["color"]
                 title = sort_results[plugin_type]["title"]
                 for plugin in sort_results[plugin_type][status]:
-                    summary = plugin.summary
+                    summary = plugin.summary or "No description available"
                     name = plugin.name
                     desc = f" ({color}{title}"
                     if status == "using":
@@ -113,9 +113,13 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
         print("")
         print(f"{bcolors.HEADER}{plugin.name}{bcolors.ENDC}")
         print(f"{bcolors.BOLD}  Type{bcolors.ENDC}: {plugin.type}")
-        print(f"{bcolors.BOLD}  Author{bcolors.ENDC}: {plugin.author} ({plugin.email})")
-        print(f"{bcolors.BOLD}  Summary{bcolors.ENDC}: {plugin.summary}")
-        print(f"{bcolors.BOLD}  Documents{bcolors.ENDC}: {plugin.readme}")
+        if plugin.author and plugin.email:
+            print(f"{bcolors.BOLD}  Author{bcolors.ENDC}: {plugin.author} ({plugin.email})")
+        elif plugin.author:
+            print(f"{bcolors.BOLD}  Author{bcolors.ENDC}: {plugin.author}")
+        print(f"{bcolors.BOLD}  Summary{bcolors.ENDC}: {plugin.summary or 'No description available'}")
+        if plugin.readme:
+            print(f"{bcolors.BOLD}  Documents{bcolors.ENDC}: {plugin.readme}")
         print("")
         print(f"  {bcolors.HEADER}Fields{bcolors.ENDC}")
         req_field = []
@@ -238,7 +242,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
         params.sync_data = True
 
         # If this is not a built-in or custom script, we need to attach it to the config record.
-        if plugin_code_bytes is not None:
+        if plugin_code_bytes is not None and plugin.file_name:
 
             with TemporaryDirectory() as temp_dir:
                 sync_down(params)
@@ -256,9 +260,10 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
                 task.title = f"{plugin.name} Script"
                 task.mime_type = "text/x-python"
 
-                script_signature = make_script_signature(plugin_code_bytes)
-                if script_signature != plugin.file_sig:
-                    raise ValueError("The plugin signature in catalog does not match what was downloaded.")
+                if plugin.file_sig:
+                    script_signature = make_script_signature(plugin_code_bytes)
+                    if script_signature != plugin.file_sig:
+                        raise ValueError("The plugin signature in catalog does not match what was downloaded.")
 
                 attachment.upload_attachments(params, existing_record, [task])
 
@@ -331,7 +336,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
 
                 # For catalog plugins, we need to download the python file from GitHub.
                 plugin_code_bytes = None
-                if plugin.type == "catalog":
+                if plugin.type == "catalog" and plugin.file:
                     res = requests.get(plugin.file)
                     if res.ok is False:
                         print("")
