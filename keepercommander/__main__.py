@@ -206,10 +206,9 @@ def main(from_package=False):
     ssl_cert_file = get_ssl_cert_file()
     if ssl_cert_file:
         os.environ['SSL_CERT_FILE'] = ssl_cert_file
-        logging.debug(f"Using SSL certificate file: {ssl_cert_file}")
     else:
         # User explicitly disabled SSL verification
-        logging.warning("SSL certificate verification has been disabled. This is not recommended for production use.")
+        print("Warning: SSL certificate verification has been disabled. This is not recommended for production use.", file=sys.stderr)
         if 'SSL_CERT_FILE' in os.environ:
             del os.environ['SSL_CERT_FILE']
     logging.basicConfig(format='%(message)s')
@@ -233,6 +232,12 @@ def main(from_package=False):
         params.debug = opts.debug
 
     logging.getLogger().setLevel(logging.WARNING if params.batch_mode else logging.DEBUG if opts.debug else logging.INFO)
+
+    # Log SSL certificate selection in debug mode (after logging is configured)
+    if opts.debug:
+        ssl_cert_from_env = os.environ.get('SSL_CERT_FILE')
+        if ssl_cert_from_env:
+            logging.debug(f"Using SSL certificate file: {ssl_cert_from_env}")
 
     if opts.proxy:
         params.proxy = opts.proxy
