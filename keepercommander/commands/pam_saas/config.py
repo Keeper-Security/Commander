@@ -337,7 +337,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
                 # For catalog plugins, we need to download the python file from GitHub.
                 plugin_code_bytes = None
                 if plugin.type == "catalog" and plugin.file:
-                    res = requests.get(plugin.file)
+                    res = utils.ssl_aware_get(plugin.file)
                     if res.ok is False:
                         print("")
                         print(f"{bcolors.FAIL}Could download the script from GitHub.{bcolors.ENDC}")
