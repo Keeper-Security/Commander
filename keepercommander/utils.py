@@ -16,6 +16,7 @@ import re
 import time
 from urllib.parse import urlparse, parse_qs, unquote
 from pathlib import Path
+import sys
 
 from . import crypto
 from .constants import EMAIL_PATTERN
@@ -387,7 +388,6 @@ def get_ssl_cert_file():
     import platform
     import certifi
     import os
-    import logging
     
     # Allow user to override via environment variable
     user_cert_file = os.getenv('KEEPER_SSL_CERT_FILE')
@@ -401,7 +401,8 @@ def get_ssl_cert_file():
         elif os.path.exists(user_cert_file):
             return user_cert_file
         else:
-            logging.warning(f"SSL cert file specified in KEEPER_SSL_CERT_FILE not found: {user_cert_file}")
+            # Don't use logging here as it can interfere with main logging config
+            print(f"Warning: SSL cert file specified in KEEPER_SSL_CERT_FILE not found: {user_cert_file}", file=sys.stderr)
     
     # Try to use system CA store first for corporate environments
     try:
