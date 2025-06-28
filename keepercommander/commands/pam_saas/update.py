@@ -4,7 +4,7 @@ import logging
 import traceback
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ...display import bcolors
-from ... import api, vault, vault_extensions, attachment, record_management
+from ... import api, vault, vault_extensions, attachment, record_management, utils
 from . import (get_plugins_map, make_script_signature, SaasCatalog, get_field_input, get_record_field_value,
                set_record_field_value)
 from tempfile import TemporaryDirectory
@@ -62,7 +62,7 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
             raise ValueError("Plugin does not have a file name.")
 
         print("  * downloading updated plugin script")
-        res = requests.get(plugin.file)
+        res = utils.ssl_aware_get(plugin.file)
         if res.ok is False:
             raise ValueError("Could download updated script from GitHub")
         plugin_code_bytes = res.content
