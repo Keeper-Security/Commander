@@ -405,11 +405,12 @@ def get_ssl_cert_file():
     
     # Try to use system CA store first for corporate environments
     try:
-        # On macOS, try system keychain first
+        # On macOS, try Homebrew certificates first (better for corporate environments like Zscaler)
         if platform.system() == 'Darwin':
             system_ca_paths = [
+                '/opt/homebrew/etc/ca-certificates/cert.pem',  # Homebrew CA bundle (best for Zscaler)
+                '/usr/local/etc/ssl/cert.pem',  # Homebrew SSL (older location)
                 '/etc/ssl/cert.pem',  # macOS system CA bundle
-                '/usr/local/etc/ssl/cert.pem',  # Homebrew SSL
             ]
             for ca_path in system_ca_paths:
                 if os.path.exists(ca_path):
@@ -455,6 +456,7 @@ def ssl_aware_request(method, url, **kwargs):
             kwargs['verify'] = False
         elif cert_file:
             kwargs['verify'] = cert_file
+        # If cert_file is None, let requests use its default
     
     return requests.request(method, url, **kwargs)
 
