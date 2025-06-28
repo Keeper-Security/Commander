@@ -7,6 +7,7 @@ from ...proto import pam_pb2
 from ...display import bcolors
 from ... import vault
 from ...discovery_common.record_link import RecordLink
+from ... import utils
 import logging
 import requests
 import hmac
@@ -235,7 +236,7 @@ def get_plugins_map(params: KeeperParams, gateway_context: GatewayContext) -> Op
 
     # Get the latest release of the catalog.json
     api_url = f"https://api.github.com/repos/{CATALOG_REPO}/releases/latest"
-    res = requests.get(api_url)
+    res = utils.ssl_aware_get(api_url)
     if res.ok is False:
         print("")
         print(f"{bcolors.FAIL}Could not get plugin catalog from GitHub.{bcolors.ENDC}")
@@ -249,7 +250,7 @@ def get_plugins_map(params: KeeperParams, gateway_context: GatewayContext) -> Op
     logging.debug(f"download {asset['name']} from {download_url}")
 
     # Download the latest the catalog.yml
-    res = requests.get(download_url)
+    res = utils.ssl_aware_get(download_url)
     if res.ok is False:
         print("")
         print(f"{bcolors.FAIL}Could not download the plugin catalog from GitHub.{bcolors.ENDC}")
