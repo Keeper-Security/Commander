@@ -101,7 +101,7 @@ class PAMActionSaasAddCommand(PAMGatewayActionDiscoverCommandBase):
         # Make sure the SaaS configuration record has correct custom fields.
         missing_fields = []
         for field in plugin.fields:
-            if field.required is True:
+            if field.required is True and field.default_value is None:
                 found = next((x for x in config_record.custom if x.label == field.label), None)
                 if not found:
                     missing_fields.append(field.label.strip())
@@ -147,7 +147,7 @@ class PAMActionSaasAddCommand(PAMGatewayActionDiscoverCommandBase):
             return
 
         # If there is a resource record, it not NOOP.
-        # If there is NO resource record, it is NOOP.\
+        # If there is NO resource record, it is NOOP.
         # However, if this is an IAM User, don't set the NOOP
         if acl.is_iam_user is False:
             acl.rotation_settings.noop = resource_uid is None
