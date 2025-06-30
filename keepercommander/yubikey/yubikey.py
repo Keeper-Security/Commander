@@ -141,6 +141,10 @@ def yubikey_authenticate(request):  # type: (dict) -> Optional[AuthenticationRes
 
     options = request['publicKeyCredentialRequestOptions'].copy()
     origin = ''
+    if 'extensions' not in options:
+        options['extensions'] = {}
+    if 'largeBlob' not in options['extensions']:
+        options['extensions']['largeBlob'] = {'read': False}
     if 'extensions' in options:
         extensions = options['extensions']
         origin = extensions.get('appid') or ''
