@@ -144,6 +144,8 @@ def yubikey_authenticate(request):  # type: (dict) -> Optional[AuthenticationRes
     if 'extensions' in options:
         extensions = options['extensions']
         origin = extensions.get('appid') or ''
+        if 'largeBlob' not in options['extensions']:
+            options['extensions']['largeBlob'] = {'read': None}
 
     credentials = options.get('allowCredentials') or []
     for c in credentials:
