@@ -720,6 +720,8 @@ class RecordAddCommand(Command, RecordEditMixin):
             raise CommandError('record-add', 'Record type parameter is required.')
 
         fields = kwargs.get('fields', [])
+        # Filter out empty strings that might be introduced by copy-paste or line continuation issues
+        fields = [field.strip() for field in fields if field.strip()]
 
         record_fields = []    # type: List[ParsedFieldValue]
         add_attachments = []  # type: List[ParsedFieldValue]
@@ -841,6 +843,8 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
                 record.notes = notes
 
         fields = kwargs.get('fields', [])
+        # Filter out empty strings that might be introduced by copy-paste or line continuation issues
+        fields = [field.strip() for field in fields if field.strip()]
 
         record_fields = []    # type: List[ParsedFieldValue]
         add_attachments = []  # type: List[ParsedFieldValue]

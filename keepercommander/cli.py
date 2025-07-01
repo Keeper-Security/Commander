@@ -341,6 +341,43 @@ def force_quit():
 prompt_session = None
 
 
+def read_command_with_continuation(prompt_session, params):
+    """Read command with support for line continuation using backslash."""
+    command_lines = []
+    continuation_prompt = "... "
+    current_prompt = get_prompt(params)
+    
+    while True:
+        if prompt_session is not None:
+            line = prompt_session.prompt(current_prompt)
+        else:
+            line = input(current_prompt)
+        
+        # Check if line ends with backslash (line continuation)
+        # First strip all trailing whitespace, then check for backslash
+        stripped_line = line.rstrip()
+        if stripped_line.endswith('\\'):
+            # Remove the backslash and any remaining whitespace
+            line_content = stripped_line[:-1].strip()
+            if line_content:  # Only add non-empty lines
+                command_lines.append(line_content)
+            current_prompt = continuation_prompt
+        else:
+            # No continuation, add the final line if it has content
+            line_content = stripped_line
+            if line_content:
+                command_lines.append(line_content)
+            break
+    
+    # Join all lines with spaces, ensuring no extra spaces
+    # Also clean up any multiple spaces that might have been introduced
+    result = ' '.join(command_lines)
+    # Replace multiple spaces with single spaces to handle any remaining formatting issues
+    import re
+    result = re.sub(r'\s+', ' ', result).strip()
+    return result
+
+
 def loop(params):  # type: (KeeperParams) -> int
     global prompt_session
     error_no = 0
@@ -401,9 +438,9 @@ def loop(params):  # type: (KeeperParams) -> int
                             enforcement_checked.add(params.user)
                             do_command(params, 'check-enforcements')
 
-                        command = prompt_session.prompt(get_prompt(params))
+                        command = read_command_with_continuation(prompt_session, params)
                     else:
-                        command = input(get_prompt(params))
+                        command = read_command_with_continuation(None, params)
                     if tmer:
                         tmer.cancel()
                         tmer = None
