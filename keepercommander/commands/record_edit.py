@@ -95,9 +95,7 @@ upload_parser.add_argument('record', action='store', help='record path or UID')
 record_fields_description = '''
 Commander supports two types of records:
 1. Typed
-2. Legacy
-
-To create a Legacy record type pass "legacy" or "general" record type parameter
+2. Legacy (update only)
 
 The content of Typed record is defined by schema. The schema name is stored on record "type" field
 To view all available record types:  "record-type-info" or "rti"
@@ -743,7 +741,7 @@ class RecordAddCommand(Command, RecordEditMixin):
         title = kwargs.get('title')
         if not title:
             raise CommandError('record-add', 'Title parameter is required.')
-        record_type = kwargs.get('record_type')
+        record_type = kwargs.get('record_type')   # type: Optional[str]
         if not record_type:
             raise CommandError('record-add', 'Record type parameter is required.')
 
@@ -762,8 +760,9 @@ class RecordAddCommand(Command, RecordEditMixin):
                 record_fields.append(parsed_field)
 
         if record_type in ('legacy', 'general'):
-            record = vault.PasswordRecord()
-            self.assign_legacy_fields(record, record_fields)
+            raise CommandError('record-add', 'Legacy record type is not supported anymore.')
+            # record = vault.PasswordRecord()
+            # self.assign_legacy_fields(record, record_fields)
         else:
             rt_fields = self.get_record_type_fields(params, record_type)
             if not rt_fields:
