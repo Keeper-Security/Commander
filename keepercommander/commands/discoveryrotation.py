@@ -1490,14 +1490,14 @@ class PamConfigurationEditMixin(RecordEditMixin):
         elif record.record_type == 'pamGcpConfiguration':
             gcp_id = kwargs.get('gcp_id')
             if gcp_id:
-                extra_properties.append(f'text.gcpId={gcp_id}')
+                extra_properties.append(f'text.pamGcpId={gcp_id}')
             service_account_key = kwargs.get('service_account_key')
             if service_account_key:
-                extra_properties.append(f'multiline.serviceAccountKeyJson={service_account_key}')
+                extra_properties.append(f'json.pamServiceAccountKey={service_account_key}')
             gcp_region = kwargs.get('gcp_region')
             if gcp_region:
                 regions = '\n'.join(gcp_region)
-                extra_properties.append(f'multiline.regionNames={regions}')
+                extra_properties.append(f'multiline.pamGcpRegionName={regions}')
         elif record.record_type == 'pamAzureConfiguration':
             azure_id = kwargs.get('azure_id')
             if azure_id:

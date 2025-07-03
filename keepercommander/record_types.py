@@ -18,6 +18,7 @@ FieldTypes = {x[0]: x for x in (
     FieldType('text', '', 'plain text'),
     FieldType('url', '', 'url string, can be clicked'),
     FieldType('multiline', '', 'multiline text'),
+    FieldType('json', '', 'json text; only validated data persisted'),
     FieldType('fileRef', '', 'reference to the file field on another record'),
     FieldType('email', '', 'valid email address plus tag'),
     FieldType('secret', '', 'the field value is masked'),
