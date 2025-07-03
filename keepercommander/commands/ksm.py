@@ -130,7 +130,8 @@ ksm_parser.add_argument('--config-init', type=str, dest='config_init', action='s
                         help='Initialize client config')    # json, b64, file
 # Application sharing options
 ksm_parser.add_argument('--email', action='store', type=str, dest='email', help='Email of user to grant / remove application access to / from')
-ksm_parser.add_argument('--admin', action='store_true', help='Allow share recipient to manage application')
+# Disable sharing apps w/ admin permissions for now
+# ksm_parser.add_argument('--admin', action='store_true', help='Allow share recipient to manage application')
 
 
 
@@ -332,6 +333,10 @@ class KSMCommand(Command):
         if app_rec is None:
             logging.warning('Application "%s" not found.' % app_name_or_uid)
             return
+
+        # For now, disable sharing app w/ edit + share permissions
+        is_admin = False
+
         app_uid = app_rec.get('record_uid', '')
         sr_action = 'revoke' if unshare else 'grant'
         rec_perms = dict(can_edit=is_admin and not unshare, can_share=is_admin and not unshare)
