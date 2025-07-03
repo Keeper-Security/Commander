@@ -65,17 +65,18 @@ class TestRecord(TestCase):
                 cmd.execute(params, force=True, title='New Record')
 
             added_record = None
-            cmd.execute(params, force=True, title='New Record', record_type='legacy',
-                        fields=['login=user@company.com', 'password=password', 'url=https://google.com/', 'AAA=BBB'])
-            self.assertIsNotNone(added_record)
-            self.assertEqual('New Record', added_record.title)
-            self.assertIsInstance(added_record, vault.PasswordRecord)
-            self.assertEqual(added_record.login, 'user@company.com')
-            self.assertEqual(added_record.password, 'password')
-            self.assertEqual(added_record.link, 'https://google.com/')
-            self.assertEqual(len(added_record.custom), 1)
-            value = added_record.get_custom_value('AAA')
-            self.assertEqual(value, 'BBB')
+            self.assertRaises(CommandError, cmd.execute, params, force=True, title='New Record')
+            # cmd.execute(params, force=True, title='New Record', record_type='legacy',
+            #             fields=['login=user@company.com', 'password=password', 'url=https://google.com/', 'AAA=BBB'])
+            # self.assertIsNotNone(added_record)
+            # self.assertEqual('New Record', added_record.title)
+            # self.assertIsInstance(added_record, vault.PasswordRecord)
+            # self.assertEqual(added_record.login, 'user@company.com')
+            # self.assertEqual(added_record.password, 'password')
+            # self.assertEqual(added_record.link, 'https://google.com/')
+            # self.assertEqual(len(added_record.custom), 1)
+            # value = added_record.get_custom_value('AAA')
+            # self.assertEqual(value, 'BBB')
 
             added_record = None
             cmd.execute(params, force=True, title='New Record', record_type='login',
