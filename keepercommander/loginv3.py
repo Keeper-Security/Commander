@@ -22,7 +22,6 @@ from prompt_toolkit.lexers.base import Lexer
 from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.shortcuts import prompt
 from prompt_toolkit.validation import Validator, ValidationError
-
 from . import api, rest_api, utils, crypto, constants, generator
 from .auth import login_steps, console_ui
 from .breachwatch import BreachWatch
@@ -47,6 +46,21 @@ class LoginV3Flow:
 
         logging.debug("Login v3 Start as '%s'", params.user)
 
+        # Check if biometric should be attempted automatically based on user's previous usage
+        biometric = False
+        if params.user:
+            try:
+                from keepercommander.biometric.biometric import check_biometric_previously_used
+                if check_biometric_previously_used(params.user):
+                    biometric = True
+                    logging.debug("Biometric authentication enabled automatically based on user's previous usage")
+            except ImportError:
+                # Biometric module not available, continue with password authentication
+                pass
+            except Exception as e:
+                # Any error checking the flag, log and continue with password authentication
+                logging.debug(f"Error checking biometric flag: {e}")
+
         encryptedDeviceToken = LoginV3API.get_device_id(params, new_device)
 
         if new_login:
@@ -60,11 +74,63 @@ class LoginV3Flow:
             login_type = 'ALTERNATE'
 
         resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes, loginType=login_type)
+        if biometric:
+            resp.loginState = APIRequest_pb2.AFTER_PASSKEY_LOGIN
 
         is_alternate_login = False
 
         while True:
-            if resp.loginState == APIRequest_pb2.DEVICE_APPROVAL_REQUIRED:  # client goes to “standard device approval”.
+            if resp.loginState == APIRequest_pb2.AFTER_PASSKEY_LOGIN:
+                from keepercommander.biometric.biometric import BiometricVerifyCommand
+                auth_helper = BiometricVerifyCommand()
+                print("Attempting biometric authentication...")
+                print("Press Ctrl+C to skip biometric and default login method")
+                
+                try:
+                    biometric_result = auth_helper.biometric_authenticate(params, username=params.user)
+                    
+                    if biometric_result and biometric_result.get('is_valid'):
+                        print("Biometric authentication successful!")
+                        encrypted_login_token = biometric_result.get('login_token')
+                        resp = LoginV3API.resume_login(params, encrypted_login_token, encryptedDeviceToken, loginType="PASSKEY_BIO")
+                    else:
+                        print("Biometric authentication failed.")
+                        print("Falling back to password authentication...")
+                        resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes, loginType=login_type)
+                        continue
+                        
+                except KeyboardInterrupt:
+                    print(f"\n{bcolors.OKBLUE}Biometric authentication cancelled by user.{bcolors.ENDC}")
+                    print("Falling back to password/SSO authentication...")
+                    resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes, loginType=login_type)
+                    continue
+                            
+                except Exception as e:
+                    error_message = str(e).lower()
+                    
+                    if "device_needs_approval" in error_message or "device approval" in error_message:
+                        print(f"\n{bcolors.FAIL}Biometric Login Failed{bcolors.ENDC}")
+                        print(f"{bcolors.WARNING}Device registration required for biometric authentication.{bcolors.ENDC}")
+                        print(f"\nPlease run: {bcolors.BOLD}{bcolors.OKBLUE}this-device register{bcolors.ENDC}")
+                        print("Then try biometric login again.")
+                        
+                        # Always provide option to fallback
+                        fallback_choice = input("\nWould you like to try password/SSO login instead? (y/n): ").strip().lower()
+                        if fallback_choice in ['y', 'yes']:
+                            print("Falling back to password/SSO authentication...")
+                            resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes, loginType=login_type)
+                            continue
+                        else:
+                            raise Exception("Device needs approval for biometric authentication. Please register your device first.")
+                    
+                    else:
+                        # For any other biometric errors, fall back to normal flow
+                        print(f"Biometric authentication unavailable: {str(e)}")
+                        print("Falling back to password/SSO authentication...")
+                        resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes, loginType=login_type)
+                        continue
+
+            if resp.loginState == APIRequest_pb2.DEVICE_APPROVAL_REQUIRED:  # client goes to "standard device approval".
                 should_cancel = False
                 should_resume = False
 
@@ -820,7 +886,6 @@ class LoginV3API:
         api_request_payload.payload = rq.SerializeToString()
 
         rs = rest_api.execute_rest(params.rest_context, 'authentication/start_login', api_request_payload)
-
         if type(rs) == bytes:
             login_resp = APIRequest_pb2.LoginResponse()
             login_resp.ParseFromString(rs)
