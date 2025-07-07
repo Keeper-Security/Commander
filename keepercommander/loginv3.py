@@ -51,6 +51,7 @@ class LoginV3Flow:
         if params.user:
             try:
                 from keepercommander.biometric.biometric import check_biometric_previously_used
+
                 if check_biometric_previously_used(params.user):
                     biometric = True
                     logging.debug("Biometric authentication enabled automatically based on user's previous usage")
@@ -81,7 +82,7 @@ class LoginV3Flow:
 
         while True:
             if resp.loginState == APIRequest_pb2.AFTER_PASSKEY_LOGIN:
-                from keepercommander.biometric.biometric import BiometricVerifyCommand
+                from keepercommander.biometric.commands.verify import BiometricVerifyCommand
                 auth_helper = BiometricVerifyCommand()
                 print("Attempting biometric authentication...")
                 print("Press Ctrl+C to skip biometric and default login method")

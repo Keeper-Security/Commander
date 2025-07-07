@@ -8,65 +8,156 @@ The biometric module enables users to authenticate with Keeper using platform-sp
 - Windows Hello (Windows)
 - Touch ID (macOS)
 
-## Architecture
 
-The module is structured as follows:
+## Prerequisites
 
-- `biometric.py` - Core biometric functionality and command implementations
-- `biometric_win.py` - Windows-specific biometric implementations
-- `biometric_mac.py` - macOS-specific biometric implementations
+### 1. OS-Level Biometric Setup
 
-## Dependencies
+**Before using biometric authentication with Keeper Commander, you must have biometric credentials already configured in your operating system:**
 
-- `fido2` - FIDO2/WebAuthn support for biometric authentication
-- Platform-specific libraries are imported conditionally
+#### Windows Requirements:
+- **Windows Hello must be set up** in Windows Settings
+- Navigate to: `Settings > Accounts > Sign-in options > Windows Hello`
+- Configure at least one of:
+  - **Face recognition**: Set up Windows Hello Face
+  - **Fingerprint**: Set up Windows Hello Fingerprint
+  - **PIN**: Required as a backup authentication method
+- Hardware requirements:
+  - Compatible biometric hardware (fingerprint reader, IR camera, etc.)
+  - TPM (Trusted Platform Module) chip
+
+#### macOS Requirements:
+- **Touch ID must be enabled** in System Preferences
+- Navigate to: `System Preferences > Touch ID & Password`
+- Add your fingerprint(s) to the system
+- Hardware requirements:
+  - Mac with Touch ID sensor (MacBook Pro 2016+, MacBook Air 2018+, iMac with Touch ID, etc.)
+
+### 2. Device Registration
+
+**Device registration is mandatory before biometric authentication can be used:**
+After login with keeper shell:
+```bash
+# First, register your device with Keeper
+this-device register
+```
+
+This step is required because:
+- Biometric authentication requires a trusted device relationship
+- The device must be approved by Keeper's security system
+- Without device registration, biometric login will fail with "Device needs approval" error
 
 ## Usage
 
-### Adding a biometric method
+### Complete Setup Process
+
+1. **Register your device** (required first step):
+   ```bash
+   this-device register
+   ```
+
+2. **Add biometric authentication**:
+   ```bash
+   biometric register
+   ```
+
+3. **Verify the setup**:
+   ```bash
+   biometric verify
+   ```
+
+### Available Commands
+
+#### Adding a biometric method
 ```bash
 biometric register
 ```
+- Registers your OS-configured biometric credentials with Keeper
+- Requires prior device registration via `this-device register`
 
-### Listing biometric methods
+#### Listing biometric methods
 ```bash
 biometric list
 ```
+- Shows all registered biometric credentials for your account
 
-### Testing biometric authentication
-```bash
-biometric test
-```
-
-### Verifying biometric authentication
+#### Testing biometric authentication
 ```bash
 biometric verify
 ```
+- Tests biometric authentication without logging in
+- Useful for troubleshooting setup issues
 
-### Disabling biometric authentication
+#### Disabling biometric authentication
 ```bash
 biometric unregister
 ```
+- Removes biometric authentication from your account
+- You'll need to use password authentication after this
 
 ## Platform Support
 
 ### Windows
-- Windows Hello Face recognition
-- Windows Hello Fingerprint
-- WebAuthn support via Windows Hello
+- **Windows Hello Face recognition**
+- **Windows Hello Fingerprint**
+- **WebAuthn support via Windows Hello**
+- **Storage**: Windows Registry (`HKEY_CURRENT_USER\Software\KeeperSecurity\Commander`)
 
 ### macOS
-- Touch ID
-- FIDO2 device support
+- **Touch ID**
+- **FIDO2 device support**
+- **Storage**: Property list files (`~/Library/Application Support/Keeper/biometric_flags.plist`)
 
+## Troubleshooting
+
+### Common Issues
+
+#### "Device needs approval" error
+```bash
+# Solution: Register your device first
+this-device register
+
+# Then try biometric registration again
+biometric register
+```
+
+#### "No biometric hardware detected"
+- **Windows**: Ensure Windows Hello is properly configured in Settings
+- **macOS**: Verify Touch ID is enabled in System Preferences
+- Check that your hardware supports biometric authentication
+
+#### "Authentication failed"
+- Verify your biometric credentials work for OS login
+- Try re-registering: `biometric unregister` then `biometric register`
+- Ensure your biometric sensor is clean and unobstructed
+
+#### "FIDO2 not available"
+```bash
+# Install required dependencies
+pip install fido2
+```
 
 ## Implementation Details
 
 The module uses FIDO2/WebAuthn standards for biometric authentication, ensuring compatibility with Keeper's backend systems. Platform-specific implementations handle the nuances of each operating system's biometric APIs.
 
-## Registry/Configuration Storage
+### Storage Locations
 
-- **Windows**: Uses Windows Registry to store biometric authentication flags
+- **Windows**: `HKEY_CURRENT_USER\Software\KeeperSecurity\Commander`
+- **macOS**: `~/Library/Application Support/Keeper/biometric_flags.plist`
+
+### Security Features
+
+- Uses platform-specific secure storage
+- Implements proper FIDO2/WebAuthn protocols
+- Supports user presence verification
+- Handles timeout and cancellation scenarios
+
+## Dependencies
+
+- `fido2` - FIDO2/WebAuthn support for biometric authentication
+- Platform-specific libraries are imported conditionally
+- No additional dependencies required beyond base Keeper Commander
 
 ## Error Handling
 
@@ -75,4 +166,5 @@ The module provides comprehensive error handling for various biometric authentic
 - User cancellation
 - Timeout conditions
 - Authentication failures
-- Platform-specific errors 
+- Platform-specific errors
+- Device approval requirements 
