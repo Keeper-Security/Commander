@@ -80,10 +80,13 @@ def verify_rp_id_none(rp_id, origin):
 
 
 def check_biometric_previously_used(username):
-    """Check if biometric authentication was previously used for this user - Windows only"""
+    """Check if biometric authentication was previously used for this user"""
     if os.name == 'nt':
         from .biometric_win import get_windows_registry_biometric_flag
         return get_windows_registry_biometric_flag(username)
+    elif platform.system() == 'Darwin':
+        from .biometric_mac import get_macos_biometric_flag
+        return get_macos_biometric_flag(username)
     else:
         return False
 
@@ -137,9 +140,10 @@ class PlatformBiometricDetector:
             from .biometric_win import detect_windows_hello
             return detect_windows_hello()
         elif system == 'Darwin':
-            return False, "macOS biometric authentication is not implemented"
+            from .biometric_mac import detect_touch_id
+            return detect_touch_id()
         else:
-            return False, f"Biometric authentication is only supported on Windows. Current platform: {system}"
+            return False, f"Biometric authentication is only supported on Windows and macOS. Current platform: {system}"
 
 
 class BiometricCommand(GroupCommand):
@@ -175,7 +179,7 @@ class BiometricRegisterCommand(Command):
 
         supported, message = PlatformBiometricDetector.detect_platform_biometric()
         if not supported and not kwargs.get('force', False):
-            raise CommandError('biometric add', 
+            raise CommandError('biometric register', 
                              f'Biometric authentication is not supported: {message}\n'
                              f'Use --force to attempt registration anyway.')
         
@@ -206,10 +210,10 @@ class BiometricRegisterCommand(Command):
             
         except KeyboardInterrupt:
             logging.info('Biometric registration cancelled by user')
-            raise CommandError('biometric add', 'Registration cancelled by user')
+            raise CommandError('biometric register', 'Registration cancelled by user')
         except Exception as e:
             logging.error(f'Failed to add biometric authentication: {str(e)}')
-            raise CommandError('biometric add', str(e))
+            raise CommandError('biometric register', str(e))
 
     def _get_default_name(self):
         """Generate a default name for the biometric method"""
@@ -218,8 +222,10 @@ class BiometricRegisterCommand(Command):
         
         if system == 'Windows':
             return f"Windows Hello - {hostname}"
+        elif system == 'Darwin':
+            return f"Touch ID - {hostname}"
         else:
-            raise CommandError('biometric add', f'Biometric authentication is only supported on Windows. Current platform: {system}')
+            raise CommandError('biometric register', f'Biometric authentication is only supported on Windows and macOS. Current platform: {system}')
 
     def _generate_registration_options(self, params, kwargs):
         """Call Keeper's generate_registration API"""
@@ -243,7 +249,7 @@ class BiometricRegisterCommand(Command):
             }
             
         except Exception as e:
-            raise CommandError('biometric add', f'Failed to generate registration options: {str(e)}')
+            raise CommandError('biometric register', f'Failed to generate registration options: {str(e)}')
 
     def _create_biometric_credential(self, registration_options, timeout=30):
         """Create biometric credential using FIDO2"""
@@ -254,13 +260,16 @@ class BiometricRegisterCommand(Command):
             if isinstance(creation_options.get('challenge'), str):
                 creation_options['challenge'] = utils.base64_url_decode(creation_options['challenge'])
             
-            # Platform-specific handling - Windows only
+            # Platform-specific handling
             system = platform.system()
             if system == 'Windows':
                 from .biometric_win import handle_windows_credential_creation
                 creation_options = handle_windows_credential_creation(creation_options, timeout)
+            elif system == 'Darwin':
+                from .biometric_mac import handle_macos_credential_creation
+                creation_options = handle_macos_credential_creation(creation_options, timeout)
             else:
-                raise Exception(f'Biometric authentication is only supported on Windows. Current platform: {system}')
+                raise Exception(f'Biometric authentication is only supported on Windows and macOS. Current platform: {system}')
             
             options = PublicKeyCredentialCreationOptions.from_dict(creation_options)
             
@@ -277,8 +286,11 @@ class BiometricRegisterCommand(Command):
             if system == 'Windows':
                 from .biometric_win import perform_windows_credential_creation
                 return perform_windows_credential_creation(client, options)
+            elif system == 'Darwin':
+                from .biometric_mac import perform_macos_credential_creation
+                return perform_macos_credential_creation(client, options)
             else:
-                raise Exception(f'Biometric authentication is only supported on Windows. Current platform: {system}')
+                raise Exception(f'Biometric authentication is only supported on Windows and macOS. Current platform: {system}')
                 
         except ClientError as err:
             if isinstance(err.cause, CtapError):
@@ -299,7 +311,7 @@ class BiometricRegisterCommand(Command):
             raise Exception(f'Failed to create biometric credential: {str(e)}')
 
     def _create_webauthn_client(self, origin, timeout=30):
-        """Create appropriate WebAuthn client for the platform - Windows only"""
+        """Create appropriate WebAuthn client for the platform"""
         data_collector = DefaultClientDataCollector(origin, verify=verify_rp_id_none)
         
         system = platform.system()
@@ -307,8 +319,11 @@ class BiometricRegisterCommand(Command):
         if system == 'Windows':
             from .biometric_win import create_windows_webauthn_client
             return create_windows_webauthn_client(data_collector, timeout)
+        elif system == 'Darwin':
+            from .biometric_mac import create_macos_webauthn_client
+            return create_macos_webauthn_client(data_collector, timeout)
         else:
-            raise Exception(f'Biometric authentication is only supported on Windows. Current platform: {system}')
+            raise Exception(f'Biometric authentication is only supported on Windows and macOS. Current platform: {system}')
 
     def _verify_registration(self, params, registration_options, credential_response, friendly_name):
         """Verify the registration with Keeper"""
@@ -346,13 +361,17 @@ class BiometricRegisterCommand(Command):
             raise Exception(f'Failed to verify biometric registration: {str(e)}')
 
     def _set_biometric_enabled_for_user(self, username, enabled):
-        """Set biometric authentication enabled flag for a user on this device - Windows only"""
+        """Set biometric authentication enabled flag for a user on this device"""
         if os.name == 'nt':
             # Use Windows registry on Windows
             from .biometric_win import set_windows_registry_biometric_flag
             set_windows_registry_biometric_flag(username, enabled)
+        elif platform.system() == 'Darwin':
+            # Use macOS preferences on macOS
+            from .biometric_mac import set_macos_biometric_flag
+            set_macos_biometric_flag(username, enabled)
         else:
-            raise Exception(f'Biometric authentication is only supported on Windows. Current platform: {platform.system()}')
+            raise Exception(f'Biometric authentication is only supported on Windows and macOS. Current platform: {platform.system()}')
 
 
 class BiometricListCommand(Command):
@@ -434,8 +453,12 @@ class BiometricUnregisterCommand(Command):
                 from .biometric_win import set_windows_registry_biometric_flag
                 success = set_windows_registry_biometric_flag(params.user, False)
                 flag_status = "successfully Unregister Biometric Authentication" if success else "Failed to Unregister Biometric Authentication"
+            elif platform.system() == 'Darwin':
+                from .biometric_mac import set_macos_biometric_flag
+                success = set_macos_biometric_flag(params.user, False)
+                flag_status = "successfully Unregister Biometric Authentication" if success else "Failed to Unregister Biometric Authentication"
             else:
-                raise CommandError('biometric disable', f'Biometric authentication is only supported on Windows. Current platform: {platform.system()}')
+                raise CommandError('biometric disable', f'Biometric authentication is only supported on Windows and macOS. Current platform: {platform.system()}')
             
             # Verify the flag was set correctly
             if not check_biometric_previously_used(params.user):
@@ -473,7 +496,7 @@ class BiometricVerifyCommand(Command):
             
             available_credentials = self._get_available_credentials(params)
             if not available_credentials:
-                raise CommandError('biometric verify', 'No biometric credentials found. Please add a credential first using "biometric add"')
+                raise CommandError('biometric verify', 'No biometric credentials found. Please add a credential first using "biometric register"')
             
             print(f"Found {len(available_credentials)} biometric credential(s)")
             
@@ -551,8 +574,11 @@ class BiometricVerifyCommand(Command):
             if system == 'Windows':
                 from .biometric_win import handle_windows_authentication_options
                 pk_options = handle_windows_authentication_options(pk_options, timeout)
+            elif system == 'Darwin':
+                from .biometric_mac import handle_macos_authentication_options
+                pk_options = handle_macos_authentication_options(pk_options, timeout)
             else:
-                raise Exception(f'Biometric authentication is only supported on Windows. Current platform: {system}')
+                raise Exception(f'Biometric authentication is only supported on Windows and macOS. Current platform: {system}')
 
             options = PublicKeyCredentialRequestOptions.from_dict(pk_options)
             rp_id = options.rp_id or 'keepersecurity.com'
@@ -560,10 +586,18 @@ class BiometricVerifyCommand(Command):
             
             data_collector = DefaultClientDataCollector(origin, verify=verify_rp_id_none)
             
-            # Windows-only authentication
-            from .biometric_win import create_windows_webauthn_client, perform_windows_authentication
-            client = create_windows_webauthn_client(data_collector, timeout)
-            return perform_windows_authentication(client, options)
+            # Platform-specific authentication
+            system = platform.system()
+            if system == 'Windows':
+                from .biometric_win import create_windows_webauthn_client, perform_windows_authentication
+                client = create_windows_webauthn_client(data_collector, timeout)
+                return perform_windows_authentication(client, options)
+            elif system == 'Darwin':
+                from .biometric_mac import create_macos_webauthn_client, perform_macos_authentication
+                client = create_macos_webauthn_client(data_collector, timeout)
+                return perform_macos_authentication(client, options)
+            else:
+                raise Exception(f'Biometric authentication is only supported on Windows and macOS. Current platform: {system}')
 
         except ClientError as err:
             if isinstance(err.cause, CtapError):
