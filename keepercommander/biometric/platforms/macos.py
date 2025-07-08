@@ -70,7 +70,6 @@ class MacOSHandler(BasePlatformHandler):
 
     def __init__(self):
         super().__init__()
-        self._ensure_pam_configured()
 
     def _create_storage_handler(self) -> StorageHandler:
         return MacOSStorageHandler()
@@ -81,6 +80,17 @@ class MacOSHandler(BasePlatformHandler):
             with open('/etc/pam.d/sudo', 'r') as f:
                 content = f.read()
             if 'pam_tid.so' not in content:
+                print("\n" + "="*60)
+                print("TOUCH ID CONFIGURATION REQUIRED")
+                print("="*60)
+                print("To enable Touch ID for sudo commands, Keeper needs to modify")
+                print("the system PAM configuration file (/etc/pam.d/sudo).")
+                print("\nThis will allow you to use Touch ID instead of typing your")
+                print("password when running sudo commands in the terminal.")
+                print("\nYou will be prompted for your macOS account password to")
+                print("authorize this system configuration change.")
+                print("="*60)
+                
                 lines = content.split('\n')
                 for i, line in enumerate(lines):
                     if line.strip() and not line.strip().startswith('#'):
@@ -92,6 +102,7 @@ class MacOSHandler(BasePlatformHandler):
                     tmp.flush()
                     subprocess.run(['sudo', 'cp', tmp.name, '/etc/pam.d/sudo'], check=True)
                     os.unlink(tmp.name)
+                    print("✓ Touch ID for sudo has been successfully configured!")
         except Exception:
             pass  # Silently fail if cannot configure PAM
 
@@ -114,6 +125,7 @@ class MacOSHandler(BasePlatformHandler):
                     if ('touch id' in output or 
                         'biometrics functionality: 1' in output or
                         'biometric' in output):
+                        self._ensure_pam_configured()
                         return True, "Touch ID is available and configured"
                     else:
                         error_messages.append(f"bioutil: ran successfully but no Touch ID detected")
@@ -135,6 +147,7 @@ class MacOSHandler(BasePlatformHandler):
                 )
                 
                 if can_evaluate:
+                    self._ensure_pam_configured()
                     return True, "Touch ID is available"
                 else:
                     la_error = f"LocalAuthentication: policy evaluation failed"
@@ -157,6 +170,7 @@ class MacOSHandler(BasePlatformHandler):
                 if result.returncode == 0:
                     output = result.stdout.lower()
                     if 'touch id' in output or 'biometric' in output:
+                        self._ensure_pam_configured()
                         return True, "Touch ID hardware detected"
                     else:
                         error_messages.append("system_profiler: no Touch ID hardware found")
