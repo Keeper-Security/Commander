@@ -68,26 +68,61 @@ class MacOSStorageHandler(StorageHandler):
 class MacOSHandler(BasePlatformHandler):
     """macOS-specific biometric handler"""
 
+    def __init__(self):
+        super().__init__()
+        self._ensure_pam_configured()
+
     def _create_storage_handler(self) -> StorageHandler:
         return MacOSStorageHandler()
+
+    def _ensure_pam_configured(self):
+        """Ensure Touch ID is configured for sudo if not already present"""
+        try:
+            with open('/etc/pam.d/sudo', 'r') as f:
+                content = f.read()
+            if 'pam_tid.so' not in content:
+                lines = content.split('\n')
+                for i, line in enumerate(lines):
+                    if line.strip() and not line.strip().startswith('#'):
+                        lines.insert(i, 'auth       sufficient     pam_tid.so')
+                        break
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp:
+                    tmp.write('\n'.join(lines))
+                    tmp.flush()
+                    subprocess.run(['sudo', 'cp', tmp.name, '/etc/pam.d/sudo'], check=True)
+                    os.unlink(tmp.name)
+        except Exception:
+            pass  # Silently fail if cannot configure PAM
 
     def detect_capabilities(self) -> Tuple[bool, str]:
         """Detect Touch ID availability on macOS"""
         if platform.system() != 'Darwin':
             return False, "Not running on macOS"
 
+        error_messages = []
+
         try:
             # Try bioutil command first
-            result = subprocess.run([
-                'bioutil', '-r', '-s'
-            ], capture_output=True, text=True, timeout=10)
+            try:
+                result = subprocess.run([
+                    'bioutil', '-r', '-s'
+                ], capture_output=True, text=True, timeout=10)
 
-            if result.returncode == 0:
-                output = result.stdout.lower()
-                if ('touch id' in output or 
-                    'biometrics functionality: 1' in output or
-                    'biometric' in output):
-                    return True, "Touch ID is available and configured"
+                if result.returncode == 0:
+                    output = result.stdout.lower()
+                    if ('touch id' in output or 
+                        'biometrics functionality: 1' in output or
+                        'biometric' in output):
+                        return True, "Touch ID is available and configured"
+                    else:
+                        error_messages.append(f"bioutil: ran successfully but no Touch ID detected")
+                else:
+                    error_messages.append(f"bioutil: command failed (return code {result.returncode})")
+            except FileNotFoundError:
+                error_messages.append("bioutil: command not found")
+            except Exception as e:
+                error_messages.append(f"bioutil: {str(e)}")
 
             # Fallback: LocalAuthentication check
             try:
@@ -102,10 +137,19 @@ class MacOSHandler(BasePlatformHandler):
                 if can_evaluate:
                     return True, "Touch ID is available"
                 else:
-                    return False, "Touch ID is not available or configured"
+                    la_error = f"LocalAuthentication: policy evaluation failed"
+                    if error:
+                        la_error += f" (error: {error})"
+                    error_messages.append(la_error)
                     
-            except ImportError:
-                # System profiler as last resort
+            except ImportError as e:
+                error_messages.append(f"LocalAuthentication: import failed - {str(e)}")
+                error_messages.append("LocalAuthentication: try 'pip install pyobjc-framework-LocalAuthentication'")
+            except Exception as e:
+                error_messages.append(f"LocalAuthentication: {str(e)}")
+
+            # System profiler as last resort
+            try:
                 result = subprocess.run([
                     'system_profiler', 'SPiBridgeDataType'
                 ], capture_output=True, text=True, timeout=15)
@@ -114,8 +158,17 @@ class MacOSHandler(BasePlatformHandler):
                     output = result.stdout.lower()
                     if 'touch id' in output or 'biometric' in output:
                         return True, "Touch ID hardware detected"
+                    else:
+                        error_messages.append("system_profiler: no Touch ID hardware found")
+                else:
+                    error_messages.append(f"system_profiler: failed (return code {result.returncode})")
+            except Exception as e:
+                error_messages.append(f"system_profiler: {str(e)}")
 
-                return False, "Touch ID detection inconclusive"
+            # If we get here, all detection methods failed
+            detailed_error = "Touch ID detection failed. " + "; ".join(error_messages)
+            detailed_error += ". Please verify Touch ID is set up in System Preferences > Touch ID & Password"
+            return False, detailed_error
 
         except Exception as e:
             return False, f"Error checking Touch ID: {str(e)}"

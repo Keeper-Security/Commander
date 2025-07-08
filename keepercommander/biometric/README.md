@@ -11,7 +11,7 @@ The biometric module enables users to authenticate with Keeper using platform-sp
 
 ## Prerequisites
 
-### 1. OS-Level Biometric Setup
+### OS-Level Biometric Setup
 
 **Before using biometric authentication with Keeper Commander, you must have biometric credentials already configured in your operating system:**
 
@@ -33,9 +33,15 @@ The biometric module enables users to authenticate with Keeper using platform-sp
 - Hardware requirements:
   - Mac with Touch ID sensor (MacBook Pro 2016+, MacBook Air 2018+, iMac with Touch ID, etc.)
 
-### 2. Device Registration
+## Usage
 
-**Device registration is mandatory before biometric authentication can be used:**
+### Setup Process
+
+1. **Install required dependencies**:
+   ```bash
+   pip install cbor2 pyobjc-framework-LocalAuthentication
+   ```
+2. **Device registration is mandatory before biometric authentication can be used:**
 After login with keeper shell:
 ```bash
 # First, register your device with Keeper
@@ -47,24 +53,7 @@ This step is required because:
 - The device must be approved by Keeper's security system
 - Without device registration, biometric login will fail with "Device needs approval" error
 
-## Usage
-
-### Complete Setup Process
-
-1. **Register your device** (required first step):
-   ```bash
-   this-device register
-   ```
-
-2. **Add biometric authentication**:
-   ```bash
-   biometric register
-   ```
-
-3. **Verify the setup**:
-   ```bash
-   biometric verify
-   ```
+**Note**: For macOS, Touch ID for sudo is automatically configured when you use biometric authentication for the first time.
 
 ### Available Commands
 
