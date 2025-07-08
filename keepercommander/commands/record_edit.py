@@ -95,12 +95,10 @@ upload_parser.add_argument('record', action='store', help='record path or UID')
 record_fields_description = '''
 Commander supports two types of records:
 1. Typed
-2. Legacy
-
-To create a Legacy record type pass "legacy" or "general" record type parameter 
+2. Legacy (update only)
 
 The content of Typed record is defined by schema. The schema name is stored on record "type" field
-To view all available record types:  "record-type-info" or "rti" 
+To view all available record types:  "record-type-info" or "rti"
 To view fields for particular record type:  "record-type-info --list-record <record type>"  "rti -lt login"
 To view field information type: "record-type-info --list-field <field type>"  "rti -lf host"
 
@@ -116,28 +114,28 @@ Example:   "url.Web URL=https://google.com"
 Field types are case sensitive
 Field labels are case insensitive
 
-Use full <FIELD_TYPE>.<FIELD_LABEL> syntax when field label collides with field type. 
+Use full <FIELD_TYPE>.<FIELD_LABEL> syntax when field label collides with field type.
 Example:  "password"          "password" field with no label
           "text.password"     "text" field with "password" label
-          "Password"          "text" field with "Password" label`
+          "Password"          "text" field with "Password" label
 
 Use full <FIELD_TYPE>.<FIELD_LABEL> syntax when field label contains a dot (.)
 Example:   "google.com"       Incorrect field type google
            "text.google.com"  Field type "text" field label "google.com"
-           
-If field label contains equal sign '=' then double it. 
+
+If field label contains equal sign '=' then double it.
 If field value starts with equal sign then prepend a value with space
 Example:
-    text.aaa==bbb=" =ccc"     sets custom field with label "aaa=bbb" to "=ccc"        
+    text.aaa==bbb=" =ccc"     sets custom field with label "aaa=bbb" to "=ccc"
 
-The Legacy records define the following field types.  
+The Legacy records define the following field types.
 1. login
 2. password
 3. url
 4. oneTimeCode
 
 All records support:
-3. Custom Fields: Any field that is not the pre-defined field is added to custom field section. 
+3. Custom Fields: Any field that is not the pre-defined field is added to custom field section.
    "url.Web URL=https://google.com"
 4. File Attachments:   "file=@<FILE_NAME>"
 
@@ -148,7 +146,7 @@ file              File attachment                       @file.txt
 date              Unix epoch time.       integer        1668639533 | 2022-11-16T10:58:53Z | 2022-11-16
 host              host name / port       object         {"hostName": "", "port": ""} 
                                                         192.168.1.2:4321
-address           Address                object         {"street1": "", "street2": "", "city": "", "state": "", 
+address           Address                object         {"street1": "", "street2": "", "city": "", "state": "",
                                                          "zip": "", "country": ""}
                                                         123 Main St, SmallTown, CA 12345, USA
 phone             Phone                  object         {"region": "", "number": "", "ext": "", "type": ""}
@@ -164,27 +162,55 @@ bankAccount       Bank Account           object         {"accountType": "", "rou
 keyPair           Key Pair               object         {"publicKey": "", "privateKey": ""}
 
 oneTimeCode       TOTP URL               string         otpauth://totp/Example?secret=JBSWY3DPEHPK3PXP&issuer=Keeper
-note              Masked multiline text  string         
-multiline         Multiline text         string         
-secret            Masked text            string         
-login             Login                  string                                         
-email             Email                  string         'name@company.com'                                
-password          Password               string         
+note              Masked multiline text  string
+multiline         Multiline text         string
+secret            Masked text            string
+login             Login                  string
+email             Email                  string         'name@company.com'
+password          Password               string
 url               URL                    string         https://google.com/
 text              Free form text         string         This field type generally has a label
 
-$<ACTION>[:<PARAMS>, <PARAMS>]   executes an action that returns a field value   
+$<ACTION>[:<PARAMS>, <PARAMS>]   executes an action that returns a field value
 
 Value                   Field type         Description                      Example
 ====================    ===============    ===================              ==============
 $GEN:[alg],[n]          password           Generates a random password      $GEN:dice,5
                                            Default algorith is rand         alg: [rand | dice | crypto]
-                                           Optional: password length        
-$GEN                    oneTimeCode        Generates TOTP URL               
+                                           Optional: password length
+$GEN                    oneTimeCode        Generates TOTP URL
 $GEN:[alg,][enc]        keyPair            Generates a key pair and         $GEN:ec,enc
-                                           optional passcode                alg: [rsa | ec | ed25519], enc 
-$JSON:<JSON TEXT>       any object         Sets a field value as JSON       
-                                           phone.Cell=$JSON:'{"number": "(555) 555-1234", "type": "Mobile"}' 
+                                           optional passcode                alg: [rsa | ec | ed25519], enc
+$JSON:<JSON TEXT>       any object         Sets a field value as JSON
+                                           phone.Cell=$JSON:'{"number": "(555) 555-1234", "type": "Mobile"}'
+
+PAM records require a PAM Configuration and additional commands for complete setup.
+Example setup: A machine with user set up for rotation, connections, and tunneling:
+
+mkdir gwapp -sf -a
+secrets-manager app create gwapp1
+secrets-manager share add --app=gwapp1 --secret=SHARED_FOLDER_UID --editable
+
+pam gateway new --name=gateway1 --application=gwapp1 --config-init=b64 --return_value
+pam config new --environment=local --title=config1 --gateway=gateway1 -sf=SHARED_FOLDER_UID \
+    --connections=on --tunneling=on --rotation=on --remote-browser-isolation=on
+
+record-add --folder=SHARED_FOLDER_UID --title=admin1 -rt=pamUser login=admin1 password="$GEN:rand,16"
+record-add --folder=SHARED_FOLDER_UID --title=user1  -rt=pamUser login=user1  password="$GEN:rand,16"
+record-add --folder=SHARED_FOLDER_UID --title=machine1 -rt=pamMachine \
+  pamHostname="$JSON:{\"hostName\": \"127.0.0.1\", \"port\": \"22\"}"
+
+pam tunnel edit PAM_MACHINE_UID --configuration=PAM_CONFIG_UID --enable-tunneling
+pam connection edit PAM_MACHINE_UID --configuration=PAM_CONFIG_UID \
+  --connections=on \
+  --protocol=ssh \
+  --admin-user=ADMIN_USER_UID
+
+pam rotation edit --config=PAM_CONFIG_UID \
+  --record=PAM_USER_UID \
+  --resource=PAM_MACHINE_UID \
+  --admin-user=ADMIN_USER_UID \
+  --on-demand --enable --force
 '''
 
 
@@ -715,11 +741,13 @@ class RecordAddCommand(Command, RecordEditMixin):
         title = kwargs.get('title')
         if not title:
             raise CommandError('record-add', 'Title parameter is required.')
-        record_type = kwargs.get('record_type')
+        record_type = kwargs.get('record_type')   # type: Optional[str]
         if not record_type:
             raise CommandError('record-add', 'Record type parameter is required.')
 
         fields = kwargs.get('fields', [])
+        # Filter out empty strings that might be introduced by copy-paste or line continuation issues
+        fields = [field.strip() for field in fields if field.strip()]
 
         record_fields = []    # type: List[ParsedFieldValue]
         add_attachments = []  # type: List[ParsedFieldValue]
@@ -732,8 +760,9 @@ class RecordAddCommand(Command, RecordEditMixin):
                 record_fields.append(parsed_field)
 
         if record_type in ('legacy', 'general'):
-            record = vault.PasswordRecord()
-            self.assign_legacy_fields(record, record_fields)
+            raise CommandError('record-add', 'Legacy record type is not supported anymore.')
+            # record = vault.PasswordRecord()
+            # self.assign_legacy_fields(record, record_fields)
         else:
             rt_fields = self.get_record_type_fields(params, record_type)
             if not rt_fields:
@@ -841,6 +870,8 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
                 record.notes = notes
 
         fields = kwargs.get('fields', [])
+        # Filter out empty strings that might be introduced by copy-paste or line continuation issues
+        fields = [field.strip() for field in fields if field.strip()]
 
         record_fields = []    # type: List[ParsedFieldValue]
         add_attachments = []  # type: List[ParsedFieldValue]

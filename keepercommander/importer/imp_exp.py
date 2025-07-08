@@ -872,7 +872,6 @@ def _import(params, file_format, filename, **kwargs):
     audit_uids = []
 
     if records:  # create/update records
-        records_v2_to_add = []      # type: List[folder_pb2.RecordRequest]
         records_v2_to_update = []   # type: List[dict]
         records_v3_to_add = []      # type: List[record_pb2.RecordAdd]
         records_v3_to_update = []   # type: List[record_pb2.RecordUpdate]
@@ -1020,69 +1019,46 @@ def _import(params, file_format, filename, **kwargs):
                         if folder.type == BaseFolderNode.RootFolderType:
                             folder_uid = ''
 
-                if import_record.type:   # V3
-                    v3_add_rq = record_pb2.RecordAdd()
-                    v3_add_rq.record_uid = utils.base64_url_decode(import_record.uid)
-                    import_uids[import_record.uid] = {'ver': 'v3', 'op': 'add'}
-                    v3_add_rq.client_modified_time = utils.current_milli_time()
-                    data = _construct_record_v3_data(import_record)
-                    v3_add_rq.data = crypto.encrypt_aes_v2(api.get_record_data_json_bytes(data), record_key)
-                    data_size = len(v3_add_rq.data)
-                    if data_size > RECORD_MAX_DATA_LEN:
-                        logging.warning(RECORD_MAX_DATA_WARN.format(data['title'], data_size, RECORD_MAX_DATA_LEN))
-                        continue
+                if not import_record.type:
+                    import_record.type = 'login'
+                v3_add_rq = record_pb2.RecordAdd()
+                v3_add_rq.record_uid = utils.base64_url_decode(import_record.uid)
+                import_uids[import_record.uid] = {'ver': 'v3', 'op': 'add'}
+                v3_add_rq.client_modified_time = utils.current_milli_time()
+                data = _construct_record_v3_data(import_record)
+                v3_add_rq.data = crypto.encrypt_aes_v2(api.get_record_data_json_bytes(data), record_key)
+                data_size = len(v3_add_rq.data)
+                if data_size > RECORD_MAX_DATA_LEN:
+                    logging.warning(RECORD_MAX_DATA_WARN.format(data['title'], data_size, RECORD_MAX_DATA_LEN))
+                    continue
 
-                    v3_add_rq.record_key = crypto.encrypt_aes_v2(record_key, params.data_key)
-                    v3_add_rq.folder_type = \
-                        record_pb2.user_folder if folder_type == BaseFolderNode.UserFolderType else \
-                        record_pb2.shared_folder if folder_type == BaseFolderNode.SharedFolderType else \
-                        record_pb2.shared_folder_folder
+                v3_add_rq.record_key = crypto.encrypt_aes_v2(record_key, params.data_key)
+                v3_add_rq.folder_type = \
+                    record_pb2.user_folder if folder_type == BaseFolderNode.UserFolderType else \
+                    record_pb2.shared_folder if folder_type == BaseFolderNode.SharedFolderType else \
+                    record_pb2.shared_folder_folder
 
-                    if folder_uid:
-                        v3_add_rq.folder_uid = utils.base64_url_decode(folder_uid)
-                        if shared_folder_key:
-                            v3_add_rq.folder_key = crypto.encrypt_aes_v2(record_key, shared_folder_key)
-                    for uid in reference_uids:
-                        link = record_pb2.RecordLink()
-                        link.record_uid = utils.base64_url_decode(uid)
-                        v3_add_rq.record_links.append(link)
+                if folder_uid:
+                    v3_add_rq.folder_uid = utils.base64_url_decode(folder_uid)
+                    if shared_folder_key:
+                        v3_add_rq.folder_key = crypto.encrypt_aes_v2(record_key, shared_folder_key)
+                for uid in reference_uids:
+                    link = record_pb2.RecordLink()
+                    link.record_uid = utils.base64_url_decode(uid)
+                    v3_add_rq.record_links.append(link)
 
-                    if params.enterprise_ec_key:
-                        audit_data = {
-                            'title': import_record.title,
-                            'record_type': import_record.type
-                        }
-                        if import_record.login_url:
-                            audit_data['url'] = utils.url_strip(import_record.login_url)
-                        v3_add_rq.audit.version = 0
-                        v3_add_rq.audit.data = crypto.encrypt_ec(json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
-                        v3_add_rq = attach_security_data(params, data, v3_add_rq)
+                if params.enterprise_ec_key:
+                    audit_data = {
+                        'title': import_record.title,
+                        'record_type': import_record.type
+                    }
+                    if import_record.login_url:
+                        audit_data['url'] = utils.url_strip(import_record.login_url)
+                    v3_add_rq.audit.version = 0
+                    v3_add_rq.audit.data = crypto.encrypt_ec(json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
+                    v3_add_rq = attach_security_data(params, data, v3_add_rq)
 
-                    records_v3_to_add.append(v3_add_rq)
-                else:
-                    v2_add_rq = folder_pb2.RecordRequest()
-                    v2_add_rq.recordUid = utils.base64_url_decode(import_record.uid)
-                    import_uids[import_record.uid] = {'ver': 'v2', 'op': 'add'}
-                    v2_add_rq.recordType = 0
-                    v2_add_rq.howLongAgo = 0
-                    data, extra = _construct_record_v2(import_record)
-                    v2_add_rq.recordData = crypto.encrypt_aes_v1(json.dumps(data).encode('utf-8'), record_key)
-                    if extra:
-                        v2_add_rq.extra = crypto.encrypt_aes_v1(json.dumps(extra).encode('utf-8'), record_key)
-                    v2_add_rq.encryptedRecordKey = crypto.encrypt_aes_v1(record_key, params.data_key)
-                    v2_add_rq.folderType = \
-                        folder_pb2.user_folder if folder_type == BaseFolderNode.UserFolderType else \
-                        folder_pb2.shared_folder if folder_type == BaseFolderNode.SharedFolderType else \
-                        folder_pb2.shared_folder_folder
-                    if folder_uid:
-                        v2_add_rq.folderUid = utils.base64_url_decode(folder_uid)
-                        if shared_folder_key:
-                            v2_add_rq.encryptedRecordFolderKey = crypto.encrypt_aes_v1(record_key, shared_folder_key)
-
-                    records_v2_to_add.append(v2_add_rq)
-                    if params.enterprise_ec_key:
-                        audit_uids.append(import_record.uid)
-
+                records_v3_to_add.append(v3_add_rq)
         if dry_run:
             base.dump_report_data(table, header, column_width=40)
             return
@@ -1105,8 +1081,6 @@ def _import(params, file_format, filename, **kwargs):
                 if record_key and link_key:
                     link.record_key = crypto.encrypt_aes_v2(link_key, record_key)
 
-        if records_v2_to_add:
-            _, rec_rs = execute_import_folder_record(params, None, records_v2_to_add)
         if records_v3_to_add:
             rec_rs = execute_records_add(params, records_v3_to_add)
         if records_v2_to_update:
@@ -1171,10 +1145,6 @@ def _import(params, file_format, filename, **kwargs):
             finally:
                 sfu_rqs = None
 
-        # legacy records are not returned in incremental sync (import_folders_and_records issue: KA-6012)
-        if len(records_v2_to_add) > 0:
-            params.revision = 0
-            params.sync_down_token = b''
         sync_down.sync_down(params)
 
         # upload attachments

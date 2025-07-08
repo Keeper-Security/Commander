@@ -381,18 +381,20 @@ class DownloadMembershipCommand(Command):
                             p.manage_users = override_users
                         if isinstance(override_records, bool):
                             p.manage_records = override_records
-                added_folders.append(obj)
+                if obj.path:
+                    if obj.path[0] == PathDelimiter or obj.path[-1] == PathDelimiter:
+                        path = obj.path.replace(2 * PathDelimiter, '\0')
+                        path = path.strip(PathDelimiter)
+                        obj.path = path.replace('\0', PathDelimiter)
+                    if obj.path:
+                        added_folders.append(obj)
             elif isinstance(obj, Team):
                 if old_domain and new_domain and obj.members:
                     obj.members = [replace_email_domain(x, old_domain, new_domain) for x in obj.members]
-                added_teams.append(obj)
+                if obj.name:
+                    added_teams.append(obj)
 
         # process shared sub folders
-        for f in added_folders:
-            if f.path[0] == PathDelimiter or f.path[-1] == PathDelimiter:
-                path = f.path.replace(2 * PathDelimiter, '\0')
-                path = path.strip(PathDelimiter)
-                f.path = path.replace('\0', PathDelimiter)
         sub_folder_action = kwargs.get('sub_folder') or 'ignore'
         sf = {x.path.lower(): x for x in added_folders if x.path}
         paths = list(sf.keys())

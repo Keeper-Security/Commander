@@ -7,6 +7,7 @@ from ...proto import pam_pb2
 from ...display import bcolors
 from ... import vault
 from ...discovery_common.record_link import RecordLink
+from ... import utils
 import logging
 import requests
 import hmac
@@ -61,6 +62,7 @@ class SaasConfigItem(BaseModel):
     id: str
     label: str
     desc: str
+    is_secret: bool = False
     desc_code: Optional[str] = None
     type: Optional[str] = "text"
     code: Optional[str] = None
@@ -78,12 +80,12 @@ class SaasPluginUsage(BaseModel):
 class SaasCatalog(BaseModel):
     name: str
     type: str = "catalog"
-    author: str
-    email: str
-    summary: str
-    file: str
+    author: Optional[str] = None
+    email: Optional[str] = None
+    summary: Optional[str] = None
+    file: Optional[str] = None
     file_sig: Optional[str] = None
-    allows_remote_management: bool = False
+    allows_remote_management: Optional[bool] = False
     readme: Optional[str] = None
     fields: List[SaasConfigItem] = []
     installed: bool = False
@@ -91,7 +93,7 @@ class SaasCatalog(BaseModel):
 
     @property
     def file_name(self):
-        return self.file.split(os.sep)[-1]
+        return self.file.split(os.sep)[-1] if self.file else None
 
 
 def get_gateway_saas_schema(params: KeeperParams, gateway_context: GatewayContext) -> Optional[List[dict]]:
@@ -234,7 +236,7 @@ def get_plugins_map(params: KeeperParams, gateway_context: GatewayContext) -> Op
 
     # Get the latest release of the catalog.json
     api_url = f"https://api.github.com/repos/{CATALOG_REPO}/releases/latest"
-    res = requests.get(api_url)
+    res = utils.ssl_aware_get(api_url)
     if res.ok is False:
         print("")
         print(f"{bcolors.FAIL}Could not get plugin catalog from GitHub.{bcolors.ENDC}")
@@ -248,7 +250,7 @@ def get_plugins_map(params: KeeperParams, gateway_context: GatewayContext) -> Op
     logging.debug(f"download {asset['name']} from {download_url}")
 
     # Download the latest the catalog.yml
-    res = requests.get(download_url)
+    res = utils.ssl_aware_get(download_url)
     if res.ok is False:
         print("")
         print(f"{bcolors.FAIL}Could not download the plugin catalog from GitHub.{bcolors.ENDC}")
@@ -293,6 +295,8 @@ def get_field_input(field, current_value: Optional[str] = None):
     print(f"Description: {field.desc}")
     if field.required is True:
         print(f"{bcolors.WARNING}Field is required.{bcolors.ENDC}")
+    if field.type == "multiline":
+        print(f"Enter a file path to load value from file.")
 
     while True:
         prompt = "Enter value"
@@ -315,6 +319,10 @@ def get_field_input(field, current_value: Optional[str] = None):
                 value = current_value
             elif field.default_value is not None:
                 value = field.default_value
+        elif os.path.exists(value):
+            with open(value, "r") as fh:
+                value = fh.read()
+                fh.close()
         if len(valid_values) > 0 and value not in valid_values:
             print(f"{bcolors.FAIL}{value} is not a valid value.{bcolors.ENDC}")
             continue
