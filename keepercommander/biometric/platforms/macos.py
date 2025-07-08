@@ -64,6 +64,28 @@ class MacOSStorageHandler(StorageHandler):
             logging.debug(f'Failed to set macOS biometric flag: {e}')
             return False
 
+    def delete_biometric_flag(self, username: str) -> bool:
+        """Delete biometric flag from macOS preferences"""
+        try:
+            import plistlib
+            if not os.path.exists(self.prefs_path):
+                return True  # Already deleted/doesn't exist
+            
+            with open(self.prefs_path, 'rb') as f:
+                prefs = plistlib.load(f)
+            
+            if username in prefs:
+                del prefs[username]
+                
+                # Save the updated plist
+                with open(self.prefs_path, 'wb') as f:
+                    plistlib.dump(prefs, f)
+            
+            return True
+        except Exception as e:
+            logging.debug(f'Failed to delete macOS biometric flag: {e}')
+            return False
+
 
 class MacOSHandler(BasePlatformHandler):
     """macOS-specific biometric handler"""
@@ -84,7 +106,7 @@ class MacOSHandler(BasePlatformHandler):
                 print("TOUCH ID CONFIGURATION REQUIRED")
                 print("="*60)
                 print("To enable Touch ID for sudo commands, Keeper needs to modify")
-                print("the system PAM configuration file (/etc/pam.d/sudo).")
+                print("the system configuration file (/etc/pam.d/sudo).")
                 print("\nThis will allow you to use Touch ID instead of typing your")
                 print("password when running sudo commands in the terminal.")
                 print("\nYou will be prompted for your macOS account password to")
@@ -139,7 +161,7 @@ class MacOSHandler(BasePlatformHandler):
             # Fallback: LocalAuthentication check
             try:
                 import LocalAuthentication  # pylint: disable=import-error
-                context = LocalAuthentication.LAContext.alloc().init()
+                context = LocalAuthentication.LAContext.alloc().init()  # pylint: disable=no-member
                 error = None
                 can_evaluate = context.canEvaluatePolicy_error_(
                     LocalAuthentication.LAPolicyDeviceOwnerAuthenticationWithBiometrics,  # pylint: disable=no-member
@@ -335,7 +357,7 @@ class MacOSTouchIDWebAuthnClient:
             credential_id = utils.base64_url_encode(os.urandom(32))
             
             # Create LocalAuthentication context
-            context = LocalAuthentication.LAContext.alloc().init()
+            context = LocalAuthentication.LAContext.alloc().init()  # pylint: disable=no-member
             
             # Check biometric availability
             error = None
@@ -348,7 +370,7 @@ class MacOSTouchIDWebAuthnClient:
                 raise Exception("Touch ID is not available or configured")
 
             # Generate EC P-256 key pair
-            private_key = ec.generate_private_key(ec.SECP256R1())
+            private_key: ec.EllipticCurvePrivateKey = ec.generate_private_key(ec.SECP256R1())
             public_key = private_key.public_key()
             
             # Export public key
@@ -479,7 +501,7 @@ class MacOSTouchIDWebAuthnClient:
                 raise Exception("No matching credential found in keychain")
 
             # Create LocalAuthentication context
-            context = LocalAuthentication.LAContext.alloc().init()
+            context = LocalAuthentication.LAContext.alloc().init()  # pylint: disable=no-member
 
             # Check biometric availability
             error = None
@@ -519,7 +541,7 @@ class MacOSTouchIDWebAuthnClient:
                 raise Exception("Touch ID authentication failed")
 
             # Sign the data
-            der_signature = private_key.sign(signed_data, ec.ECDSA(hashes.SHA256()))
+            der_signature = private_key.sign(signed_data, ec.ECDSA(hashes.SHA256()))  # type: ignore
 
             # Create response
             return self._create_assertion_response(
