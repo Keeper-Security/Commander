@@ -167,6 +167,7 @@ class KeeperParams:
         # TODO check if it can be deleted
         self.salt = None
         self.iterations = 0
+        self.biometric = None
 
 
     def clear_session(self):
@@ -233,6 +234,7 @@ class KeeperParams:
         self.tunnel_threads.clear()
         self.tunnel_threads_queue = {}
         self.forbid_rsa = False
+        self.biometric = None
 
     def __get_rest_context(self):   # type: () -> RestApiContext
         return self.__rest_context

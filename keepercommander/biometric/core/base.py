@@ -87,6 +87,11 @@ class PlatformHandler(ABC):
         """Set biometric flag for user"""
         pass
 
+    @abstractmethod
+    def delete_biometric_flag(self, username: str) -> bool:
+        """Delete biometric flag for user"""
+        pass
+
 
 class StorageHandler(ABC):
     """Abstract base class for biometric flag storage"""
@@ -99,4 +104,9 @@ class StorageHandler(ABC):
     @abstractmethod
     def set_biometric_flag(self, username: str, enabled: bool) -> bool:
         """Set biometric flag for user"""
+        pass
+
+    @abstractmethod
+    def delete_biometric_flag(self, username: str) -> bool:
+        """Delete biometric flag for user"""
         pass 

@@ -71,4 +71,12 @@ class BiometricCommand(Command):
             handler = self.detector.get_platform_handler()
             return handler.set_biometric_flag(username, enabled)
         except Exception:
+            return False
+
+    def _delete_biometric_flag(self, username: str) -> bool:
+        """Delete biometric authentication flag for user"""
+        try:
+            handler = self.detector.get_platform_handler()
+            return handler.delete_biometric_flag(username)
+        except Exception:
             return False 

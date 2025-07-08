@@ -180,8 +180,63 @@ class BiometricClient:
                 'id': passkey.userId,
                 'name': passkey.friendlyName,
                 'created': passkey.createdAtMillis,
-                'last_used': passkey.lastUsedMillis
+                'last_used': passkey.lastUsedMillis,
+                'credential_id': passkey.credentialId
             } for passkey in rs.passkeyInfo]
 
         except Exception as e:
-            raise Exception(f'Failed to retrieve available credentials: {str(e)}') 
+            raise Exception(f'Failed to retrieve available credentials: {str(e)}')
+
+    def disable_passkey(self, params, user_id: int, credential_id: bytes):
+        """Disable a passkey using the UpdatePasskeyRequest endpoint"""
+        try:
+            rq = APIRequest_pb2.UpdatePasskeyRequest()
+            rq.userId = user_id
+            rq.credentialId = credential_id
+            # Don't set friendlyName since we're only disabling, not updating name
+
+            # Use the same pattern as other API methods
+            api.communicate_rest(params, rq, 'authentication/passkey/disable')
+            
+            # If we get here, the API call was successful
+            return {'status': 'SUCCESS', 'message': 'Passkey was successfully disabled and no longer available for login'}
+
+        except Exception as e:
+            # Parse the error message for specific error types
+            error_msg = str(e).lower()
+            if 'bad_request' in error_msg or 'credential id' in error_msg or 'userid' in error_msg:
+                return {'status': 'BAD_REQUEST', 'message': 'Unable to disable. Data error. Credential ID or UserID mismatch'}
+            elif 'server_error' in error_msg or 'unexpected' in error_msg:
+                return {'status': 'SERVER_ERROR', 'message': 'Unexpected server exception'}
+            else:
+                raise Exception(f'Failed to disable passkey: {str(e)}')
+
+    def disable_all_user_passkeys(self, params):
+        """Disable all passkeys for the current user"""
+        try:
+            # Get list of available credentials
+            credentials = self.get_available_credentials(params)
+            
+            if not credentials:
+                return {'status': 'SUCCESS', 'message': 'No passkeys found to disable'}
+            
+            results = []
+            for credential in credentials:
+                try:
+                    result = self.disable_passkey(params, credential['id'], credential['credential_id'])
+                    results.append({
+                        'credential_name': credential['name'],
+                        'status': result['status'],
+                        'message': result['message']
+                    })
+                except Exception as e:
+                    results.append({
+                        'credential_name': credential['name'],
+                        'status': 'ERROR',
+                        'message': str(e)
+                    })
+            
+            return {'status': 'SUCCESS', 'results': results}
+            
+        except Exception as e:
+            raise Exception(f'Failed to disable user passkeys: {str(e)}') 

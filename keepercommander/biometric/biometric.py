@@ -53,16 +53,6 @@ def check_biometric_previously_used(username):
         return False
 
 
-class PlatformBiometricDetector:
-    """Detect and validate biometric capabilities across platforms (backward compatibility)"""
-    
-    @staticmethod
-    def detect_platform_biometric():
-        """Detect biometric capabilities for the current platform"""
-        detector = BiometricDetector()
-        return detector.detect_platform_capabilities()
-
-
 class BiometricCommand(GroupCommand):
     """Main biometric command group"""
     

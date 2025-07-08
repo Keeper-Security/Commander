@@ -21,4 +21,8 @@ class BasePlatformHandler(PlatformHandler):
 
     def set_biometric_flag(self, username: str, enabled: bool) -> bool:
         """Set biometric flag for user"""
-        return self.storage_handler.set_biometric_flag(username, enabled) 
+        return self.storage_handler.set_biometric_flag(username, enabled)
+
+    def delete_biometric_flag(self, username: str) -> bool:
+        """Delete biometric flag for user"""
+        return self.storage_handler.delete_biometric_flag(username) 

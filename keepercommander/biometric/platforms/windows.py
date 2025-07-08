@@ -58,6 +58,26 @@ class WindowsStorageHandler(StorageHandler):
             logging.debug(f'Failed to set Windows registry biometric flag: {e}')
         return False
 
+    def delete_biometric_flag(self, username: str) -> bool:
+        """Delete biometric flag from Windows registry"""
+        try:
+            import winreg
+            key = self._get_registry_key()
+            if key:
+                try:
+                    winreg.DeleteValue(key, username)
+                    winreg.CloseKey(key)
+                    logging.debug(f'Deleted Windows registry biometric flag for user: {username}')
+                    return True
+                except FileNotFoundError:
+                    # Value doesn't exist, consider this a success
+                    winreg.CloseKey(key)
+                    logging.debug(f'Windows registry biometric flag for user {username} was already deleted')
+                    return True
+        except Exception as e:
+            logging.debug(f'Failed to delete Windows registry biometric flag: {e}')
+        return False
+
 
 class WindowsHandler(BasePlatformHandler):
     """Windows-specific biometric handler"""
