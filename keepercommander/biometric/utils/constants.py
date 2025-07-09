@@ -26,6 +26,28 @@ MACOS_SETTINGS = {
 WINDOWS_REGISTRY_PATH = r"SOFTWARE\Keeper Security\Commander\Biometric"
 MACOS_PREFS_PATH = "com.keepersecurity.commander.biometric.plist"
 
+# FIDO2 availability check
+try:
+    from fido2.client import ClientError, DefaultClientDataCollector, UserInteraction, WebAuthnClient
+    from fido2.ctap import CtapError
+    from fido2.webauthn import (
+        PublicKeyCredentialRequestOptions, 
+        AuthenticationResponse,
+        PublicKeyCredentialCreationOptions, 
+        RegistrationResponse,
+        UserVerificationRequirement
+    )
+    FIDO2_AVAILABLE = True
+except ImportError:
+    FIDO2_AVAILABLE = False
+
+# Warning messages
+FIDO2_WARNING_MESSAGE = """
+    You can use Security Key with Commander:
+    Upgrade your Python interpreter to 3.10 or newer
+    and make sure fido2 package is 2.0.0 or newer
+"""
+
 # Error messages
 ERROR_MESSAGES = {
     'no_fido2': 'FIDO2 library not available. Please install: pip install fido2',
@@ -36,4 +58,11 @@ ERROR_MESSAGES = {
     'authentication_failed': 'Biometric authentication failed',
     'registration_failed': 'Biometric registration failed',
     'verification_failed': 'Biometric verification failed'
+}
+
+# Default credential name templates
+CREDENTIAL_NAME_TEMPLATES = {
+    'Windows': "Windows Hello - {hostname}",
+    'Darwin': "Touch ID - {hostname}",
+    'default': "Biometric - {hostname}"
 } 

@@ -1,8 +1,8 @@
 import argparse
 import json
 
-from .base import BiometricCommand, ClientError, CtapError
-from ...error import CommandError
+from .base import BiometricCommand
+from ..utils.constants import DEFAULT_AUTHENTICATION_TIMEOUT
 from ... import utils
 
 
@@ -10,8 +10,8 @@ class BiometricVerifyCommand(BiometricCommand):
     """Verify biometric authentication"""
 
     parser = argparse.ArgumentParser(prog='biometric verify', description='Verify biometric authentication with existing credentials')
-    parser.add_argument('--timeout', dest='timeout', type=int, default=10, 
-                       help='Authentication timeout in seconds (default: 10)')
+    parser.add_argument('--timeout', dest='timeout', type=int, default=DEFAULT_AUTHENTICATION_TIMEOUT, 
+                       help=f'Authentication timeout in seconds (default: {DEFAULT_AUTHENTICATION_TIMEOUT})')
     parser.add_argument('--credential-id', dest='credential_id', 
                        help='Specific credential ID to test (optional)')
     parser.add_argument('--purpose', dest='purpose', choices=['login', 'vault'], default='login', 
@@ -22,16 +22,13 @@ class BiometricVerifyCommand(BiometricCommand):
 
     def execute(self, params, **kwargs):
         """Execute biometric verify command"""
-        try:
-            timeout = kwargs.get('timeout', 10)
+        def _verify():
+            timeout = kwargs.get('timeout', DEFAULT_AUTHENTICATION_TIMEOUT)
             credential_id = kwargs.get('credential_id')
             purpose = kwargs.get('purpose', 'login')
 
-            available_credentials = self.client.get_available_credentials(params)
-            if not available_credentials:
-                raise CommandError('biometric verify', 
-                                 'No biometric credentials found. Please add a credential first using "biometric register"')
-
+            # Get available credentials
+            available_credentials = self._get_available_credentials_or_error(params)
             print(f"Found {len(available_credentials)} biometric credential(s)")
 
             # Generate authentication options
@@ -46,10 +43,7 @@ class BiometricVerifyCommand(BiometricCommand):
             # Report results
             self._report_verification_results(verification_result, purpose)
 
-        except KeyboardInterrupt:
-            raise CommandError('biometric verify', 'Verification cancelled by user')
-        except Exception as e:
-            raise CommandError('biometric verify', str(e))
+        return self._execute_with_error_handling('verify biometric authentication', _verify)
 
     def _verify_authentication_response(self, params, auth_options, assertion_response, purpose):
         """Verify the authentication response with Keeper"""

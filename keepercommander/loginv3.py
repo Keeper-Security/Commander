@@ -49,7 +49,7 @@ class LoginV3Flow:
         # Check if biometric should be attempted automatically based on user's previous usage
         if params.user:
             try:
-                from keepercommander.biometric.biometric import check_biometric_previously_used
+                from keepercommander.biometric import check_biometric_previously_used
 
                 if check_biometric_previously_used(params.user):
                     params.biometric = True

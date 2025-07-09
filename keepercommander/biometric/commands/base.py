@@ -6,25 +6,17 @@ from ...commands.base import Command
 from ...error import CommandError
 from ..core.client import BiometricClient
 from ..core.detector import BiometricDetector
-
-# Import FIDO2 availability check
-try:
-    from fido2.client import ClientError
-    from fido2.ctap import CtapError
-    from fido2.webauthn import (
-        PublicKeyCredentialRequestOptions, 
-        AuthenticationResponse,
-        PublicKeyCredentialCreationOptions, 
-        RegistrationResponse,
-        UserVerificationRequirement
-    )
-    FIDO2_AVAILABLE = True
-except ImportError:
-    FIDO2_AVAILABLE = False
+from ..utils.constants import (
+    FIDO2_AVAILABLE, 
+    ERROR_MESSAGES, 
+    CREDENTIAL_NAME_TEMPLATES,
+    DEFAULT_REGISTRATION_TIMEOUT,
+    DEFAULT_AUTHENTICATION_TIMEOUT
+)
 
 
 class BiometricCommand(Command):
-    """Base class for biometric commands"""
+    """Base class for biometric commands with common functionality"""
 
     def __init__(self):
         super().__init__()
@@ -35,25 +27,20 @@ class BiometricCommand(Command):
         """Generate default credential name"""
         system = platform.system()
         hostname = platform.node() or 'Unknown'
-
-        names = {
-            'Windows': f"Windows Hello - {hostname}",
-            'Darwin': f"Touch ID - {hostname}",
-        }
-
-        return names.get(system, f"Biometric - {hostname}")
+        
+        template = CREDENTIAL_NAME_TEMPLATES.get(system, CREDENTIAL_NAME_TEMPLATES['default'])
+        return template.format(hostname=hostname)
 
     def _check_platform_support(self, force: bool = False):
         """Check if platform supports biometric authentication"""
         if not FIDO2_AVAILABLE:
-            raise CommandError(self.__class__.__name__, 
-                             'FIDO2 library not available. Please install: pip install fido2')
+            raise CommandError(self.__class__.__name__, ERROR_MESSAGES['no_fido2'])
 
         supported, message = self.detector.detect_platform_capabilities()
 
         if not supported and not force:
             raise CommandError(self.__class__.__name__,
-                             f'Biometric authentication not supported: {message}')
+                             f'{ERROR_MESSAGES["platform_not_supported"]}: {message}')
 
         return supported, message
 
@@ -79,4 +66,33 @@ class BiometricCommand(Command):
             handler = self.detector.get_platform_handler()
             return handler.delete_biometric_flag(username)
         except Exception:
-            return False 
+            return False
+
+    def _handle_keyboard_interrupt(self, operation: str):
+        """Handle keyboard interrupt consistently across commands"""
+        raise CommandError(self.__class__.__name__, f'{operation} cancelled by user')
+
+    def _handle_command_error(self, operation: str, error: Exception):
+        """Handle command errors consistently across commands"""
+        import logging
+        logging.error(f'Failed to {operation}: {str(error)}')
+        raise CommandError(self.__class__.__name__, str(error))
+
+    def _get_available_credentials_or_error(self, params):
+        """Get available credentials with consistent error handling"""
+        try:
+            credentials = self.client.get_available_credentials(params)
+            if not credentials:
+                raise CommandError(self.__class__.__name__, ERROR_MESSAGES['no_credentials'])
+            return credentials
+        except Exception as e:
+            raise CommandError(self.__class__.__name__, str(e))
+
+    def _execute_with_error_handling(self, operation: str, func, *args, **kwargs):
+        """Execute a function with consistent error handling"""
+        try:
+            return func(*args, **kwargs)
+        except KeyboardInterrupt:
+            self._handle_keyboard_interrupt(operation)
+        except Exception as e:
+            self._handle_command_error(operation, e) 

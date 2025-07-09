@@ -2,7 +2,6 @@ import argparse
 import json
 
 from .base import BiometricCommand
-from ...error import CommandError
 
 
 class BiometricListCommand(BiometricCommand):
@@ -17,23 +16,25 @@ class BiometricListCommand(BiometricCommand):
 
     def execute(self, params, **kwargs):
         """List registered biometric methods"""
-        try:
+        def _list():
             passkeys = self.client.get_available_credentials(params)
+            self._display_credentials(passkeys, kwargs.get('format', 'table'))
 
-            if kwargs.get('format') == 'json':
-                print(json.dumps(passkeys, indent=2))
+        return self._execute_with_error_handling('list biometric methods', _list)
+
+    def _display_credentials(self, passkeys, format_type):
+        """Display credentials in the specified format"""
+        if format_type == 'json':
+            print(json.dumps(passkeys, indent=2))
+        else:
+            if not passkeys:
+                print("No biometric authentication methods found.")
             else:
-                if not passkeys:
-                    print("No biometric authentication methods found.")
-                else:
-                    print("\n📱 Registered Biometric Authentication Methods:")
-                    print("-" * 70)
-                    for passkey in passkeys:
-                        print(f"Name: {passkey['name']}")
-                        print(f"ID: {passkey['id']}")
-                        print(f"Created: {passkey['created']}")
-                        print(f"Last Used: {passkey['last_used']}")
-                        print("-" * 70)
-
-        except Exception as e:
-            raise CommandError('biometric list', f'Failed to list biometric methods: {str(e)}') 
+                print("\n📱 Registered Biometric Authentication Methods:")
+                print("-" * 70)
+                for passkey in passkeys:
+                    print(f"Name: {passkey['name']}")
+                    print(f"ID: {passkey['id']}")
+                    print(f"Created: {passkey['created']}")
+                    print(f"Last Used: {passkey['last_used']}")
+                    print("-" * 70) 

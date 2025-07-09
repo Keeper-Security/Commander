@@ -85,6 +85,12 @@ class WindowsHandler(BasePlatformHandler):
     def _create_storage_handler(self) -> StorageHandler:
         return WindowsStorageHandler()
 
+    def _get_platform_name(self) -> str:
+        return "Windows Hello"
+
+    def _get_platform_settings(self) -> Dict[str, Any]:
+        return {'residentKey': 'required'}
+
     def detect_capabilities(self) -> Tuple[bool, str]:
         """Detect Windows Hello capabilities"""
         if os.name != 'nt':
@@ -134,81 +140,26 @@ class WindowsHandler(BasePlatformHandler):
 
     def handle_credential_creation(self, creation_options: Dict[str, Any], timeout: int = 30) -> Dict[str, Any]:
         """Handle Windows-specific credential creation"""
-        # Convert user ID to bytes
-        user_id = utils.base64_url_decode(creation_options['user']['id'])
-        creation_options['user']['id'] = user_id
-
-        # Remove unsupported options
-        creation_options.pop('hints', None)
-        creation_options.pop('extensions', None)
-
-        # Remove empty excludeCredentials
-        if 'excludeCredentials' in creation_options and not creation_options['excludeCredentials']:
-            creation_options.pop('excludeCredentials')
-
-        # Set authenticator selection
-        if 'authenticatorSelection' not in creation_options:
-            creation_options['authenticatorSelection'] = {}
-
-        creation_options['authenticatorSelection'].update({
-            'authenticatorAttachment': 'platform',
-            'userVerification': 'required',
-            'residentKey': 'required'
-        })
-
-        creation_options['attestation'] = 'none'
-        
-        if 'timeout' not in creation_options:
-            creation_options['timeout'] = timeout * 1000
-
-        return creation_options
+        return self._prepare_credential_creation_options(
+            creation_options, 
+            timeout, 
+            self._get_platform_settings()
+        )
 
     def handle_authentication_options(self, pk_options: Dict[str, Any], timeout: int = 10) -> Dict[str, Any]:
         """Handle Windows-specific authentication options"""
-        pk_options.pop('hints', None)
-        pk_options.pop('extensions', None)
-
-        # Clean up empty transports
-        if 'allowCredentials' in pk_options:
-            for cred in pk_options['allowCredentials']:
-                if 'transports' in cred and not cred['transports']:
-                    cred.pop('transports')
-
-        pk_options['userVerification'] = 'required'
-        
-        if 'timeout' not in pk_options:
-            pk_options['timeout'] = timeout * 1000
-
-        return pk_options
+        return self._prepare_authentication_options(pk_options, timeout)
 
     def perform_authentication(self, client, options: PublicKeyCredentialRequestOptions):
         """Perform Windows Hello authentication"""
         try:
             return client.get_assertion(options)
         except Exception as e:
-            error_msg = str(e).lower()
-            if any(keyword in error_msg for keyword in ["cancelled", "denied"]):
-                raise Exception("Windows Hello authentication cancelled")
-            elif "timeout" in error_msg:
-                raise Exception("Windows Hello authentication timed out")
-            elif "not available" in error_msg:
-                raise Exception("Windows Hello is not available or not set up")
-            elif "parameter is incorrect" in error_msg:
-                raise Exception("Windows Hello parameter error - please check your biometric setup")
-            else:
-                raise Exception(f"Windows Hello authentication failed: {str(e)}")
+            raise self._handle_authentication_error(e, self._get_platform_name())
 
     def perform_credential_creation(self, client, options: PublicKeyCredentialCreationOptions):
         """Perform Windows Hello credential creation"""
         try:
             return client.make_credential(options)
         except Exception as e:
-            error_msg = str(e).lower()
-            if any(keyword in error_msg for keyword in ["cancelled", "denied"]):
-                raise Exception("Windows Hello registration cancelled")
-            elif "timeout" in error_msg:
-                raise Exception("Windows Hello registration timed out")
-            elif "not available" in error_msg:
-                raise Exception("Windows Hello is not available or not set up")
-            else:
-                raise Exception(f"Windows Hello registration failed: {str(e)}") 
+            raise self._handle_credential_creation_error(e, self._get_platform_name()) 

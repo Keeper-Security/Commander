@@ -1,7 +1,8 @@
 import argparse
+import platform
+import subprocess
 
 from .base import BiometricCommand
-from ...error import CommandError
 
 
 class BiometricUnregisterCommand(BiometricCommand):
@@ -14,10 +15,72 @@ class BiometricUnregisterCommand(BiometricCommand):
     def get_parser(self):
         return self.parser
 
+    def execute(self, params, **kwargs):
+        """Disable biometric authentication for the current user"""
+        def _unregister():
+            # Check if biometric is already disabled
+            if not self._check_biometric_flag(params.user):
+                print(f"Biometric authentication is already disabled for user '{params.user}'.")
+                return
+
+            # Get confirmation if not provided
+            if not kwargs.get('confirm') and not self._get_user_confirmation(params.user):
+                print("Operation cancelled.")
+                return
+
+            # Disable passkeys on server
+            self._disable_server_passkeys(params)
+
+            # Clean up local storage
+            params.biometric = False
+            delete_success = self._delete_biometric_flag(params.user)
+            cleanup_success = self._cleanup_local_credentials(params.user)
+
+            # Report results
+            self._report_unregister_results(params.user, delete_success, cleanup_success)
+
+        return self._execute_with_error_handling('disable biometric authentication', _unregister)
+
+    def _get_user_confirmation(self, username: str) -> bool:
+        """Get user confirmation for unregistering biometric authentication"""
+        confirm = input(f"Are you sure you want to disable biometric authentication for user '{username}'? (y/n): ")
+        return confirm.lower() == 'y'
+
+    def _disable_server_passkeys(self, params):
+        """Disable passkeys on the server"""
+        try:
+            passkey_result = self.client.disable_all_user_passkeys(params)
+            
+            if isinstance(passkey_result, dict) and passkey_result.get('status') == 'SUCCESS':
+                if 'results' in passkey_result:
+                    success_count = 0
+                    error_count = 0
+                    
+                    for result in passkey_result['results']:
+                        if isinstance(result, dict):
+                            if result.get('status') == 'SUCCESS':
+                                success_count += 1
+                            else:
+                                error_count += 1
+                                print(f"Failed to disable passkey '{result.get('credential_name', 'Unknown')}': {result.get('message', 'Unknown error')}")
+                    
+                    if success_count > 0:
+                        credential_name = result.get('credential_name', 'Unknown') if isinstance(result, dict) else 'Unknown'
+                        print(f"Disabled passkey: {credential_name}")
+                    if error_count > 0:
+                        print(f"{error_count} passkey(s) failed to disable")
+                else:
+                    print("No passkeys found to disable")
+            else:
+                message = passkey_result.get('message', 'Unknown error') if isinstance(passkey_result, dict) else 'Unknown error'
+                print(f"Issue with passkey disable: {message}")
+                        
+        except Exception as e:
+            print(f"Failed to disable passkeys on server: {str(e)}")
+
     def _cleanup_local_credentials(self, username: str) -> bool:
         """Clean up local biometric credentials (platform-specific)"""
         try:
-            import platform
             system = platform.system()
             
             if system == 'Darwin':  # macOS
@@ -34,8 +97,6 @@ class BiometricUnregisterCommand(BiometricCommand):
     def _cleanup_macos_keychain_credentials(self) -> bool:
         """Clean up macOS keychain credentials for biometric authentication"""
         try:
-            import subprocess
-            
             # Try to find and delete WebAuthn credentials in keychain
             services_to_clean = [
                 "Keeper WebAuthn - keepersecurity.com",
@@ -69,73 +130,20 @@ class BiometricUnregisterCommand(BiometricCommand):
     def _cleanup_windows_credentials(self) -> bool:
         """Clean up Windows credentials for biometric authentication"""
         try:
-          
             return True
         except Exception:
             return False
 
-    def execute(self, params, **kwargs):
-        """Disable biometric authentication for the current user"""
-        
-        if not self._check_biometric_flag(params.user):
-            print(f"Biometric authentication is already disabled for user '{params.user}'.")
-            return
+    def _report_unregister_results(self, username: str, delete_success: bool, cleanup_success: bool):
+        """Report the results of the unregister operation"""
+        flag_status = ("Successfully removed biometric authentication data" if delete_success
+                      else "Failed to remove biometric authentication data")
 
-        if not kwargs.get('confirm'):
-            confirm = input(f"Are you sure you want to disable biometric authentication for user '{params.user}'? (y/N): ")
-            if confirm.lower() != 'y':
-                print("Operation cancelled.")
-                return
-
-        try:
-            try:
-                passkey_result = self.client.disable_all_user_passkeys(params)
-                
-                if isinstance(passkey_result, dict) and passkey_result.get('status') == 'SUCCESS':
-                    if 'results' in passkey_result:
-                        success_count = 0
-                        error_count = 0
-                        
-                        for result in passkey_result['results']:
-                            if isinstance(result, dict):
-                                if result.get('status') == 'SUCCESS':
-                                    success_count += 1
-                                else:
-                                    error_count += 1
-                                    print(f"Failed to disable passkey '{result.get('credential_name', 'Unknown')}': {result.get('message', 'Unknown error')}")
-                        
-                        if success_count > 0:
-                            print(f"Disabled passkey: {result.get('credential_name', 'Unknown')}")
-                        if error_count > 0:
-                            print(f"{error_count} passkey(s) failed to disable")
-                    else:
-                        print("No passkeys found to disable")
-                else:
-                    message = passkey_result.get('message', 'Unknown error') if isinstance(passkey_result, dict) else 'Unknown error'
-                    print(f"Issue with passkey disable: {message}")
-                        
-            except Exception as e:
-                print(f"Failed to disable passkeys on server: {str(e)}")
-
-            params.biometric = False  
-            
-            delete_success = self._delete_biometric_flag(params.user)
-            
-            cleanup_success = self._cleanup_local_credentials(params.user)
-            
-            if delete_success:
-                flag_status = "Successfully removed biometric authentication data"
-            else:
-                flag_status = "Failed to remove biometric authentication data"
-
-            if not self._check_biometric_flag(params.user):
-                print(f"Biometric authentication has been completely removed for user '{params.user}'.")
-                print(f"{flag_status}")
-                if cleanup_success:
-                    print("Default authentication will be used for future logins.")
-            else:
-                print(f"Failed to remove biometric authentication. Please try again.")
-                print(f"{flag_status}")
-
-        except Exception as e:
-            raise CommandError('biometric unregister', f'Failed to disable biometric authentication: {str(e)}') 
+        if not self._check_biometric_flag(username):
+            print(f"Biometric authentication has been completely removed for user '{username}'.")
+            print(f"{flag_status}")
+            if cleanup_success:
+                print("Default authentication will be used for future logins.")
+        else:
+            print(f"Failed to remove biometric authentication. Please try again.")
+            print(f"{flag_status}") 

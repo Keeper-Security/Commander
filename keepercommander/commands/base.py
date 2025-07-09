@@ -114,7 +114,7 @@ def register_commands(commands, aliases, command_info):
     commands['2fa'] = TwoFaCommand()
     command_info['2fa'] = '2FA management'
 
-    from ..biometric.biometric import BiometricCommand
+    from ..biometric import BiometricCommand
     commands['biometric'] = BiometricCommand()
     command_info['biometric'] = 'Biometric management'
 

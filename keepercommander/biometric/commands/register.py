@@ -2,7 +2,7 @@ import argparse
 import logging
 
 from .base import BiometricCommand
-from ...error import CommandError
+from ..utils.constants import DEFAULT_REGISTRATION_TIMEOUT
 
 
 class BiometricRegisterCommand(BiometricCommand):
@@ -13,19 +13,19 @@ class BiometricRegisterCommand(BiometricCommand):
                        help='Friendly name for the biometric method')
     parser.add_argument('--force', dest='force', action='store_true', 
                        help='Force registration even if platform support is uncertain')
-    parser.add_argument('--timeout', dest='timeout', type=int, default=30,
-                       help='Authentication timeout in seconds (default: 30)')
+    parser.add_argument('--timeout', dest='timeout', type=int, default=DEFAULT_REGISTRATION_TIMEOUT,
+                       help=f'Authentication timeout in seconds (default: {DEFAULT_REGISTRATION_TIMEOUT})')
 
     def get_parser(self):
         return self.parser
 
     def execute(self, params, **kwargs):
         """Execute registration"""
-        try:
+        def _register():
             self._check_platform_support(kwargs.get('force', False))
 
             friendly_name = kwargs.get('name') or self._get_default_credential_name()
-            timeout = kwargs.get('timeout', 30)
+            timeout = kwargs.get('timeout', DEFAULT_REGISTRATION_TIMEOUT)
 
             logging.info(f'Adding biometric authentication method: {friendly_name}')
 
@@ -41,20 +41,18 @@ class BiometricRegisterCommand(BiometricCommand):
             # Set biometric flag
             self._set_biometric_flag(params.user, True)
 
-            # Check if flag was set successfully
-            if self._check_biometric_flag(params.user):
-                flag_status = "Biometric registration successful"
-            else:
-                flag_status = "Biometric registration failed, please try again"
+            # Report success
+            self._report_success(friendly_name, params.user)
 
-            logging.info(f'Biometric authentication method "{friendly_name}" added successfully!')
-            print(f'\nSuccess! Biometric authentication "{friendly_name}" has been configured.')
-            print('Biometric authentication will now be your default login method.')
-            print(f'{flag_status}')
+        return self._execute_with_error_handling('register biometric authentication', _register)
 
-        except KeyboardInterrupt:
-            logging.info('Biometric registration cancelled by user')
-            raise CommandError('biometric register', 'Registration cancelled by user')
-        except Exception as e:
-            logging.error(f'Failed to add biometric authentication: {str(e)}')
-            raise CommandError('biometric register', str(e)) 
+    def _report_success(self, friendly_name: str, username: str):
+        """Report successful registration"""
+        flag_status = ("Biometric registration successful" 
+                      if self._check_biometric_flag(username)
+                      else "Biometric registration failed, please try again")
+
+        logging.info(f'Biometric authentication method "{friendly_name}" added successfully!')
+        print(f'\nSuccess! Biometric authentication "{friendly_name}" has been configured.')
+        print('Biometric authentication will now be your default login method.')
+        print(f'{flag_status}') 

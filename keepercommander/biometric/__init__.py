@@ -12,7 +12,7 @@ import logging
 
 from ..commands.base import GroupCommand
 
-# Import new structured commands
+# Import structured commands
 from .commands.register import BiometricRegisterCommand
 from .commands.list import BiometricListCommand
 from .commands.unregister import BiometricUnregisterCommand
@@ -21,22 +21,18 @@ from .commands.verify import BiometricVerifyCommand
 # Import core functionality
 from .core.client import BiometricClient
 from .core.detector import BiometricDetector
+from .utils.constants import FIDO2_WARNING_MESSAGE
 
-warned_on_fido_package = False
-install_fido_package_warning = """
-    You can use Security Key with Commander:
-    Upgrade your Python interpreter to 3.10 or newer
-    and make sure fido2 package is 2.0.0 or newer
-"""
+# Global state for warning display
+_warned_on_fido_package = False
 
 def display_fido2_warning():
-    global warned_on_fido_package
+    """Display FIDO2 package warning once"""
+    global _warned_on_fido_package
+    if not _warned_on_fido_package:
+        logging.warning(FIDO2_WARNING_MESSAGE)
+        _warned_on_fido_package = True
 
-    if not warned_on_fido_package:
-        logging.warning(install_fido_package_warning)
-    warned_on_fido_package = True
-
-# Export backward compatibility functions
 def check_biometric_previously_used(username):
     """Check if biometric authentication was previously used for this user"""
     try:
@@ -67,5 +63,6 @@ __all__ = [
     'BiometricVerifyCommand',
     'BiometricClient',
     'BiometricDetector',
-    'check_biometric_previously_used'
+    'check_biometric_previously_used',
+    'display_fido2_warning'
 ]

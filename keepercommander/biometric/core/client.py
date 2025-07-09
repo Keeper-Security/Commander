@@ -8,6 +8,7 @@ from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredenti
 from ... import api, utils, rest_api
 from ...proto import APIRequest_pb2
 from .detector import BiometricDetector
+from ..utils.constants import KEEPER_RP_ID
 
 
 def verify_rp_id_none(rp_id, origin):
@@ -67,7 +68,7 @@ class BiometricClient:
 
             # Create WebAuthn client
             options = PublicKeyCredentialCreationOptions.from_dict(creation_options)
-            rp_id = options.rp.id or 'keepersecurity.com'
+            rp_id = options.rp.id or KEEPER_RP_ID
             origin = f'https://{rp_id}'
 
             data_collector = DefaultClientDataCollector(origin, verify=verify_rp_id_none)
@@ -158,7 +159,7 @@ class BiometricClient:
             pk_options = self.platform_handler.handle_authentication_options(pk_options, timeout)
 
             options = PublicKeyCredentialRequestOptions.from_dict(pk_options)
-            rp_id = options.rp_id or 'keepersecurity.com'
+            rp_id = options.rp_id or KEEPER_RP_ID
             origin = f'https://{rp_id}'
 
             data_collector = DefaultClientDataCollector(origin, verify=verify_rp_id_none)
