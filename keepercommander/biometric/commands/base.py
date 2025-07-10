@@ -13,6 +13,7 @@ from ..utils.constants import (
     DEFAULT_REGISTRATION_TIMEOUT,
     DEFAULT_AUTHENTICATION_TIMEOUT
 )
+from ..utils.error_handler import BiometricErrorHandler
 
 
 class BiometricCommand(Command):
@@ -68,16 +69,6 @@ class BiometricCommand(Command):
         except Exception:
             return False
 
-    def _handle_keyboard_interrupt(self, operation: str):
-        """Handle keyboard interrupt consistently across commands"""
-        raise CommandError(self.__class__.__name__, f'{operation} cancelled by user')
-
-    def _handle_command_error(self, operation: str, error: Exception):
-        """Handle command errors consistently across commands"""
-        import logging
-        logging.error(f'Failed to {operation}: {str(error)}')
-        raise CommandError(self.__class__.__name__, str(error))
-
     def _get_available_credentials_or_error(self, params):
         """Get available credentials with consistent error handling"""
         try:
@@ -90,9 +81,6 @@ class BiometricCommand(Command):
 
     def _execute_with_error_handling(self, operation: str, func, *args, **kwargs):
         """Execute a function with consistent error handling"""
-        try:
-            return func(*args, **kwargs)
-        except KeyboardInterrupt:
-            self._handle_keyboard_interrupt(operation)
-        except Exception as e:
-            self._handle_command_error(operation, e) 
+        return BiometricErrorHandler.execute_with_error_handling(
+            self.__class__.__name__, operation, func, *args, **kwargs
+        ) 

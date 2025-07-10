@@ -2,7 +2,7 @@ import argparse
 import json
 
 from .base import BiometricCommand
-from ..utils.constants import DEFAULT_AUTHENTICATION_TIMEOUT
+from ..utils.constants import DEFAULT_AUTHENTICATION_TIMEOUT, SUCCESS_MESSAGES
 from ... import utils
 
 
@@ -54,57 +54,69 @@ class BiometricVerifyCommand(BiometricCommand):
                 raise Exception(f"Invalid assertion response object: {type(actual_response)}")
 
             client_data_bytes = actual_response.response.client_data
-            if hasattr(client_data_bytes, 'b64'):
-                client_data_b64 = client_data_bytes.b64
-            elif isinstance(client_data_bytes, bytes):
-                client_data_b64 = utils.base64_url_encode(client_data_bytes)
-            else:
-                client_data_b64 = str(client_data_bytes)
+            client_data_b64 = self._extract_client_data_b64(client_data_bytes)
 
             credential_id = actual_response.id
             credential_raw_id = actual_response.raw_id
             if not credential_id or not credential_raw_id:
                 raise Exception("Could not extract credential ID from assertion response")
 
-            assertion_object = {
-                'id': credential_id,
-                'rawId': utils.base64_url_encode(credential_raw_id),
-                'response': {
-                    'authenticatorData': utils.base64_url_encode(actual_response.response.authenticator_data),
-                    'clientDataJSON': client_data_b64,
-                    'signature': utils.base64_url_encode(actual_response.response.signature),
-                },
-                'type': 'public-key',
-                'clientExtensionResults': getattr(actual_response, 'client_extension_results', {}) or {}
-            }
+            assertion_object = self._create_assertion_object(actual_response, client_data_b64)
 
-            # Import here to avoid circular imports
-            from ...proto import APIRequest_pb2
-            from ... import api
-
-            rq = APIRequest_pb2.PasskeyValidationRequest()
-            rq.challengeToken = auth_options['challenge_token']
-            rq.assertionResponse = json.dumps(assertion_object).encode('utf-8')
-            rq.passkeyPurpose = (APIRequest_pb2.PasskeyPurpose.PK_REAUTH 
-                               if purpose == 'vault' else APIRequest_pb2.PasskeyPurpose.PK_LOGIN)
-
-            # Include login token if available
-            if auth_options.get('login_token'):
-                login_token = auth_options['login_token']
-                rq.encryptedLoginToken = utils.base64_url_decode(login_token) if isinstance(login_token, str) else login_token
-
-            rs = api.communicate_rest(params, rq, 'authentication/passkey/verify_authentication', 
-                                    rs_type=APIRequest_pb2.PasskeyValidationResponse)
-
-            return {
-                'is_valid': rs.isValid,
-                'login_token': rs.encryptedLoginToken,
-                'credential_id': actual_response.id.encode() if isinstance(actual_response.id, str) else actual_response.id,
-                'user_handle': actual_response.response.user_handle
-            }
+            return self._send_verification_request(params, auth_options, assertion_object, purpose)
 
         except Exception as e:
             raise Exception(f'Failed to verify authentication response: {str(e)}')
+
+    def _extract_client_data_b64(self, client_data_bytes):
+        """Extract base64-encoded client data"""
+        if hasattr(client_data_bytes, 'b64'):
+            return client_data_bytes.b64
+        elif isinstance(client_data_bytes, bytes):
+            return utils.base64_url_encode(client_data_bytes)
+        else:
+            return str(client_data_bytes)
+
+    def _create_assertion_object(self, actual_response, client_data_b64):
+        """Create assertion object for verification"""
+        return {
+            'id': actual_response.id,
+            'rawId': utils.base64_url_encode(actual_response.raw_id),
+            'response': {
+                'authenticatorData': utils.base64_url_encode(actual_response.response.authenticator_data),
+                'clientDataJSON': client_data_b64,
+                'signature': utils.base64_url_encode(actual_response.response.signature),
+            },
+            'type': 'public-key',
+            'clientExtensionResults': getattr(actual_response, 'client_extension_results', {}) or {}
+        }
+
+    def _send_verification_request(self, params, auth_options, assertion_object, purpose):
+        """Send verification request to Keeper API"""
+        # Import here to avoid circular imports
+        from ...proto import APIRequest_pb2
+        from ... import api
+
+        rq = APIRequest_pb2.PasskeyValidationRequest()
+        rq.challengeToken = auth_options['challenge_token']
+        rq.assertionResponse = json.dumps(assertion_object).encode('utf-8')
+        rq.passkeyPurpose = (APIRequest_pb2.PasskeyPurpose.PK_REAUTH 
+                           if purpose == 'vault' else APIRequest_pb2.PasskeyPurpose.PK_LOGIN)
+
+        # Include login token if available
+        if auth_options.get('login_token'):
+            login_token = auth_options['login_token']
+            rq.encryptedLoginToken = utils.base64_url_decode(login_token) if isinstance(login_token, str) else login_token
+
+        rs = api.communicate_rest(params, rq, 'authentication/passkey/verify_authentication', 
+                                rs_type=APIRequest_pb2.PasskeyValidationResponse)
+
+        return {
+            'is_valid': rs.isValid,
+            'login_token': rs.encryptedLoginToken,
+            'credential_id': assertion_object['id'].encode() if isinstance(assertion_object['id'], str) else assertion_object['id'],
+            'user_handle': getattr(getattr(getattr(assertion_object, 'response', None), 'response', None), 'user_handle', None)
+        }
 
     def _extract_assertion_response(self, assertion_result):
         """Extract assertion response from various result types"""
@@ -141,7 +153,7 @@ class BiometricVerifyCommand(BiometricCommand):
             if verification_result.get('login_token'):
                 print("Login Token: Received")
 
-            print("\n Your biometric authentication is working correctly!")
+            print(f"\n {SUCCESS_MESSAGES['verification_success']}")
         else:
             print("Status: FAILED")
             print(f"Purpose: {purpose.upper()}")

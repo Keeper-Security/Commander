@@ -42,16 +42,16 @@ The biometric module enables users to authenticate with Keeper using platform-sp
    pip install cbor2 pyobjc-framework-LocalAuthentication
    ```
 2. **Device registration is mandatory before biometric authentication can be used:**
-After login with keeper shell:
-```bash
-# First, register your device with Keeper
-this-device register
-```
+    After login with keeper shell:
+    ```bash
+    # First, register your device with Keeper
+    this-device register
+    ```
 
-This step is required because:
-- Biometric authentication requires a trusted device relationship
-- The device must be approved by Keeper's security system
-- Without device registration, biometric login will fail with "Device needs approval" error
+    This step is required because:
+    - Biometric authentication requires a trusted device relationship
+    - The device must be approved by Keeper's security system
+    - Without device registration, biometric login will still require default authentication.
 
 **Note**: For macOS, Touch ID for sudo is automatically configured when you use biometric authentication for the first time.
 
@@ -101,7 +101,7 @@ biometric unregister
 
 ### Common Issues
 
-#### "Device needs approval" error
+#### Password prompt after Biometric
 ```bash
 # Solution: Register your device first
 this-device register
@@ -110,21 +110,17 @@ this-device register
 biometric register
 ```
 
-#### "No biometric hardware detected"
-- **Windows**: Ensure Windows Hello is properly configured in Settings
-- **macOS**: Verify Touch ID is enabled in System Preferences
-- Check that your hardware supports biometric authentication
-
 #### "Authentication failed"
 - Verify your biometric credentials work for OS login
 - Try re-registering: `biometric unregister` then `biometric register`
 - Ensure your biometric sensor is clean and unobstructed
 
-#### "FIDO2 not available"
-```bash
-# Install required dependencies
-pip install fido2
-```
+#### "No biometric hardware detected"
+- **Windows**: Ensure Windows Hello is properly configured in Settings
+  - Also check if FIDO libraries are installed: `pip install fido2`
+- **macOS**: Verify Touch ID is enabled in System Preferences
+  - Also check if local authentication CBOR libraries are installed: `pip install cbor2 pyobjc-framework-LocalAuthentication`
+- Check that your hardware supports biometric authentication
 
 ## Implementation Details
 
@@ -145,6 +141,8 @@ The module uses FIDO2/WebAuthn standards for biometric authentication, ensuring 
 ## Dependencies
 
 - `fido2` - FIDO2/WebAuthn support for biometric authentication
+- `cbor2` - CBOR encoding/decoding for biometric data
+- `pyobjc-framework-LocalAuthentication` - macOS local authentication framework
 - Platform-specific libraries are imported conditionally
 - No additional dependencies required beyond base Keeper Commander
 

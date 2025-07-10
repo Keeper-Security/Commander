@@ -8,14 +8,22 @@ from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredenti
 
 from ... import utils
 from ..core.base import StorageHandler
+from ..utils.constants import (
+    WINDOWS_REGISTRY_PATH,
+    WINDOWS_SETTINGS
+)
+from ..utils.error_handler import BiometricErrorHandler
 from .base import BasePlatformHandler
+
+# Windows platform detection constant
+WINDOWS_WEBAUTHN_DLL_PATH = r"System32\webauthn.dll"
 
 
 class WindowsStorageHandler(StorageHandler):
     """Windows Registry storage handler"""
 
     def __init__(self):
-        self.key_path = r"SOFTWARE\Keeper Security\Commander\Biometric"
+        self.key_path = WINDOWS_REGISTRY_PATH
 
     def _get_registry_key(self):
         """Get Windows registry key"""
@@ -42,7 +50,7 @@ class WindowsStorageHandler(StorageHandler):
                     winreg.CloseKey(key)
                     return False
         except Exception as e:
-            logging.debug(f'Failed to get Windows registry biometric flag: {e}')
+            BiometricErrorHandler.create_storage_error("get", "Windows registry", e)
         return False
 
     def set_biometric_flag(self, username: str, enabled: bool) -> bool:
@@ -55,7 +63,7 @@ class WindowsStorageHandler(StorageHandler):
                 winreg.CloseKey(key)
                 return True
         except Exception as e:
-            logging.debug(f'Failed to set Windows registry biometric flag: {e}')
+            BiometricErrorHandler.create_storage_error("set", "Windows registry", e)
         return False
 
     def delete_biometric_flag(self, username: str) -> bool:
@@ -75,7 +83,7 @@ class WindowsStorageHandler(StorageHandler):
                     logging.debug(f'Windows registry biometric flag for user {username} was already deleted')
                     return True
         except Exception as e:
-            logging.debug(f'Failed to delete Windows registry biometric flag: {e}')
+            BiometricErrorHandler.create_storage_error("delete", "Windows registry", e)
         return False
 
 
@@ -89,7 +97,7 @@ class WindowsHandler(BasePlatformHandler):
         return "Windows Hello"
 
     def _get_platform_settings(self) -> Dict[str, Any]:
-        return {'residentKey': 'required'}
+        return WINDOWS_SETTINGS
 
     def detect_capabilities(self) -> Tuple[bool, str]:
         """Detect Windows Hello capabilities"""
@@ -98,11 +106,23 @@ class WindowsHandler(BasePlatformHandler):
 
         try:
             # Quick WebAuthn check first
-            webauthn_path = os.path.join(os.environ.get('WINDIR', 'C:\\Windows'), 'System32', 'webauthn.dll')
+            webauthn_path = os.path.join(os.environ.get('WINDIR', 'C:\\Windows'), WINDOWS_WEBAUTHN_DLL_PATH)
             if os.path.exists(webauthn_path):
                 return True, "Windows Hello WebAuthn support detected"
 
             # Detailed PowerShell check
+            result = self._run_powershell_detection()
+            if result:
+                return True, result
+
+            return False, "Windows Hello not available"
+
+        except Exception as e:
+            return False, f"Error detecting Windows Hello: {str(e)}"
+
+    def _run_powershell_detection(self) -> str:
+        """Run PowerShell detection script"""
+        try:
             result = subprocess.run([
                 'powershell', '-Command',
                 '''
@@ -123,12 +143,11 @@ class WindowsHandler(BasePlatformHandler):
                     if details.get('Face'): features.append("Face")
                     if details.get('Fingerprint'): features.append("Fingerprint")
                     if details.get('WebAuthn'): features.append("WebAuthn")
-                    return True, f"Windows Hello available: {', '.join(features)}"
-
-            return False, "Windows Hello not available"
-
-        except Exception as e:
-            return False, f"Error detecting Windows Hello: {str(e)}"
+                    return f"Windows Hello available: {', '.join(features)}"
+        except Exception:
+            pass
+        
+        return None
 
     def create_webauthn_client(self, data_collector, timeout: int = 30):
         """Create Windows WebAuthn client"""

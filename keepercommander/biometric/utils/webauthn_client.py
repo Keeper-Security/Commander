@@ -4,28 +4,43 @@ import time
 from typing import Dict, Any, Optional, Tuple
 
 from ... import utils, crypto
+from .constants import (
+    AUTH_REASONS,
+    ERROR_MESSAGES
+)
+from .error_handler import BiometricErrorHandler
+
+# WebAuthn constants
+WEBAUTHN_CHALLENGE_TYPE_CREATE = 'webauthn.create'
+WEBAUTHN_CHALLENGE_TYPE_GET = 'webauthn.get'
+WEBAUTHN_CREDENTIAL_TYPE = 'public-key'
+
+# Cryptographic constants
+EC_CURVE_P256 = 1
+EC_ALG_ES256 = -7
+EC_KTY_EC2 = 2
+EC_PUBLIC_KEY_UNCOMPRESSED_PREFIX = 0x04
+EC_COORDINATE_LENGTH = 32
+
+# Authentication flags
+AUTH_FLAG_UP = 0b00000001  # User Present
+AUTH_FLAG_UV = 0b00000100  # User Verified
+AUTH_FLAG_AT = 0b01000000  # Attested credential data included
+AUTH_FLAG_CREATION = AUTH_FLAG_UP | AUTH_FLAG_UV | AUTH_FLAG_AT  # 0b01000101
+AUTH_FLAG_ASSERTION = AUTH_FLAG_UP | AUTH_FLAG_UV  # 0b00000101
 
 
 class BaseWebAuthnClient:
     """Base WebAuthn client with common functionality"""
     
-    def __init__(self, client_data_collector, user_interaction, keychain_manager, timeout=30):
+    def __init__(self, client_data_collector, keychain_manager, timeout=30):
         self.client_data_collector = client_data_collector
-        self.user_interaction = user_interaction
         self.keychain_manager = keychain_manager
         self.timeout = timeout
 
     def _validate_dependencies(self, required_modules: list) -> None:
         """Validate that required modules are available"""
-        missing_modules = []
-        for module in required_modules:
-            try:
-                __import__(module)
-            except ImportError:
-                missing_modules.append(module)
-        
-        if missing_modules:
-            raise Exception(f"Required dependencies not available: {', '.join(missing_modules)}")
+        BiometricErrorHandler.validate_dependencies(required_modules)
 
     def _create_client_data(self, data_type: str, challenge: bytes, rp_id: str) -> Tuple[Dict[str, Any], bytes]:
         """Create WebAuthn client data"""
@@ -59,8 +74,8 @@ class BaseWebAuthnClient:
 class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
     """macOS Touch ID WebAuthn client with DRY principles"""
     
-    def __init__(self, client_data_collector, user_interaction, keychain_manager, timeout=30):
-        super().__init__(client_data_collector, user_interaction, keychain_manager, timeout)
+    def __init__(self, client_data_collector, keychain_manager, timeout=30):
+        super().__init__(client_data_collector, keychain_manager, timeout)
 
     def make_credential(self, options):
         """Create WebAuthn credential using Touch ID"""
@@ -80,15 +95,15 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
             
             # Store key before authentication
             if not self.keychain_manager.store_credential(credential_id, private_key_data, rp_id):
-                raise Exception("Failed to store credential in keychain")
+                raise Exception(ERROR_MESSAGES['keychain_store_failed'])
             
             # Authenticate
-            success = self._authenticate_with_touchid(context, 
-                f"Register biometric authentication for {rp_id}")
+            reason = AUTH_REASONS['register'].format(rp_id=rp_id)
+            success = self._authenticate_with_touchid(context, reason)
             
             if not success:
                 self.keychain_manager.delete_credential(credential_id)
-                raise Exception("Touch ID authentication failed")
+                raise Exception(ERROR_MESSAGES['authentication_failed'])
 
             # Create WebAuthn response
             return self._create_credential_response(
@@ -112,11 +127,11 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
             context = self._create_auth_context()
             self._check_biometric_availability(context)
             
-            success = self._authenticate_with_touchid(context, 
-                f"Authenticate with Keeper for {rp_id}")
+            reason = AUTH_REASONS['login'].format(rp_id=rp_id)
+            success = self._authenticate_with_touchid(context, reason)
             
             if not success:
-                raise Exception("Touch ID authentication failed")
+                raise Exception(ERROR_MESSAGES['authentication_failed'])
 
             # Create WebAuthn response
             return self._create_assertion_response(
@@ -142,7 +157,7 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
         )
         
         if not can_evaluate:
-            raise Exception("Touch ID is not available or configured")
+            raise Exception(ERROR_MESSAGES['touchid_not_available'])
 
     def _authenticate_with_touchid(self, context, reason: str) -> bool:
         """Perform Touch ID authentication"""
@@ -198,20 +213,19 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
                                   public_key_data: bytes, rp_id: str):
         """Create WebAuthn credential response"""
         import cbor2
-        import hashlib
         import struct
         
         challenge = options.challenge
         client_data, client_data_json = self._create_client_data(
-            'webauthn.create', challenge, rp_id
+            WEBAUTHN_CHALLENGE_TYPE_CREATE, challenge, rp_id
         )
 
         # Create COSE key
         x_coord, y_coord = self._extract_key_coordinates(public_key_data)
         cose_key = {
-            1: 2,      # kty: EC2
-            3: -7,     # alg: ES256
-            -1: 1,     # crv: P-256
+            1: EC_KTY_EC2,      # kty: EC2
+            3: EC_ALG_ES256,    # alg: ES256
+            -1: EC_CURVE_P256,  # crv: P-256
             -2: x_coord,
             -3: y_coord
         }
@@ -225,9 +239,8 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
         )
 
         # Create authenticator data
-        flags = 0b01000101  # UP=1, UV=1, AT=1
         authenticator_data = self._create_authenticator_data(
-            rp_id, flags, 0, attested_credential_data
+            rp_id, AUTH_FLAG_CREATION, 0, attested_credential_data
         )
 
         # Create attestation object
@@ -251,12 +264,11 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
         from cryptography.hazmat.primitives.asymmetric import ec
         
         client_data, client_data_json = self._create_client_data(
-            'webauthn.get', challenge, rp_id
+            WEBAUTHN_CHALLENGE_TYPE_GET, challenge, rp_id
         )
 
         # Create authenticator data
-        flags = 0b00000101  # UP=1, UV=1
-        authenticator_data = self._create_authenticator_data(rp_id, flags)
+        authenticator_data = self._create_authenticator_data(rp_id, AUTH_FLAG_ASSERTION)
 
         # Sign the data
         signed_data = self._create_signed_data(authenticator_data, client_data_json)
@@ -272,10 +284,12 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
 
     def _extract_key_coordinates(self, public_key_data: bytes) -> Tuple[bytes, bytes]:
         """Extract x and y coordinates from EC key"""
-        if len(public_key_data) != 65 or public_key_data[0] != 0x04:
+        expected_length = 1 + (2 * EC_COORDINATE_LENGTH)  # 1 + (2 * 32) = 65
+        if len(public_key_data) != expected_length or public_key_data[0] != EC_PUBLIC_KEY_UNCOMPRESSED_PREFIX:
             raise Exception("Invalid P-256 public key format")
         
-        return public_key_data[1:33], public_key_data[33:65]
+        return (public_key_data[1:1 + EC_COORDINATE_LENGTH], 
+                public_key_data[1 + EC_COORDINATE_LENGTH:])
 
     def _create_registration_response(self, credential_id: str, client_data_json: bytes, 
                                     attestation_object_cbor: bytes):
@@ -286,7 +300,7 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
                 self.raw_id = cred_raw_id
                 self.response = AttestationResponse(client_data, attestation_obj)
                 self.client_extension_results = {}
-                self.type = 'public-key'
+                self.type = WEBAUTHN_CREDENTIAL_TYPE
                 
         class AttestationResponse:
             def __init__(self, client_data, attestation_obj):
@@ -310,7 +324,7 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
                 self.raw_id = cred_raw_id
                 self.response = AssertionResponse(client_data, auth_data, sig)
                 self.client_extension_results = {}
-                self.type = 'public-key'
+                self.type = WEBAUTHN_CREDENTIAL_TYPE
                 
         class AssertionResponse:
             def __init__(self, client_data, auth_data, sig):

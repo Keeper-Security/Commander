@@ -2,7 +2,7 @@ import argparse
 import logging
 
 from .base import BiometricCommand
-from ..utils.constants import DEFAULT_REGISTRATION_TIMEOUT
+from ..utils.constants import DEFAULT_REGISTRATION_TIMEOUT, SUCCESS_MESSAGES
 
 
 class BiometricRegisterCommand(BiometricCommand):
@@ -52,7 +52,7 @@ class BiometricRegisterCommand(BiometricCommand):
                       if self._check_biometric_flag(username)
                       else "Biometric registration failed, please try again")
 
-        logging.info(f'Biometric authentication method "{friendly_name}" added successfully!')
+        logging.info(SUCCESS_MESSAGES['registration_complete'])
         print(f'\nSuccess! Biometric authentication "{friendly_name}" has been configured.')
         print('Biometric authentication will now be your default login method.')
         print(f'{flag_status}') 

@@ -22,9 +22,10 @@ MACOS_SETTINGS = {
     'attestation': 'none'
 }
 
-# Storage paths
+# Storage paths and service names
 WINDOWS_REGISTRY_PATH = r"SOFTWARE\Keeper Security\Commander\Biometric"
 MACOS_PREFS_PATH = "com.keepersecurity.commander.biometric.plist"
+MACOS_KEYCHAIN_SERVICE_PREFIX = "Keeper WebAuthn"
 
 # FIDO2 availability check
 try:
@@ -57,7 +58,19 @@ ERROR_MESSAGES = {
     'authentication_timeout': 'Biometric authentication timed out',
     'authentication_failed': 'Biometric authentication failed',
     'registration_failed': 'Biometric registration failed',
-    'verification_failed': 'Biometric verification failed'
+    'verification_failed': 'Biometric verification failed',
+    'credential_exists': 'A biometric credential for this account already exists. Use "biometric unregister" first.',
+    'keychain_store_failed': 'Failed to store credential in keychain',
+    'touchid_not_available': 'Touch ID is not available or configured',
+    'windows_hello_not_available': 'Windows Hello not available'
+}
+
+# Success messages
+SUCCESS_MESSAGES = {
+    'registration_complete': 'Biometric authentication method added successfully!',
+    'unregistration_complete': 'Biometric authentication has been completely removed',
+    'verification_success': 'Your biometric authentication is working correctly!',
+    'credential_disabled': 'Passkey was successfully disabled and no longer available for login'
 }
 
 # Default credential name templates
@@ -65,4 +78,11 @@ CREDENTIAL_NAME_TEMPLATES = {
     'Windows': "Windows Hello - {hostname}",
     'Darwin': "Touch ID - {hostname}",
     'default': "Biometric - {hostname}"
+}
+
+# Common authentication reasons
+AUTH_REASONS = {
+    'register': "Register biometric authentication for {rp_id}",
+    'login': "Authenticate with Keeper for {rp_id}",
+    'verification': "Verify biometric authentication for {rp_id}"
 } 
