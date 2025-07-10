@@ -19,6 +19,8 @@ import os
 import re
 import shlex
 import sys
+import ssl
+import platform
 
 from pathlib import Path
 from typing import Optional
@@ -129,6 +131,69 @@ def handle_exceptions(exc_type, exc_value, exc_traceback):
     sys.exit(-1)
 
 
+def get_ssl_cert_file():
+    """Get SSL certificate file path, preferring system CA store for corporate environments like Zscaler"""
+    
+    # Allow user to override via environment variable
+    user_cert_file = os.getenv('KEEPER_SSL_CERT_FILE')
+    if user_cert_file:
+        if user_cert_file.lower() == 'system':
+            # User explicitly wants system certs
+            pass  # Continue with system detection below
+        elif user_cert_file.lower() == 'certifi':
+            # User explicitly wants certifi
+            return certifi.where()
+        elif user_cert_file.lower() == 'none' or user_cert_file.lower() == 'false':
+            # User wants to disable SSL verification (not recommended)
+            return None
+        elif os.path.exists(user_cert_file):
+            # User provided specific cert file
+            return user_cert_file
+        else:
+            logging.warning(f"SSL cert file specified in KEEPER_SSL_CERT_FILE not found: {user_cert_file}")
+    
+    # Try to use system CA store first for corporate environments
+    try:
+        # On macOS, try Homebrew certificates first (better for corporate environments like Zscaler)
+        if platform.system() == 'Darwin':
+            system_ca_paths = [
+                '/opt/homebrew/etc/ca-certificates/cert.pem',  # Homebrew CA bundle (best for Zscaler)
+                '/usr/local/etc/ssl/cert.pem',  # Homebrew SSL (older location)
+                '/etc/ssl/cert.pem',  # macOS system CA bundle
+            ]
+            for ca_path in system_ca_paths:
+                if os.path.exists(ca_path):
+                    return ca_path
+        
+        # On Linux/Unix systems
+        elif platform.system() == 'Linux':
+            system_ca_paths = [
+                '/etc/ssl/certs/ca-certificates.crt',  # Debian/Ubuntu
+                '/etc/pki/tls/certs/ca-bundle.crt',    # RHEL/CentOS
+                '/etc/ssl/ca-bundle.pem',              # OpenSUSE
+                '/etc/ssl/cert.pem',                   # Generic
+            ]
+            for ca_path in system_ca_paths:
+                if os.path.exists(ca_path):
+                    return ca_path
+        
+        # Try to get default SSL context locations
+        try:
+            default_locations = ssl.get_default_verify_paths()
+            if default_locations.cafile and os.path.exists(default_locations.cafile):
+                return default_locations.cafile
+            if default_locations.capath and os.path.exists(default_locations.capath):
+                return default_locations.capath
+        except:
+            pass
+            
+    except Exception:
+        pass
+    
+    # Fall back to certifi if system CA not available
+    return certifi.where()
+
+
 def main(from_package=False):
     if sys.platform == 'win32' and sys.version_info >= (3, 7):
         try:
@@ -136,7 +201,16 @@ def main(from_package=False):
             sys.stderr.reconfigure(encoding='utf-8')
         except:
             pass
-    os.environ['SSL_CERT_FILE'] = certifi.where()
+    
+    # Use system CA certificates when available (supports Zscaler), fallback to certifi
+    ssl_cert_file = get_ssl_cert_file()
+    if ssl_cert_file:
+        os.environ['SSL_CERT_FILE'] = ssl_cert_file
+    else:
+        # User explicitly disabled SSL verification
+        print("Warning: SSL certificate verification has been disabled. This is not recommended for production use.", file=sys.stderr)
+        if 'SSL_CERT_FILE' in os.environ:
+            del os.environ['SSL_CERT_FILE']
     logging.basicConfig(format='%(message)s')
 
     errno = 0
@@ -158,6 +232,12 @@ def main(from_package=False):
         params.debug = opts.debug
 
     logging.getLogger().setLevel(logging.WARNING if params.batch_mode else logging.DEBUG if opts.debug else logging.INFO)
+
+    # Log SSL certificate selection in debug mode (after logging is configured)
+    if opts.debug:
+        ssl_cert_from_env = os.environ.get('SSL_CERT_FILE')
+        if ssl_cert_from_env:
+            logging.debug(f"Using SSL certificate file: {ssl_cert_from_env}")
 
     if opts.proxy:
         params.proxy = opts.proxy

@@ -3,7 +3,7 @@ import argparse
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ...display import bcolors
 from ... import vault
-from . import get_gateway_saas_schema
+from . import get_plugins_map
 from ...utils import value_to_boolean
 from keepercommander.discovery_common.record_link import RecordLink
 from keepercommander.discovery_common.constants import PAM_USER
@@ -14,14 +14,14 @@ if TYPE_CHECKING:
     from ...params import KeeperParams
 
 
-class PAMActionSaasInfoCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam-action-saas-info')
+class PAMActionSaasUserCommand(PAMGatewayActionDiscoverCommandBase):
+    parser = argparse.ArgumentParser(prog='pam action saas user')
 
-    parser.add_argument('--user-uid', '-u', required=True, dest='user_uid', action='store',
+    parser.add_argument('--user-record-uid', '-u', required=True, dest='user_uid', action='store',
                         help='The UID of the User record')
 
     def get_parser(self):
-        return PAMActionSaasInfoCommand.parser
+        return PAMActionSaasUserCommand.parser
 
     def execute(self, params: KeeperParams, **kwargs):
 
@@ -57,9 +57,7 @@ class PAMActionSaasInfoCommand(PAMGatewayActionDiscoverCommandBase):
             print(self._f("The user record does not have the set gateway"))
             return
 
-        schema_res = get_gateway_saas_schema(params, gateway_context)
-        if schema_res is None:
-            return
+        plugins = get_plugins_map(params, gateway_context)
 
         record_link = RecordLink(record=gateway_context.configuration, params=params, fail_on_corrupt=False)
         user_vertex = record_link.get_record_link(user_uid)
@@ -69,12 +67,18 @@ class PAMActionSaasInfoCommand(PAMGatewayActionDiscoverCommandBase):
 
         print(self._h(user_record.title))
 
+        missing_configs = []
+
+        # User's can have multiple ACL edges to different parents.
+        # One of those ACL edges, in the rotation settings, may a populated saas_record_uid_list
         for parent_vertex in user_vertex.belongs_to_vertices():
 
             # Check to see if the record exists.
             parent_record = vault.KeeperRecord.load(params, parent_vertex.uid)  # type: Optional[TypedRecord]
             if parent_record is None:
-                print(self._f(f"  Parent record UID {parent_vertex.uid} does not exists."))
+                print(self._f(f"* Parent record UID {parent_vertex.uid} does not exists."))
+                print("   The record may have been deleted, however the relationship still exists.")
+                print("")
                 continue
 
             print(self._b(f" * {parent_record.title}, {parent_record.record_type}"))
@@ -86,46 +90,53 @@ class PAMActionSaasInfoCommand(PAMGatewayActionDiscoverCommandBase):
                 if saas_record_uid_list is None or len(saas_record_uid_list) == 0:
                     print(f"{bcolors.WARNING}    The user does not have any SaaS service rotations.{bcolors.ENDC}")
                     return
-                for record_uid in saas_record_uid_list:
-                    config_record = vault.KeeperRecord.load(params, record_uid)  # type: Optional[TypedRecord]
+
+                for config_record_uid in saas_record_uid_list:
+                    config_record = vault.KeeperRecord.load(params, config_record_uid)  # type: Optional[TypedRecord]
                     if config_record is None:
-                        print(f"{bcolors.WARNING} * Record UID {record_uid} not longer exists.{bcolors.ENDC}")
+                        print(f"{bcolors.WARNING} * Record UID {config_record_uid} not longer exists.{bcolors.ENDC}")
                         continue
                     print(self._gr(f"   {config_record.title}"))
 
-                    saas_type = "Unknown"
+                    plugin_name = "<Not Set>"
                     saas_type_field = next((x for x in config_record.custom if x.label == "SaaS Type"), None)
                     if (saas_type_field is not None and saas_type_field.value is not None
                             and len(saas_type_field.value) > 0):
-                        saas_type = saas_type_field.value[0]
+                        plugin_name = saas_type_field.value[0]
 
-                    saas_schema = next((x for x in schema_res.get('data') if x.get('id') == saas_type), None)
+                    plugin = plugins.get(plugin_name)
+
+                    # This might have been a valid plugin, or the name is mistyped, so it's not supported.
+                    if plugin is None:
+                        plugin_name += " (" + self._f("Not Supported") + ")"
+
                     rotation_active = self._gr("Active")
                     rotation_active_field = next((x for x in config_record.custom if x.label == "Active"),
                                                  None)
+
                     if (rotation_active_field is not None and rotation_active_field.value is not None
                             and len(rotation_active_field.value) > 0):
                         is_active = value_to_boolean(rotation_active_field.value[0])
                         if is_active is False:
                             rotation_active = self._f("Inactive")
 
-                    print(f"     {bcolors.BOLD}SaaS Type{bcolors.ENDC}: {saas_type}")
+                    print(f"     {bcolors.BOLD}SaaS Type{bcolors.ENDC}: {plugin_name}")
                     print(f"     {bcolors.BOLD}Config Record UID{bcolors.ENDC}: {config_record.record_uid}")
                     print(f"     {bcolors.BOLD}Active{bcolors.ENDC}: {rotation_active}")
-                    schema = saas_schema.get("schema")
 
-                    # If a custom plugin, they might have removed it.
-                    if schema is None:
-                        print(f"     {bcolors.FAIL}Cannot find schema for plugin.{bcolors.ENDC}")
-                        continue
+                    if plugin is not None:
 
-                    for field in schema:
-                        label = field.get("label")
-                        value = next((x.value for x in config_record.custom if x.label == label), None)
-                        if value is not None:
-                            value = value[0]
-                        default = ""
-                        if value is None and field.get("default_value") is not None:
-                            default = f" (default: {field.get('default_value')})"
-                        print(f"     {bcolors.BOLD}{label}{bcolors.ENDC}: {value}{default}")
+                        for field in plugin.fields:
+                            value = next((x.value for x in config_record.custom if x.label == field.label), None)
+                            if value is not None:
+                                if len(value) > 0:
+                                    value = value[0]
+                                else:
+                                    value = None
+                            if value is None:
+                                if field.default_value is not None:
+                                    value = f"{field.default_value} ({bcolors.OKBLUE}Default{bcolors.ENDC})"
+                                else:
+                                    value = f"{bcolors.FAIL}Not Set{bcolors.ENDC}"
+                            print(f"     {bcolors.BOLD}{field.label}{bcolors.ENDC}: {value}")
                     print("")

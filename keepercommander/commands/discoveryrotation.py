@@ -83,9 +83,10 @@ from .pam_service.list import PAMActionServiceListCommand
 from .pam_service.add import PAMActionServiceAddCommand
 from .pam_service.remove import PAMActionServiceRemoveCommand
 from .pam_saas.add import PAMActionSaasAddCommand
-from .pam_saas.info import PAMActionSaasInfoCommand
+from .pam_saas.user import PAMActionSaasUserCommand
 from .pam_saas.remove import PAMActionSaasRemoveCommand
 from .pam_saas.config import PAMActionSaasConfigCommand
+from .pam_saas.update import PAMActionSaasUpdateCommand
 
 
 # These characters are based on the Vault
@@ -213,14 +214,16 @@ class PAMActionSaasCommand(GroupCommand):
 
     def __init__(self):
         super(PAMActionSaasCommand, self).__init__()
-        self.register_command('info', PAMActionSaasInfoCommand(),
-                              'Information of SaaS service rotation for a PAM User record.', 'i')
+        self.register_command('config', PAMActionSaasConfigCommand(),
+                              'Create a configuration for a SaaS rotation.', 'c')
         self.register_command('add', PAMActionSaasAddCommand(),
                               'Add a SaaS rotation to a PAM User record.', 'a')
         self.register_command('remove', PAMActionSaasRemoveCommand(),
                               'Remove a SaaS rotation from a PAM User record', 'r')
-        self.register_command('config', PAMActionSaasConfigCommand(),
-                              'Create a configuration for a SaaS rotation.', 'c')
+        self.register_command('user', PAMActionSaasUserCommand(),
+                              "Get user's SaaS rotations", 'i')
+        self.register_command('update', PAMActionSaasUpdateCommand(),
+                              'Update existing configuration.', 'u')
 
 
 class GatewayActionCommand(GroupCommand):
@@ -252,7 +255,7 @@ class PAMDebugCommand(GroupCommand):
         # Disable for now. Needs more work.
         # self.register_command('verify', PAMDebugVerifyCommand(), 'Verify graphs', 'v')
         self.register_command('acl', PAMDebugACLCommand(), 'Control ACL of PAM Users', 'c')
-        self.register_command('link', PAMDebugACLCommand(), 'Link resource to configuration', 'l')
+        self.register_command('link', PAMDebugLinkCommand(), 'Link resource to configuration', 'l')
         self.register_command('rs-reset', PAMDebugRotationSettingsCommand(),
                               'Create/reset rotation settings', 'rs')
 
@@ -707,7 +710,7 @@ class PAMCreateRecordRotationCommand(Command):
                 _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_resource_uid)
                 if not _dag.linking_dag.has_graph:
                     raise CommandError('', f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated '
-                                           f'with any configuration.'
+                                           f'with any configuration. '
                                            f'{bcolors.OKBLUE}pam rotation edit -rs {target_resource_uid} '
                                            f'--config CONFIG{bcolors.ENDC}')
             # Noop and resource cannot be both assigned
@@ -731,11 +734,13 @@ class PAMCreateRecordRotationCommand(Command):
                     target_resource_uid = resource_uids[0]
 
                 if not _dag.resource_belongs_to_config(target_resource_uid):
-                    raise CommandError('',
-                                    f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated with the '
-                                    f'configuration of the user "{target_record.record_uid}". To associated the resources '
-                                    f'to this config run {bcolors.OKBLUE}"pam rotation resource {target_resource_uid} '
-                                    f'--config {_dag.record.record_uid}"{bcolors.ENDC}')
+                    # some rotations (iam_user/noop) link straight to pamConfiguration
+                    if target_resource_uid != _dag.record.record_uid:
+                        raise CommandError('',
+                            f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated with the '
+                            f'configuration of the user "{target_record.record_uid}". To associated the resources '
+                            f'to this config run {bcolors.OKBLUE}"pam rotation resource {target_resource_uid} '
+                            f'--config {_dag.record.record_uid}"{bcolors.ENDC}')
                 if not _dag.user_belongs_to_resource(target_record.record_uid, target_resource_uid):
                     old_resource_uid = _dag.get_resource_uid(target_record.record_uid)
                     if old_resource_uid is not None and old_resource_uid != target_resource_uid:

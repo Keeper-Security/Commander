@@ -2,11 +2,10 @@ from __future__ import annotations
 import argparse
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ... import vault
-from . import get_gateway_saas_schema
+from . import get_plugins_map
 from keepercommander.discovery_common.record_link import RecordLink
 from keepercommander.discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
 from keepercommander.discovery_common.types import UserAclRotationSettings
-import json
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -15,7 +14,7 @@ if TYPE_CHECKING:
 
 
 class PAMActionSaasAddCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam-action-saas-add')
+    parser = argparse.ArgumentParser(prog='pam action saas add')
 
     parser.add_argument('--user-uid', '-u', required=True, dest='user_uid', action='store',
                         help='The UID of the User record')
@@ -63,8 +62,8 @@ class PAMActionSaasAddCommand(PAMGatewayActionDiscoverCommandBase):
             print(self._f("The user record does not have the set gateway"))
             return
 
-        schema_data = get_gateway_saas_schema(params, gateway_context)
-        if schema_data is None:
+        plugins = get_plugins_map(params, gateway_context)
+        if plugins is None:
             return
 
         # Check to see if the config record exists.
@@ -79,38 +78,37 @@ class PAMActionSaasAddCommand(PAMGatewayActionDiscoverCommandBase):
             print(self._f("The SaaS configuration record is not a Login record."))
             return
 
-        saas_type_field = next((x for x in config_record.custom if x.label == "SaaS Type"), None)
-        if saas_type_field is None:
+        plugin_name_field = next((x for x in config_record.custom if x.label == "SaaS Type"), None)
+        if plugin_name_field is None:
             print(self._f("The SaaS configuration record is missing the custom field label 'SaaS Type'"))
             return
 
-        saas_type = None
-        if saas_type_field.value is not None and len(saas_type_field.value) > 0:
-            saas_type = saas_type_field.value[0]
+        plugin_name = None
+        if plugin_name_field.value is not None and len(plugin_name_field.value) > 0:
+            plugin_name = plugin_name_field.value[0]
 
-        if saas_type is None:
+        if plugin_name is None:
             print(self._f("The SaaS configuration record's custom field label 'SaaS Type' does not have a value."))
             return
 
-        found_plugin = False
-        for plugin in schema_data.get("data", []):
-            if plugin["name"] == saas_type:
-                found_plugin = True
-                missing_fields = []
-                for field in plugin["schema"]:
-                    if field.get("required") is True:
-                        found = next((x for x in config_record.custom if x.label == field.get("label")), None)
-                        if not found:
-                            missing_fields.append(field.get("label").strip())
-
-                if len(missing_fields) > 0:
-                    print(self._f("The SaaS configuration record is missing the following required custom fields: "
-                                  f'{", ".join(missing_fields)}'))
-                    return
-
-        if found_plugin is False:
+        if plugin_name not in plugins:
             print(self._f("The SaaS configuration record's custom field label 'SaaS Type' is not supported by the "
                           "gateway or the value is not correct."))
+            return
+
+        plugin = plugins[plugin_name]
+
+        # Make sure the SaaS configuration record has correct custom fields.
+        missing_fields = []
+        for field in plugin.fields:
+            if field.required is True and field.default_value is None:
+                found = next((x for x in config_record.custom if x.label == field.label), None)
+                if not found:
+                    missing_fields.append(field.label.strip())
+
+        if len(missing_fields) > 0:
+            print(self._f("The SaaS configuration record is missing the following required custom fields: "
+                          f'{", ".join(missing_fields)}'))
             return
 
         parent_uid = gateway_context.configuration_uid
@@ -149,7 +147,7 @@ class PAMActionSaasAddCommand(PAMGatewayActionDiscoverCommandBase):
             return
 
         # If there is a resource record, it not NOOP.
-        # If there is NO resource record, it is NOOP.\
+        # If there is NO resource record, it is NOOP.
         # However, if this is an IAM User, don't set the NOOP
         if acl.is_iam_user is False:
             acl.rotation_settings.noop = resource_uid is None
@@ -168,4 +166,5 @@ class PAMActionSaasAddCommand(PAMGatewayActionDiscoverCommandBase):
         record_link.belongs_to(user_uid, parent_uid, acl=acl)
         record_link.save()
 
-        print(self._gr(f"Added {saas_type} service rotation to the user record."))
+        print(self._gr(f"Added {plugin_name} rotation to the user record."))
+        print("")

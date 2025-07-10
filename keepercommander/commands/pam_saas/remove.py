@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 class PAMActionSaasRemoveCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam-action-saas-remove')
+    parser = argparse.ArgumentParser(prog='pam action saas remove')
 
     parser.add_argument('--user-uid', '-u', required=True, dest='user_uid', action='store',
                         help='The UID of the User record')

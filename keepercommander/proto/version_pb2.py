@@ -4,9 +4,8 @@
 """Generated protocol buffer code."""
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import descriptor_pool as _descriptor_pool
-from google.protobuf import message as _message
-from google.protobuf import reflection as _reflection
 from google.protobuf import symbol_database as _symbol_database
+from google.protobuf.internal import builder as _builder
 # @@protoc_insertion_point(imports)
 
 _sym_db = _symbol_database.Default()
@@ -16,20 +15,12 @@ _sym_db = _symbol_database.Default()
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rversion.proto\x12\x0fSemanticVersion\"E\n\x07Version\x12\r\n\x05major\x18\x01 \x01(\x05\x12\r\n\x05minor\x18\x02 \x01(\x05\x12\r\n\x05patch\x18\x03 \x01(\x05\x12\r\n\x05\x62uild\x18\x04 \x01(\x05\x42+\n\x18\x63om.keepersecurity.protoB\x0fSemanticVersionb\x06proto3')
 
-
-
-_VERSION = DESCRIPTOR.message_types_by_name['Version']
-Version = _reflection.GeneratedProtocolMessageType('Version', (_message.Message,), {
-  'DESCRIPTOR' : _VERSION,
-  '__module__' : 'version_pb2'
-  # @@protoc_insertion_point(class_scope:SemanticVersion.Version)
-  })
-_sym_db.RegisterMessage(Version)
-
+_globals = globals()
+_builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
+_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'version_pb2', _globals)
 if _descriptor._USE_C_DESCRIPTORS == False:
-
-  DESCRIPTOR._options = None
-  DESCRIPTOR._serialized_options = b'\n\030com.keepersecurity.protoB\017SemanticVersion'
-  _VERSION._serialized_start=34
-  _VERSION._serialized_end=103
+  _globals['DESCRIPTOR']._options = None
+  _globals['DESCRIPTOR']._serialized_options = b'\n\030com.keepersecurity.protoB\017SemanticVersion'
+  _globals['_VERSION']._serialized_start=34
+  _globals['_VERSION']._serialized_end=103
 # @@protoc_insertion_point(module_scope)

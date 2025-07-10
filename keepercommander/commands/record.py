@@ -81,14 +81,14 @@ def register_command_info(aliases, command_info):
     command_info['trash'] = 'Manage deleted items.'
 
 
-get_info_parser = argparse.ArgumentParser(prog='get', description='Get the details of a record/folder/team by UID.')
+get_info_parser = argparse.ArgumentParser(prog='get', description='Get the details of a record/folder/team by UID or title.')
 get_info_parser.add_argument('--unmask', dest='unmask', action='store_true', help='display hidden field content')
 get_info_parser.add_argument('--legacy', dest='legacy', action='store_true',
                              help='json output: display typed records as legacy')
 get_info_parser.add_argument(
     '--format', dest='format', action='store', choices=['detail', 'json', 'password', 'fields'],
     default='detail', help='output format')
-get_info_parser.add_argument('uid', type=str, action='store', help='UID')
+get_info_parser.add_argument('uid', type=str, action='store', help='UID or title to search for')
 
 
 search_parser = argparse.ArgumentParser(prog='search', description='Search the vault. Can use a regular expression.')
@@ -117,6 +117,8 @@ verbose_group.add_argument('-v', '--verbose', action='store_true', help="verbose
 verbose_group.add_argument('-vv', '--very-verbose', action='store_true', help="more verbose output (fetches team membership info not in cache)")
 list_team_parser.add_argument('-a', '--all', action='store_true',
                               help="show all teams in your contacts (including those outside your primary organization)")
+list_team_parser.add_argument('--sort', dest='sort', choices=['company', 'team_uid', 'name'], default='company',
+                              help="sort teams by column (default: company)")
 
 
 record_history_parser = argparse.ArgumentParser(prog='record-history', parents=[base.report_output_parser],
@@ -233,6 +235,9 @@ class RecordGetUidCommand(Command):
 
         fmt = kwargs.get('format') or 'detail'
 
+        # First try to interpret as UID
+        direct_match = False
+        
         if api.is_shared_folder(params, uid):
             admins = api.get_share_admins_for_shared_folder(params, uid)
             sf = api.get_shared_folder(params, uid)
@@ -272,6 +277,7 @@ class RecordGetUidCommand(Command):
                 if admins:
                     sf.share_admins = admins
                 sf.display()
+            direct_match = True
             return
 
         if uid in params.folder_cache:
@@ -290,6 +296,7 @@ class RecordGetUidCommand(Command):
                 print(json.dumps(fo, indent=2))
             else:
                 f.display()
+            direct_match = True
             return
 
         if api.is_team(params, uid):
@@ -305,6 +312,7 @@ class RecordGetUidCommand(Command):
                 print(json.dumps(to, indent=2))
             else:
                 team.display()
+            direct_match = True
             return
 
         if params.available_team_cache is None:
@@ -328,6 +336,7 @@ class RecordGetUidCommand(Command):
                         print('{0:>20s}: {1:<20s}'.format('Team UID', team_uid))
                         print('{0:>20s}: {1}'.format('Name', team_name))
                         print('')
+                    direct_match = True
                     return
 
         if uid not in params.record_cache:
@@ -393,224 +402,350 @@ class RecordGetUidCommand(Command):
                         ro['share_admins'] = admins
 
                     ro['revision'] = r.revision
+
                     print(json.dumps(ro, indent=2))
-                elif fmt == 'fields':
-                    fields = collections.OrderedDict()    # type: Dict[str, str]
-                    record = vault.KeeperRecord.load(params, rec)
-                    if record:
-                        fields['--title'] = record.title
-                        fields['--notes'] = r.notes
-                        if isinstance(record, vault.PasswordRecord):
-                            fields['--record-type'] = 'legacy'
-                            fields['login'] = record.login
-                            fields['password'] = record.password
-                            fields['url'] = record.link
-                            fields['oneTimeCode'] = record.totp
-                            if record.custom:
-                                for cf in record.custom:
-                                    fields[cf.name] = cf.value
-                        elif isinstance(record, vault.TypedRecord):
-                            fields['--record-type'] = record.type_name
-                            for f in itertools.chain(record.fields, record.custom):
-                                if not isinstance(f.value, list):
-                                    continue
-                                f_type = f.type
-                                if f_type.endswith('Ref'):
-                                    continue
-                                if f_type in record_types.RecordFields:
-                                    rf = record_types.RecordFields[f_type]
-                                    ft = record_types.FieldTypes.get(rf.type)
-                                    key = rf.name
-                                else:
-                                    rf = None
-                                    ft = None
-                                    key = f'{f_type}.'
-                                if rf and rf.multiple == record_types.Multiple.Optional:
-                                    if f.label:
-                                        f_label = f.label.replace('\\', '\\\\').replace('"', '\\"').replace('=', '==')
-                                        if ' ' in f_label or "'" in f_label:
-                                            f_label = f'"{f_label}"'
-                                        key += f'.{f_label}'
-                                if len(f.value) == 0:
-                                    fields[key] = ''
-                                else:
-                                    value = ''
-                                    if ft:
-                                        for f_value in f.value:
-                                            if isinstance(f_value, type(ft.value)):
-                                                if isinstance(f_value, str):
-                                                    f_value = f_value.strip()
-                                                    if f_value:
-                                                        value = f_value
-                                                elif isinstance(f_value, bool):
-                                                    value = str(f_value)
-                                                elif isinstance(f_value, int):
-                                                    if ft.name == 'date':
-                                                        if f_value > 0:
-                                                            dt = datetime.datetime.fromtimestamp(int(f_value / 1000)).date()
-                                                            value = str(dt)
-                                                    else:
-                                                        value = str(f_value)
-                                                elif isinstance(f_value, dict):
-                                                    if ft.name == 'host':
-                                                        v = vault.TypedField.export_host_field(f_value)
-                                                    elif ft.name == 'phone':
-                                                        v = vault.TypedField.export_phone_field(f_value)
-                                                    elif ft.name == 'name':
-                                                        v = vault.TypedField.export_name_field(f_value)
-                                                    elif ft.name == 'address':
-                                                        v = vault.TypedField.export_address_field(f_value)
-                                                    elif ft.name == 'securityQuestion':
-                                                        v = vault.TypedField.export_q_and_a_field(f_value)
-                                                    elif ft.name == 'paymentCard':
-                                                        v = vault.TypedField.export_card_field(f_value)
-                                                    elif ft.name == 'bankAccount':
-                                                        v = vault.TypedField.export_account_field(f_value)
-                                                    elif ft.name == 'privateKey':
-                                                        v = vault.TypedField.export_ssh_key_field(f_value)
-                                                    elif ft.name == 'schedule':
-                                                        v = vault.TypedField.export_schedule_field(f_value)
-                                                    else:
-                                                        v = f'$JSON:{json.dumps(f_value)}'
-                                                    if v:
-                                                        if value:
-                                                            value += '; ' + v
-                                                        else:
-                                                            value = v
-                                            if value and rf.multiple != record_types.Multiple.Always:
-                                                break
-                                    else:
-                                        if len(f.value) == 1:
-                                            f_value = f.value[0]
-                                            if isinstance(f_value, str):
-                                                value = f_value
-                                            elif isinstance(f_value, int):
-                                                value = str(f_value)
-                                            else:
-                                                value = f'$JSON:{json.dumps(f_value)}'
-                                        else:
-                                            value = f'$JSON:{json.dumps(f.value)}'
-
-                                    fields[key] = value
-                        pairs = []
-                        for key, value in fields.items():
-                            value = value.replace('\r\n', '\n').replace('\r', '\n')
-                            value = value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
-                            if value.startswith('='):
-                                value = ' ' + value
-                            if ' ' in value or "'" in value:
-                                value = f'"{value}"'
-                            pairs.append(f'{key}={value}')
-
-                        print(' '.join(pairs))
                 elif fmt == 'password':
-                    print(r.password)
+                    if r.password:
+                        print(r.password)
+                elif fmt == 'fields':
+                    fields = []
+                    # todo: combine with cli.py format_field_name()
+                    normalize_titles = {}
+                    # Record properties
+                    record_props = {
+                        'title': r.title,
+                        'record_uid': r.record_uid,
+                        'revision': r.revision,
+                        'version': r.version,
+                        'shared': rec.get('shared', False),
+                    }
+                    for prop_name, prop_value in record_props.items():
+                        normalize_titles[prop_name.lower()] = prop_name
+                        key = prop_name
+                        field = {
+                            'name': key,
+                            'value': prop_value,
+                        }
+                        fields.append(field)
+                    # unmasked fields
+                    for key, value in r.get_unmasked_field_params():
+                        key = key.replace('_', ' ').title()
+                        normalize_titles[key.lower()] = key
+                        field = {
+                            'name': key,
+                            'value': value,
+                        }
+                        fields.append(field)
+                    # masked fields
+                    for key, value in r.get_masked_field_params():
+                        unmask = kwargs.get('unmask') is True
+                        field = {
+                            'name': key.replace('_', ' ').title(),
+                            'value': value if unmask else '********',
+                        }
+                        fields.append(field)
+                    # typed fields
+                    for field in r.get_typed_fields():
+                        key = field.type
+                        if key and key in field.type_name:
+                            key = field.type_name[key]
+                            if key in normalize_titles:
+                                key = normalize_titles[key.lower()]
+                            normalize_titles[key.lower()] = key
+                            var_value = ''
+                            unmask = kwargs.get('unmask') is True
+                            if field.value and unmask or not field.sensitive:
+                                var_value = field.value
+                            elif field.value:
+                                var_value = '********'
+
+                            field = {
+                                'name': key,
+                                'value': var_value,
+                            }
+                            fields.append(field)
+                    # notes
+                    if r.notes:
+                        field = {
+                            'name': 'Notes',
+                            'value': r.notes,
+                        }
+                        fields.append(field)
+
+                    print(json.dumps(fields, indent=2))
                 else:
-                    unmask = params.unmask_all or kwargs.get('unmask')
-                    if version < 3:
-                        r.display(unmask=unmask)
-                    else:
-                        recordv3.RecordV3.display(rec, **{'params': params, 'format': fmt, 'unmask': unmask})
-
-                    folders = [get_folder_path(params, x) for x in find_folders(params, uid)]
-                    for i in range(len(folders)):
-                        print('{0:>21s} {1:<20s}'.format('Folder:' if i == 0 else '', folders[i]))
-
-                    if 'client_modified_time' in rec:
-                        dt = datetime.datetime.fromtimestamp(rec['client_modified_time'] / 1000.0)
-                        print('{0:>20s}: {1:<20s}'.format('Last Modified', dt.strftime('%Y-%m-%d %H:%M:%S')))
-
-                    if 'shared' in rec:
-                        print('{0:>20s}: {1:<20s}'.format('Shared', str(rec['shared'])))
-                    if 'shares' in rec:
-                        if 'user_permissions' in rec['shares']:
-                            perm = rec['shares']['user_permissions'].copy()
-                            perm.sort(key=lambda r: (' 1' if r.get('owner') else
-                                                     ' 2' if r.get('editable') else
-                                                     ' 3' if r.get('shareable') else
-                                                     '') + r.get('username'))
-                            for no, uo in enumerate(perm):
-                                username = uo['username']
-                                if username == params.user:
-                                    username += ' (you)'
-                                flags = ''
-                                if uo.get('owner'):
-                                    flags = 'Owner'
-                                elif uo.get('awaiting_approval'):
-                                    flags = 'Awaiting Approval'
+                    unmask = kwargs.get('unmask') is True
+                    r.display(unmask=unmask)
+                    if rec.get('shares'):
+                        if 'user_permissions' in rec['shares'] and rec['shares']['user_permissions']:
+                            print('')
+                            print('User Permissions:')
+                            for user in rec['shares']['user_permissions']:
+                                print('')
+                                if 'username' in user:
+                                    print('User: ' + user['username'])
+                                if 'user_uid' in user:
+                                    print('User UID: ' + user['user_uid'])
+                                elif 'accountUid' in user:
+                                    print('User UID: ' + user['accountUid'])
+                                
+                                # Handle both possible spellings of sharable/shareable
+                                if 'sharable' in user:
+                                    shareable = user['sharable']
+                                elif 'shareable' in user:
+                                    shareable = user['shareable']
                                 else:
-                                    if uo.get('editable'):
-                                        flags = 'Can Edit'
-                                    if uo.get('shareable'):
-                                        if flags:
-                                            flags = flags + ' & '
-                                        else:
-                                            flags = 'Can '
-                                        flags = flags + 'Share'
-                                if not flags:
-                                    flags = 'Read Only'
-                                expires = uo.get('expiration')
-                                if isinstance(expires, (int, float)) and expires > 0:
-                                    expires = 'Expires: ' + str(datetime.datetime.fromtimestamp(expires // 1000))
+                                    shareable = False
+                                
+                                if shareable is None:
+                                    shareable = False
+                                
+                                # Handle both possible spellings of readable
+                                if 'readable' in user:
+                                    readable = user['readable']
                                 else:
-                                    expires = ''
-                                print('{0:>21s} {1:<32s} ({2}) {3}'.format(
-                                    'Shared Users:' if no == 0 else '', username, flags, expires))
-
-                        if 'shared_folder_permissions' in rec['shares']:
-                            for no, sfo in enumerate(rec['shares']['shared_folder_permissions']):
-                                flags = ''
-                                if sfo.get('editable'):
-                                    flags = 'Can Edit'
-                                if sfo.get('reshareable'):
-                                    if flags:
-                                        flags = flags + ' & '
-                                    else:
-                                        flags = 'Can '
-                                    flags += 'Share'
-                                if not flags:
-                                    flags = 'Read Only'
-                                expires = sfo.get('expiration')
-                                if isinstance(expires, (int, float)) and expires > 0:
-                                    expires = 'Expires: ' + str(datetime.datetime.fromtimestamp(expires // 1000))
-                                else:
-                                    expires = ''
-                                sf_uid = sfo['shared_folder_uid']
-                                folder_paths = []
-                                for f_uid in find_folders(params, uid):
-                                    if f_uid in params.subfolder_cache:
-                                        fol = params.folder_cache[f_uid]
-                                        if fol.type in {subfolder.BaseFolderNode.SharedFolderType,
-                                                        subfolder.BaseFolderNode.SharedFolderFolderType}:
-                                            sfid = fol.uid \
-                                                if fol.type == subfolder.BaseFolderNode.SharedFolderType \
-                                                else fol.shared_folder_uid
-                                            if sf_uid == sfid:
-                                                folder_paths.append(fol.name)
-                                if len(folder_paths) == 0:
-                                    if sf_uid in params.shared_folder_cache:
-                                        folder_paths.append(params.shared_folder_cache[sf_uid]['name_unencrypted'])
-                                for path in folder_paths:
-                                    print('{0:>21s} {1:<32s} ({2}) {3}'.format(
-                                        'Shared Folders:' if no == 0 else '', path, flags, expires))
-
+                                    readable = False
+                                
+                                if readable is None:
+                                    readable = False
+                                
+                                print('Shareable: ' + ('Yes' if shareable else 'No'))
+                                print('Read-Only: ' + ('Yes' if not shareable else 'No'))
+                            print('')
+                        if 'shared_folder_permissions' in rec['shares'] and rec['shares']['shared_folder_permissions']:
+                            print('')
+                            print('Shared Folder Permissions:')
+                            for sf in rec['shares']['shared_folder_permissions']:
+                                print('')
+                                if 'shared_folder_uid' in sf:
+                                    print('Shared Folder UID: ' + sf['shared_folder_uid'])
+                                if 'user_uid' in sf:
+                                    print('User UID: ' + sf['user_uid'])
+                                elif 'accountUid' in sf:
+                                    print('User UID: ' + sf['accountUid'])
+                                
+                                # Safely access boolean fields with fallback to False
+                                if sf.get('manage_users', False) is True:
+                                    print('Manage Users: True')
+                                if sf.get('manage_records', False) is True:
+                                    print('Manage Records: True')
+                                if sf.get('can_edit', False) is True:
+                                    print('Can Edit: True')
+                                if sf.get('can_share', False) is True:
+                                    print('Can Share: True')
+                            print('')
+                        if 'team_permissions' in rec['shares'] and rec['shares']['team_permissions']:
+                            print('')
+                            print('Team Permissions:')
+                            for team in rec['shares']['team_permissions']:
+                                print('')
+                                if 'team_uid' in team:
+                                    print('Team UID: ' + team['team_uid'])
+                                if 'name' in team:
+                                    print('Name: ' + team['name'])
+                            print('')
                     if admins:
-                        for no, admin in enumerate(admins):
-                            print('{0:>21s} {1:<26s}'.format('Share Admins:' if no == 0 else '', admin))
+                        print('')
+                        print('Share Admins:')
+                        for admin in admins:
+                            print(admin)
+                direct_match = True
+                return
 
-                    if params.breach_watch:
-                        bw_status = params.breach_watch.get_record_status(params, uid)
-                        if bw_status and 'status' in bw_status:
-                            status = bw_status['status']
-                            if status:
-                                if status in {'WEAK', 'BREACHED'}:
-                                    status = 'High-Risk Password'
-                                elif status == 'IGNORE':
-                                    status = 'Ignored'
-                                print('{0:>20s}: {1:<20s}'.format('BreachWatch', status))
+        # If we didn't find a direct match by UID, try searching by title
+        if not direct_match:
+            # Find all title matches
+            matched_records = []
+            for record_uid in params.record_cache:
+                record = vault.KeeperRecord.load(params, record_uid)
+                if record and record.title and uid.lower() in record.title.lower():
+                    matched_records.append(record)
+            
+            matched_folders = []
+            for folder_uid in params.folder_cache:
+                folder = params.folder_cache[folder_uid]
+                if folder and folder.name and uid.lower() in folder.name.lower():
+                    matched_folders.append(folder)
+            
+            matched_teams = []
+            if params.available_team_cache:
+                for team in params.available_team_cache:
+                    team_name = team.get('team_name')
+                    if team_name and uid.lower() in team_name.lower():
+                        matched_teams.append(team)
+            
+            total_matches = len(matched_records) + len(matched_folders) + len(matched_teams)
+            
+            if total_matches == 0:
+                # No matches found by title either, show original error
+                raise CommandError('get', 'Cannot find any object with UID: {0}'.format(uid))
+            
+            if total_matches == 1:
+                # If only one match, display it directly
+                if len(matched_records) == 1:
+                    return self.execute(params, uid=matched_records[0].record_uid, format=fmt, unmask=kwargs.get('unmask'), legacy=kwargs.get('legacy'))
+                elif len(matched_folders) == 1:
+                    uid = matched_folders[0].uid
+                    f = params.folder_cache[uid]
+                    if fmt == 'json':
+                        fo = {
+                            'folder_uid': f.uid,
+                            'type': f.type,
+                            'name': f.name
+                        }
+                        if isinstance(f, (subfolder.SharedFolderFolderNode, subfolder.SharedFolderNode)):
+                            fo['shared_folder_uid'] = f.shared_folder_uid if isinstance(f, subfolder.SharedFolderFolderNode) \
+                                else f.uid
+                        if f.parent_uid:
+                            fo['parent_folder_uid'] = f.parent_uid
+                        print(json.dumps(fo, indent=2))
+                    else:
+                        f.display()
+                    return
+                elif len(matched_teams) == 1:
+                    team_uid = matched_teams[0].get('team_uid')
+                    if api.is_team(params, team_uid):
+                        team = api.get_team(params, team_uid)
+                        if fmt == 'json':
+                            to = {
+                                'team_uid': team.team_uid,
+                                'name': team.name,
+                                'restrict_edit': team.restrict_edit,
+                                'restrict_view': team.restrict_view,
+                                'restrict_share': team.restrict_share
+                            }
+                            print(json.dumps(to, indent=2))
+                        else:
+                            team.display()
+                        return
+                    else:
+                        team_uid = matched_teams[0].get('team_uid')
+                        team_name = matched_teams[0].get('team_name')
+                        if fmt == 'json':
+                            fo = {
+                                'team_uid': team_uid,
+                                'name': team_name
+                            }
+                            print(json.dumps(fo, indent=2))
+                        else:
+                            print('')
+                            print('User {0} does not belong to team {1}'.format(params.user, team_name))
+                            print('')
+                            print('{0:>20s}: {1:<20s}'.format('Team UID', team_uid))
+                            print('{0:>20s}: {1}'.format('Name', team_name))
+                            print('')
+                        return
+            
+            # Multiple matches, show summary
+            logging.info(f'Found {total_matches} items with title containing "{uid}":')
+            
+            # Create a unified table for all types of items
+            table = []
+            headers = ['UID', 'Type', 'Title']
+            
+            # Create a list for JSON output if needed
+            json_results = []
+            
+            # Add records to the unified table
+            for r in matched_records:
+                # For records, include both "Record" and the record_type
+                type_display = f"Record ({r.record_type})" if r.record_type else "Record"
+                row = [r.record_uid, type_display, r.title]
+                table.append(row)
+                
+                # Add to JSON results
+                json_results.append({
+                    "uid": r.record_uid,
+                    "type": "record",
+                    "record_type": r.record_type,
+                    "title": r.title
+                })
+            
+            # Add folders to the unified table
+            for f in matched_folders:
+                path = get_folder_path(params, f.uid)
+                # For folders, display "Shared Folder"
+                title = f.name + (" - " + path if path else "")
+                row = [f.uid, "Shared Folder", title]
+                table.append(row)
+                
+                # Add to JSON results
+                json_results.append({
+                    "uid": f.uid,
+                    "type": "shared_folder",
+                    "folder_type": f.type,
+                    "name": f.name,
+                    "path": path
+                })
+            
+            # Add teams to the unified table
+            for t in matched_teams:
+                # For teams, just display "Team"
+                row = [t.get('team_uid'), "Team", t.get('team_name')]
+                table.append(row)
+                
+                # Add to JSON results
+                json_results.append({
+                    "uid": t.get('team_uid'),
+                    "type": "team",
+                    "name": t.get('team_name')
+                })
+            
+            # Sort the table by type first (records on top) and then by title
+            def sort_key(row):
+                # Assign a priority number based on type to sort records first
+                type_text = row[1]
+                if type_text.startswith("Record"):
+                    type_priority = 1
+                elif type_text == "Shared Folder":
+                    type_priority = 2
+                else:  # "Team"
+                    type_priority = 3
+                return (type_priority, row[2].lower())
+            
+            table.sort(key=sort_key)
+            
+            # Get the format from kwargs
+            fmt = kwargs.get('format') or 'detail'
+            
+            # For both table and JSON formats, use dump_report_data
+            # This is consistent with how other commands use this function
+            if fmt == 'json':
+                # For JSON format, convert our hierarchical data to a flattened table format
+                # But ensure we preserve all the information
+                json_table = []
+                for item in json_results:
+                    row = []
+                    row.append(item['uid'])
+                    row.append(item['type'])
+                    if item['type'] == 'record' and 'record_type' in item:
+                        row.append(item['record_type'])
+                    else:
+                        row.append('')
+                    row.append(item.get('title', item.get('name', '')))
+                    if item['type'] == 'shared_folder' and 'path' in item:
+                        row.append(item['path'])
+                    else:
+                        row.append('')
+                    json_table.append(row)
+                
+                # Sort the JSON table the same way we sorted the display table
+                json_table.sort(key=lambda x: (
+                    1 if x[1] == 'record' else 2 if x[1] == 'shared_folder' else 3,
+                    x[3].lower()
+                ))
+                
+                json_headers = ['uid', 'type', 'subtype', 'title', 'path']
+                # Use dump_report_data with fmt='json'
+                # This matches the pattern used in discoveryrotation.py
+                base.dump_report_data(json_table, json_headers, fmt='json')
+            else:
+                # Display the unified table using dump_report_data for tabular format
+                base.dump_report_data(table, headers, row_number=True)
+                
+                # Display a helpful message about using UID for precise access
+                logging.info('\nTo view details of a specific item, use the get command with its UID.')
             return
-
-        raise CommandError('get', 'Cannot find any object with UID: {0}'.format(uid))
 
 
 class SearchCommand(Command):
@@ -760,7 +895,7 @@ class RecordListTeamCommand(Command):
             team_uids = [uid for uid in share_targets.get('teams', {}).keys()]
             api.load_available_teams(params)
             teams.extend(
-                 [Team(team_uid=team.get('team_uid'), name=team.get('team_name'), enterprise_id=enterprise_id) for team in params.available_team_cache if team.get('uid') not in team_uids]
+                 [Team(team_uid=team.get('team_uid'), name=team.get('team_name'), enterprise_id=enterprise_id) for team in params.available_team_cache if team.get('team_uid') not in team_uids]
             )
 
         teams = self.get_team_members(params, teams, fetch_missing_users) if show_team_users else teams
@@ -775,7 +910,15 @@ class RecordListTeamCommand(Command):
                 if show_team_users:
                     row.append(team.members)
                 table.append(row)
-            table.sort(key=lambda x: (x[0] or '').lower())
+            
+            # Sort by the specified column
+            sort_column = kwargs.get('sort', 'company')
+            if sort_column == 'company':
+                table.sort(key=lambda x: (x[0] or '').lower())
+            elif sort_column == 'team_uid':
+                table.sort(key=lambda x: x[1].lower())
+            elif sort_column == 'name':
+                table.sort(key=lambda x: x[2].lower())
 
             return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
                                     row_number=True)
