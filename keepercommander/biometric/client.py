@@ -239,3 +239,27 @@ class BiometricClient:
             
         except Exception as e:
             raise Exception(f'Failed to disable user passkeys: {str(e)}') 
+
+    def update_passkey_name(self, params, user_id: int, credential_id: bytes, friendly_name: str):
+        """Update the friendly name of a passkey using the UpdatePasskeyRequest endpoint"""
+        try:
+            rq = APIRequest_pb2.UpdatePasskeyRequest()
+            rq.userId = user_id
+            rq.credentialId = credential_id
+            rq.friendlyName = friendly_name
+
+            # Use the update_friendly_name endpoint
+            api.communicate_rest(params, rq, 'authentication/passkey/update_friendly_name')
+            
+            # If we get here, the API call was successful
+            return {'status': 'SUCCESS', 'message': 'Passkey friendly name was successfully updated'}
+
+        except Exception as e:
+            # Parse the error message for specific error types
+            error_msg = str(e).lower()
+            if 'bad_request' in error_msg or 'credential id' in error_msg or 'userid' in error_msg:
+                return {'status': 'BAD_REQUEST', 'message': 'Unable to update. Data error. Credential ID or UserID mismatch'}
+            elif 'server_error' in error_msg or 'unexpected' in error_msg:
+                return {'status': 'SERVER_ERROR', 'message': 'Unexpected server exception'}
+            else:
+                raise Exception(f'Failed to update passkey friendly name: {str(e)}') 

@@ -17,6 +17,7 @@ from .commands.register import BiometricRegisterCommand
 from .commands.list import BiometricListCommand
 from .commands.unregister import BiometricUnregisterCommand
 from .commands.verify import BiometricVerifyCommand
+from .commands.update_name import BiometricUpdateNameCommand
 
 # Import core functionality
 from .client import BiometricClient
@@ -42,6 +43,7 @@ class BiometricCommand(GroupCommand):
         self.register_command('list', BiometricListCommand(), 'List biometric authentication methods')
         self.register_command('unregister', BiometricUnregisterCommand(), 'Disable biometric authentication for this user')
         self.register_command('verify', BiometricVerifyCommand(), 'Verify biometric authentication with existing credentials')
+        self.register_command('update-name', BiometricUpdateNameCommand(), 'Update friendly name of a biometric passkey')
 
 
 # Export everything for backward compatibility
