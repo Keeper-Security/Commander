@@ -4,8 +4,8 @@ import platform
 
 from ...commands.base import Command
 from ...error import CommandError
-from ..core.client import BiometricClient
-from ..core.detector import BiometricDetector
+from ..client import BiometricClient
+from ..platforms.detector import BiometricDetector
 from ..utils.constants import (
     FIDO2_AVAILABLE, 
     ERROR_MESSAGES, 

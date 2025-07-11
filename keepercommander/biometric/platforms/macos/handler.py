@@ -9,18 +9,16 @@ from typing import Dict, Any, Tuple
 
 from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredentialRequestOptions
 
-from ... import utils, crypto
-from ..core.base import StorageHandler
-from ..core.keychain_manager import MacOSKeychainManager
-from ..utils.webauthn_client import MacOSTouchIDWebAuthnClient
-from ..utils.constants import (
+from .... import utils, crypto
+from ..base import BasePlatformHandler, StorageHandler
+from .keychain import MacOSKeychainManager
+from .webauthn import MacOSTouchIDWebAuthnClient
+from ...utils.constants import (
     MACOS_PREFS_PATH,
-    MACOS_SETTINGS,
     ERROR_MESSAGES,
     AUTH_REASONS
 )
-from ..utils.error_handler import BiometricErrorHandler
-from .base import BasePlatformHandler
+from ...utils.error_handler import BiometricErrorHandler
 
 # macOS platform detection commands
 MACOS_BIOUTIL_COMMAND = ['bioutil', '-r', '-s']
@@ -113,124 +111,7 @@ class MacOSHandler(BasePlatformHandler):
     def _get_platform_name(self) -> str:
         return "Touch ID"
 
-    def _get_platform_settings(self) -> Dict[str, Any]:
-        return MACOS_SETTINGS
 
-#     def _ensure_pam_configured(self):
-#         """Ensure Touch ID is configured for sudo if not already present"""
-#         try:
-#             with open('/etc/pam.d/sudo', 'r') as f:
-#                 content = f.read()
-#             if 'pam_tid.so' not in content:
-#                 # Show informational dialog with terminal icon
-#                 # Get the path to the Keeper image for other dialogs
-#                 import os
-#                 current_dir = os.path.dirname(os.path.abspath(__file__))
-#                 keeper_image_path = os.path.join(current_dir, '..', '..', '..', 'images', 'commander-black.png')
-#                 keeper_image_path = os.path.abspath(keeper_image_path)
-                
-#                 # Use terminal icon for the first dialog since it's about terminal/sudo configuration
-#                 info_script = '''
-#                 display dialog "Touch ID Configuration Required
-
-# To enable Touch ID for sudo commands, Keeper needs to modify the system configuration file (/etc/pam.d/sudo).
-
-# You will be prompted for your macOS account password to authorize this system configuration change." buttons {"Cancel", "Continue"} default button "Continue" with title "Keeper Commander - Touch ID Setup" with icon caution
-#                 '''
-                
-#                 try:
-#                     result = subprocess.run(['osascript', '-e', info_script], capture_output=True, text=True, timeout=30)
-#                     if result.returncode != 0:
-#                         return  # User cancelled or dialog failed
-#                 except (subprocess.TimeoutExpired, Exception):
-#                     return  # Fallback to silent failure
-                
-#                 # Show password dialog with Keeper image
-#                 icon_part = f'with icon file (POSIX file "{keeper_image_path}")' if os.path.exists(keeper_image_path) else 'with icon caution'
-#                 password_script = f'''
-#                 display dialog "Enter your macOS account password to configure Touch ID for sudo:" default answer "" with hidden answer buttons {{"Cancel", "OK"}} default button "OK" with title "Keeper Commander - Administrator Password" {icon_part}
-#                 '''
-                
-#                 try:
-#                     result = subprocess.run(['osascript', '-e', password_script], capture_output=True, text=True, timeout=60)
-#                     if result.returncode != 0:
-#                         return  # User cancelled or dialog failed
-                        
-#                     # Extract password from AppleScript result
-#                     # AppleScript returns: "button returned:OK, text returned:password"
-#                     output = result.stdout.strip()
-#                     if 'text returned:' not in output:
-#                         return  # Invalid response
-                    
-#                     password = output.split('text returned:')[1].strip()
-#                     if not password:
-#                         return  # Empty password
-                        
-#                 except (subprocess.TimeoutExpired, Exception):
-#                     return  # Fallback to silent failure
-                
-#                 # Prepare the new sudo file content
-#                 lines = content.split('\n')
-#                 for i, line in enumerate(lines):
-#                     if line.strip() and not line.strip().startswith('#'):
-#                         lines.insert(i, 'auth       sufficient     pam_tid.so')
-#                         break
-                
-#                 import tempfile
-#                 import shlex
-                
-#                 with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp:
-#                     tmp.write('\n'.join(lines))
-#                     tmp.flush()
-                    
-#                     try:
-#                         # Use password with sudo -S (read password from stdin)
-#                         # Properly escape the password for shell usage
-#                         escaped_password = shlex.quote(password)
-#                         sudo_process = subprocess.Popen(
-#                             ['sudo', '-S', 'cp', tmp.name, '/etc/pam.d/sudo'],
-#                             stdin=subprocess.PIPE,
-#                             stdout=subprocess.PIPE,
-#                             stderr=subprocess.PIPE,
-#                             text=True
-#                         )
-                        
-#                         stdout, stderr = sudo_process.communicate(input=password + '\n', timeout=30)
-                        
-#                         if sudo_process.returncode == 0:
-#                             # Show success dialog with Keeper image
-#                             icon_part = f'with icon file (POSIX file "{keeper_image_path}")' if os.path.exists(keeper_image_path) else 'with icon note'
-#                             success_script = f'''
-#                             display dialog "Touch ID for sudo has been successfully configured!" buttons {{"OK"}} default button "OK" with title "Keeper Commander - Configuration Complete" {icon_part}
-#                             '''
-#                             subprocess.run(['osascript', '-e', success_script], timeout=10)
-#                         else:
-#                             # Show error dialog with appropriate icon
-#                             icon_part = f'with icon file (POSIX file "{keeper_image_path}")' if os.path.exists(keeper_image_path) else 'with icon stop'
-#                             error_script = f'''
-#                             display dialog "Failed to configure Touch ID for sudo. Please check your password and try again." buttons {{"OK"}} default button "OK" with title "Keeper Commander - Configuration Failed" {icon_part}
-#                             '''
-#                             subprocess.run(['osascript', '-e', error_script], timeout=10)
-                            
-#                     except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
-#                         # Show error dialog for timeout or other errors
-#                         icon_part = f'with icon file (POSIX file "{keeper_image_path}")' if os.path.exists(keeper_image_path) else 'with icon stop'
-#                         error_script = f'''
-#                         display dialog "Failed to configure Touch ID for sudo. The operation timed out or failed." buttons {{"OK"}} default button "OK" with title "Keeper Commander - Configuration Failed" {icon_part}
-#                         '''
-#                         subprocess.run(['osascript', '-e', error_script], timeout=10)
-#                     finally:
-#                         # Clean up temporary file
-#                         try:
-#                             os.unlink(tmp.name)
-#                         except OSError:
-#                             pass
-                        
-#                         # Clear password from memory
-#                         password = None
-                        
-#         except Exception:
-#             pass  # Silently fail if cannot configure PAM
 
     def detect_capabilities(self) -> Tuple[bool, str]:
         """Detect Touch ID availability on macOS"""
@@ -349,11 +230,7 @@ class MacOSHandler(BasePlatformHandler):
                     raise Exception(ERROR_MESSAGES['credential_exists'])
 
         # Use common preparation logic
-        return self._prepare_credential_creation_options(
-            creation_options, 
-            timeout, 
-            self._get_platform_settings()
-        )
+        return self._prepare_credential_creation_options(creation_options, timeout)
 
     def handle_authentication_options(self, pk_options: Dict[str, Any], timeout: int = 10) -> Dict[str, Any]:
         """Handle macOS-specific authentication options"""

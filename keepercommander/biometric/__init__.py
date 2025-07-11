@@ -19,19 +19,9 @@ from .commands.unregister import BiometricUnregisterCommand
 from .commands.verify import BiometricVerifyCommand
 
 # Import core functionality
-from .core.client import BiometricClient
-from .core.detector import BiometricDetector
+from .client import BiometricClient
+from .platforms.detector import BiometricDetector
 from .utils.constants import FIDO2_WARNING_MESSAGE
-
-# Global state for warning display
-_warned_on_fido_package = False
-
-def display_fido2_warning():
-    """Display FIDO2 package warning once"""
-    global _warned_on_fido_package
-    if not _warned_on_fido_package:
-        logging.warning(FIDO2_WARNING_MESSAGE)
-        _warned_on_fido_package = True
 
 def check_biometric_previously_used(username):
     """Check if biometric authentication was previously used for this user"""
@@ -64,5 +54,4 @@ __all__ = [
     'BiometricClient',
     'BiometricDetector',
     'check_biometric_previously_used',
-    'display_fido2_warning'
 ]

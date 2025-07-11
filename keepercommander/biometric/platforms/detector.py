@@ -17,14 +17,14 @@ class BiometricDetector:
 
         try:
             if platform.system() == 'Windows':
-                from ..platforms.windows import WindowsHandler
+                from .windows import WindowsHandler
                 handlers['Windows'] = WindowsHandler()
         except ImportError:
             logging.debug("Windows platform handler not available")
 
         try:
             if platform.system() == 'Darwin':
-                from ..platforms.macos import MacOSHandler
+                from .macos import MacOSHandler
                 handlers['Darwin'] = MacOSHandler()
         except ImportError:
             logging.debug("macOS platform handler not available")

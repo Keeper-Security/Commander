@@ -11,16 +11,7 @@ AUTHENTICATOR_SELECTION = {
     'userVerification': 'required'
 }
 
-# Platform-specific settings
-WINDOWS_SETTINGS = {
-    'residentKey': 'required',
-    'attestation': 'none'
-}
 
-MACOS_SETTINGS = {
-    'residentKey': 'discouraged',
-    'attestation': 'none'
-}
 
 # Storage paths and service names
 WINDOWS_REGISTRY_PATH = r"SOFTWARE\Keeper Security\Commander\Biometric"

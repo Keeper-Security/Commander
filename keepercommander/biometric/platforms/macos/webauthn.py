@@ -3,12 +3,12 @@ import logging
 import time
 from typing import Dict, Any, Optional, Tuple
 
-from ... import utils, crypto
-from .constants import (
+from .... import utils, crypto
+from ...utils.constants import (
     AUTH_REASONS,
     ERROR_MESSAGES
 )
-from .error_handler import BiometricErrorHandler
+from ...utils.error_handler import BiometricErrorHandler
 
 # WebAuthn constants
 WEBAUTHN_CHALLENGE_TYPE_CREATE = 'webauthn.create'

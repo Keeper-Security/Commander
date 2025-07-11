@@ -62,7 +62,6 @@ The biometric module enables users to authenticate with Keeper using platform-sp
 biometric register
 ```
 - Registers your OS-configured biometric credentials with Keeper
-- Requires prior device registration via `this-device register`
 
 #### Listing biometric methods
 ```bash

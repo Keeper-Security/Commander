@@ -5,15 +5,13 @@ from typing import Dict, Any, Optional
 from fido2.client import DefaultClientDataCollector
 from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredentialRequestOptions
 
-from ... import api, utils, rest_api
-from ...proto import APIRequest_pb2
-from .detector import BiometricDetector
-from ..utils.constants import KEEPER_RP_ID
+from .. import api, utils, rest_api
+from ..proto import APIRequest_pb2
+from .platforms.detector import BiometricDetector
+from .utils.constants import KEEPER_RP_ID
 
 
-def verify_rp_id_none(rp_id, origin):
-    """Verification function for RP ID"""
-    return True
+
 
 
 class BiometricClient:
@@ -71,7 +69,7 @@ class BiometricClient:
             rp_id = options.rp.id or KEEPER_RP_ID
             origin = f'https://{rp_id}'
 
-            data_collector = DefaultClientDataCollector(origin, verify=verify_rp_id_none)
+            data_collector = DefaultClientDataCollector(origin)
             client = self.platform_handler.create_webauthn_client(data_collector, timeout)
 
             print("Please complete biometric authentication...")
@@ -162,7 +160,7 @@ class BiometricClient:
             rp_id = options.rp_id or KEEPER_RP_ID
             origin = f'https://{rp_id}'
 
-            data_collector = DefaultClientDataCollector(origin, verify=verify_rp_id_none)
+            data_collector = DefaultClientDataCollector(origin)
             client = self.platform_handler.create_webauthn_client(data_collector, timeout)
 
             return self.platform_handler.perform_authentication(client, options)

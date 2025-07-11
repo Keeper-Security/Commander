@@ -95,7 +95,7 @@ class BiometricUnregisterCommand(BiometricCommand):
                 # For other platforms, just return True as there's nothing specific to clean up
                 return True
         except Exception as e:
-            print(f"⚠️  Warning: Could not clean up local credentials: {str(e)}")
+            print(f"Warning: Could not clean up local credentials: {str(e)}")
             return False
 
     def _cleanup_macos_keychain_credentials(self) -> bool:

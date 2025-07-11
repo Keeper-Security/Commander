@@ -30,7 +30,7 @@ class BiometricListCommand(BiometricCommand):
             if not passkeys:
                 print("No biometric authentication methods found.")
             else:
-                print("\n📱 Registered Biometric Authentication Methods:")
+                print("\nRegistered Biometric Authentication Methods:")
                 print("-" * 70)
                 for passkey in passkeys:
                     print(f"Name: {passkey['name']}")

@@ -4,9 +4,9 @@ import base64
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from ... import crypto
-from ..utils.constants import MACOS_KEYCHAIN_SERVICE_PREFIX, ERROR_MESSAGES
-from ..utils.error_handler import BiometricErrorHandler
+from .... import crypto
+from ...utils.constants import MACOS_KEYCHAIN_SERVICE_PREFIX, ERROR_MESSAGES
+from ...utils.error_handler import BiometricErrorHandler
 
 
 class KeychainManager(ABC):
@@ -253,25 +253,4 @@ Please authenticate with Touch ID to continue." buttons {"Cancel", "Authenticate
             return False
             
         except Exception:
-            return False
-
-
-class WindowsKeychainManager(KeychainManager):
-    """Windows credential storage manager (for future implementation)"""
-    
-    def store_credential(self, credential_id: str, private_key_data: bytes, rp_id: str) -> bool:
-        """Store credential in Windows credential store (placeholder)"""
-        logging.warning("Windows credential storage not yet implemented")
-        return False
-    
-    def load_credential(self, credential_id: str) -> Optional[object]:
-        """Load credential from Windows credential store (placeholder)"""
-        return None
-    
-    def delete_credential(self, credential_id: str) -> bool:
-        """Delete credential from Windows credential store (placeholder)"""
-        return False
-    
-    def credential_exists(self, credential_id: str) -> bool:
-        """Check if credential exists in Windows credential store (placeholder)"""
-        return False 
+            return False 

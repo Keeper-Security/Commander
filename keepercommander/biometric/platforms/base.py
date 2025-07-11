@@ -1,9 +1,78 @@
 from abc import ABC, abstractmethod
-from typing import Tuple, Dict, Any
+from typing import Dict, Any, Tuple
 
-from ..core.base import PlatformHandler, StorageHandler
+from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredentialRequestOptions
+
 from ..utils.constants import DEFAULT_REGISTRATION_TIMEOUT, DEFAULT_AUTHENTICATION_TIMEOUT
 from ... import utils
+
+
+class PlatformHandler(ABC):
+    """Abstract base class for platform-specific biometric handlers"""
+
+    @abstractmethod
+    def detect_capabilities(self) -> Tuple[bool, str]:
+        """Detect biometric capabilities for this platform"""
+        pass
+
+    @abstractmethod
+    def create_webauthn_client(self, data_collector, timeout: int = 30):
+        """Create platform-specific WebAuthn client"""
+        pass
+
+    @abstractmethod
+    def handle_credential_creation(self, creation_options: Dict[str, Any], timeout: int = 30) -> Dict[str, Any]:
+        """Handle platform-specific credential creation options"""
+        pass
+
+    @abstractmethod
+    def handle_authentication_options(self, pk_options: Dict[str, Any], timeout: int = 10) -> Dict[str, Any]:
+        """Handle platform-specific authentication options"""
+        pass
+
+    @abstractmethod
+    def perform_authentication(self, client, options: PublicKeyCredentialRequestOptions):
+        """Perform platform-specific authentication"""
+        pass
+
+    @abstractmethod
+    def perform_credential_creation(self, client, options: PublicKeyCredentialCreationOptions):
+        """Perform platform-specific credential creation"""
+        pass
+
+    @abstractmethod
+    def get_biometric_flag(self, username: str) -> bool:
+        """Get biometric flag for user"""
+        pass
+
+    @abstractmethod
+    def set_biometric_flag(self, username: str, enabled: bool) -> bool:
+        """Set biometric flag for user"""
+        pass
+
+    @abstractmethod
+    def delete_biometric_flag(self, username: str) -> bool:
+        """Delete biometric flag for user"""
+        pass
+
+
+class StorageHandler(ABC):
+    """Abstract base class for biometric flag storage"""
+
+    @abstractmethod
+    def get_biometric_flag(self, username: str) -> bool:
+        """Get biometric flag for user"""
+        pass
+
+    @abstractmethod
+    def set_biometric_flag(self, username: str, enabled: bool) -> bool:
+        """Set biometric flag for user"""
+        pass
+
+    @abstractmethod
+    def delete_biometric_flag(self, username: str) -> bool:
+        """Delete biometric flag for user"""
+        pass
 
 
 class BasePlatformHandler(PlatformHandler):
@@ -30,8 +99,7 @@ class BasePlatformHandler(PlatformHandler):
         return self.storage_handler.delete_biometric_flag(username)
 
     def _prepare_credential_creation_options(self, creation_options: Dict[str, Any], 
-                                           timeout: int = DEFAULT_REGISTRATION_TIMEOUT,
-                                           platform_settings: Dict[str, Any] = None) -> Dict[str, Any]:
+                                           timeout: int = DEFAULT_REGISTRATION_TIMEOUT) -> Dict[str, Any]:
         """Common credential creation options preparation"""
         # Convert user ID to bytes
         if isinstance(creation_options['user'].get('id'), str):
@@ -53,12 +121,9 @@ class BasePlatformHandler(PlatformHandler):
         # Apply default authenticator selection
         default_selection = {
             'authenticatorAttachment': 'platform',
-            'userVerification': 'required'
+            'userVerification': 'required',
+            'residentKey': 'required'
         }
-        
-        # Apply platform-specific settings
-        if platform_settings:
-            default_selection.update(platform_settings)
             
         creation_options['authenticatorSelection'].update(default_selection)
         creation_options['attestation'] = 'none'
@@ -118,9 +183,4 @@ class BasePlatformHandler(PlatformHandler):
     @abstractmethod
     def _get_platform_name(self) -> str:
         """Get platform-specific name for error messages"""
-        pass
-
-    @abstractmethod
-    def _get_platform_settings(self) -> Dict[str, Any]:
-        """Get platform-specific settings for credential creation"""
         pass 

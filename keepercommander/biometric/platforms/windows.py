@@ -7,10 +7,9 @@ from typing import Dict, Any, Tuple
 from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredentialRequestOptions
 
 from ... import utils
-from ..core.base import StorageHandler
+from .base import StorageHandler
 from ..utils.constants import (
-    WINDOWS_REGISTRY_PATH,
-    WINDOWS_SETTINGS
+    WINDOWS_REGISTRY_PATH
 )
 from ..utils.error_handler import BiometricErrorHandler
 from .base import BasePlatformHandler
@@ -96,8 +95,7 @@ class WindowsHandler(BasePlatformHandler):
     def _get_platform_name(self) -> str:
         return "Windows Hello"
 
-    def _get_platform_settings(self) -> Dict[str, Any]:
-        return WINDOWS_SETTINGS
+
 
     def detect_capabilities(self) -> Tuple[bool, str]:
         """Detect Windows Hello capabilities"""
@@ -159,11 +157,7 @@ class WindowsHandler(BasePlatformHandler):
 
     def handle_credential_creation(self, creation_options: Dict[str, Any], timeout: int = 30) -> Dict[str, Any]:
         """Handle Windows-specific credential creation"""
-        return self._prepare_credential_creation_options(
-            creation_options, 
-            timeout, 
-            self._get_platform_settings()
-        )
+        return self._prepare_credential_creation_options(creation_options, timeout)
 
     def handle_authentication_options(self, pk_options: Dict[str, Any], timeout: int = 10) -> Dict[str, Any]:
         """Handle Windows-specific authentication options"""
