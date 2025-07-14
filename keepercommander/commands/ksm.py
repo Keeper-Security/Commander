@@ -349,10 +349,10 @@ class KSMCommand(Command):
         share_rec_cmd.execute(params, record=app_uid, **share_rec_args)
 
         api.sync_down(params)
-        KSMCommand.update_shares_user_permissions(params, app_uid, removed=unshare and email or None)
+        KSMCommand.update_secrets_user_permissions(params, app_uid, removed=unshare and email or None)
 
     @staticmethod
-    def update_shares_user_permissions(params, app_uid, removed=None):   # type: (KeeperParams, str, Optional[str] ) -> None
+    def update_secrets_user_permissions(params, app_uid, removed=None):   # type: (KeeperParams, str, Optional[str] ) -> None
         # Get app user-permissions
         api.get_record_shares(params, [app_uid])
         app_rec = KSMCommand.get_app_record(params, app_uid)
@@ -363,29 +363,37 @@ class KSMCommand(Command):
         user_perms = app_rec.get('shares', {}).get('user_permissions', [])
         sf_perm_keys = ('manage_users', 'manage_records')
         rec_perm_keys = ('can_edit', 'can_share')
-        rec_user_permissions = ('editable', 'shareable')
 
-        # Grant app-users access to shares if not already shared
+        # Grant app-users access to shares as needed
         app_info = KSMCommand.get_app_info(params, app_uid)
         share_uids = [utils.base64_url_encode(s.secretUid) for ai in app_info for s in (ai.shares or [])]
         shared_recs = [uid for uid in share_uids if uid in params.record_cache]
-        shared_folders = [uid for uid in share_uids if uid not in shared_recs]
+        shared_folders = [uid for uid in share_uids if uid in params.shared_folder_cache]
 
+        # Exclude un-shareable secrets
         api.get_record_shares(params, shared_recs)
+        get_sf_permissions = lambda uid: params.shared_folder_cache.get(uid, {}).get('users', [])
+        get_rec_permissions = lambda uid: params.record_cache.get(uid, {}).get('shares', {}).get('user_permissions', {})
+        is_sf_admin = lambda uid: params.user in api.get_share_admins_for_shared_folder(params, uid)
+        is_rec = lambda uid: uid in shared_recs
+        get_perms = lambda uid: get_rec_permissions(uid) if is_rec(uid) else get_sf_permissions(uid)
+        get_share_user_perms = lambda user, uid: next((x for x in get_perms(uid) if x.get('username') == user), {})
+        get_perm = lambda uid, name: get_share_user_perms(params.user, uid).get(name, False)
+        is_shareable = lambda uid: (get_perm(uid, 'shareable') or get_perm(uid, 'share_admin')
+                                    or  get_perm(uid, 'manage_users') or is_sf_admin(uid))
+        shared_recs = [uid for uid in shared_recs if is_shareable(uid)]
+        shared_folders = [uid for uid in shared_folders if is_shareable(uid)]
 
         def share_needs_update(user, share_uid, elevated):
             if is_removed:
-                return False    # Allow user to retain access to this app's shares even if user is removed from the app
-            is_rec_share = share_uid in params.record_cache
-            perm_keys, share_cache = (rec_user_permissions, params.record_cache) if is_rec_share \
-                else (sf_perm_keys, params.shared_folder_cache)
-            get_user_permissions = lambda cached_share: cached_share.get('shares', {}).get('user_permissions',{}) if is_rec_share else cached_share.get('users')
-            share_user_permissions = get_user_permissions(share_cache.get(share_uid, {}))
-            return not any(up for up in share_user_permissions if up.get('username') == user)
-
+                # Allow user to retain access to app secrets after removal from app
+                return False
+            else:
+                # Share secret w/ user only if they lack access
+                return not get_share_user_perms(user, share_uid)
 
         admins = [up.get('username') for up in user_perms if up.get('editable')]
-        admins = [x for x in admins if x != params.user]
+        admins = [x for x in admins if x != params.user]    # Exclude current user
         viewers = [up.get('username') for up in user_perms if not up.get('editable')]
         removed = [removed] if removed is not None else []
         app_users_map = dict(admins=admins,viewers=viewers, removed=removed)
@@ -451,7 +459,7 @@ class KSMCommand(Command):
 
         # Update user-permissions for new app share
         api.sync_down(params)
-        KSMCommand.update_shares_user_permissions(params, app_record_uid)
+        KSMCommand.update_secrets_user_permissions(params, app_record_uid)
 
     @staticmethod
     def record_data_as_dict(record_dict):
