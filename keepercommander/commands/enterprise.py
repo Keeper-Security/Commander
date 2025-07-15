@@ -314,13 +314,16 @@ def get_user_status_dict(user):
         account_status = lock_text(user['lock'])
 
     acct_transfer_status = ''
+    ta_status = user.get('transfer_acceptance_status') or 0
+    if ta_status == enterprise_pb2.NOT_REQUIRED:
+        acct_transfer_status = 'Not required'
+    elif ta_status == enterprise_pb2.NOT_ACCEPTED:
+        acct_transfer_status = 'Pending transfer'
+    elif ta_status == enterprise_pb2.PARTIALLY_ACCEPTED:
+        acct_transfer_status = 'Partially accepted'
+    elif ta_status == enterprise_pb2.ACCEPTED:
+        acct_transfer_status = 'Transfer accepted'
 
-    if 'account_share_expiration' in user:
-        expire_at = datetime.datetime.fromtimestamp(user['account_share_expiration']/1000.0)
-        if expire_at < datetime.datetime.now():
-            acct_transfer_status = 'Blocked'
-        else:
-            acct_transfer_status = 'Pending Transfer'
     return {
         'acct_status': account_status,
         'acct_transfer_status': acct_transfer_status
@@ -413,7 +416,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     'name': user['data'].get('displayname') or '',
                     'status': user['status'],
                     'lock': user['lock'],
-                    'tfa_enabled': user['tfa_enabled']
+                    'tfa_enabled': user['tfa_enabled'],
+                    'transfer_acceptance_status': user['transfer_acceptance_status']
                 }
                 if 'account_share_expiration' in user:
                     u['account_share_expiration'] = user['account_share_expiration']

@@ -474,6 +474,7 @@ class _EnterpriseUserEntity(_EnterpriseEntity):
         _set_or_remove(keeper_entity, 'full_name', proto_entity.fullName if proto_entity.fullName else None)
         _set_or_remove(keeper_entity, 'job_title', proto_entity.jobTitle if proto_entity.jobTitle else None)
         _set_or_remove(keeper_entity, 'tfa_enabled', proto_entity.tfaEnabled)
+        _set_or_remove(keeper_entity, 'transfer_acceptance_status', proto_entity.transferAcceptanceStatus)
         data = {}
         encrypted_data = keeper_entity.get('encrypted_data')
         if encrypted_data:
