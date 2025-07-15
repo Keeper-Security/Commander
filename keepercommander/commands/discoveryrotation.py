@@ -1494,7 +1494,7 @@ class PamConfigurationEditMixin(RecordEditMixin):
             service_account_key = kwargs.get('service_account_key')
             if service_account_key:
                 extra_properties.append(f'json.pamServiceAccountKey={service_account_key}')
-            gcp_region = kwargs.get('gcp_region')
+            gcp_region = kwargs.get('region_names')
             if gcp_region:
                 regions = '\n'.join(gcp_region)
                 extra_properties.append(f'multiline.pamGcpRegionName={regions}')
