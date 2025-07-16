@@ -516,7 +516,7 @@ class PAMCreateRecordRotationCommand(Command):
             _rotation_enabled = True if kwargs.get('enable') else False if kwargs.get('disable') else None
 
             if _rotation_enabled is not None:
-                _dag.set_resource_allowed(target_record, rotation=_rotation_enabled,
+                _dag.set_resource_allowed(target_record.record_uid, rotation=_rotation_enabled,
                                                     allowed_settings_name="rotation")
 
             if resource_dag is not None and resource_dag.linking_dag.has_graph:
