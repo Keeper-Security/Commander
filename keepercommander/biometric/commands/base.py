@@ -30,7 +30,7 @@ class BiometricCommand(Command):
         hostname = platform.node() or 'Unknown'
         
         template = CREDENTIAL_NAME_TEMPLATES.get(system, CREDENTIAL_NAME_TEMPLATES['default'])
-        return template.format(hostname=hostname)
+        return template.format(hostname=hostname)[:31]
 
     def _check_platform_support(self, force: bool = False):
         """Check if platform supports biometric authentication"""

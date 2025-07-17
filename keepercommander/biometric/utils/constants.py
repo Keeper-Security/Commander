@@ -2,10 +2,6 @@
 DEFAULT_REGISTRATION_TIMEOUT = 30
 DEFAULT_AUTHENTICATION_TIMEOUT = 10
 
-# RP ID for Keeper
-KEEPER_RP_ID = 'keepersecurity.com'
-
-# Authenticator selection preferences
 AUTHENTICATOR_SELECTION = {
     'authenticatorAttachment': 'platform',
     'userVerification': 'required'

@@ -2,7 +2,7 @@ import logging
 import subprocess
 import base64
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Union
 
 from .... import crypto
 from ...utils.constants import MACOS_KEYCHAIN_SERVICE_PREFIX, ERROR_MESSAGES
@@ -18,17 +18,17 @@ class KeychainManager(ABC):
         pass
     
     @abstractmethod
-    def load_credential(self, credential_id: str) -> Optional[object]:
+    def load_credential(self, credential_id: str, rp_id: Optional[str] = None) -> Optional[object]:
         """Load a credential from platform-specific storage"""
         pass
     
     @abstractmethod
-    def delete_credential(self, credential_id: str) -> bool:
+    def delete_credential(self, credential_id: str, rp_id: Optional[str] = None) -> bool:
         """Delete a credential from platform-specific storage"""
         pass
     
     @abstractmethod
-    def credential_exists(self, credential_id: str) -> bool:
+    def credential_exists(self, credential_id: str, rp_id: Optional[str] = None) -> bool:
         """Check if credential exists in platform-specific storage"""
         pass
 
@@ -161,11 +161,14 @@ Please authenticate with Touch ID to continue." buttons {"Cancel", "Authenticate
         except Exception as e:
             logging.debug(f"Could not set Touch ID access control: {str(e)}")
 
-    def load_credential(self, credential_id: str) -> Optional[object]:
+    def load_credential(self, credential_id: str, rp_id: Optional[str] = None) -> Optional[object]:
         """Load private key from macOS keychain using Touch ID"""
         try:
             account_name = f"webauthn-{credential_id}"
-            service_names = [f"{self.service_prefix} - keepersecurity.com"]
+            # Use the provided RP ID
+            if not rp_id:
+                raise Exception("RP ID is required for credential loading")
+            service_names = [f"{self.service_prefix} - {rp_id}"]
             
             for service_name in service_names:
                 encoded_key = self._load_from_service(service_name, account_name)
@@ -202,11 +205,14 @@ Please authenticate with Touch ID to continue." buttons {"Cancel", "Authenticate
         
         return None
 
-    def delete_credential(self, credential_id: str) -> bool:
+    def delete_credential(self, credential_id: str, rp_id: Optional[str] = None) -> bool:
         """Delete private key from macOS keychain"""
         try:
             account_name = f"webauthn-{credential_id}"
-            service_names = [f"{self.service_prefix} - keepersecurity.com"]
+            # Use the provided RP ID
+            if not rp_id:
+                raise Exception("RP ID is required for credential deletion")
+            service_names = [f"{self.service_prefix} - {rp_id}"]
             
             success = False
             for service_name in service_names:
@@ -229,11 +235,14 @@ Please authenticate with Touch ID to continue." buttons {"Cancel", "Authenticate
             BiometricErrorHandler.create_storage_error("delete", "macOS keychain", e)
             return False
 
-    def credential_exists(self, credential_id: str) -> bool:
+    def credential_exists(self, credential_id: str, rp_id: Optional[str] = None) -> bool:
         """Check if credential exists in macOS keychain"""
         try:
             account_name = f"webauthn-{credential_id}"
-            service_names = [f"{self.service_prefix} - keepersecurity.com"]
+            # Use the provided RP ID
+            if not rp_id:
+                raise Exception("RP ID is required for credential existence check")
+            service_names = [f"{self.service_prefix} - {rp_id}"]
             
             for service_name in service_names:
                 try:

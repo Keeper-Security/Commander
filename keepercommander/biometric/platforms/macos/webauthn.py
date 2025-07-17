@@ -89,7 +89,9 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
             private_key_data = crypto.unload_ec_private_key(private_key)
 
             # Setup and authenticate
-            rp_id = options.rp.id or 'keepersecurity.com'
+            rp_id = options.rp.id
+            if not rp_id:
+                raise Exception("No RP ID found in options - server configuration error")
             context = self._create_auth_context()
             self._check_biometric_availability(context)
             
@@ -102,7 +104,7 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
             success = self._authenticate_with_touchid(context, reason)
             
             if not success:
-                self.keychain_manager.delete_credential(credential_id)
+                self.keychain_manager.delete_credential(credential_id, rp_id)
                 raise Exception(ERROR_MESSAGES['authentication_failed'])
 
             # Create WebAuthn response
@@ -120,8 +122,10 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
             
             # Find credential
             challenge = options.challenge
-            rp_id = options.rp_id or 'keepersecurity.com'
-            private_key, credential_id_b64, credential_id_bytes = self._find_credential(options)
+            rp_id = options.rp_id
+            if not rp_id:
+                raise Exception("No RP ID found in options - server configuration error")
+            private_key, credential_id_b64, credential_id_bytes = self._find_credential(options, rp_id)
             
             # Setup and authenticate
             context = self._create_auth_context()
@@ -188,7 +192,7 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
         
         return result['success']
 
-    def _find_credential(self, options) -> Tuple[Any, str, bytes]:
+    def _find_credential(self, options, rp_id: str) -> Tuple[Any, str, bytes]:
         """Find credential using keychain manager"""
         allowed_credentials = options.allow_credentials or []
         if not allowed_credentials:
@@ -203,7 +207,7 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
                 test_id_bytes = cred_id
                 test_id_b64 = utils.base64_url_encode(cred_id)
 
-            test_key = self.keychain_manager.load_credential(test_id_b64)
+            test_key = self.keychain_manager.load_credential(test_id_b64, rp_id)
             if test_key:
                 return test_key, test_id_b64, test_id_bytes
 

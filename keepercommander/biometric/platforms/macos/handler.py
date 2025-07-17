@@ -217,6 +217,11 @@ class MacOSHandler(BasePlatformHandler):
 
     def handle_credential_creation(self, creation_options: Dict[str, Any], timeout: int = 30) -> Dict[str, Any]:
         """Handle macOS-specific credential creation"""
+        # Extract RP ID from creation options
+        rp_id = creation_options.get('rp', {}).get('id')
+        if not rp_id:
+            raise Exception("No RP ID found in creation options - server configuration error")
+            
         # Check for existing credentials before processing
         if 'excludeCredentials' in creation_options and creation_options['excludeCredentials']:
             for excluded_cred in creation_options['excludeCredentials']:
@@ -226,7 +231,7 @@ class MacOSHandler(BasePlatformHandler):
                 else:
                     cred_id_b64 = utils.base64_url_encode(cred_id)
                 
-                if self.keychain_manager.credential_exists(cred_id_b64):
+                if self.keychain_manager.credential_exists(cred_id_b64, rp_id):
                     raise Exception(ERROR_MESSAGES['credential_exists'])
 
         # Use common preparation logic

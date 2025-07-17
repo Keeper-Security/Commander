@@ -8,7 +8,6 @@ from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredenti
 from .. import api, utils, rest_api
 from ..proto import APIRequest_pb2
 from .platforms.detector import BiometricDetector
-from .utils.constants import KEEPER_RP_ID
 
 
 
@@ -66,7 +65,13 @@ class BiometricClient:
 
             # Create WebAuthn client
             options = PublicKeyCredentialCreationOptions.from_dict(creation_options)
-            rp_id = options.rp.id or KEEPER_RP_ID
+            # Extract RP ID from the API response
+            rp_id = options.rp.id
+            if not rp_id:
+                # If no RP ID in response, try to extract from creation_options directly
+                rp_id = creation_options.get('rp', {}).get('id')
+            if not rp_id:
+                raise Exception("No RP ID found in API response - server configuration error")
             origin = f'https://{rp_id}'
 
             data_collector = DefaultClientDataCollector(origin)
@@ -157,7 +162,13 @@ class BiometricClient:
             pk_options = self.platform_handler.handle_authentication_options(pk_options, timeout)
 
             options = PublicKeyCredentialRequestOptions.from_dict(pk_options)
-            rp_id = options.rp_id or KEEPER_RP_ID
+            # Extract RP ID from the API response
+            rp_id = options.rp_id
+            if not rp_id:
+                # If no RP ID in response, try to extract from pk_options directly
+                rp_id = pk_options.get('rpId')
+            if not rp_id:
+                raise Exception("No RP ID found in API response - server configuration error")
             origin = f'https://{rp_id}'
 
             data_collector = DefaultClientDataCollector(origin)

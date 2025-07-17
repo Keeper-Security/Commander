@@ -1,6 +1,7 @@
 import argparse
 import platform
 import subprocess
+from typing import Optional
 
 from .base import BiometricCommand
 from ..utils.constants import SUCCESS_MESSAGES, MACOS_KEYCHAIN_SERVICE_PREFIX
@@ -29,13 +30,16 @@ class BiometricUnregisterCommand(BiometricCommand):
                 print("Operation cancelled.")
                 return
 
+            # Get RP ID from server before disabling (needed for cleanup)
+            rp_id = self._get_rp_id_from_server(params)
+
             # Disable passkeys on server
             self._disable_server_passkeys(params)
 
             # Clean up local storage
             params.biometric = False
             delete_success = self._delete_biometric_flag(params.user)
-            cleanup_success = self._cleanup_local_credentials(params.user)
+            cleanup_success = self._cleanup_local_credentials(params.user, rp_id)
 
             # Report results
             self._report_unregister_results(params.user, delete_success, cleanup_success)
@@ -46,6 +50,26 @@ class BiometricUnregisterCommand(BiometricCommand):
         """Get user confirmation for unregistering biometric authentication"""
         confirm = input(f"Are you sure you want to disable biometric authentication for user '{username}'? (y/n): ")
         return confirm.lower() == 'y'
+
+    def _get_rp_id_from_server(self, params) -> Optional[str]:
+        """Get RP ID from server authentication options"""
+        try:
+            # Generate authentication options to get RP ID from server response
+            auth_options = self.client.generate_authentication_options(params, 'login')
+            
+            # Extract RP ID from the request options
+            request_options = auth_options['request_options']
+            pk_options = request_options.get('publicKeyCredentialRequestOptions', request_options)
+            rp_id = pk_options.get('rpId')
+            
+            if not rp_id:
+                print("Warning: Could not get RP ID from server - using limited cleanup")
+                return None
+                
+            return rp_id
+        except Exception as e:
+            print(f"Warning: Could not get RP ID from server ({str(e)}) - using limited cleanup")
+            return None
 
     def _disable_server_passkeys(self, params):
         """Disable passkeys on the server"""
@@ -82,13 +106,13 @@ class BiometricUnregisterCommand(BiometricCommand):
             message = passkey_result.get('message', 'Unknown error') if isinstance(passkey_result, dict) else 'Unknown error'
             print(f"Issue with passkey disable: {message}")
 
-    def _cleanup_local_credentials(self, username: str) -> bool:
+    def _cleanup_local_credentials(self, username: str, rp_id: Optional[str] = None) -> bool:
         """Clean up local biometric credentials (platform-specific)"""
         try:
             system = platform.system()
             
             if system == 'Darwin':  # macOS
-                return self._cleanup_macos_keychain_credentials()
+                return self._cleanup_macos_keychain_credentials(rp_id)
             elif system == 'Windows':  # Windows
                 return self._cleanup_windows_credentials()
             else:
@@ -98,14 +122,17 @@ class BiometricUnregisterCommand(BiometricCommand):
             print(f"Warning: Could not clean up local credentials: {str(e)}")
             return False
 
-    def _cleanup_macos_keychain_credentials(self) -> bool:
+    def _cleanup_macos_keychain_credentials(self, rp_id: Optional[str] = None) -> bool:
         """Clean up macOS keychain credentials for biometric authentication"""
         try:
-            # Try to find and delete WebAuthn credentials in keychain
-            services_to_clean = [
-                f"{MACOS_KEYCHAIN_SERVICE_PREFIX} - keepersecurity.com",
-                "Keeper Biometric Authentication"
-            ]
+            # Build list of services to clean up
+            services_to_clean = ["Keeper Biometric Authentication"]
+            
+            # If we have the RP ID, also clean up WebAuthn-specific entries
+            if rp_id:
+                services_to_clean.append(f"{MACOS_KEYCHAIN_SERVICE_PREFIX} - {rp_id}")
+            else:
+                print("RP ID not available - performing limited cleanup")
             
             deleted_count = 0
             for service_name in services_to_clean:
