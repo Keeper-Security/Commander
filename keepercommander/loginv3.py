@@ -47,12 +47,12 @@ class LoginV3Flow:
         logging.debug("Login v3 Start as '%s'", params.user)
 
         # Check if biometric should be attempted automatically based on user's previous usage
-        biometric = False
         if params.user:
             try:
-                from keepercommander.biometric.biometric import check_biometric_previously_used
+                from keepercommander.biometric import check_biometric_previously_used
+
                 if check_biometric_previously_used(params.user):
-                    biometric = True
+                    params.biometric = True
                     logging.debug("Biometric authentication enabled automatically based on user's previous usage")
             except ImportError:
                 # Biometric module not available, continue with password authentication
@@ -74,14 +74,14 @@ class LoginV3Flow:
             login_type = 'ALTERNATE'
 
         resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes, loginType=login_type)
-        if biometric:
+        if params.biometric:
             resp.loginState = APIRequest_pb2.AFTER_PASSKEY_LOGIN
 
         is_alternate_login = False
 
         while True:
             if resp.loginState == APIRequest_pb2.AFTER_PASSKEY_LOGIN:
-                from keepercommander.biometric.biometric import BiometricVerifyCommand
+                from keepercommander.biometric.commands.verify import BiometricVerifyCommand
                 auth_helper = BiometricVerifyCommand()
                 print("Attempting biometric authentication...")
                 print("Press Ctrl+C to skip biometric and default login method")
@@ -403,6 +403,8 @@ class LoginV3Flow:
             decrypted_data_key = crypto.decrypt_ec(resp.encryptedDataKey, private_key)
             if params.sso_login_info:
                 login_type_message = bcolors.UNDERLINE + "SSO Login"
+            elif params.biometric:
+                login_type_message = bcolors.UNDERLINE + "Biometric Login"
             else:
                 login_type_message = bcolors.UNDERLINE + "Persistent Login"
 
