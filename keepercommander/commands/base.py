@@ -114,9 +114,10 @@ def register_commands(commands, aliases, command_info):
     commands['2fa'] = TwoFaCommand()
     command_info['2fa'] = '2FA management'
 
-    from ..biometric import BiometricCommand
-    commands['biometric'] = BiometricCommand()
-    command_info['biometric'] = 'Biometric management'
+    if sys.version_info.major == 3 and sys.version_info.minor >= 10:
+        from ..biometric import BiometricCommand
+        commands['biometric'] = BiometricCommand()
+        command_info['biometric'] = 'Biometric management'
 
     if sys.version_info.major == 3 and sys.version_info.minor >= 8:
         from .start_service import register_commands as service_commands, register_command_info as service_command_info
