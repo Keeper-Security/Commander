@@ -38,8 +38,8 @@ class BiometricUnregisterCommand(BiometricCommand):
 
             # Clean up local storage
             params.biometric = False
-            delete_success = self._delete_biometric_flag(params.user)
             cleanup_success = self._cleanup_local_credentials(params.user, rp_id)
+            delete_success = self._delete_biometric_flag(params.user)  
 
             # Report results
             self._report_unregister_results(params.user, delete_success, cleanup_success)
@@ -72,39 +72,83 @@ class BiometricUnregisterCommand(BiometricCommand):
             return None
 
     def _disable_server_passkeys(self, params):
-        """Disable passkeys on the server"""
+        """Disable the specific passkey stored for this device"""
         try:
-            passkey_result = self.client.disable_all_user_passkeys(params)
-            self._process_passkey_results(passkey_result)
+            # Get the stored credential ID for this device
+            stored_credential_id = self._get_stored_credential_id(params.user)
+            
+            if stored_credential_id:
+                # Find and disable only the specific passkey for this device
+                passkey_result = self._disable_specific_passkey(params, stored_credential_id)
+                self._process_specific_passkey_result(passkey_result, stored_credential_id)
+            else:
+                print("Warning: No stored credential ID found for this device.")
+                print("This could mean:")
+                print("  - The credential was already removed")
+                print("  - Registration was incomplete")
+                print("")
+                print("No passkeys will be disabled on the server.")
                         
         except Exception as e:
-            print(f"Failed to disable passkeys on server: {str(e)}")
+            print(f"Failed to disable passkey on server: {str(e)}")
 
-    def _process_passkey_results(self, passkey_result):
-        """Process and display passkey disable results"""
-        if isinstance(passkey_result, dict) and passkey_result.get('status') == 'SUCCESS':
-            if 'results' in passkey_result:
-                success_count = 0
-                error_count = 0
-                
-                for result in passkey_result['results']:
-                    if isinstance(result, dict):
-                        if result.get('status') == 'SUCCESS':
-                            success_count += 1
-                        else:
-                            error_count += 1
-                            print(f"Failed to disable passkey '{result.get('credential_name', 'Unknown')}': {result.get('message', 'Unknown error')}")
-                
-                if success_count > 0:
-                    credential_name = result.get('credential_name', 'Unknown') if isinstance(result, dict) else 'Unknown'
-                    print(f"Disabled passkey: {credential_name}")
-                if error_count > 0:
-                    print(f"{error_count} passkey(s) failed to disable")
+    def _get_stored_credential_id(self, username: str) -> Optional[str]:
+        """Get the stored credential ID for this device"""
+        try:
+            platform_handler = self.client.platform_handler
+            if platform_handler and hasattr(platform_handler, 'storage_handler'):
+                storage_handler = getattr(platform_handler, 'storage_handler')
+                if storage_handler and hasattr(storage_handler, 'get_credential_id'):
+                    return storage_handler.get_credential_id(username)
+        except Exception as e:
+            print(f"Warning: Could not retrieve stored credential ID: {str(e)}")
+        return None
+
+    def _disable_specific_passkey(self, params, credential_id: str):
+        """Disable a specific passkey by credential ID"""
+        try:
+            # Get list of available credentials to find the matching passkey
+            available_credentials = self.client.get_available_credentials(params)
+            
+            # Find the passkey with matching credential ID
+            target_passkey = None
+            for credential in available_credentials:
+                # Convert stored credential ID to bytes for comparison if needed
+                stored_cred_id_bytes = credential.get('credential_id')
+                if isinstance(stored_cred_id_bytes, bytes):
+                    # Compare base64url encoded versions
+                    from ... import utils
+                    stored_cred_id_b64 = utils.base64_url_encode(stored_cred_id_bytes)
+                    if stored_cred_id_b64 == credential_id or credential_id == stored_cred_id_bytes:
+                        target_passkey = credential
+                        break
+                elif credential_id == stored_cred_id_bytes:
+                    target_passkey = credential
+                    break
+            
+            if target_passkey:
+                # Disable the specific passkey
+                result = self.client.disable_passkey(params, target_passkey['id'], target_passkey['credential_id'])
+                return result
             else:
-                print("No passkeys found to disable")
+                return {'status': 'NOT_FOUND', 'message': f'Passkey with credential ID {credential_id} not found on server'}
+                
+        except Exception as e:
+            return {'status': 'ERROR', 'message': f'Error disabling specific passkey: {str(e)}'}
+
+    def _process_specific_passkey_result(self, passkey_result, credential_id: str):
+        """Process and display results for a specific passkey disable operation"""
+        if isinstance(passkey_result, dict):
+            status = passkey_result.get('status')
+            message = passkey_result.get('message', 'Unknown result')
+            
+            if status == 'NOT_FOUND':
+                print(f"Passkey not found on server (credential ID: {credential_id[:8]}...)")
+                print("The passkey may have already been disabled or removed.")
+            else:
+                print(f"Failed to disable passkey: {message}")
         else:
-            message = passkey_result.get('message', 'Unknown error') if isinstance(passkey_result, dict) else 'Unknown error'
-            print(f"Issue with passkey disable: {message}")
+            print(f"Unexpected result when disabling passkey: {passkey_result}")
 
     def _cleanup_local_credentials(self, username: str, rp_id: Optional[str] = None) -> bool:
         """Clean up local biometric credentials (platform-specific)"""

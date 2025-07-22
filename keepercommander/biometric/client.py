@@ -111,6 +111,20 @@ class BiometricClient:
 
             api.communicate_rest(params, rq, 'authentication/passkey/verify_registration')
 
+            # Store credential ID in platform storage (this also serves as the biometric flag)
+            if self.platform_handler and hasattr(self.platform_handler, 'storage_handler'):
+                storage_handler = getattr(self.platform_handler, 'storage_handler')
+                if storage_handler and hasattr(storage_handler, 'store_credential_id'):
+                    try:
+                        credential_id = credential_response.id
+                        success = storage_handler.store_credential_id(params.user, credential_id)
+                        if success:
+                            logging.debug(f'Stored credential ID for user {params.user}')
+                        else:
+                            logging.warning(f'Failed to store credential ID for user {params.user}')
+                    except Exception as e:
+                        logging.warning(f'Error storing credential ID: {str(e)}')
+
         except Exception as e:
             raise Exception(f'Failed to verify biometric registration: {str(e)}')
 
@@ -220,36 +234,6 @@ class BiometricClient:
                 return {'status': 'SERVER_ERROR', 'message': 'Unexpected server exception'}
             else:
                 raise Exception(f'Failed to disable passkey: {str(e)}')
-
-    def disable_all_user_passkeys(self, params):
-        """Disable all passkeys for the current user"""
-        try:
-            # Get list of available credentials
-            credentials = self.get_available_credentials(params)
-            
-            if not credentials:
-                return {'status': 'SUCCESS', 'message': 'No passkeys found to disable'}
-            
-            results = []
-            for credential in credentials:
-                try:
-                    result = self.disable_passkey(params, credential['id'], credential['credential_id'])
-                    results.append({
-                        'credential_name': credential['name'],
-                        'status': result['status'],
-                        'message': result['message']
-                    })
-                except Exception as e:
-                    results.append({
-                        'credential_name': credential['name'],
-                        'status': 'ERROR',
-                        'message': str(e)
-                    })
-            
-            return {'status': 'SUCCESS', 'results': results}
-            
-        except Exception as e:
-            raise Exception(f'Failed to disable user passkeys: {str(e)}') 
 
     def update_passkey_name(self, params, user_id: int, credential_id: bytes, friendly_name: str):
         """Update the friendly name of a passkey using the UpdatePasskeyRequest endpoint"""

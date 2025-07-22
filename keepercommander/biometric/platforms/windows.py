@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import subprocess
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 
 from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredentialRequestOptions
 
@@ -36,37 +36,65 @@ class WindowsStorageHandler(StorageHandler):
             return None
 
     def get_biometric_flag(self, username: str) -> bool:
-        """Get biometric flag from Windows registry"""
+        """Get biometric flag from Windows registry - True if credential ID exists"""
+        return self.get_credential_id(username) is not None
+
+    def set_biometric_flag(self, username: str, enabled: bool) -> bool:
+        """Set biometric flag in Windows registry (deprecated - use store_credential_id)"""
+        # This method is kept for backward compatibility but should not be used
+        # The presence of credential_id now serves as the flag
+        logging.warning("set_biometric_flag is deprecated, use store_credential_id instead")
+        return True
+
+    def delete_biometric_flag(self, username: str) -> bool:
+        """Delete biometric flag from Windows registry - removes credential ID"""
+        return self.delete_credential_id(username)
+
+    def store_credential_id(self, username: str, credential_id: str) -> bool:
+        """Store credential ID for user in Windows registry (also serves as biometric flag)"""
+        try:
+            import winreg
+            key = self._get_registry_key()
+            if key:
+                winreg.SetValueEx(key, username, 0, winreg.REG_SZ, credential_id)
+                winreg.CloseKey(key)
+                logging.debug(f'Stored credential ID for user: {username}')
+                return True
+        except Exception as e:
+            logging.warning(f"Failed to store credential ID for {username}: {str(e)}")
+            BiometricErrorHandler.create_storage_error("store credential ID", "Windows registry", e)
+        return False
+
+    def get_credential_id(self, username: str) -> Optional[str]:
+        """Get stored credential ID for user from Windows registry"""
         try:
             import winreg
             key = self._get_registry_key()
             if key:
                 try:
-                    value, _ = winreg.QueryValueEx(key, username)
+                    value, reg_type = winreg.QueryValueEx(key, username)
                     winreg.CloseKey(key)
-                    return bool(value)
+                    # Handle both old DWORD format (1/0) and new string format (credential_id)
+                    if reg_type == winreg.REG_DWORD:
+                        # Old format - migrate to new format by returning None
+                        logging.debug(f'Found old DWORD format for user {username}, needs migration')
+                        return None
+                    elif reg_type == winreg.REG_SZ and value:
+                        logging.debug(f'Retrieved credential ID for user: {username}')
+                        return str(value)
+                    else:
+                        return None
                 except FileNotFoundError:
                     winreg.CloseKey(key)
-                    return False
+                    logging.debug(f'No stored credential ID found for user: {username}')
+                    return None
         except Exception as e:
-            BiometricErrorHandler.create_storage_error("get", "Windows registry", e)
-        return False
+            logging.warning(f"Failed to retrieve credential ID for {username}: {str(e)}")
+            BiometricErrorHandler.create_storage_error("get credential ID", "Windows registry", e)
+        return None
 
-    def set_biometric_flag(self, username: str, enabled: bool) -> bool:
-        """Set biometric flag in Windows registry"""
-        try:
-            import winreg
-            key = self._get_registry_key()
-            if key:
-                winreg.SetValueEx(key, username, 0, winreg.REG_DWORD, 1 if enabled else 0)
-                winreg.CloseKey(key)
-                return True
-        except Exception as e:
-            BiometricErrorHandler.create_storage_error("set", "Windows registry", e)
-        return False
-
-    def delete_biometric_flag(self, username: str) -> bool:
-        """Delete biometric flag from Windows registry"""
+    def delete_credential_id(self, username: str) -> bool:
+        """Delete stored credential ID for user from Windows registry"""
         try:
             import winreg
             key = self._get_registry_key()
@@ -74,15 +102,16 @@ class WindowsStorageHandler(StorageHandler):
                 try:
                     winreg.DeleteValue(key, username)
                     winreg.CloseKey(key)
-                    logging.debug(f'Deleted Windows registry biometric flag for user: {username}')
+                    logging.debug(f'Deleted stored credential ID for user: {username}')
                     return True
                 except FileNotFoundError:
                     # Value doesn't exist, consider this a success
                     winreg.CloseKey(key)
-                    logging.debug(f'Windows registry biometric flag for user {username} was already deleted')
+                    logging.debug(f'Credential ID for user {username} was already deleted')
                     return True
         except Exception as e:
-            BiometricErrorHandler.create_storage_error("delete", "Windows registry", e)
+            logging.warning(f"Failed to delete credential ID for {username}: {str(e)}")
+            BiometricErrorHandler.create_storage_error("delete credential ID", "Windows registry", e)
         return False
 
 
@@ -118,7 +147,7 @@ class WindowsHandler(BasePlatformHandler):
         except Exception as e:
             return False, f"Error detecting Windows Hello: {str(e)}"
 
-    def _run_powershell_detection(self) -> str:
+    def _run_powershell_detection(self) -> Optional[str]:
         """Run PowerShell detection script"""
         try:
             result = subprocess.run([

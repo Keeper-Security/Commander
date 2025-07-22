@@ -5,7 +5,7 @@ import platform
 import subprocess
 import threading
 import time
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 
 from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredentialRequestOptions
 
@@ -37,22 +37,22 @@ class MacOSStorageHandler(StorageHandler):
         return os.path.join(home_dir, "Library", "Preferences", MACOS_PREFS_PATH)
 
     def get_biometric_flag(self, username: str) -> bool:
-        """Get biometric flag from macOS preferences"""
-        try:
-            import plistlib
-            if not os.path.exists(self.prefs_path):
-                return False
-            
-            with open(self.prefs_path, 'rb') as f:
-                prefs = plistlib.load(f)
-            
-            return prefs.get(username, False)
-        except Exception as e:
-            BiometricErrorHandler.create_storage_error("get", "macOS", e)
-            return False
+        """Get biometric flag from macOS preferences - True if credential ID exists"""
+        return self.get_credential_id(username) is not None
 
     def set_biometric_flag(self, username: str, enabled: bool) -> bool:
-        """Set biometric flag in macOS preferences"""
+        """Set biometric flag in macOS preferences (deprecated - use store_credential_id)"""
+        # This method is kept for backward compatibility but should not be used
+        # The presence of credential_id now serves as the flag
+        logging.warning("set_biometric_flag is deprecated, use store_credential_id instead")
+        return True
+
+    def delete_biometric_flag(self, username: str) -> bool:
+        """Delete biometric flag from macOS preferences - removes credential ID"""
+        return self.delete_credential_id(username)
+
+    def store_credential_id(self, username: str, credential_id: str) -> bool:
+        """Store credential ID for user in macOS preferences (also serves as biometric flag)"""
         try:
             import plistlib
             prefs = {}
@@ -64,19 +64,50 @@ class MacOSStorageHandler(StorageHandler):
                 except Exception:
                     prefs = {}
             
-            prefs[username] = enabled
+            prefs[username] = credential_id
             
             os.makedirs(os.path.dirname(self.prefs_path), exist_ok=True)
             with open(self.prefs_path, 'wb') as f:
                 plistlib.dump(prefs, f)
             
+            logging.debug(f'Stored credential ID for user: {username}')
             return True
         except Exception as e:
-            BiometricErrorHandler.create_storage_error("set", "macOS", e)
+            logging.warning(f"Failed to store credential ID for {username}: {str(e)}")
+            BiometricErrorHandler.create_storage_error("store credential ID", "macOS", e)
             return False
 
-    def delete_biometric_flag(self, username: str) -> bool:
-        """Delete biometric flag from macOS preferences"""
+    def get_credential_id(self, username: str) -> Optional[str]:
+        """Get stored credential ID for user from macOS preferences"""
+        try:
+            import plistlib
+            if not os.path.exists(self.prefs_path):
+                return None
+            
+            with open(self.prefs_path, 'rb') as f:
+                prefs = plistlib.load(f)
+            
+            value = prefs.get(username)
+            
+            if value:
+                # Handle both old boolean format and new string format
+                if isinstance(value, bool):
+                    # Old format - needs migration
+                    logging.debug(f'Found old boolean format for user {username}, needs migration')
+                    return None
+                elif isinstance(value, str):
+                    logging.debug(f'Retrieved credential ID for user: {username}')
+                    return value
+            
+            logging.debug(f'No stored credential ID found for user: {username}')
+            return None
+        except Exception as e:
+            logging.warning(f"Failed to retrieve credential ID for {username}: {str(e)}")
+            BiometricErrorHandler.create_storage_error("get credential ID", "macOS", e)
+            return None
+
+    def delete_credential_id(self, username: str) -> bool:
+        """Delete stored credential ID for user from macOS preferences"""
         try:
             import plistlib
             if not os.path.exists(self.prefs_path):
@@ -91,10 +122,12 @@ class MacOSStorageHandler(StorageHandler):
                 # Save the updated plist
                 with open(self.prefs_path, 'wb') as f:
                     plistlib.dump(prefs, f)
-            
+                
+            logging.debug(f'Deleted stored credential ID for user: {username}')
             return True
         except Exception as e:
-            BiometricErrorHandler.create_storage_error("delete", "macOS", e)
+            logging.warning(f"Failed to delete credential ID for {username}: {str(e)}")
+            BiometricErrorHandler.create_storage_error("delete credential ID", "macOS", e)
             return False
 
 

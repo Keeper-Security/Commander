@@ -27,18 +27,10 @@ class BiometricUpdateNameCommand(BiometricCommand):
             available_credentials = self._get_available_credentials_or_error(params)
             print(f"Found {len(available_credentials)} biometric credential(s)")
 
-            # Interactive credential selection
-            passkey_id = self._interactive_credential_selection(available_credentials)
+            selected_index = self._interactive_credential_selection(available_credentials)
 
-            # Find the target credential
-            target_credential = None
-            for credential in available_credentials:
-                if credential['id'] == passkey_id:
-                    target_credential = credential
-                    break
-            
-            if not target_credential:
-                raise Exception(f"Passkey with ID {passkey_id} not found")
+            # Get the target credential by index (not by ID search)
+            target_credential = available_credentials[selected_index]
 
             # Interactive name input
             friendly_name = self._interactive_name_input(target_credential)
@@ -53,7 +45,7 @@ class BiometricUpdateNameCommand(BiometricCommand):
                 return
 
             # Perform update
-            result = self.client.update_passkey_name(params, passkey_id, target_credential['credential_id'], friendly_name)
+            result = self.client.update_passkey_name(params, target_credential['id'], target_credential['credential_id'], friendly_name)
             
             # Report results
             self._report_update_results(result, target_credential, friendly_name, output_format)
@@ -67,7 +59,7 @@ class BiometricUpdateNameCommand(BiometricCommand):
             print(f"Found single credential: {credential['name']}")
             answer = user_choice('Use this credential?', 'yn', 'y')
             if answer.lower() == 'y':
-                return credential['id']
+                return 0  # Return index instead of ID
             else:
                 raise Exception("Operation cancelled by user")
         
@@ -93,7 +85,7 @@ class BiometricUpdateNameCommand(BiometricCommand):
                 if 0 <= selection < len(available_credentials):
                     selected_credential = available_credentials[selection]
                     print(f"Selected: {selected_credential['name']}")
-                    return selected_credential['id']
+                    return selection  # Return index instead of ID
                 else:
                     print(f"Invalid selection. Please choose 1-{len(available_credentials)}.")
             except ValueError:

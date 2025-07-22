@@ -38,10 +38,6 @@ class BiometricRegisterCommand(BiometricCommand):
             # Verify registration
             self.client.verify_registration(params, registration_options, credential_response, friendly_name)
 
-            # Set biometric flag
-            self._set_biometric_flag(params.user, True)
-
-            # Report success
             self._report_success(friendly_name, params.user)
 
         return self._execute_with_error_handling('register biometric authentication', _register)
