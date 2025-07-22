@@ -4,7 +4,6 @@ colorama
 prompt_toolkit
 pycryptodomex
 pyperclip
-PySocks
 tabulate
 websockets
 fido2>=2.0.0; python_version>='3.10'

@@ -43,7 +43,11 @@ def get_router_url(params: KeeperParams):
 
 def get_router_ws_url(params: KeeperParams):
     router_url = get_router_url(params)
-    router_url = router_url.replace('http', 'ws')
+    # More precise replacement of just the scheme
+    if router_url.startswith('https://'):
+        router_url = 'wss://' + router_url[8:]
+    elif router_url.startswith('http://'):
+        router_url = 'ws://' + router_url[7:]
     return router_url
 
 
@@ -220,7 +224,8 @@ def request_cookie_jar_to_str(cookie_jar):
 
 def router_send_action_to_gateway(params, gateway_action: GatewayAction, message_type, is_streaming,
                                   destination_gateway_uid_str=None, gateway_timeout=15000, transmission_key=None,
-                                  encrypted_transmission_key=None, encrypted_session_token=None):
+                                  encrypted_transmission_key=None, encrypted_session_token=None,
+                                  destination_gateway_cookies=None):
     # Default time out how long the response from the Gateway should be
     krouter_host = get_router_url(params)
 
@@ -283,6 +288,7 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
         transmission_key=transmission_key,
         rq_proto=rq,
         destination_gateway_uid_str=destination_gateway_uid_str,
+        destination_gateway_cookies=destination_gateway_cookies,
         encrypted_transmission_key=encrypted_transmission_key,
         encrypted_session_token=encrypted_session_token)
 
