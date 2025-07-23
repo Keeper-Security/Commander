@@ -222,8 +222,6 @@ def do_command(params, command_line):
     elif command_line == 'debug':
         is_debug = logging.getLogger().level <= logging.DEBUG
         logging.getLogger().setLevel((logging.WARNING if params.batch_mode else logging.INFO) if is_debug else logging.DEBUG)
-        logging.getLogger('aiortc').setLevel(logging.WARNING if is_debug or params.batch_mode else logging.DEBUG)
-        logging.getLogger('aioice').setLevel(logging.WARNING if is_debug or params.batch_mode else logging.DEBUG)
         logging.info('Debug %s', 'OFF' if is_debug else 'ON')
 
     else:
