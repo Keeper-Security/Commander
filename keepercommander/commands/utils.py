@@ -617,7 +617,9 @@ class WhoamiCommand(Command):
                         print('{0:>20s}: {1}'.format('Secure Add Ons' if i == 0 else '', addon))
         else:
             print('{0:>20s}:'.format('Not logged in'))
-
+    
+    def is_authorised(self):
+        return False
 
 class VersionCommand(Command):
     def get_parser(self):
@@ -691,6 +693,9 @@ class KeepAliveCommand(Command):
     def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
         """Just send the keepalive."""
         api.send_keepalive(params)
+    
+    def is_authorised(self):
+        return False
 
 
 class ProxyCommand(Command):
