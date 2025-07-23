@@ -60,6 +60,7 @@ class LoginV3Flow:
             except Exception as e:
                 # Any error checking the flag, log and continue with password authentication
                 logging.debug(f"Error checking biometric flag: {e}")
+                pass
 
         encryptedDeviceToken = LoginV3API.get_device_id(params, new_device)
 

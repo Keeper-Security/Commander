@@ -2,6 +2,7 @@ import argparse
 import platform
 import subprocess
 from typing import Optional
+import os
 
 from .base import BiometricCommand
 from ..utils.constants import SUCCESS_MESSAGES, MACOS_KEYCHAIN_SERVICE_PREFIX
@@ -41,8 +42,16 @@ class BiometricUnregisterCommand(BiometricCommand):
             cleanup_success = self._cleanup_local_credentials(params.user, rp_id)
             delete_success = self._delete_biometric_flag(params.user)  
 
+            # Verify that the biometric flag was actually cleared
+            verification_success = not self._check_biometric_flag(params.user)
+            
+            # If deletion reported success but verification failed, try again
+            if delete_success and not verification_success:
+                delete_success = self._delete_biometric_flag(params.user)
+                verification_success = not self._check_biometric_flag(params.user)
+
             # Report results
-            self._report_unregister_results(params.user, delete_success, cleanup_success)
+            self._report_unregister_results(params.user, delete_success and verification_success, cleanup_success)
 
         return self._execute_with_error_handling('disable biometric authentication', _unregister)
 
@@ -143,8 +152,9 @@ class BiometricUnregisterCommand(BiometricCommand):
             message = passkey_result.get('message', 'Unknown result')
             
             if status == 'NOT_FOUND':
-                print(f"Passkey not found on server (credential ID: {credential_id[:8]}...)")
                 print("The passkey may have already been disabled or removed.")
+            elif status == 'SUCCESS':
+                pass
             else:
                 print(f"Failed to disable passkey: {message}")
         else:
@@ -211,14 +221,14 @@ class BiometricUnregisterCommand(BiometricCommand):
 
     def _report_unregister_results(self, username: str, delete_success: bool, cleanup_success: bool):
         """Report the results of the unregister operation"""
-        flag_status = ("Successfully removed biometric authentication data" if delete_success
-                      else "Failed to remove biometric authentication data")
-
-        if not self._check_biometric_flag(username):
+        if delete_success:
             print(SUCCESS_MESSAGES['unregistration_complete'] + f" for user '{username}'.")
-            print(f"{flag_status}")
             if cleanup_success:
                 print("Default authentication will be used for future logins.")
         else:
-            print(f"Failed to remove biometric authentication. Please try again.")
-            print(f"{flag_status}") 
+            print(f"Failed to remove biometric authentication for user '{username}'. Please try again.")
+
+    def _get_detector(self):
+        """Get biometric detector instance"""
+        from ..platforms.detector import BiometricDetector
+        return BiometricDetector() 

@@ -93,13 +93,10 @@ class MacOSStorageHandler(StorageHandler):
                 # Handle both old boolean format and new string format
                 if isinstance(value, bool):
                     # Old format - needs migration
-                    logging.debug(f'Found old boolean format for user {username}, needs migration')
                     return None
                 elif isinstance(value, str):
-                    logging.debug(f'Retrieved credential ID for user: {username}')
                     return value
             
-            logging.debug(f'No stored credential ID found for user: {username}')
             return None
         except Exception as e:
             logging.warning(f"Failed to retrieve credential ID for {username}: {str(e)}")
@@ -116,15 +113,21 @@ class MacOSStorageHandler(StorageHandler):
             with open(self.prefs_path, 'rb') as f:
                 prefs = plistlib.load(f)
             
-            if username in prefs:
-                del prefs[username]
+            if username not in prefs:
+                return True  # User not in prefs, already deleted
                 
-                # Save the updated plist
-                with open(self.prefs_path, 'wb') as f:
-                    plistlib.dump(prefs, f)
-                
-            logging.debug(f'Deleted stored credential ID for user: {username}')
-            return True
+            # Remove the user entry
+            del prefs[username]
+            
+            # Save the updated plist
+            with open(self.prefs_path, 'wb') as f:
+                plistlib.dump(prefs, f)
+            
+            # Verify deletion worked
+            with open(self.prefs_path, 'rb') as f:
+                verification_prefs = plistlib.load(f)
+            
+            return username not in verification_prefs
         except Exception as e:
             logging.warning(f"Failed to delete credential ID for {username}: {str(e)}")
             BiometricErrorHandler.create_storage_error("delete credential ID", "macOS", e)
