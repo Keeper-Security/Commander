@@ -104,9 +104,10 @@ ERROR_MESSAGES = {
     'registration_failed': 'Biometric registration failed',
     'verification_failed': 'Biometric verification failed',
     'credential_exists': 'A biometric credential for this account already exists. Use "biometric unregister" first.',
+    'credential_already_registered': 'A biometric credential for this account already exists. Use "biometric unregister" first.',
     'keychain_store_failed': 'Failed to store credential in keychain',
     'touchid_not_available': 'Touch ID is not available or configured',
-    'windows_hello_not_available': 'Windows Hello not available'
+    'windows_hello_not_setup': 'Windows Hello is available but not set up. Please set up Windows Hello in Windows Settings > Accounts > Sign-in options first, then try this command again.'
 }
 
 # Success messages

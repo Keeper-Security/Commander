@@ -166,7 +166,7 @@ class BiometricUnregisterCommand(BiometricCommand):
             message = passkey_result.get('message', 'Unknown result')
             
             if status == STATUS_NOT_FOUND:
-                print("The passkey may have already been disabled or removed.")
+                pass
             elif status == STATUS_SUCCESS:
                 pass
             else:

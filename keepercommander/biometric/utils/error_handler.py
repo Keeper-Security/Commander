@@ -64,6 +64,9 @@ class BiometricErrorHandler:
         
         if any(keyword in error_msg for keyword in ["cancelled", "denied"]):
             return Exception(f"{platform_name} registration cancelled")
+        elif ("object already exists" in error_msg or 
+            ("oserror" in error_msg and "22" in error_msg and "object already exists" in error_msg)):
+            return Exception(f"A biometric credential for this account already exists")
         elif "timeout" in error_msg:
             return Exception(f"{platform_name} registration timed out")
         elif "not available" in error_msg:
