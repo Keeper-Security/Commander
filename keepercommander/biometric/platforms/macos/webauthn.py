@@ -1,3 +1,14 @@
+#  _  __
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|
+#
+# Keeper Commander
+# Copyright 2025 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
 import json
 import logging
 import time
@@ -82,6 +93,19 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
         try:
             self._validate_dependencies(['LocalAuthentication', 'cbor2'])
             
+            # Check excludeCredentials like Windows WebAuthn API does internally
+            if hasattr(options, 'exclude_credentials') and options.exclude_credentials:
+                for excluded_cred in options.exclude_credentials:
+                    cred_id = excluded_cred.id
+                    if isinstance(cred_id, str):
+                        cred_id_b64 = cred_id
+                    else:
+                        cred_id_b64 = utils.base64_url_encode(cred_id)
+                    
+                    if self.keychain_manager.credential_exists(cred_id_b64):
+                        # Match Windows WebAuthn API behavior exactly
+                        raise OSError("The object already exists")
+            
             # Generate credential and keys
             credential_id = utils.base64_url_encode(crypto.get_random_bytes(32))
             private_key, public_key = crypto.generate_ec_key()
@@ -113,7 +137,7 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
             )
 
         except Exception as e:
-            raise Exception(f"Failed to create Touch ID credential: {str(e)}")
+            raise Exception(str(e))
 
     def get_assertion(self, options):
         """Get WebAuthn assertion using Touch ID"""
@@ -143,7 +167,7 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
             )
 
         except Exception as e:
-            raise Exception(f"Failed to perform Touch ID authentication: {str(e)}")
+            raise Exception(str(e))
 
     def _create_auth_context(self):
         """Create LocalAuthentication context"""
@@ -188,7 +212,10 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
             time.sleep(0.1)
         
         if error_holder['error']:
-            raise Exception(f"Touch ID authentication failed: {error_holder['error']}")
+            from ...utils.error_handler import BiometricErrorHandler
+            raise BiometricErrorHandler.handle_authentication_error(
+                Exception(str(error_holder['error'])), "Touch ID"
+            )
         
         return result['success']
 

@@ -1,3 +1,14 @@
+#  _  __
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|
+#
+# Keeper Commander
+# Copyright 2025 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
 import json
 import logging
 from typing import Dict, Any, Optional
@@ -8,10 +19,13 @@ from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredenti
 from .. import api, utils, rest_api
 from ..proto import APIRequest_pb2
 from .platforms.detector import BiometricDetector
+from .utils.constants import (
+    STATUS_SUCCESS, STATUS_NOT_FOUND, STATUS_BAD_REQUEST, STATUS_SERVER_ERROR,
+    API_ENDPOINTS, API_RESPONSE_MESSAGES
+)
 
-
-
-
+# WebAuthn protocol constants
+WEBAUTHN_ORIGIN_SCHEME = 'https'
 
 class BiometricClient:
     """Main client for biometric authentication operations"""
@@ -37,7 +51,7 @@ class BiometricClient:
             rs = api.communicate_rest(
                 params,
                 rq,
-                'authentication/passkey/generate_registration',
+                API_ENDPOINTS['generate_registration'],
                 rs_type=APIRequest_pb2.PasskeyRegistrationResponse
             )
 
@@ -46,7 +60,7 @@ class BiometricClient:
                 'creation_options': json.loads(rs.pkCreationOptions)
             }
         except Exception as e:
-            raise Exception(f'Failed to generate registration options: {str(e)}')
+            raise Exception(str(e))
 
     def create_credential(self, registration_options: Dict[str, Any], timeout: int = 30):
         """Create biometric credential"""
@@ -72,7 +86,7 @@ class BiometricClient:
                 rp_id = creation_options.get('rp', {}).get('id')
             if not rp_id:
                 raise Exception("No RP ID found in API response - server configuration error")
-            origin = f'https://{rp_id}'
+            origin = f'{WEBAUTHN_ORIGIN_SCHEME}://{rp_id}'
 
             data_collector = DefaultClientDataCollector(origin)
             client = self.platform_handler.create_webauthn_client(data_collector, timeout)
@@ -81,7 +95,7 @@ class BiometricClient:
             return self.platform_handler.perform_credential_creation(client, options)
 
         except Exception as e:
-            raise Exception(f'Failed to create biometric credential: {str(e)}')
+            raise Exception(str(e))
 
     def verify_registration(self, params, registration_options: Dict[str, Any],
                           credential_response, friendly_name: str):
@@ -109,7 +123,7 @@ class BiometricClient:
             rq.authenticatorResponse = json.dumps(attestation_object)
             rq.friendlyName = friendly_name
 
-            api.communicate_rest(params, rq, 'authentication/passkey/verify_registration')
+            api.communicate_rest(params, rq, API_ENDPOINTS['verify_registration'])
 
             # Store credential ID in platform storage (this also serves as the biometric flag)
             if self.platform_handler and hasattr(self.platform_handler, 'storage_handler'):
@@ -126,7 +140,7 @@ class BiometricClient:
                         logging.warning(f'Error storing credential ID: {str(e)}')
 
         except Exception as e:
-            raise Exception(f'Failed to verify biometric registration: {str(e)}')
+            raise Exception(str(e))
 
     def generate_authentication_options(self, params, purpose: str = 'login',
                                       credential_id: Optional[str] = None) -> Dict[str, Any]:
@@ -143,7 +157,7 @@ class BiometricClient:
                 rq.encryptedDeviceToken = utils.base64_url_decode(params.device_token)
 
             rs = api.communicate_rest(
-                params, rq, 'authentication/passkey/generate_authentication',
+                params, rq, API_ENDPOINTS['generate_authentication'],
                 rs_type=APIRequest_pb2.PasskeyAuthenticationResponse
             )
 
@@ -154,7 +168,7 @@ class BiometricClient:
                 'purpose': purpose
             }
         except Exception as e:
-            raise Exception(f'Failed to generate authentication options: {str(e)}')
+            raise Exception(str(e))
 
     def perform_authentication(self, auth_options: Dict[str, Any], timeout: int = 10):
         """Perform biometric authentication"""
@@ -183,7 +197,7 @@ class BiometricClient:
                 rp_id = pk_options.get('rpId')
             if not rp_id:
                 raise Exception("No RP ID found in API response - server configuration error")
-            origin = f'https://{rp_id}'
+            origin = f'{WEBAUTHN_ORIGIN_SCHEME}://{rp_id}'
 
             data_collector = DefaultClientDataCollector(origin)
             client = self.platform_handler.create_webauthn_client(data_collector, timeout)
@@ -191,13 +205,13 @@ class BiometricClient:
             return self.platform_handler.perform_authentication(client, options)
 
         except Exception as e:
-            raise Exception(f'Failed to perform biometric authentication: {str(e)}')
+            raise Exception(str(e))
 
     def get_available_credentials(self, params):
         """Get list of available biometric credentials"""
         try:
             rq = APIRequest_pb2.PasskeyListRequest()
-            rs = api.communicate_rest(params, rq, 'authentication/passkey/get_available_keys', 
+            rs = api.communicate_rest(params, rq, API_ENDPOINTS['get_available_keys'], 
                                     rs_type=APIRequest_pb2.PasskeyListResponse)
 
             return [{
@@ -209,7 +223,7 @@ class BiometricClient:
             } for passkey in rs.passkeyInfo]
 
         except Exception as e:
-            raise Exception(f'Failed to retrieve available credentials: {str(e)}')
+            raise Exception(str(e))
 
     def disable_passkey(self, params, user_id: int, credential_id: bytes):
         """Disable a passkey using the UpdatePasskeyRequest endpoint"""
@@ -220,20 +234,20 @@ class BiometricClient:
             # Don't set friendlyName since we're only disabling, not updating name
 
             # Use the same pattern as other API methods
-            api.communicate_rest(params, rq, 'authentication/passkey/disable')
+            api.communicate_rest(params, rq, API_ENDPOINTS['disable_passkey'])
             
             # If we get here, the API call was successful
-            return {'status': 'SUCCESS', 'message': 'Passkey was successfully disabled and no longer available for login'}
+            return {'status': STATUS_SUCCESS, 'message': API_RESPONSE_MESSAGES['passkey_disabled_success']}
 
         except Exception as e:
             # Parse the error message for specific error types
             error_msg = str(e).lower()
             if 'bad_request' in error_msg or 'credential id' in error_msg or 'userid' in error_msg:
-                return {'status': 'BAD_REQUEST', 'message': 'Unable to disable. Data error. Credential ID or UserID mismatch'}
+                return {'status': STATUS_BAD_REQUEST, 'message': API_RESPONSE_MESSAGES['disable_bad_request']}
             elif 'server_error' in error_msg or 'unexpected' in error_msg:
-                return {'status': 'SERVER_ERROR', 'message': 'Unexpected server exception'}
+                return {'status': STATUS_SERVER_ERROR, 'message': API_RESPONSE_MESSAGES['server_exception']}
             else:
-                raise Exception(f'Failed to disable passkey: {str(e)}')
+                raise Exception(str(e))
 
     def update_passkey_name(self, params, user_id: int, credential_id: bytes, friendly_name: str):
         """Update the friendly name of a passkey using the UpdatePasskeyRequest endpoint"""
@@ -244,17 +258,17 @@ class BiometricClient:
             rq.friendlyName = friendly_name
 
             # Use the update_friendly_name endpoint
-            api.communicate_rest(params, rq, 'authentication/passkey/update_friendly_name')
+            api.communicate_rest(params, rq, API_ENDPOINTS['update_passkey_name'])
             
             # If we get here, the API call was successful
-            return {'status': 'SUCCESS', 'message': 'Passkey friendly name was successfully updated'}
+            return {'status': STATUS_SUCCESS, 'message': API_RESPONSE_MESSAGES['passkey_name_updated_success']}
 
         except Exception as e:
             # Parse the error message for specific error types
             error_msg = str(e).lower()
             if 'bad_request' in error_msg or 'credential id' in error_msg or 'userid' in error_msg:
-                return {'status': 'BAD_REQUEST', 'message': 'Unable to update. Data error. Credential ID or UserID mismatch'}
+                return {'status': STATUS_BAD_REQUEST, 'message': API_RESPONSE_MESSAGES['update_bad_request']}
             elif 'server_error' in error_msg or 'unexpected' in error_msg:
-                return {'status': 'SERVER_ERROR', 'message': 'Unexpected server exception'}
+                return {'status': STATUS_SERVER_ERROR, 'message': API_RESPONSE_MESSAGES['server_exception']}
             else:
-                raise Exception(f'Failed to update passkey friendly name: {str(e)}') 
+                raise Exception(str(e)) 

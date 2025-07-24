@@ -1,8 +1,20 @@
+#  _  __
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|
+#
+# Keeper Commander
+# Copyright 2025 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
 from typing import Tuple
 import platform
 import logging
 
 from .base import PlatformHandler
+from ..utils.constants import PLATFORM_WINDOWS, PLATFORM_DARWIN
 
 
 class BiometricDetector:
@@ -16,16 +28,16 @@ class BiometricDetector:
         handlers = {}
 
         try:
-            if platform.system() == 'Windows':
+            if platform.system() == PLATFORM_WINDOWS:
                 from .windows import WindowsHandler
-                handlers['Windows'] = WindowsHandler()
+                handlers[PLATFORM_WINDOWS] = WindowsHandler()
         except ImportError:
             logging.debug("Windows platform handler not available")
 
         try:
-            if platform.system() == 'Darwin':
+            if platform.system() == PLATFORM_DARWIN:
                 from .macos import MacOSHandler
-                handlers['Darwin'] = MacOSHandler()
+                handlers[PLATFORM_DARWIN] = MacOSHandler()
         except ImportError:
             logging.debug("macOS platform handler not available")
 

@@ -1,3 +1,14 @@
+#  _  __
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|
+#
+# Keeper Commander
+# Copyright 2025 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
 import json
 import logging
 import os
@@ -174,7 +185,7 @@ class WindowsHandler(BasePlatformHandler):
         except Exception:
             pass
         
-        return None
+        return ""
 
     def create_webauthn_client(self, data_collector, timeout: int = 30):
         """Create Windows WebAuthn client"""

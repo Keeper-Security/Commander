@@ -126,7 +126,7 @@ class LoginV3Flow:
                     
                     else:
                         # For any other biometric errors, fall back to normal flow
-                        print(f"Biometric authentication unavailable: {str(e)}")
+                        print(f"{str(e)}")
                         print("Falling back to password/SSO authentication...")
                         resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes, loginType=login_type)
                         continue

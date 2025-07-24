@@ -1,3 +1,14 @@
+#  _  __
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|
+#
+# Keeper Commander
+# Copyright 2025 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
 import argparse
 import platform
 import subprocess
@@ -5,7 +16,10 @@ from typing import Optional
 import os
 
 from .base import BiometricCommand
-from ..utils.constants import SUCCESS_MESSAGES, MACOS_KEYCHAIN_SERVICE_PREFIX
+from ..utils.constants import (
+    SUCCESS_MESSAGES, MACOS_KEYCHAIN_SERVICE_PREFIX,
+    STATUS_SUCCESS, STATUS_NOT_FOUND, STATUS_ERROR, PLATFORM_DARWIN, PLATFORM_WINDOWS
+)
 
 
 class BiometricUnregisterCommand(BiometricCommand):
@@ -28,7 +42,7 @@ class BiometricUnregisterCommand(BiometricCommand):
 
             # Get confirmation if not provided
             if not kwargs.get('confirm') and not self._get_user_confirmation(params.user):
-                print("Operation cancelled.")
+                print("Operation cancelled by user")
                 return
 
             # Get RP ID from server before disabling (needed for cleanup)
@@ -140,10 +154,10 @@ class BiometricUnregisterCommand(BiometricCommand):
                 result = self.client.disable_passkey(params, target_passkey['id'], target_passkey['credential_id'])
                 return result
             else:
-                return {'status': 'NOT_FOUND', 'message': f'Passkey with credential ID {credential_id} not found on server'}
+                return {'status': STATUS_NOT_FOUND, 'message': f'Passkey with credential ID {credential_id} not found on server'}
                 
         except Exception as e:
-            return {'status': 'ERROR', 'message': f'Error disabling specific passkey: {str(e)}'}
+            return {'status': STATUS_ERROR, 'message': f'Error disabling specific passkey: {str(e)}'}
 
     def _process_specific_passkey_result(self, passkey_result, credential_id: str):
         """Process and display results for a specific passkey disable operation"""
@@ -151,9 +165,9 @@ class BiometricUnregisterCommand(BiometricCommand):
             status = passkey_result.get('status')
             message = passkey_result.get('message', 'Unknown result')
             
-            if status == 'NOT_FOUND':
+            if status == STATUS_NOT_FOUND:
                 print("The passkey may have already been disabled or removed.")
-            elif status == 'SUCCESS':
+            elif status == STATUS_SUCCESS:
                 pass
             else:
                 print(f"Failed to disable passkey: {message}")
@@ -165,9 +179,9 @@ class BiometricUnregisterCommand(BiometricCommand):
         try:
             system = platform.system()
             
-            if system == 'Darwin':  # macOS
+            if system == PLATFORM_DARWIN:  # macOS
                 return self._cleanup_macos_keychain_credentials(rp_id)
-            elif system == 'Windows':  # Windows
+            elif system == PLATFORM_WINDOWS:  # Windows
                 return self._cleanup_windows_credentials()
             else:
                 # For other platforms, just return True as there's nothing specific to clean up

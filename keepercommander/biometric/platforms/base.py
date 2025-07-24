@@ -1,3 +1,14 @@
+#  _  __
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|
+#
+# Keeper Commander
+# Copyright 2025 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Tuple
 
@@ -154,31 +165,15 @@ class BasePlatformHandler(PlatformHandler):
 
     def _handle_authentication_error(self, error: Exception, platform_name: str = "Biometric") -> Exception:
         """Common error handling for authentication failures"""
-        error_msg = str(error).lower()
-        
-        if any(keyword in error_msg for keyword in ["cancelled", "denied"]):
-            return Exception(f"{platform_name} authentication cancelled")
-        elif "timeout" in error_msg:
-            return Exception(f"{platform_name} authentication timed out")
-        elif "not available" in error_msg:
-            return Exception(f"{platform_name} is not available or not set up")
-        elif "parameter is incorrect" in error_msg:
-            return Exception(f"{platform_name} parameter error - please check your biometric setup")
-        else:
-            return Exception(f"{platform_name} authentication failed: {str(error)}")
+        # Use BiometricErrorHandler for consistent, clean error messages
+        from ..utils.error_handler import BiometricErrorHandler
+        return BiometricErrorHandler.handle_authentication_error(error, platform_name)
 
     def _handle_credential_creation_error(self, error: Exception, platform_name: str = "Biometric") -> Exception:
         """Common error handling for credential creation failures"""
-        error_msg = str(error).lower()
-        
-        if any(keyword in error_msg for keyword in ["cancelled", "denied"]):
-            return Exception(f"{platform_name} registration cancelled")
-        elif "timeout" in error_msg:
-            return Exception(f"{platform_name} registration timed out")
-        elif "not available" in error_msg:
-            return Exception(f"{platform_name} is not available or not set up")
-        else:
-            return Exception(f"{platform_name} registration failed: {str(error)}")
+        # Use BiometricErrorHandler for consistent, clean error messages
+        from ..utils.error_handler import BiometricErrorHandler
+        return BiometricErrorHandler.handle_credential_creation_error(error, platform_name)
 
     @abstractmethod
     def _get_platform_name(self) -> str:

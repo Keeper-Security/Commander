@@ -1,3 +1,14 @@
+#  _  __
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|
+#
+# Keeper Commander
+# Copyright 2025 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
 import json
 import logging
 import os
@@ -16,7 +27,8 @@ from .webauthn import MacOSTouchIDWebAuthnClient
 from ...utils.constants import (
     MACOS_PREFS_PATH,
     ERROR_MESSAGES,
-    AUTH_REASONS
+    AUTH_REASONS,
+    PLATFORM_DARWIN
 )
 from ...utils.error_handler import BiometricErrorHandler
 
@@ -151,7 +163,7 @@ class MacOSHandler(BasePlatformHandler):
 
     def detect_capabilities(self) -> Tuple[bool, str]:
         """Detect Touch ID availability on macOS"""
-        if platform.system() != 'Darwin':
+        if platform.system() != PLATFORM_DARWIN:
             return False, "Not running on macOS"
 
         error_messages = []
@@ -205,10 +217,14 @@ class MacOSHandler(BasePlatformHandler):
             import LocalAuthentication  # pylint: disable=import-error
             context = LocalAuthentication.LAContext.alloc().init()  # pylint: disable=no-member
             error = None
-            can_evaluate = context.canEvaluatePolicy_error_(
-                LocalAuthentication.LAPolicyDeviceOwnerAuthenticationWithBiometrics,  # pylint: disable=no-member
-                error
-            )
+            
+            # Use getattr to safely access potentially unavailable attributes
+            policy_attr = getattr(LocalAuthentication, 'LAPolicyDeviceOwnerAuthenticationWithBiometrics', None)
+            if policy_attr is None:
+                error_messages.append("LocalAuthentication: biometric policy not available")
+                return False
+                
+            can_evaluate = context.canEvaluatePolicy_error_(policy_attr, error)
             
             if can_evaluate:
                 return True

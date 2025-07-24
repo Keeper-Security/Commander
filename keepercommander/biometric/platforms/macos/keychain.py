@@ -1,3 +1,14 @@
+#  _  __
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|
+#
+# Keeper Commander
+# Copyright 2025 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
 import logging
 import subprocess
 import base64
@@ -42,30 +53,11 @@ class MacOSKeychainManager(KeychainManager):
     def _authenticate_with_touchid(self, service_name: str, account_name: str) -> Optional[str]:
         """Authenticate with Touch ID and return the credential data"""
         try:
-            self._show_touchid_dialog()
             return self._access_keychain_item(service_name, account_name)
         except Exception as e:
             logging.debug(f"Touch ID authentication failed: {str(e)}")
             return None
-    
-    def _show_touchid_dialog(self):
-        """Show Touch ID authentication dialog"""
-        info_script = '''
-        display dialog "Touch ID Authentication Required
 
-Keeper needs to access your biometric credential from the keychain.
-
-Please authenticate with Touch ID to continue." buttons {"Cancel", "Authenticate"} default button "Authenticate" with title "Keeper Commander - Touch ID Required" with icon note
-        '''
-        
-        try:
-            result = subprocess.run(['osascript', '-e', info_script], 
-                                  capture_output=True, text=True, timeout=30)
-            if result.returncode != 0:
-                return None  # User cancelled
-        except Exception:
-            pass  # Continue without dialog if AppleScript fails
-    
     def _access_keychain_item(self, service_name: str, account_name: str) -> Optional[str]:
         """Access keychain item with authentication"""
         try:

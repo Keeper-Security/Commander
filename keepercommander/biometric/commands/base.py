@@ -1,3 +1,14 @@
+#  _  __
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|
+#
+# Keeper Commander
+# Copyright 2025 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
 from abc import ABC, abstractmethod
 import argparse
 import platform
@@ -35,13 +46,12 @@ class BiometricCommand(Command):
     def _check_platform_support(self, force: bool = False):
         """Check if platform supports biometric authentication"""
         if not FIDO2_AVAILABLE:
-            raise CommandError(self.__class__.__name__, ERROR_MESSAGES['no_fido2'])
+            raise CommandError(None, ERROR_MESSAGES['no_fido2'])
 
         supported, message = self.detector.detect_platform_capabilities()
 
         if not supported and not force:
-            raise CommandError(self.__class__.__name__,
-                             f'{ERROR_MESSAGES["platform_not_supported"]}: {message}')
+            raise CommandError(None, f'{ERROR_MESSAGES["platform_not_supported"]}: {message}')
 
         return supported, message
 
@@ -74,10 +84,10 @@ class BiometricCommand(Command):
         try:
             credentials = self.client.get_available_credentials(params)
             if not credentials:
-                raise CommandError(self.__class__.__name__, ERROR_MESSAGES['no_credentials'])
+                raise CommandError(None, ERROR_MESSAGES['no_credentials'])
             return credentials
         except Exception as e:
-            raise CommandError(self.__class__.__name__, str(e))
+            raise CommandError(None, str(e))
 
     def _execute_with_error_handling(self, operation: str, func, *args, **kwargs):
         """Execute a function with consistent error handling"""

@@ -1,19 +1,28 @@
+#  _  __
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|
+#
+# Keeper Commander
+# Copyright 2025 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
 import argparse
-import json
 import time
 
 from .base import BiometricCommand
 from ...proto import APIRequest_pb2
 from ... import api
 from ...commands.base import user_choice
+from ..utils.constants import get_status_message
 
 
 class BiometricUpdateNameCommand(BiometricCommand):
     """Update friendly name of a biometric passkey"""
 
     parser = argparse.ArgumentParser(prog='biometric update-name', description='Update friendly name of a biometric passkey')
-    parser.add_argument('--format', dest='format', choices=['table', 'json'], default='table',
-                       help='Output format (default: table)')
 
     def get_parser(self):
         return self.parser
@@ -21,8 +30,6 @@ class BiometricUpdateNameCommand(BiometricCommand):
     def execute(self, params, **kwargs):
         """Execute biometric update-name command"""
         def _update_name():
-            output_format = kwargs.get('format', 'table')
-
             # Get available credentials
             available_credentials = self._get_available_credentials_or_error(params)
             print(f"Found {len(available_credentials)} biometric credential(s)")
@@ -48,7 +55,7 @@ class BiometricUpdateNameCommand(BiometricCommand):
             result = self.client.update_passkey_name(params, target_credential['id'], target_credential['credential_id'], friendly_name)
             
             # Report results
-            self._report_update_results(result, target_credential, friendly_name, output_format)
+            self._report_update_results(result, target_credential, friendly_name)
 
         return self._execute_with_error_handling('update passkey friendly name', _update_name)
 
@@ -131,22 +138,15 @@ class BiometricUpdateNameCommand(BiometricCommand):
         answer = user_choice('Proceed with update?', 'yn', 'y')
         return answer.lower() == 'y'
 
-    def _report_update_results(self, result, credential, new_name, output_format):
+    def _report_update_results(self, result, credential, new_name):
         """Report the update results to the user"""
-        if output_format == 'json':
-            print(json.dumps({
-                'status': result['status'],
-                'message': result['message'],
-                'credential_id': credential['id'],
-                'old_name': credential['name'],
-                'new_name': new_name
-            }, indent=2))
-        else:
-            print("\nPasskey Update Results:")
-            print("=" * 30)
-            print(f"Status: {result['status']}")
-            print(f"Credential ID: {credential['id']}")
-            print(f"Old Name: {credential['name']}")
-            print(f"New Name: {new_name}")
-            print(f"Message: {result['message']}")
-            print("=" * 30) 
+        print("\nPasskey Update Results:")
+        print("=" * 30)
+        status_code = result['status']
+        status_text = get_status_message(status_code)
+        print(f"Status: {status_text}")
+        print(f"Credential ID: {credential['id']}")
+        print(f"Old Name: {credential['name']}")
+        print(f"New Name: {new_name}")
+        print(f"Message: {result['message']}")
+        print("=" * 30) 

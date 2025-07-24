@@ -1,8 +1,19 @@
+#  _  __
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|
+#
+# Keeper Commander
+# Copyright 2025 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
 import argparse
 import json
 
 from .base import BiometricCommand
-from ..utils.constants import DEFAULT_AUTHENTICATION_TIMEOUT, SUCCESS_MESSAGES
+from ..utils.constants import DEFAULT_AUTHENTICATION_TIMEOUT, SUCCESS_MESSAGES, API_ENDPOINTS
 from ... import utils
 
 
@@ -66,7 +77,7 @@ class BiometricVerifyCommand(BiometricCommand):
             return self._send_verification_request(params, auth_options, assertion_object, purpose)
 
         except Exception as e:
-            raise Exception(f'Failed to verify authentication response: {str(e)}')
+            raise Exception(str(e))
 
     def _extract_client_data_b64(self, client_data_bytes):
         """Extract base64-encoded client data"""
@@ -108,7 +119,7 @@ class BiometricVerifyCommand(BiometricCommand):
             login_token = auth_options['login_token']
             rq.encryptedLoginToken = utils.base64_url_decode(login_token) if isinstance(login_token, str) else login_token
 
-        rs = api.communicate_rest(params, rq, 'authentication/passkey/verify_authentication', 
+        rs = api.communicate_rest(params, rq, API_ENDPOINTS['verify_authentication'], 
                                 rs_type=APIRequest_pb2.PasskeyValidationResponse)
 
         return {
@@ -136,7 +147,7 @@ class BiometricVerifyCommand(BiometricCommand):
             else:
                 raise Exception(f"Unknown assertion result format: {type(assertion_result)}")
         except Exception as e:
-            raise Exception(f"Failed to extract assertion response: {str(e)}")
+            raise Exception(str(e))
 
     def _report_verification_results(self, verification_result, purpose):
         """Report the verification results to the user"""
@@ -174,4 +185,4 @@ class BiometricVerifyCommand(BiometricCommand):
             return verification_result
 
         except Exception as e:
-            raise Exception(f'Biometric authentication failed: {str(e)}') 
+            raise Exception(str(e)) 

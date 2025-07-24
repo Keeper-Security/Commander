@@ -1,3 +1,14 @@
+#  _  __
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|
+#
+# Keeper Commander
+# Copyright 2025 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
 """
 Centralized error handling utilities for biometric authentication
 """
@@ -15,6 +26,7 @@ class BiometricErrorHandler:
     def handle_authentication_error(error: Exception, platform_name: str = "Biometric") -> Exception:
         """Handle authentication errors with consistent messaging"""
         error_msg = str(error).lower()
+        error_str = str(error)
         
         if any(keyword in error_msg for keyword in ["cancelled", "denied"]):
             return Exception(f"{platform_name} authentication cancelled")
@@ -22,15 +34,33 @@ class BiometricErrorHandler:
             return Exception(f"{platform_name} authentication timed out")
         elif "not available" in error_msg:
             return Exception(f"{platform_name} is not available or not set up")
+        elif any(phrase in error_msg for phrase in ["no identities are enrolled", "biometry is not enrolled", "not enrolled", "biometric not set up", "touch id not set up"]):
+            return Exception(f"{platform_name} is not set up - please enroll your biometric credentials in system settings")
         elif "parameter is incorrect" in error_msg:
             return Exception(f"{platform_name} parameter error - please check your biometric setup")
+        elif any(phrase in error_msg for phrase in ["not configured", "not enabled", "unavailable", "not supported"]):
+            return Exception(f"{platform_name} is not available or not configured")
         else:
-            return Exception(f"{platform_name} authentication failed: {str(error)}")
+            # For debugging: include more specific error information
+            if "error domain=" in error_msg or "code=" in error_msg:
+                # This is a detailed system error, extract the most useful part
+                if "localizeddescription=" in error_msg:
+                    # Try to extract the localized description
+                    desc_start = error_msg.find("localizeddescription=") + len("localizeddescription=")
+                    desc_end = error_msg.find("}", desc_start)
+                    if desc_end == -1:
+                        desc_end = len(error_msg)
+                    description = error_str[desc_start:desc_end].strip()
+                    return Exception(f"{platform_name} error: {description}")
+            
+            # Return the original error with platform context
+            return Exception(f"{platform_name} authentication failed: {error_str}")
 
     @staticmethod
     def handle_credential_creation_error(error: Exception, platform_name: str = "Biometric") -> Exception:
         """Handle credential creation errors with consistent messaging"""
         error_msg = str(error).lower()
+        error_str = str(error)
         
         if any(keyword in error_msg for keyword in ["cancelled", "denied"]):
             return Exception(f"{platform_name} registration cancelled")
@@ -38,19 +68,35 @@ class BiometricErrorHandler:
             return Exception(f"{platform_name} registration timed out")
         elif "not available" in error_msg:
             return Exception(f"{platform_name} is not available or not set up")
+        elif any(phrase in error_msg for phrase in ["no identities are enrolled", "biometry is not enrolled", "not enrolled", "biometric not set up", "touch id not set up"]):
+            return Exception(f"{platform_name} is not set up - please enroll your biometric credentials in system settings")
+        elif any(phrase in error_msg for phrase in ["not configured", "not enabled", "unavailable", "not supported"]):
+            return Exception(f"{platform_name} is not available or not configured")
         else:
-            return Exception(f"{platform_name} registration failed: {str(error)}")
+            # For debugging: include more specific error information
+            if "error domain=" in error_msg or "code=" in error_msg:
+                # This is a detailed system error, extract the most useful part
+                if "localizeddescription=" in error_msg:
+                    # Try to extract the localized description
+                    desc_start = error_msg.find("localizeddescription=") + len("localizeddescription=")
+                    desc_end = error_msg.find("}", desc_start)
+                    if desc_end == -1:
+                        desc_end = len(error_msg)
+                    description = error_str[desc_start:desc_end].strip()
+                    return Exception(f"{platform_name} error: {description}")
+            
+            # Return the original error with platform context
+            return Exception(f"{platform_name} registration failed: {error_str}")
 
     @staticmethod
     def handle_command_error(command_name: str, operation: str, error: Exception):
-        """Handle command errors with consistent logging and exception raising"""
-        logging.error(f'Failed to {operation}: {str(error)}')
-        raise CommandError(command_name, str(error))
+        """Handle command errors with clean error messages"""
+        raise CommandError(None, str(error))
 
     @staticmethod
     def handle_keyboard_interrupt(command_name: str, operation: str):
-        """Handle keyboard interrupt consistently across commands"""
-        raise CommandError(command_name, f'{operation} cancelled by user')
+        """Handle keyboard interrupt with clean error messages"""
+        raise CommandError(None, f'{operation} cancelled by user')
 
     @staticmethod
     def create_platform_error(platform_name: str, error_key: str, additional_info: str = "") -> str:

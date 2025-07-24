@@ -1,13 +1,70 @@
+#  _  __
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|
+#
+# Keeper Commander
+# Copyright 2025 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
 # Default timeout values
 DEFAULT_REGISTRATION_TIMEOUT = 30
 DEFAULT_AUTHENTICATION_TIMEOUT = 10
+
+# Platform/System constants
+PLATFORM_WINDOWS = 'Windows'
+PLATFORM_DARWIN = 'Darwin'
+
+# HTTP Status codes
+STATUS_SUCCESS = 200  # OK
+STATUS_NOT_FOUND = 404  # Not Found
+STATUS_BAD_REQUEST = 400  # Bad Request
+STATUS_SERVER_ERROR = 500  # Internal Server Error
+STATUS_ERROR = 500  # Internal Server Error (generic)
+
+# Status code to readable message mapping
+STATUS_MESSAGES = {
+    STATUS_SUCCESS: 'Success',
+    STATUS_NOT_FOUND: 'Not Found',
+    STATUS_BAD_REQUEST: 'Bad Request',
+    STATUS_SERVER_ERROR: 'Server Error',
+    STATUS_ERROR: 'Error'
+}
+
+def get_status_message(status_code: int) -> str:
+    """Get readable message for HTTP status code"""
+    return STATUS_MESSAGES.get(status_code, f"Unknown Status ({status_code})")
+
+def is_success_status(status_code: int) -> bool:
+    """Check if status code indicates success (2xx range)"""
+    return 200 <= status_code < 300
+
+# API Endpoints
+API_ENDPOINTS = {
+    'generate_registration': 'authentication/passkey/generate_registration',
+    'verify_registration': 'authentication/passkey/verify_registration',
+    'generate_authentication': 'authentication/passkey/generate_authentication',
+    'verify_authentication': 'authentication/passkey/verify_authentication',
+    'get_available_keys': 'authentication/passkey/get_available_keys',
+    'disable_passkey': 'authentication/passkey/disable',
+    'update_passkey_name': 'authentication/passkey/update_friendly_name'
+}
+
+# API Response Messages
+API_RESPONSE_MESSAGES = {
+    'passkey_disabled_success': 'Passkey was successfully disabled and no longer available for login',
+    'passkey_name_updated_success': 'Passkey friendly name was successfully updated',
+    'disable_bad_request': 'Unable to disable. Data error. Credential ID or UserID mismatch',
+    'update_bad_request': 'Unable to update. Data error. Credential ID or UserID mismatch',
+    'server_exception': 'Unexpected server exception'
+}
 
 AUTHENTICATOR_SELECTION = {
     'authenticatorAttachment': 'platform',
     'userVerification': 'required'
 }
-
-
 
 # Storage paths and service names
 WINDOWS_REGISTRY_PATH = r"SOFTWARE\Keeper Security\Commander\Biometric"
@@ -62,8 +119,8 @@ SUCCESS_MESSAGES = {
 
 # Default credential name templates
 CREDENTIAL_NAME_TEMPLATES = {
-    'Windows': "Windows Hello - {hostname}",
-    'Darwin': "Touch ID - {hostname}",
+    PLATFORM_WINDOWS: "Windows Hello - {hostname}",
+    PLATFORM_DARWIN: "Touch ID - {hostname}",
     'default': "Biometric - {hostname}"
 }
 

@@ -5,11 +5,9 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2023 Keeper Security Inc.
+# Copyright 2025 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
-import logging
-
 from ..commands.base import GroupCommand
 
 # Import structured commands
