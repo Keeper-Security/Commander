@@ -14,7 +14,7 @@ import logging
 
 from .base import BiometricCommand
 from ..utils.constants import DEFAULT_REGISTRATION_TIMEOUT, SUCCESS_MESSAGES, ERROR_MESSAGES
-from ... import CommandError
+from ...error import CommandError
 
 
 class BiometricRegisterCommand(BiometricCommand):
