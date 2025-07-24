@@ -35,7 +35,7 @@ from .tunnel.port_forward.TunnelGraph import TunnelDAG
 from .tunnel.port_forward.tunnel_helpers import find_open_port, get_config_uid, get_keeper_tokens, \
     get_or_create_tube_registry, get_gateway_uid_from_record, initialize_rust_logger, RUST_LOGGER_INITIALIZED, \
     get_rust_logger_state, resolve_record, resolve_pam_config, resolve_folder, remove_field, start_rust_tunnel, \
-    get_tunnel_session
+    get_tunnel_session, CloseConnectionReasons
 from .. import api, vault, record_management
 from ..display import bcolors
 from ..error import CommandError
@@ -218,14 +218,14 @@ class PAMTunnelStopCommand(Command):
                     conversation_ids = tube_registry.get_conversation_ids_by_tube_id(tube_id)
                     
                     if conversation_ids:
-                        # Close each connection on the tube
+                        # Close each connection on the tube with Normal reason (user-initiated stop)
                         for conversation_id in conversation_ids:
-                            tube_registry.close_connection(conversation_id)
+                            tube_registry.close_connection(conversation_id, reason=CloseConnectionReasons.Normal)
                         print(f"{bcolors.OKGREEN}Stopped tunnel: {tube_id}{bcolors.ENDC}")
                         stopped_count += 1
                     else:
                         # Fallback to close_tube if no conversation IDs found
-                        tube_registry.close_tube(tube_id)
+                        tube_registry.close_tube(tube_id, reason=CloseConnectionReasons.Normal)
                         print(f"{bcolors.OKGREEN}Stopped tunnel: {tube_id}{bcolors.ENDC}")
                         stopped_count += 1
                     

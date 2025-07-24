@@ -82,6 +82,14 @@ class CloseConnectionReason:
         10: {"name": "ConnectionFailed", "critical": True, "user_initiated": False, "retryable": True},
         11: {"name": "TunnelClosed", "critical": False, "user_initiated": True, "retryable": False},
         12: {"name": "AdminClosed", "critical": False, "user_initiated": True, "retryable": False},
+        13: {"name": "ErrorRecording", "critical": True, "user_initiated": False, "retryable": False},
+        14: {"name": "GuacdError", "critical": True, "user_initiated": False, "retryable": False},
+        15: {"name": "AIClosed", "critical": False, "user_initiated": False, "retryable": False},
+        16: {"name": "AddressResolutionFailed", "critical": True, "user_initiated": False, "retryable": True},
+        17: {"name": "DecryptionFailed", "critical": True, "user_initiated": False, "retryable": False},
+        18: {"name": "ConfigurationError", "critical": True, "user_initiated": False, "retryable": False},
+        19: {"name": "ProtocolError", "critical": True, "user_initiated": False, "retryable": False},
+        20: {"name": "UpstreamClosed", "critical": False, "user_initiated": False, "retryable": True},
     }
     
     # Legacy outcome mapping for backward compatibility
@@ -107,6 +115,17 @@ class CloseConnectionReason:
         "connection_failed": 10,
         "tunnel_closed": 11,
         "admin_closed": 12,
+        "error_recording": 13,
+        "recording_error": 13,
+        "guacd_error": 14,
+        "ai_closed": 15,
+        "address_resolution_failed": 16,
+        "dns_failed": 16,
+        "decryption_failed": 17,
+        "configuration_error": 18,
+        "config_error": 18,
+        "protocol_error": 19,
+        "upstream_closed": 20,
     }
     
     def __init__(self, code, name=None):
@@ -432,6 +451,14 @@ class CloseConnectionReasons(enum.IntEnum):
     ConnectionFailed = 10
     TunnelClosed = 11
     AdminClosed = 12
+    ErrorRecording = 13
+    GuacdError = 14
+    AIClosed = 15
+    AddressResolutionFailed = 16
+    DecryptionFailed = 17
+    ConfigurationError = 18
+    ProtocolError = 19
+    UpstreamClosed = 20
 
 
 class ConversationType(enum.Enum):
