@@ -617,7 +617,9 @@ class WhoamiCommand(Command):
                         print('{0:>20s}: {1}'.format('Secure Add Ons' if i == 0 else '', addon))
         else:
             print('{0:>20s}:'.format('Not logged in'))
-
+    
+    def is_authorised(self):
+        return False
 
 class VersionCommand(Command):
     def get_parser(self):
@@ -691,6 +693,9 @@ class KeepAliveCommand(Command):
     def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
         """Just send the keepalive."""
         api.send_keepalive(params)
+    
+    def is_authorised(self):
+        return False
 
 
 class ProxyCommand(Command):
@@ -865,13 +870,12 @@ class LogoutCommand(Command):
             except:
                 pass
 
-        if isinstance(params.tunnel_threads, dict) and len(params.tunnel_threads) > 0:
-            try:
-                from .discoveryrotation import clean_up_tunnel
-                for convo_id in list(params.tunnel_threads.keys()):
-                    clean_up_tunnel(params, convo_id)
-            except Exception as e:
-                logging.debug('Port forwarding cleanup error: %s', e)
+        # Clean up Rust WebRTC tube registry if it exists
+        try:
+            from .tunnel.port_forward.tunnel_helpers import cleanup_tube_registry
+            cleanup_tube_registry(params)
+        except Exception as e:
+            logging.debug('Tube registry cleanup error: %s', e)
 
         if params.sso_login_info and 'idp_session_id' in params.sso_login_info:
             sso_url = params.sso_login_info.get('sso_url') or ''

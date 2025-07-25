@@ -187,7 +187,7 @@ def parse_ATTA(chunk, accounts):
     if len(parents) > 0:
         parent = parents[0]
         if parent.attach_key:
-            filename = decode_aes256_base64_auto(filename_encrypted, parent.attach_key).decode('utf-8')
+            filename = decode_aes256_base64_auto(filename_encrypted, parent.attach_key).decode('utf-8', 'ignore')
             attachment = LastpassAttachment(id, parent, mimetype, storagekey, lastpass_size, filename)
             parent.attachments.append(attachment)
 

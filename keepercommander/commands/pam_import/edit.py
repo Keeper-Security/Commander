@@ -28,7 +28,8 @@ from ..pam.config_helper import pam_configurations_get_all
 from ..recordv3 import RecordAddCommand
 from ..record_edit import RecordAddCommand as RecordEditAddCommand
 from ..record_edit import RecordUploadAttachmentCommand
-from ..tunnel.port_forward.endpoint import get_keeper_tokens, TunnelDAG
+from ..tunnel.port_forward.TunnelGraph import TunnelDAG
+from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
 from ... import api, attachment, crypto, utils, vault, vault_extensions, \
     record_facades, record_management
 from ...display import bcolors
