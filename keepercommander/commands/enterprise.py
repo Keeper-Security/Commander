@@ -1023,6 +1023,10 @@ class EnterpriseNodeCommand(EnterpriseCommand):
         unmatched_nodes = set()
 
         for node_name in kwargs['node']:
+            if not node_name or not node_name.strip():
+                logging.warning('Empty node name provided. Skipping.')
+                continue
+                
             n = node_lookup.get(node_name)
             if not n:
                 n = node_lookup.get(node_name.lower())
