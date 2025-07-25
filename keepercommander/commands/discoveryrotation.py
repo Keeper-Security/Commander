@@ -493,7 +493,7 @@ class PAMCreateRecordRotationCommand(Command):
                 resource_dag.remove_from_dag(target_record.record_uid)
 
             if not silent:
-                _dag.print_tunneling_config(target_record .record_uid, config_uid=target_config_uid)
+                _dag.print_tunneling_config(target_record.record_uid, config_uid=target_config_uid)
 
         def config_iam_aad_user(_dag, target_record, target_iam_aad_config_uid):
             if _dag and not _dag.linking_dag.has_graph:
@@ -633,7 +633,6 @@ class PAMCreateRecordRotationCommand(Command):
             r_requests.append(rq)
 
         def config_user(_dag, target_record, target_resource_uid, target_config_uid=None, silent=None):
-
             # NOOP rotation
             noop_rotation = str(kwargs.get('noop', False) or False).upper() == 'TRUE'
             if target_record and not noop_rotation:  # check from record data
@@ -850,9 +849,9 @@ class PAMCreateRecordRotationCommand(Command):
                     raise CommandError('', f'Record uid {iam_aad_config_uid} is not a PAM Configuration record.')
 
                 if resource_uid and iam_aad_config_uid:
-                    raise CommandError('', f'Cannot use both --resource and --iam-aad-config_uid at once.'
-                                           f' --resource is used to configure users found on a resource.'
-                                           f' --iam-aad-config-uid is used to configure AWS IAM or Azure AD users')
+                    raise CommandError('', 'Cannot use both --resource and --iam-aad-config_uid at once.'
+                                           ' --resource is used to configure users found on a resource.'
+                                           ' --iam-aad-config-uid is used to configure AWS IAM or Azure AD users')
 
                 if iam_aad_config_uid:
                     config_iam_aad_user(tmp_dag, _record, iam_aad_config_uid)
@@ -2334,7 +2333,6 @@ class PAMGatewayActionRotateCommand(Command):
             resource_uid = tmp_dag.get_resource_uid(record_uid)
             if not resource_uid:
                 # NOOP records don't need resource_uid
-
                 is_noop = False
                 pam_config = vault.KeeperRecord.load(params, config_uid)
 
