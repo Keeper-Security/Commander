@@ -114,7 +114,7 @@ def register_commands(commands, aliases, command_info):
     commands['2fa'] = TwoFaCommand()
     command_info['2fa'] = '2FA management'
 
-    if sys.version_info.major == 3 and sys.version_info.minor >= 10:
+    if sys.version_info.major == 3 and sys.version_info.minor >= 10 and (utils.is_windows_11() or sys.platform == 'darwin'):
         from ..biometric import BiometricCommand
         commands['biometric'] = BiometricCommand()
         command_info['biometric'] = 'Biometric management'

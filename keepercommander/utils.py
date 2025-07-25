@@ -465,3 +465,9 @@ def ssl_aware_request(method, url, **kwargs):
 def ssl_aware_get(url, **kwargs):
     """SSL-aware GET request using system CA certificates when available"""
     return ssl_aware_request('GET', url, **kwargs)
+
+def is_windows_11():
+    if sys.platform != "win32":
+        return False
+    version = sys.getwindowsversion()
+    return version.major >= 10 and version.build >= 22000

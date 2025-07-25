@@ -87,6 +87,5 @@ class BiometricRegisterCommand(BiometricCommand):
 
         logging.info(SUCCESS_MESSAGES['registration_complete'])
         print(f'\nSuccess! Biometric authentication "{friendly_name}" has been configured.')
-        print('Biometric authentication will now be your default login method.')
         print(f'{flag_status}') 
         print(f'\nPlease register your device using the \033[31m"this-device register"\033[0m command to set biometric authentication as your default login method.')        
