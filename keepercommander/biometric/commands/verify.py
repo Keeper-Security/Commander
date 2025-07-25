@@ -34,6 +34,7 @@ class BiometricVerifyCommand(BiometricCommand):
     def execute(self, params, **kwargs):
         """Execute biometric verify command"""
         def _verify():
+            self._check_platform_support()
             timeout = kwargs.get('timeout', DEFAULT_AUTHENTICATION_TIMEOUT)
             credential_id = kwargs.get('credential_id')
             purpose = kwargs.get('purpose', 'login')

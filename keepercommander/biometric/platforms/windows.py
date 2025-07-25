@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import subprocess
+import getpass
 from typing import Dict, Any, Tuple, Optional
 
 from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredentialRequestOptions
@@ -20,13 +21,11 @@ from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredenti
 from ... import utils
 from .base import StorageHandler
 from ..utils.constants import (
+    ERROR_MESSAGES,
     WINDOWS_REGISTRY_PATH
 )
 from ..utils.error_handler import BiometricErrorHandler
 from .base import BasePlatformHandler
-
-# Windows platform detection constant
-WINDOWS_WEBAUTHN_DLL_PATH = r"System32\webauthn.dll"
 
 
 class WindowsStorageHandler(StorageHandler):
@@ -116,7 +115,6 @@ class WindowsStorageHandler(StorageHandler):
                     logging.debug(f'Deleted stored credential ID for user: {username}')
                     return True
                 except FileNotFoundError:
-                    # Value doesn't exist, consider this a success
                     winreg.CloseKey(key)
                     logging.debug(f'Credential ID for user {username} was already deleted')
                     return True
@@ -135,6 +133,59 @@ class WindowsHandler(BasePlatformHandler):
     def _get_platform_name(self) -> str:
         return "Windows Hello"
 
+    def _get_current_user_sid(self) -> Optional[str]:
+        """Get current user SID using PowerShell and WMI"""
+        try:
+            cmd = ['powershell', '-Command', 
+                   f"(Get-WmiObject -Class Win32_UserAccount -Filter \"Name='{getpass.getuser()}'\").SID"]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            return result.stdout.strip()
+        except subprocess.CalledProcessError:
+            try:
+                cmd = ['whoami', '/user', '/fo', 'csv']
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                lines = result.stdout.strip().split('\n')
+                if len(lines) > 1:
+                    # Parse CSV output - SID is in the second column
+                    sid_line = lines[1].split(',')
+                    if len(sid_line) > 1:
+                        return sid_line[1].strip('"')
+            except subprocess.CalledProcessError:
+                pass
+            
+            return None
+
+    def _check_biometrics(self) -> bool:
+        """Check if biometrics (face/fingerprint) are enrolled"""
+        sid = self._get_current_user_sid()
+        if not sid:
+            return False
+        
+        reg_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\WinBio\AccountInfo\{}".format(sid)
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path) as key:
+                value, regtype = winreg.QueryValueEx(key, "EnrolledFactors")
+                # 2 = Face, 8 = Fingerprint, 10 = Face and Fingerprint
+                return value in [2, 8, 10]
+        except (FileNotFoundError, ImportError):
+            return False
+
+    def _check_pin_enrollment(self) -> bool:
+        """Check if PIN is enrolled"""
+        sid = self._get_current_user_sid()
+        if not sid:
+            return False
+        
+        reg_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{{D6886603-9D2F-4EB2-B667-1971041FA96B}}\{}".format(sid)
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path) as key:
+                value, regtype = winreg.QueryValueEx(key, "LogonCredsAvailable")
+                return value == 1
+        except (FileNotFoundError, ImportError):
+            return False
+
 
 
     def detect_capabilities(self) -> Tuple[bool, str]:
@@ -143,49 +194,21 @@ class WindowsHandler(BasePlatformHandler):
             return False, "Not running on Windows"
 
         try:
-            # Quick WebAuthn check first
-            webauthn_path = os.path.join(os.environ.get('WINDIR', 'C:\\Windows'), WINDOWS_WEBAUTHN_DLL_PATH)
-            if os.path.exists(webauthn_path):
-                return True, "Windows Hello WebAuthn support detected"
-
-            # Detailed PowerShell check
-            result = self._run_powershell_detection()
-            if result:
-                return True, result
-
-            return False, "Windows Hello not available"
+            has_biometrics = self._check_biometrics()
+            has_pin = self._check_pin_enrollment()
+            
+            if has_biometrics or has_pin:
+                features = []
+                if has_biometrics:
+                    features.append("Biometrics")
+                if has_pin:
+                    features.append("PIN")
+                return True, f"Windows Hello available: {', '.join(features)}"
+            else:
+                return False, Exception(ERROR_MESSAGES['windows_hello_not_setup'])
 
         except Exception as e:
             return False, f"Error detecting Windows Hello: {str(e)}"
-
-    def _run_powershell_detection(self) -> Optional[str]:
-        """Run PowerShell detection script"""
-        try:
-            result = subprocess.run([
-                'powershell', '-Command',
-                '''
-                $hello = @{
-                    Face = (Get-WindowsOptionalFeature -Online -FeatureName "Windows-Hello-Face" -EA SilentlyContinue).State -eq "Enabled"
-                    Fingerprint = (Get-WmiObject -Class Win32_PnPEntity | Where-Object { $_.Name -like "*fingerprint*" -or $_.Name -like "*biometric*" }).Count -gt 0
-                    WebAuthn = Test-Path "$env:WINDIR\\System32\\webauthn.dll"
-                }
-                @{ Available = ($hello.Face -or $hello.Fingerprint -or $hello.WebAuthn); Details = $hello } | ConvertTo-Json -Compress
-                '''
-            ], capture_output=True, text=True, timeout=10)
-
-            if result.returncode == 0:
-                hello_info = json.loads(result.stdout.strip())
-                if hello_info.get('Available'):
-                    details = hello_info.get('Details', {})
-                    features = []
-                    if details.get('Face'): features.append("Face")
-                    if details.get('Fingerprint'): features.append("Fingerprint")
-                    if details.get('WebAuthn'): features.append("WebAuthn")
-                    return f"Windows Hello available: {', '.join(features)}"
-        except Exception:
-            pass
-        
-        return ""
 
     def create_webauthn_client(self, data_collector, timeout: int = 30):
         """Create Windows WebAuthn client"""
