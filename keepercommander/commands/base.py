@@ -118,6 +118,9 @@ def register_commands(commands, aliases, command_info):
         from .start_service import register_commands as service_commands, register_command_info as service_command_info
         service_commands(commands)
         service_command_info(aliases, command_info)
+        from .mcp_commands import register_commands as mcp_commands, register_command_info as mcp_command_info
+        mcp_commands(commands)
+        mcp_command_info(aliases, command_info)
 
     if sys.version_info.major == 3 and sys.version_info.minor >= 8:
         from . import discoveryrotation
