@@ -52,13 +52,6 @@ class MacOSStorageHandler(StorageHandler):
         """Get biometric flag from macOS preferences - True if credential ID exists"""
         return self.get_credential_id(username) is not None
 
-    def set_biometric_flag(self, username: str, enabled: bool) -> bool:
-        """Set biometric flag in macOS preferences (deprecated - use store_credential_id)"""
-        # This method is kept for backward compatibility but should not be used
-        # The presence of credential_id now serves as the flag
-        logging.warning("set_biometric_flag is deprecated, use store_credential_id instead")
-        return True
-
     def delete_biometric_flag(self, username: str) -> bool:
         """Delete biometric flag from macOS preferences - removes credential ID"""
         return self.delete_credential_id(username)
@@ -102,11 +95,7 @@ class MacOSStorageHandler(StorageHandler):
             value = prefs.get(username)
             
             if value:
-                # Handle both old boolean format and new string format
-                if isinstance(value, bool):
-                    # Old format - needs migration
-                    return None
-                elif isinstance(value, str):
+                if isinstance(value, str):
                     return value
             
             return None

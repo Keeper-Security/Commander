@@ -63,14 +63,6 @@ class BiometricCommand(Command):
         except Exception:
             return False
 
-    def _set_biometric_flag(self, username: str, enabled: bool) -> bool:
-        """Set biometric authentication flag for user"""
-        try:
-            handler = self.detector.get_platform_handler()
-            return handler.set_biometric_flag(username, enabled)
-        except Exception:
-            return False
-
     def _delete_biometric_flag(self, username: str) -> bool:
         """Delete biometric authentication flag for user"""
         try:

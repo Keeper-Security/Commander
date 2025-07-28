@@ -23,8 +23,6 @@ class BiometricVerifyCommand(BiometricCommand):
     parser = argparse.ArgumentParser(prog='biometric verify', description='Verify biometric authentication with existing credentials')
     parser.add_argument('--timeout', dest='timeout', type=int, default=DEFAULT_AUTHENTICATION_TIMEOUT, 
                        help=f'Authentication timeout in seconds (default: {DEFAULT_AUTHENTICATION_TIMEOUT})')
-    parser.add_argument('--credential-id', dest='credential_id', 
-                       help='Specific credential ID to test (optional)')
     parser.add_argument('--purpose', dest='purpose', choices=['login', 'vault'], default='login', 
                        help='Authentication purpose (default: login)')
 
@@ -35,7 +33,6 @@ class BiometricVerifyCommand(BiometricCommand):
         """Execute biometric verify command"""
         def _verify():
             timeout = kwargs.get('timeout', DEFAULT_AUTHENTICATION_TIMEOUT)
-            credential_id = kwargs.get('credential_id')
             purpose = kwargs.get('purpose', 'login')
 
             # Get available credentials
@@ -43,7 +40,7 @@ class BiometricVerifyCommand(BiometricCommand):
             print(f"Found {len(available_credentials)} biometric credential(s)")
 
             # Generate authentication options
-            auth_options = self.client.generate_authentication_options(params, purpose, credential_id)
+            auth_options = self.client.generate_authentication_options(params, purpose)
 
             # Perform authentication
             assertion_response = self.client.perform_authentication(auth_options, timeout)
@@ -164,7 +161,7 @@ class BiometricVerifyCommand(BiometricCommand):
             if verification_result.get('login_token'):
                 print("Login Token: Received")
 
-            print(f"\n {SUCCESS_MESSAGES['verification_success']}")
+            print(f"\n{SUCCESS_MESSAGES['verification_success']}")
         else:
             print("Status: FAILED")
             print(f"Purpose: {purpose.upper()}")
@@ -175,10 +172,9 @@ class BiometricVerifyCommand(BiometricCommand):
     def biometric_authenticate(self, params, username=None, **kwargs):
         """Perform biometric authentication for login"""
         try:
-            credential_id = kwargs.get('credential_id')
             purpose = kwargs.get('purpose', 'login')
 
-            auth_options = self.client.generate_authentication_options(params, purpose, credential_id)
+            auth_options = self.client.generate_authentication_options(params, purpose)
             assertion_response = self.client.perform_authentication(auth_options, timeout=10)
             verification_result = self._verify_authentication_response(params, auth_options, assertion_response, purpose)
 

@@ -51,21 +51,6 @@ class PlatformHandler(ABC):
         """Perform platform-specific credential creation"""
         pass
 
-    @abstractmethod
-    def get_biometric_flag(self, username: str) -> bool:
-        """Get biometric flag for user"""
-        pass
-
-    @abstractmethod
-    def set_biometric_flag(self, username: str, enabled: bool) -> bool:
-        """Set biometric flag for user"""
-        pass
-
-    @abstractmethod
-    def delete_biometric_flag(self, username: str) -> bool:
-        """Delete biometric flag for user"""
-        pass
-
 
 class StorageHandler(ABC):
     """Abstract base class for biometric flag storage"""
@@ -73,11 +58,6 @@ class StorageHandler(ABC):
     @abstractmethod
     def get_biometric_flag(self, username: str) -> bool:
         """Get biometric flag for user"""
-        pass
-
-    @abstractmethod
-    def set_biometric_flag(self, username: str, enabled: bool) -> bool:
-        """Set biometric flag for user"""
         pass
 
     @abstractmethod
@@ -100,10 +80,6 @@ class BasePlatformHandler(PlatformHandler):
     def get_biometric_flag(self, username: str) -> bool:
         """Get biometric flag for user"""
         return self.storage_handler.get_biometric_flag(username)
-
-    def set_biometric_flag(self, username: str, enabled: bool) -> bool:
-        """Set biometric flag for user"""
-        return self.storage_handler.set_biometric_flag(username, enabled)
 
     def delete_biometric_flag(self, username: str) -> bool:
         """Delete biometric flag for user"""

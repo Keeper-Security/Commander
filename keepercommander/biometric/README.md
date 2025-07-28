@@ -125,10 +125,6 @@ biometric register
 
 The module uses FIDO2/WebAuthn standards for biometric authentication, ensuring compatibility with Keeper's backend systems. Platform-specific implementations handle the nuances of each operating system's biometric APIs.
 
-### Storage Locations
-
-- **Windows**: `HKEY_CURRENT_USER\Software\KeeperSecurity\Commander`
-- **macOS**: `~/Library/Application Support/Keeper/biometric_flags.plist`
 
 ### Security Features
 

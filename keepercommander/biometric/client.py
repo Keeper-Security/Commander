@@ -142,8 +142,7 @@ class BiometricClient:
         except Exception as e:
             raise Exception(str(e))
 
-    def generate_authentication_options(self, params, purpose: str = 'login',
-                                      credential_id: Optional[str] = None) -> Dict[str, Any]:
+    def generate_authentication_options(self, params, purpose: str = 'login') -> Dict[str, Any]:
         """Generate authentication options"""
         try:
             rq = APIRequest_pb2.PasskeyAuthenticationRequest()

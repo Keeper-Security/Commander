@@ -130,7 +130,7 @@ class BiometricUpdateNameCommand(BiometricCommand):
         """Confirm the update operation"""
         print("\nUpdate Summary:")
         print("-" * 20)
-        print(f"Credential ID: {credential['id']}")
+        print(f"ID: {credential['id']}")
         print(f"Current Name:  {credential['name']}")
         print(f"New Name:      {new_name}")
         print()
@@ -145,7 +145,7 @@ class BiometricUpdateNameCommand(BiometricCommand):
         status_code = result['status']
         status_text = get_status_message(status_code)
         print(f"Status: {status_text}")
-        print(f"Credential ID: {credential['id']}")
+        print(f"ID: {credential['id']}")
         print(f"Old Name: {credential['name']}")
         print(f"New Name: {new_name}")
         print(f"Message: {result['message']}")

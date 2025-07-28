@@ -50,13 +50,6 @@ class WindowsStorageHandler(StorageHandler):
         """Get biometric flag from Windows registry - True if credential ID exists"""
         return self.get_credential_id(username) is not None
 
-    def set_biometric_flag(self, username: str, enabled: bool) -> bool:
-        """Set biometric flag in Windows registry (deprecated - use store_credential_id)"""
-        # This method is kept for backward compatibility but should not be used
-        # The presence of credential_id now serves as the flag
-        logging.warning("set_biometric_flag is deprecated, use store_credential_id instead")
-        return True
-
     def delete_biometric_flag(self, username: str) -> bool:
         """Delete biometric flag from Windows registry - removes credential ID"""
         return self.delete_credential_id(username)
@@ -85,12 +78,8 @@ class WindowsStorageHandler(StorageHandler):
                 try:
                     value, reg_type = winreg.QueryValueEx(key, username)
                     winreg.CloseKey(key)
-                    # Handle both old DWORD format (1/0) and new string format (credential_id)
-                    if reg_type == winreg.REG_DWORD:
-                        # Old format - migrate to new format by returning None
-                        logging.debug(f'Found old DWORD format for user {username}, needs migration')
-                        return None
-                    elif reg_type == winreg.REG_SZ and value:
+                    # Only handle the new string format (credential_id)
+                    if reg_type == winreg.REG_SZ and value:
                         logging.debug(f'Retrieved credential ID for user: {username}')
                         return str(value)
                     else:
@@ -134,8 +123,6 @@ class WindowsHandler(BasePlatformHandler):
 
     def _get_platform_name(self) -> str:
         return "Windows Hello"
-
-
 
     def detect_capabilities(self) -> Tuple[bool, str]:
         """Detect Windows Hello capabilities"""

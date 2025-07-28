@@ -12,39 +12,14 @@
 import logging
 import subprocess
 import base64
-from abc import ABC, abstractmethod
-from typing import Optional, Union
+from typing import Optional
 
 from .... import crypto
 from ...utils.constants import MACOS_KEYCHAIN_SERVICE_PREFIX, ERROR_MESSAGES
 from ...utils.error_handler import BiometricErrorHandler
 
 
-class KeychainManager(ABC):
-    """Abstract base class for platform-specific credential storage"""
-    
-    @abstractmethod
-    def store_credential(self, credential_id: str, private_key_data: bytes, rp_id: str) -> bool:
-        """Store a credential in platform-specific storage"""
-        pass
-    
-    @abstractmethod
-    def load_credential(self, credential_id: str, rp_id: Optional[str] = None) -> Optional[object]:
-        """Load a credential from platform-specific storage"""
-        pass
-    
-    @abstractmethod
-    def delete_credential(self, credential_id: str, rp_id: Optional[str] = None) -> bool:
-        """Delete a credential from platform-specific storage"""
-        pass
-    
-    @abstractmethod
-    def credential_exists(self, credential_id: str, rp_id: Optional[str] = None) -> bool:
-        """Check if credential exists in platform-specific storage"""
-        pass
-
-
-class MacOSKeychainManager(KeychainManager):
+class MacOSKeychainManager:
     """macOS Keychain credential manager"""
     
     def __init__(self):
@@ -112,31 +87,10 @@ class MacOSKeychainManager(KeychainManager):
             if result.returncode == 0:
                 return True
             
-            # Fallback attempt with AppleScript
-            return self._store_with_applescript_fallback(service_name, account_name, encoded_key, rp_id)
+            return False
             
         except Exception as e:
             logging.warning(f"Failed to store credential: {str(e)}")
-            return False
-    
-    def _store_with_applescript_fallback(self, service_name: str, account_name: str, 
-                                       encoded_key: str, rp_id: str) -> bool:
-        """Fallback storage method using AppleScript"""
-        try:
-            applescript = f'''
-            tell application "Keychain Access"
-                activate
-            end tell
-            
-            do shell script "security add-internet-password -s '{service_name}' -a '{account_name}' -w '{encoded_key}' -D 'WebAuthn Credential' -j 'Keeper biometric credential for {rp_id}' -T '' -U"
-            '''
-            
-            subprocess.run(['osascript', '-e', applescript], 
-                         capture_output=True, text=True, timeout=30)
-            return True
-            
-        except Exception as e:
-            logging.warning(f"AppleScript fallback failed: {str(e)}")
             return False
     
     def _set_touchid_access_control(self, service_name: str, account_name: str):
