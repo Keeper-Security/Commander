@@ -195,23 +195,23 @@ def get_ssl_cert_file():
 
 
 def main(from_package=False):
-    if sys.platform == 'win32' and sys.version_info >= (3, 7):
+    if sys.platform == 'win32':
         try:
             sys.stdout.reconfigure(encoding='utf-8')
             sys.stderr.reconfigure(encoding='utf-8')
         except:
             pass
-    
+    logging.basicConfig(format='%(message)s', force=True)
+
     # Use system CA certificates when available (supports Zscaler), fallback to certifi
     ssl_cert_file = get_ssl_cert_file()
     if ssl_cert_file:
         os.environ['SSL_CERT_FILE'] = ssl_cert_file
     else:
         # User explicitly disabled SSL verification
-        print("Warning: SSL certificate verification has been disabled. This is not recommended for production use.", file=sys.stderr)
+        logging.warning("Warning: SSL certificate verification has been disabled. This is not recommended for production use.")
         if 'SSL_CERT_FILE' in os.environ:
             del os.environ['SSL_CERT_FILE']
-    logging.basicConfig(format='%(message)s')
 
     errno = 0
 

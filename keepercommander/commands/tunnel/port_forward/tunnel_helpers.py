@@ -6,6 +6,7 @@ import os
 import secrets
 import socket
 import string
+import sys
 import time
 import ssl
 import asyncio
@@ -33,7 +34,7 @@ try:
     WEBSOCKETS_AVAILABLE = True
 except ImportError:
     WEBSOCKETS_AVAILABLE = False
-    logging.warning("websockets library not available - falling back to HTTP for ICE candidate exchange")
+    print("websockets library not available - falling back to HTTP for ICE candidate exchange", file=sys.stderr)
 
 # Constants
 NONCE_LENGTH = 12
