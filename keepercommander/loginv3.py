@@ -148,11 +148,8 @@ class LoginV3Flow:
                             step.fallback_to_password()
                         else:
                             raise Exception("Device needs approval for biometric authentication. Please register your device first.")
-                    elif "no matching credential found" in error_message:
-                        print(str(e))
-                        step.fallback_to_password()
                     else:
-                        logging.debug(f"Biometric authentication error: {e}")
+                        logging.info(f"Biometric authentication error: {e}")
                         step.fallback_to_password()
 
                 if should_cancel:
