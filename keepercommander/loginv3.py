@@ -43,9 +43,26 @@ class LoginV3Flow:
     def __init__(self, login_ui=None):   # type: (login_steps.LoginUi) -> None
         self.login_ui = login_ui or console_ui.ConsoleLoginUi()    # type: login_steps.LoginUi
 
+    def _fallback_to_password_auth(self, params, encryptedDeviceToken, clone_code_bytes, login_type):
+        """Helper method to handle fallback from biometric to default authentication"""
+        logging.info("Falling back to default authentication...")
+        return LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes, loginType=login_type)
+
     def login(self, params, new_device=False, new_login=False):   # type: (KeeperParams, bool, bool) -> None
 
         logging.debug("Login v3 Start as '%s'", params.user)
+
+        if params.user:
+            params.biometric = None
+            try:
+                from keepercommander.biometric import check_biometric_previously_used
+                if check_biometric_previously_used(params.user):
+                    params.biometric = True
+            except ImportError:
+                pass
+            except Exception as e:
+                logging.debug(f"Error checking biometric flag: {e}")
+                pass
 
         encryptedDeviceToken = LoginV3API.get_device_id(params, new_device)
 
@@ -60,11 +77,90 @@ class LoginV3Flow:
             login_type = 'ALTERNATE'
 
         resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes, loginType=login_type)
+        if params.biometric:
+            resp.loginState = APIRequest_pb2.AFTER_PASSKEY_LOGIN
 
         is_alternate_login = False
 
         while True:
-            if resp.loginState == APIRequest_pb2.DEVICE_APPROVAL_REQUIRED:  # client goes to “standard device approval”.
+            if resp.loginState == APIRequest_pb2.AFTER_PASSKEY_LOGIN:
+                should_cancel = False
+                should_fallback = False
+                encrypted_login_token = None
+
+                class BiometricStep(login_steps.LoginStepPassword):
+                    @property
+                    def username(self):
+                        return params.user
+
+                    def verify_password(self, password):
+                        # Not used in biometric flow
+                        pass
+
+                    def forgot_password(self):
+                        # Not used in biometric flow
+                        pass
+
+                    def verify_biometric_key(self, biometric_key):
+                        nonlocal encrypted_login_token
+                        encrypted_login_token = biometric_key
+
+                    def cancel(self):
+                        nonlocal should_cancel
+                        should_cancel = True
+
+                    def fallback_to_password(self):
+                        nonlocal should_fallback
+                        should_fallback = True
+
+                step = BiometricStep()
+                
+                try:
+                    from keepercommander.biometric.commands.verify import BiometricVerifyCommand
+                    auth_helper = BiometricVerifyCommand()
+                    logging.info("Attempting biometric authentication...")
+                    print("Press Ctrl+C to skip biometric and use default login method")
+                    
+                    biometric_result = auth_helper.biometric_authenticate(params, username=params.user)
+                    
+                    if biometric_result and biometric_result.get('is_valid'):
+                        logging.debug("Biometric authentication successful!")
+                        step.verify_biometric_key(biometric_result.get('login_token'))
+                    else:
+                        logging.info("Biometric authentication failed")
+                        step.fallback_to_password()
+                        
+                except KeyboardInterrupt:
+                    logging.info("Biometric authentication cancelled by user")
+                    step.fallback_to_password()
+                            
+                except Exception as e:
+                    error_message = str(e).lower()
+                    
+                    if "device_needs_approval" in error_message or "device approval" in error_message:
+                        print(f"\n{bcolors.FAIL}Biometric Login Failed{bcolors.ENDC}")
+                        print(f"{bcolors.WARNING}Device registration required for biometric authentication.{bcolors.ENDC}")
+                        print(f"\nPlease run: {bcolors.BOLD}{bcolors.OKBLUE}this-device register{bcolors.ENDC}")
+                        print("Then try biometric login again.")
+                        
+                        fallback_choice = input("\nWould you like to try default login instead? (y/n): ").strip().lower()
+                        if fallback_choice in ['y', 'yes']:
+                            step.fallback_to_password()
+                        else:
+                            raise Exception("Device needs approval for biometric authentication. Please register your device first.")
+                    else:
+                        logging.info(f"Biometric authentication error: {e}")
+                        step.fallback_to_password()
+
+                if should_cancel:
+                    break
+                elif should_fallback:
+                    resp = self._fallback_to_password_auth(params, encryptedDeviceToken, clone_code_bytes, login_type)
+                    continue
+                elif encrypted_login_token:
+                    resp = LoginV3API.resume_login(params, encrypted_login_token, encryptedDeviceToken, loginType="PASSKEY_BIO")
+
+            if resp.loginState == APIRequest_pb2.DEVICE_APPROVAL_REQUIRED:  # client goes to "standard device approval".
                 should_cancel = False
                 should_resume = False
 
@@ -337,6 +433,8 @@ class LoginV3Flow:
             decrypted_data_key = crypto.decrypt_ec(resp.encryptedDataKey, private_key)
             if params.sso_login_info:
                 login_type_message = bcolors.UNDERLINE + "SSO Login"
+            elif params.biometric:
+                login_type_message = bcolors.UNDERLINE + "Biometric Login"
             else:
                 login_type_message = bcolors.UNDERLINE + "Persistent Login"
 
