@@ -373,7 +373,9 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
                     form_files = { 'file': (file['file_name'], dst, 'application/octet-stream') }
                     form_params = json.loads(parameters)
                     logging.info('Uploading %s ...', file['full_path'])
-                    response = requests.post(url, data=form_params, files=form_files)
+                    response = requests.post(url, data=form_params, files=form_files,
+                                             proxies=params.rest_context.proxies,
+                                             verify=params.rest_context.certificate_check)
                     if 'success_action_status' in form_params and str(response.status_code) == form_params['success_action_status']:
                         attachments.append(file)
                         # params.queue_audit_event('file_attachment_uploaded', record_uid=record_uid, attachment_id=a['file_id'])
@@ -395,7 +397,7 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
 
         data = json.dumps(data_dict)
 
-        # For compatibility w/ legacy: --password overides --generate AND --generate overrides dataJSON/option
+        # For compatibility w/ legacy: --password overrides --generate AND --generate overrides dataJSON/option
         # dataJSON/option < kwargs: --generate < kwargs: --password
         password = kwargs.get('password')
         if not password and (kwargs.get('generate') or kwargs.get('generate_rules') or kwargs.get('generate_length')):

@@ -1405,7 +1405,9 @@ def upload_v3_attachments(params, records_with_attachments):  # type: (KeeperPar
                     form_files = {'file': (atta.name, encrypted_src, 'application/octet-stream')}
                     form_params = json.loads(f.parameters)
                     print(f'{atta.name} ... ', file=sys.stderr, end='', flush=True)
-                    response = requests.post(f.url, data=form_params, files=form_files)
+                    response = requests.post(f.url, data=form_params, files=form_files,
+                                             proxies=params.rest_context.proxies,
+                                             verify=params.rest_context.certificate_check)
 
             if str(response.status_code) == form_params.get('success_action_status'):
                 print('Done')

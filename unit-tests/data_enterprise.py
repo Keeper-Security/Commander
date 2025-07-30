@@ -99,6 +99,7 @@ def get_enterprise_data(params):
             'status': 'active',
             'lock': 0,
             'tfa_enabled': True,
+            'transfer_acceptance_status': 1
         },
         {
             'enterprise_user_id':  _USER2_ID,
@@ -109,6 +110,7 @@ def get_enterprise_data(params):
             'status': 'active',
             'lock': 1,
             'tfa_enabled': False,
+            'transfer_acceptance_status': 4
         }
     ]
 
