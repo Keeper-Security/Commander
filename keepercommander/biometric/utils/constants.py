@@ -9,9 +9,8 @@
 # Contact: ops@keepersecurity.com
 #
 
-# Default timeout values
-DEFAULT_REGISTRATION_TIMEOUT = 30
-DEFAULT_AUTHENTICATION_TIMEOUT = 10
+# Default timeout value for all biometric operations
+DEFAULT_BIOMETRIC_TIMEOUT = 60
 
 # Platform/System constants
 PLATFORM_WINDOWS = 'Windows'
@@ -112,7 +111,7 @@ ERROR_MESSAGES = {
 
 # Success messages
 SUCCESS_MESSAGES = {
-    'registration_complete': 'Biometric authentication method added successfully!',
+    'registration_complete': 'Biometric authentication completed successfully!',
     'unregistration_complete': 'Biometric authentication has been completely removed',
     'verification_success': 'Your biometric authentication is working correctly!',
     'credential_disabled': 'Passkey was successfully disabled and no longer available for login'

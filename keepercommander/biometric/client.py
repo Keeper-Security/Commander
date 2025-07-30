@@ -40,7 +40,7 @@ class BiometricClient:
         try:
             self.platform_handler = self.detector.get_platform_handler()
         except Exception as e:
-            logging.warning(f"Failed to initialize platform handler: {e}")
+            logging.warning("Failed to initialize platform handler: %s", str(e))
 
     def generate_registration_options(self, params, **kwargs) -> Dict[str, Any]:
         """Generate registration options from Keeper API"""
@@ -62,7 +62,7 @@ class BiometricClient:
         except Exception as e:
             raise Exception(str(e))
 
-    def create_credential(self, registration_options: Dict[str, Any], timeout: int = 30):
+    def create_credential(self, registration_options: Dict[str, Any]):
         """Create biometric credential"""
         if not self.platform_handler:
             raise Exception("Platform handler not available")
@@ -75,7 +75,7 @@ class BiometricClient:
                 creation_options['challenge'] = utils.base64_url_decode(creation_options['challenge'])
 
             # Handle platform-specific options
-            creation_options = self.platform_handler.handle_credential_creation(creation_options, timeout)
+            creation_options = self.platform_handler.handle_credential_creation(creation_options)
 
             # Create WebAuthn client
             options = PublicKeyCredentialCreationOptions.from_dict(creation_options)
@@ -89,7 +89,7 @@ class BiometricClient:
             origin = f'{WEBAUTHN_ORIGIN_SCHEME}://{rp_id}'
 
             data_collector = DefaultClientDataCollector(origin)
-            client = self.platform_handler.create_webauthn_client(data_collector, timeout)
+            client = self.platform_handler.create_webauthn_client(data_collector)
 
             print("Please complete biometric authentication...")
             return self.platform_handler.perform_credential_creation(client, options)
@@ -133,11 +133,11 @@ class BiometricClient:
                         credential_id = credential_response.id
                         success = storage_handler.store_credential_id(params.user, credential_id)
                         if success:
-                            logging.debug(f'Stored credential ID for user {params.user}')
+                            logging.debug("Stored credential ID for user: %s", params.user)
                         else:
-                            logging.warning(f'Failed to store credential ID for user {params.user}')
+                            logging.warning("Failed to store credential ID for user: %s", params.user)
                     except Exception as e:
-                        logging.warning(f'Error storing credential ID: {str(e)}')
+                        logging.warning("Error storing credential ID: %s", str(e))
 
         except Exception as e:
             raise Exception(str(e))
@@ -169,7 +169,7 @@ class BiometricClient:
         except Exception as e:
             raise Exception(str(e))
 
-    def perform_authentication(self, auth_options: Dict[str, Any], timeout: int = 10):
+    def perform_authentication(self, auth_options: Dict[str, Any]):
         """Perform biometric authentication"""
         if not self.platform_handler:
             raise Exception("Platform handler not available")
@@ -186,7 +186,7 @@ class BiometricClient:
                     if isinstance(cred.get('id'), str):
                         cred['id'] = utils.base64_url_decode(cred['id'])
 
-            pk_options = self.platform_handler.handle_authentication_options(pk_options, timeout)
+            pk_options = self.platform_handler.handle_authentication_options(pk_options)
 
             options = PublicKeyCredentialRequestOptions.from_dict(pk_options)
             # Extract RP ID from the API response
@@ -199,7 +199,7 @@ class BiometricClient:
             origin = f'{WEBAUTHN_ORIGIN_SCHEME}://{rp_id}'
 
             data_collector = DefaultClientDataCollector(origin)
-            client = self.platform_handler.create_webauthn_client(data_collector, timeout)
+            client = self.platform_handler.create_webauthn_client(data_collector)
 
             return self.platform_handler.perform_authentication(client, options)
 

@@ -14,6 +14,7 @@ import logging
 import os
 import subprocess
 import getpass
+from contextlib import contextmanager
 from typing import Dict, Any, Tuple, Optional
 
 from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredentialRequestOptions
@@ -34,7 +35,7 @@ class WindowsStorageHandler(StorageHandler):
     def __init__(self):
         self.key_path = WINDOWS_REGISTRY_PATH
 
-    def _get_registry_key(self):
+    def _get_registry_key(self) -> Optional[Any]:
         """Get Windows registry key"""
         try:
             import winreg
@@ -44,6 +45,20 @@ class WindowsStorageHandler(StorageHandler):
                 return winreg.CreateKey(winreg.HKEY_CURRENT_USER, self.key_path)
         except ImportError:
             return None
+
+    @contextmanager
+    def registry_key(self) -> Any:
+        """Context manager for registry key handling"""
+        import winreg
+        key = None
+        try:
+            key = self._get_registry_key()
+            if key is None:
+                raise ImportError("winreg module not available")
+            yield key
+        finally:
+            if key:
+                winreg.CloseKey(key)
 
     def get_biometric_flag(self, username: str) -> bool:
         """Get biometric flag from Windows registry - True if credential ID exists"""
@@ -57,60 +72,52 @@ class WindowsStorageHandler(StorageHandler):
         """Store credential ID for user in Windows registry (also serves as biometric flag)"""
         try:
             import winreg
-            key = self._get_registry_key()
-            if key:
+            with self.registry_key() as key:
                 winreg.SetValueEx(key, username, 0, winreg.REG_SZ, credential_id)
-                winreg.CloseKey(key)
-                logging.debug(f'Stored credential ID for user: {username}')
+                logging.debug("Stored credential ID for user: %s", username)
                 return True
         except Exception as e:
-            logging.warning(f"Failed to store credential ID for {username}: {str(e)}")
+            logging.warning("Failed to store credential ID for %s: %s", username, str(e))
             BiometricErrorHandler.create_storage_error("store credential ID", "Windows registry", e)
-        return False
+            return False
 
     def get_credential_id(self, username: str) -> Optional[str]:
         """Get stored credential ID for user from Windows registry"""
         try:
             import winreg
-            key = self._get_registry_key()
-            if key:
+            with self.registry_key() as key:
                 try:
                     value, reg_type = winreg.QueryValueEx(key, username)
-                    winreg.CloseKey(key)
                     # Only handle the new string format (credential_id)
                     if reg_type == winreg.REG_SZ and value:
-                        logging.debug(f'Retrieved credential ID for user: {username}')
+                        logging.debug("Retrieved credential ID for user: %s", username)
                         return str(value)
                     else:
                         return None
                 except FileNotFoundError:
-                    winreg.CloseKey(key)
-                    logging.debug(f'No stored credential ID found for user: {username}')
+                    logging.debug("No stored credential ID found for user: %s", username)
                     return None
         except Exception as e:
-            logging.warning(f"Failed to retrieve credential ID for {username}: {str(e)}")
+            logging.warning("Failed to retrieve credential ID for %s: %s", username, str(e))
             BiometricErrorHandler.create_storage_error("get credential ID", "Windows registry", e)
-        return None
+            return None
 
     def delete_credential_id(self, username: str) -> bool:
         """Delete stored credential ID for user from Windows registry"""
         try:
             import winreg
-            key = self._get_registry_key()
-            if key:
+            with self.registry_key() as key:
                 try:
                     winreg.DeleteValue(key, username)
-                    winreg.CloseKey(key)
-                    logging.debug(f'Deleted stored credential ID for user: {username}')
+                    logging.debug("Deleted stored credential ID for user: %s", username)
                     return True
                 except FileNotFoundError:
-                    winreg.CloseKey(key)
-                    logging.debug(f'Credential ID for user {username} was already deleted')
+                    logging.debug("Credential ID for user %s was already deleted", username)
                     return True
         except Exception as e:
-            logging.warning(f"Failed to delete credential ID for {username}: {str(e)}")
+            logging.warning("Failed to delete credential ID for %s: %s", username, str(e))
             BiometricErrorHandler.create_storage_error("delete credential ID", "Windows registry", e)
-        return False
+            return False
 
 
 class WindowsHandler(BasePlatformHandler):
@@ -192,12 +199,12 @@ class WindowsHandler(BasePlatformHandler):
                     features.append("PIN")
                 return True, f"Windows Hello available: {', '.join(features)}"
             else:
-                return False, Exception(ERROR_MESSAGES['windows_hello_not_setup'])
+                return False, ERROR_MESSAGES['windows_hello_not_setup']
 
         except Exception as e:
             return False, f"Error detecting Windows Hello: {str(e)}"
 
-    def create_webauthn_client(self, data_collector, timeout: int = 30):
+    def create_webauthn_client(self, data_collector):
         """Create Windows WebAuthn client"""
         try:
             from fido2.client.windows import WindowsClient
@@ -205,13 +212,13 @@ class WindowsHandler(BasePlatformHandler):
         except ImportError:
             raise Exception('Windows Hello client not available. Install fido2[pcsc]')
 
-    def handle_credential_creation(self, creation_options: Dict[str, Any], timeout: int = 30) -> Dict[str, Any]:
+    def handle_credential_creation(self, creation_options: Dict[str, Any]) -> Dict[str, Any]:
         """Handle Windows-specific credential creation"""
-        return self._prepare_credential_creation_options(creation_options, timeout)
+        return self._prepare_credential_creation_options(creation_options)
 
-    def handle_authentication_options(self, pk_options: Dict[str, Any], timeout: int = 10) -> Dict[str, Any]:
+    def handle_authentication_options(self, pk_options: Dict[str, Any]) -> Dict[str, Any]:
         """Handle Windows-specific authentication options"""
-        return self._prepare_authentication_options(pk_options, timeout)
+        return self._prepare_authentication_options(pk_options)
 
     def perform_authentication(self, client, options: PublicKeyCredentialRequestOptions):
         """Perform Windows Hello authentication"""

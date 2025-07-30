@@ -21,8 +21,6 @@ from ..utils.constants import (
     FIDO2_AVAILABLE, 
     ERROR_MESSAGES, 
     CREDENTIAL_NAME_TEMPLATES,
-    DEFAULT_REGISTRATION_TIMEOUT,
-    DEFAULT_AUTHENTICATION_TIMEOUT
 )
 from ..utils.error_handler import BiometricErrorHandler
 

@@ -17,7 +17,8 @@ from typing import Dict, Any, Optional, Tuple
 from .... import utils, crypto
 from ...utils.constants import (
     AUTH_REASONS,
-    ERROR_MESSAGES
+    ERROR_MESSAGES,
+    DEFAULT_BIOMETRIC_TIMEOUT
 )
 from ...utils.error_handler import BiometricErrorHandler
 
@@ -44,10 +45,9 @@ AUTH_FLAG_ASSERTION = AUTH_FLAG_UP | AUTH_FLAG_UV  # 0b00000101
 class BaseWebAuthnClient:
     """Base WebAuthn client with common functionality"""
     
-    def __init__(self, client_data_collector, keychain_manager, timeout=30):
+    def __init__(self, client_data_collector, keychain_manager):
         self.client_data_collector = client_data_collector
         self.keychain_manager = keychain_manager
-        self.timeout = timeout
 
     def _validate_dependencies(self, required_modules: list) -> None:
         """Validate that required modules are available"""
@@ -85,13 +85,17 @@ class BaseWebAuthnClient:
 class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
     """macOS Touch ID WebAuthn client with DRY principles"""
     
-    def __init__(self, client_data_collector, keychain_manager, timeout=30):
-        super().__init__(client_data_collector, keychain_manager, timeout)
+    def __init__(self, client_data_collector, keychain_manager):
+        super().__init__(client_data_collector, keychain_manager)
 
     def make_credential(self, options):
         """Create WebAuthn credential using Touch ID"""
         try:
             self._validate_dependencies(['LocalAuthentication', 'cbor2'])
+            
+            # Extract timeout from WebAuthn options FIRST (comes from backend or default)
+            timeout_ms = getattr(options, 'timeout', None)
+            timeout_seconds = (timeout_ms / 1000.0) if timeout_ms else DEFAULT_BIOMETRIC_TIMEOUT
             
             # Check excludeCredentials like Windows WebAuthn API does internally
             if hasattr(options, 'exclude_credentials') and options.exclude_credentials:
@@ -102,7 +106,7 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
                     else:
                         cred_id_b64 = utils.base64_url_encode(cred_id)
                     
-                    if self.keychain_manager.credential_exists(cred_id_b64):
+                    if self.keychain_manager.credential_exists(cred_id_b64, options.rp.id, timeout_seconds):
                         # Match Windows WebAuthn API behavior exactly
                         raise OSError("The object already exists")
             
@@ -120,15 +124,15 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
             self._check_biometric_availability(context)
             
             # Store key before authentication
-            if not self.keychain_manager.store_credential(credential_id, private_key_data, rp_id):
+            if not self.keychain_manager.store_credential(credential_id, private_key_data, rp_id, timeout_seconds):
                 raise Exception(ERROR_MESSAGES['keychain_store_failed'])
             
             # Authenticate
             reason = AUTH_REASONS['register'].format(rp_id=rp_id)
-            success = self._authenticate_with_touchid(context, reason)
+            success = self._authenticate_with_touchid(context, reason, timeout_seconds)
             
             if not success:
-                self.keychain_manager.delete_credential(credential_id, rp_id)
+                self.keychain_manager.delete_credential(credential_id, rp_id, timeout_seconds)
                 raise Exception(ERROR_MESSAGES['authentication_failed'])
 
             # Create WebAuthn response
@@ -144,19 +148,23 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
         try:
             self._validate_dependencies(['LocalAuthentication'])
             
+            # Extract timeout from WebAuthn options FIRST (comes from backend or default)
+            timeout_ms = getattr(options, 'timeout', None)
+            timeout_seconds = (timeout_ms / 1000.0) if timeout_ms else DEFAULT_BIOMETRIC_TIMEOUT
+            
             # Find credential
             challenge = options.challenge
             rp_id = options.rp_id
             if not rp_id:
                 raise Exception("No RP ID found in options - server configuration error")
-            private_key, credential_id_b64, credential_id_bytes = self._find_credential(options, rp_id)
+            private_key, credential_id_b64, credential_id_bytes = self._find_credential(options, rp_id, timeout_seconds)
             
             # Setup and authenticate
             context = self._create_auth_context()
             self._check_biometric_availability(context)
             
             reason = AUTH_REASONS['login'].format(rp_id=rp_id)
-            success = self._authenticate_with_touchid(context, reason)
+            success = self._authenticate_with_touchid(context, reason, timeout_seconds)
             
             if not success:
                 raise Exception(ERROR_MESSAGES['authentication_failed'])
@@ -187,16 +195,18 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
         if not can_evaluate:
             raise Exception(ERROR_MESSAGES['touchid_not_available'])
 
-    def _authenticate_with_touchid(self, context, reason: str) -> bool:
-        """Perform Touch ID authentication"""
+    def _authenticate_with_touchid(self, context, reason: str, timeout_seconds: float = 30) -> bool:
+        """Perform Touch ID authentication with proper synchronization"""
         import LocalAuthentication  # pylint: disable=import-error
-        
-        result = {'success': False}
-        error_holder = {'error': None}
+        import threading
+                
+        event = threading.Event()
+        result = {'success': False, 'error': None}
         
         def auth_callback(success, error):
             result['success'] = bool(success)
-            error_holder['error'] = error
+            result['error'] = error
+            event.set()
         
         context.evaluatePolicy_localizedReason_reply_(
             LocalAuthentication.LAPolicyDeviceOwnerAuthenticationWithBiometrics,  # pylint: disable=no-member
@@ -204,22 +214,18 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
             auth_callback
         )
         
-        # Wait for result
-        start_time = time.time()
-        while time.time() - start_time < self.timeout:
-            if result['success'] or error_holder['error']:
-                break
-            time.sleep(0.1)
-        
-        if error_holder['error']:
-            from ...utils.error_handler import BiometricErrorHandler
-            raise BiometricErrorHandler.handle_authentication_error(
-                Exception(str(error_holder['error'])), "Touch ID"
-            )
-        
-        return result['success']
+        # Wait for result with proper synchronization
+        if event.wait(timeout=timeout_seconds):
+            if result['error']:
+                from ...utils.error_handler import BiometricErrorHandler
+                raise BiometricErrorHandler.handle_authentication_error(
+                    Exception(str(result['error'])), "Touch ID"
+                )
+            return result['success']
+        else:
+            raise TimeoutError("Touch ID authentication timed out")
 
-    def _find_credential(self, options, rp_id: str) -> Tuple[Any, str, bytes]:
+    def _find_credential(self, options, rp_id: str, timeout_seconds: float) -> Tuple[Any, str, bytes]:
         """Find credential using keychain manager"""
         allowed_credentials = options.allow_credentials or []
         if not allowed_credentials:
@@ -234,7 +240,7 @@ class MacOSTouchIDWebAuthnClient(BaseWebAuthnClient):
                 test_id_bytes = cred_id
                 test_id_b64 = utils.base64_url_encode(cred_id)
 
-            test_key = self.keychain_manager.load_credential(test_id_b64, rp_id)
+            test_key = self.keychain_manager.load_credential(test_id_b64, rp_id, timeout_seconds)
             if test_key:
                 return test_key, test_id_b64, test_id_bytes
 

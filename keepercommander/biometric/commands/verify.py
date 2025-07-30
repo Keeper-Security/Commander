@@ -13,7 +13,7 @@ import argparse
 import json
 
 from .base import BiometricCommand
-from ..utils.constants import DEFAULT_AUTHENTICATION_TIMEOUT, SUCCESS_MESSAGES, API_ENDPOINTS
+from ..utils.constants import SUCCESS_MESSAGES, API_ENDPOINTS
 from ... import utils
 
 
@@ -21,8 +21,6 @@ class BiometricVerifyCommand(BiometricCommand):
     """Verify biometric authentication"""
 
     parser = argparse.ArgumentParser(prog='biometric verify', description='Verify biometric authentication with existing credentials')
-    parser.add_argument('--timeout', dest='timeout', type=int, default=DEFAULT_AUTHENTICATION_TIMEOUT, 
-                       help=f'Authentication timeout in seconds (default: {DEFAULT_AUTHENTICATION_TIMEOUT})')
     parser.add_argument('--purpose', dest='purpose', choices=['login', 'vault'], default='login', 
                        help='Authentication purpose (default: login)')
 
@@ -33,7 +31,6 @@ class BiometricVerifyCommand(BiometricCommand):
         """Execute biometric verify command"""
         def _verify():
             self._check_platform_support()
-            timeout = kwargs.get('timeout', DEFAULT_AUTHENTICATION_TIMEOUT)
             purpose = kwargs.get('purpose', 'login')
 
             # Get available credentials
@@ -44,7 +41,7 @@ class BiometricVerifyCommand(BiometricCommand):
             auth_options = self.client.generate_authentication_options(params, purpose)
 
             # Perform authentication
-            assertion_response = self.client.perform_authentication(auth_options, timeout)
+            assertion_response = self.client.perform_authentication(auth_options)
 
             # Verify authentication
             verification_result = self._verify_authentication_response(params, auth_options, assertion_response, purpose)
@@ -155,7 +152,7 @@ class BiometricVerifyCommand(BiometricCommand):
         if verification_result['is_valid']:
             print("Status: SUCCESSFUL")
             print(f"Purpose: {purpose.upper()}")
-            print(f"Credential ID: {utils.base64_url_encode(verification_result['credential_id'])}")
+            # print(f"Credential ID: {utils.base64_url_encode(verification_result['credential_id'])}")
 
             if verification_result.get('user_handle'):
                 print(f"User Handle: {utils.base64_url_encode(verification_result['user_handle'])}")
@@ -176,7 +173,7 @@ class BiometricVerifyCommand(BiometricCommand):
             purpose = kwargs.get('purpose', 'login')
 
             auth_options = self.client.generate_authentication_options(params, purpose)
-            assertion_response = self.client.perform_authentication(auth_options, timeout=10)
+            assertion_response = self.client.perform_authentication(auth_options)
             verification_result = self._verify_authentication_response(params, auth_options, assertion_response, purpose)
 
             return verification_result

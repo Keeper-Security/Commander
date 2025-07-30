@@ -28,14 +28,13 @@ from ...utils.constants import (
     MACOS_PREFS_PATH,
     ERROR_MESSAGES,
     AUTH_REASONS,
-    PLATFORM_DARWIN
+    PLATFORM_DARWIN,
+    DEFAULT_BIOMETRIC_TIMEOUT
 )
 from ...utils.error_handler import BiometricErrorHandler
 
 # macOS platform detection commands
 MACOS_BIOUTIL_COMMAND = ['bioutil', '-r', '-s']
-MACOS_SYSTEM_PROFILER_COMMAND = ['system_profiler', 'SPiBridgeDataType']
-
 
 class MacOSStorageHandler(StorageHandler):
     """macOS plist storage handler"""
@@ -75,10 +74,10 @@ class MacOSStorageHandler(StorageHandler):
             with open(self.prefs_path, 'wb') as f:
                 plistlib.dump(prefs, f)
             
-            logging.debug(f'Stored credential ID for user: {username}')
+            logging.debug("Stored credential ID for user: %s", username)
             return True
         except Exception as e:
-            logging.warning(f"Failed to store credential ID for {username}: {str(e)}")
+            logging.warning("Failed to store credential ID for %s: %s", username, str(e))
             BiometricErrorHandler.create_storage_error("store credential ID", "macOS", e)
             return False
 
@@ -100,7 +99,7 @@ class MacOSStorageHandler(StorageHandler):
             
             return None
         except Exception as e:
-            logging.warning(f"Failed to retrieve credential ID for {username}: {str(e)}")
+            logging.warning("Failed to retrieve credential ID for %s: %s", username, str(e))
             BiometricErrorHandler.create_storage_error("get credential ID", "macOS", e)
             return None
 
@@ -130,10 +129,9 @@ class MacOSStorageHandler(StorageHandler):
             
             return username not in verification_prefs
         except Exception as e:
-            logging.warning(f"Failed to delete credential ID for {username}: {str(e)}")
+            logging.warning("Failed to delete credential ID for %s: %s", username, str(e))
             BiometricErrorHandler.create_storage_error("delete credential ID", "macOS", e)
             return False
-
 
 class MacOSHandler(BasePlatformHandler):
     """macOS-specific biometric handler"""
@@ -147,8 +145,6 @@ class MacOSHandler(BasePlatformHandler):
 
     def _get_platform_name(self) -> str:
         return "Touch ID"
-
-
 
     def detect_capabilities(self) -> Tuple[bool, str]:
         """Detect Touch ID availability on macOS"""
@@ -165,10 +161,6 @@ class MacOSHandler(BasePlatformHandler):
             # Fallback: LocalAuthentication check
             if self._check_local_authentication(error_messages):
                 return True, "Touch ID is available"
-
-            # System profiler as last resort
-            if self._check_system_profiler(error_messages):
-                return True, "Touch ID hardware detected"
 
             # If we get here, all detection methods failed
             detailed_error = "Touch ID detection failed. " + "; ".join(error_messages)
@@ -231,32 +223,14 @@ class MacOSHandler(BasePlatformHandler):
 
         return False
 
-    def _check_system_profiler(self, error_messages: list) -> bool:
-        """Check Touch ID using system profiler"""
-        try:
-            result = subprocess.run(MACOS_SYSTEM_PROFILER_COMMAND, capture_output=True, text=True, timeout=15)
-
-            if result.returncode == 0:
-                output = result.stdout.lower()
-                if 'touch id' in output or 'biometric' in output:
-                    return True
-                else:
-                    error_messages.append("system_profiler: no Touch ID hardware found")
-            else:
-                error_messages.append(f"system_profiler: failed (return code {result.returncode})")
-        except Exception as e:
-            error_messages.append(f"system_profiler: {str(e)}")
-
-        return False
-
-    def create_webauthn_client(self, data_collector, timeout: int = 30):
+    def create_webauthn_client(self, data_collector):
         """Create macOS Touch ID WebAuthn client"""
         try:
-            return MacOSTouchIDWebAuthnClient(data_collector, self.keychain_manager, timeout)
+            return MacOSTouchIDWebAuthnClient(data_collector, self.keychain_manager)
         except ImportError:
             raise Exception('macOS Touch ID client dependencies not available')
 
-    def handle_credential_creation(self, creation_options: Dict[str, Any], timeout: int = 30) -> Dict[str, Any]:
+    def handle_credential_creation(self, creation_options: Dict[str, Any]) -> Dict[str, Any]:
         """Handle macOS-specific credential creation"""
         # Extract RP ID from creation options
         rp_id = creation_options.get('rp', {}).get('id')
@@ -272,15 +246,15 @@ class MacOSHandler(BasePlatformHandler):
                 else:
                     cred_id_b64 = utils.base64_url_encode(cred_id)
                 
-                if self.keychain_manager.credential_exists(cred_id_b64, rp_id):
+                if self.keychain_manager.credential_exists(cred_id_b64, rp_id, DEFAULT_BIOMETRIC_TIMEOUT):
                     raise Exception(ERROR_MESSAGES['credential_exists'])
 
         # Use common preparation logic
-        return self._prepare_credential_creation_options(creation_options, timeout)
+        return self._prepare_credential_creation_options(creation_options)
 
-    def handle_authentication_options(self, pk_options: Dict[str, Any], timeout: int = 10) -> Dict[str, Any]:
+    def handle_authentication_options(self, pk_options: Dict[str, Any]) -> Dict[str, Any]:
         """Handle macOS-specific authentication options"""
-        return self._prepare_authentication_options(pk_options, timeout)
+        return self._prepare_authentication_options(pk_options)
 
     def perform_authentication(self, client, options: PublicKeyCredentialRequestOptions):
         """Perform macOS Touch ID authentication"""

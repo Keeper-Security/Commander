@@ -14,7 +14,7 @@ from typing import Dict, Any, Tuple
 
 from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredentialRequestOptions
 
-from ..utils.constants import DEFAULT_REGISTRATION_TIMEOUT, DEFAULT_AUTHENTICATION_TIMEOUT
+from ..utils.constants import DEFAULT_BIOMETRIC_TIMEOUT
 from ... import utils
 
 
@@ -27,17 +27,17 @@ class PlatformHandler(ABC):
         pass
 
     @abstractmethod
-    def create_webauthn_client(self, data_collector, timeout: int = 30):
+    def create_webauthn_client(self, data_collector):
         """Create platform-specific WebAuthn client"""
         pass
 
     @abstractmethod
-    def handle_credential_creation(self, creation_options: Dict[str, Any], timeout: int = 30) -> Dict[str, Any]:
+    def handle_credential_creation(self, creation_options: Dict[str, Any]) -> Dict[str, Any]:
         """Handle platform-specific credential creation options"""
         pass
 
     @abstractmethod
-    def handle_authentication_options(self, pk_options: Dict[str, Any], timeout: int = 10) -> Dict[str, Any]:
+    def handle_authentication_options(self, pk_options: Dict[str, Any]) -> Dict[str, Any]:
         """Handle platform-specific authentication options"""
         pass
 
@@ -85,8 +85,7 @@ class BasePlatformHandler(PlatformHandler):
         """Delete biometric flag for user"""
         return self.storage_handler.delete_biometric_flag(username)
 
-    def _prepare_credential_creation_options(self, creation_options: Dict[str, Any], 
-                                           timeout: int = DEFAULT_REGISTRATION_TIMEOUT) -> Dict[str, Any]:
+    def _prepare_credential_creation_options(self, creation_options: Dict[str, Any]) -> Dict[str, Any]:
         """Common credential creation options preparation"""
         # Convert user ID to bytes
         if isinstance(creation_options['user'].get('id'), str):
@@ -113,15 +112,13 @@ class BasePlatformHandler(PlatformHandler):
         }
             
         creation_options['authenticatorSelection'].update(default_selection)
-        creation_options['attestation'] = 'none'
         
         if 'timeout' not in creation_options:
-            creation_options['timeout'] = timeout * 1000
+            creation_options['timeout'] = DEFAULT_BIOMETRIC_TIMEOUT * 1000
 
         return creation_options
 
-    def _prepare_authentication_options(self, pk_options: Dict[str, Any], 
-                                      timeout: int = DEFAULT_AUTHENTICATION_TIMEOUT) -> Dict[str, Any]:
+    def _prepare_authentication_options(self, pk_options: Dict[str, Any]) -> Dict[str, Any]:
         """Common authentication options preparation"""
         pk_options.pop('hints', None)
         pk_options.pop('extensions', None)
@@ -135,7 +132,7 @@ class BasePlatformHandler(PlatformHandler):
         pk_options['userVerification'] = 'required'
         
         if 'timeout' not in pk_options:
-            pk_options['timeout'] = timeout * 1000
+            pk_options['timeout'] = DEFAULT_BIOMETRIC_TIMEOUT * 1000
 
         return pk_options
 
