@@ -10,7 +10,6 @@
 #
 
 import argparse
-import time
 
 from .base import BiometricCommand
 from ...commands.base import user_choice
@@ -28,8 +27,15 @@ class BiometricUpdateNameCommand(BiometricCommand):
     def execute(self, params, **kwargs):
         """Execute biometric update-name command"""
         def _update_name():
-            available_credentials = self._get_available_credentials_or_error(params)
-            print(f"Found {len(available_credentials)} biometric credential(s)")
+            all_credentials = self._get_available_credentials_or_error(params)
+            available_credentials = [cred for cred in all_credentials if cred.get('name') and cred['name'].strip()]
+            
+            if not available_credentials:
+                print("No biometric credentials with friendly names found.")
+                print("Use 'biometric register' to create a new credential with a friendly name.")
+                return
+                
+            print(f"Found {len(available_credentials)} biometric credential(s) with friendly names")
 
             selected_index = self._interactive_credential_selection(available_credentials)
 
@@ -65,12 +71,13 @@ class BiometricUpdateNameCommand(BiometricCommand):
         print("-" * 50)
         
         for i, credential in enumerate(available_credentials, 1):
-            created_date = time.strftime('%Y-%m-%d', time.localtime(credential['created'] / 1000))
-            last_used = time.strftime('%Y-%m-%d', time.localtime(credential['last_used'] / 1000)) if credential['last_used'] else 'Never'
+            created_date = self._format_timestamp(credential.get('created'))
+            last_used = self._format_timestamp(credential.get('last_used'))
             
             print(f"{i:2}. {credential['name']}")
             print(f"    ID: {credential['id']}")
-            print(f"    Created: {created_date} | Last Used: {last_used}")
+            print(f"    Created: {created_date}")
+            print(f"    Last Used: {last_used}")
             print()
         
         while True:

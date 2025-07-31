@@ -72,7 +72,7 @@ You'll be prompted to:
 Example with custom settings:
 
 ```bash
-biometric register --name "My MacBook Touch ID"
+biometric register --name "My MacBook"
 ```
 
 #### 2. Device Registration (Mandatory)
@@ -121,17 +121,17 @@ biometric register [options]
 biometric register
 
 # Registration with custom name
-biometric register --name "Work Laptop Touch ID"
+biometric register --name "Work Laptop"
 ```
 
 **Sample Output:**
 
 ```
-Adding biometric authentication method: My MacBook Touch ID
+Adding biometric authentication method: My MacBook
 Please complete biometric authentication...
 Biometric authentication completed successfully!
 
-Success! Biometric authentication "Touch ID - MacBook" has been registered.
+Success! Biometric authentication "Commander CLI (MacBook)" has been registered.
 
 Please register your device using the "this-device register" command to set biometric authentication as your default login method.
 ```
@@ -149,15 +149,20 @@ biometric list
 ```
 Registered Biometric Authentication Methods:
 ----------------------------------------------------------------------
-Name: Touch ID - MacBook
+Name: Commander CLI (MacBook)
 ID: 12345
-Created: 1703123456789
-Last Used: 1703234567890
+Created: December 20, 2023
+Last Used: Today
 ----------------------------------------------------------------------
-Name: Windows Hello - Desktop
+Name: iCloud Keychain
 ID: 67890
-Created: 1703123456789
-Last Used: 1703234567890
+Created: December 18, 2023
+Last Used: July 10, 2025
+----------------------------------------------------------------------
+Name: Chrome on Mac
+ID: 54321
+Created: November 15, 2023
+Last Used: Never
 ----------------------------------------------------------------------
 ```
 
@@ -230,30 +235,32 @@ This command provides an interactive interface to:
 **Sample Interaction:**
 
 ```
-Found 2 biometric credential(s)
+Found 2 biometric credential(s) with friendly names
 
 Available Biometric Credentials:
 --------------------------------------------------
- 1. Touch ID - MacBook
+ 1. Commander CLI (MacBook)
     ID: 12345
-    Created: 2024-01-15 | Last Used: 2024-01-20
+    Created: January 15, 2024
+    Last Used: Today
 
- 2. Windows Hello - Desktop  
+ 2. Commander CLI (Desktop)  
     ID: 67890
-    Created: 2024-01-10 | Last Used: 2024-01-18
+    Created: January 10, 2024
+    Last Used: January 18, 2024
 
 Select credential number (1-2): 1
-Selected: Touch ID - MacBook
+Selected: Commander CLI (MacBook)
 
-Current Name: Touch ID - MacBook
+Current Name: Commander CLI (MacBook)
 Enter a new friendly name (max 32 characters):
-New name: Personal MacBook Touch ID
+New name: Personal MacBook
 
 Update Summary:
 --------------------
 ID: 12345
-Current Name:  Touch ID - MacBook
-New Name:      Personal MacBook Touch ID
+Current Name:  Commander CLI (MacBook)
+New Name:      Personal MacBook
 
 Proceed with update? (y/n): y
 
@@ -261,8 +268,8 @@ Passkey Update Results:
 ==============================
 Status: Success
 ID: 12345
-Old Name: Touch ID - MacBook
-New Name: Personal MacBook Touch ID
+Old Name: Commander CLI (MacBook)
+New Name: Personal MacBook
 Message: Passkey friendly name was successfully updated
 ==============================
 ```

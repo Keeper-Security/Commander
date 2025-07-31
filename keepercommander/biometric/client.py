@@ -207,7 +207,8 @@ class BiometricClient:
                 'name': passkey.friendlyName,
                 'created': passkey.createdAtMillis,
                 'last_used': passkey.lastUsedMillis,
-                'credential_id': passkey.credentialId
+                'credential_id': passkey.credentialId,
+                'aaguid': getattr(passkey, 'AAGUID', None)
             } for passkey in rs.passkeyInfo]
 
         except Exception as e:
