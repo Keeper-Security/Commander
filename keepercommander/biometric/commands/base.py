@@ -10,6 +10,7 @@
 #
 
 import platform
+from datetime import datetime, date
 
 from ...commands.base import Command
 from ...error import CommandError
@@ -18,7 +19,7 @@ from ..platforms.detector import BiometricDetector
 from ..utils.constants import (
     FIDO2_AVAILABLE, 
     ERROR_MESSAGES, 
-    CREDENTIAL_NAME_TEMPLATES,
+    CREDENTIAL_NAME_TEMPLATE,
 )
 from ..utils.error_handler import BiometricErrorHandler
 
@@ -33,11 +34,31 @@ class BiometricCommand(Command):
 
     def _get_default_credential_name(self) -> str:
         """Generate default credential name"""
-        system = platform.system()
         hostname = platform.node() or 'Unknown'
         
-        template = CREDENTIAL_NAME_TEMPLATES.get(system, CREDENTIAL_NAME_TEMPLATES['default'])
-        return template.format(hostname=hostname)[:31]
+        prefix = "Commander CLI ("
+        suffix = ")"
+        max_hostname_length = 31 - len(prefix) - len(suffix)
+        
+        if len(hostname) > max_hostname_length:
+            hostname = hostname[:max_hostname_length]
+            
+        return CREDENTIAL_NAME_TEMPLATE.format(hostname=hostname)
+
+    def _format_timestamp(self, timestamp_ms: int) -> str:
+        """Format timestamp for display with friendly date format"""
+        if not timestamp_ms:
+            return 'Never'
+        
+        timestamp_s = timestamp_ms / 1000
+        dt = datetime.fromtimestamp(timestamp_s)
+        today = date.today()
+        
+        if dt.date() == today:
+            return 'Today'
+        
+        # Format as "Month Day, Year" (e.g., "July 10, 2025")
+        return dt.strftime('%B %d, %Y')
 
     def _check_platform_support(self, force: bool = False):
         """Check if platform supports biometric authentication"""

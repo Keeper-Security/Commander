@@ -110,12 +110,8 @@ SUCCESS_MESSAGES = {
     'credential_disabled': 'Passkey was successfully disabled and no longer available for login'
 }
 
-# Default credential name templates
-CREDENTIAL_NAME_TEMPLATES = {
-    PLATFORM_WINDOWS: "Windows Hello - {hostname}",
-    PLATFORM_DARWIN: "Touch ID - {hostname}",
-    'default': "Biometric - {hostname}"
-}
+# Default credential name template
+CREDENTIAL_NAME_TEMPLATE = "Commander CLI ({hostname})"
 
 # Common authentication reasons
 AUTH_REASONS = {
