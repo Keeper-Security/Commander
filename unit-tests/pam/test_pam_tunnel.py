@@ -14,7 +14,7 @@ if sys.version_info >= (3, 8):
     from cryptography.hazmat.primitives import serialization, hashes
     from cryptography.hazmat.primitives.asymmetric import ec
 
-    from keepercommander.commands.tunnel.port_forward.endpoint import (generate_random_bytes, find_open_port)
+    from keepercommander.commands.tunnel.port_forward.tunnel_helpers import (generate_random_bytes, find_open_port)
 
     def generate_self_signed_cert(private_key):
         # Generate a self-signed certificate

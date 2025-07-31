@@ -146,6 +146,9 @@ def register_enterprise_commands(commands, aliases, command_info):
     from . import scim
     scim.register_commands(commands)
     scim.register_command_info(aliases, command_info)
+    from . import enterprise_api_keys
+    enterprise_api_keys.register_commands(commands)
+    enterprise_api_keys.register_command_info(aliases, command_info)
     from .msp import switch_to_msp_parser, SwitchToMspCommand
     commands[switch_to_msp_parser.prog] = SwitchToMspCommand()
     command_info[switch_to_msp_parser.prog] = switch_to_msp_parser.description

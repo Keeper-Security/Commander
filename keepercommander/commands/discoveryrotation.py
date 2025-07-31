@@ -9,26 +9,18 @@
 # Contact: sm@keepersecurity.com
 #
 import argparse
-import asyncio
 import fnmatch
 import json
 import logging
 import os.path
 import re
-import queue
-import sys
-import threading
 import time
 from datetime import datetime
 from typing import Dict, Optional, Any, Set, List
 
 
 import requests
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from keeper_secrets_manager_core.utils import url_safe_str_to_bytes, bytes_to_base64, base64_to_bytes
+from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
 from .base import (Command, GroupCommand, user_choice, dump_report_data, report_output_parser, field_to_title,
                    FolderMixin, RecordMixin, register_pam_legacy_commands)
@@ -52,16 +44,14 @@ from .pam.router_helper import router_send_action_to_gateway, print_router_respo
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, \
     get_router_url
 from .record_edit import RecordEditMixin
-from .tunnel.port_forward.endpoint import WebRTCConnection, TunnelEntrance, READ_TIMEOUT, \
-    find_open_port, CloseConnectionReasons, SOCKS5Server, TunnelDAG, get_config_uid, MAIN_NONCE_LENGTH, \
-    SYMMETRIC_KEY_LENGTH, get_keeper_tokens
+from .tunnel.port_forward.TunnelGraph import TunnelDAG
+from .tunnel.port_forward.tunnel_helpers import get_config_uid, get_keeper_tokens
 from .. import api, utils, vault_extensions, crypto, vault, record_management, attachment, record_facades
 from ..display import bcolors
 from ..error import CommandError, KeeperApiError
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..proto import pam_pb2, router_pb2, record_pb2
-from ..subfolder import find_folders, find_parent_top_folder, \
-    try_resolve_path, BaseFolderNode
+from ..subfolder import find_parent_top_folder, try_resolve_path, BaseFolderNode
 from ..vault import TypedField
 from ..discovery_common.record_link import RecordLink
 from .discover.job_start import PAMGatewayActionDiscoverJobStartCommand
@@ -87,6 +77,7 @@ from .pam_saas.user import PAMActionSaasUserCommand
 from .pam_saas.remove import PAMActionSaasRemoveCommand
 from .pam_saas.config import PAMActionSaasConfigCommand
 from .pam_saas.update import PAMActionSaasUpdateCommand
+from .tunnel_and_connections import PAMTunnelCommand, PAMConnectionCommand, PAMSplitCommand
 
 
 # These characters are based on the Vault
@@ -126,28 +117,6 @@ class PAMGatewayCommand(GroupCommand):
         # self.register_command('connect', PAMConnect(), 'Connect')
         # self.register_command('disconnect', PAMDisconnect(), 'Disconnect')
         self.default_verb = 'list'
-
-
-class PAMTunnelCommand(GroupCommand):
-
-    def __init__(self):
-        super(PAMTunnelCommand, self).__init__()
-        self.register_command('start', PAMTunnelStartCommand(), 'Start Tunnel', 's')
-        self.register_command('list', PAMTunnelListCommand(), 'List all Tunnels', 'l')
-        self.register_command('stop', PAMTunnelStopCommand(), 'Stop Tunnel to the server', 'x')
-        self.register_command('tail', PAMTunnelTailCommand(), 'View Tunnel Log', 't')
-        self.register_command('edit', PAMTunnelEditCommand(), 'Edit Tunnel settings', 'e')
-        self.default_verb = 'list'
-
-
-class PAMConnectionCommand(GroupCommand):
-
-    def __init__(self):
-        super(PAMConnectionCommand, self).__init__()
-        # self.register_command('start', PAMConnectionStartCommand(), 'Start Connection', 's')
-        # self.register_command('stop', PAMConnectionStopCommand(), 'Stop Connection', 'x')
-        self.register_command('edit', PAMConnectionEditCommand(), 'Edit Connection settings', 'e')
-        self.default_verb = 'edit'
 
 
 class PAMConfigurationsCommand(GroupCommand):
@@ -516,7 +485,7 @@ class PAMCreateRecordRotationCommand(Command):
             _rotation_enabled = True if kwargs.get('enable') else False if kwargs.get('disable') else None
 
             if _rotation_enabled is not None:
-                _dag.set_resource_allowed(target_record, rotation=_rotation_enabled,
+                _dag.set_resource_allowed(target_record.record_uid, rotation=_rotation_enabled,
                                                     allowed_settings_name="rotation")
 
             if resource_dag is not None and resource_dag.linking_dag.has_graph:
@@ -524,7 +493,7 @@ class PAMCreateRecordRotationCommand(Command):
                 resource_dag.remove_from_dag(target_record.record_uid)
 
             if not silent:
-                _dag.print_tunneling_config(target_record .record_uid, config_uid=target_config_uid)
+                _dag.print_tunneling_config(target_record.record_uid, config_uid=target_config_uid)
 
         def config_iam_aad_user(_dag, target_record, target_iam_aad_config_uid):
             if _dag and not _dag.linking_dag.has_graph:
@@ -664,7 +633,6 @@ class PAMCreateRecordRotationCommand(Command):
             r_requests.append(rq)
 
         def config_user(_dag, target_record, target_resource_uid, target_config_uid=None, silent=None):
-
             # NOOP rotation
             noop_rotation = str(kwargs.get('noop', False) or False).upper() == 'TRUE'
             if target_record and not noop_rotation:  # check from record data
@@ -881,9 +849,9 @@ class PAMCreateRecordRotationCommand(Command):
                     raise CommandError('', f'Record uid {iam_aad_config_uid} is not a PAM Configuration record.')
 
                 if resource_uid and iam_aad_config_uid:
-                    raise CommandError('', f'Cannot use both --resource and --iam-aad-config_uid at once.'
-                                           f' --resource is used to configure users found on a resource.'
-                                           f' --iam-aad-config-uid is used to configure AWS IAM or Azure AD users')
+                    raise CommandError('', 'Cannot use both --resource and --iam-aad-config_uid at once.'
+                                           ' --resource is used to configure users found on a resource.'
+                                           ' --iam-aad-config-uid is used to configure AWS IAM or Azure AD users')
 
                 if iam_aad_config_uid:
                     config_iam_aad_user(tmp_dag, _record, iam_aad_config_uid)
@@ -2385,7 +2353,6 @@ class PAMGatewayActionRotateCommand(Command):
             resource_uid = tmp_dag.get_resource_uid(record_uid)
             if not resource_uid:
                 # NOOP records don't need resource_uid
-
                 is_noop = False
                 pam_config = vault.KeeperRecord.load(params, config_uid)
 
@@ -2649,7 +2616,6 @@ class PAMCreateGatewayCommand(Command):
             print('-----------------------------------------------')
             print(bcolors.OKGREEN + one_time_token + bcolors.ENDC)
             print('-----------------------------------------------')
-
 
 # TUNNELING
 class PAMTunnelListCommand(Command):
