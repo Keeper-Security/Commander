@@ -12,6 +12,7 @@
 import argparse
 
 from .base import BiometricCommand
+from ..utils.aaguid import get_provider_name_from_aaguid
 
 
 class BiometricListCommand(BiometricCommand):
@@ -38,8 +39,18 @@ class BiometricListCommand(BiometricCommand):
             print("\nRegistered Biometric Authentication Methods:")
             print("-" * 70)
             for passkey in passkeys:
-                print(f"Name: {passkey['name']}")
+                created_date = self._format_timestamp(passkey.get('created'))
+                last_used_date = self._format_timestamp(passkey.get('last_used'))
+                
+                display_name = passkey['name']
+                # If name is empty, use provider name from AAGUID
+                if not display_name:
+                    aaguid = passkey.get('aaguid')
+                    provider_name = get_provider_name_from_aaguid(aaguid)
+                    display_name = provider_name
+                
+                print(f"Name: {display_name}")
                 print(f"ID: {passkey['id']}")
-                print(f"Created: {passkey['created']}")
-                print(f"Last Used: {passkey['last_used']}")
+                print(f"Created: {created_date}")
+                print(f"Last Used: {last_used_date}")
                 print("-" * 70) 
