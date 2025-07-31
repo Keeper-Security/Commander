@@ -33,10 +33,11 @@ def get_router_url(params: KeeperParams):
         str_base_server = base_server
         if isinstance(base_server, bytes):
             base_server = base_server.decode('utf-8')
-        if base_server.lower().startswith('govcloud.'):
-            base_server = base_server[len('govcloud.'):]
-
-        krouter_server_url = 'https://connect.' + base_server  # https://connect.dev.keepersecurity.com
+        
+        # In GovCloud environments, the router service is not under the govcloud subdomain
+        krouter_server_url = 'https://connect.' + base_server
+        if '.govcloud.' in krouter_server_url:
+            krouter_server_url = krouter_server_url.replace('.govcloud.', '.')
 
     return krouter_server_url
 
