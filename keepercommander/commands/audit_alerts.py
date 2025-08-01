@@ -36,7 +36,15 @@ alert_view_parser = argparse.ArgumentParser(prog='audit-alert view', parents=[al
 alert_history_parser = argparse.ArgumentParser(
     prog='audit-alert history', parents=[report_output_parser, alert_target_parser])
 alert_reset_counts_parser = argparse.ArgumentParser(prog='audit-alert reset-counts', parents=[alert_target_parser])
-alert_delete_parser = argparse.ArgumentParser(prog='audit-alert remove', parents=[alert_target_parser])
+alert_delete_parser = argparse.ArgumentParser(prog='audit-alert remove')
+alert_delete_parser.add_argument('target', metavar='ALERT', nargs='?', help='Alert ID or Name.')
+alert_delete_parser.add_argument('--all', dest='delete_all', action='store_true', help='Delete all alerts')
+alert_delete_parser.add_argument('--from', dest='from_id', metavar='ALERT ID', type=int,
+                                help='Starting alert ID for range deletion')
+alert_delete_parser.add_argument('--to', dest='to_id', metavar='ALERT ID', type=int,
+                                help='Ending alert ID for range deletion')
+alert_delete_parser.add_argument('--force', dest='force', action='store_true', 
+                                help='Force deletion without confirmation prompt')
 
 alert_recipient_edit_options = argparse.ArgumentParser(add_help=False)
 alert_recipient_edit_options.add_argument(
@@ -396,17 +404,121 @@ class AuditAlertDelete(EnterpriseCommand, AuditSettingMixin):
         return alert_delete_parser
 
     def execute(self, params, **kwargs):
-        alert = AuditSettingMixin.get_alert_configuration(params, kwargs.get('target'))
+        target = kwargs.get('target')
+        delete_all = kwargs.get('delete_all')
+        from_id = kwargs.get('from_id')
+        to_id = kwargs.get('to_id')
+        
+        # Load settings to get all alerts
+        settings = self.load_settings(params)
+        if not settings:
+            logging.info('No alerts found')
+            return
+        alert_filter = settings.get('AuditAlertFilter')
+        if not isinstance(alert_filter, list) or len(alert_filter) == 0:
+            logging.info('No alerts found')
+            return
 
-        rq = {
-            'command': 'delete_enterprise_setting',
-            'type': 'AuditAlertFilter',
-            'id': alert['id'],
-        }
-        api.communicate(params, rq)
+        # Determine which deletion method to use and get alerts to delete
+        if from_id is not None or to_id is not None:
+            alerts_to_delete = self._delete_by_range(params, from_id, to_id, alert_filter)
+        elif delete_all:
+            alerts_to_delete = self._delete_all(params, alert_filter)
+        elif target:
+            alerts_to_delete = self._delete_single(params, target)
+        else:
+            raise CommandError('alert delete', 'Either target, --all, or --from/--to parameters are required.')
+
+        # Confirm deletion unless --force is used
+        force = kwargs.get('force', False)
+        if not force and not self._confirm_deletion(alerts_to_delete):
+            logging.info('Deletion cancelled by user.')
+            return
+
+        # Execute the deletion
+        deleted_count = self._execute_deletion(params, alerts_to_delete)
+        
         self.invalidate_alerts()
-        command = AuditAlertList()
-        command.execute(params, reload=True)
+        
+        if deleted_count > 0:
+            # Show remaining alerts
+            command = AuditAlertList()
+            command.execute(params, reload=True)
+        else:
+            logging.warning('No alerts were deleted.')
+
+    def _delete_by_range(self, params, from_id, to_id, alert_filter):
+        """Handle range deletion with --from and --to parameters."""
+        if from_id is None or to_id is None:
+            raise CommandError('alert delete', 'Both --from and --to parameters are required for range deletion.')
+        
+        # Validation: both values should not be zero or negative
+        if from_id <= 0 or to_id <= 0:
+            raise CommandError('alert delete', 'Alert IDs must be positive integers. Please specify valid alert IDs.')
+        
+        # Validation: from value should be less than to value
+        if from_id >= to_id:
+            raise CommandError('alert delete', f'Invalid range: --from ({from_id}) must be less than --to ({to_id}).')
+        
+        # Find alerts in range
+        alerts_to_delete = []
+        for alert in alert_filter:
+            alert_id = alert.get('id')
+            if isinstance(alert_id, int) and from_id <= alert_id <= to_id:
+                alerts_to_delete.append(alert)
+        
+        if not alerts_to_delete:
+            raise CommandError('alert delete', f'No alerts found in range {from_id}-{to_id}')
+        
+        return alerts_to_delete
+
+    def _delete_all(self, params, alert_filter):
+        """Handle delete all with --all flag."""
+        return alert_filter
+
+    def _delete_single(self, params, target):
+        """Handle single target deletion."""
+        alert = AuditSettingMixin.get_alert_configuration(params, target)
+        return [alert]
+
+    def _confirm_deletion(self, alerts_to_delete):
+        """Prompt user for confirmation before deleting alerts."""
+        if not alerts_to_delete:
+            return False
+        
+        print(f"\nThe following {len(alerts_to_delete)} alert(s) will be deleted:")
+        print("-" * 60)
+        for alert in alerts_to_delete:
+            alert_id = alert.get('id', 'N/A')
+            alert_name = alert.get('name', 'N/A')
+            print(f"  ID: {alert_id} | Name: {alert_name}")
+        print("-" * 60)
+        
+        try:
+            response = input(f"Are you sure you want to delete {len(alerts_to_delete)} alert(s)? (y/n): ").strip().lower()
+            return response in ('y', 'yes')
+        except (KeyboardInterrupt, EOFError):
+            print("\nOperation cancelled.")
+            return False
+
+    def _execute_deletion(self, params, alerts_to_delete):
+        """Execute the actual deletion of alerts and return count of successfully deleted alerts."""
+        deleted_count = 0
+        for alert in alerts_to_delete:
+            alert_id = alert.get('id')
+            alert_name = alert.get('name', f'ID {alert_id}')
+            try:
+                rq = {
+                    'command': 'delete_enterprise_setting',
+                    'type': 'AuditAlertFilter',
+                    'id': alert_id,
+                }
+                api.communicate(params, rq)
+                deleted_count += 1
+            except Exception as e:
+                logging.error(f'Failed to delete alert: {alert_name} (ID: {alert_id}): {str(e)}')
+        
+        return deleted_count
 
 
 class AuditAlertView(EnterpriseCommand, AuditSettingMixin):
@@ -779,7 +891,7 @@ class AuditAlerts(GroupCommand):
         self.register_command('list', AuditAlertList(), 'Display alert list', 'l')
         self.register_command('view', AuditAlertView(), 'View alert configuration', 'v')
         self.register_command('history', AuditAlertHistory(), 'View alert history', 'h')
-        self.register_command('delete', AuditAlertDelete(), 'Delete audit alert', 'd')
+        self.register_command('delete', AuditAlertDelete(), 'Delete audit alert(s) - single, range, or all', 'd')
         self.register_command('add', AuditAlertAdd(), 'Add audit alert', 'a')
         self.register_command('edit', AuditAlertEdit(), 'Edit audit alert', 'e')
         self.register_command('reset-counts', AuditAlertResetCount(), 'Reset alert counts')
