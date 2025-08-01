@@ -228,6 +228,30 @@ class TunnelDAG:
             config_vertex = self.linking_dag.add_vertex(uid=self.record.record_uid)
         self.link_user(user_uid, config_vertex, belongs_to=True, is_iam_user=True)
 
+    def unlink_user_from_resource(self, user_uid, resource_uid) -> bool:
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        if resource_vertex is None or not self.resource_belongs_to_config(resource_uid):
+            print(f"{bcolors.FAIL}Resource {resource_uid} does not belong to the configuration{bcolors.ENDC}")
+            return False
+
+        user_vertex = self.linking_dag.get_vertex(user_uid)
+        if user_vertex is None or user_vertex.vertex_type != RefType.PAM_USER:
+            return False
+
+        if resource_vertex.has(user_vertex, EdgeType.ACL):
+            acl_edge = user_vertex.get_edge(resource_vertex, EdgeType.ACL)
+            edge_content = acl_edge.content_as_dict or {}
+            link_keys = ('belongs_to', 'is_admin')  # "is_iam_user"
+            dirty = any(key in link_keys for key in edge_content)
+            if dirty:
+                for link_key in link_keys:
+                    edge_content.pop(link_key, None)
+                user_vertex.belongs_to(resource_vertex, EdgeType.ACL, content=edge_content)
+                self.linking_dag.save()
+                return True
+
+        return False
+
     def link_user_to_resource(self, user_uid, resource_uid, is_admin=None, belongs_to=None):
         resource_vertex = self.linking_dag.get_vertex(resource_uid)
         if resource_vertex is None or not self.resource_belongs_to_config(resource_uid):
@@ -256,7 +280,7 @@ class TunnelDAG:
 
         if source_vertex.has(user_vertex, EdgeType.ACL):
             acl_edge = user_vertex.get_edge(source_vertex, EdgeType.ACL)
-            existing_content = acl_edge.content_as_dict
+            existing_content = acl_edge.content_as_dict or {}
             for key in existing_content:
                 if key not in content:
                     content[key] = existing_content[key]

@@ -514,10 +514,9 @@ class PAMCreateRecordRotationCommand(Command):
                         f'Now moving it to {target_iam_aad_config_uid} and it will no longer be rotated on {old_resource_uid}.'
                         f'{bcolors.ENDC}')
                     if old_resource_uid == _dag.record.record_uid:
-                        _dag.unlink_user_from_resource(target_record.record_uid)
+                        _dag.unlink_user_from_resource(target_record.record_uid, old_resource_uid)
                     _dag.link_user_to_resource(target_record.record_uid, old_resource_uid, belongs_to=False)
                 _dag.link_user_to_config(target_record.record_uid)
-
 
             current_record_rotation = params.record_rotation_cache.get(target_record.record_uid)
 
