@@ -50,7 +50,6 @@ class BiometricListCommand(BiometricCommand):
                     display_name = provider_name
                 
                 print(f"Name: {display_name}")
-                print(f"ID: {passkey['id']}")
                 print(f"Created: {created_date}")
                 print(f"Last Used: {last_used_date}")
                 print("-" * 70) 
