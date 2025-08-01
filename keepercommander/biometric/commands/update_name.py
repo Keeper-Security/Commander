@@ -75,7 +75,6 @@ class BiometricUpdateNameCommand(BiometricCommand):
             last_used = self._format_timestamp(credential.get('last_used'))
             
             print(f"{i:2}. {credential['name']}")
-            print(f"    ID: {credential['id']}")
             print(f"    Created: {created_date}")
             print(f"    Last Used: {last_used}")
             print()
@@ -128,7 +127,6 @@ class BiometricUpdateNameCommand(BiometricCommand):
         """Confirm the update operation"""
         print("\nUpdate Summary:")
         print("-" * 20)
-        print(f"ID: {credential['id']}")
         print(f"Current Name:  {credential['name']}")
         print(f"New Name:      {new_name}")
         print()
@@ -143,7 +141,6 @@ class BiometricUpdateNameCommand(BiometricCommand):
         status_code = result['status']
         status_text = get_status_message(status_code)
         print(f"Status: {status_text}")
-        print(f"ID: {credential['id']}")
         print(f"Old Name: {credential['name']}")
         print(f"New Name: {new_name}")
         print(f"Message: {result['message']}")

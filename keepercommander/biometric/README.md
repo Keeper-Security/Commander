@@ -150,17 +150,14 @@ biometric list
 Registered Biometric Authentication Methods:
 ----------------------------------------------------------------------
 Name: Commander CLI (MacBook)
-ID: 12345
 Created: December 20, 2023
 Last Used: Today
 ----------------------------------------------------------------------
 Name: iCloud Keychain
-ID: 67890
 Created: December 18, 2023
 Last Used: July 10, 2025
 ----------------------------------------------------------------------
 Name: Chrome on Mac
-ID: 54321
 Created: November 15, 2023
 Last Used: Never
 ----------------------------------------------------------------------
@@ -240,12 +237,10 @@ Found 2 biometric credential(s) with friendly names
 Available Biometric Credentials:
 --------------------------------------------------
  1. Commander CLI (MacBook)
-    ID: 12345
     Created: January 15, 2024
     Last Used: Today
 
  2. Commander CLI (Desktop)  
-    ID: 67890
     Created: January 10, 2024
     Last Used: January 18, 2024
 
@@ -258,7 +253,6 @@ New name: Personal MacBook
 
 Update Summary:
 --------------------
-ID: 12345
 Current Name:  Commander CLI (MacBook)
 New Name:      Personal MacBook
 
@@ -267,7 +261,6 @@ Proceed with update? (y/n): y
 Passkey Update Results:
 ==============================
 Status: Success
-ID: 12345
 Old Name: Commander CLI (MacBook)
 New Name: Personal MacBook
 Message: Passkey friendly name was successfully updated
