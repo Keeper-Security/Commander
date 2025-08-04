@@ -25,6 +25,11 @@ from ..utils.constants import (
 )
 from ..utils.error_handler import BiometricErrorHandler
 from .base import BasePlatformHandler
+import asyncio
+from winrt.windows.security.credentials.ui import (
+    UserConsentVerifier,
+    UserConsentVerifierAvailability,
+)
 
 
 class WindowsStorageHandler(StorageHandler):
@@ -146,37 +151,51 @@ class WindowsHandler(BasePlatformHandler):
                 pass
             
             return None
-
-    def _check_biometrics(self) -> bool:
-        """Check if biometrics (face/fingerprint) are enrolled"""
-        sid = self._get_current_user_sid()
-        if not sid:
-            return False
         
-        reg_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\WinBio\AccountInfo\{}".format(sid)
+
+    async def _check_biometrics(self) -> bool:
+        """Check if biometrics (face/fingerprint) are enrolled using Windows Runtime API"""
         try:
-            import winreg
-            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path) as key:
-                value, regtype = winreg.QueryValueEx(key, "EnrolledFactors")
-                # 2 = Face, 8 = Fingerprint, 10 = Face and Fingerprint
-                return value in [2, 8, 10]
-        except (FileNotFoundError, ImportError):
+            availability = await UserConsentVerifier.check_availability_async()
+
+            if availability == UserConsentVerifierAvailability.AVAILABLE:
+                return True
+            else:
+                return False
+        except Exception as e:
+            logging.debug("Failed to check biometrics availability: %s", str(e))
             return False
 
-    def _check_pin_enrollment(self) -> bool:
-        """Check if PIN is enrolled"""
-        sid = self._get_current_user_sid()
-        if not sid:
-            return False
+    # def _check_biometrics(self) -> bool:
+    #     """Check if biometrics (face/fingerprint) are enrolled"""
+    #     sid = self._get_current_user_sid()
+    #     if not sid:
+    #         return False
         
-        reg_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{{D6886603-9D2F-4EB2-B667-1971041FA96B}}\{}".format(sid)
-        try:
-            import winreg
-            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path) as key:
-                value, regtype = winreg.QueryValueEx(key, "LogonCredsAvailable")
-                return value == 1
-        except (FileNotFoundError, ImportError):
-            return False
+    #     reg_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\WinBio\AccountInfo\{}".format(sid)
+    #     try:
+    #         import winreg
+    #         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path) as key:
+    #             value, regtype = winreg.QueryValueEx(key, "EnrolledFactors")
+    #             # 2 = Face, 8 = Fingerprint, 10 = Face and Fingerprint
+    #             return value in [2, 8, 10]
+    #     except (FileNotFoundError, ImportError):
+    #         return False
+
+    # def _check_pin_enrollment(self) -> bool:
+    #     """Check if PIN is enrolled"""
+    #     sid = self._get_current_user_sid()
+    #     if not sid:
+    #         return False
+        
+    #     reg_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{{D6886603-9D2F-4EB2-B667-1971041FA96B}}\{}".format(sid)
+    #     try:
+    #         import winreg
+    #         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path) as key:
+    #             value, regtype = winreg.QueryValueEx(key, "LogonCredsAvailable")
+    #             return value == 1
+    #     except (FileNotFoundError, ImportError):
+    #         return False
 
     def detect_capabilities(self) -> Tuple[bool, str]:
         """Detect Windows Hello capabilities"""
@@ -184,20 +203,16 @@ class WindowsHandler(BasePlatformHandler):
             return False, "Not running on Windows"
 
         try:
-            has_biometrics = self._check_biometrics()
-            has_pin = self._check_pin_enrollment()
+            # Run the async biometrics check
+            has_biometrics = asyncio.run(self._check_biometrics())
             
-            if has_biometrics or has_pin:
-                features = []
-                if has_biometrics:
-                    features.append("Biometrics")
-                if has_pin:
-                    features.append("PIN")
-                return True, f"Windows Hello available: {', '.join(features)}"
+            if has_biometrics:
+                return True, "Windows Hello available: Biometrics"
             else:
                 return False, ERROR_MESSAGES['windows_hello_not_setup']
 
         except Exception as e:
+            logging.warning("Error detecting Windows Hello: %s", str(e))
             return False, f"Error detecting Windows Hello: {str(e)}"
 
     def create_webauthn_client(self, data_collector):
