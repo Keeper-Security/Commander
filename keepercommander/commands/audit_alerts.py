@@ -123,6 +123,18 @@ alert_edit_options.add_argument(
 alert_add_parser = argparse.ArgumentParser(prog='audit-alert add', parents=[alert_edit_options])
 alert_edit_parser = argparse.ArgumentParser(prog='audit-alert edit', parents=[alert_target_parser, alert_edit_options])
 
+alert_enable_parser = argparse.ArgumentParser(prog='audit-alert enable')
+alert_enable_parser.add_argument('target', metavar='ALERT', nargs='?', help='Alert ID or Name')
+alert_enable_parser.add_argument('--all', dest='enable_all', action='store_true', help='Enable all alerts')
+alert_enable_parser.error = raise_parse_exception
+alert_enable_parser.exit = suppress_exit
+
+alert_disable_parser = argparse.ArgumentParser(prog='audit-alert disable')
+alert_disable_parser.add_argument('target', metavar='ALERT', nargs='?', help='Alert ID or Name')
+alert_disable_parser.add_argument('--all', dest='disable_all', action='store_true', help='Disable all alerts')
+alert_disable_parser.error = raise_parse_exception
+alert_disable_parser.exit = suppress_exit
+
 
 class AuditSettingMixin:
     LAST_USERNAME = ""
@@ -843,6 +855,138 @@ class AuditAlertResetCount(EnterpriseCommand, AuditSettingMixin):
         AuditSettingMixin.invalidate_alerts()
         logging.info('Alert counts reset to zero')
 
+class AuditAlertEnable(EnterpriseCommand, AuditSettingMixin):
+    def get_parser(self):
+        return alert_enable_parser
+
+    def execute(self, params, **kwargs):
+        enable_all = kwargs.get('enable_all', False)
+        target = kwargs.get('target')
+        
+        if enable_all:
+            if target:
+                raise CommandError('Cannot specify both alert target and --all flag')
+            self._enable_all_alerts(params)
+        else:
+            if not target:
+                raise CommandError('Alert target is required unless using --all flag')
+            self._enable_single_alert(params, target, kwargs)
+    
+    def _enable_single_alert(self, params, target, kwargs):
+        alert = AuditSettingMixin.get_alert_configuration(params, target)
+
+        rq = {
+            'command': 'put_enterprise_setting',
+            'type': 'AuditAlertContext',
+            'settings': {
+                'id': alert.get('id'),
+                'disabled': False
+            }
+        }
+        api.communicate(params, rq)
+        AuditSettingMixin.invalidate_alerts()
+        
+        alert_name = alert.get('name') or f"Alert ID {alert.get('id')}"
+        logging.info(f'Alert "{alert_name}" has been enabled')
+        command = AuditAlertView()
+        command.execute(params, target=target)
+    
+    def _enable_all_alerts(self, params):
+        alerts = self.load_settings(params)
+        if not isinstance(alerts, dict):
+            logging.info('No alerts found')
+            return
+        alert_filter = alerts.get('AuditAlertFilter')
+        if not isinstance(alert_filter, list):
+            logging.info('No alerts found')
+            return
+        
+        enabled_count = 0
+        for alert in alert_filter:
+            alert_id = alert.get('id')
+            if alert_id:
+                rq = {
+                    'command': 'put_enterprise_setting',
+                    'type': 'AuditAlertContext',
+                    'settings': {
+                        'id': alert_id,
+                        'disabled': False
+                    }
+                }
+                api.communicate(params, rq)
+                enabled_count += 1
+        
+        AuditSettingMixin.invalidate_alerts()
+        logging.info(f'Enabled {enabled_count} alert(s)')
+        command = AuditAlertList()
+        command.execute(params)
+
+class AuditAlertDisable(EnterpriseCommand, AuditSettingMixin):
+    def get_parser(self):
+        return alert_disable_parser
+
+    def execute(self, params, **kwargs):
+        disable_all = kwargs.get('disable_all', False)
+        target = kwargs.get('target')
+        
+        if disable_all:
+            if target:
+                raise CommandError('Cannot specify both alert target and --all flag')
+            self._disable_all_alerts(params)
+        else:
+            if not target:
+                raise CommandError('Alert target is required unless using --all flag')
+            self._disable_single_alert(params, target, kwargs)
+    
+    def _disable_single_alert(self, params, target, kwargs):
+        alert = AuditSettingMixin.get_alert_configuration(params, target)
+
+        rq = {
+            'command': 'put_enterprise_setting',
+            'type': 'AuditAlertContext',
+            'settings': {
+                'id': alert.get('id'),
+                'disabled': True
+            }
+        }
+        api.communicate(params, rq)
+        AuditSettingMixin.invalidate_alerts()
+        
+        alert_name = alert.get('name') or f"Alert ID {alert.get('id')}"
+        logging.info(f'Alert "{alert_name}" has been disabled')
+        command = AuditAlertView()
+        command.execute(params, target=target)
+    
+    def _disable_all_alerts(self, params):
+        alerts = self.load_settings(params)
+        if not isinstance(alerts, dict):
+            logging.info('No alerts found')
+            return
+        alert_filter = alerts.get('AuditAlertFilter')
+        if not isinstance(alert_filter, list):
+            logging.info('No alerts found')
+            return
+        
+        disabled_count = 0
+        for alert in alert_filter:
+            alert_id = alert.get('id')
+            if alert_id:
+                rq = {
+                    'command': 'put_enterprise_setting',
+                    'type': 'AuditAlertContext',
+                    'settings': {
+                        'id': alert_id,
+                        'disabled': True
+                    }
+                }
+                api.communicate(params, rq)
+                disabled_count += 1
+        
+        AuditSettingMixin.invalidate_alerts()
+        logging.info(f'Disabled {disabled_count} alert(s)')
+        command = AuditAlertList()
+        command.execute(params)
+
 
 class AuditAlertRecipients(EnterpriseCommand, AuditSettingMixin):
     def get_parser(self):
@@ -1086,5 +1230,7 @@ class AuditAlerts(GroupCommand):
         self.register_command('add', AuditAlertAdd(), 'Add audit alert', 'a')
         self.register_command('edit', AuditAlertEdit(), 'Edit audit alert', 'e')
         self.register_command('reset-counts', AuditAlertResetCount(), 'Reset alert counts')
+        self.register_command('enable', AuditAlertEnable(), 'Enable audit alert')
+        self.register_command('disable', AuditAlertDisable(), 'Disable audit alert')
         self.register_command('recipient', AuditAlertRecipients(), 'Modify alert recipients', 'r')
         self.default_verb = 'list'
