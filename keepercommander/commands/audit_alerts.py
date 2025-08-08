@@ -26,6 +26,9 @@ from ..params import KeeperParams
 from ..error import CommandError
 
 
+PUT_ENTERPRISE_SETTING = 'put_enterprise_setting'
+AUDIT_ALERT_CONTEXT = 'AuditAlertContext'
+
 alert_list_parser = argparse.ArgumentParser(prog='audit-alert list', parents=[report_output_parser])
 alert_list_parser.add_argument('--reload', dest='reload', action='store_true', help='reload alert information')
 
@@ -863,21 +866,21 @@ class AuditAlertEnable(EnterpriseCommand, AuditSettingMixin):
         enable_all = kwargs.get('enable_all', False)
         target = kwargs.get('target')
         
-        if enable_all:
-            if target:
-                raise CommandError('Cannot specify both alert target and --all flag')
+        if enable_all and target:
+            raise CommandError('alert enable', 'Cannot specify both alert target and --all flag')
+        elif enable_all:
             self._enable_all_alerts(params)
+        elif not target:
+            raise CommandError('alert enable', 'Alert ID/Name is required unless using --all flag')
         else:
-            if not target:
-                raise CommandError('Alert target is required unless using --all flag')
             self._enable_single_alert(params, target, kwargs)
     
     def _enable_single_alert(self, params, target, kwargs):
         alert = AuditSettingMixin.get_alert_configuration(params, target)
 
         rq = {
-            'command': 'put_enterprise_setting',
-            'type': 'AuditAlertContext',
+            'command': PUT_ENTERPRISE_SETTING,
+            'type': AUDIT_ALERT_CONTEXT,
             'settings': {
                 'id': alert.get('id'),
                 'disabled': False
@@ -901,23 +904,29 @@ class AuditAlertEnable(EnterpriseCommand, AuditSettingMixin):
             logging.info('No alerts found')
             return
         
-        enabled_count = 0
+        requests = []
         for alert in alert_filter:
             alert_id = alert.get('id')
             if alert_id:
                 rq = {
-                    'command': 'put_enterprise_setting',
-                    'type': 'AuditAlertContext',
+                    'command': PUT_ENTERPRISE_SETTING,
+                    'type': AUDIT_ALERT_CONTEXT,
                     'settings': {
                         'id': alert_id,
                         'disabled': False
                     }
                 }
-                api.communicate(params, rq)
-                enabled_count += 1
+                requests.append(rq)
+        
+        if not requests:
+            logging.info('No valid alerts found to enable')
+            return
+        
+        api.execute_batch(params, requests)
+        logging.info(f'Enabled {len(requests)} alert(s)')
+  
         
         AuditSettingMixin.invalidate_alerts()
-        logging.info(f'Enabled {enabled_count} alert(s)')
         command = AuditAlertList()
         command.execute(params)
 
@@ -931,19 +940,19 @@ class AuditAlertDisable(EnterpriseCommand, AuditSettingMixin):
         
         if disable_all:
             if target:
-                raise CommandError('Cannot specify both alert target and --all flag')
+                raise CommandError('alert disable', 'Cannot specify both alert target and --all flag')
             self._disable_all_alerts(params)
         else:
             if not target:
-                raise CommandError('Alert target is required unless using --all flag')
+                raise CommandError('alert disable', 'Alert ID/Name is required unless using --all flag')
             self._disable_single_alert(params, target, kwargs)
     
     def _disable_single_alert(self, params, target, kwargs):
         alert = AuditSettingMixin.get_alert_configuration(params, target)
 
         rq = {
-            'command': 'put_enterprise_setting',
-            'type': 'AuditAlertContext',
+            'command': PUT_ENTERPRISE_SETTING,
+            'type': AUDIT_ALERT_CONTEXT,
             'settings': {
                 'id': alert.get('id'),
                 'disabled': True
@@ -967,23 +976,28 @@ class AuditAlertDisable(EnterpriseCommand, AuditSettingMixin):
             logging.info('No alerts found')
             return
         
-        disabled_count = 0
+        requests = []
         for alert in alert_filter:
             alert_id = alert.get('id')
             if alert_id:
                 rq = {
-                    'command': 'put_enterprise_setting',
-                    'type': 'AuditAlertContext',
+                    'command': PUT_ENTERPRISE_SETTING,
+                    'type': AUDIT_ALERT_CONTEXT,
                     'settings': {
                         'id': alert_id,
                         'disabled': True
                     }
                 }
-                api.communicate(params, rq)
-                disabled_count += 1
+                requests.append(rq)
         
+        if not requests:
+            logging.info('No valid alerts found to enable')
+            return
+        
+        api.execute_batch(params, requests)
+        logging.info(f'Disabled {len(requests)} alert(s)')
+       
         AuditSettingMixin.invalidate_alerts()
-        logging.info(f'Disabled {disabled_count} alert(s)')
         command = AuditAlertList()
         command.execute(params)
 
