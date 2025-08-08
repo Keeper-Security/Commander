@@ -119,7 +119,7 @@ class LoginV3Flow:
                     from keepercommander.biometric.commands.verify import BiometricVerifyCommand
                     auth_helper = BiometricVerifyCommand()
                     logging.info("Attempting biometric authentication...")
-                    print("Press Ctrl+C to skip biometric and use default login method")
+                    logging.info("Press Ctrl+C to skip biometric and use default login method")
                     
                     biometric_result = auth_helper.biometric_authenticate(params, username=params.user)
                     
@@ -138,10 +138,10 @@ class LoginV3Flow:
                     error_message = str(e).lower()
                     
                     if "device_needs_approval" in error_message or "device approval" in error_message:
-                        print(f"\n{bcolors.FAIL}Biometric Login Failed{bcolors.ENDC}")
-                        print(f"{bcolors.WARNING}Device registration required for biometric authentication.{bcolors.ENDC}")
-                        print(f"\nPlease run: {bcolors.BOLD}{bcolors.OKBLUE}this-device register{bcolors.ENDC}")
-                        print("Then try biometric login again.")
+                        logging.error(f"\n{bcolors.FAIL}Biometric Login Failed{bcolors.ENDC}")
+                        logging.warning(f"{bcolors.WARNING}Device registration required for biometric authentication.{bcolors.ENDC}")
+                        logging.warning(f"\nPlease run: {bcolors.BOLD}{bcolors.OKBLUE}this-device register{bcolors.ENDC}")
+                        logging.warning("Then try biometric login again.")
                         
                         fallback_choice = input("\nWould you like to try default login instead? (y/n): ").strip().lower()
                         if fallback_choice in ['y', 'yes']:
