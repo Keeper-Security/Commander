@@ -29,12 +29,26 @@ from keepercommander.subfolder import try_resolve_path
 from keepercommander import crypto, utils, rest_api, api
 
 # Import the websockets library for async WebSocket communication
+# Support both websockets 15.0.1+ (asyncio) and legacy 11.0.3 (sync) versions
 try:
-    import websockets
+    # Try websockets 15.0.1+ asyncio implementation first
+    from websockets.asyncio.client import connect as websockets_connect
+    from websockets.exceptions import ConnectionClosed, InvalidURI, InvalidHandshake
+    WEBSOCKETS_VERSION = "asyncio"
     WEBSOCKETS_AVAILABLE = True
 except ImportError:
-    WEBSOCKETS_AVAILABLE = False
-    print("websockets library not available - falling back to HTTP for ICE candidate exchange", file=sys.stderr)
+    try:
+        # Fallback to websockets 11.0.3 legacy implementation
+        from websockets import connect as websockets_connect
+        from websockets.exceptions import ConnectionClosed, InvalidURI, InvalidHandshake
+        WEBSOCKETS_VERSION = "legacy"
+        WEBSOCKETS_AVAILABLE = True
+    except ImportError:
+        WEBSOCKETS_AVAILABLE = False
+        websockets_connect = None
+        ConnectionClosed = None
+        WEBSOCKETS_VERSION = None
+        print("websockets library not available - install with: pip install websockets", file=sys.stderr)
 
 # Constants
 NONCE_LENGTH = 12
@@ -760,6 +774,65 @@ def resolve_pam_config(params, record_uid, pam_config_option):
 
 
 # Direct WebSocket handler - no stored state
+async def connect_websocket_with_fallback(ws_endpoint, headers, ssl_context, tube_registry, timeout):
+    """
+    Connect to WebSocket with backward compatibility for both websockets 15.0.1+ and 11.0.3
+    Handles parameter name differences between versions
+    """
+    # Base connection parameters that work across versions
+    base_kwargs = {
+        "ping_interval": 20,
+        "ping_timeout": 20,
+        "close_timeout": 30
+    }
+    
+    if WEBSOCKETS_VERSION == "asyncio":
+        # websockets 15.0.1+ uses additional_headers and ssl_context/ssl parameters
+        connect_kwargs = {
+            **base_kwargs,
+            "additional_headers": headers
+        }
+        
+        # Try ssl_context parameter first, fallback to ssl if not supported
+        if ssl_context:
+            try:
+                async with websockets_connect(ws_endpoint, ssl_context=ssl_context, **connect_kwargs) as websocket:
+                    logging.info("WebSocket connection established with ssl_context parameter")
+                    await handle_websocket_messages(websocket, tube_registry, timeout)
+                    return
+            except TypeError as e:
+                if "ssl_context" in str(e):
+                    logging.info("ssl_context parameter not supported, trying with ssl parameter")
+                    async with websockets_connect(ws_endpoint, ssl=ssl_context, **connect_kwargs) as websocket:
+                        logging.info("WebSocket connection established with ssl parameter")
+                        await handle_websocket_messages(websocket, tube_registry, timeout)
+                        return
+                else:
+                    raise
+        else:
+            async with websockets_connect(ws_endpoint, **connect_kwargs) as websocket:
+                logging.info("WebSocket connection established")
+                await handle_websocket_messages(websocket, tube_registry, timeout)
+                
+    elif WEBSOCKETS_VERSION == "legacy":
+        # websockets 11.0.3 uses extra_headers and ssl parameters
+        connect_kwargs = {
+            **base_kwargs,
+            "extra_headers": headers
+        }
+        
+        if ssl_context:
+            async with websockets_connect(ws_endpoint, ssl=ssl_context, **connect_kwargs) as websocket:
+                logging.info("WebSocket connection established (legacy)")
+                await handle_websocket_messages(websocket, tube_registry, timeout)
+        else:
+            async with websockets_connect(ws_endpoint, **connect_kwargs) as websocket:
+                logging.info("WebSocket connection established (legacy)")
+                await handle_websocket_messages(websocket, tube_registry, timeout)
+    else:
+        raise Exception("No compatible websockets version available")
+
+
 async def handle_websocket_responses(params, tube_registry, timeout=60, gateway_uid=None, gateway_cookies=None):
     """
     Direct WebSocket handler that connects, listens for responses, and routes them to Rust.
@@ -797,49 +870,46 @@ async def handle_websocket_responses(params, tube_registry, timeout=60, gateway_
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
     
-    # Connect and handle messages directly
-    async with websockets.connect(
-        ws_endpoint,
-        extra_headers=headers,
-        ssl=ssl_context,
-        ping_interval=20,
-        ping_timeout=20,
-        close_timeout=30
-    ) as websocket:
-        logging.info("WebSocket connection established")
+    # Connect and handle messages with backward compatibility
+    # Handle parameter differences between websockets versions
+    await connect_websocket_with_fallback(ws_endpoint, headers, ssl_context, tube_registry, timeout)
+
+
+async def handle_websocket_messages(websocket, tube_registry, timeout):
+    """Handle WebSocket message processing"""
         
-        # Listen for messages with timeout
-        try:
-            start_time = time.time()
-            while time.time() - start_time < timeout:
-                try:
-                    # Wait for a message with short timeout to allow checking overall timeout
-                    message_text = await asyncio.wait_for(websocket.recv(), timeout=1.0)
-                    logging.debug(f"WebSocket received: {message_text[:200]}...")
-                    
-                    # Parse response - can be an array or single object
-                    response_data = json.loads(message_text)
-                    if isinstance(response_data, list):
-                        # Handle an array of responses
-                        for response_item in response_data:
-                            route_message_to_rust(response_item, tube_registry)
-                    elif isinstance(response_data, dict):
-                        # Handle a single response object
-                        route_message_to_rust(response_data, tube_registry)
-                    else:
-                        logging.warning(f"Unexpected WebSocket message format: {type(response_data)}")
-                
-                except asyncio.TimeoutError:
-                    # No message received within 1 second, continue loop to check overall timeout
-                    continue
-                except websockets.exceptions.ConnectionClosed:
-                    logging.info("WebSocket connection closed")
-                    break
-                    
-        except Exception as e:
-            logging.error(f"Error in WebSocket message handling: {e}")
-        finally:
-            logging.debug("WebSocket handler completed")
+    # Listen for messages with timeout
+    try:
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                # Wait for a message with short timeout to allow checking overall timeout
+                message_text = await asyncio.wait_for(websocket.recv(), timeout=1.0)
+                logging.debug(f"WebSocket received: {message_text[:200]}...")
+
+                # Parse response - can be an array or single object
+                response_data = json.loads(message_text)
+                if isinstance(response_data, list):
+                    # Handle an array of responses
+                    for response_item in response_data:
+                        route_message_to_rust(response_item, tube_registry)
+                elif isinstance(response_data, dict):
+                    # Handle a single response object
+                    route_message_to_rust(response_data, tube_registry)
+                else:
+                    logging.warning(f"Unexpected WebSocket message format: {type(response_data)}")
+
+            except asyncio.TimeoutError:
+                # No message received within 1 second, continue loop to check overall timeout
+                continue
+            except ConnectionClosed:
+                logging.info("WebSocket connection closed")
+                break
+
+    except Exception as e:
+        logging.error(f"Error in WebSocket message handling: {e}")
+    finally:
+        logging.debug("WebSocket handler completed")
 
 
 def route_message_to_rust(response_item, tube_registry):
