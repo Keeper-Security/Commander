@@ -55,37 +55,58 @@ def auth_check(fn):
 def policy_check(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        api_key = request.headers.get('api-key')
-        policy = ConfigReader.read_config('command_list', api_key)
-        command_content = request.json.get("command")
-        if len(command_content) > 4096:
-            return {
-                'status': 'fail',
-                'message': 'Command length exceeded'
-            }, 400
-        command = command_content.split(" ")
-        if not policy or not policy.strip():
-            return {
-                'status': 'fail',
-                'message': 'Not permitted to perform this function'
-            }, 403
-        allowed_commands = split_to_list(policy, ',')
+        # Skip policy check for GET requests entirely
+        if request.method == 'GET':
+            return fn(*args, **kwargs)
+            
+        # Skip if content type is not JSON
+        if not request.content_type or 'application/json' not in request.content_type:
+            return fn(*args, **kwargs)
+            
+        try:
+            # Only access request.json if we're sure it's a JSON request
+            request_data = request.get_json(silent=True)
+            if not request_data:
+                return fn(*args, **kwargs)
+                
+            api_key = request.headers.get('api-key')
+            policy = ConfigReader.read_config('command_list', api_key)
+            command_content = request_data.get("command")
+            
+            if not command_content:
+                return fn(*args, **kwargs)
+                
+            if len(command_content) > 4096:
+                return {
+                    'status': 'fail',
+                    'message': 'Command length exceeded'
+                }, 400
+            command = command_content.split(" ")
+            if not policy or not policy.strip():
+                return {
+                    'status': 'fail',
+                    'message': 'Not permitted to perform this function'
+                }, 403
+            allowed_commands = split_to_list(policy, ',')
 
-        logger.debug(f"Allowed Commands : {allowed_commands}")
-        logger.debug(f"Command : {command[0]}")
-
-        if not any(command[0] == cmd.strip() for cmd in allowed_commands):
-            return {
-                'status': 'fail',
-                'message': 'Not permitted to perform this function'
-            }, 403
-        
-        if Verifycommand.is_append_command(command):
+            logger.debug(f"Allowed Commands : {allowed_commands}")
             logger.debug(f"Command : {command[0]}")
-            return {
-                'status': 'fail',
-                'message': 'Invalid command'
-            }, 400
+
+            if not any(command[0] == cmd.strip() for cmd in allowed_commands):
+                return {
+                    'status': 'fail',
+                    'message': 'Not permitted to perform this function'
+                }, 403
+            
+            if Verifycommand.is_append_command(command):
+                logger.debug(f"Command : {command[0]}")
+                return {
+                    'status': 'fail',
+                    'message': 'Invalid command'
+                }, 400
+                
+        except Exception as e:
+            logger.debug(f"Policy check skipped due to JSON parsing error: {e}")
             
         return fn(*args, **kwargs)
     return wrapper

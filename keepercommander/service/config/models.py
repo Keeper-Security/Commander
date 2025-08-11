@@ -12,6 +12,11 @@
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, List
 
+# Default queue configuration constants
+DEFAULT_QUEUE_MAX_SIZE = 100
+DEFAULT_REQUEST_TIMEOUT = 300  # 5 minutes in seconds
+DEFAULT_RESULT_RETENTION = 3600  # 1 hour in seconds
+
 @dataclass
 class ServiceConfigData:
     """Data structure for service configuration."""
@@ -33,3 +38,7 @@ class ServiceConfigData:
     fileformat: str
     run_mode: str
     records: List[Dict[str, Any]]
+    # Queue system configuration
+    queue_max_size: int = DEFAULT_QUEUE_MAX_SIZE
+    request_timeout: int = DEFAULT_REQUEST_TIMEOUT
+    result_retention: int = DEFAULT_RESULT_RETENTION

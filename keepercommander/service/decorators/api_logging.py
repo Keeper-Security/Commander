@@ -57,8 +57,14 @@ def api_log_handler(fn: Callable) -> Callable:
             else:
                 status_color = "\033[93m"  # Yellow for server errors
             
-            # Sanitize request data to hide passwords
-            sanitized_data = sanitize_password_in_command(request.json)
+            # Sanitize request data to hide passwords (only for JSON requests)
+            sanitized_data = None
+            if request.method == 'POST' and request.content_type and 'application/json' in request.content_type:
+                try:
+                    json_data = request.get_json(silent=True)
+                    sanitized_data = sanitize_password_in_command(json_data)
+                except Exception:
+                    sanitized_data = None
             data_str = f"data={sanitized_data}" if sanitized_data else "no-data"
             
             log_parts = [
@@ -76,8 +82,14 @@ def api_log_handler(fn: Callable) -> Callable:
         except Exception as ex:
             duration = time.time() - start_time
             
-            # Sanitize request data for error logs too
-            sanitized_data = sanitize_password_in_command(request.json)
+            # Sanitize request data for error logs too (only for JSON requests)
+            sanitized_data = None
+            if request.method == 'POST' and request.content_type and 'application/json' in request.content_type:
+                try:
+                    json_data = request.get_json(silent=True)
+                    sanitized_data = sanitize_password_in_command(json_data)
+                except Exception:
+                    sanitized_data = None
             data_str = f"data={sanitized_data}" if sanitized_data else "no-data"
             
             log_parts = [

@@ -21,7 +21,7 @@ from keepercommander.params import KeeperParams
 from .file_handler import ConfigFormatHandler
 from ..decorators.logging import logger, debug_decorator
 from ..util.exceptions import ValidationError
-from .models import ServiceConfigData
+from .models import ServiceConfigData, DEFAULT_QUEUE_MAX_SIZE, DEFAULT_REQUEST_TIMEOUT, DEFAULT_RESULT_RETENTION
 from keepercommander import resources, utils
 from .file_handler import ConfigFormatHandler
 
@@ -101,7 +101,10 @@ class ServiceConfig:
             encryption_private_key="",
             fileformat="yaml",
             run_mode="foreground",
-            records=[]
+            records=[],
+            queue_max_size=DEFAULT_QUEUE_MAX_SIZE,
+            request_timeout=DEFAULT_REQUEST_TIMEOUT,
+            result_retention=DEFAULT_RESULT_RETENTION
         ).__dict__
         return config
 
