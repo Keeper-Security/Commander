@@ -187,6 +187,10 @@ class ServiceConfig:
             keeper_dir.mkdir(parents=True, exist_ok=True)
 
             cert_paths = self.get_cert_paths(config_data)
+            
+            # Only proceed if there are certificates to save
+            if not cert_paths:
+                return keeper_dir
 
             updated_names = {}
             saved_files = []
@@ -202,7 +206,9 @@ class ServiceConfig:
 
             self.update_service_config(updated_names)
 
-            logging.info(f"Certificates saved in {keeper_dir}: {', '.join(str(f.name) for f in saved_files)}")
+            # Only show the message if certificates were actually saved
+            if saved_files:
+                logging.info(f"Certificates saved in: {', '.join(str(f.name) for f in saved_files)}")
             return keeper_dir
 
         except Exception as e:

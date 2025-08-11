@@ -110,7 +110,10 @@ class CreateService(Command):
         else:
             format = 'create'
         self.service_config.save_config(config_data, format)
-        self.service_config.save_cert_data(config_data, 'create')
+        
+        # Only save certificate data if TLS is enabled
+        if config_data.get("tls_certificate") == "y":
+            self.service_config.save_cert_data(config_data, 'create')
         
     def _upload_and_start_service(self, params: KeeperParams) -> None:
         self.service_config.update_or_add_record(params)
