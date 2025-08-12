@@ -1076,10 +1076,6 @@ def start_websocket_listener(params, tube_registry, timeout=60, gateway_uid=None
     global _ACTIVE_WEBSOCKET_THREAD
     
     with _WEBSOCKET_THREAD_LOCK:
-        # If there's already an active WebSocket thread, reuse it
-        if _ACTIVE_WEBSOCKET_THREAD and _ACTIVE_WEBSOCKET_THREAD.is_alive():
-            logging.debug("Reusing existing WebSocket listener thread")
-            return _ACTIVE_WEBSOCKET_THREAD
         
         # Start a new WebSocket listener thread
         def run_websocket():
@@ -1458,6 +1454,33 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
         # Register the encryption key in the global conversation store
         register_conversation_key(conversation_id, symmetric_key)
 
+        # Get session cookies for router affinity BEFORE creating tube
+        logging.debug(f"Getting session cookies for gateway {gateway_uid}")
+        gateway_cookies = get_controller_cookie(params, gateway_uid)
+        if gateway_cookies:
+            logging.debug(f"Got session cookies for router affinity")
+        else:
+            logging.warning("Failed to get session cookies - may experience routing issues")
+        
+        # Create a temporary tunnel session BEFORE creating the tube so ICE candidates can be buffered immediately
+        import uuid
+        temp_tube_id = str(uuid.uuid4())
+        
+        # Pre-create tunnel session with temporary ID to buffer early ICE candidates
+        tunnel_session = TunnelSession(
+            tube_id=temp_tube_id,
+            conversation_id=conversation_id,
+            gateway_uid=gateway_uid,
+            symmetric_key=symmetric_key,
+            gateway_cookies=gateway_cookies,
+            offer_sent=False,
+            host=host,
+            port=port
+        )
+        
+        # Register the temporary session so ICE candidates can be buffered immediately
+        register_tunnel_session(temp_tube_id, tunnel_session)
+        
         # Create the tube to get the WebRTC offer with trickle ICE
         logging.info("Creating WebRTC offer with trickle ICE gathering")
         
@@ -1470,9 +1493,13 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             base64_nonce=base64_nonce,
             conversation_id=conversation_id,
             tube_registry=tube_registry,
-            tube_id=None,
+            tube_id=temp_tube_id,  # Use temp ID initially 
             trickle_ice=True,
         )
+        signal_handler.gateway_cookies = gateway_cookies
+        
+        # Store signal handler reference so we can send buffered candidates later
+        tunnel_session.signal_handler = signal_handler
         
         print(f"{bcolors.OKBLUE}Creating WebRTC offer and setting up local listener...{bcolors.ENDC}")
         
@@ -1492,44 +1519,17 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             error_msg = "Failed to create tube"
             if offer:
                 error_msg = offer.get('error', error_msg)
+            # Clean up temporary session on failure
+            unregister_tunnel_session(temp_tube_id)
             return {"success": False, "error": error_msg}
 
         commander_tube_id = offer['tube_id']
+        
+        # Update both signal handler and tunnel session with real tube ID
         signal_handler.tube_id = commander_tube_id
         signal_handler.host = host  # Store for later endpoint display
         signal_handler.port = port
-        
-        logging.debug(f"Registered encryption key for conversation: {conversation_id}")
-        logging.info(f"Expecting WebSocket responses for conversation ID: {conversation_id}")
-        
-        # Get session cookies for router affinity BEFORE starting WebSocket
-        logging.debug(f"Getting session cookies for gateway {gateway_uid}")
-        gateway_cookies = get_controller_cookie(params, gateway_uid)
-        if gateway_cookies:
-            logging.debug(f"Got session cookies for router affinity")
-            signal_handler.gateway_cookies = gateway_cookies
-        else:
-            logging.warning("Failed to get session cookies - may experience routing issues")
-        
-        # Start or reuse WebSocket listener with cookies for session affinity
-        websocket_thread = start_websocket_listener(params, tube_registry, timeout=300, gateway_uid=gateway_uid, gateway_cookies=gateway_cookies)
-        
-        # Wait a moment for WebSocket to establish connection
-        time.sleep(1.5)
-        
-        # Create tunnel session for global management
-        tunnel_session = TunnelSession(
-            tube_id=commander_tube_id,
-            conversation_id=conversation_id,
-            gateway_uid=gateway_uid,
-            symmetric_key=symmetric_key,
-            gateway_cookies=gateway_cookies,
-            offer_sent=False,
-            host=host,
-            port=port
-        )
-        # Store signal handler reference so we can send buffered candidates later
-        tunnel_session.signal_handler = signal_handler
+        tunnel_session.tube_id = commander_tube_id
         
         # Get the actual listening address from Rust (source of truth)
         if 'actual_local_listen_addr' in offer and offer['actual_local_listen_addr']:
@@ -1539,12 +1539,24 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                     rust_host, rust_port = rust_addr.rsplit(':', 1)
                     tunnel_session.host = rust_host
                     tunnel_session.port = int(rust_port)
+                    signal_handler.host = rust_host
+                    signal_handler.port = int(rust_port)
                     logging.debug(f"Using actual Rust listening address: {rust_host}:{rust_port}")
             except Exception as e:
                 logging.warning(f"Failed to parse Rust address '{rust_addr}': {e}")
         
-        logging.debug(f"Creating tunnel session for tube {commander_tube_id} with host={tunnel_session.host}, port={tunnel_session.port}")
+        # Unregister temporary session and register with real tube ID
+        unregister_tunnel_session(temp_tube_id)
         register_tunnel_session(commander_tube_id, tunnel_session)
+        
+        logging.debug(f"Registered encryption key for conversation: {conversation_id}")
+        logging.info(f"Expecting WebSocket responses for conversation ID: {conversation_id}")
+        
+        # Start or reuse WebSocket listener with cookies for session affinity
+        websocket_thread = start_websocket_listener(params, tube_registry, timeout=300, gateway_uid=gateway_uid, gateway_cookies=gateway_cookies)
+        
+        # Wait a moment for WebSocket to establish connection
+        time.sleep(1.5)
         
         # Verify the session was stored correctly
         stored_session = get_tunnel_session(commander_tube_id)
@@ -1593,6 +1605,13 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             # Mark offer as sent in both signal handler and session
             signal_handler.offer_sent = True
             tunnel_session.offer_sent = True
+            
+            # Send any buffered ICE candidates that arrived before offer was sent
+            if tunnel_session.buffered_ice_candidates:
+                logging.debug(f"Flushing {len(tunnel_session.buffered_ice_candidates)} buffered ICE candidates after offer sent")
+                for candidate in tunnel_session.buffered_ice_candidates:
+                    signal_handler._send_ice_candidate_immediately(candidate, commander_tube_id)
+                tunnel_session.buffered_ice_candidates.clear()
             
         except Exception as e:
             signal_handler.cleanup()

@@ -191,56 +191,31 @@ class PAMTunnelStopCommand(Command):
         uid = kwargs.get('uid')
         if not uid:
             raise CommandError('tunnel stop', '"uid" argument is required')
-        
-        # Rust logger should already be initialized by the loglevel command
-        if not RUST_LOGGER_INITIALIZED:
-            debug_level = hasattr(params, 'debug') and params.debug
-            log_level = logging.DEBUG if debug_level else logging.INFO
-            initialize_rust_logger(logger_name="keeper-pam-webrtc-rs", verbose=False, level=log_level)
-        
-        # Try to use Rust PyTubeRegistry first
-        tube_registry = get_or_create_tube_registry(params)
-        if tube_registry:
-            # Find matching tubes using Rust API
-            matching_tubes = tube_registry.find_tubes(uid)
-            
-            if not matching_tubes:
-                # Also check if it's a tube ID directly
-                if tube_registry.tube_found(uid):
-                    matching_tubes = [uid]
-                else:
-                    raise CommandError('tunnel stop', f"No active tunnels found matching '{uid}'")
-            
-            # Stop all matching tubes by closing their connections
-            stopped_count = 0
-            for tube_id in matching_tubes:
-                try:
-                    # Get all conversation IDs for this tube
-                    conversation_ids = tube_registry.get_conversation_ids_by_tube_id(tube_id)
-                    
-                    if conversation_ids:
-                        # Close each connection on the tube with Normal reason (user-initiated stop)
-                        for conversation_id in conversation_ids:
-                            tube_registry.close_connection(conversation_id, reason=CloseConnectionReasons.Normal)
-                        print(f"{bcolors.OKGREEN}Stopped tunnel: {tube_id}{bcolors.ENDC}")
-                        stopped_count += 1
-                    else:
-                        # Fallback to close_tube if no conversation IDs found
-                        tube_registry.close_tube(tube_id, reason=CloseConnectionReasons.Normal)
-                        print(f"{bcolors.OKGREEN}Stopped tunnel: {tube_id}{bcolors.ENDC}")
-                        stopped_count += 1
-                    
-                except Exception as e:
-                    print(f"{bcolors.FAIL}Failed to stop tunnel {tube_id}: {e}{bcolors.ENDC}")
-            
-            if stopped_count == 0:
-                raise CommandError('tunnel stop', f"Failed to stop any tunnels matching '{uid}'")
-        else:
-            # Rust WebRTC library is required for tunnel operations
-            raise CommandError('tunnel stop', 'This command requires the Rust WebRTC library (keeper_pam_webrtc_rs). '
-                                            'Please ensure the keeper_pam_webrtc_rs module is installed and available.')
 
-        return
+        tube_registry = get_or_create_tube_registry(params)
+        if not tube_registry:
+            raise CommandError('tunnel stop', 'This command requires the Rust WebRTC library')
+
+        # Find matching tubes
+        matching_tubes = tube_registry.find_tubes(uid)
+        if not matching_tubes and tube_registry.tube_found(uid):
+            matching_tubes = [uid]
+
+        if not matching_tubes:
+            raise CommandError('tunnel stop', f"No active tunnels found matching '{uid}'")
+
+        # Close all matching tubes
+        stopped_count = 0
+        for tube_id in matching_tubes:
+            try:
+                tube_registry.close_tube(tube_id, reason=CloseConnectionReasons.Normal)
+                print(f"{bcolors.OKGREEN}Stopped tunnel: {tube_id}{bcolors.ENDC}")
+                stopped_count += 1
+            except Exception as e:
+                print(f"{bcolors.FAIL}Failed to stop tunnel {tube_id}: {e}{bcolors.ENDC}")
+
+        if stopped_count == 0:
+            raise CommandError('tunnel stop', f"Failed to stop any tunnels matching '{uid}'")
 
 
 class PAMTunnelEditCommand(Command):
