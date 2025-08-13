@@ -26,4 +26,4 @@ def init_routes(app: Optional[Flask] = None) -> None:
     logger.debug("Registering command blueprint with URL prefix '/api/v1'")
     app.register_blueprint(command_bp, url_prefix='/api/v1')
     
-    logger.info("Route initialization completed successfully")
+    logger.debug("Route initialization completed successfully")

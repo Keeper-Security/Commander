@@ -103,14 +103,19 @@ class CreateService(Command):
             self.security_handler.configure_security(config_data)
     
     def _create_and_save_record(self, config_data: Dict[str, Any], params: KeeperParams, args: StreamlineArgs) -> None:
+        if args.port is None:
+            self.config_handler._configure_run_mode(config_data)
+        
         record = self.service_config.create_record(config_data["is_advanced_security_enabled"], params, args.commands)
         config_data["records"] = [record]
-        if args.fileformat:
-            format = args.fileformat
+        if config_data.get("fileformat"):
+            format_type = config_data["fileformat"]
         else:
-            format = 'create'
-        self.service_config.save_config(config_data, format)
-        self.service_config.save_cert_data(config_data, 'create')
+            format_type = self.service_config.format_handler.get_config_format('create')
+            config_data["fileformat"] = format_type
+        self.service_config.save_config(config_data, format_type)
+        if config_data.get("tls_certificate") == "y":
+            self.service_config.save_cert_data(config_data, 'create')
         
     def _upload_and_start_service(self, params: KeeperParams) -> None:
         self.service_config.update_or_add_record(params)

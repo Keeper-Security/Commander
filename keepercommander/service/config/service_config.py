@@ -187,6 +187,9 @@ class ServiceConfig:
             keeper_dir.mkdir(parents=True, exist_ok=True)
 
             cert_paths = self.get_cert_paths(config_data)
+            
+            if not cert_paths:
+                return keeper_dir
 
             updated_names = {}
             saved_files = []
@@ -202,7 +205,8 @@ class ServiceConfig:
 
             self.update_service_config(updated_names)
 
-            logging.info(f"Certificates saved in {keeper_dir}: {', '.join(str(f.name) for f in saved_files)}")
+            if saved_files:
+                logging.info(f"Certificates saved in {keeper_dir}: {', '.join(str(f.name) for f in saved_files)}")
             return keeper_dir
 
         except Exception as e:
@@ -280,5 +284,12 @@ class ServiceConfig:
         logger.debug(f" Uploaded file remote success.")
         self.format_handler.encrypt_config_file(self.format_handler.config_path, self.format_handler.config_dir)
         logger.debug(f" Local file encryption success.")
-        self.record_handler.update_or_add_cert_record(params, self.title)
-        logger.debug(f" Uploaded TLS certificate at remote.")
+        try:
+            config = self.load_config()
+            if config.get("tls_certificate") == "y":
+                self.record_handler.update_or_add_cert_record(params, self.title)
+                logger.debug(f" Uploaded TLS certificate at remote.")
+            else:
+                logger.debug(f" TLS certificate upload skipped - TLS not enabled.")
+        except Exception as e:
+            logger.debug(f"Error checking TLS configuration: {e}")

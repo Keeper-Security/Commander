@@ -22,7 +22,7 @@ from ..decorators.logging import logger, debug_decorator
 from .process_info import ProcessInfo
 from .terminal_handler import TerminalHandler
 from .signal_handler import SignalHandler
-import json, io, sys, os, subprocess, atexit
+import json, io, sys, os, subprocess, atexit, time
 
 class ServiceManager:
     """Manages the lifecycle of the service including start, stop, and status operations."""
@@ -66,11 +66,15 @@ class ServiceManager:
             try:
                 process = psutil.Process(process_info.pid)
 
-                if "python" in process.name().lower() or "py" in process.name().lower():
+                try:
                     cmdline = process.cmdline()
-                    if any("service_app.py" in arg for arg in cmdline if isinstance(arg, str)):
+                    if (len(cmdline) >= 2 and 
+                        cmdline[0] == sys.executable and 
+                        any("service_app.py" in str(arg) for arg in cmdline)):
                         print(f"Error: Commander Service is already running (PID: {process_info.pid})")
-                        return                
+                        return
+                except (psutil.AccessDenied, psutil.ZombieProcess):
+                    pass                
                 # Clear the stored process info
                 ProcessInfo.clear()
             except psutil.NoSuchProcess:
@@ -103,23 +107,43 @@ class ServiceManager:
 
                 base_dir = os.path.dirname(os.path.abspath(__file__))
                 service_path = os.path.join(base_dir, "service_app.py")
+                python_executable = sys.executable
 
-                if sys.platform == "win32":
-                    subprocess.DETACHED_PROCESS = 0x00000008
-                    cls = subprocess.Popen(
-                        ["py", service_path],
-                        creationflags= subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL  # Redirect output to log file
-                    )
-                else:
-                    cls = subprocess.Popen(
-                        ["python3", service_path],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        preexec_fn=os.setpgrp
-                    )
+                # Create logs directory for subprocess output
+                log_dir = os.path.join(base_dir, "logs")
+                os.makedirs(log_dir, exist_ok=True)
+                log_file = os.path.join(log_dir, "service_subprocess.log")
 
-                print(f"Commander Service started with PID: {cls.pid}")
+                try:
+                    if sys.platform == "win32":
+                        subprocess.DETACHED_PROCESS = 0x00000008
+                        with open(log_file, 'w') as log_f:
+                            cls = subprocess.Popen(
+                                [python_executable, service_path],
+                                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+                                stdout=log_f,
+                                stderr=subprocess.STDOUT,  # Combine stderr with stdout
+                                cwd=base_dir,  # Set working directory
+                                env=os.environ.copy()  # Inherit environment variables
+                            )
+                    else:
+                        # For macOS and Linux - improved subprocess handling
+                        with open(log_file, 'w') as log_f:
+                            cls = subprocess.Popen(
+                                [python_executable, service_path],
+                                stdout=log_f,
+                                stderr=subprocess.STDOUT,  # Combine stderr with stdout
+                                preexec_fn=os.setpgrp,
+                                cwd=base_dir,  # Set working directory
+                                env=os.environ.copy()  # Inherit environment variables
+                            )
+                    
+                    logger.debug(f"Service subprocess logs available at: {log_file}")
+                    print(f"Commander Service started with PID: {cls.pid}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to start service subprocess: {e}")
+                    raise
 
             else:
                 from keepercommander.service.app import create_app
