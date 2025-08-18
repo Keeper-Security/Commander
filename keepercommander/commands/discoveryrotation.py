@@ -313,159 +313,6 @@ class PAMCreateRecordRotationCommand(Command):
         PAM router service.
         """
 
-        record_uids = set()   # type: Set[str]
-
-        folder_uids = set()
-        record_pattern = ''
-        record_name = kwargs.get('record_name')
-
-        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
-        if record_name:
-            if record_name in params.record_cache:
-                record_uids.add(record_name)
-            else:
-                rs = try_resolve_path(params, record_name, find_all_matches=True)
-                if rs is not None:
-                    folder, record_title = rs
-                    if record_title:
-                        record_pattern = record_title
-                        if isinstance(folder, BaseFolderNode):
-                            folder_uids.add(folder.uid)
-                        elif isinstance(folder, list):
-                            for f in folder:
-                                if isinstance(f, BaseFolderNode):
-                                    folder_uids.add(f.uid)
-                    else:
-                        logging.warning('Record \"%s\" not found. Skipping.', record_name)
-
-        folder_name = kwargs.get('folder_name')
-        if folder_name:
-            if folder_name in params.folder_cache:
-                folder_uids.add(folder_name)
-            else:
-                rs = try_resolve_path(params, folder_name, find_all_matches=True)
-                if rs is not None:
-                    folder, record_title = rs
-                    if not record_title:
-
-                        def add_folders(sub_folder):   # type: (BaseFolderNode) -> None
-                            folder_uids.add(sub_folder.uid or '')
-
-                        if isinstance(folder, BaseFolderNode):
-                            folder = [folder]
-                        if isinstance(folder, list):
-                            for f in folder:
-                                FolderMixin.traverse_folder_tree(params, f.uid, add_folders)
-                    else:
-                        logging.warning('Folder \"%s\" not found. Skipping.', folder_name)
-
-        if record_name and folder_name:
-            raise CommandError('', 'Cannot use both --record and --folder at the same time.')
-
-        if folder_uids:
-            regex = re.compile(fnmatch.translate(record_pattern), re.IGNORECASE).match if record_pattern else None
-            for folder_uid in folder_uids:
-                folder_records = params.subfolder_record_cache.get(folder_uid)
-                if not folder_records:
-                    continue
-                if record_pattern and record_pattern in folder_records:
-                    record_uids.add(record_pattern)
-                else:
-                    for record_uid in folder_records:
-                        if record_uid not in record_uids:
-                            r = vault.KeeperRecord.load(params, record_uid)
-                            if r:
-                                if regex and not regex(r.title):
-                                    continue
-                                record_uids.add(record_uid)
-
-        pam_records = []    # type: List[vault.TypedRecord]
-        valid_record_types = ['pamDatabase', 'pamDirectory', 'pamMachine', 'pamUser', 'pamRemoteBrowser']
-        for record_uid in record_uids:
-            record = vault.KeeperRecord.load(params, record_uid)
-            if record and isinstance(record, vault.TypedRecord) and record.record_type in valid_record_types:
-                pam_records.append(record)
-
-        if len(pam_records) == 0:
-            rts = ', '.join(valid_record_types)
-            raise CommandError('', f'No PAM record is found. Valid PAM record types: {rts}')
-        else:
-            if not kwargs.get('silent'):
-                logging.info('Selected %d PAM record(s) for rotation', len(pam_records))
-
-        pam_configurations = {x.record_uid: x for x in vault_extensions.find_records(params, record_version=6) if isinstance(x, vault.TypedRecord)}
-
-        config_uid = kwargs.get('config')
-        cfg_rec = RecordMixin.resolve_single_record(params, kwargs.get('config', None))
-        if cfg_rec and cfg_rec.version == 6 and cfg_rec.record_uid in pam_configurations:
-            config_uid = cfg_rec.record_uid
-
-        pam_config = None   # type: Optional[vault.TypedRecord]
-        if config_uid:
-            if config_uid in pam_configurations:
-                pam_config = pam_configurations[config_uid]
-            else:
-                raise CommandError('', f'Record uid {config_uid} is not a PAM Configuration record.')
-
-        schedule_json_data = kwargs.get('schedule_json_data')
-        schedule_cron_data = kwargs.get('schedule_cron_data')    # See this page for more details: http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html#examples
-        schedule_on_demand = kwargs.get('on_demand') is True
-        schedule_config = kwargs.get('schedule_config') is True
-        schedule_data = None   # type: Optional[List]
-        if isinstance(schedule_json_data, list):
-            schedule_data = [json.loads(x) for x in schedule_json_data]
-        elif isinstance(schedule_cron_data, list):
-            schedule_data = []
-            for cron in schedule_cron_data:
-                comps = [x.strip() for x in cron.split(' ')]
-                if len(comps) != 5:
-                    raise CommandError('', f'Cron value is expected to have 5 components: minute hour day_of_month month day_of_week')
-                schedule_data.append(TypedField.import_schedule_field(cron))
-        elif schedule_on_demand is True:
-            schedule_data = []
-
-        pwd_complexity = kwargs.get("pwd_complexity")
-        pwd_complexity_rule_list = None     # type: Optional[dict]
-        if pwd_complexity is not None:
-            if pwd_complexity:
-                pwd_complexity_list = [s.strip() for s in pwd_complexity.split(',', maxsplit=5)]
-                if len(pwd_complexity_list) < 5 or not all(n.isnumeric() for n in pwd_complexity_list[:5]):
-                    raise CommandError('', 'Invalid rules to generate password. ''Format is "length, '
-                                           'upper, lower, digits, symbols". Ex: 32,5,5,5,5[,SPECIAL CHARS]')
-
-                special_chars = PAM_DEFAULT_SPECIAL_CHAR
-                if len(pwd_complexity_list) == 6:
-
-                    # Get the special characters.
-                    # Only take chars in our special char list.
-                    special_chars = ""
-                    for char in PAM_DEFAULT_SPECIAL_CHAR:
-                        if char in pwd_complexity_list[5]:
-                            special_chars += char
-
-                pwd_complexity_rule_list = {
-                    'length': int(pwd_complexity_list[0]),
-                    'caps': int(pwd_complexity_list[1]),
-                    'lowercase': int(pwd_complexity_list[2]),
-                    'digits': int(pwd_complexity_list[3]),
-                    'special': int(pwd_complexity_list[4]),
-                    'specialChars': special_chars
-                }
-            else:
-                pwd_complexity_rule_list = {}
-
-        resource_uid = kwargs.get('resource')
-        res_rec = RecordMixin.resolve_single_record(params, kwargs.get('resource', None))
-        if res_rec and isinstance(res_rec, vault.TypedRecord):
-            resource_uid = res_rec.record_uid
-
-        skipped_header = ['record_uid', 'record_title', 'problem', 'description']
-        skipped_records = []
-        valid_header = ['record_uid', 'record_title', 'enabled', 'configuration_uid', 'resource_uid', 'schedule', 'complexity']
-        valid_records = []
-
-        r_requests = []   # type: List[router_pb2.RouterRecordRotationRequest]
-
         def config_resource(_dag, target_record, target_config_uid, silent=None):
             if not _dag.linking_dag.has_graph:
                 # Add DAG for resource
@@ -530,7 +377,7 @@ class PAMCreateRecordRotationCommand(Command):
                     except:
                         record_schedule_data = []
                 pwd_complexity_rule_list_encrypted = utils.base64_url_decode(current_record_rotation.get('pwd_complexity', ''))
-                record_resource_uid = current_record_rotation.get('resourceUid')
+                record_resource_uid = current_record_rotation.get('resource_uid')
                 disabled = current_record_rotation.get('disabled', False)
 
                 schedule = 'On-Demand'
@@ -595,8 +442,6 @@ class PAMCreateRecordRotationCommand(Command):
                     _dag.link_user_to_resource(target_record.record_uid, old_resource_uid, belongs_to=False)
                 _dag.link_user_to_config(target_record.record_uid)
 
-
-
             # 1. PAM Configuration UID
             record_config_uid = _dag.record.record_uid
             record_pam_config = pam_config
@@ -643,15 +488,15 @@ class PAMCreateRecordRotationCommand(Command):
             else:
                 if len(pwd_complexity_rule_list) > 0:
                     pwd_complexity_rule_list_encrypted = router_helper.encrypt_pwd_complexity(pwd_complexity_rule_list,
-                                                                                              record.record_key)
+                                                                                              target_record.record_key)
                 else:
                     pwd_complexity_rule_list_encrypted = b''
 
             # 4. Resource record
-            record_resource_uid = iam_aad_config_uid
+            record_resource_uid = target_iam_aad_config_uid
             if record_resource_uid is None:
                 if current_record_rotation:
-                    record_resource_uid = current_record_rotation.get('resourceUid')
+                    record_resource_uid = current_record_rotation.get('resource_uid')
             if record_resource_uid is None:
                 resource_field = record_pam_config.get_typed_field('pamResources')
                 if resource_field and isinstance(resource_field.value, list) and len(resource_field.value) > 0:
@@ -670,9 +515,9 @@ class PAMCreateRecordRotationCommand(Command):
             disabled = False
             # 5. Enable rotation
             if kwargs.get('enable'):
-                _dag.set_resource_allowed(iam_aad_config_uid, rotation=True, is_config=bool(target_iam_aad_config_uid))
+                _dag.set_resource_allowed(target_iam_aad_config_uid, rotation=True, is_config=bool(target_iam_aad_config_uid))
             elif kwargs.get('disable'):
-                _dag.set_resource_allowed(iam_aad_config_uid, rotation=False, is_config=bool(target_iam_aad_config_uid))
+                _dag.set_resource_allowed(target_iam_aad_config_uid, rotation=False, is_config=bool(target_iam_aad_config_uid))
                 disabled = True
 
             schedule = 'On-Demand'
@@ -733,7 +578,7 @@ class PAMCreateRecordRotationCommand(Command):
                     except:
                         record_schedule_data = []
                 pwd_complexity_rule_list_encrypted = utils.base64_url_decode(current_record_rotation.get('pwd_complexity', ''))
-                record_resource_uid = current_record_rotation.get('resourceUid')
+                record_resource_uid = current_record_rotation.get('resource_uid')
                 disabled = current_record_rotation.get('disabled', False)
 
                 schedule = 'On-Demand'
@@ -921,7 +766,7 @@ class PAMCreateRecordRotationCommand(Command):
             else:
                 if len(pwd_complexity_rule_list) > 0:
                     pwd_complexity_rule_list_encrypted = router_helper.encrypt_pwd_complexity(pwd_complexity_rule_list,
-                                                                                              record.record_key)
+                                                                                              target_record.record_key)
                 else:
                     pwd_complexity_rule_list_encrypted = b''
 
@@ -931,7 +776,7 @@ class PAMCreateRecordRotationCommand(Command):
                 record_resource_uid = target_resource_uid
                 if record_resource_uid is None:
                     if current_record_rotation:
-                        record_resource_uid = current_record_rotation.get('resourceUid')
+                        record_resource_uid = current_record_rotation.get('resource_uid')
                 if record_resource_uid is None:
                     resource_field = record_pam_config.get_typed_field('pamResources')
                     if resource_field and isinstance(resource_field.value, list) and len(resource_field.value) > 0:
@@ -990,6 +835,160 @@ class PAMCreateRecordRotationCommand(Command):
                 rq.noop = True
                 rq.resourceUid = b''  # Noop and resource cannot be both assigned
             r_requests.append(rq)
+
+        # Main execute() logic starts here
+        record_uids = set()   # type: Set[str]
+
+        folder_uids = set()
+        record_pattern = ''
+        record_name = kwargs.get('record_name')
+
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        if record_name:
+            if record_name in params.record_cache:
+                record_uids.add(record_name)
+            else:
+                rs = try_resolve_path(params, record_name, find_all_matches=True)
+                if rs is not None:
+                    folder, record_title = rs
+                    if record_title:
+                        record_pattern = record_title
+                        if isinstance(folder, BaseFolderNode):
+                            folder_uids.add(folder.uid)
+                        elif isinstance(folder, list):
+                            for f in folder:
+                                if isinstance(f, BaseFolderNode):
+                                    folder_uids.add(f.uid)
+                    else:
+                        logging.warning('Record \"%s\" not found. Skipping.', record_name)
+
+        folder_name = kwargs.get('folder_name')
+        if folder_name:
+            if folder_name in params.folder_cache:
+                folder_uids.add(folder_name)
+            else:
+                rs = try_resolve_path(params, folder_name, find_all_matches=True)
+                if rs is not None:
+                    folder, record_title = rs
+                    if not record_title:
+
+                        def add_folders(sub_folder):   # type: (BaseFolderNode) -> None
+                            folder_uids.add(sub_folder.uid or '')
+
+                        if isinstance(folder, BaseFolderNode):
+                            folder = [folder]
+                        if isinstance(folder, list):
+                            for f in folder:
+                                FolderMixin.traverse_folder_tree(params, f.uid, add_folders)
+                    else:
+                        logging.warning('Folder \"%s\" not found. Skipping.', folder_name)
+
+        if record_name and folder_name:
+            raise CommandError('', 'Cannot use both --record and --folder at the same time.')
+
+        if folder_uids:
+            regex = re.compile(fnmatch.translate(record_pattern), re.IGNORECASE).match if record_pattern else None
+            for folder_uid in folder_uids:
+                folder_records = params.subfolder_record_cache.get(folder_uid)
+                if not folder_records:
+                    continue
+                if record_pattern and record_pattern in folder_records:
+                    record_uids.add(record_pattern)
+                else:
+                    for record_uid in folder_records:
+                        if record_uid not in record_uids:
+                            r = vault.KeeperRecord.load(params, record_uid)
+                            if r:
+                                if regex and not regex(r.title):
+                                    continue
+                                record_uids.add(record_uid)
+
+        pam_records = []    # type: List[vault.TypedRecord]
+        valid_record_types = ['pamDatabase', 'pamDirectory', 'pamMachine', 'pamUser', 'pamRemoteBrowser']
+        for record_uid in record_uids:
+            record = vault.KeeperRecord.load(params, record_uid)
+            if record and isinstance(record, vault.TypedRecord) and record.record_type in valid_record_types:
+                pam_records.append(record)
+
+        if len(pam_records) == 0:
+            rts = ', '.join(valid_record_types)
+            raise CommandError('', f'No PAM record is found. Valid PAM record types: {rts}')
+        else:
+            if not kwargs.get('silent'):
+                logging.info('Selected %d PAM record(s) for rotation', len(pam_records))
+
+        pam_configurations = {x.record_uid: x for x in vault_extensions.find_records(params, record_version=6) if isinstance(x, vault.TypedRecord)}
+
+        config_uid = kwargs.get('config')
+        cfg_rec = RecordMixin.resolve_single_record(params, kwargs.get('config', None))
+        if cfg_rec and cfg_rec.version == 6 and cfg_rec.record_uid in pam_configurations:
+            config_uid = cfg_rec.record_uid
+
+        pam_config = None   # type: Optional[vault.TypedRecord]
+        if config_uid:
+            if config_uid in pam_configurations:
+                pam_config = pam_configurations[config_uid]
+            else:
+                raise CommandError('', f'Record uid {config_uid} is not a PAM Configuration record.')
+
+        schedule_json_data = kwargs.get('schedule_json_data')
+        schedule_cron_data = kwargs.get('schedule_cron_data')    # See this page for more details: http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html#examples
+        schedule_on_demand = kwargs.get('on_demand') is True
+        schedule_config = kwargs.get('schedule_config') is True
+        schedule_data = None   # type: Optional[List]
+        if isinstance(schedule_json_data, list):
+            schedule_data = [json.loads(x) for x in schedule_json_data]
+        elif isinstance(schedule_cron_data, list):
+            schedule_data = []
+            for cron in schedule_cron_data:
+                comps = [x.strip() for x in cron.split(' ')]
+                if len(comps) != 5:
+                    raise CommandError('', f'Cron value is expected to have 5 components: minute hour day_of_month month day_of_week')
+                schedule_data.append(TypedField.import_schedule_field(cron))
+        elif schedule_on_demand is True:
+            schedule_data = []
+
+        pwd_complexity = kwargs.get("pwd_complexity")
+        pwd_complexity_rule_list = None     # type: Optional[dict]
+        if pwd_complexity is not None:
+            if pwd_complexity:
+                pwd_complexity_list = [s.strip() for s in pwd_complexity.split(',', maxsplit=5)]
+                if len(pwd_complexity_list) < 5 or not all(n.isnumeric() for n in pwd_complexity_list[:5]):
+                    raise CommandError('', 'Invalid rules to generate password. ''Format is "length, '
+                                           'upper, lower, digits, symbols". Ex: 32,5,5,5,5[,SPECIAL CHARS]')
+
+                special_chars = PAM_DEFAULT_SPECIAL_CHAR
+                if len(pwd_complexity_list) == 6:
+
+                    # Get the special characters.
+                    # Only take chars in our special char list.
+                    special_chars = ""
+                    for char in PAM_DEFAULT_SPECIAL_CHAR:
+                        if char in pwd_complexity_list[5]:
+                            special_chars += char
+
+                pwd_complexity_rule_list = {
+                    'length': int(pwd_complexity_list[0]),
+                    'caps': int(pwd_complexity_list[1]),
+                    'lowercase': int(pwd_complexity_list[2]),
+                    'digits': int(pwd_complexity_list[3]),
+                    'special': int(pwd_complexity_list[4]),
+                    'specialChars': special_chars
+                }
+            else:
+                pwd_complexity_rule_list = {}
+
+        resource_uid = kwargs.get('resource')
+        res_rec = RecordMixin.resolve_single_record(params, kwargs.get('resource', None))
+        if res_rec and isinstance(res_rec, vault.TypedRecord):
+            resource_uid = res_rec.record_uid
+
+        skipped_header = ['record_uid', 'record_title', 'problem', 'description']
+        skipped_records = []
+        valid_header = ['record_uid', 'record_title', 'enabled', 'configuration_uid', 'resource_uid', 'schedule', 'complexity']
+        valid_records = []
+
+        r_requests = []   # type: List[router_pb2.RouterRecordRotationRequest]
 
         for _record in pam_records:
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, _record.record_uid)
