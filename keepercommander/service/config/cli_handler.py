@@ -14,7 +14,6 @@ import sys
 import re
 from pathlib import Path
 from typing import Optional
-from keepercommander import cli
 from keepercommander.params import KeeperParams
 from ..decorators.logging import logger, debug_decorator
 
@@ -25,6 +24,7 @@ class CommandHandler:
         output = io.StringIO()
         sys.stdout = output
         try:
+            from keepercommander import cli
             cli.do_command(params, command)
             return output.getvalue()
         except Exception as e:
@@ -50,6 +50,7 @@ class CommandHandler:
         """Get help output from CLI."""
         output = io.StringIO()
         sys.stdout = output
+        from keepercommander import cli
         cli.do_command(params, 'help')
         sys.stdout = sys.__stdout__
         return output.getvalue()

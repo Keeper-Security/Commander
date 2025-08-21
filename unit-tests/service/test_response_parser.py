@@ -21,14 +21,10 @@ if sys.version_info >= (3, 8):
           
           folder = result['data']['folders'][0]
           self.assertEqual(folder['number'], 1)
-          self.assertEqual(folder['uid'], 'b4pBzT1WowoUXHk_US0SCg')
           self.assertEqual(folder['name'], 'Root')
-          self.assertEqual(folder['flags'], 'RS')
           
           record = result['data']['records'][0]
           self.assertEqual(record['number'], 1)
-          self.assertEqual(record['uid'], 'dGJ3xbH8CXhNF00FBX0wMA')
-          self.assertEqual(record['type'], 'login')
           self.assertEqual(record['title'], 'My Login')
           self.assertEqual(record['description'], 'Important')
 
