@@ -14,9 +14,9 @@ from configparser import ConfigParser
 from pathlib import Path
 from ..decorators.logging import logger, debug_decorator
 from ..config.service_config import ServiceConfig
-from keepercommander.commands.base import Command
 from ..util.exceptions import ValidationError
-from keepercommander import resources
+from ...commands.base import Command
+from ... import resources
 
 class SecurityConfigHandler(Command):
     def __init__(self, service_config: ServiceConfig):

@@ -3,12 +3,12 @@ import argparse
 from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ...display import bcolors
 from ..pam.router_helper import router_get_connected_gateways
-from keepercommander.discovery_common.rule import Rules
-from keepercommander.discovery_common.types import RuleTypeEnum
+from ...discovery_common.rule import Rules
+from ...discovery_common.types import RuleTypeEnum
 from typing import List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from keepercommander.discovery_common.types import RuleItem
+    from ...discovery_common.types import RuleItem
 
 
 class PAMGatewayActionDiscoverRuleListCommand(PAMGatewayActionDiscoverCommandBase):

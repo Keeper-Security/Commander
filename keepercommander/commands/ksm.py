@@ -344,7 +344,7 @@ class KSMCommand(Command):
         share_rec_args = dict(**rec_perms, action=sr_action, email=users)
 
         # (Un)Share application record
-        from keepercommander.commands.register import ShareRecordCommand
+        from .register import ShareRecordCommand
         share_rec_cmd = ShareRecordCommand()
         share_rec_cmd.execute(params, record=app_uid, **share_rec_args)
 
@@ -398,7 +398,7 @@ class KSMCommand(Command):
         removed = [removed] if removed is not None else []
         app_users_map = dict(admins=admins,viewers=viewers, removed=removed)
 
-        from keepercommander.commands.register import ShareRecordCommand, ShareFolderCommand
+        from .register import ShareRecordCommand, ShareFolderCommand
 
         get_sf = lambda uid: params.shared_folder_cache.get(uid, {})
         user_needs_update = lambda u, adm: any(share_needs_update(u, uid, adm) for uid in share_uids)

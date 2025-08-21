@@ -14,7 +14,7 @@ import json
 import logging
 from typing import Optional, Union
 
-from keepercommander.breachwatch import BreachWatch
+from .breachwatch import BreachWatch
 
 from . import api, subfolder, utils, crypto, vault, vault_extensions
 from .api import get_records_add_request, get_records_update_request

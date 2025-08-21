@@ -23,11 +23,10 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from urllib.parse import urlunparse
 
-from keepercommander.breachwatch import BreachWatch
-
 from .base import Command, RecordMixin, FolderMixin
 from .helpers.timeout import parse_timeout
 from .. import api, utils, vault, record_types, generator, crypto, attachment, record_facades, record_management
+from ..breachwatch import BreachWatch
 from ..commands import recordv3
 from ..error import CommandError
 from ..params import KeeperParams, LAST_RECORD_UID

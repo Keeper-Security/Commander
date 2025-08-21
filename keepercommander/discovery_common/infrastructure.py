@@ -2,16 +2,16 @@ from __future__ import annotations
 import logging
 from .constants import DIS_INFRA_GRAPH_ID
 from .utils import get_connection
-from keepercommander.keeper_dag import DAG, EdgeType
-from keepercommander.keeper_dag.exceptions import DAGVertexException
-from keepercommander.keeper_dag.crypto import urlsafe_str_to_bytes
+from ..keeper_dag import DAG, EdgeType
+from ..keeper_dag.exceptions import DAGVertexException
+from ..keeper_dag.crypto import urlsafe_str_to_bytes
 import os
 import importlib
 import time
 from typing import Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from keepercommander.keeper_dag.vertex import DAGVertex
+    from ..keeper_dag.vertex import DAGVertex
 
 
 class Infrastructure:

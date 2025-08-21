@@ -1,10 +1,10 @@
-from keepercommander.commands.tunnel.port_forward.tunnel_helpers import generate_random_bytes, get_config_uid
-from keepercommander.keeper_dag import DAG, EdgeType
-from keepercommander.keeper_dag.connection.commander import Connection
-from keepercommander.keeper_dag.types import RefType
-from keepercommander.keeper_dag.vertex import DAGVertex
-from keepercommander.display import bcolors
-from keepercommander.vault import PasswordRecord
+from ....commands.tunnel.port_forward.tunnel_helpers import generate_random_bytes, get_config_uid
+from ....keeper_dag import DAG, EdgeType
+from ....keeper_dag.connection.commander import Connection
+from ....keeper_dag.types import RefType
+from ....keeper_dag.vertex import DAGVertex
+from ....display import bcolors
+from ....vault import PasswordRecord
 
 
 def get_vertex_content(vertex):

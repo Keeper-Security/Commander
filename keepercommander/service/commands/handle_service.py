@@ -10,8 +10,8 @@
 #
 
 import argparse
-from keepercommander.params import KeeperParams
-from keepercommander.commands.base import report_output_parser, Command
+from ...params import KeeperParams
+from ...commands.base import report_output_parser, Command
 from ..core.service_manager import ServiceManager
 from ..core.globals import init_globals
 from ..decorators.logging import debug_decorator
