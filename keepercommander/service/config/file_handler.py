@@ -170,7 +170,7 @@ class ConfigFormatHandler:
         encrypted_content = ConfigFormatHandler.encrypted_content(config_path.read_text(), config_path, config_dir)
         with open(config_path, 'wb') as encrypted_file:
             encrypted_file.write(encrypted_content)
-        logger.info(f" {config_path} File encryption success. ")
+        logger.debug(f" {config_path} File encryption success. ")
         
         
     @staticmethod

@@ -77,8 +77,9 @@ class LoginV3Flow:
             login_type = 'ALTERNATE'
 
         resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes, loginType=login_type)
-        if params.biometric:
+        if params.biometric and resp.loginState != APIRequest_pb2.LOGGED_IN:
             resp.loginState = APIRequest_pb2.AFTER_PASSKEY_LOGIN
+            params.biometric = "biometric"
 
         is_alternate_login = False
 
@@ -160,7 +161,7 @@ class LoginV3Flow:
                 elif encrypted_login_token:
                     resp = LoginV3API.resume_login(params, encrypted_login_token, encryptedDeviceToken, loginType="PASSKEY_BIO")
 
-            if resp.loginState == APIRequest_pb2.DEVICE_APPROVAL_REQUIRED:  # client goes to "standard device approval".
+            elif resp.loginState == APIRequest_pb2.DEVICE_APPROVAL_REQUIRED:  # client goes to "standard device approval".
                 should_cancel = False
                 should_resume = False
 
@@ -433,7 +434,7 @@ class LoginV3Flow:
             decrypted_data_key = crypto.decrypt_ec(resp.encryptedDataKey, private_key)
             if params.sso_login_info:
                 login_type_message = bcolors.UNDERLINE + "SSO Login"
-            elif params.biometric:
+            elif params.biometric == "biometric":
                 login_type_message = bcolors.UNDERLINE + "Biometric Login"
             else:
                 login_type_message = bcolors.UNDERLINE + "Persistent Login"

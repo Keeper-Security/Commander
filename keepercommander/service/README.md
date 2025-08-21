@@ -40,29 +40,30 @@ You'll be prompted to configure:
   - Ngrok auth token
   - Ngrok custom domain
 - Enable TLS Certificate (y/n)
-  - TLS Certficate path 
-  - TLS Certficate password
-- Advance Security (y/n)
-  - Ralte Limit
+  - TLS Certificate path 
+  - TLS Certificate password
+- Advanced Security (y/n)
+  - Rate Limit
   - Allowed IP List (comma-separated)
   - Denied IP List (comma-separated)
   - Enable Encryption (y/n) 
 - List of supported commands (comma separated)
-- Toekn Expiration Time(Xm, Xh, Xd) or empty for no expiration
+- Run mode (foreground/background)
+- Token Expiration Time (Xm, Xh, Xd) or empty for no expiration
 - File format (yaml/json)
 
 ### Streamlined Configuration
 
-Configure the service with a streamline with TLS:
+Configure the service streamlined with TLS:
 
 ```bash
-  My Vault> service-create -p <port> -f <json-Or-yaml> -c 'tree,ls,search,record-add,mkdir' -rm <foreground-Or-background> -crtf <certificate-file-path> -crtp <certificate-password-key-path>  -aip <allwed-Ip-list> -dip <denied-Ip-list>
+  My Vault> service-create -p <port> -f <json-or-yaml> -c 'tree,ls,search,record-add,mkdir' -rm <foreground-or-background> -crtf <certificate-file-path> -crtp <certificate-password-key-path> -aip <allowed-ip-list> -dip <denied-ip-list>
 ```
 
-Configure the service with a streamline wiht Ngrok:
+Configure the service streamlined with Ngrok:
 
 ```bash
-  My Vault> service-create -p <port> -f <json-Or-yaml> -c 'tree,record-add,audit-report' -ng <ngrok-token> -cd <ngrok_custom_domain> -rm <foreground-Or-background> -aip <allwed-Ip-list> -dip <denied-Ip-list>
+  My Vault> service-create -p <port> -f <json-or-yaml> -c 'tree,record-add,audit-report' -ng <ngrok-token> -cd <ngrok_custom_domain> -rm <foreground-or-background> -aip <allowed-ip-list> -dip <denied-ip-list>
 ``` 
 
 Parameters:
@@ -70,12 +71,12 @@ Parameters:
 - `-c, --commands`: Comma-separated list of allowed commands
 - `-ng, --ngrok`: Ngrok authentication token for public URL access
 - `-cd, --ngrok_custom_domain`: Ngrok custom domain name
-- `-f, --fileformat`: File Format.
-- `-crtf, --certfile`: Certificate file path.
-- `-crtp, --certpassword`: Certificate key path.
-- `-rm, --run_mode`: Mode of process (forground/background)
-- `-dip, --deniedip`: Denied ip list to access service
-- `-aip, --allowedip'`: Allowed ip list to access service
+- `-f, --fileformat`: File format (json/yaml)
+- `-crtf, --certfile`: Certificate file path
+- `-crtp, --certpassword`: Certificate password
+- `-rm, --run_mode`: Run mode (foreground/background)
+- `-dip, --deniedip`: Denied IP list to access service
+- `-aip, --allowedip`: Allowed IP list to access service
 
 ### Service Management
 
@@ -96,31 +97,128 @@ My Vault> service-stop
 
 ## API Usage
 
-### Execute Command Endpoint
+### Request Queue System
 
+The service uses an asynchronous request queue system that provides:
+- **Sequential Processing**: Requests are processed one at a time in FIFO order
+- **Request Tracking**: Each request receives a unique ID for status tracking
+- **No Dropped Requests**: All requests are queued and processed
+- **Result Retrieval**: Asynchronous result retrieval using request IDs
+
+#### API Endpoints
+
+**Submit Request:**
 ```bash
-curl --location 'http://localhost:<port>/api/v1/executecommand' \
+curl -X POST 'http://localhost:<port>/api/v1/executecommand' \
 --header 'Content-Type: application/json' \
 --header 'api-key: <your-api-key>' \
---data '{
-    "command": "tree"
-}'
+--data '{"command": "tree"}'
 ```
+*Response (202 Accepted):*
+```json
+{
+    "success": true,
+    "request_id": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "queued",
+    "message": "Request queued successfully. Use /api/v1/status/<request_id> to check progress, /api/v1/result/<request_id> to get results, or /api/v1/queue/status for queue info."
+}
+```
+
+**Check Request Status:**
+```bash
+curl 'http://localhost:<port>/api/v1/status/<request_id>' \
+--header 'api-key: <your-api-key>'
+```
+*Response:*
+```json
+{
+    "success": true,
+    "request_id": "550e8400-e29b-41d4-a716-446655440000",
+    "command": "tree",
+    "status": "completed",
+    "created_at": "2024-01-15T10:30:00.000000",
+    "started_at": "2024-01-15T10:30:01.000000",
+    "completed_at": "2024-01-15T10:30:03.000000"
+}
+```
+
+**Get Request Result:**
+```bash
+curl 'http://localhost:<port>/api/v1/result/<request_id>' \
+--header 'api-key: <your-api-key>'
+```
+*Response (for completed request):*
+```json
+{
+    "result": "...",
+    "status": "success"
+}
+```
+
+**Get Queue Status:**
+```bash
+curl 'http://localhost:<port>/api/v1/queue/status' \
+--header 'api-key: <your-api-key>'
+```
+*Response:*
+```json
+{
+    "success": true,
+    "queue_size": 3,
+    "active_requests": 5,
+    "completed_requests": 12,
+    "currently_processing": "550e8400-e29b-41d4-a716-446655440000",
+    "worker_running": true
+}
+```
+
+#### Request States
+- `queued` - Request accepted and waiting in queue
+- `processing` - Currently being executed  
+- `completed` - Successfully completed
+- `failed` - Execution failed
+- `expired` - Request timed out before processing
+
+#### Queue Configuration
+The queue system can be configured in your service configuration:
+```yaml
+queue_max_size: 100          # Maximum queued requests
+request_timeout: 300         # Request timeout (5 minutes)
+result_retention: 3600       # Result retention (1 hour)
+```
+
+#### Error Responses
+- **503 Service Unavailable**: Queue is full
+- **404 Not Found**: Request ID not found
+- **500 Internal Server Error**: Command execution failed
 
 ## Configuration
 
 The service configuration is stored as an attachment to a vault record in JSON/YAML format and includes:
 
-- Port Number
-- Ngrok configuration (optional)
-- TLS certificate path (optional)
-- Security settings
+- **Service Title**: Identifier for the service configuration
+- **Port Number**: Port for the API server
+- **Run Mode**: Service execution mode (foreground/background)
+- **Ngrok Configuration** (optional):
+  - Ngrok tunneling enabled/disabled
+  - Ngrok authentication token
+  - Ngrok custom domain
+  - Generated public URL
+- **TLS Certificate Configuration** (optional):
+  - TLS certificate enabled/disabled
+  - Certificate file path
+  - Certificate password
+- **Advanced Security Settings**:
   - Rate limiting rules
-  - IP restrictions
-  - Encryption settings
-  - Token expiration
-- API key(s) (Auto generated)
-- Command access controls
+  - IP allowed list (whitelist)
+  - IP denied list (blacklist)
+  - Encryption enabled/disabled
+  - Encryption private key
+- **API Configuration**:
+  - API key(s) (Auto generated)
+  - Command access controls
+  - Token expiration settings
+- **File Format**: Configuration storage format (JSON/YAML)
 
 ## Security Considerations
 
@@ -138,6 +236,18 @@ The service includes a comprehensive logging system that tracks:
 - Command execution
 - Security events
 - Error conditions
+
+### Background Process Logging
+When running in **background mode**, service logs are stored in:
+- **Location**: `keepercommander/service/core/logs/service_subprocess.log`
+- **Content**: Subprocess output, errors, and service events
+- **Auto-created**: Log directory is automatically created when service starts in background
+
+### General Logging Configuration
+- **Configuration file**: `~/.keeper/logging_config.yaml` (auto-generated)
+- **Default level**: `INFO`
+- **Available levels**: INFO, DEBUG, ERROR, CRITICAL
+- **Control**: Enable/disable logging by setting `enabled: false` in config file
 
 ## Requirements
 

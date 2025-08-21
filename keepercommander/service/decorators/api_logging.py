@@ -30,6 +30,17 @@ def sanitize_password_in_command(data):
     
     return sanitized
 
+def _get_sanitized_request_data():
+    """Extract and sanitize request data for logging (only for JSON POST requests)"""
+    sanitized_data = None
+    if request.method == 'POST' and request.content_type and 'application/json' in request.content_type:
+        try:
+            json_data = request.get_json(silent=True)
+            sanitized_data = sanitize_password_in_command(json_data)
+        except Exception:
+            sanitized_data = None
+    return f"data={sanitized_data}" if sanitized_data else "no-data"
+
 def api_log_handler(fn: Callable) -> Callable:
     """Log API request information in a single line with color-coded status"""
     @wraps(fn)
@@ -57,9 +68,8 @@ def api_log_handler(fn: Callable) -> Callable:
             else:
                 status_color = "\033[93m"  # Yellow for server errors
             
-            # Sanitize request data to hide passwords
-            sanitized_data = sanitize_password_in_command(request.json)
-            data_str = f"data={sanitized_data}" if sanitized_data else "no-data"
+            # Sanitize request data to hide passwords (only for JSON requests)
+            data_str = _get_sanitized_request_data()
             
             log_parts = [
                 f"\033[94m{request.method}\033[0m",  # Blue method
@@ -76,9 +86,8 @@ def api_log_handler(fn: Callable) -> Callable:
         except Exception as ex:
             duration = time.time() - start_time
             
-            # Sanitize request data for error logs too
-            sanitized_data = sanitize_password_in_command(request.json)
-            data_str = f"data={sanitized_data}" if sanitized_data else "no-data"
+            # Sanitize request data for error logs too (only for JSON requests)
+            data_str = _get_sanitized_request_data()
             
             log_parts = [
                 request.method,
