@@ -134,7 +134,7 @@ curl 'http://localhost:<port>/api/v1/status/<request_id>' \
 {
     "success": true,
     "request_id": "550e8400-e29b-41d4-a716-446655440000",
-    "command": "tree",
+    "command": "tree", 
     "status": "completed",
     "created_at": "2024-01-15T10:30:00.000000",
     "started_at": "2024-01-15T10:30:01.000000",
@@ -187,10 +187,15 @@ request_timeout: 300         # Request timeout (5 minutes)
 result_retention: 3600       # Result retention (1 hour)
 ```
 
+#### Rate Limiting
+- **Default limits**: 60/minute, 600/hour, 6000/day
+- **Example**: Setting `"20/minute"` effectively provides ~20 requests per minute across all endpoints
+
 #### Error Responses
 - **503 Service Unavailable**: Queue is full
 - **404 Not Found**: Request ID not found
 - **500 Internal Server Error**: Command execution failed
+- **429 Too Many Requests**: Rate limit exceeded
 
 ## Configuration
 
@@ -243,18 +248,18 @@ When running in **background mode**, service logs are stored in:
 - **Content**: Subprocess output, errors, and service events
 - **Auto-created**: Log directory is automatically created when service starts in background
 
+### Ngrok Logging
+When ngrok tunneling is enabled, additional logs are maintained:
+- **Location**: `keepercommander/service/core/logs/ngrok_subprocess.log`
+- **Content**: Ngrok tunnel startup, connection events, public URL generation, and tunnel errors
+- **Includes**: Tunnel establishment, reconnection attempts, and ngrok-specific error messages
+- **Auto-created**: Created automatically when ngrok tunneling is configured and service starts
+
 ### General Logging Configuration
 - **Configuration file**: `~/.keeper/logging_config.yaml` (auto-generated)
 - **Default level**: `INFO`
 - **Available levels**: INFO, DEBUG, ERROR, CRITICAL
 - **Control**: Enable/disable logging by setting `enabled: false` in config file
-
-## Requirements
-
-- Python 3.6+
-- Keeper Commander
-- Flask
-- Dependencies listed in `requirements.txt`
 
 ## Error Handling
 
@@ -263,6 +268,13 @@ The service includes robust error handling for:
 - Authentication failures
 - Rate limit violations
 - Invalid commands
+
+## Requirements
+
+- Python 3.6+
+- Keeper Commander
+- Flask
+- Dependencies listed in `requirements.txt`
 
 ## Docker Deploy
 
@@ -306,14 +318,7 @@ The service includes robust error handling for:
       "command": "<command>"
    }'
    ```
-## Logging configuration
-  Once service mode started the `logging_config.yaml` is generated at default path(~\.keeper) with default level `INFO`
-  User can disable logging by setting `enabled:false` or can change log level(INFO,DEBUG,ERROR,CRITICAL) using `logging_config.yaml`
-  ```bash
-    logging:
-      enabled: true
-      level: INFO
-  ```
+
 ## Contributing
 
 Please refer to Keeper Commander's contribution guidelines while making changes to this module.
