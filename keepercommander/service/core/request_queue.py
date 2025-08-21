@@ -52,12 +52,15 @@ class QueuedRequest:
     def to_dict(self) -> Dict[str, Any]:
         """Convert request to dictionary for JSON serialization."""
         data = asdict(self)
-        # Convert datetime objects to ISO strings
+        # Convert datetime objects to ISO strings and handle bytes objects
         for key, value in data.items():
             if isinstance(value, datetime):
                 data[key] = value.isoformat()
             elif isinstance(value, RequestStatus):
                 data[key] = value.value
+            elif isinstance(value, bytes):
+                # Handle encrypted results - don't expose the raw bytes
+                data[key] = {"encrypted": True, "type": "bytes"}
         return data
 
 

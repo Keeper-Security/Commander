@@ -49,11 +49,12 @@ if sys.version_info >= (3, 8):
             """Test starting service when another instance is already running"""
             ProcessInfo.save(pid=12345, is_running=True)
             with mock.patch('os.getpid', return_value=12345), \
-                mock.patch('psutil.Process') as mock_process:
+                mock.patch('psutil.Process') as mock_process, \
+                mock.patch('sys.executable', '/usr/bin/python3'):
                 mock_proc_instance = mock.Mock()
                 mock_proc_instance.is_running.return_value = True
-                mock_proc_instance.name.return_value = "python.exe"
-                mock_proc_instance.cmdline.return_value = ["python.exe", "service_app.py"]
+                mock_proc_instance.name.return_value = "python3"
+                mock_proc_instance.cmdline.return_value = ["/usr/bin/python3", "service_app.py"]
                 mock_process.return_value = mock_proc_instance
 
                 start_cmd = StartService()
