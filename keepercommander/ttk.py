@@ -4,8 +4,7 @@
 
 import logging
 import time
-from keepercommander import api
-import keepercommander.error
+from . import api, error
 
 
 class TimeToKeepalive:
@@ -59,7 +58,7 @@ class TimeToKeepalive:
         ):
             try:
                 api.send_keepalive(params)
-            except keepercommander.error.KeeperApiError as kae:
+            except error.KeeperApiError as kae:
                 logging.warning(kae.message)
 
 

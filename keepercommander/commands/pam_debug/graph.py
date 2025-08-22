@@ -5,21 +5,21 @@ import logging
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ...display import bcolors
 from ... import vault
-from keepercommander.discovery_common.infrastructure import Infrastructure
-from keepercommander.discovery_common.record_link import RecordLink
-from keepercommander.discovery_common.user_service import UserService
-from keepercommander.discovery_common.jobs import Jobs
-from keepercommander.discovery_common.constants import (PAM_USER, PAM_DIRECTORY, PAM_MACHINE, PAM_DATABASE, VERTICES_SORT_MAP,
+from ...discovery_common.infrastructure import Infrastructure
+from ...discovery_common.record_link import RecordLink
+from ...discovery_common.user_service import UserService
+from ...discovery_common.jobs import Jobs
+from ...discovery_common.constants import (PAM_USER, PAM_DIRECTORY, PAM_MACHINE, PAM_DATABASE, VERTICES_SORT_MAP,
                                         DIS_INFRA_GRAPH_ID, RECORD_LINK_GRAPH_ID, USER_SERVICE_GRAPH_ID,
                                         DIS_JOBS_GRAPH_ID)
-from keepercommander.discovery_common.types import (DiscoveryObject, DiscoveryUser, DiscoveryDirectory, DiscoveryMachine,
+from ...discovery_common.types import (DiscoveryObject, DiscoveryUser, DiscoveryDirectory, DiscoveryMachine,
                                     DiscoveryDatabase, JobContent)
-from keepercommander.discovery_common.dag_sort import sort_infra_vertices
-from keepercommander.keeper_dag import DAG
-from keepercommander.keeper_dag.connection.commander import Connection as CommanderConnection
-from keepercommander.keeper_dag.connection.local import Connection as LocalConnection
-from keepercommander.keeper_dag.vertex import DAGVertex
-from keepercommander.keeper_dag.edge import DAGEdge
+from ...discovery_common.dag_sort import sort_infra_vertices
+from ...keeper_dag import DAG
+from ...keeper_dag.connection.commander import Connection as CommanderConnection
+from ...keeper_dag.connection.local import Connection as LocalConnection
+from ...keeper_dag.vertex import DAGVertex
+from ...keeper_dag.edge import DAGEdge
 from typing import Optional, Union, TYPE_CHECKING
 
 Connection = Union[CommanderConnection, LocalConnection]

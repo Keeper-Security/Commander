@@ -4,7 +4,7 @@ import logging
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
 from ...display import bcolors
 from ... import vault
-from keepercommander.discovery_common.record_link import RecordLink
+from ...discovery_common.record_link import RecordLink
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:

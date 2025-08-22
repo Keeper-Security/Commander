@@ -3,8 +3,8 @@ from .constants import DIS_RULES_GRAPH_ID
 from .types import (RuleTypeEnum, RuleItem, ActionRuleSet, ActionRuleItem, ScheduleRuleSet, ComplexityRuleSet,
                     Statement, RuleActionEnum)
 from .utils import value_to_boolean, get_connection
-from keepercommander.keeper_dag import DAG, EdgeType
-from keepercommander.keeper_dag.exceptions import DAGException
+from ..keeper_dag import DAG, EdgeType
+from ..keeper_dag.exceptions import DAGException
 from time import time
 import base64
 import os

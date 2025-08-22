@@ -1,8 +1,8 @@
 from typing import Set, Optional
 
-from keepercommander import api
-from keepercommander.params import KeeperParams
-from keepercommander.subfolder import try_resolve_path
+from ... import api
+from ...params import KeeperParams
+from ...subfolder import try_resolve_path
 
 
 # Get record UID(s) given one of its identifiers: name (if current folder contains the record), path, or UID

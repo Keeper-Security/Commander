@@ -3,12 +3,12 @@ import logging
 from .constants import RECORD_LINK_GRAPH_ID
 from .utils import get_connection
 from .types import UserAcl, DiscoveryObject
-from keepercommander.keeper_dag import DAG, EdgeType
+from ..keeper_dag import DAG, EdgeType
 import importlib
 from typing import Any, Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from keepercommander.keeper_dag.vertex import DAGVertex
+    from ..keeper_dag.vertex import DAGVertex
 
 
 class RecordLink:

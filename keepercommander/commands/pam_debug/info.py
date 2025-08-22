@@ -3,12 +3,12 @@ import argparse
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ...display import bcolors
 from ... import vault, vault_extensions
-from keepercommander.discovery_common.infrastructure import Infrastructure
-from keepercommander.discovery_common.record_link import RecordLink
-from keepercommander.discovery_common.user_service import UserService
-from keepercommander.discovery_common.types import UserAcl, DiscoveryObject
-from keepercommander.discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
-from keepercommander.keeper_dag import EdgeType
+from ...discovery_common.infrastructure import Infrastructure
+from ...discovery_common.record_link import RecordLink
+from ...discovery_common.user_service import UserService
+from ...discovery_common.types import UserAcl, DiscoveryObject
+from ...discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
+from ...keeper_dag import EdgeType
 import time
 import re
 from typing import Optional, TYPE_CHECKING

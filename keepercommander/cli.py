@@ -119,7 +119,7 @@ def is_enterprise_command(name, command, args):   # type: (str, CliCommand, str)
         args = args.split(' ')
         verb = next(iter(args), None)
         subcommand = command.subcommands.get(verb)
-        from keepercommander.commands.enterprise_common import EnterpriseCommand
+        from .commands.enterprise_common import EnterpriseCommand
         return isinstance(subcommand, EnterpriseCommand)
     else:
         return False

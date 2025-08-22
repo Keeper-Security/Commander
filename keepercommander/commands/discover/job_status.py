@@ -3,18 +3,18 @@ import argparse
 import json
 import logging
 from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
+from ..pam.router_helper import router_get_connected_gateways
 from ... import vault_extensions
 from ...display import bcolors
-from ..pam.router_helper import router_get_connected_gateways
-from keepercommander.discovery_common.jobs import Jobs
-from keepercommander.discovery_common.infrastructure import Infrastructure
-from keepercommander.discovery_common.constants import DIS_INFRA_GRAPH_ID
-from keepercommander.discovery_common.types import DiscoveryDelta, DiscoveryObject
-from keepercommander.keeper_dag.dag import DAG
+from ...discovery_common.jobs import Jobs
+from ...discovery_common.infrastructure import Infrastructure
+from ...discovery_common.constants import DIS_INFRA_GRAPH_ID
+from ...discovery_common.types import DiscoveryDelta, DiscoveryObject
+from ...keeper_dag.dag import DAG
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from keepercommander.discovery_common.jobs import JobItem
+    from ...discovery_common.jobs import JobItem
 
 
 def _h(text):

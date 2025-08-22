@@ -16,7 +16,7 @@ from tabulate import tabulate
 
 from prompt_toolkit.styles.named_colors import NAMED_COLORS
 
-from keepercommander import __version__
+from . import __version__
 from .subfolder import BaseFolderNode
 
 init()

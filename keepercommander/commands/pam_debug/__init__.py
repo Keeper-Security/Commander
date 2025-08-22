@@ -5,13 +5,13 @@ from typing import  TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ...params import KeeperParams
-    from keepercommander.keeper_dag.connection import ConnectionBase
+    from ...keeper_dag.connection import ConnectionBase
 
 
 def get_connection(params: KeeperParams) -> ConnectionBase:
     if value_to_boolean(os.environ.get("USE_LOCAL_DAG", False)) is False:
-        from keepercommander.keeper_dag.connection.commander import Connection as CommanderConnection
+        from ...keeper_dag.connection.commander import Connection as CommanderConnection
         return CommanderConnection(params=params)
     else:
-        from keepercommander.keeper_dag.connection.local import Connection as LocalConnection
+        from ...keeper_dag.connection.local import Connection as LocalConnection
         return LocalConnection()

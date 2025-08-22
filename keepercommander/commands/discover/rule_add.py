@@ -6,8 +6,8 @@ from ..pam.pam_dto import GatewayActionDiscoverRuleValidateInputs, GatewayAction
 from ..pam.router_helper import router_send_action_to_gateway, router_get_connected_gateways
 from ...display import bcolors
 from ...proto import pam_pb2
-from keepercommander.discovery_common.rule import Rules
-from keepercommander.discovery_common.types import ActionRuleItem
+from ...discovery_common.rule import Rules
+from ...discovery_common.types import ActionRuleItem
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:

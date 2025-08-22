@@ -95,7 +95,7 @@ class ExternalSharesReportCommand(enterprise_common.EnterpriseCommand):
 
     def get_sox_data(self, params, refresh_data):
         if not self.sox_data or refresh_data:
-            from keepercommander.sox import get_compliance_data
+            from ..sox import get_compliance_data
             node_id = params.enterprise['nodes'][0].get('node_id', 0)
             enterprise_id = node_id >> 32
             now_ts = datetime.datetime.now().timestamp()

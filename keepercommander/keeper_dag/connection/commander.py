@@ -9,15 +9,15 @@ import requests
 import time
 
 try:  # pragma: no cover
-    from keepercommander import crypto, utils, rest_api
+    from ... import crypto, utils, rest_api
 except ImportError:  # pragma: no cover
     raise Exception("Please install the keepercommander module to use the Commander connection.")
 
 from typing import Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
-    from keepercommander.params import KeeperParams
-    from keepercommander.vault import KeeperRecord
+    from ...params import KeeperParams
+    from ...vault import KeeperRecord
     Content = Union[str, bytes, dict]
     QueryValue = Union[list, dict, str, float, int, bool]
     Logger = Union[logging.RootLogger, logging.Logger]

@@ -3,9 +3,9 @@ import argparse
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ...display import bcolors
 from ... import vault
-from keepercommander.discovery_common.record_link import RecordLink
-from keepercommander.discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
-from keepercommander.discovery_common.types import UserAclRotationSettings
+from ...discovery_common.record_link import RecordLink
+from ...discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
+from ...discovery_common.types import UserAclRotationSettings
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:

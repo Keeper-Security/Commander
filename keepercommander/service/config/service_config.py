@@ -17,13 +17,12 @@ from typing import Dict, Any, List, Optional
 from configparser import ConfigParser
 
 import yaml
-from keepercommander.params import KeeperParams
 from .file_handler import ConfigFormatHandler
+from .models import ServiceConfigData
 from ..decorators.logging import logger, debug_decorator
 from ..util.exceptions import ValidationError
-from .models import ServiceConfigData
-from keepercommander import resources, utils
-from .file_handler import ConfigFormatHandler
+from ... import resources, utils
+from ...params import KeeperParams
 
 
 VALID_CERT_EXTENSIONS = {".pem", ".crt", ".cer", ".key"}

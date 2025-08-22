@@ -5,8 +5,8 @@ from ...display import bcolors
 from ... import vault
 from . import get_plugins_map
 from ...utils import value_to_boolean
-from keepercommander.discovery_common.record_link import RecordLink
-from keepercommander.discovery_common.constants import PAM_USER
+from ...discovery_common.record_link import RecordLink
+from ...discovery_common.constants import PAM_USER
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:

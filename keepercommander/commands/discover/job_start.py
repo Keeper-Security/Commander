@@ -11,8 +11,8 @@ from ... import vault_extensions
 from ... import vault
 from ...proto import pam_pb2
 from ...display import bcolors
-from keepercommander.discovery_common.jobs import Jobs
-from keepercommander.discovery_common.types import CredentialBase
+from ...discovery_common.jobs import Jobs
+from ...discovery_common.types import CredentialBase
 from typing import List, TYPE_CHECKING
 
 if TYPE_CHECKING:

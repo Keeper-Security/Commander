@@ -6,14 +6,14 @@ from .user_service import UserService
 from .constants import PAM_MACHINE, PAM_DIRECTORY
 from .utils import get_connection
 from .types import DiscoveryObject
-from keepercommander.keeper_dag import EdgeType
-from keepercommander.keeper_dag.edge import DAGEdge
+from ..keeper_dag import EdgeType
+from ..keeper_dag.edge import DAGEdge
 import re
 import sys
 from typing import Any, Optional, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from keepercommander.keeper_dag.vertex import DAGVertex
+    from ..keeper_dag.vertex import DAGVertex
 
 
 class Verify:

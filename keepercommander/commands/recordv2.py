@@ -15,7 +15,7 @@ import logging
 import os
 import re
 
-from keepercommander.breachwatch import BreachWatch
+from ..breachwatch import BreachWatch
 
 from .base import suppress_exit, raise_parse_exception, Command
 from .. import api, generator, utils, crypto

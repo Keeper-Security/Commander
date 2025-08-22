@@ -10,14 +10,13 @@
 #
 
 import argparse
-from typing import Dict, Any
-from keepercommander.params import KeeperParams
-from keepercommander.commands.base import report_output_parser, Command
+from typing import Any, Dict, Optional
 from ..config.service_config import ServiceConfig
 from ..config.config_validation import ValidationError
 from ..decorators.logging import logger, debug_decorator
+from ...params import KeeperParams
+from ...commands.base import report_output_parser, Command
 from dataclasses import dataclass
-from typing import Optional
 
 @dataclass
 class StreamlineArgs:

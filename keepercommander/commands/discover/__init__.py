@@ -10,7 +10,7 @@ from ... import vault
 from ...proto import APIRequest_pb2
 from ...crypto import encrypt_aes_v2, decrypt_aes_v2
 from ...display import bcolors
-from keepercommander.discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
+from ...discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
 import json
 import base64
 

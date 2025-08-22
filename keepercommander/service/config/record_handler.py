@@ -12,13 +12,13 @@
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any
-from keepercommander import utils
-from keepercommander.params import KeeperParams
-from ..util.api_key import generate_api_key
-from ..util.exceptions import ValidationError
-from ..decorators.logging import logger, debug_decorator
 from .cli_handler import CommandHandler
 from .config_validation import ConfigValidator
+from ..decorators.logging import logger, debug_decorator
+from ..util.api_key import generate_api_key
+from ..util.exceptions import ValidationError
+from ... import utils
+from ...params import KeeperParams
 
 class RecordHandler:
     def __init__(self):

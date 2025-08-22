@@ -2,7 +2,7 @@ from __future__ import annotations
 from .constants import DIS_JOBS_GRAPH_ID
 from .utils import get_connection
 from .types import JobContent, JobItem, Settings, DiscoveryDelta
-from keepercommander.keeper_dag import DAG, EdgeType
+from ..keeper_dag import DAG, EdgeType
 import logging
 import os
 import base64
@@ -11,7 +11,7 @@ from time import time
 from typing import Any, Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from keepercommander.keeper_dag.vertex import DAGVertex
+    from ..keeper_dag.vertex import DAGVertex
 
 
 class Jobs:

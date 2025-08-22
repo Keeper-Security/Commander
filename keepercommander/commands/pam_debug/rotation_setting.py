@@ -7,9 +7,9 @@ from ...proto import router_pb2
 from ...sync_down import sync_down
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 from ..pam.router_helper import router_set_record_rotation_information
-from keepercommander.discovery_common.record_link import RecordLink
-from keepercommander.discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
-from keepercommander.discovery_common.types import UserAcl, UserAclRotationSettings
+from ...discovery_common.record_link import RecordLink
+from ...discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
+from ...discovery_common.types import UserAcl, UserAclRotationSettings
 import re
 from typing import Optional, TYPE_CHECKING
 

@@ -580,9 +580,9 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
                     filters_by_user.update({user: filters})
             return records_accessed_by_user
 
-        from keepercommander.sox.storage_types import StorageRecordAging
-        from keepercommander.commands.aram import API_EVENT_SUMMARY_ROW_LIMIT
-        from keepercommander.commands.enterprise import EnterpriseInfoCommand
+        from ..sox.storage_types import StorageRecordAging
+        from .aram import API_EVENT_SUMMARY_ROW_LIMIT
+        from .enterprise import EnterpriseInfoCommand
 
         report_data = []
         user_lookup = {user.get('enterprise_user_id'): user.get('username') for user in params.enterprise.get('users')}
@@ -633,7 +633,7 @@ class ComplianceSummaryReportCommand(BaseComplianceReportCommand):
             return email, num_total, num_owned, num_active, num_deleted
 
         filter_by_node = node != root_node
-        from keepercommander.commands.enterprise import EnterpriseInfoCommand
+        from .enterprise import EnterpriseInfoCommand
         cmd = EnterpriseInfoCommand()
         cmd_kwargs = {
             'users': True,

@@ -187,7 +187,7 @@ def get_contained_folder_uids(params, name, children_only=True):
 
     folder_uids = set()
     root_folder_uids = get_folder_uids(params, name)
-    from keepercommander.commands.base import FolderMixin
+    from .commands.base import FolderMixin
     for uid in get_folder_uids(params, name):
         FolderMixin.traverse_folder_tree(params, uid, on_folder)
 
@@ -196,7 +196,7 @@ def get_contained_folder_uids(params, name, children_only=True):
 
 def get_contained_record_uids(params, name, children_only=True):
     # type: (KeeperParams, str, bool) -> Dict[str, Iterable[str]]
-    from keepercommander.commands.base import FolderMixin
+    from .commands.base import FolderMixin
     recs_by_folder = dict()
     root_folder_uids = get_folder_uids(params, name)
 

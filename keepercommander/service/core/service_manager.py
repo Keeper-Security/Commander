@@ -15,9 +15,9 @@ from pathlib import Path
 import signal
 import psutil
 
-from keepercommander import utils
-from keepercommander.params import KeeperParams
-from keepercommander.service.config.service_config import ServiceConfig
+from ... import utils
+from ...params import KeeperParams
+from ...service.config.service_config import ServiceConfig
 from ..decorators.logging import logger, debug_decorator
 from .process_info import ProcessInfo
 from .terminal_handler import TerminalHandler
@@ -149,7 +149,7 @@ class ServiceManager:
                     raise
 
             else:
-                from keepercommander.service.app import create_app
+                from ...service.app import create_app
                 cls._flask_app = create_app()
                 cls._is_running = True
 

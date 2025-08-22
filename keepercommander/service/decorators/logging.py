@@ -14,7 +14,7 @@ from typing import Callable, Any
 import logging
 import sys, os, yaml
 from enum import Enum
-from keepercommander import utils
+from ... import utils
 
 class LogLevel(Enum):
     ERROR = logging.ERROR

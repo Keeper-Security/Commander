@@ -15,7 +15,7 @@ from datetime import datetime
 from ..util.str_util import split_to_list
 from ..util.config_reader import ConfigReader
 from ..decorators.logging import debug_decorator, logger
-from keepercommander.service.util.verified_command import Verifycommand
+from ...service.util.verified_command import Verifycommand
 
 def auth_check(fn):
     @wraps(fn)

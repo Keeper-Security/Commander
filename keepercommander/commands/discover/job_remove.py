@@ -3,11 +3,11 @@ import argparse
 import logging
 from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ..pam.pam_dto import GatewayActionDiscoverJobRemoveInputs, GatewayActionDiscoverJobRemove, GatewayAction
-from ...proto import pam_pb2
 from ..pam.router_helper import router_send_action_to_gateway, router_get_connected_gateways
 from ... import vault_extensions
 from ...display import bcolors
-from keepercommander.discovery_common.jobs import Jobs
+from ...discovery_common.jobs import Jobs
+from ...proto import pam_pb2
 
 
 class PAMGatewayActionDiscoverJobRemoveCommand(PAMGatewayActionDiscoverCommandBase):

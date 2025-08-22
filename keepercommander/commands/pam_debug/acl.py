@@ -4,8 +4,8 @@ import logging
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, PAM_USER
 from ...display import bcolors
 from ... import vault
-from keepercommander.discovery_common.record_link import RecordLink
-from keepercommander.discovery_common.types import UserAcl
+from ...discovery_common.record_link import RecordLink
+from ...discovery_common.types import UserAcl
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
