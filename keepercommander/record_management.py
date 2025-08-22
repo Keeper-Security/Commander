@@ -14,18 +14,17 @@ import json
 import logging
 from typing import Optional, Union
 
-from .breachwatch import BreachWatch
-
 from . import api, subfolder, utils, crypto, vault, vault_extensions
 from .api import get_records_add_request, get_records_update_request
+from .breachwatch import BreachWatch
 from .error import KeeperApiError
 from .params import KeeperParams, LAST_RECORD_UID
 from .proto import record_pb2
 from .security_audit import attach_security_data
 
 
-def add_record_to_folder(params, record, folder_uid=None):
-    # type: (KeeperParams, vault.KeeperRecord, Optional[str]) -> None
+def add_record_to_folder(params, record, folder_uid=None, pb_only:bool=False):
+    # type: (KeeperParams, vault.KeeperRecord, Optional[str], Optional[bool]) -> Optional[Union[record_pb2.RecordUpdate, record_pb2.RecordAdd]]
     if not record.record_uid:
         record.record_uid = utils.generate_uid()
     if not record.record_key:
@@ -120,6 +119,10 @@ def add_record_to_folder(params, record, folder_uid=None):
                 add_record.audit.data = crypto.encrypt_ec(
                     json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key)
             add_record = attach_security_data(params, record, add_record)
+
+        if utils.value_to_boolean(pb_only) is True:
+            return add_record
+
         rq = get_records_add_request(params)
         rq.records.append(add_record)
         rs = api.communicate_rest(params, rq, 'vault/records_add', rs_type=record_pb2.RecordsModifyResponse)
