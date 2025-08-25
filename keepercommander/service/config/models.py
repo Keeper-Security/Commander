@@ -32,4 +32,5 @@ class ServiceConfigData:
     encryption_private_key: str
     fileformat: str
     run_mode: str
+    queue_enabled: str
     records: List[Dict[str, Any]]

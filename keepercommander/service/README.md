@@ -42,6 +42,7 @@ You'll be prompted to configure:
 - Enable TLS Certificate (y/n)
   - TLS Certificate path 
   - TLS Certificate password
+- Enable Request Queue (y/n)
 - Advanced Security (y/n)
   - Rate Limit
   - Allowed IP List (comma-separated)
@@ -57,13 +58,13 @@ You'll be prompted to configure:
 Configure the service streamlined with TLS:
 
 ```bash
-  My Vault> service-create -p <port> -f <json-or-yaml> -c 'tree,ls,search,record-add,mkdir' -rm <foreground-or-background> -crtf <certificate-file-path> -crtp <certificate-password-key-path> -aip <allowed-ip-list> -dip <denied-ip-list>
+  My Vault> service-create -p <port> -f <json-or-yaml> -c 'tree,ls,search,record-add,mkdir' -rm <foreground-or-background> -q <y-or-n> -crtf <certificate-file-path> -crtp <certificate-password-key-path> -aip <allowed-ip-list> -dip <denied-ip-list>
 ```
 
 Configure the service streamlined with Ngrok:
 
 ```bash
-  My Vault> service-create -p <port> -f <json-or-yaml> -c 'tree,record-add,audit-report' -ng <ngrok-token> -cd <ngrok_custom_domain> -rm <foreground-or-background> -aip <allowed-ip-list> -dip <denied-ip-list>
+  My Vault> service-create -p <port> -f <json-or-yaml> -c 'tree,record-add,audit-report' -ng <ngrok-token> -cd <ngrok_custom_domain> -rm <foreground-or-background> -q <y-or-n> -aip <allowed-ip-list> -dip <denied-ip-list>
 ``` 
 
 Parameters:
@@ -75,6 +76,7 @@ Parameters:
 - `-crtf, --certfile`: Certificate file path
 - `-crtp, --certpassword`: Certificate password
 - `-rm, --run_mode`: Run mode (foreground/background)
+- `-q, --queue_enabled`: Enable request queue (y/n)
 - `-dip, --deniedip`: Denied IP list to access service
 - `-aip, --allowedip`: Allowed IP list to access service
 
@@ -97,6 +99,12 @@ My Vault> service-stop
 
 ## API Usage
 
+### API Versioning
+
+The service provides two API versions based on queue configuration:
+- **`/api/v2/`** - Queue enabled (default): Asynchronous request processing with enhanced features
+- **`/api/v1/`** - Queue disabled (legacy): Direct synchronous execution 
+
 ### Request Queue System
 
 The service uses an asynchronous request queue system that provides:
@@ -109,7 +117,7 @@ The service uses an asynchronous request queue system that provides:
 
 **Submit Request:**
 ```bash
-curl -X POST 'http://localhost:<port>/api/v1/executecommand' \
+curl -X POST 'http://localhost:<port>/api/v2/executecommand-async' \
 --header 'Content-Type: application/json' \
 --header 'api-key: <your-api-key>' \
 --data '{"command": "tree"}'
@@ -120,13 +128,13 @@ curl -X POST 'http://localhost:<port>/api/v1/executecommand' \
     "success": true,
     "request_id": "550e8400-e29b-41d4-a716-446655440000",
     "status": "queued",
-    "message": "Request queued successfully. Use /api/v1/status/<request_id> to check progress, /api/v1/result/<request_id> to get results, or /api/v1/queue/status for queue info."
+    "message": "Request queued successfully. Use /api/v2/status/<request_id> to check progress, /api/v2/result/<request_id> to get results, or /api/v2/queue/status for queue info."
 }
 ```
 
 **Check Request Status:**
 ```bash
-curl 'http://localhost:<port>/api/v1/status/<request_id>' \
+curl 'http://localhost:<port>/api/v2/status/<request_id>' \
 --header 'api-key: <your-api-key>'
 ```
 *Response:*
@@ -144,7 +152,7 @@ curl 'http://localhost:<port>/api/v1/status/<request_id>' \
 
 **Get Request Result:**
 ```bash
-curl 'http://localhost:<port>/api/v1/result/<request_id>' \
+curl 'http://localhost:<port>/api/v2/result/<request_id>' \
 --header 'api-key: <your-api-key>'
 ```
 *Response (for completed request):*
@@ -157,7 +165,7 @@ curl 'http://localhost:<port>/api/v1/result/<request_id>' \
 
 **Get Queue Status:**
 ```bash
-curl 'http://localhost:<port>/api/v1/queue/status' \
+curl 'http://localhost:<port>/api/v2/queue/status' \
 --header 'api-key: <your-api-key>'
 ```
 *Response:*
@@ -311,6 +319,15 @@ The service includes robust error handling for:
 ### Execute Command Endpoint
 
    ```bash
+   # Queue enabled (v2 - async)
+   curl --location 'http://localhost:<port>/api/v2/executecommand-async' \
+   --header 'Content-Type: application/json' \
+   --header 'api-key: <your-api-key>' \
+   --data '{
+      "command": "<command>"
+   }'
+   
+   # Queue disabled (v1 - direct)  
    curl --location 'http://localhost:<port>/api/v1/executecommand' \
    --header 'Content-Type: application/json' \
    --header 'api-key: <your-api-key>' \
