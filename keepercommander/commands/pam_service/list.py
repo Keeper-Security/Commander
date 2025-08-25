@@ -3,6 +3,7 @@ import argparse
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ...display import bcolors
 from ... import vault
+from ... import __version__
 from keepercommander.discovery_common.user_service import UserService
 from keepercommander.discovery_common.constants import PAM_MACHINE
 from keepercommander.keeper_dag import EdgeType
@@ -36,7 +37,8 @@ class PAMActionServiceListCommand(PAMGatewayActionDiscoverCommandBase):
             print(f"  {self._f('Cannot get gateway information. Gateway may not be up.')}")
             return
 
-        user_service = UserService(record=gateway_context.configuration, params=params, fail_on_corrupt=False)
+        user_service = UserService(record=gateway_context.configuration, params=params, fail_on_corrupt=False,
+                                   agent=f"Cmdr/{__version__}")
 
         service_map = {}
         for resource_vertex in user_service.dag.get_root.has_vertices(edge_type=EdgeType.LINK):
@@ -64,6 +66,9 @@ class PAMActionServiceListCommand(PAMGatewayActionDiscoverCommandBase):
                         comma = ","
                     if acl.is_task is True:
                         text += f"{comma} {bcolors.OKGREEN}Scheduled Tasks{bcolors.ENDC}"
+                    if acl.is_iis_pool is True:
+                        text += f"{comma} {bcolors.OKGREEN}IIS Pools{bcolors.ENDC}"
+                    comma = ","
                     service_map[user_record.record_uid]["machines"].append(text)
 
         print("")
