@@ -13,14 +13,46 @@ from flask import Blueprint, request, jsonify
 from html import escape
 import queue
 from ..decorators.unified import unified_api_decorator
+from ..util.command_util import CommandExecutor
 from ..decorators.logging import logger
 from ..core.request_queue import queue_manager
+
+def create_legacy_command_blueprint():
+    """Create legacy blueprint for direct/synchronous command execution (non-queue mode)."""
+    bp = Blueprint("legacy_command_bp", __name__)
+    
+    @bp.after_request
+    def add_deprecation_header(response):
+        """Add deprecation header for legacy API."""
+        response.headers['X-API-Deprecated'] = 'true'
+        return response
+    
+    @bp.route("/executecommand", methods=["POST"])
+    @unified_api_decorator()
+    def execute_command_direct(**kwargs):
+        """Execute command directly and return result immediately (legacy behavior)."""
+        try:
+            logger.warning("DEPRECATED: /api/v1/ usage - migrate to /api/v2/")
+            
+            request_command = request.json.get("command")
+            if not request_command:
+                return jsonify({"success": False, "error": "Error: No command provided"}), 400
+
+            command = escape(request_command)
+            response, status_code = CommandExecutor.execute(command)
+            return response if isinstance(response, bytes) else jsonify(response), status_code
+
+        except Exception as e:
+            logger.error(f"Error executing command: {e}")
+            return jsonify({"success": False, "error": f"{str(e)}"}), 500
+
+    return bp
 
 def create_command_blueprint():
     """Create Blue Print for Keeper Commander Service."""
     bp = Blueprint("command_bp", __name__)
     
-    @bp.route("/executecommand", methods=["POST"])
+    @bp.route("/executecommand-async", methods=["POST"])
     @unified_api_decorator()
     def execute_command(**kwargs):
         """Submit a command for execution and return request ID immediately."""
@@ -38,7 +70,7 @@ def create_command_blueprint():
                     "success": True,
                     "request_id": request_id,
                     "status": "queued",
-                    "message": "Request queued successfully. Use /api/v1/status/<request_id> to check progress, /api/v1/result/<request_id> to get results, or /api/v1/queue/status for queue info."
+                    "message": "Request queued successfully. Use /api/v2/status/<request_id> to check progress, /api/v2/result/<request_id> to get results, or /api/v2/queue/status for queue info."
                 }), 202  # 202 Accepted
             except queue.Full:
                 return jsonify({
