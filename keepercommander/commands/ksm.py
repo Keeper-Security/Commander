@@ -132,6 +132,8 @@ ksm_parser.add_argument('--config-init', type=str, dest='config_init', action='s
 ksm_parser.add_argument('--email', action='store', type=str, dest='email', help='Email of user to grant / remove application access to / from')
 # Disable sharing apps w/ admin permissions for now
 # ksm_parser.add_argument('--admin', action='store_true', help='Allow share recipient to manage application')
+ksm_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], default='table',
+                        help='Output format (table, json)')
 
 
 
@@ -167,8 +169,8 @@ class KSMCommand(Command):
 
         if ksm_obj == 'apps' or \
                 (ksm_obj in ['app', 'apps'] and ksm_action == 'list'):
-            KSMCommand.print_all_apps_records(params)
-            return
+            format_type = kwargs.get('format', 'table')
+            return KSMCommand.print_all_apps_records(params, format_type)
 
         if ksm_obj == 'clients' or (ksm_obj in ['client', 'clients'] and ksm_action == 'list'):
             print(bcolors.WARNING + "Listing clients is not available" + bcolors.ENDC)
@@ -186,10 +188,17 @@ class KSMCommand(Command):
             ksm_app = KSMCommand.get_app_record(params, ksm_app_uid_or_name)
 
             if not ksm_app:
-                print((bcolors.WARNING + "Application '%s' not found." + bcolors.ENDC) % ksm_app_uid_or_name)
+                format_type = kwargs.get('format', 'table')
+                if format_type == 'json':
+                    return json.dumps({"error": f"Application '{ksm_app_uid_or_name}' not found."})
+                else:
+                    print((bcolors.WARNING + "Application '%s' not found." + bcolors.ENDC) % ksm_app_uid_or_name)
                 return
 
-            KSMCommand.get_and_print_app_info(params, ksm_app.get('record_uid'))
+            format_type = kwargs.get('format', 'table')
+            result = KSMCommand.get_and_print_app_info(params, ksm_app.get('record_uid'), format_type)
+            if format_type == 'json' and result:
+                return result
             return
 
         if ksm_obj in ['client'] and ksm_action == 'get':
@@ -207,8 +216,11 @@ class KSMCommand(Command):
             ksm_app_name = ksm_command[2]
 
             force_to_add = False    # TODO: externalize this
+            format_type = kwargs.get('format', 'table')
 
-            KSMCommand.add_new_v5_app(params, ksm_app_name, force_to_add)
+            result = KSMCommand.add_new_v5_app(params, ksm_app_name, force_to_add, format_type)
+            if format_type == 'json' and result:
+                return result
             return
 
         if ksm_obj in ['app', 'apps'] and ksm_action in ['remove', 'rem', 'rm']:
@@ -468,9 +480,11 @@ class KSMCommand(Command):
         return data_dict
 
     @staticmethod
-    def print_all_apps_records(params):
+    def print_all_apps_records(params, format_type='table'):
 
-        print(f"\n{bcolors.BOLD}List all Secrets Manager Applications{bcolors.ENDC}\n")
+        if format_type == 'table':
+            print(f"\n{bcolors.BOLD}List all Secrets Manager Applications{bcolors.ENDC}\n")
+        
         rs = api.communicate_rest(params, None, 'vault/get_applications_summary',
                                   rs_type=APIRequest_pb2.GetApplicationsSummaryResponse)
 
@@ -482,8 +496,12 @@ class KSMCommand(Command):
             'client_count': x.clientCount,
         } for x in rs.applicationSummary}
 
-        apps_table_fields = [f'{bcolors.OKGREEN}App Name{bcolors.ENDC}', f'{bcolors.OKBLUE}App UID{bcolors.ENDC}',
-                             'Records', 'Folders', 'Devices', 'Last Access']
+        if format_type == 'json':
+            apps_table_fields = ['app_name', 'app_uid', 'records', 'folders', 'devices', 'last_access']
+        else:
+            apps_table_fields = [f'{bcolors.OKGREEN}App Name{bcolors.ENDC}', f'{bcolors.OKBLUE}App UID{bcolors.ENDC}',
+                                 'Records', 'Folders', 'Devices', 'Last Access']
+        
         apps_table = []
         for app_uid in app_summary:
             app = app_summary[app_uid]
@@ -492,22 +510,32 @@ class KSMCommand(Command):
                 la = app['last_access']
                 if la > 0:
                     last_access = datetime.datetime.fromtimestamp(la // 1000)
+                    last_access_str = last_access.strftime('%Y-%m-%d %H:%M:%S') if format_type == 'json' else last_access
                 else:
-                    last_access = None
-                row = [f'{bcolors.OKGREEN}{app_record.title}{bcolors.ENDC}', f'{bcolors.OKBLUE}{app_uid}{bcolors.ENDC}',
-                       app['folder_records'], app['folder_shares'], app['client_count'], last_access]
+                    last_access_str = None
+                
+                if format_type == 'json':
+                    row = [app_record.title, app_uid, app['folder_records'], app['folder_shares'], 
+                           app['client_count'], last_access_str]
+                else:
+                    row = [f'{bcolors.OKGREEN}{app_record.title}{bcolors.ENDC}', f'{bcolors.OKBLUE}{app_uid}{bcolors.ENDC}',
+                           app['folder_records'], app['folder_shares'], app['client_count'], last_access_str]
                 apps_table.append(row)
 
-        apps_table.sort(key=lambda x: x[0].lower())
+        apps_table.sort(key=lambda x: x[0].lower() if format_type == 'json' else x[0].replace('\x1b[92m', '').replace('\x1b[0m', '').lower())
 
         if len(apps_table) == 0:
-            print(f'{bcolors.WARNING}No Applications to list.{bcolors.ENDC}\n\n'
-                  f'To create new application, use command {bcolors.OKGREEN}secrets-manager app '
-                  f'create {bcolors.OKBLUE}[NAME]{bcolors.ENDC}')
+            if format_type == 'json':
+                print(json.dumps({"applications": [], "message": "No Applications to list."}))
+            else:
+                print(f'{bcolors.WARNING}No Applications to list.{bcolors.ENDC}\n\n'
+                      f'To create new application, use command {bcolors.OKGREEN}secrets-manager app '
+                      f'create {bcolors.OKBLUE}[NAME]{bcolors.ENDC}')
         else:
-            dump_report_data(apps_table, apps_table_fields, fmt='table')
+            return dump_report_data(apps_table, apps_table_fields, fmt=format_type)
 
-        print("")
+        if format_type == 'table':
+            print("")
 
     @staticmethod
     def get_app_info(params, app_uid):   # type: (KeeperParams, str) -> Sequence[APIRequest_pb2.AppInfo]
@@ -529,7 +557,7 @@ class KSMCommand(Command):
         return data_dict
 
     @staticmethod
-    def get_and_print_app_info(params, uid):
+    def get_and_print_app_info(params, uid, format_type='table'):
 
         app_info = KSMCommand.get_app_info(params, uid)
 
@@ -544,110 +572,164 @@ class KSMCommand(Command):
                 return shorten_client_id(all_clients, original_id, number_of_characters+1)
 
         if len(app_info) == 0:
-            print(bcolors.WARNING + 'No Secrets Manager Applications returned.' + bcolors.ENDC)
+            if format_type == 'json':
+                return json.dumps({"error": "No Secrets Manager Applications returned."})
+            else:
+                print(bcolors.WARNING + 'No Secrets Manager Applications returned.' + bcolors.ENDC)
             return
         else:
+            result_data = []
             for ai in app_info:
 
                 app_uid_str = utils.base64_url_encode(ai.appRecordUid)
 
                 app = KSMCommand.get_sm_app_record_by_uid(params, app_uid_str)
-                print(f'\nSecrets Manager Application\n'
-                      f'App Name: {app.get("title")}\n'
-                      f'App UID: {app_uid_str}')
+                
+                app_data = {
+                    "app_name": app.get("title"),
+                    "app_uid": app_uid_str,
+                    "client_devices": [],
+                    "shares": []
+                }
+                
+                if format_type == 'table':
+                    print(f'\nSecrets Manager Application\n'
+                        f'App Name: {app.get("title")}\n'
+                        f'App UID: {app_uid_str}')
 
                 client_devices = [x for x in ai.clients if x.appClientType == enterprise_pb2.GENERAL]
                 if len(client_devices) > 0:
                     client_count = 1
                     for c in client_devices:
                         client_id = utils.base64_url_encode(c.clientId)
-                        created_on = f'{bcolors.OKGREEN}{ms_to_str(c.createdOn)}{bcolors.ENDC}'
-                        first_access = f'{bcolors.WARNING}Never{bcolors.ENDC}' if c.firstAccess == 0 else f'{bcolors.OKGREEN}{ms_to_str(c.firstAccess)}{bcolors.ENDC}'
-                        last_access = f'{bcolors.WARNING}Never{bcolors.ENDC}' if c.lastAccess == 0 else f'{bcolors.OKGREEN}{ms_to_str(c.lastAccess)}{bcolors.ENDC}'
-                        lock_ip = f'{bcolors.OKGREEN}Enabled{bcolors.ENDC}' if c.lockIp else f'{bcolors.WARNING}Disabled{bcolors.ENDC}'
-
                         current_milli_time = round(time.time() * 1000)
-
+                        
+                        created_on_ts = ms_to_str(c.createdOn)
+                        first_access_ts = None if c.firstAccess == 0 else ms_to_str(c.firstAccess)
+                        last_access_ts = None if c.lastAccess == 0 else ms_to_str(c.lastAccess)
+                        
                         if c.accessExpireOn == 0:
-                            expire_access = f'{bcolors.OKGREEN}Never{bcolors.ENDC}'
+                            expire_access_ts = None
+                            expire_status = "never"
                         elif c.accessExpireOn <= current_milli_time:
-                            expire_access = f'{bcolors.FAIL}{ms_to_str(c.accessExpireOn)}{bcolors.ENDC}'
+                            expire_access_ts = ms_to_str(c.accessExpireOn)
+                            expire_status = "expired"
                         else:
-                            expire_access = f'{bcolors.WARNING}{ms_to_str(c.accessExpireOn)}{bcolors.ENDC}'
-
-                        ip_address = c.ipAddress
-                        # public_key = c.publicKey
-
+                            expire_access_ts = ms_to_str(c.accessExpireOn)
+                            expire_status = "active"
+                        
                         short_client_id = shorten_client_id(ai.clients, client_id, KSMCommand.CLIENT_SHORT_ID_LENGTH)
+                        
+                        client_device_data = {
+                            "device_name": c.id,
+                            "short_id": short_client_id,
+                            "client_id": client_id,
+                            "created_on": created_on_ts,
+                            "expires_on": expire_access_ts,
+                            "expire_status": expire_status,
+                            "first_access": first_access_ts,
+                            "last_access": last_access_ts,
+                            "ip_lock_enabled": c.lockIp,
+                            "ip_address": c.ipAddress if c.ipAddress else None
+                        }
+                        app_data["client_devices"].append(client_device_data)
+                        
+                        if format_type == 'table':
+                            created_on = f'{bcolors.OKGREEN}{created_on_ts}{bcolors.ENDC}'
+                            first_access = f'{bcolors.WARNING}Never{bcolors.ENDC}' if c.firstAccess == 0 else f'{bcolors.OKGREEN}{first_access_ts}{bcolors.ENDC}'
+                            last_access = f'{bcolors.WARNING}Never{bcolors.ENDC}' if c.lastAccess == 0 else f'{bcolors.OKGREEN}{last_access_ts}{bcolors.ENDC}'
+                            lock_ip = f'{bcolors.OKGREEN}Enabled{bcolors.ENDC}' if c.lockIp else f'{bcolors.WARNING}Disabled{bcolors.ENDC}'
+                            
+                            if expire_status == "never":
+                                expire_access = f'{bcolors.OKGREEN}Never{bcolors.ENDC}'
+                            elif expire_status == "expired":
+                                expire_access = f'{bcolors.FAIL}{expire_access_ts}{bcolors.ENDC}'
+                            else:
+                                expire_access = f'{bcolors.WARNING}{expire_access_ts}{bcolors.ENDC}'
 
-                        client_devices_str = f"\n{bcolors.BOLD}Client Device {client_count}{bcolors.ENDC}\n" \
-                                             f"=============================\n" \
-                                             f'  Device Name: {bcolors.OKGREEN}{c.id}{bcolors.ENDC}\n' \
-                                             f'  Short ID: {bcolors.OKGREEN}{short_client_id}{bcolors.ENDC}\n' \
-                                             f'  Created On: {created_on}\n' \
-                                             f'  Expires On: {expire_access}\n' \
-                                             f'  First Access: {first_access}\n' \
-                                             f'  Last Access: {last_access}\n' \
-                                             f'  IP Lock: {lock_ip}\n' \
-                                             f'  IP Address: {ip_address if c.ipAddress else "--"}'
+                            client_devices_str = f"\n{bcolors.BOLD}Client Device {client_count}{bcolors.ENDC}\n" \
+                                                f"=============================\n" \
+                                                f'  Device Name: {bcolors.OKGREEN}{c.id}{bcolors.ENDC}\n' \
+                                                f'  Short ID: {bcolors.OKGREEN}{short_client_id}{bcolors.ENDC}\n' \
+                                                f'  Created On: {created_on}\n' \
+                                                f'  Expires On: {expire_access}\n' \
+                                                f'  First Access: {first_access}\n' \
+                                                f'  Last Access: {last_access}\n' \
+                                                f'  IP Lock: {lock_ip}\n' \
+                                                f'  IP Address: {client_device_data["ip_address"] or "--"}'
 
-                        print(client_devices_str)
+                            print(client_devices_str)
                         client_count += 1
 
                 else:
-                    print(f'\n\t{bcolors.WARNING}No client devices registered for this Application{bcolors.ENDC}')
+                    if format_type == 'table':
+                        print(f'\n\t{bcolors.WARNING}No client devices registered for this Application{bcolors.ENDC}')
 
-                print(bcolors.BOLD + "\nApplication Access\n" + bcolors.ENDC)
+                if format_type == 'table':
+                    print(bcolors.BOLD + "\nApplication Access\n" + bcolors.ENDC)
 
                 if ai.shares:
-
                     recs = params.record_cache
 
-                    shares_table_fields = ['Share Type', 'UID', 'Title', 'Permissions']
-                    shares_table = []
-
                     for s in ai.shares:
-
                         uid_str = utils.base64_url_encode(s.secretUid)
-                        uid_str_c = bcolors.OKBLUE + uid_str + bcolors.ENDC
-
                         sht = APIRequest_pb2.ApplicationShareType.Name(s.shareType)
-                        editable_status_color = bcolors.OKGREEN if s.editable else bcolors.WARNING
-                        editable_status = editable_status_color + ("Editable" if s.editable else "Read-Only") + bcolors.ENDC
+                        
+                        share_data = {
+                            "share_type": sht,
+                            "uid": uid_str,
+                            "editable": s.editable
+                        }
 
                         if sht == 'SHARE_TYPE_RECORD':
                             rec = recs.get(uid_str)
-                            record_data_dict = KSMCommand.record_data_as_dict(rec)
-                            row = [
-                                'RECORD',
-                                uid_str_c,
-                                record_data_dict.get('title'),
-                                editable_status]
+                            if rec:
+                                record_data_dict = KSMCommand.record_data_as_dict(rec)
+                                share_data["title"] = record_data_dict.get('title')
+                                share_data["type"] = "RECORD"
                         elif sht == 'SHARE_TYPE_FOLDER':
-                            if uid_str not in params.shared_folder_cache:
-                                # logging.warning(f"Shared folder uid {uid_str} is not present in the cache. Looks like "
-                                #                 f"it was removed or was not sync to this client yet. Try to perform "
-                                #                 f"the `sync-down` to download latest data to local cache." % sht)
+                            if uid_str in params.shared_folder_cache:
+                                cached_sf = params.shared_folder_cache[uid_str]
+                                share_data["title"] = cached_sf.get('name_unencrypted')
+                                share_data["type"] = "FOLDER"
+                            else:
                                 continue
-                            cached_sf = params.shared_folder_cache[uid_str]
-                            shf_name = cached_sf.get('name_unencrypted')
-                            # shf_num_of_records = len(cached_sf.get('records'))
-                            row = [
-                                'FOLDER',
-                                uid_str_c,
-                                shf_name,
-                                editable_status]
                         else:
                             logging.warning("Unknown Share Type %s" % sht)
                             continue
 
-                        shares_table.append(row)
+                        app_data["shares"].append(share_data)
+                    
+                    if format_type == 'table' and ai.shares:
+                        shares_table_fields = ['Share Type', 'UID', 'Title', 'Permissions']
+                        shares_table = []
+                        
+                        for share in app_data["shares"]:
+                            uid_str_c = bcolors.OKBLUE + share["uid"] + bcolors.ENDC
+                            editable_status_color = bcolors.OKGREEN if share["editable"] else bcolors.WARNING
+                            editable_status = editable_status_color + ("Editable" if share["editable"] else "Read-Only") + bcolors.ENDC
+                            
+                            row = [
+                                share["type"],
+                                uid_str_c,
+                                share.get("title", ""),
+                                editable_status]
+                            shares_table.append(row)
 
-                    shares_table.sort(key=lambda x: x[2].lower())
-                    dump_report_data(shares_table, shares_table_fields, fmt='table')
-                    print()
+                        shares_table.sort(key=lambda x: x[2].lower())
+                        dump_report_data(shares_table, shares_table_fields, fmt='table')
+                        print()
                 else:
-                    print('\tThere are no shared secrets to this application')
+                    if format_type == 'table':
+                        print('\tThere are no shared secrets to this application')
+                
+                result_data.append(app_data)
+            
+        if format_type == 'json':
+            if len(result_data) == 1:
+                return json.dumps(result_data[0], indent=2)
+            else:
+                return json.dumps({"applications": result_data}, indent=2)
 
     @staticmethod
     def share_secret(params, app_uid, master_key, secret_uids, is_editable=False):
@@ -776,13 +858,16 @@ class KSMCommand(Command):
         cmd.execute(params, purge=purge, force=True, record=app_uid)
 
     @staticmethod
-    def add_new_v5_app(params, app_name, force_to_add=False):
+    def add_new_v5_app(params, app_name, force_to_add=False, format_type='table'):
 
         logging.debug("Creating new KSM Application named '%s'" % app_name)
 
         found_app = KSMCommand.get_app_record(params, app_name)
         if (found_app is not None) and (found_app is not force_to_add):
-            logging.warning('Application with the same name "%s" already exists.' % app_name)
+            if format_type == 'json':
+                return json.dumps({"error": f'Application with the same name "{app_name}" already exists.'})
+            else:
+                logging.warning('Application with the same name "%s" already exists.' % app_name)
             return
 
         app_record_data = {
@@ -813,7 +898,18 @@ class KSMCommand(Command):
 
         api.communicate_rest(params, ra, 'vault/application_add')
         app_uid_str = utils.base64_url_encode(ra.app_uid)
-        print(bcolors.OKGREEN + f"Application was successfully added (UID: {app_uid_str})" + bcolors.ENDC)
+        
+        if format_type == 'json':
+            result = {
+                "app_name": app_name,
+                "app_uid": app_uid_str,
+                "message": "Application was successfully added",
+                "created_at": datetime.datetime.fromtimestamp(client_modif_time / 1000).strftime('%Y-%m-%d %H:%M:%S')
+            }
+            params.sync_data = True
+            return json.dumps(result, indent=2)
+        else:
+            print(bcolors.OKGREEN + f"Application was successfully added (UID: {app_uid_str})" + bcolors.ENDC)
 
         params.sync_data = True
 
