@@ -1261,7 +1261,23 @@ class AuditReportCommand(Command):
     def execute(self, params, **kwargs):
         load_syslog_templates(params)
 
-        if kwargs.get('syntax_help') or not kwargs['report_type']:
+        def normalize_param(param_value):
+            """Convert single values to lists to maintain consistent processing"""
+            if param_value is None:
+                return None
+            if isinstance(param_value, str):
+                return [param_value]
+            elif isinstance(param_value, list):
+                return param_value
+            else:
+                return [param_value]
+
+        list_params = ['event_type', 'username', 'to_username', 'record_uid', 'shared_folder_uid', 'ip_address', 'aggregate']
+        for param in list_params:
+            if param in kwargs and kwargs[param] is not None:
+                kwargs[param] = normalize_param(kwargs[param])
+
+        if kwargs.get('syntax_help'):
             logging.info(audit_report_description)
             if kwargs.get('syntax_help'):
                 events = AuditReportCommand.load_audit_dimension(params, 'audit_event_type')

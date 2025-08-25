@@ -1200,6 +1200,8 @@ class PAMGatewayListCommand(Command):
                         help='Force retrieval of gateways')
     parser.add_argument('--verbose', '-v', required=False, default=False, dest='is_verbose', action='store_true',
                         help='Verbose output')
+    parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], default='table',
+                        help='Output format (table, json)')
 
     def get_parser(self):
         return PAMGatewayListCommand.parser
@@ -1208,6 +1210,7 @@ class PAMGatewayListCommand(Command):
 
         is_force = kwargs.get('is_force')
         is_verbose = kwargs.get('is_verbose')
+        format_type = kwargs.get('format', 'table')
 
         is_router_down = False
         krouter_url = router_helper.get_router_url(params)
@@ -1232,31 +1235,41 @@ class PAMGatewayListCommand(Command):
         enterprise_controllers_all = gateway_helper.get_all_gateways(params)
 
         if not enterprise_controllers_all:
-            print(f"{bcolors.OKBLUE}\nThis Enterprise does not have Gateways yet. To create new Gateway, use command "
-                  f"`{bcolors.ENDC}{bcolors.OKGREEN}pam gateway new{bcolors.ENDC}{bcolors.OKBLUE}`\n\n"
-                  f"NOTE: If you have added new Gateway, you might still need to initialize it before it is "
-                  f"listed.{bcolors.ENDC}")
+            if format_type == 'json':
+                return json.dumps({"gateways": [], "message": "This Enterprise does not have Gateways yet."})
+            else:
+                print(f"{bcolors.OKBLUE}\nThis Enterprise does not have Gateways yet. To create new Gateway, use command "
+                      f"`{bcolors.ENDC}{bcolors.OKGREEN}pam gateway new{bcolors.ENDC}{bcolors.OKBLUE}`\n\n"
+                      f"NOTE: If you have added new Gateway, you might still need to initialize it before it is "
+                      f"listed.{bcolors.ENDC}")
             return
 
         table = []
+        gateways_data = []
 
-        headers = []
-        headers.append('KSM Application Name (UID)')
-        headers.append('Gateway Name')
-        headers.append('Gateway UID')
-        headers.append('Status')
-        headers.append('Gateway Version')
+        if format_type == 'json':
+            headers = ['ksm_app_name_uid', 'gateway_name', 'gateway_uid', 'status', 'gateway_version']
+            if is_verbose:
+                headers.extend(['device_name', 'device_token', 'created_on', 'last_modified', 'node_id', 
+                               'os', 'os_release', 'machine_type', 'os_version'])
+        else:
+            headers = []
+            headers.append('KSM Application Name (UID)')
+            headers.append('Gateway Name')
+            headers.append('Gateway UID')
+            headers.append('Status')
+            headers.append('Gateway Version')
 
-        if is_verbose:
-            headers.append('Device Name')
-            headers.append('Device Token')
-            headers.append('Created On')
-            headers.append('Last Modified')
-            headers.append('Node ID')
-            headers.append('OS')
-            headers.append('OS Release')
-            headers.append('Machine Type')
-            headers.append('OS Version')
+            if is_verbose:
+                headers.append('Device Name')
+                headers.append('Device Token')
+                headers.append('Created On')
+                headers.append('Last Modified')
+                headers.append('Node ID')
+                headers.append('OS')
+                headers.append('OS Release')
+                headers.append('Machine Type')
+                headers.append('OS Version')
 
         # Create a lookup dictionary for connected controllers
         connected_controllers_dict = {}
@@ -1270,17 +1283,6 @@ class PAMGatewayListCommand(Command):
             if enterprise_controllers_connected:
                 connected_controller = connected_controllers_dict.get(c.controllerUid)
 
-            row_color = ''
-            if not is_router_down:
-                row_color = bcolors.FAIL
-
-                if connected_controller:
-                    row_color = bcolors.OKGREEN
-
-            add_cookie = False
-
-            row = []
-
             ksm_app_uid_str = utils.base64_url_encode(c.applicationUid)
             ksm_app = KSMCommand.get_app_record(params, ksm_app_uid_str)
 
@@ -1288,13 +1290,13 @@ class PAMGatewayListCommand(Command):
                 ksm_app_data_unencrypted_json = ksm_app.get('data_unencrypted')
                 ksm_app_data_unencrypted_dict = json.loads(ksm_app_data_unencrypted_json)
                 ksm_app_title = ksm_app_data_unencrypted_dict.get('title')
-                ksm_app_info = f'{ksm_app_title} ({ksm_app_uid_str})'
+                ksm_app_info_plain = f'{ksm_app_title} ({ksm_app_uid_str})'
+                ksm_app_name = ksm_app_title
+                ksm_app_accessible = True
             else:
-                ksm_app_info = f'[APP NOT ACCESSIBLE OR DELETED] ({ksm_app_uid_str})'
-
-            row.append(f'{row_color if ksm_app else bcolors.WHITE}{ksm_app_info}{bcolors.ENDC}')
-            row.append(f'{row_color}{c.controllerName}{bcolors.ENDC}')
-            row.append(f'{row_color}{utils.base64_url_encode(c.controllerUid)}{bcolors.ENDC}')
+                ksm_app_info_plain = f'[APP NOT ACCESSIBLE OR DELETED] ({ksm_app_uid_str})'
+                ksm_app_name = None
+                ksm_app_accessible = False
 
             if is_router_down:
                 status = 'UNKNOWN'
@@ -1302,8 +1304,6 @@ class PAMGatewayListCommand(Command):
                 status = "ONLINE"
             else:
                 status = "OFFLINE"
-
-            row.append(f'{row_color}{status}{bcolors.ENDC}')
 
             # Version information
             version = ""
@@ -1313,35 +1313,87 @@ class PAMGatewayListCommand(Command):
                 # In non-verbose mode, just show the Gateway Version part
                 version = version_parts[0] if version_parts else connected_controller.version
 
-            row.append(f'{row_color}{version}{bcolors.ENDC}')
+            gateway_uid_str = utils.base64_url_encode(c.controllerUid)
+
+            gateway_data = {
+                "ksm_app_name": ksm_app_name,
+                "ksm_app_uid": ksm_app_uid_str,
+                "ksm_app_accessible": ksm_app_accessible,
+                "gateway_name": c.controllerName,
+                "gateway_uid": gateway_uid_str,
+                "status": status,
+                "gateway_version": version
+            }
 
             if is_verbose:
-                row.append(f'{row_color}{c.deviceName}{bcolors.ENDC}')
-                row.append(f'{row_color}{c.deviceToken}{bcolors.ENDC}')
-                row.append(f'{row_color}{datetime.fromtimestamp(c.created / 1000)}{bcolors.ENDC}')
-                row.append(f'{row_color}{datetime.fromtimestamp(c.lastModified / 1000)}{bcolors.ENDC}')
-                row.append(f'{row_color}{c.nodeId}{bcolors.ENDC}')
-                
-                # Add version components as separate columns in verbose mode
                 os_name = version_parts[1] if len(version_parts) > 1 else ""
                 os_release = version_parts[2] if len(version_parts) > 2 else ""
                 machine_type = version_parts[3] if len(version_parts) > 3 else ""
                 os_version = version_parts[4] if len(version_parts) > 4 else ""
                 
-                row.append(f'{row_color}{os_name}{bcolors.ENDC}')
-                row.append(f'{row_color}{os_release}{bcolors.ENDC}')
-                row.append(f'{row_color}{machine_type}{bcolors.ENDC}')
-                row.append(f'{row_color}{os_version}{bcolors.ENDC}')
+                gateway_data.update({
+                    "device_name": c.deviceName,
+                    "device_token": c.deviceToken,
+                    "created_on": datetime.fromtimestamp(c.created / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+                    "last_modified": datetime.fromtimestamp(c.lastModified / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+                    "node_id": c.nodeId,
+                    "os": os_name,
+                    "os_release": os_release,
+                    "machine_type": machine_type,
+                    "os_version": os_version
+                })
 
-            table.append(row)
-        table.sort(key=lambda x: (x[3] or '', x[0].lower()))
+            gateways_data.append(gateway_data)
 
-        if is_verbose:
-            krouter_host = get_router_url(params)
-            print(f"\n{bcolors.BOLD}Router Host: {bcolors.OKBLUE}{krouter_host}{bcolors.ENDC}\n")
+            if format_type == 'table':
+                row_color = ''
+                if not is_router_down:
+                    row_color = bcolors.FAIL
+                    if connected_controller:
+                        row_color = bcolors.OKGREEN
 
-        dump_report_data(table, headers, fmt='table', filename="",
-                         row_number=False, column_width=None)
+                row = []
+                row.append(f'{row_color if ksm_app_accessible else bcolors.WHITE}{ksm_app_info_plain}{bcolors.ENDC}')
+                row.append(f'{row_color}{c.controllerName}{bcolors.ENDC}')
+                row.append(f'{row_color}{gateway_uid_str}{bcolors.ENDC}')
+                row.append(f'{row_color}{status}{bcolors.ENDC}')
+                row.append(f'{row_color}{version}{bcolors.ENDC}')
+
+                if is_verbose:
+                    row.append(f'{row_color}{c.deviceName}{bcolors.ENDC}')
+                    row.append(f'{row_color}{c.deviceToken}{bcolors.ENDC}')
+                    row.append(f'{row_color}{datetime.fromtimestamp(c.created / 1000)}{bcolors.ENDC}')
+                    row.append(f'{row_color}{datetime.fromtimestamp(c.lastModified / 1000)}{bcolors.ENDC}')
+                    row.append(f'{row_color}{c.nodeId}{bcolors.ENDC}')
+                    row.append(f'{row_color}{os_name}{bcolors.ENDC}')
+                    row.append(f'{row_color}{os_release}{bcolors.ENDC}')
+                    row.append(f'{row_color}{machine_type}{bcolors.ENDC}')
+                    row.append(f'{row_color}{os_version}{bcolors.ENDC}')
+
+                table.append(row)
+        if format_type == 'json':
+            # Sort JSON data by status and app name
+            gateways_data.sort(key=lambda x: (x['status'], (x['ksm_app_name'] or '').lower()))
+            
+            if is_verbose:
+                krouter_host = get_router_url(params)
+                result = {
+                    "router_host": krouter_host,
+                    "gateways": gateways_data
+                }
+            else:
+                result = {"gateways": gateways_data}
+            
+            return json.dumps(result, indent=2)
+        else:
+            table.sort(key=lambda x: (x[3] or '', x[0].lower()))
+
+            if is_verbose:
+                krouter_host = get_router_url(params)
+                print(f"\n{bcolors.BOLD}Router Host: {bcolors.OKBLUE}{krouter_host}{bcolors.ENDC}\n")
+
+            dump_report_data(table, headers, fmt='table', filename="",
+                             row_number=False, column_width=None)
 
 
 class PAMConfigurationListCommand(Command):
@@ -1349,6 +1401,8 @@ class PAMConfigurationListCommand(Command):
     parser.add_argument('--config', '-c', required=False, dest='pam_configuration', action='store',
                         help='Specific PAM Configuration UID')
     parser.add_argument('--verbose', '-v', required=False, dest='verbose', action='store_true', help='Verbose')
+    parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], default='table',
+                        help='Output format (table, json)')
 
     def get_parser(self):
         return PAMConfigurationListCommand.parser
@@ -1356,84 +1410,166 @@ class PAMConfigurationListCommand(Command):
     def execute(self, params, **kwargs):
         pam_configuration_uid = kwargs.get('pam_configuration')
         is_verbose = kwargs.get('verbose')
+        format_type = kwargs.get('format', 'table')
 
         if not pam_configuration_uid:  # Print ALL root level configs
-            PAMConfigurationListCommand.print_root_rotation_setting(params, is_verbose)
+            result = PAMConfigurationListCommand.print_root_rotation_setting(params, is_verbose, format_type)
+            if format_type == 'json' and result:
+                return result
         else:  # Print element configs (config that is not a root)
-            PAMConfigurationListCommand.print_pam_configuration_details(params, pam_configuration_uid, is_verbose)
+            result = PAMConfigurationListCommand.print_pam_configuration_details(params, pam_configuration_uid, is_verbose, format_type)
+            if format_type == 'json' and result:
+                return result
 
-            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
-            tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_configuration_uid,
-                                is_config=True)
-            tmp_dag.print_tunneling_config(pam_configuration_uid, None)
+            if format_type == 'table':  # Only print tunneling config for table format
+                encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+                tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_configuration_uid,
+                                    is_config=True)
+                tmp_dag.print_tunneling_config(pam_configuration_uid, None)
 
     @staticmethod
-    def print_pam_configuration_details(params, config_uid, is_verbose=False):
+    def print_pam_configuration_details(params, config_uid, is_verbose=False, format_type='table'):
         configuration = vault.KeeperRecord.load(params, config_uid)
         if not configuration:
-            raise Exception(f'Configuration {config_uid} not found')
+            if format_type == 'json':
+                return json.dumps({"error": f'Configuration {config_uid} not found'})
+            else:
+                raise Exception(f'Configuration {config_uid} not found')
+            return
         if configuration.version != 6:
-            raise Exception(f'{config_uid} is not PAM Configuration')
+            if format_type == 'json':
+                return json.dumps({"error": f'{config_uid} is not PAM Configuration'})
+            else:
+                raise Exception(f'{config_uid} is not PAM Configuration')
+            return
         if not isinstance(configuration, vault.TypedRecord):
-            raise Exception(f'{config_uid} is not PAM Configuration')
+            if format_type == 'json':
+                return json.dumps({"error": f'{config_uid} is not PAM Configuration'})
+            else:
+                raise Exception(f'{config_uid} is not PAM Configuration')
+            return
 
         facade = PamConfigurationRecordFacade()
         facade.record = configuration
-        table = []
-        header = ['name', 'value']
-        table.append(['UID', configuration.record_uid])
-        table.append(['Name', configuration.title])
-        table.append(['Config Type', configuration.record_type])
+        
         folder_uid = facade.folder_uid
         sf = None
         if folder_uid in params.shared_folder_cache:
             sf = api.get_shared_folder(params, folder_uid)
-        table.append(['Shared Folder', f'{sf.name} ({sf.shared_folder_uid})' if sf else ''])
-        table.append(['Gateway UID', facade.controller_uid])
-        table.append(['Resource Record UIDs', facade.resource_ref])
+        
+        if format_type == 'json':
+            config_data = {
+                "uid": configuration.record_uid,
+                "name": configuration.title,
+                "config_type": configuration.record_type,
+                "shared_folder": {
+                    "name": sf.name if sf else None,
+                    "uid": sf.shared_folder_uid if sf else None
+                } if sf else None,
+                "gateway_uid": facade.controller_uid,
+                "resource_record_uids": facade.resource_ref,
+                "fields": {}
+            }
+            
+            for field in configuration.fields:
+                if field.type in ('pamResources', 'fileRef'):
+                    continue
+                values = list(field.get_external_value())
+                if not values:
+                    continue
+                field_name = field.get_field_name()
+                if field.type == 'schedule':
+                    field_name = 'Default Schedule'
+                
+                config_data["fields"][field_name] = values
+            
+            return json.dumps(config_data, indent=2)
+        else:
+            table = []
+            header = ['name', 'value']
+            table.append(['UID', configuration.record_uid])
+            table.append(['Name', configuration.title])
+            table.append(['Config Type', configuration.record_type])
+            table.append(['Shared Folder', f'{sf.name} ({sf.shared_folder_uid})' if sf else ''])
+            table.append(['Gateway UID', facade.controller_uid])
+            table.append(['Resource Record UIDs', facade.resource_ref])
 
-        for field in configuration.fields:
-            if field.type in ('pamResources', 'fileRef'):
-                continue
-            values = list(field.get_external_value())
-            if not values:
-                continue
-            field_name = field.get_field_name()
-            if field.type == 'schedule':
-                field_name = 'Default Schedule'
+            for field in configuration.fields:
+                if field.type in ('pamResources', 'fileRef'):
+                    continue
+                values = list(field.get_external_value())
+                if not values:
+                    continue
+                field_name = field.get_field_name()
+                if field.type == 'schedule':
+                    field_name = 'Default Schedule'
 
-            table.append([field_name, values])
-        dump_report_data(table, header, no_header=True, right_align=(0,))
+                table.append([field_name, values])
+            dump_report_data(table, header, no_header=True, right_align=(0,))
 
     @staticmethod
-    def print_root_rotation_setting(params, is_verbose=False):
-        table = []
-        headers = ['UID', 'Config Name', 'Config Type', 'Shared Folder', 'Gateway UID', 'Resource Record UIDs']
-        if is_verbose:
-            headers.append('Fields')
-
+    def print_root_rotation_setting(params, is_verbose=False, format_type='table'):
         configurations = list(vault_extensions.find_records(params, record_version=6))
         facade = PamConfigurationRecordFacade()
+        
+        configs_data = []
+        table = []
+        
+        if format_type == 'json':
+            headers = ['uid', 'config_name', 'config_type', 'shared_folder', 'gateway_uid', 'resource_record_uids']
+            if is_verbose:
+                headers.append('fields')
+        else:
+            headers = ['UID', 'Config Name', 'Config Type', 'Shared Folder', 'Gateway UID', 'Resource Record UIDs']
+            if is_verbose:
+                headers.append('Fields')
+
         for c in configurations:  # type: vault.TypedRecord
             if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamNetworkConfiguration'):
                 facade.record = c
                 shared_folder_parents = find_parent_top_folder(params, c.record_uid)
                 if shared_folder_parents:
                     sf = shared_folder_parents[0]
-                    row = [c.record_uid, c.title, c.record_type, f'{sf.name} ({sf.uid})',
-                           facade.controller_uid, facade.resource_ref]
+                    
+                    if format_type == 'json':
+                        config_data = {
+                            "uid": c.record_uid,
+                            "config_name": c.title,
+                            "config_type": c.record_type,
+                            "shared_folder": {
+                                "name": sf.name,
+                                "uid": sf.uid
+                            },
+                            "gateway_uid": facade.controller_uid,
+                            "resource_record_uids": facade.resource_ref
+                        }
 
-                    if is_verbose:
-                        fields = []
-                        for field in c.fields:
-                            if field.type in ('pamResources', 'fileRef'):
-                                continue
-                            value = ', '.join(field.get_external_value())
-                            if value:
-                                fields.append(f'{field.get_field_name()}: {value}')
-                        row.append(fields)
+                        if is_verbose:
+                            fields = {}
+                            for field in c.fields:
+                                if field.type in ('pamResources', 'fileRef'):
+                                    continue
+                                value = ', '.join(field.get_external_value())
+                                if value:
+                                    fields[field.get_field_name()] = value
+                            config_data["fields"] = fields
 
-                    table.append(row)
+                        configs_data.append(config_data)
+                    else:
+                        row = [c.record_uid, c.title, c.record_type, f'{sf.name} ({sf.uid})',
+                               facade.controller_uid, facade.resource_ref]
+
+                        if is_verbose:
+                            fields = []
+                            for field in c.fields:
+                                if field.type in ('pamResources', 'fileRef'):
+                                    continue
+                                value = ', '.join(field.get_external_value())
+                                if value:
+                                    fields.append(f'{field.get_field_name()}: {value}')
+                            row.append(fields)
+
+                        table.append(row)
                 else:
                     logging.warning(f'Following configuration is not in the shared folder: UID: %s, Title: %s',
                                     c.record_uid, c.title)
@@ -1441,8 +1577,12 @@ class PAMConfigurationListCommand(Command):
                 logging.warning(f'Following configuration has unsupported type: UID: %s, Title: %s', c.record_uid,
                                 c.title)
 
-        table.sort(key=lambda x: (x[1] or ''))
-        dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
+        if format_type == 'json':
+            configs_data.sort(key=lambda x: x['config_name'] or '')
+            return json.dumps({"configurations": configs_data}, indent=2)
+        else:
+            table.sort(key=lambda x: (x[1] or ''))
+            dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
 
 
 common_parser = argparse.ArgumentParser(add_help=False)
