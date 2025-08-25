@@ -9,36 +9,41 @@
 # Contact: ops@keepersecurity.com
 #
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response
 from html import escape
 import queue
+from typing import Tuple, Union
 from ..decorators.unified import unified_api_decorator
 from ..util.command_util import CommandExecutor
 from ..decorators.logging import logger
 from ..core.request_queue import queue_manager
+from ..util.request_validation import RequestValidator
 
 def create_legacy_command_blueprint():
     """Create legacy blueprint for direct/synchronous command execution (non-queue mode)."""
     bp = Blueprint("legacy_command_bp", __name__)
     
     @bp.after_request
-    def add_deprecation_header(response):
-        """Add deprecation header for legacy API."""
-        response.headers['X-API-Deprecated'] = 'true'
+    def add_legacy_header(response):
+        """Add legacy header for legacy API."""
+        response.headers['X-API-Legacy'] = 'true'
         return response
     
     @bp.route("/executecommand", methods=["POST"])
     @unified_api_decorator()
-    def execute_command_direct(**kwargs):
+    def execute_command_direct(**kwargs) -> Tuple[Union[Response, bytes], int]:
         """Execute command directly and return result immediately (legacy behavior)."""
         try:
-            logger.warning("DEPRECATED: /api/v1/ usage - migrate to /api/v2/")
+            logger.warning("LEGACY: /api/v1/ usage - migrate to /api/v2/")
             
-            request_command = request.json.get("command")
-            if not request_command:
-                return jsonify({"success": False, "error": "Error: No command provided"}), 400
-
-            command = escape(request_command)
+            json_error = RequestValidator.validate_request_json()
+            if json_error:
+                return json_error
+            
+            command, validation_error = RequestValidator.validate_and_escape_command(request.json)
+            if validation_error:
+                return validation_error
+                
             response, status_code = CommandExecutor.execute(command)
             
             # If we get a busy response, add v1-specific message
@@ -61,14 +66,16 @@ def create_command_blueprint():
     
     @bp.route("/executecommand-async", methods=["POST"])
     @unified_api_decorator()
-    def execute_command(**kwargs):
+    def execute_command(**kwargs) -> Tuple[Response, int]:
         """Submit a command for execution and return request ID immediately."""
         try:
-            request_command = request.json.get("command")
-            if not request_command:
-                return jsonify({"success": False, "error": "Error: No command provided"}), 400
-                
-            command = escape(request_command)
+            json_error = RequestValidator.validate_request_json()
+            if json_error:
+                return json_error
+            
+            command, validation_error = RequestValidator.validate_and_escape_command(request.json)
+            if validation_error:
+                return validation_error
             
             # Submit to queue and return request ID immediately
             try:
@@ -91,7 +98,7 @@ def create_command_blueprint():
 
     @bp.route("/status/<request_id>", methods=["GET"])
     @unified_api_decorator()
-    def get_request_status(request_id, **kwargs):
+    def get_request_status(request_id: str, **kwargs) -> Tuple[Response, int]:
         """Get the status of a specific request."""
         try:
             status_info = queue_manager.get_request_status(request_id)
@@ -113,7 +120,7 @@ def create_command_blueprint():
 
     @bp.route("/result/<request_id>", methods=["GET"])
     @unified_api_decorator()
-    def get_request_result(request_id, **kwargs):
+    def get_request_result(request_id: str, **kwargs) -> Tuple[Union[Response, bytes], int]:
         """Get the result of a completed request."""
         try:
             result_data = queue_manager.get_request_result(request_id)
@@ -141,7 +148,7 @@ def create_command_blueprint():
 
     @bp.route("/queue/status", methods=["GET"])
     @unified_api_decorator()
-    def get_queue_status(**kwargs):
+    def get_queue_status(**kwargs) -> Tuple[Response, int]:
         """Get overall queue status information."""
         try:
             queue_status = queue_manager.get_queue_status()
