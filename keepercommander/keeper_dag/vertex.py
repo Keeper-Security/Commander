@@ -61,7 +61,7 @@ class DAGVertex:
         self.corrupt = False
 
         # These are edges to which vertex own this vertex. This vertex belongs to. So this would
-        self.edges = []
+        self.edges: list[Optional[DAGEdge]] = []
         self.has_uid = []
 
         # Flag indicating that this vertex is active.

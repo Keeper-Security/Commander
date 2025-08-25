@@ -3,6 +3,7 @@ import argparse
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ...display import bcolors
 from ... import vault
+from ... import __version__
 from keepercommander.discovery_common.user_service import UserService
 from keepercommander.discovery_common.record_link import RecordLink
 from keepercommander.discovery_common.constants import PAM_USER, PAM_MACHINE
@@ -26,8 +27,8 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
                         help='The UID of the Windows Machine record')
     parser.add_argument('--user-uid', '-u', required=True, dest='user_uid', action='store',
                         help='The UID of the User record')
-    parser.add_argument('--type', '-t', required=True, choices=['service', 'task'], dest='type',
-                        action='store', help='Relationship to add [service, task]')
+    parser.add_argument('--type', '-t', required=True, choices=['service', 'task', 'iis'], dest='type',
+                        action='store', help='Relationship to add [service, task, iis]')
 
     def get_parser(self):
         return PAMActionServiceAddCommand.parser
@@ -50,8 +51,10 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
             print(f"  {self._f('Cannot get gateway information. Gateway may not be up.')}")
             return
 
-        user_service = UserService(record=gateway_context.configuration, params=params, fail_on_corrupt=False)
-        record_link = RecordLink(record=gateway_context.configuration, params=params, fail_on_corrupt=False)
+        user_service = UserService(record=gateway_context.configuration, params=params, fail_on_corrupt=False,
+                                   agent=f"Cmdr/{__version__}")
+        record_link = RecordLink(record=gateway_context.configuration, params=params, fail_on_corrupt=False,
+                                 agent=f"Cmdr/{__version__}")
 
         ###############
 
@@ -68,7 +71,14 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
 
         # Make sure this machine is linked to the configuration record.
         machine_rl = record_link.get_record_link(machine_record.record_uid)
-        if machine_rl.get_edge(record_link.dag.get_root, edge_type=EdgeType.LINK) is None:
+        if machine_rl is None:
+            print(self._f("The machine record does not exists in the graph."))
+            return
+
+        # Edges from provider and machine might be wrong.
+        # Should be a LINK edge, could be an ACL edge.
+        if (machine_rl.get_edge(record_link.dag.get_root, edge_type=EdgeType.LINK) is None and
+                machine_rl.get_edge(record_link.dag.get_root, edge_type=EdgeType.ACL) is None):
             print(self._f("The machine record does not belong to this gateway."))
             return
 
@@ -138,11 +148,13 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
             acl = ServiceAcl()
         if rel_type == "service":
             acl.is_service = True
-        else:
+        elif rel_type == "task":
             acl.is_task = True
+        else:
+            acl.is_iis_pool = True
 
         # Make sure the machine has a LINK connection to the configuration.
-        if user_service.dag.get_root.has(machine_vertex) is False:
+        if not user_service.dag.get_root.has(machine_vertex):
             user_service.belongs_to(gateway_context.configuration_uid, machine_vertex.uid)
 
         # Add our new ACL edge between the machine and the yser.
@@ -153,14 +165,21 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
         if rel_type == "service":
             print(
                 self._gr(
-                    f"Success: Services running on this machine, with this user, will be updated and restarted after "
+                    f"Success: Services running on this machine, using this user, will be updated and restarted after "
+                    "password rotation."
+                )
+            )
+        elif rel_type == "task":
+            print(
+                self._gr(
+                    f"Success: Scheduled tasks running on this machine, using this user, will be updated after "
                     "password rotation."
                 )
             )
         else:
             print(
                 self._gr(
-                    f"Success: Scheduled tasks running on this machine, with this user, will be updated after "
+                    f"Success: IIS pools running on this machine, using this user, will be updated after "
                     "password rotation."
                 )
             )
