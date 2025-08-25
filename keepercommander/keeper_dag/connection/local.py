@@ -269,7 +269,7 @@ CREATE TABLE IF NOT EXISTS dag_streams (
 
         return stream_id
 
-    def add_data(self, payload: DataPayload):
+    def add_data(self, payload: DataPayload, agent: str):
 
         stream_id = self._find_stream_id(payload)
         self.debug(f"STREAM ID IS {stream_id}")
@@ -342,7 +342,7 @@ CREATE TABLE IF NOT EXISTS dag_streams (
 
                 connection.commit()
 
-    def sync(self, stream_id: str, sync_point: Optional[int] = 0, graph_id: Optional[int] = 0) -> SyncData:
+    def sync(self, stream_id: str,  agent: str, sync_point: Optional[int] = 0, graph_id: Optional[int] = 0) -> SyncData:
 
         self.debug(f"Sync: stream id {stream_id}, sync point {sync_point}, graph {graph_id}")
 

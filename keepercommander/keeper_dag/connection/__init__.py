@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging
+from ..__version__ import __version__
 from ..exceptions import DAGException, DAGConnectionException
 from ..crypto import generate_random_bytes
 from ..types import SyncData, SyncQuery, DataPayload
@@ -28,7 +29,7 @@ class ConnectionBase:
     def get_key_bytes(record: object) -> bytes:
         pass
 
-    def rest_call_to_router(self, http_method, endpoint, payload_json=None) -> str:
+    def rest_call_to_router(self, http_method, endpoint, agent, payload_json=None) -> str:
         return ""
 
     def _endpoint(self, action: str) -> str:
@@ -40,7 +41,7 @@ class ConnectionBase:
             base = "/api/user"
         return base + action
 
-    def add_data(self, payload: Union[DataPayload, str]):
+    def add_data(self, payload: Union[DataPayload, str], agent: Optional[str] = None):
 
         # if payload is DataPayload
         if isinstance(payload, DataPayload):
@@ -58,14 +59,24 @@ class ConnectionBase:
         else:
             raise DAGException(f'Unsupported payload type: {type(payload)}')
 
+        if agent is None:
+            f"keeper-dag/{__version__}"
+
         try:
-            self.rest_call_to_router("POST", self._endpoint("/add_data"), payload_data)
+            self.rest_call_to_router(http_method="POST",
+                                     endpoint=self._endpoint("/add_data"),
+                                     payload_json=payload_data,
+                                     agent=agent)
         except DAGConnectionException as err:
             raise err
         except Exception as err:
             raise DAGException(f"Could not create a new DAG structure: {err}")
 
-    def sync(self, stream_id: str, sync_point: Optional[int] = 0, graph_id: Optional[int] = 0) -> SyncData:
+    def sync(self, stream_id: str, agent: Optional[str] = None, sync_point: Optional[int] = 0,
+             graph_id: Optional[int] = 0) -> SyncData:
+
+        if agent is None:
+            f"keeper-dag/{__version__}"
 
         try:
             sync_query = SyncQuery(
@@ -76,7 +87,10 @@ class ConnectionBase:
             )
             sync_query_json_str = sync_query.model_dump_json()
 
-            data_resp = self.rest_call_to_router("POST", self._endpoint("/sync"), sync_query_json_str)
+            data_resp = self.rest_call_to_router(http_method="POST",
+                                                 endpoint=self._endpoint("/sync"),
+                                                 agent=agent,
+                                                 payload_json=sync_query_json_str)
             sync_data_resp = SyncData.model_validate_json(data_resp)
 
             return sync_data_resp

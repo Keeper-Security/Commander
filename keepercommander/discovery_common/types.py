@@ -27,7 +27,7 @@ class BaseEnum(Enum):
             for e in cls:
                 if e == value or e.value == value:
                     return e
-            if hasattr(cls, str(value).upper()) is True:
+            if hasattr(cls, str(value).upper()):
                 return getattr(cls, value.upper())
         return default
 
@@ -38,6 +38,7 @@ class CredentialBase(BaseModel):
     dn: Optional[Any] = None
     password: Optional[Any] = None
     private_key: Optional[Any] = None
+    private_key_passphrase: Optional[Any] = None
     database: Optional[Any] = None
 
 
@@ -98,7 +99,10 @@ class JobItem(BaseModel):
     conversation_id: Optional[str] = None
     error: Optional[str] = None
     stacktrace: Optional[str] = None
+
     sync_point: Optional[int] = None
+
+    # Stored chunked, in multiple DATA edges
     delta: Optional[DiscoveryDelta] = None
 
     @property
@@ -283,12 +287,12 @@ class UserAclRotationSettings(BaseModel):
     saas_record_uid_list: List[str] = []
 
     def set_pwd_complexity(self, complexity: Union[dict, str, bytes], record_key_bytes: bytes):
-        if isinstance(complexity, dict) is True:
+        if isinstance(complexity, dict):
             complexity = json.dumps(complexity)
-        if isinstance(complexity, str) is True:
+        if isinstance(complexity, str):
             complexity = complexity.encode()
 
-        if isinstance(complexity, bytes) is False:
+        if not isinstance(complexity, bytes):
             raise ValueError("The complexity is not a dictionary, string or is bytes.")
 
         self.pwd_complexity = base64.b64encode(CryptoUtils.encrypt_aes(complexity, record_key_bytes)).decode()
@@ -301,7 +305,7 @@ class UserAclRotationSettings(BaseModel):
         return json.loads(complexity_bytes)
 
     def set_schedule(self, schedule: Union[dict, str]):
-        if isinstance(schedule, dict) is True:
+        if isinstance(schedule, dict):
             schedule = json.dumps(schedule)
         self.schedule = schedule
 
@@ -368,6 +372,7 @@ class DiscoveryUser(DiscoveryItem):
     # Normally these do not get set, except for the access_user.
     password: Optional[str] = None
     private_key: Optional[str] = None
+    private_key_passphrase: Optional[str] = None
 
     # Simple flag, for access user in discovery, that states could connect with creds.
     # Local connection might not have passwords, so this is our flag to indicate that the user connected.
@@ -397,6 +402,7 @@ class Facts(BaseModel):
     id: Optional[FactsId] = None
     services: List[FactsNameUser] = []
     tasks: List[FactsNameUser] = []
+    iis_pools: List[FactsNameUser] = []
 
     @property
     def has_services(self):
@@ -407,8 +413,12 @@ class Facts(BaseModel):
         return self.tasks is not None and len(self.tasks) > 0
 
     @property
-    def has_services_or_tasks(self):
-        return self.has_services or self.has_tasks
+    def has_iis_pools(self):
+        return self.iis_pools is not None and len(self.iis_pools) > 0
+
+    @property
+    def has_service_items(self):
+        return self.has_services or self.has_tasks or self.has_iis_pools
 
 
 class DiscoveryMachine(DiscoveryItem):
@@ -497,7 +507,7 @@ class DiscoveryObject(BaseModel):
         return None
 
     def set_field_value(self, label, value):
-        if isinstance(value, list) is False:
+        if not isinstance(value, list):
             value = [value]
         for field in self.fields:
             if field.label == label or field.type == label:
@@ -687,8 +697,12 @@ class BulkProcessResults(BaseModel):
         return len(self.success)
 
 
-# Service/Schedule Task
+# Service/Schedule Task/IIS Pool
 
 class ServiceAcl(BaseModel):
     is_service: bool = False
     is_task: bool = False
+    is_iis_pool: bool = False
+
+    def is_used(self):
+        return self.is_service or self.is_task or self.is_iis_pool

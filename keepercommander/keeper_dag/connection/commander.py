@@ -49,14 +49,14 @@ class Connection(ConnectionBase):
 
     @property
     def hostname(self) -> str:
-        # The host is connect.keepersecurity.com, connect.dev.keepersecurity.com, etc.
-        # Append "connect" in front of host used for Commander.
+        # The host is connect.keepersecurity.com, connect.dev.keepersecurity.com, etc. Append "connect" in front
+        # of host used for Commander.
         configured_host = f'connect.{self.params.config.get("server")}'
-
+        
         # In GovCloud environments, the router service is not under the govcloud subdomain
-        if '.govcloud.' in configured_host:
-            configured_host = configured_host.replace('.govcloud.', '.')
-
+        if 'govcloud.' in configured_host:
+            configured_host = configured_host.replace('govcloud.', '') # "connect.govcloud.keepersecurity.com" -> "connect.keepersecurity.com"
+            
         return os.environ.get("ROUTER_HOST", configured_host)
 
     @property
@@ -88,7 +88,10 @@ class Connection(ConnectionBase):
         self.encrypted_session_token = crypto.encrypt_aes_v2(
             utils.base64_url_decode(self.params.session_token), transmission_key)
 
-    def rest_call_to_router(self, http_method: str, endpoint: str,
+    def rest_call_to_router(self,
+                            http_method: str,
+                            endpoint: str,
+                            agent: str,
                             payload_json: Optional[Union[bytes, str]] = None,
                             retry: int = 5,
                             retry_wait: float = 10,
@@ -106,14 +109,15 @@ class Connection(ConnectionBase):
         while True:
             try:
                 attempt += 1
-                self.logger.debug(f"DAG web service call to {url} [{attempt}/{retry}]")
+                self.logger.debug(f"graph web service call to {url} [{attempt}/{retry}]")
                 response = requests.request(
                     method=http_method,
                     url=url,
                     verify=self.verify_ssl,
                     headers={
                         'TransmissionKey': bytes_to_base64(self.encrypted_transmission_key),
-                        'Authorization': f'KeeperUser {bytes_to_base64(self.encrypted_session_token)}'
+                        'Authorization': f'KeeperUser {bytes_to_base64(self.encrypted_session_token)}',
+                        'User-Agent': agent
                     },
                     data=payload_json,
                     timeout=timeout
@@ -123,7 +127,16 @@ class Connection(ConnectionBase):
                 return response.text
 
             except requests.exceptions.HTTPError as http_err:
-                err_msg = f"{http_err.response.status_code}, {http_err.response.text}"
+
+                msg = http_err.response.reason
+                try:
+                    content = http_err.response.content.decode()
+                    if content is not None and content != "":
+                        msg = "; " + content
+                except (Exception,):
+                    pass
+
+                err_msg = f"{http_err.response.status_code}, {msg}"
 
                 if http_err.response.status_code == 429:
                     attempt -= 1
@@ -134,9 +147,11 @@ class Connection(ConnectionBase):
             except Exception as err:
                 err_msg = str(err)
 
-            self.logger.info(f"call to DAG web service had a problem: {err_msg}.")
+            self.logger.info(f"call to graph web service had a problem: {err_msg}")
             if attempt >= retry:
-                raise DAGConnectionException(f"Call to DAG web service {url}, after {retry} "
+                self.logger.error(f"call to graph web service {url}, after {retry} "
+                                  f"attempts, failed!: {err_msg}")
+                raise DAGConnectionException(f"Call to graph web service {url}, after {retry} "
                                              f"attempts, failed!: {err_msg}")
 
             self.logger.info(f"will retry call after {retry_wait} seconds.")

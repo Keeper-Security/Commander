@@ -7,6 +7,7 @@ from .crypto import encrypt_aes, decrypt_aes, generate_uid_str, bytes_to_str, st
 from .exceptions import (DAGConfirmException, DAGPathException, DAGVertexAlreadyExistsException, DAGKeyException,
                          DAGVertexException, DAGCorruptException, DAGDataException)
 from .utils import value_to_boolean
+from .__version__ import __version__
 import json
 import importlib
 from typing import Optional, Union, List, Any, TYPE_CHECKING
@@ -40,7 +41,7 @@ class DAG:
                  history_level: int = 0, logger: Optional[Any] = None, debug_level: int = 0, is_dev: bool = False,
                  vertex_type: RefType = RefType.PAM_NETWORK, decrypt: bool = True, fail_on_corrupt: bool = True,
                  data_requires_encryption: bool = False, log_prefix: str = "GraphSync",
-                 save_batch_count: Optional[int] = None):
+                 save_batch_count: Optional[int] = None, agent: Optional[str] = None):
 
         """
         Create a GraphSync instance.
@@ -61,6 +62,7 @@ class DAG:
         :param data_requires_encryption: Data edges are already encrypted. Default is False.
         :param log_prefix: Text prepended to the log messages. Handy if dealing with multiple graphs
         :param save_batch_count: The number of edges to save at one time.
+        :param agent: User Agent to send with web service requests.
         :return: Instance of GraphSync
         """
 
@@ -154,6 +156,10 @@ class DAG:
         self.corrupt_uids = []
 
         self.conn = conn
+
+        self.agent = f"keeper-dag/{__version__}"
+        if agent is not None:
+            self.agent += "; " + agent
 
     def debug(self, msg: str, level: int = 0):
         """
@@ -368,7 +374,8 @@ class DAG:
             resp = self.conn.sync(
                 stream_id=self.uid,
                 sync_point=sync_point,
-                graph_id=self.graph_id
+                graph_id=self.graph_id,
+                agent=self.agent
             )
             if resp.syncPoint == 0:
                 return all_data, 0
@@ -699,7 +706,6 @@ class DAG:
                         self.corrupt_uids.append(vertex.uid)
                         raise DAGDataException(f"The data edge {vertex.uid} could not be decrypted.")
 
-
                     edge.content = content
                     edge.needs_encryption = False
                     self.debug(f"  * edge is not encrypted or key is incorrect.")
@@ -1005,7 +1011,13 @@ class DAG:
                 self.debug(payload.model_dump_json(), level=5)
                 self.debug("==================================================", level=5)
 
-                self.conn.add_data(payload)
+                try:
+                    self.conn.add_data(payload, agent=self.agent)
+                except Exception as err:
+                    if value_to_boolean(os.environ.get("GS_SHOW_PAYLOAD_ERR", False)) is True:
+                        self.logger.error(f"\n----\n{payload.model_dump_json(indent=4)}\n----\n")
+                    raise err
+
                 batch_num += 1
 
                 # It's a POST that returns no data
@@ -1104,6 +1116,7 @@ class DAG:
                                 value=next_value,
                                 ignore_case=ignore_case) is False:
                     return False
+            return True
         elif isinstance(value, list) is True:
             # If the object is not a dictionary, then it's not match
             for next_value in value:
@@ -1120,8 +1133,6 @@ class DAG:
                 value = value.lower()
 
             return value in content
-
-        return True
 
     def search_content(self, query, ignore_case: bool = False):
         results = []

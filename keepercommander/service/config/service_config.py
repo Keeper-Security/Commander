@@ -100,6 +100,7 @@ class ServiceConfig:
             encryption_private_key="",
             fileformat="yaml",
             run_mode="foreground",
+            queue_enabled="y",
             records=[]
         ).__dict__
         return config
@@ -215,6 +216,12 @@ class ServiceConfig:
     def load_config(self) -> Dict[str, Any]:
         """Load configuration from file."""
         config = self.format_handler.load_config()
+        
+        # Add backwards compatibility for missing queue_enabled field
+        if 'queue_enabled' not in config:
+            config['queue_enabled'] = 'y'  # Default to enabled for existing configs
+            logger.debug("Added default queue_enabled=y for backwards compatibility")
+        
         self._validate_config_structure(config)
         return config
 

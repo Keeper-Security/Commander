@@ -93,6 +93,7 @@ class RequestQueueManager:
         self.current_request_id = None
         self.request_timeout = DEFAULT_REQUEST_TIMEOUT
         self.result_retention = DEFAULT_RESULT_RETENTION
+        self.data_lock = threading.Lock()  # Lock for shared data structures
         
         logger.debug("RequestQueueManager initialized")
     
@@ -139,7 +140,8 @@ class RequestQueueManager:
         
         try:
             self.request_queue.put(request, block=False)
-            self.active_requests[request_id] = request
+            with self.data_lock:
+                self.active_requests[request_id] = request
             logger.info(f"Request {request_id} queued: {command}")
             return request_id
         except queue.Full:
@@ -156,15 +158,16 @@ class RequestQueueManager:
         Returns:
             Dict containing request status and metadata, or None if not found
         """
-        # Check active requests
-        if request_id in self.active_requests:
-            return self.active_requests[request_id].to_dict()
-            
-        # Check completed requests
-        if request_id in self.completed_requests:
-            return self.completed_requests[request_id].to_dict()
-            
-        return None
+        with self.data_lock:
+            # Check active requests
+            if request_id in self.active_requests:
+                return self.active_requests[request_id].to_dict()
+                
+            # Check completed requests
+            if request_id in self.completed_requests:
+                return self.completed_requests[request_id].to_dict()
+                
+            return None
     
     @debug_decorator
     def get_request_result(self, request_id: str) -> Optional[Tuple[Any, int]]:
@@ -176,13 +179,14 @@ class RequestQueueManager:
         Returns:
             Tuple of (result, status_code) or None if not found/not completed
         """
-        if request_id in self.completed_requests:
-            request = self.completed_requests[request_id]
-            if request.status == RequestStatus.COMPLETED:
-                return request.result, 200
-            elif request.status == RequestStatus.FAILED:
-                return {"error": request.error_message}, 500
-        return None
+        with self.data_lock:
+            if request_id in self.completed_requests:
+                request = self.completed_requests[request_id]
+                if request.status == RequestStatus.COMPLETED:
+                    return request.result, 200
+                elif request.status == RequestStatus.FAILED:
+                    return {"error": request.error_message}, 500
+            return None
     
     @debug_decorator
     def get_queue_status(self) -> Dict[str, Any]:
@@ -191,13 +195,14 @@ class RequestQueueManager:
         Returns:
             Dict containing queue statistics
         """
-        return {
-            "queue_size": self.request_queue.qsize(),
-            "active_requests": len(self.active_requests),
-            "completed_requests": len(self.completed_requests),
-            "currently_processing": self.current_request_id,
-            "worker_running": self.is_running and self.worker_thread and self.worker_thread.is_alive()
-        }
+        with self.data_lock:
+            return {
+                "queue_size": self.request_queue.qsize(),
+                "active_requests": len(self.active_requests),
+                "completed_requests": len(self.completed_requests),
+                "currently_processing": self.current_request_id,
+                "worker_running": self.is_running and self.worker_thread and self.worker_thread.is_alive()
+            }
     
     def _process_queue(self):
         """Main worker thread loop for processing queued requests."""
@@ -253,39 +258,41 @@ class RequestQueueManager:
         
         finally:
             # Move from active to completed
-            if request.request_id in self.active_requests:
-                del self.active_requests[request.request_id]
-            self.completed_requests[request.request_id] = request
-            self.current_request_id = None
+            with self.data_lock:
+                if request.request_id in self.active_requests:
+                    del self.active_requests[request.request_id]
+                self.completed_requests[request.request_id] = request
+                self.current_request_id = None
     
     def _cleanup_expired_requests(self):
         """Clean up expired and old completed requests."""
         now = datetime.now()
         
-        # Find expired active requests
-        expired_ids = []
-        for request_id, request in self.active_requests.items():
-            if request.status == RequestStatus.QUEUED:
-                age = (now - request.created_at).total_seconds()
-                if age > self.request_timeout:
-                    request.status = RequestStatus.EXPIRED
-                    expired_ids.append(request_id)
-        
-        # Move expired requests to completed
-        for request_id in expired_ids:
-            request = self.active_requests.pop(request_id)
-            self.completed_requests[request_id] = request
-            logger.warning(f"Request {request_id} expired after {self.request_timeout}s")
-        
-        # Clean up old completed requests
-        cutoff_time = now - timedelta(seconds=self.result_retention)
-        old_ids = []
-        for request_id, request in self.completed_requests.items():
-            if request.completed_at and request.completed_at < cutoff_time:
-                old_ids.append(request_id)
-        
-        for request_id in old_ids:
-            del self.completed_requests[request_id]
-            logger.debug(f"Cleaned up old request {request_id}")
+        with self.data_lock:
+            # Find expired active requests
+            expired_ids = []
+            for request_id, request in self.active_requests.items():
+                if request.status == RequestStatus.QUEUED:
+                    age = (now - request.created_at).total_seconds()
+                    if age > self.request_timeout:
+                        request.status = RequestStatus.EXPIRED
+                        expired_ids.append(request_id)
+            
+            # Move expired requests to completed
+            for request_id in expired_ids:
+                request = self.active_requests.pop(request_id)
+                self.completed_requests[request_id] = request
+                logger.warning(f"Request {request_id} expired after {self.request_timeout}s")
+            
+            # Clean up old completed requests
+            cutoff_time = now - timedelta(seconds=self.result_retention)
+            old_ids = []
+            for request_id, request in self.completed_requests.items():
+                if request.completed_at and request.completed_at < cutoff_time:
+                    old_ids.append(request_id)
+            
+            for request_id in old_ids:
+                del self.completed_requests[request_id]
+                logger.debug(f"Cleaned up old request {request_id}")
 
 queue_manager = RequestQueueManager()
