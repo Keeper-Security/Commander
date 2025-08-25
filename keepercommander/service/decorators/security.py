@@ -82,14 +82,17 @@ def is_ip_in_range(ip, ip_range):
 def security_check(fn):
     @wraps(fn)
     def get_multiplied_rate_limit():
-        """Get rate limit multiplied by 4 to account for 4 endpoints sharing the limit"""
+        """Get rate limit with appropriate multiplier based on API version"""
+        from flask import request
         base_limit = ConfigReader.read_config("rate_limiting")
         if base_limit:
             import re
             match = re.match(r'(\d+)(/\w+)', base_limit)
             if match:
                 number, unit = match.groups()
-                return f"{int(number) * 4}{unit}"
+                # v2 API has 4 endpoints sharing the limit, v1 API has only 1
+                multiplier = 1 if request.path.startswith('/api/v1') else 4
+                return f"{int(number) * multiplier}{unit}"
         return base_limit
     
     @limiter.limit(get_multiplied_rate_limit)

@@ -28,7 +28,8 @@ if sys.version_info >= (3, 8):
                 "certfile": "",
                 "certpassword": "",
                 "fileformat": "",
-                "run_mode": ""
+                "run_mode": "",
+                "queue_enabled": "y"
             }
 
         def test_create_default_config(self):

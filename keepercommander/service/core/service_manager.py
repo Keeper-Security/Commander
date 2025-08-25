@@ -100,7 +100,10 @@ class ServiceManager:
             
             
             is_running = True
-            print(f"Commander Service starting on https://localhost:{port}")
+            queue_enabled = config_data.get("queue_enabled", "y")
+            api_version = "v2" if queue_enabled == "y" else "v1"
+            
+            print(f"Commander Service starting on https://localhost:{port}/api/{api_version}/")
             
             ngrok_pid = NgrokConfigurator.configure_ngrok(config_data, service_config)
             

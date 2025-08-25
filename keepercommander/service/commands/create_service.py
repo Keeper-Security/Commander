@@ -31,6 +31,7 @@ class StreamlineArgs:
     certpassword : Optional[str]
     fileformat : Optional[str]
     run_mode: Optional[str]
+    queue_enabled: Optional[str]
     
 class CreateService(Command):
     """Command to create a new service configuration."""
@@ -67,6 +68,7 @@ class CreateService(Command):
         parser.add_argument('-crtp', '--certpassword', type=str, help='certificate password')
         parser.add_argument('-f', '--fileformat', type=str, help='file format')
         parser.add_argument('-rm', '--run_mode', type=str, help='run mode')
+        parser.add_argument('-q', '--queue_enabled', type=str, help='enable request queue (y/n)')
         return parser
     
     def execute(self, params: KeeperParams, **kwargs) -> None:
@@ -81,7 +83,7 @@ class CreateService(Command):
 
             config_data = self.service_config.create_default_config()
 
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'certfile', 'certpassword', 'fileformat', 'run_mode']}
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'certfile', 'certpassword', 'fileformat', 'run_mode', 'queue_enabled']}
             args = StreamlineArgs(**filtered_kwargs)
             self._handle_configuration(config_data, params, args)
             self._create_and_save_record(config_data, params, args)

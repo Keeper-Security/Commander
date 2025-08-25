@@ -15,7 +15,6 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from .decorators.security import limiter
 from .api.routes import init_routes
 from .decorators.logging import logger
-from .core.request_queue import queue_manager
 
     
 def create_app():
@@ -31,9 +30,6 @@ def create_app():
     try:
         logger.debug("Configuring rate limiter")
         limiter.init_app(app)
-
-        logger.debug("Starting request queue manager")
-        queue_manager.start()
         
         logger.debug("Initializing API routes")
         init_routes(app)

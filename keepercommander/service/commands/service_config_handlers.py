@@ -39,6 +39,10 @@ class ServiceConfigHandler:
         if args.fileformat is not None and args.fileformat not in ['json', 'yaml']:
             raise ValidationError(f"Invalid file format '{args.fileformat}'. Must be 'json' or 'yaml'.")
         
+        queue_enabled = args.queue_enabled if args.queue_enabled is not None else "y"
+        if args.queue_enabled is not None and queue_enabled not in ['y', 'n']:
+            raise ValidationError(f"Invalid queue setting '{queue_enabled}'. Must be 'y' or 'n'.")
+        
         config_data.update({
             "port": self.service_config.validator.validate_port(args.port),
             "ip_allowed_list": self.service_config.validator.validate_ip_list(args.allowedip),
@@ -52,7 +56,8 @@ class ServiceConfigHandler:
             "certfile": args.certfile,
             "certpassword": args.certpassword,
             "fileformat": args.fileformat,  # Keep original logic - can be None
-            "run_mode": run_mode
+            "run_mode": run_mode,
+            "queue_enabled": queue_enabled
         })
 
     @debug_decorator
@@ -60,6 +65,7 @@ class ServiceConfigHandler:
         self._configure_port(config_data)
         self._configure_ngrok(config_data)
         self._configure_tls(config_data)
+        self._configure_queue(config_data)
         
         config_data["fileformat"] = None
     
@@ -108,6 +114,11 @@ class ServiceConfigHandler:
             config_data["certfile"] = ""
             config_data["certpassword"] = ""
     
+    def _configure_queue(self, config_data: Dict[str, Any]) -> None:
+        """Configure queue enabled setting with user prompt."""
+        config_data["queue_enabled"] = self.service_config._get_yes_no_input(self.messages['queue_enabled_prompt'])
+        logger.debug(f"Queue enabled set to: {config_data['queue_enabled']}")
+
     def _configure_run_mode(self, config_data: Dict[str, Any]) -> None:
         """Configure run mode with user prompt."""
         while True:

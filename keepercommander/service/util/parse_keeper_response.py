@@ -26,7 +26,10 @@ class KeeperResponseParser:
             Dict[str, Any]: Structured JSON response
         """
         if not response:
-            return {"status": "success", "data": None}
+            return {
+                "success": False,
+                "error": "The server is temporarily busy. Please try again shortly."
+            }
         
         response_str = str(response).strip()
         if '--format=json' in command:

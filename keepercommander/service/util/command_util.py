@@ -103,6 +103,10 @@ class CommandExecutor:
                 logger.debug("Command executed successfully")
                 return response, 200
             else:
-                return "Internal Server Error", 500
+                busy_response = {
+                    "success": False,
+                    "error": "The server is temporarily busy. Please try again shortly."
+                }
+                return busy_response, 503
         except Exception as e:
             raise CommandExecutionError(f"Command execution failed: {str(e)}")
