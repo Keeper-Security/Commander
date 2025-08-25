@@ -40,11 +40,18 @@ def create_legacy_command_blueprint():
 
             command = escape(request_command)
             response, status_code = CommandExecutor.execute(command)
+            
+            # If we get a busy response, add v1-specific message
+            if (isinstance(response, dict) and 
+                "temporarily busy" in str(response.get("error", "")).lower()):
+                response["message"] = "Note: api/v1/executecommand only supports a single request at a time."
+                status_code = 503
+            
             return response if isinstance(response, bytes) else jsonify(response), status_code
 
         except Exception as e:
             logger.error(f"Error executing command: {e}")
-            return jsonify({"success": False, "error": f"{str(e)}"}), 500
+            return jsonify({"success": False, "error": f"Error: {str(e)}"}), 500
 
     return bp
 
