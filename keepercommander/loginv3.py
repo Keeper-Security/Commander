@@ -55,7 +55,7 @@ class LoginV3Flow:
         if params.user:
             params.biometric = None
             try:
-                from keepercommander.biometric import check_biometric_previously_used
+                from .biometric import check_biometric_previously_used
                 if check_biometric_previously_used(params.user):
                     params.biometric = True
             except ImportError:
@@ -117,7 +117,7 @@ class LoginV3Flow:
                 step = BiometricStep()
                 
                 try:
-                    from keepercommander.biometric.commands.verify import BiometricVerifyCommand
+                    from .biometric.commands.verify import BiometricVerifyCommand
                     auth_helper = BiometricVerifyCommand()
                     logging.info("Attempting biometric authentication...")
                     logging.info("Press Ctrl+C to skip biometric and use default login method")

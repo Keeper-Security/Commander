@@ -14,15 +14,15 @@ from pathlib import Path
 import sys
 import json
 from typing import Any, Tuple, Optional
-from keepercommander import cli, utils
-from keepercommander.__main__ import get_params_from_config
-from keepercommander.service.config.service_config import ServiceConfig
-from .exceptions import CommandExecutionError
 from .config_reader import ConfigReader
-from ..core.globals import get_current_params
+from .exceptions import CommandExecutionError
 from .parse_keeper_response import parse_keeper_response
-from keepercommander.crypto import encrypt_aes_v2
+from ..core.globals import get_current_params
 from ..decorators.logging import logger, debug_decorator
+from ... import cli, utils
+from ...__main__ import get_params_from_config
+from ...service.config.service_config import ServiceConfig
+from ...crypto import encrypt_aes_v2
 
 class CommandExecutor:
     @staticmethod

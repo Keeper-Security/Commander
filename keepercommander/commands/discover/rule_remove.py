@@ -2,8 +2,8 @@ import argparse
 from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ..pam.router_helper import router_get_connected_gateways
 from ...display import bcolors
-from keepercommander.discovery_common.rule import Rules
-from keepercommander.discovery_common.types import RuleTypeEnum
+from ...discovery_common.rule import Rules
+from ...discovery_common.types import RuleTypeEnum
 
 
 class PAMGatewayActionDiscoverRuleRemoveCommand(PAMGatewayActionDiscoverCommandBase):

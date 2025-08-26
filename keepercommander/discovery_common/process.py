@@ -12,15 +12,15 @@ from .types import (DiscoveryObject, DiscoveryUser, RecordField, RuleActionEnum,
                     DirectoryInfo, NormalizedRecord)
 from .utils import value_to_boolean, split_user_and_domain
 from .dag_sort import sort_infra_vertices
-from keepercommander.keeper_dag import EdgeType
-from keepercommander.keeper_dag.crypto import bytes_to_urlsafe_str
+from ..keeper_dag import EdgeType
+from ..keeper_dag.crypto import bytes_to_urlsafe_str
 import hashlib
 import time
 from typing import Any, Callable, List, Optional, Union, TYPE_CHECKING
 
 
 if TYPE_CHECKING:
-    from keepercommander.keeper_dag.vertex import DAGVertex
+    from ..keeper_dag.vertex import DAGVertex
     DirectoryResult = Union[DirectoryInfo, List]
     DirectoryUserResult = Union[NormalizedRecord, DAGVertex]
 

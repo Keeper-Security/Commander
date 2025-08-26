@@ -10,13 +10,13 @@
 #
 
 from typing import Dict, Any
-from keepercommander.params import KeeperParams
-from keepercommander import resources
 from configparser import ConfigParser
 from pathlib import Path
 from ..config.service_config import ServiceConfig
 from ..decorators.logging import logger, debug_decorator
 from ..util.exceptions import ValidationError
+from ... import resources
+from ...params import KeeperParams
 
 class ServiceConfigHandler:
     def __init__(self, service_config: ServiceConfig):

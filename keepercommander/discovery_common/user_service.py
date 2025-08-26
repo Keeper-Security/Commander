@@ -5,13 +5,13 @@ from .utils import get_connection, user_in_lookup, user_check_list, make_agent
 from .types import DiscoveryObject, ServiceAcl, FactsNameUser
 from .infrastructure import Infrastructure
 
-from keepercommander.keeper_dag import DAG, EdgeType
+from ..keeper_dag import DAG, EdgeType
 import importlib
 from typing import Any, Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from keepercommander.keeper_dag.vertex import DAGVertex
-    from keepercommander.keeper_dag.edge import DAGEdge
+    from ..keeper_dag.vertex import DAGVertex
+    from ..keeper_dag.edge import DAGEdge
 
 
 class UserService:

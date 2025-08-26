@@ -16,7 +16,7 @@ from pathlib import Path
 from dotenv import load_dotenv, set_key, dotenv_values
 from ..decorators.logging import logger
 from .terminal_handler import TerminalHandler
-from keepercommander import utils
+from ... import utils
 
 @dataclass
 class ProcessInfo:

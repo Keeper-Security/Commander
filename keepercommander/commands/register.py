@@ -1128,7 +1128,7 @@ class ShareReportCommand(Command):
 
         record_uids = record_uids.intersection(contained_records) if contained_records else record_uids
 
-        from keepercommander.shared_record import get_shared_records
+        from ..shared_record import get_shared_records
         shared_records = get_shared_records(params, record_uids, not show_team_users)
 
         def get_record_shares():
@@ -1893,7 +1893,7 @@ class FindDuplicateCommand(Command):
             cmd = self.get_parser().prog
             if not params.enterprise:
                 raise CommandError(cmd, 'This feature is available only to enterprise account administrators')
-            from keepercommander import sox
+            from .. import sox
             sox.validate_data_access(params, cmd)
 
             field_keys = ['title', 'url', 'record_type']

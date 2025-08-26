@@ -2049,7 +2049,7 @@ class ActionReportCommand(EnterpriseCommand):
                                  f'value must be one of {actions_allowed})'
             is_valid_action = action in actions_allowed
 
-            from keepercommander.commands.enterprise import EnterpriseUserCommand
+            from .enterprise import EnterpriseUserCommand
             exec_fn = EnterpriseUserCommand().execute
             emails = [u.get('username') for u in targets]
             action_handlers = {
@@ -2087,7 +2087,7 @@ class ActionReportCommand(EnterpriseCommand):
             return data, headers
 
         users = params.enterprise['users']
-        from keepercommander.commands.enterprise import EnterpriseInfoCommand
+        from .enterprise import EnterpriseInfoCommand
         ei_cmd = EnterpriseInfoCommand()
         columns = ['status', 'transfer_status']
         cmd_output = ei_cmd.execute(params, users=True, quiet=True, format='json', columns=','.join(columns))
@@ -2132,7 +2132,7 @@ class ActionReportCommand(EnterpriseCommand):
 
         # Sync local enterprise data if changes were made
         if admin_action != 'none' and not dry_run:
-            from keepercommander.commands.enterprise import GetEnterpriseDataCommand
+            from .enterprise import GetEnterpriseDataCommand
             get_enterprise_data_cmd = GetEnterpriseDataCommand()
             get_enterprise_data_cmd.execute(params)
 

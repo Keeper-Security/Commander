@@ -17,16 +17,16 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes
-from keepercommander.proto import pam_pb2
+from ....proto import pam_pb2
 
-from keepercommander.commands.base import FolderMixin
-from keepercommander.commands.pam.pam_dto import GatewayAction, GatewayActionWebRTCSession
-from keepercommander.commands.pam.router_helper import router_get_relay_access_creds, get_dag_leafs, \
+from ....commands.base import FolderMixin
+from ....commands.pam.pam_dto import GatewayAction, GatewayActionWebRTCSession
+from ....commands.pam.router_helper import router_get_relay_access_creds, get_dag_leafs, \
     get_router_ws_url, router_send_action_to_gateway, get_controller_cookie
-from keepercommander.display import bcolors
-from keepercommander.error import CommandError
-from keepercommander.subfolder import try_resolve_path
-from keepercommander import crypto, utils, rest_api, api
+from ....display import bcolors
+from ....error import CommandError
+from ....subfolder import try_resolve_path
+from .... import crypto, utils, rest_api, api
 
 # Import the websockets library for async WebSocket communication
 # Support both websockets 15.0.1+ (asyncio) and legacy 11.0.3 (sync) versions
@@ -856,11 +856,11 @@ async def handle_websocket_responses(params, tube_registry, timeout=60, gateway_
     
     # Add cookies to headers if provided for session affinity
     if gateway_cookies:
-        from keepercommander.commands.pam.router_helper import request_cookie_jar_to_str
+        from ....commands.pam.router_helper import request_cookie_jar_to_str
         cookie_string = request_cookie_jar_to_str(gateway_cookies)
         if cookie_string:
             headers['Cookie'] = cookie_string
-            logging.debug(f"Added cookies to WebSocket headers for session affinity")
+            logging.debug("Added cookies to WebSocket headers for session affinity")
     
     # Set up SSL context
     ssl_context = None

@@ -2,7 +2,7 @@ from __future__ import annotations
 from .constants import DIS_JOBS_GRAPH_ID
 from .utils import get_connection, make_agent
 from .types import JobContent, JobItem, Settings, DiscoveryDelta
-from keepercommander.keeper_dag import DAG, EdgeType
+from ..keeper_dag import DAG, EdgeType
 import logging
 import os
 import base64
@@ -11,8 +11,8 @@ from time import time
 import copy
 from typing import Any, Optional, List, TYPE_CHECKING
 
-if TYPE_CHECKING:  # pragma: no cover
-    from keepercommander.keeper_dag.vertex import DAGVertex
+if TYPE_CHECKING:
+    from ..keeper_dag.vertex import DAGVertex
 
 
 class Jobs:
