@@ -37,13 +37,17 @@ class Connection(ConnectionBase):
     KEEPER_CLIENT = 'ms16.5.0'
 
     def __init__(self, config: Union[str, dict, KeyValueStorage], verify_ssl: bool = None,
-                 logger: Optional[Logger] = None):
+                 logger: Optional[Logger] = None,
+                 log_transactions: Optional[bool] = None, log_transactions_dir: Optional[str] = None):
 
-        super().__init__(is_device=True, logger=logger)
+        super().__init__(is_device=False,
+                         logger=logger,
+                         log_transactions=log_transactions,
+                         log_transactions_dir=log_transactions_dir)
 
         if InMemoryKeyValueStorage.is_base64(config):
             config = utils.base64_to_string(config)
-        if isinstance(config, str) is True:
+        if isinstance(config, str):
             try:
                 config = json.loads(config)
             except json.JSONDecodeError as err:
@@ -69,7 +73,7 @@ class Connection(ConnectionBase):
         return record.record_key_bytes
 
     def get_config_value(self, key: ConfigKeys) -> str:
-        if isinstance(self.config, KeyValueStorage) is True:
+        if isinstance(self.config, KeyValueStorage):
             return self.config.get(key)
         else:
             return self.config.get(key.value)
