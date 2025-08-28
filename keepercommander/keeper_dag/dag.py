@@ -8,9 +8,10 @@ from .exceptions import (DAGConfirmException, DAGPathException, DAGVertexAlready
                          DAGVertexException, DAGCorruptException, DAGDataException)
 from .utils import value_to_boolean
 from .__version__ import __version__
+from enum import Enum
 import json
 import importlib
-from typing import Optional, Union, List, Any, TYPE_CHECKING
+from typing import Optional, Union, List, Any, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .connection import ConnectionBase
@@ -37,7 +38,8 @@ class DAG:
     }
 
     def __init__(self, conn: ConnectionBase, record: Optional[object] = None, key_bytes: Optional[bytes] = None,
-                 name: Optional[str] = None, graph_id: int = 0, auto_save: bool = False,
+                 name: Optional[str] = None, endpoint: Optional[Union[str, Enum]] = None,
+                 graph_id: Optional[Union[int,Enum]] = None, auto_save: bool = False,
                  history_level: int = 0, logger: Optional[Any] = None, debug_level: int = 0, is_dev: bool = False,
                  vertex_type: RefType = RefType.PAM_NETWORK, decrypt: bool = True, fail_on_corrupt: bool = True,
                  data_requires_encryption: bool = False, log_prefix: str = "GraphSync",
@@ -50,7 +52,9 @@ class DAG:
         :param record: If set, the key bytes will use the key bytes in the record. Overrides key_bytes.
         :param key_bytes:  If set, these key bytes will be used.
         :param name: Optional name for the graph.
-        :param graph_id: Graph ID sets which graph to load for the graph.
+        :param endpoint: Endpoint for graph. Use this over `graph_id`. (i.e. graph-sync/pam )
+        :param graph_id: Graph ID sets which graph to load for the graph. `endpoint` replaces this, but code is
+                         backwards compatiable.
         :param auto_save: Automatically save when modifications are performed. Default is False.
         :param history_level: How much edge history to keep in memory. Default is 0, no history.
         :param logger: Python logger instance to use for logging.
@@ -108,8 +112,18 @@ class DAG:
         if self.uid is None:
             self.uid = generate_uid_str(key_bytes[:16])
 
-        # Graph ID allow you to select which graph to load. The default is 0, which will load all graph for the UID
+        if graph_id is None and endpoint is None:
+            raise ValueError("Either graph_id or endpoint needs to be set.")
+
+        # graph_id and endpoint determine how/where the graph is stored on the GraphSync service.
+        if graph_id is not None:
+            if isinstance(endpoint, Enum):
+                graph_id = graph_id.value
         self.graph_id = graph_id
+        if endpoint is not None:
+            if isinstance(endpoint, Enum):
+                endpoint = endpoint.value
+        self.endpoint = endpoint
 
         self.debug(f"{self.log_prefix} key {self.key}", level=1)
         self.debug(f"{self.log_prefix} UID {self.uid}", level=1)
@@ -221,7 +235,7 @@ class DAG:
         :return:
         """
 
-        if value is True:
+        if value:
             self.debug("ability to auto save has been ENABLED", level=2)
         else:
             self.debug("ability to auto save has been DISABLED", level=2)
@@ -351,7 +365,7 @@ class DAG:
         :return: List of DAGVertex
         """
         results = []
-        if inc_deleted is True:
+        if inc_deleted:
             vertices = self.all_vertices
         else:
             vertices = self.vertices
@@ -362,19 +376,20 @@ class DAG:
                     results.append(vertex)
         return results
 
-    def _sync(self, sync_point: int = 0) -> (List[DAGData], int):
+    def _sync(self, sync_point: int = 0) -> Tuple[List[DAGData], int]:
 
         # The web service will send 500 items, if there is more the 'has_more' flag is set to True.
         has_more = True
 
         # Make the web service call to set all the data
         all_data = []
-        while has_more is True:
+        while has_more:
             # Load a page worth of items
             resp = self.conn.sync(
                 stream_id=self.uid,
                 sync_point=sync_point,
                 graph_id=self.graph_id,
+                endpoint=self.endpoint,
                 agent=self.agent
             )
             if resp.syncPoint == 0:
@@ -437,7 +452,7 @@ class DAG:
             self.debug(f"  * edge {edge_type}, tail {tail_uid} to head {head_uid}", level=3)
 
             # We want to store this edge in the Vertex with the same value/UID as the ref.
-            if self.vertex_exists(tail_uid) is False:
+            if not self.vertex_exists(tail_uid):
                 self.debug(f"    * tail vertex {tail_uid} does not exists. create.", level=3)
                 self.add_vertex(
                     uid=tail_uid,
@@ -457,7 +472,7 @@ class DAG:
                 head_uid = tail_uid
 
             # If the head vertex doesn't exist, we need to create.
-            if self.vertex_exists(head_uid) is False:
+            if not self.vertex_exists(head_uid):
                 self.debug(f"    * head vertex {head_uid} does not exists. create.", level=3)
                 self.add_vertex(
                     uid=head_uid,
@@ -509,7 +524,7 @@ class DAG:
             # Get the tail vertex.
             tail_uid = data.ref.get("value")
             # We want to store this edge in the Vertex with the same value/UID as the ref.
-            if self.vertex_exists(tail_uid) is False:
+            if not self.vertex_exists(tail_uid):
                 self.debug(f"    * tail vertex {tail_uid} does not exists. create.", level=3)
                 self.add_vertex(
                     uid=tail_uid,
@@ -559,7 +574,7 @@ class DAG:
 
                 # Check if this edge has a matching DELETION edge.
                 # If it does not, this vertex cannot be deleted.
-                if edge.is_deleted is False:
+                if not edge.is_deleted:
                     found_edge_to_another_vertex = True
                     break
 
@@ -624,7 +639,7 @@ class DAG:
                         except (Exception,):
                             self.debug(f"      !! this is not the key", level=3)
 
-                    if was_able_to_decrypt is False:
+                    if not was_able_to_decrypt:
 
                         # Flag that the edge is corrupt, flag that the vertex keychain is corrupt,
                         #   and store vertex UID/tail UID.
@@ -632,18 +647,18 @@ class DAG:
                         e.corrupt = True
                         v.corrupt = True
                         self.corrupt_uids.append(v.uid)
-                        if self.fail_on_corrupt is True:
+                        if self.fail_on_corrupt:
                             raise DAGKeyException(f"Could not decrypt vertex {v.uid} keychain for edge path {e.path}")
                         return []
 
-            if found_key_edge is True:
+            if found_key_edge:
                 return v.keychain
             else:
                 self.debug("  * using record bytes", level=3)
                 return [self.key]
 
         for vertex in self.all_vertices:
-            if vertex.has_key is False:
+            if not vertex.has_key:
                 continue
             self.debug(f"vertex {vertex.uid}, {vertex.has_key}, {vertex.has_decrypted_keys}", level=3)
             vertex.keychain = _get_keychain(vertex)
@@ -663,7 +678,7 @@ class DAG:
 
         self.debug("  DECRYPT the dag data", level=1)
         for vertex in self.all_vertices:
-            if vertex.has_data is False:
+            if not vertex.has_data:
                 continue
             self.debug(f"vertex {vertex.uid}, {vertex.keychain}", level=3)
 
@@ -672,13 +687,13 @@ class DAG:
                     continue
 
                 # If the vertex/KEY edge that tail is this vertex is corrupt, we cannot decrypt data.
-                if vertex.corrupt is True:
+                if vertex.corrupt:
                     self.logger.error(f"the key for the DATA edge is corrupt for vertex {vertex.uid}; "
                                       "cannot decrypt data.")
                     continue
 
                 content = edge.content
-                if isinstance(content, bytes) is True:
+                if isinstance(content, bytes):
                     raise ValueError("The content has already been decrypted.")
 
                 self.debug(f"  * enc safe content {content}", level=3)
@@ -699,10 +714,10 @@ class DAG:
                     except (Exception,):
                         self.debug(f"      !! this is not the key", level=3)
 
-                if able_to_decrypt is False:
+                if not able_to_decrypt:
 
                     # If the DATA edge requires encryption, throw error if we cannot decrypt.
-                    if self.data_requires_encryption is True:
+                    if self.data_requires_encryption:
                         self.corrupt_uids.append(vertex.uid)
                         raise DAGDataException(f"The data edge {vertex.uid} could not be decrypted.")
 
@@ -744,7 +759,7 @@ class DAG:
         sync_point = self._load(sync_point)
         self.debug(f"sync point is {sync_point}")
         self._mark_deletion()
-        if self.decrypt is True:
+        if self.decrypt:
             self._decrypt_keychain()
             self._decrypt_data()
         else:
@@ -752,7 +767,7 @@ class DAG:
         self._flag_as_not_modified()
         self.debug("====================================================================================", level=2)
 
-        # We have loaded the grpah, enable the ability to use auto save.
+        # We have loaded the graph, enable the ability to use auto save.
         self.allow_auto_save = True
 
         self.last_sync_point = sync_point
@@ -769,7 +784,7 @@ class DAG:
                 if edge.modified is True:
                     found_modification = True
                     break
-            if found_modification is True:
+            if found_modification:
                 modified_vertices.append(vertex)
         if len(modified_vertices) == 0:
             self.debug("nothing has been modified")
@@ -799,14 +814,14 @@ class DAG:
                             # If the most recent edge a DELETION edge?
                             version, highest_edge = vertex.get_highest_edge_version(next_vertex.uid)
                             is_deletion = highest_edge.edge_type == EdgeType.DELETION
-                            if is_deletion is True:
+                            if is_deletion:
                                 self.debug(f"    highest deletion edge. will not mark any edges as modified",
                                            level=3)
 
                         found_path = _flag(next_vertex)
                         if found_path is True and seen.get(edge.head_uid) is None:
                             self.debug(f"  setting {vertex.uid}, {edge_type} active", level=3)
-                            if is_deletion is False:
+                            if not is_deletion:
                                 edge.modified = True
                                 seen[edge.head_uid] = True
                     else:
@@ -854,9 +869,9 @@ class DAG:
 
         self.debug("== SAVE GRAPH ========================================================================", level=2)
 
-        if self.is_corrupt is True:
+        if self.is_corrupt:
             self.logger.error(f"the graph is corrupt, there are problem UIDs: {','.join(self.corrupt_uids)}")
-            raise DAGCorruptException(f"Cannot save. Graph steam uid {self.uid}, graph id {self.graph_id} "
+            raise DAGCorruptException(f"Cannot save. Graph steam uid {self.uid}, graph {self.endpoint}:{self.graph_id} "
                                       f"has corrupt vertices: {','.join(self.corrupt_uids)}")
 
         root_vertex = self.get_vertex(self.uid)
@@ -872,7 +887,7 @@ class DAG:
             raise DAGConfirmException("Cannot save. Confirmation is required.")
         self.need_save_confirm = False
 
-        if delta_graph is True:
+        if delta_graph:
             self._make_delta_graph()
 
         data_list = []
@@ -885,7 +900,7 @@ class DAG:
                 self.debug(f"  * edge {edge.edge_type.value}, head {edge.head_uid}, tail {vertex.uid}", level=3)
 
                 # If this edge is not modified, don't add to the data list to save.
-                if edge.modified is False:
+                if not edge.modified:
                     self.debug(f"    not modified, not saving.", level=3)
                     continue
 
@@ -893,12 +908,12 @@ class DAG:
 
                 # If we are decrypting the edge data, then we want to encrypt it when we save.
                 # Else, save the content as it is.
-                if self.decrypt is True:
+                if self.decrypt:
                     if edge.edge_type == EdgeType.DATA:
                         self.debug(f"    edge is data, encrypt data: {edge.needs_encryption}", level=3)
-                        if isinstance(content, dict) is True:
+                        if isinstance(content, dict):
                             content = json.dumps(content)
-                        if isinstance(content, str) is True:
+                        if isinstance(content, str):
                             content = content.encode()
 
                         # If individual edges require encryption or all DATA edge require encryption, then encrypt
@@ -1012,7 +1027,7 @@ class DAG:
                 self.debug("==================================================", level=5)
 
                 try:
-                    self.conn.add_data(payload, agent=self.agent)
+                    self.conn.add_data(payload, endpoint=self.endpoint, agent=self.agent)
                 except Exception as err:
                     if value_to_boolean(os.environ.get("GS_SHOW_PAYLOAD_ERR", False)) is True:
                         self.logger.error(f"\n----\n{payload.model_dump_json(indent=4)}\n----\n")
@@ -1030,10 +1045,10 @@ class DAG:
         # If allow_auto_save is False, we will not allow auto saving.
         # On newly created graph, this will happen if the root vertex has not been connected.
         # The root vertex/disconnect edge head is needed to get a proper stream ID.
-        if self.allow_auto_save is False:
+        if not self.allow_auto_save:
             self.debug("cannot auto_save, allow_auto_save is False.", level=3)
             return
-        if self.auto_save is True:
+        if self.auto_save:
             self.debug("... dag auto saving", level=1)
             self.save()
 
@@ -1061,7 +1076,7 @@ class DAG:
             keychain=keychain,
             vertex_type=vertex_type
         )
-        if self.vertex_exists(vertex.uid) is True:
+        if self.vertex_exists(vertex.uid):
             raise DAGVertexAlreadyExistsException(f"Vertex {vertex.uid} already exists.")
 
         # Set the UID to array index lookup.
@@ -1105,30 +1120,30 @@ class DAG:
 
     def _search(self, content: Any, value: QueryValue, ignore_case: bool = False):
 
-        if isinstance(value, dict) is True:
+        if isinstance(value, dict):
             # If the object is not a dictionary, then it's not match
-            if isinstance(content, dict) is False:
+            if not isinstance(content, dict):
                 return False
             for next_key, next_value in value.items():
                 if next_key not in content:
                     return False
-                if self._search(content=content[next_key],
-                                value=next_value,
-                                ignore_case=ignore_case) is False:
+                if not self._search(content=content[next_key],
+                                    value=next_value,
+                                    ignore_case=ignore_case):
                     return False
             return True
-        elif isinstance(value, list) is True:
+        elif isinstance(value, list):
             # If the object is not a dictionary, then it's not match
             for next_value in value:
                 if self._search(content=content,
                                 value=next_value,
-                                ignore_case=ignore_case) is True:
+                                ignore_case=ignore_case):
                     return True
             return False
         else:
             content = str(content)
             value = str(value)
-            if ignore_case is True:
+            if ignore_case:
                 content = content.lower()
                 value = value.lower()
 
@@ -1140,10 +1155,10 @@ class DAG:
             if vertex.has_data is False or vertex.active is False:
                 continue
             content = vertex.content
-            if isinstance(query, bytes) is True:
+            if isinstance(query, bytes):
                 if query == content:
                     results.append(vertex)
-            elif isinstance(query, str) is True:
+            elif isinstance(query, str):
                 try:
                     content = content.decode()
                     if query in content:
@@ -1152,12 +1167,12 @@ class DAG:
 
                 except (Exception,):
                     pass
-            elif isinstance(query, dict) is True:
+            elif isinstance(query, dict):
                 try:
                     content = content.decode()
                     content = json.loads(content)
                     search_result = self._search(content, value=query, ignore_case=ignore_case)
-                    if search_result is True:
+                    if search_result:
                         results.append(vertex)
                 except (Exception,):
                     pass
@@ -1202,14 +1217,14 @@ class DAG:
         for v in self._vertices:
             if show_only_active is True and v.active is False:
                 continue
-            if v.corrupt is False:
+            if not v.corrupt:
                 fillcolor = "white"
-                if v.active is False:
+                if not v.active:
                     fillcolor = "grey"
                 label = f"uid={v.uid}"
                 if v.name is not None and v.name != v.uid:
                     label += f"\\nname={v.name}"
-                if show_hex_uid is True:
+                if show_hex_uid:
                     label += f"\\nhex={urlsafe_str_to_bytes(v.uid).hex()}"
             else:
                 fillcolor = "red"
@@ -1218,19 +1233,19 @@ class DAG:
             dot.node(v.uid, label, fillcolor=fillcolor, style="filled")
             for edge in v.edges:
 
-                if edge.corrupt is False:
+                if not edge.corrupt:
                     color = "grey"
                     style = "solid"
 
                     # To reduce the number of edges, only show the active edges
-                    if edge.active is True:
+                    if edge.active:
                         color = "black"
                         style = "bold"
-                    elif show_only_active is True:
+                    elif show_only_active:
                         continue
 
                     # If the vertex is not active, gray out the DATA edge
-                    if edge.active is False:
+                    if not edge.active:
                         color = "grey"
 
                     if edge.edge_type == EdgeType.DELETION:
@@ -1241,7 +1256,7 @@ class DAG:
                         label = "UNK"
                     if edge.path is not None and edge.path != "":
                         label += f"\\npath={edge.path}"
-                    if show_version is True:
+                    if show_version:
                         label += f"\\ne{edge.version}"
                     # tail, head (arrow side), label
                 else:

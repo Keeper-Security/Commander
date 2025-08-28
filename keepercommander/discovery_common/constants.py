@@ -1,3 +1,5 @@
+# NOTE: The graph_id constant are part of keeper-dag as enums now.
+
 # This should the relationship between Keeper Vault record
 RECORD_LINK_GRAPH_ID = 0
 

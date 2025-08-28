@@ -1,8 +1,8 @@
 from __future__ import annotations
-from .constants import DIS_JOBS_GRAPH_ID
 from .utils import get_connection, make_agent
 from .types import JobContent, JobItem, Settings, DiscoveryDelta
-from ..keeper_dag import DAG, EdgeType
+from keepercommander.keeper_dag import DAG, EdgeType
+from keepercommander.keeper_dag.types import PamGraphId, PamEndpoints
 import logging
 import os
 import base64
@@ -11,8 +11,8 @@ from time import time
 import copy
 from typing import Any, Optional, List, TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from ..keeper_dag.vertex import DAGVertex
+if TYPE_CHECKING:  # pragma: no cover
+    from keepercommander.keeper_dag.vertex import DAGVertex
 
 
 class Jobs:
@@ -35,7 +35,7 @@ class Jobs:
     SUMMARY_ERROR_LIMIT = 40
 
     def __init__(self, record: Any, logger: Optional[Any] = None, debug_level: int = 0, fail_on_corrupt: bool = True,
-                 log_prefix: str = "GS Jobs", save_batch_count: int = 200, agent:Optional[str] = None,
+                 log_prefix: str = "GS Jobs", save_batch_count: int = 200, agent: Optional[str] = None,
                  **kwargs):
 
         self.conn = get_connection(**kwargs)
@@ -60,17 +60,25 @@ class Jobs:
     def dag(self) -> DAG:
         if self._dag is None:
 
-            self._dag = DAG(conn=self.conn, record=self.record, graph_id=DIS_JOBS_GRAPH_ID, auto_save=False,
-                            logger=self.logger, debug_level=self.debug_level, name="Discovery Jobs",
-                            fail_on_corrupt=self.fail_on_corrupt, log_prefix=self.log_prefix,
-                            save_batch_count=self.save_batch_count, agent=self.agent)
+            self._dag = DAG(conn=self.conn,
+                            record=self.record,
+                            endpoint=PamEndpoints.DISCOVERY_JOBS,
+                            graph_id=PamGraphId.DISCOVERY_JOBS,
+                            auto_save=False,
+                            logger=self.logger,
+                            debug_level=self.debug_level,
+                            name="Discovery Jobs",
+                            fail_on_corrupt=self.fail_on_corrupt,
+                            log_prefix=self.log_prefix,
+                            save_batch_count=self.save_batch_count,
+                            agent=self.agent)
 
             ts = time()
             self._dag.load()
             self.logger.debug(f"jobs took {time() - ts} secs to load")
 
             # Has the status been initialized?
-            if self._dag.has_graph is False:
+            if not self._dag.has_graph:
                 self._dag.allow_auto_save = False
                 status = self._dag.add_vertex()
                 status.belongs_to_root(
@@ -94,7 +102,7 @@ class Jobs:
         self.logger.debug("loading discovery jobs from DAG")
 
         vertex = self.dag.walk_down_path(self.data_path)
-        current_dict= vertex.content_as_dict
+        current_dict = vertex.content_as_dict
 
         if current_dict is None:
             self.logger.debug("  there is no job content, creating empty job content")
@@ -428,15 +436,15 @@ class Jobs:
                 style = "solid"
 
                 # To reduce the number of edges, only show the active edges
-                if edge.active is True:
+                if edge.active:
                     color = "black"
                     style = "bold"
-                elif show_only_active_edges is True:
+                elif show_only_active_edges:
                     continue
 
                 # If the vertex is not active, gray out the DATA edge
                 if edge.edge_type == EdgeType.DATA:
-                    if v.active is False:
+                    if not v.active:
                         color = "grey"
                     elif v.has_data:
 
@@ -477,7 +485,7 @@ class Jobs:
                     label = "UNK"
                 if edge.path is not None and edge.path != "":
                     label += f"\\npath={edge.path}"
-                if show_version is True:
+                if show_version:
                     label += f"\\nv={edge.version}"
 
                 # tail, head (arrow side), label, ...
@@ -486,7 +494,7 @@ class Jobs:
             shape = "ellipse"
 
             color = "black"
-            if v.active is False:
+            if not v.active:
                 fillcolor = "grey"
 
             label = f"uid={v.uid}"

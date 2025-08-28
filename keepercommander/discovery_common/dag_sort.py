@@ -8,7 +8,7 @@ from typing import List, Optional, Union, TYPE_CHECKING
 
 Logger = Union[logging.RootLogger, logging.Logger]
 if TYPE_CHECKING:
-    from ..keeper_dag.vertex import DAGVertex
+    from keepercommander.keeper_dag.vertex import DAGVertex
 
 
 def sort_infra_name(vertices: List[DAGVertex]) -> List[DAGVertex]:
