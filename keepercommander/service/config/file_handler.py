@@ -16,8 +16,6 @@ from typing import Dict, Any
 from .cli_handler import CommandHandler
 from ..decorators.logging import logger
 from ..util.exceptions import ValidationError
-from ...crypto import encrypt_aes_v2
-from ...loginv3 import KeeperParams
 
 class ConfigFormatHandler:
     def __init__(self, config_dir: Path, messages: Dict, validation_messages: Dict):

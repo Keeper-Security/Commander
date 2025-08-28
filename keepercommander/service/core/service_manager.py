@@ -11,18 +11,16 @@
 
 import os
 import logging
-from pathlib import Path
 import signal
 import psutil
 
 from ... import utils
-from ...params import KeeperParams
 from ...service.config.service_config import ServiceConfig
 from ..decorators.logging import logger, debug_decorator
 from .process_info import ProcessInfo
 from .terminal_handler import TerminalHandler
 from .signal_handler import SignalHandler
-import json, io, sys, os, subprocess, atexit, time
+import sys, os, subprocess
 
 class ServiceManager:
     """Manages the lifecycle of the service including start, stop, and status operations."""
@@ -112,7 +110,7 @@ class ServiceManager:
             if config_data.get("run_mode") == "background":
 
                 base_dir = os.path.dirname(os.path.abspath(__file__))
-                service_path = os.path.join(base_dir, "service_app.py")
+                service_module = "keepercommander.service.core.service_app"  # Use module path instead of file path
                 python_executable = sys.executable
 
                 # Create logs directory for subprocess output
@@ -125,7 +123,7 @@ class ServiceManager:
                         subprocess.DETACHED_PROCESS = 0x00000008
                         with open(log_file, 'w') as log_f:
                             cls = subprocess.Popen(
-                                [python_executable, service_path],
+                                [python_executable, '-m', service_module],
                                 creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
                                 stdout=log_f,
                                 stderr=subprocess.STDOUT,  # Combine stderr with stdout
@@ -136,7 +134,7 @@ class ServiceManager:
                         # For macOS and Linux - improved subprocess handling
                         with open(log_file, 'w') as log_f:
                             cls = subprocess.Popen(
-                                [python_executable, service_path],
+                                [python_executable, '-m', service_module],
                                 stdout=log_f,
                                 stderr=subprocess.STDOUT,  # Combine stderr with stdout
                                 preexec_fn=os.setpgrp,

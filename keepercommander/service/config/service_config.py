@@ -13,7 +13,7 @@ import json
 import logging
 from pathlib import Path
 import shutil
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 from configparser import ConfigParser
 
 import yaml
