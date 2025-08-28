@@ -10,13 +10,13 @@
 #
 
 from typing import Dict, Any
-from keepercommander.params import KeeperParams
-from keepercommander import resources
 from configparser import ConfigParser
 from pathlib import Path
 from ..config.service_config import ServiceConfig
 from ..decorators.logging import logger, debug_decorator
 from ..util.exceptions import ValidationError
+from ... import resources
+from ...params import KeeperParams
 
 class ServiceConfigHandler:
     def __init__(self, service_config: ServiceConfig):
@@ -31,6 +31,18 @@ class ServiceConfigHandler:
     def handle_streamlined_config(self, config_data: Dict[str, Any], args, params: KeeperParams) -> None:
         if args.allowedip is None:
             args.allowedip = '0.0.0.0/0'
+        
+        run_mode = args.run_mode if args.run_mode is not None else "foreground"
+        if args.run_mode is not None and run_mode not in ['foreground', 'background']:
+            raise ValidationError(f"Invalid run mode '{run_mode}'. Must be 'foreground' or 'background'.")
+        
+        if args.fileformat is not None and args.fileformat not in ['json', 'yaml']:
+            raise ValidationError(f"Invalid file format '{args.fileformat}'. Must be 'json' or 'yaml'.")
+        
+        queue_enabled = args.queue_enabled if args.queue_enabled is not None else "y"
+        if args.queue_enabled is not None and queue_enabled not in ['y', 'n']:
+            raise ValidationError(f"Invalid queue setting '{queue_enabled}'. Must be 'y' or 'n'.")
+        
         config_data.update({
             "port": self.service_config.validator.validate_port(args.port),
             "ip_allowed_list": self.service_config.validator.validate_ip_list(args.allowedip),
@@ -43,8 +55,9 @@ class ServiceConfigHandler:
             "ngrok_custom_domain": args.ngrok_custom_domain,
             "certfile": args.certfile,
             "certpassword": args.certpassword,
-            "fileformat": args.fileformat,
-            "run_mode": args.run_mode
+            "fileformat": args.fileformat,  # Keep original logic - can be None
+            "run_mode": run_mode,
+            "queue_enabled": queue_enabled
         })
 
     @debug_decorator
@@ -52,7 +65,9 @@ class ServiceConfigHandler:
         self._configure_port(config_data)
         self._configure_ngrok(config_data)
         self._configure_tls(config_data)
-        config_data["run_mode"] = "background"
+        self._configure_queue(config_data)
+        
+        config_data["fileformat"] = None
     
     def _configure_port(self, config_data: Dict[str, Any]) -> None:
         while True:
@@ -98,3 +113,18 @@ class ServiceConfigHandler:
         else:
             config_data["certfile"] = ""
             config_data["certpassword"] = ""
+    
+    def _configure_queue(self, config_data: Dict[str, Any]) -> None:
+        """Configure queue enabled setting with user prompt."""
+        config_data["queue_enabled"] = self.service_config._get_yes_no_input(self.messages['queue_enabled_prompt'])
+        logger.debug(f"Queue enabled set to: {config_data['queue_enabled']}")
+
+    def _configure_run_mode(self, config_data: Dict[str, Any]) -> None:
+        """Configure run mode with user prompt."""
+        while True:
+            run_mode = input(self.messages['run_mode_prompt']).strip().lower()
+            if run_mode in ['foreground', 'background']:
+                config_data["run_mode"] = run_mode
+                logger.debug(f"Run mode set to: {run_mode}")
+                break
+            print(f"{self.validation_messages['invalid_run_mode']} Must be 'foreground' or 'background'.")

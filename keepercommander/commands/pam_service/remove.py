@@ -1,10 +1,11 @@
 from __future__ import annotations
 import argparse
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
-from ...display import bcolors
 from ... import vault
-from keepercommander.discovery_common.constants import PAM_USER, PAM_MACHINE
-from keepercommander.discovery_common.user_service import UserService
+from ...discovery_common.constants import PAM_USER, PAM_MACHINE
+from ...discovery_common.user_service import UserService
+from ...display import bcolors
+from ... import __version__
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -23,8 +24,8 @@ class PAMActionServiceRemoveCommand(PAMGatewayActionDiscoverCommandBase):
                         help='The UID of the Windows Machine record')
     parser.add_argument('--user-uid', '-u', required=True, dest='user_uid', action='store',
                         help='The UID of the User record')
-    parser.add_argument('--type', '-t', required=True, choices=['service', 'task'], dest='type',
-                        action='store', help='Relationship to remove [service, task]')
+    parser.add_argument('--type', '-t', required=True, choices=['service', 'task', 'iis'], dest='type',
+                        action='store', help='Relationship to remove [service, task, iis]')
 
     def get_parser(self):
         return PAMActionServiceRemoveCommand.parser
@@ -47,7 +48,8 @@ class PAMActionServiceRemoveCommand(PAMGatewayActionDiscoverCommandBase):
             print(f"  {self._f('Cannot get gateway information. Gateway may not be up.')}")
             return
 
-        user_service = UserService(record=gateway_context.configuration, params=params, fail_on_corrupt=False)
+        user_service = UserService(record=gateway_context.configuration, params=params, fail_on_corrupt=False,
+                                   agent=f"Cmdr/{__version__}")
 
         machine_record = vault.KeeperRecord.load(params, machine_uid)  # type: Optional[TypedRecord]
         if machine_record is None:
@@ -79,14 +81,16 @@ class PAMActionServiceRemoveCommand(PAMGatewayActionDiscoverCommandBase):
 
         acl = user_service.get_acl(machine_vertex.uid, user_vertex.uid)
         if acl is None:
-            print(f"{bcolors.WARNING}The user did not control any services or "
-                  f"scheduled tasks on the machine.{bcolors.ENDC}")
+            print(f"{bcolors.WARNING}The user did not control any services, "
+                  f"scheduled tasks, or IIS pools on the machine.{bcolors.ENDC}")
             return
 
         if rel_type == "service":
             acl.is_service = False
-        else:
+        elif rel_type == "task":
             acl.is_task = False
+        else:
+            acl.is_iis_pool = False
 
         if user_service.dag.get_root.has(machine_vertex) is False:
             user_service.belongs_to(gateway_context.configuration_uid, machine_vertex.uid)
@@ -101,10 +105,17 @@ class PAMActionServiceRemoveCommand(PAMGatewayActionDiscoverCommandBase):
                     "user's password is rotated."
                 )
             )
-        else:
+        elif rel_type == "task":
             print(
                 self._gr(
                     "Success: Scheduled tasks running on this machine will no longer have their password changed "
+                    "when this user's password is rotated."
+                )
+            )
+        else:
+            print(
+                self._gr(
+                    "Success: IIP pools running on this machine will no longer have their password changed "
                     "when this user's password is rotated."
                 )
             )

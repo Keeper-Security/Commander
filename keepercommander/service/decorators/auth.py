@@ -15,7 +15,7 @@ from datetime import datetime
 from ..util.str_util import split_to_list
 from ..util.config_reader import ConfigReader
 from ..decorators.logging import debug_decorator, logger
-from keepercommander.service.util.verified_command import Verifycommand
+from ...service.util.verified_command import Verifycommand
 
 def auth_check(fn):
     @wraps(fn)
@@ -55,9 +55,17 @@ def auth_check(fn):
 def policy_check(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
+        # Skip policy check for GET requests entirely
+        if request.method == 'GET':
+            return fn(*args, **kwargs)
+
+        request_data = request.get_json(silent=True)
+        if not request_data:
+            return fn(*args, **kwargs)
+            
         api_key = request.headers.get('api-key')
         policy = ConfigReader.read_config('command_list', api_key)
-        command_content = request.json.get("command")
+        command_content = request_data.get("command")
         if len(command_content) > 4096:
             return {
                 'status': 'fail',

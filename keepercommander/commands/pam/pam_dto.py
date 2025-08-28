@@ -2,8 +2,8 @@ import abc
 import base64
 import json
 
-from keepercommander import crypto
-from keepercommander.loginv3 import CommonHelperMethods
+from ... import crypto
+from ...loginv3 import CommonHelperMethods
 
 
 class RouterRequest:

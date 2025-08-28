@@ -17,13 +17,12 @@ from typing import Dict, Any, List, Optional
 from configparser import ConfigParser
 
 import yaml
-from keepercommander.params import KeeperParams
 from .file_handler import ConfigFormatHandler
+from .models import ServiceConfigData
 from ..decorators.logging import logger, debug_decorator
 from ..util.exceptions import ValidationError
-from .models import ServiceConfigData
-from keepercommander import resources, utils
-from .file_handler import ConfigFormatHandler
+from ... import resources, utils
+from ...params import KeeperParams
 
 
 VALID_CERT_EXTENSIONS = {".pem", ".crt", ".cer", ".key"}
@@ -101,6 +100,7 @@ class ServiceConfig:
             encryption_private_key="",
             fileformat="yaml",
             run_mode="foreground",
+            queue_enabled="y",
             records=[]
         ).__dict__
         return config
@@ -187,6 +187,9 @@ class ServiceConfig:
             keeper_dir.mkdir(parents=True, exist_ok=True)
 
             cert_paths = self.get_cert_paths(config_data)
+            
+            if not cert_paths:
+                return keeper_dir
 
             updated_names = {}
             saved_files = []
@@ -202,7 +205,8 @@ class ServiceConfig:
 
             self.update_service_config(updated_names)
 
-            logging.info(f"Certificates saved in {keeper_dir}: {', '.join(str(f.name) for f in saved_files)}")
+            if saved_files:
+                logging.info(f"Certificates saved in {keeper_dir}: {', '.join(str(f.name) for f in saved_files)}")
             return keeper_dir
 
         except Exception as e:
@@ -212,6 +216,12 @@ class ServiceConfig:
     def load_config(self) -> Dict[str, Any]:
         """Load configuration from file."""
         config = self.format_handler.load_config()
+        
+        # Add backwards compatibility for missing queue_enabled field
+        if 'queue_enabled' not in config:
+            config['queue_enabled'] = 'y'  # Default to enabled for existing configs
+            logger.debug("Added default queue_enabled=y for backwards compatibility")
+        
         self._validate_config_structure(config)
         return config
 
@@ -280,5 +290,12 @@ class ServiceConfig:
         logger.debug(f" Uploaded file remote success.")
         self.format_handler.encrypt_config_file(self.format_handler.config_path, self.format_handler.config_dir)
         logger.debug(f" Local file encryption success.")
-        self.record_handler.update_or_add_cert_record(params, self.title)
-        logger.debug(f" Uploaded TLS certificate at remote.")
+        try:
+            config = self.load_config()
+            if config.get("tls_certificate") == "y":
+                self.record_handler.update_or_add_cert_record(params, self.title)
+                logger.debug(f" Uploaded TLS certificate at remote.")
+            else:
+                logger.debug(f" TLS certificate upload skipped - TLS not enabled.")
+        except Exception as e:
+            logger.debug(f"Error checking TLS configuration: {e}")

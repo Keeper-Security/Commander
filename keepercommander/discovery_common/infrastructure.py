@@ -1,17 +1,17 @@
 from __future__ import annotations
 import logging
 from .constants import DIS_INFRA_GRAPH_ID
-from .utils import get_connection
-from keepercommander.keeper_dag import DAG, EdgeType
-from keepercommander.keeper_dag.exceptions import DAGVertexException
-from keepercommander.keeper_dag.crypto import urlsafe_str_to_bytes
+from .utils import get_connection, make_agent
+from ..keeper_dag import DAG, EdgeType
+from ..keeper_dag.exceptions import DAGVertexException
+from ..keeper_dag.crypto import urlsafe_str_to_bytes
 import os
 import importlib
 import time
 from typing import Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from keepercommander.keeper_dag.vertex import DAGVertex
+    from ..keeper_dag.vertex import DAGVertex
 
 
 class Infrastructure:
@@ -34,7 +34,7 @@ class Infrastructure:
 
     def __init__(self, record: Any, logger: Optional[Any] = None, history_level: int = 0,
                  debug_level: int = 0, fail_on_corrupt: bool = True, log_prefix: str = "GS Infrastructure",
-                 save_batch_count: int = 200,
+                 save_batch_count: int = 200, agent: Optional[str] = None,
                  **kwargs):
 
         # This will either be a KSM Record, or Commander KeeperRecord
@@ -53,6 +53,10 @@ class Infrastructure:
         self.delta_graph = True
         self.last_sync_point = -1
 
+        self.agent = make_agent("infra")
+        if agent is not None:
+            self.agent += "; " + agent
+
         self.conn = get_connection(**kwargs)
 
     @property
@@ -65,7 +69,8 @@ class Infrastructure:
             self._dag = DAG(conn=self.conn, record=self.record, graph_id=DIS_INFRA_GRAPH_ID, auto_save=self.auto_save,
                             logger=self.logger, history_level=self.history_level, debug_level=self.debug_level,
                             name="Discovery Infrastructure", fail_on_corrupt=self.fail_on_corrupt,
-                            log_prefix=self.log_prefix, save_batch_count=self.save_batch_count)
+                            log_prefix=self.log_prefix, save_batch_count=self.save_batch_count,
+                            agent=self.agent)
             # Do not load the DAG here.
             # We don't know if we are using a sync point yet.
 

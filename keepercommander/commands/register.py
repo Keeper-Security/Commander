@@ -200,6 +200,7 @@ one_time_share_create_parser.add_argument('--output', dest='output', choices=['c
 one_time_share_create_parser.add_argument('--name', dest='share_name', action='store', help='one-time share URL name')
 one_time_share_create_parser.add_argument('-e', '--expire', dest='expire', action='store', metavar='<NUMBER>[(mi)nutes|(h)ours|(d)ays]',
                                           help='Time period record share URL is valid.')
+one_time_share_create_parser.add_argument('--editable', dest='editable', action='store_true', help='Allow recipient to edit record fields and upload files')
 one_time_share_create_parser.add_argument('record', nargs='+', type=str, action='store', help='record path or UID. Can be repeated')
 
 one_time_share_list_parser = argparse.ArgumentParser(prog='one-time-share-list', description='Displays a list of one-time shares for a records',
@@ -1127,7 +1128,7 @@ class ShareReportCommand(Command):
 
         record_uids = record_uids.intersection(contained_records) if contained_records else record_uids
 
-        from keepercommander.shared_record import get_shared_records
+        from ..shared_record import get_shared_records
         shared_records = get_shared_records(params, record_uids, not show_team_users)
 
         def get_record_shares():
@@ -1892,7 +1893,7 @@ class FindDuplicateCommand(Command):
             cmd = self.get_parser().prog
             if not params.enterprise:
                 raise CommandError(cmd, 'This feature is available only to enterprise account administrators')
-            from keepercommander import sox
+            from .. import sox
             sox.validate_data_access(params, cmd)
 
             field_keys = ['title', 'url', 'record_type']
@@ -2386,9 +2387,13 @@ class OneTimeShareCreateCommand(Command):
             share_name = kwargs.get('share_name')
             if share_name:
                 rq.id = share_name
+            query = None
+            if kwargs.get('editable'):
+                rq.isEditable = True
+                query = 'editable=true'
 
             api.communicate_rest(params, rq, 'vault/external_share_add', rs_type=APIRequest_pb2.Device)
-            url = urlunparse(('https', params.server, '/vault/share', None, None, utils.base64_url_encode(client_key)))
+            url = urlunparse(('https', params.server, '/vault/share/', None, query, utils.base64_url_encode(client_key)))
             urls[record_uid] = str(url)
 
         if params.batch_mode:

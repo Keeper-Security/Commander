@@ -19,7 +19,7 @@ from pathlib import Path
 
 import requests
 from Cryptodome.Cipher import AES
-from keepercommander.breachwatch import BreachWatch
+from ..breachwatch import BreachWatch
 
 from . import recordv2 as recordv2
 from .base import suppress_exit, raise_parse_exception, dump_report_data, Command, report_output_parser

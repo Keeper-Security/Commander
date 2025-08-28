@@ -10,7 +10,7 @@
 #
 
 from typing import Optional
-from keepercommander.params import KeeperParams
+from ...params import KeeperParams
 
 _current_params: Optional[KeeperParams] = None
 

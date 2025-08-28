@@ -10,14 +10,13 @@
 #
 
 import argparse
-from typing import Dict, Any
-from keepercommander.params import KeeperParams
-from keepercommander.commands.base import report_output_parser, Command
+from typing import Any, Dict, Optional
 from ..config.service_config import ServiceConfig
 from ..config.config_validation import ValidationError
 from ..decorators.logging import logger, debug_decorator
+from ...params import KeeperParams
+from ...commands.base import report_output_parser, Command
 from dataclasses import dataclass
-from typing import Optional
 
 @dataclass
 class StreamlineArgs:
@@ -31,6 +30,7 @@ class StreamlineArgs:
     certpassword : Optional[str]
     fileformat : Optional[str]
     run_mode: Optional[str]
+    queue_enabled: Optional[str]
     
 class CreateService(Command):
     """Command to create a new service configuration."""
@@ -67,6 +67,7 @@ class CreateService(Command):
         parser.add_argument('-crtp', '--certpassword', type=str, help='certificate password')
         parser.add_argument('-f', '--fileformat', type=str, help='file format')
         parser.add_argument('-rm', '--run_mode', type=str, help='run mode')
+        parser.add_argument('-q', '--queue_enabled', type=str, help='enable request queue (y/n)')
         return parser
     
     def execute(self, params: KeeperParams, **kwargs) -> None:
@@ -81,7 +82,7 @@ class CreateService(Command):
 
             config_data = self.service_config.create_default_config()
 
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'certfile', 'certpassword', 'fileformat', 'run_mode']}
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'certfile', 'certpassword', 'fileformat', 'run_mode', 'queue_enabled']}
             args = StreamlineArgs(**filtered_kwargs)
             self._handle_configuration(config_data, params, args)
             self._create_and_save_record(config_data, params, args)
@@ -103,14 +104,19 @@ class CreateService(Command):
             self.security_handler.configure_security(config_data)
     
     def _create_and_save_record(self, config_data: Dict[str, Any], params: KeeperParams, args: StreamlineArgs) -> None:
+        if args.port is None:
+            self.config_handler._configure_run_mode(config_data)
+        
         record = self.service_config.create_record(config_data["is_advanced_security_enabled"], params, args.commands)
         config_data["records"] = [record]
-        if args.fileformat:
-            format = args.fileformat
+        if config_data.get("fileformat"):
+            format_type = config_data["fileformat"]
         else:
-            format = 'create'
-        self.service_config.save_config(config_data, format)
-        self.service_config.save_cert_data(config_data, 'create')
+            format_type = self.service_config.format_handler.get_config_format('create')
+            config_data["fileformat"] = format_type
+        self.service_config.save_config(config_data, format_type)
+        if config_data.get("tls_certificate") == "y":
+            self.service_config.save_cert_data(config_data, 'create')
         
     def _upload_and_start_service(self, params: KeeperParams) -> None:
         self.service_config.update_or_add_record(params)

@@ -2,9 +2,9 @@ from __future__ import annotations
 from .constants import DIS_RULES_GRAPH_ID
 from .types import (RuleTypeEnum, RuleItem, ActionRuleSet, ActionRuleItem, ScheduleRuleSet, ComplexityRuleSet,
                     Statement, RuleActionEnum)
-from .utils import value_to_boolean, get_connection
-from keepercommander.keeper_dag import DAG, EdgeType
-from keepercommander.keeper_dag.exceptions import DAGException
+from .utils import value_to_boolean, get_connection, make_agent
+from ..keeper_dag import DAG, EdgeType
+from ..keeper_dag.exceptions import DAGException
 from time import time
 import base64
 import os
@@ -78,7 +78,7 @@ class Rules:
     }
 
     def __init__(self, record: Any, logger: Optional[Any] = None,  debug_level: int = 0, fail_on_corrupt: bool = True,
-                 **kwargs):
+                 agent: Optional[str] = None, **kwargs):
 
         self.conn = get_connection(**kwargs)
 
@@ -89,6 +89,10 @@ class Rules:
         self.debug_level = debug_level
         self.fail_on_corrupt = fail_on_corrupt
 
+        self.agent = make_agent("rules")
+        if agent is not None:
+            self.agent += "; " + agent
+
     @property
     def dag(self) -> DAG:
         if self._dag is None:
@@ -96,7 +100,8 @@ class Rules:
             # Turn auto_save on after the DAG has been created.
             # No need to call it six times in a row to initialize it.
             self._dag = DAG(conn=self.conn, record=self.record, graph_id=DIS_RULES_GRAPH_ID, auto_save=False,
-                            logger=self.logger, debug_level=self.debug_level, fail_on_corrupt=self.fail_on_corrupt)
+                            logger=self.logger, debug_level=self.debug_level, fail_on_corrupt=self.fail_on_corrupt,
+                            agent=self.agent)
             self._dag.load()
 
             # Has the status been initialized?

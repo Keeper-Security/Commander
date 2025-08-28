@@ -13,11 +13,11 @@ import json
 import yaml
 from pathlib import Path
 from typing import Dict, Any
+from .cli_handler import CommandHandler
 from ..decorators.logging import logger
 from ..util.exceptions import ValidationError
-from .cli_handler import CommandHandler
-from keepercommander.crypto import encrypt_aes_v2
-from keepercommander.loginv3 import KeeperParams
+from ...crypto import encrypt_aes_v2
+from ...loginv3 import KeeperParams
 
 class ConfigFormatHandler:
     def __init__(self, config_dir: Path, messages: Dict, validation_messages: Dict):
@@ -144,7 +144,7 @@ class ConfigFormatHandler:
     def encrypted_content(plaintext, config_path: Path, config_dir ) -> bytes:
         """Encrypt the content of the configuration file."""
         from hashlib import sha256
-        from keepercommander.crypto import encrypt_aes_v2
+        from ...crypto import encrypt_aes_v2
         config_json = config_dir / "config.json"
         if not config_json.exists():
             raise FileNotFoundError(f"Config.json file not found: {config_json}")
@@ -170,14 +170,14 @@ class ConfigFormatHandler:
         encrypted_content = ConfigFormatHandler.encrypted_content(config_path.read_text(), config_path, config_dir)
         with open(config_path, 'wb') as encrypted_file:
             encrypted_file.write(encrypted_content)
-        logger.info(f" {config_path} File encryption success. ")
+        logger.debug(f" {config_path} File encryption success. ")
         
         
     @staticmethod
     def decrypt_config_file(encrypted_content: bytes, config_dir: Path) -> str:
         """Decrypt the content of the configuration file and return it as a string."""
         from hashlib import sha256
-        from keepercommander.crypto import decrypt_aes_v2
+        from ...crypto import decrypt_aes_v2
         config_json = config_dir / "config.json"
         if not config_json.exists():
             raise FileNotFoundError(f"Config.json file not found: {config_json}")

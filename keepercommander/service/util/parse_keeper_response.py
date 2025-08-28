@@ -26,7 +26,10 @@ class KeeperResponseParser:
             Dict[str, Any]: Structured JSON response
         """
         if not response:
-            return {"status": "success", "data": None}
+            return {
+                "success": False,
+                "error": "The server is temporarily busy. Please try again shortly."
+            }
         
         response_str = str(response).strip()
         if '--format=json' in command:
@@ -64,40 +67,60 @@ class KeeperResponseParser:
             }
         }
 
-        sections = re.split(r'(?=#\s+(?:Folder|Record))', response)
-        
-        for section in sections:
-            if not section.strip():
-                continue
+        if "# Folder UID" in response or "# Record UID" in response:
+            sections = re.split(r'(?=#\s+(?:Folder|Record))', response)
+            
+            for section in sections:
+                if not section.strip():
+                    continue
+                    
+                lines = section.strip().split("\n")
                 
-            lines = section.strip().split("\n")
+                if "Folder UID" in lines[0]:
+                    data_lines = [line for line in lines if re.match(r'\s*\d+\s+', line)]
+                    for line in data_lines:
+                        match = re.match(r'\s*(\d+)\s+(\S+)\s+(.+?)\s+(\S+)\s*$', line)
+                        if match:
+                            result["data"]["folders"].append({
+                                "number": int(match.group(1)),
+                                "name": match.group(3).strip(),
+                            })
+                
+                elif "Record UID" in lines[0]:
+                    data_lines = [line for line in lines if re.match(r'\s*\d+\s+', line)]
+                    for line in data_lines:
+                        match = re.match(r'\s*(\d+)\s+(\S+)\s+(\S*)\s+([^@]+?)(?:\s{2,}(.+))?$', line)
+                        if match:
+                            record = {
+                                "number": int(match.group(1)),
+                                "title": match.group(4).strip()
+                            }
+                            if match.group(5):
+                                record["description"] = match.group(5).strip()
+                            result["data"]["records"].append(record)
+        else:
+            # Handle simple format (just names)
+            lines = response.strip().split('\n')
+            folder_count = 0
+            record_count = 0
             
-            if "Folder UID" in lines[0]:
-                data_lines = [line for line in lines if re.match(r'\s*\d+\s+', line)]
-                for line in data_lines:
-                    match = re.match(r'\s*(\d+)\s+(\S+)\s+(.+?)\s+(\S+)\s*$', line)
-                    if match:
-                        result["data"]["folders"].append({
-                            "number": int(match.group(1)),
-                            "uid": match.group(2),
-                            "name": match.group(3).strip(),
-                            "flags": match.group(4)
-                        })
-            
-            elif "Record UID" in lines[0]:
-                data_lines = [line for line in lines if re.match(r'\s*\d+\s+', line)]
-                for line in data_lines:
-                    match = re.match(r'\s*(\d+)\s+(\S+)\s+(\S*)\s+([^@]+?)(?:\s{2,}(.+))?$', line)
-                    if match:
-                        record = {
-                            "number": int(match.group(1)),
-                            "uid": match.group(2),
-                            "type": match.group(3),
-                            "title": match.group(4).strip()
-                        }
-                        if match.group(5):
-                            record["description"] = match.group(5).strip()
-                        result["data"]["records"].append(record)
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                if line.endswith('/'):
+                    folder_count += 1
+                    result["data"]["folders"].append({
+                        "number": folder_count,
+                        "name": line[:-1],  # Remove trailing slash
+                    })
+                else:
+                    record_count += 1
+                    result["data"]["records"].append({
+                        "number": record_count,
+                        "title": line
+                    })
 
         return result
 
