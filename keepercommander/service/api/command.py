@@ -10,7 +10,6 @@
 #
 
 from flask import Blueprint, request, jsonify, Response
-from html import escape
 import queue
 from typing import Tuple, Union
 from ..decorators.unified import unified_api_decorator
