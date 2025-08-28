@@ -1,8 +1,11 @@
 from . import ConnectionBase
-from ..types import DataPayload, SyncData, EdgeType
+from ..types import DataPayload, SyncData, EdgeType, SyncQuery
+from ..crypto import generate_random_bytes
 import json
 import os
 import logging
+import base64
+from enum import Enum
 from tabulate import tabulate
 
 try:  # pragma: no cover
@@ -30,9 +33,13 @@ class Connection(ConnectionBase):
     DEBUG = 0
 
     def __init__(self, limit: int = 100, db_file: Optional[str] = None, db_dir:  Optional[str] = None,
-                 logger: Optional[Any] = None):
+                 logger: Optional[Any] = None,
+                 log_transactions: Optional[bool] = None, log_transactions_dir: Optional[str] = None):
 
-        super().__init__(is_device=True, logger=logger)
+        super().__init__(is_device=False,
+                         logger=logger,
+                         log_transactions=log_transactions,
+                         log_transactions_dir=log_transactions_dir)
 
         if db_file is None:
             db_file = os.environ.get("LOCAL_DAG_DB_FILE", Connection.DB_FILE)
@@ -51,17 +58,17 @@ class Connection(ConnectionBase):
 
     @staticmethod
     def get_record_uid(record: object) -> bytes:
-        if hasattr(record, "record_uid") is True:
+        if hasattr(record, "record_uid"):
             return getattr(record, "record_uid")
-        elif hasattr(record, "uid") is True:
+        elif hasattr(record, "uid"):
             return getattr(record, "uid")
         raise Exception(f"Cannot find the record uid in object type: {type(record)}.")
 
     @staticmethod
     def get_key_bytes(record: object) -> bytes:
-        if hasattr(record, "record_key_bytes") is True:
+        if hasattr(record, "record_key_bytes"):
             return getattr(record, "record_key_bytes")
-        elif hasattr(record, "record_key") is True:
+        elif hasattr(record, "record_key"):
             return getattr(record, "record_key")
         raise Exception("Cannot find the record key bytes in object.")
 
@@ -75,7 +82,7 @@ class Connection(ConnectionBase):
 
         self.debug("create local dag database")
 
-        if os.path.isfile(self.db_file) is True:
+        if os.path.isfile(self.db_file):
             return False
 
         with closing(sqlite3.connect(self.db_file)) as connection:
@@ -92,7 +99,7 @@ class Connection(ConnectionBase):
                 cursor.execute(
                     """
 CREATE TABLE IF NOT EXISTS dag_edges (
-    graph_id INTEGER NOT NULL DEFAULT 0,
+    graph_id INTEGER,
     edge_id INTEGER PRIMARY KEY AUTOINCREMENT,
     type TEXT NOT NULL,
     head CHARACTER(22) NOT NULL,
@@ -124,7 +131,7 @@ CREATE TABLE IF NOT EXISTS dag_vertices (
                 cursor.execute(
                     """
 CREATE TABLE IF NOT EXISTS dag_streams (
-    graph_id INTEGER NOT NULL,
+    graph_id INTEGER,
     sync_point INTEGER PRIMARY KEY AUTOINCREMENT,
     vertex_id CHARACTER(22) NOT NULL,
     edge_id INTEGER NOT NULL,
@@ -139,9 +146,10 @@ CREATE TABLE IF NOT EXISTS dag_streams (
                 connection.commit()
 
         os.chmod(self.db_file, 0o777)
+        return None
 
     @staticmethod
-    def _payload_to_json(payload: Union[DataPayload, str]) -> str:
+    def _payload_to_json(payload: Union[DataPayload, str]) -> dict:
 
         # if payload is DataPayload
         if isinstance(payload, DataPayload):
@@ -156,8 +164,6 @@ CREATE TABLE IF NOT EXISTS dag_streams (
 
             # double check if it is a valid json inside the string
             json.loads(payload_data)
-        else:
-            raise Exception(f'Unsupported payload type: {type(payload)}')
 
         return json.loads(payload_data)
 
@@ -269,12 +275,25 @@ CREATE TABLE IF NOT EXISTS dag_streams (
 
         return stream_id
 
-    def add_data(self, payload: DataPayload, agent: str):
+    def add_data(self, payload: Union[DataPayload, str], endpoint: Optional[str] = None, agent: Optional[str] = None):
 
         stream_id = self._find_stream_id(payload)
         self.debug(f"STREAM ID IS {stream_id}")
 
+        endpoint = self._endpoint(
+            action="/add_data",
+            endpoint=endpoint)
+        self.logger.debug(f"endpoint, local test = {endpoint}")
+
         data = Connection._payload_to_json(payload)
+
+        self.write_transaction_log(
+            graph_id=payload.graphId,
+            payload_json=json.dumps(data),
+            agent=agent,
+            endpoint=endpoint,
+            error=None
+        )
 
         with closing(sqlite3.connect(self.db_file)) as connection:
             with closing(connection.cursor()) as cursor:
@@ -342,7 +361,8 @@ CREATE TABLE IF NOT EXISTS dag_streams (
 
                 connection.commit()
 
-    def sync(self, stream_id: str,  agent: str, sync_point: Optional[int] = 0, graph_id: Optional[int] = 0) -> SyncData:
+    def sync(self, stream_id: str, agent: Optional[str] = None, sync_point: Optional[int] = 0,
+             endpoint: Optional[str] = None, graph_id: Optional[int] = None) -> SyncData:
 
         self.debug(f"Sync: stream id {stream_id}, sync point {sync_point}, graph {graph_id}")
 
@@ -355,6 +375,29 @@ CREATE TABLE IF NOT EXISTS dag_streams (
             EdgeType.DENIAL.value: "denial",
             EdgeType.UNDENIAL.value: "undenial",
         }
+
+        endpoint = self._endpoint(
+            action="/sync",
+            endpoint=endpoint)
+        self.logger.debug(f"endpoint, local test = {endpoint}")
+
+        if isinstance(graph_id, Enum):
+            graph_id = graph_id.value
+
+        sync_query = SyncQuery(
+            streamId=stream_id,
+            deviceId=base64.urlsafe_b64encode(generate_random_bytes(16)).decode(),
+            syncPoint=sync_point,
+            graphId=graph_id
+        )
+
+        self.write_transaction_log(
+            graph_id=graph_id,
+            payload_json=sync_query.model_dump_json(),
+            agent=agent,
+            endpoint=endpoint,
+            error=None
+        )
 
         resp = {
             "syncPoint": 0,
@@ -476,7 +519,7 @@ CREATE TABLE IF NOT EXISTS dag_streams (
             with closing(connection.cursor()) as cursor:
 
                 sql = "UPDATE dag_edges SET data=? WHERE graph_id=? AND head=? AND tail=?"
-                res = cursor.execute(sql, (content, graph_id, head_uid, tail_uid))
+                cursor.execute(sql, (content, graph_id, head_uid, tail_uid))
 
             connection.commit()
 

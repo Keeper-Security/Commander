@@ -1,17 +1,17 @@
 from __future__ import annotations
 import logging
-from .constants import USER_SERVICE_GRAPH_ID, PAM_MACHINE, PAM_USER
+from .constants import PAM_MACHINE, PAM_USER
 from .utils import get_connection, user_in_lookup, user_check_list, make_agent
 from .types import DiscoveryObject, ServiceAcl, FactsNameUser
 from .infrastructure import Infrastructure
-
-from ..keeper_dag import DAG, EdgeType
+from keepercommander.keeper_dag import DAG, EdgeType
+from keepercommander.keeper_dag.types import PamEndpoints, PamGraphId
 import importlib
 from typing import Any, Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..keeper_dag.vertex import DAGVertex
-    from ..keeper_dag.edge import DAGEdge
+    from keepercommander.keeper_dag.vertex import DAGVertex
+    from keepercommander.keeper_dag.edge import DAGEdge
 
 
 class UserService:
@@ -46,11 +46,19 @@ class UserService:
     def dag(self) -> DAG:
         if self._dag is None:
 
-            self._dag = DAG(conn=self.conn, record=self.record, graph_id=USER_SERVICE_GRAPH_ID,
-                            auto_save=False, logger=self.logger, history_level=self.history_level,
-                            debug_level=self.debug_level, name="Discovery Service/Tasks",
-                            fail_on_corrupt=self.fail_on_corrupt, log_prefix=self.log_prefix,
-                            save_batch_count=self.save_batch_count, agent=self.agent)
+            self._dag = DAG(conn=self.conn,
+                            record=self.record,
+                            endpoint=PamEndpoints.SERVICE_LINKS,
+                            graph_id=PamGraphId.SERVICE_LINKS,
+                            auto_save=False,
+                            logger=self.logger,
+                            history_level=self.history_level,
+                            debug_level=self.debug_level,
+                            name="Discovery Service/Tasks",
+                            fail_on_corrupt=self.fail_on_corrupt,
+                            log_prefix=self.log_prefix,
+                            save_batch_count=self.save_batch_count,
+                            agent=self.agent)
 
             self._dag.load(sync_point=0)
 

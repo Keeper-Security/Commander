@@ -1,14 +1,14 @@
 from __future__ import annotations
 import logging
-from .constants import RECORD_LINK_GRAPH_ID
 from .utils import get_connection, make_agent
 from .types import UserAcl, DiscoveryObject
-from ..keeper_dag import DAG, EdgeType
+from keepercommander.keeper_dag import DAG, EdgeType
+from keepercommander.keeper_dag.types import PamGraphId, PamEndpoints
 import importlib
 from typing import Any, Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..keeper_dag.vertex import DAGVertex
+    from keepercommander.keeper_dag.vertex import DAGVertex
 
 
 class RecordLink:
@@ -43,13 +43,21 @@ class RecordLink:
 
             # Make sure this auto save is False.
             # Since we don't have transactions, we want to save the record link if everything worked.
-            self._dag = DAG(conn=self.conn, record=self.record, graph_id=RECORD_LINK_GRAPH_ID, auto_save=False,
-                            logger=self.logger, debug_level=self.debug_level, name="Record Linking",
-                            fail_on_corrupt=self.fail_on_corrupt, log_prefix=self.log_prefix,
-                            save_batch_count=self.save_batch_count, agent=self.agent)
+            self._dag = DAG(conn=self.conn,
+                            record=self.record,
+                            endpoint=PamEndpoints.PAM,
+                            graph_id=PamGraphId.PAM,
+                            auto_save=False,
+                            logger=self.logger,
+                            debug_level=self.debug_level,
+                            name="Record Linking",
+                            fail_on_corrupt=self.fail_on_corrupt,
+                            log_prefix=self.log_prefix,
+                            save_batch_count=self.save_batch_count,
+                            agent=self.agent)
             sync_point = self._dag.load(sync_point=0)
             self.logger.debug(f"the record linking sync point is {sync_point or 0}")
-            if self.dag.has_graph is False:
+            if not self.dag.has_graph:
                 self.dag.add_vertex(name=self.record.title, uid=self._dag.uid)
 
         return self._dag
@@ -114,7 +122,7 @@ class RecordLink:
         record_vertex = self.dag.get_vertex(record_uid)
         if record_vertex is None:
             record_vertex = self.dag.add_vertex(uid=record_uid, name=discovery_vertex.name)
-        if self.dag.get_root.has(record_vertex) is False:
+        if not self.dag.get_root.has(record_vertex):
             record_vertex.belongs_to_root(EdgeType.LINK)
 
     def discovery_belongs_to(self, discovery_vertex: DAGVertex, discovery_parent_vertex: DAGVertex,
@@ -194,7 +202,7 @@ class RecordLink:
             else:
                 add_edge = False
 
-        if add_edge is True:
+        if add_edge:
             self.logger.debug(f"  added {edge_type} edge")
             record_vertex.belongs_to(parent_record_vertex, edge_type=edge_type, content=acl)
 
@@ -261,7 +269,7 @@ class RecordLink:
         for edge in record_vertex.edges:
             if edge.edge_type == EdgeType.ACL:
                 content = edge.content_as_object(UserAcl)  # type: UserAcl
-                if content.belongs_to is True:
+                if content.belongs_to:
                     return edge.head_uid
             elif edge.edge_type == EdgeType.LINK:
                 return edge.head_uid

@@ -9,15 +9,15 @@ import requests
 import time
 
 try:  # pragma: no cover
-    from ... import crypto, utils, rest_api
+    from keepercommander import crypto, utils, rest_api
 except ImportError:  # pragma: no cover
     raise Exception("Please install the keepercommander module to use the Commander connection.")
 
 from typing import Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
-    from ...params import KeeperParams
-    from ...vault import KeeperRecord
+    from keepercommander.params import KeeperParams
+    from keepercommander.vault import KeeperRecord
     Content = Union[str, bytes, dict]
     QueryValue = Union[list, dict, str, float, int, bool]
     Logger = Union[logging.RootLogger, logging.Logger]
@@ -27,9 +27,14 @@ class Connection(ConnectionBase):
 
     def __init__(self, params: KeeperParams, encrypted_transmission_key: Optional[bytes] = None,
                  encrypted_session_token: Optional[bytes] = None, verify_ssl: bool = True, is_ws: bool = False,
-                 logger: Optional[Logger] = None):
+                 logger: Optional[Logger] = None,
+                 log_transactions: Optional[bool] = None, log_transactions_dir: Optional[str] = None):
 
-        super().__init__(is_device=False, logger=logger)
+        super().__init__(is_device=False,
+                         logger=logger,
+                         log_transactions=log_transactions,
+                         log_transactions_dir=log_transactions_dir)
+
         self.params = params
         self.verify_ssl = verify_ssl
         self.is_ws = is_ws
@@ -55,7 +60,8 @@ class Connection(ConnectionBase):
         
         # In GovCloud environments, the router service is not under the govcloud subdomain
         if 'govcloud.' in configured_host:
-            configured_host = configured_host.replace('govcloud.', '') # "connect.govcloud.keepersecurity.com" -> "connect.keepersecurity.com"
+            # "connect.govcloud.keepersecurity.com" -> "connect.keepersecurity.com"
+            configured_host = configured_host.replace('govcloud.', '')
             
         return os.environ.get("ROUTER_HOST", configured_host)
 
@@ -68,7 +74,7 @@ class Connection(ConnectionBase):
             return hostname
 
         use_ssl = value_to_boolean(os.environ.get("USE_SSL", True))
-        if self.is_ws is True:
+        if self.is_ws:
             prot_pref = 'ws'
         else:
             prot_pref = 'http'
@@ -100,7 +106,7 @@ class Connection(ConnectionBase):
         if payload_json is not None and isinstance(payload_json, bytes) is False:
             payload_json = payload_json.encode()
 
-        if endpoint.startswith("/") is False:
+        if not endpoint.startswith("/"):
             endpoint = "/" + endpoint
 
         url = self.dag_server_url + endpoint
@@ -147,7 +153,7 @@ class Connection(ConnectionBase):
             except Exception as err:
                 err_msg = str(err)
 
-            self.logger.info(f"call to graph web service had a problem: {err_msg}")
+            self.logger.info(f"call to graph web service {url} had a problem: {err_msg}")
             if attempt >= retry:
                 self.logger.error(f"call to graph web service {url}, after {retry} "
                                   f"attempts, failed!: {err_msg}")

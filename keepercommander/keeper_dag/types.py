@@ -12,7 +12,7 @@ class BaseEnum(Enum):
             for e in cls:
                 if e == value or e.value == value:
                     return e
-            if hasattr(cls, str(value).upper()) is True:
+            if hasattr(cls, str(value).upper()):
                 return getattr(cls, value.upper())
         return default
 
@@ -42,7 +42,7 @@ class RefType(BaseEnum):
     PAM_USER = "pam_user"
     # 11
     PAM_NETWORK = "pam_network"
-    #12
+    # 12
     PAM_BROWSER = "pam_browser"
 
     def __str__(self):
@@ -76,6 +76,22 @@ class EdgeType(BaseEnum):
 
     def __str__(self) -> str:
         return str(self.value)
+
+
+class PamGraphId(BaseEnum):
+    PAM = 0
+    DISCOVERY_RULES = 10
+    DISCOVERY_JOBS = 11
+    INFRASTRUCTURE = 12
+    SERVICE_LINKS = 13
+
+
+class PamEndpoints(BaseEnum):
+    PAM = "/graph-sync/pam"
+    DISCOVERY_RULES = "/graph-sync/discovery_rules"
+    DISCOVERY_JOBS = "/graph-sync/discovery_jobs"
+    INFRASTRUCTURE = "/graph-sync/infrastructure"
+    SERVICE_LINKS = "/graph-sync/service_links"
 
 
 class SyncQuery(BaseModel):
@@ -124,4 +140,3 @@ class DataPayload(BaseModel):
     origin: Ref
     dataList: List
     graphId: Optional[int] = 0
-

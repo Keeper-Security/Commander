@@ -1,17 +1,17 @@
 from __future__ import annotations
 import logging
-from .constants import DIS_INFRA_GRAPH_ID
 from .utils import get_connection, make_agent
-from ..keeper_dag import DAG, EdgeType
-from ..keeper_dag.exceptions import DAGVertexException
-from ..keeper_dag.crypto import urlsafe_str_to_bytes
+from keepercommander.keeper_dag import DAG, EdgeType
+from keepercommander.keeper_dag.exceptions import DAGVertexException
+from keepercommander.keeper_dag.crypto import urlsafe_str_to_bytes
+from keepercommander.keeper_dag.types import PamGraphId, PamEndpoints
 import os
 import importlib
 import time
 from typing import Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..keeper_dag.vertex import DAGVertex
+    from keepercommander.keeper_dag.vertex import DAGVertex
 
 
 class Infrastructure:
@@ -63,13 +63,21 @@ class Infrastructure:
     def dag(self) -> DAG:
         if self._dag is None:
 
-            self.logger.debug(f"loading the dag graph {DIS_INFRA_GRAPH_ID}")
+            self.logger.debug(f"loading the dag graph {PamGraphId.INFRASTRUCTURE.value}")
             self.logger.debug(f"setting graph save batch count to {self.save_batch_count}")
 
-            self._dag = DAG(conn=self.conn, record=self.record, graph_id=DIS_INFRA_GRAPH_ID, auto_save=self.auto_save,
-                            logger=self.logger, history_level=self.history_level, debug_level=self.debug_level,
-                            name="Discovery Infrastructure", fail_on_corrupt=self.fail_on_corrupt,
-                            log_prefix=self.log_prefix, save_batch_count=self.save_batch_count,
+            self._dag = DAG(conn=self.conn,
+                            record=self.record,
+                            endpoint=PamEndpoints.INFRASTRUCTURE,
+                            graph_id=PamGraphId.INFRASTRUCTURE,
+                            auto_save=self.auto_save,
+                            logger=self.logger,
+                            history_level=self.history_level,
+                            debug_level=self.debug_level,
+                            name="Discovery Infrastructure",
+                            fail_on_corrupt=self.fail_on_corrupt,
+                            log_prefix=self.log_prefix,
+                            save_batch_count=self.save_batch_count,
                             agent=self.agent)
             # Do not load the DAG here.
             # We don't know if we are using a sync point yet.
@@ -79,11 +87,11 @@ class Infrastructure:
     @property
     def has_discovery_data(self) -> bool:
         # Does the graph array have any vertices?
-        if self.dag.has_graph is False:
+        if not self.dag.has_graph:
             return False
 
         # If we at least have the root, does is have the configuration?
-        if self.get_root.has_vertices() is False:
+        if not self.get_root.has_vertices():
             return False
 
         return True
@@ -115,7 +123,7 @@ class Infrastructure:
             delta_graph = self.delta_graph
 
         self.logger.debug(f"current sync point {self.last_sync_point}")
-        if delta_graph is True:
+        if delta_graph:
             self.logger.debug("saving delta graph of the infrastructure")
         ts = time.time()
         self._dag.save(delta_graph=delta_graph)
@@ -170,9 +178,9 @@ class Infrastructure:
             fillcolor = "white"
             color = "black"
 
-            if v.corrupt is False:
+            if not v.corrupt:
 
-                if v.active is False:
+                if not v.active:
                     fillcolor = "grey"
 
                 record_type = None
@@ -191,7 +199,7 @@ class Infrastructure:
                         source = item.get("source")
                     if record_uid is not None:
                         fillcolor = "#AFFFAF"
-                    if data.get("ignore_object", False) is True:
+                    if data.get("ignore_object", False):
                         fillcolor = "#DFDFFF"
                 except (Exception,):
                     pass
@@ -206,7 +214,7 @@ class Infrastructure:
                     label += f"\\nsource={source}"
                 if record_uid is not None:
                     label += f"\\nruid={record_uid}"
-                if show_hex_uid is True:
+                if show_hex_uid:
                     label += f"\\nhex={urlsafe_str_to_bytes(v.uid).hex()}"
                 if v.uid == self.dag.get_root.uid:
                     fillcolor = "gold"
@@ -218,7 +226,7 @@ class Infrastructure:
                     for k, val in content.items():
                         if k == "item":
                             continue
-                        if isinstance(val, str) is True:
+                        if isinstance(val, str):
                             val = val.replace("\\", "\\\\")
                         tooltip += f"{k}={val}\\n"
 
@@ -226,7 +234,7 @@ class Infrastructure:
                     if item is not None:
                         tooltip += f"------------------\\n"
                         for k, val in item.items():
-                            if isinstance(val, str) is True:
+                            if isinstance(val, str):
                                 val = val.replace("\\", "\\\\")
                             tooltip += f"{k}={val}\\n"
                 except Exception as err:
@@ -250,47 +258,48 @@ class Infrastructure:
 
             def _render_edge(e):
 
-                color = "grey"
+                edge_color = "grey"
                 style = "solid"
 
                 if e.corrupt is False:
 
                     # To reduce the number of edges, only show the active edges
                     if e.active is True:
-                        color = "black"
+                        edge_color = "black"
                         style = "bold"
-                    elif show_only_active_edges is True:
+                    elif show_only_active_edges:
                         return
 
                     # If the vertex is not active, gray out the DATA edge
                     if e.edge_type == EdgeType.DATA and v.active is False:
-                        color = "grey"
+                        edge_color = "grey"
 
                     if e.edge_type == EdgeType.DELETION:
                         style = "dotted"
 
-                    edgetip = ""
+                    edge_tip = ""
                     if e.edge_type == EdgeType.ACL and v.active is True:
-                        content = e.content_as_dict
-                        for k, val in content.items():
-                            edgetip += f"{k}={val}\\n"
-                        if content.get("is_admin") is True:
-                            color = "red"
+                        edge_content = e.content_as_dict
+                        for key, value in content.items():
+                            edge_tip += f"{key}={value}\\n"
+                        if edge_content.get("is_admin") is True:
+                            edge_color = "red"
 
-                    label = DAG.EDGE_LABEL.get(e.edge_type)
-                    if label is None:
-                        label = "UNK"
+                    edge_label = DAG.EDGE_LABEL.get(e.edge_type)
+                    if edge_label is None:
+                        edge_label = "UNK"
                     if e.path is not None and e.path != "":
-                        label += f"\\npath={e.path}"
-                    if show_version is True:
-                        label += f"\\nv={e.version}"
+                        edge_label += f"\\npath={e.path}"
+                    if show_version:
+                        edge_label += f"\\nv={e.version}"
                 else:
-                    label = f"{e.edge_type.value} (CORRUPT)"
-                    color = "red"
-                    edgetip = "CORRUPT"
+                    edge_label = f"{e.edge_type.value} (CORRUPT)"
+                    edge_color = "red"
+                    edge_tip = "CORRUPT"
 
                 # tail, head (arrow side), label, ...
-                dot.edge(v.uid, e.head_uid, label, style=style, fontcolor=color, color=color, tooltip=edgetip)
+                dot.edge(v.uid, e.head_uid, edge_label, style=style, fontcolor=edge_color, color=edge_color,
+                         tooltip=edge_tip)
 
             for head_uid in head_uids:
                 version, edge = v.get_highest_edge_version(head_uid)
