@@ -12,7 +12,6 @@
 import os
 from dataclasses import dataclass
 from typing import Optional
-from pathlib import Path
 from dotenv import load_dotenv, set_key, dotenv_values
 from ..decorators.logging import logger
 from .terminal_handler import TerminalHandler

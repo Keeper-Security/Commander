@@ -15,7 +15,6 @@ import logging
 import subprocess
 import sys
 import time
-import json
 import requests
 import re
 
