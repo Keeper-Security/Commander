@@ -181,6 +181,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
             "_comment": "Connections settings per protocol - RDP",
             "protocol": "rdp",
             "port": "2222",
+            "allow_supply_user": true,
             "administrative_credentials": "admin1",
             "recording_include_keys": true,
             "disable_copy": true,
@@ -245,6 +246,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 			"_comment": "Connections settings per protocol - SSH",
 			"protocol": "ssh",
 			"port": "2222",
+			"allow_supply_user": true,
 			"administrative_credentials": "admin1",
 			"recording_include_keys": true,
 			"disable_copy": true,
@@ -298,6 +300,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 			"_comment": "Connections settings per protocol - VNC",
 			"protocol": "vnc",
 			"port": "2222",
+			"allow_supply_user": true,
 			"administrative_credentials": "admin1",
 			"recording_include_keys": true,
 			"disable_copy": true,
@@ -354,6 +357,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 			"_comment": "Connections settings per protocol - RDP",
 			"protocol": "telnet",
 			"port": "2222",
+			"allow_supply_user": true,
 			"administrative_credentials": "admin1",
 			"recording_include_keys": true,
 			"disable_copy": true,
@@ -406,6 +410,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 			"_comment": "Connections settings per protocol - K8S",
 			"protocol": "kubernetes",
 			"port": "2222",
+			"allow_supply_user": true,
 			"administrative_credentials": "admin1",
 			"recording_include_keys": true,
 			"color_scheme": "gray-black",
@@ -461,6 +466,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 						"protocol": "mysql",
 						"_comment": "protocol types: <sql-server|postgresql|mysql>",
 						"port": "2222",
+						"allow_supply_user": true,
 						"administrative_credentials": "admin1",
 						"recording_include_keys": true,
 						"disable_copy": true,
@@ -510,7 +516,38 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 				"otp": "otpauth://totp/Example:alice3@example.com?secret=JBSWY3DPEHPK3PXP&issuer=ExampleApp3",
 				"attachments": [],
 				"scripts": [],
-				"pam_settings": {},
+				"pam_settings": {
+					"options" : {
+						"rotation": "on",
+						"connections": "on",
+						"tunneling": "on",
+						"remote_browser_isolation": "on",
+						"graphical_session_recording": "on",
+						"text_session_recording": "on"
+					},
+					"port_forward": {
+						"port": "2222",
+						"reuse_port": true
+					},
+					"connection" : {
+						"_comment": "Connections settings per protocol - RDP",
+						"protocol": "ssh",
+						"port": "2222",
+						"allow_supply_user": true,
+						"administrative_credentials": "admin1",
+						"recording_include_keys": true,
+						"disable_copy": true,
+						"disable_paste": true,
+						"color_scheme": "gray-black",
+						"font_size": "18",
+						"public_host_key": "<Public Host Key (Base64)>",
+						"command": "/bin/bash",
+						"sftp": {
+							"enable_sftp": true,
+							"sftp_root_directory": "/tmp"
+						}
+					}
+				}
 				"users": []
 			},
 			{
@@ -548,6 +585,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 					"connection" : {
 						"protocol": "http",
 						"_comment": "RBI runs only on 'http' protocol",
+						"allow_supply_user": true,
 						"recording_include_keys": true,
 						"disable_copy": true,
 						"disable_paste": true,
