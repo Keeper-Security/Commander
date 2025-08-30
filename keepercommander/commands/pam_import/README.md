@@ -172,6 +172,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
             "remote_browser_isolation": "on",
             "graphical_session_recording": "on",
         },
+        "allow_supply_host": false,
         "port_forward": {
             "_comment": "Tunneling settings",
             "port": "2222",
@@ -237,6 +238,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 			"graphical_session_recording": "on",
 			"text_session_recording": "on"
 		},
+		"allow_supply_host": false,
 		"port_forward": {
 			"_comment": "Tunneling settings",
 			"port": "2222",
@@ -291,6 +293,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 			"remote_browser_isolation": "on",
 			"graphical_session_recording": "on",
 		},
+		"allow_supply_host": false,
 		"port_forward": {
 			"_comment": "Tunneling settings",
 			"port": "2222",
@@ -348,6 +351,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 			"graphical_session_recording": "on",
 			"text_session_recording": "on"
 		},
+		"allow_supply_host": false,
 		"port_forward": {
 			"_comment": "Tunneling settings",
 			"port": "2222",
@@ -401,6 +405,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 			"graphical_session_recording": "on",
 			"text_session_recording": "on"
 		},
+		"allow_supply_host": false,
 		"port_forward": {
 			"_comment": "Tunneling settings",
 			"port": "2222",
@@ -458,6 +463,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 						"graphical_session_recording": "on",
 						"text_session_recording": "on"
 					},
+					"allow_supply_host": false,
 					"port_forward": {
 						"port": "2222",
 						"reuse_port": true
@@ -525,6 +531,7 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 						"graphical_session_recording": "on",
 						"text_session_recording": "on"
 					},
+					"allow_supply_host": false,
 					"port_forward": {
 						"port": "2222",
 						"reuse_port": true
@@ -585,7 +592,6 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user whic
 					"connection" : {
 						"protocol": "http",
 						"_comment": "RBI runs only on 'http' protocol",
-						"allow_supply_user": true,
 						"recording_include_keys": true,
 						"disable_copy": true,
 						"disable_paste": true,

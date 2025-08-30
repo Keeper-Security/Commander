@@ -2491,18 +2491,15 @@ class PamMachineObject():
                 if x and isinstance(x, PamAttachmentObject) and x.file:
                     fields.append(f"file=@{x.file}")
 
-        # pam_settings port_forward/conection belong to the record
-        portForward = {}
-        connection = {}
+        # pam_settings port_forward/connection belong to the record
         if self.pam_settings and isinstance(self.pam_settings, PamSettingsFieldData):
-            if self.pam_settings.portForward:
-                portForward = self.pam_settings.portForward.to_record_dict()
-            if self.pam_settings.connection:
-                connection = self.pam_settings.connection.to_record_dict()
-        if portForward or connection:
-            val = json.dumps({"portForward": portForward or {}, "connection": connection or {}})
-            fields.append(f"c.pamSettings=$JSON:{val}")
-            # switch to f.* once RT definition(s) update w/ pamSettings field
+            allowSupplyHost = True if self.pam_settings.allowSupplyHost is True else False
+            portForward = self.pam_settings.portForward.to_record_dict() if self.pam_settings.portForward else {}
+            connection = self.pam_settings.connection.to_record_dict() if self.pam_settings.connection else {}
+            if portForward or connection or allowSupplyHost:
+                val = json.dumps({"allowSupplyHost": allowSupplyHost, "portForward": portForward or {}, "connection": connection or {}})
+                fields.append(f"c.pamSettings=$JSON:{val}")
+                # switch to f.* once RT definition(s) update w/ pamSettings field
 
         if fields: args["fields"] = fields
         uid = RecordEditAddCommand().execute(params, **args)
@@ -2681,18 +2678,15 @@ class PamDatabaseObject():
                 if x and isinstance(x, PamAttachmentObject) and x.file:
                     fields.append(f"file=@{x.file}")
 
-        # pam_settings port_forward/conection belong to the record
-        portForward = {}
-        connection = {}
+        # pam_settings port_forward/connection belong to the record
         if self.pam_settings and isinstance(self.pam_settings, PamSettingsFieldData):
-            if self.pam_settings.portForward:
-                portForward = self.pam_settings.portForward.to_record_dict()
-            if self.pam_settings.connection:
-                connection = self.pam_settings.connection.to_record_dict()
-        if portForward or connection:
-            val = json.dumps({"portForward": portForward or {}, "connection": connection or {}})
-            fields.append(f"c.pamSettings=$JSON:{val}")
-            # switch to f.* once RT definition(s) update w/ pamSettings field
+            allowSupplyHost = True if self.pam_settings.allowSupplyHost is True else False
+            portForward = self.pam_settings.portForward.to_record_dict() if self.pam_settings.portForward else {}
+            connection = self.pam_settings.connection.to_record_dict() if self.pam_settings.connection else {}
+            if portForward or connection or allowSupplyHost:
+                val = json.dumps({"allowSupplyHost": allowSupplyHost, "portForward": portForward or {}, "connection": connection or {}})
+                fields.append(f"c.pamSettings=$JSON:{val}")
+                # switch to f.* once RT definition(s) update w/ pamSettings field
 
         if fields: args["fields"] = fields
         uid = RecordEditAddCommand().execute(params, **args)
@@ -2825,18 +2819,15 @@ class PamDirectoryObject():
                 if x and isinstance(x, PamAttachmentObject) and x.file:
                     fields.append(f"file=@{x.file}")
 
-        # pam_settings port_forward/conection belong to the record
-        portForward = {}
-        connection = {}
+        # pam_settings port_forward/connection belong to the record
         if self.pam_settings and isinstance(self.pam_settings, PamSettingsFieldData):
-            if self.pam_settings.portForward:
-                portForward = self.pam_settings.portForward.to_record_dict()
-            if self.pam_settings.connection:
-                connection = self.pam_settings.connection.to_record_dict()
-        if portForward or connection:
-            val = json.dumps({"portForward": portForward or {}, "connection": connection or {}})
-            fields.append(f"c.pamSettings=$JSON:{val}")
-            # switch to f.* once RT definition(s) update w/ pamSettings field
+            allowSupplyHost = True if self.pam_settings.allowSupplyHost is True else False
+            portForward = self.pam_settings.portForward.to_record_dict() if self.pam_settings.portForward else {}
+            connection = self.pam_settings.connection.to_record_dict() if self.pam_settings.connection else {}
+            if portForward or connection or allowSupplyHost:
+                val = json.dumps({"allowSupplyHost": allowSupplyHost, "portForward": portForward or {}, "connection": connection or {}})
+                fields.append(f"c.pamSettings=$JSON:{val}")
+                # switch to f.* once RT definition(s) update w/ pamSettings field
 
         if fields: args["fields"] = fields
         uid = RecordEditAddCommand().execute(params, **args)
@@ -2926,7 +2917,7 @@ class PamRemoteBrowserObject():
                 if x and isinstance(x, PamAttachmentObject) and x.file:
                     fields.append(f"file=@{x.file}")
 
-        # pam_settings conection belongs to the record
+        # pam_settings connection belongs to the record
         connection = {}
         if self.rbi_settings and isinstance(self.rbi_settings, PamRemoteBrowserSettings):
             if self.rbi_settings.connection:
@@ -4111,10 +4102,12 @@ class PamRemoteBrowserSettings:
 class PamSettingsFieldData:
     def __init__(
         self,
+        allowSupplyHost: Optional[bool] = None,
         connection: PamConnectionSettings = None,  # Optional[PamConnectionSettings]
         portForward: Optional[PamPortForwardSettings] = None,
         options: Optional[DagSettingsObject] = None,
     ):
+        self.allowSupplyHost = allowSupplyHost
         self.connection = connection
         self.portForward = portForward
         self.options = options
@@ -4157,6 +4150,7 @@ class PamSettingsFieldData:
         except: logging.error(f"PAM Settings Field failed to load from: {str(data)[:80]}...")
         if not isinstance(data, dict): return obj
 
+        obj.allowSupplyHost = utils.value_to_boolean(data.get("allow_supply_host", None))
         options = DagSettingsObject.load(data.get("options", {}))
         if not is_empty_instance(options):
             obj.options = options
