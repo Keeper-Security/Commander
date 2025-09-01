@@ -51,7 +51,7 @@ FieldTypes = {x[0]: x for x in (
     FieldType('recordRef', '', 'reference to other record'),
     FieldType('appFiller', {'macroSequence': '', 'applicationTitle': '', 'contentFilter': ''}, 'Native Application Filler'),
     FieldType('pamResources', {'controllerUid': '', 'folderUid': '', 'resourceRef': []}, 'PAM resources'),
-    FieldType('pamSettings', {'connection': {}, 'portForward': {}}, 'PAM Settings'),
+    FieldType('pamSettings', {'allowSupplyHost': False, 'connection': {}, 'portForward': {}}, 'PAM Settings'),
     FieldType('pamRemoteBrowserSettings', {'connection': {}}, 'RBI Settings'),
     FieldType('rbiUrl', '', 'RBI URL'),
 
