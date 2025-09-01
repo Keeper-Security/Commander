@@ -2491,18 +2491,15 @@ class PamMachineObject():
                 if x and isinstance(x, PamAttachmentObject) and x.file:
                     fields.append(f"file=@{x.file}")
 
-        # pam_settings port_forward/conection belong to the record
-        portForward = {}
-        connection = {}
+        # pam_settings port_forward/connection belong to the record
         if self.pam_settings and isinstance(self.pam_settings, PamSettingsFieldData):
-            if self.pam_settings.portForward:
-                portForward = self.pam_settings.portForward.to_record_dict()
-            if self.pam_settings.connection:
-                connection = self.pam_settings.connection.to_record_dict()
-        if portForward or connection:
-            val = json.dumps({"portForward": portForward or {}, "connection": connection or {}})
-            fields.append(f"c.pamSettings=$JSON:{val}")
-            # switch to f.* once RT definition(s) update w/ pamSettings field
+            allowSupplyHost = True if self.pam_settings.allowSupplyHost is True else False
+            portForward = self.pam_settings.portForward.to_record_dict() if self.pam_settings.portForward else {}
+            connection = self.pam_settings.connection.to_record_dict() if self.pam_settings.connection else {}
+            if portForward or connection or allowSupplyHost:
+                val = json.dumps({"allowSupplyHost": allowSupplyHost, "portForward": portForward or {}, "connection": connection or {}})
+                fields.append(f"c.pamSettings=$JSON:{val}")
+                # switch to f.* once RT definition(s) update w/ pamSettings field
 
         if fields: args["fields"] = fields
         uid = RecordEditAddCommand().execute(params, **args)
@@ -2681,18 +2678,15 @@ class PamDatabaseObject():
                 if x and isinstance(x, PamAttachmentObject) and x.file:
                     fields.append(f"file=@{x.file}")
 
-        # pam_settings port_forward/conection belong to the record
-        portForward = {}
-        connection = {}
+        # pam_settings port_forward/connection belong to the record
         if self.pam_settings and isinstance(self.pam_settings, PamSettingsFieldData):
-            if self.pam_settings.portForward:
-                portForward = self.pam_settings.portForward.to_record_dict()
-            if self.pam_settings.connection:
-                connection = self.pam_settings.connection.to_record_dict()
-        if portForward or connection:
-            val = json.dumps({"portForward": portForward or {}, "connection": connection or {}})
-            fields.append(f"c.pamSettings=$JSON:{val}")
-            # switch to f.* once RT definition(s) update w/ pamSettings field
+            allowSupplyHost = True if self.pam_settings.allowSupplyHost is True else False
+            portForward = self.pam_settings.portForward.to_record_dict() if self.pam_settings.portForward else {}
+            connection = self.pam_settings.connection.to_record_dict() if self.pam_settings.connection else {}
+            if portForward or connection or allowSupplyHost:
+                val = json.dumps({"allowSupplyHost": allowSupplyHost, "portForward": portForward or {}, "connection": connection or {}})
+                fields.append(f"c.pamSettings=$JSON:{val}")
+                # switch to f.* once RT definition(s) update w/ pamSettings field
 
         if fields: args["fields"] = fields
         uid = RecordEditAddCommand().execute(params, **args)
@@ -2825,18 +2819,15 @@ class PamDirectoryObject():
                 if x and isinstance(x, PamAttachmentObject) and x.file:
                     fields.append(f"file=@{x.file}")
 
-        # pam_settings port_forward/conection belong to the record
-        portForward = {}
-        connection = {}
+        # pam_settings port_forward/connection belong to the record
         if self.pam_settings and isinstance(self.pam_settings, PamSettingsFieldData):
-            if self.pam_settings.portForward:
-                portForward = self.pam_settings.portForward.to_record_dict()
-            if self.pam_settings.connection:
-                connection = self.pam_settings.connection.to_record_dict()
-        if portForward or connection:
-            val = json.dumps({"portForward": portForward or {}, "connection": connection or {}})
-            fields.append(f"c.pamSettings=$JSON:{val}")
-            # switch to f.* once RT definition(s) update w/ pamSettings field
+            allowSupplyHost = True if self.pam_settings.allowSupplyHost is True else False
+            portForward = self.pam_settings.portForward.to_record_dict() if self.pam_settings.portForward else {}
+            connection = self.pam_settings.connection.to_record_dict() if self.pam_settings.connection else {}
+            if portForward or connection or allowSupplyHost:
+                val = json.dumps({"allowSupplyHost": allowSupplyHost, "portForward": portForward or {}, "connection": connection or {}})
+                fields.append(f"c.pamSettings=$JSON:{val}")
+                # switch to f.* once RT definition(s) update w/ pamSettings field
 
         if fields: args["fields"] = fields
         uid = RecordEditAddCommand().execute(params, **args)
@@ -2926,7 +2917,7 @@ class PamRemoteBrowserObject():
                 if x and isinstance(x, PamAttachmentObject) and x.file:
                     fields.append(f"file=@{x.file}")
 
-        # pam_settings conection belongs to the record
+        # pam_settings connection belongs to the record
         connection = {}
         if self.rbi_settings and isinstance(self.rbi_settings, PamRemoteBrowserSettings):
             if self.rbi_settings.connection:
@@ -3178,8 +3169,9 @@ class TerminalDisplayConnectionSettings:
         return obj
 
 class BaseConnectionSettings:
-    def __init__(self, port: Optional[str] = None, userRecords: Optional[List[str]] = None, recordingIncludeKeys: Optional[bool] = None):
+    def __init__(self, port: Optional[str] = None, allowSupplyUser: Optional[bool] = None, userRecords: Optional[List[str]] = None, recordingIncludeKeys: Optional[bool] = None):
         self.port = port  # Override port from host
+        self.allowSupplyUser = allowSupplyUser
         self.recordingIncludeKeys = recordingIncludeKeys
         self.userRecords = userRecords
         self.userRecordUid = None # resolved from userRecords
@@ -3194,6 +3186,7 @@ class BaseConnectionSettings:
         val = data.get("port", None)  # Override port from host
         if isinstance(val, str) or str(val).isdecimal(): obj.port = str(val)
 
+        obj.allowSupplyUser = utils.value_to_boolean(data.get("allow_supply_user", None))
         obj.userRecords = parse_multiline(data, "administrative_credentials", "Error parsing administrative_credentials")
         obj.recordingIncludeKeys = utils.value_to_boolean(data.get("recording_include_keys", None))
         return obj
@@ -3203,6 +3196,7 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
     def __init__(
         self,
         port: Optional[str] = None,  # Override port from host
+        allowSupplyUser: Optional[bool] = None,
         userRecords: Optional[List[str]] = None,
         recordingIncludeKeys: Optional[bool] = None,
         disableCopy: Optional[bool] = None,
@@ -3219,7 +3213,7 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
         enableWallpaper: Optional[bool] = None,
         enableFullWindowDrag: Optional[bool] = None
     ):
-        BaseConnectionSettings.__init__(self, port, userRecords, recordingIncludeKeys)
+        BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
         ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
         self.security = security if isinstance(security, RDPSecurity) else None
         self.disableAuth = disableAuth
@@ -3244,6 +3238,7 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
         bcs = BaseConnectionSettings.load(data)
         if bcs:
             obj.port = bcs.port
+            obj.allowSupplyUser = bcs.allowSupplyUser
             obj.userRecords = bcs.userRecords
             obj.recordingIncludeKeys = bcs.recordingIncludeKeys
 
@@ -3287,6 +3282,8 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
 
         if self.port and isinstance(self.port, str) and self.port.strip():
             kvp["port"] = self.port.strip()
+        if self.allowSupplyUser is not None and isinstance(self.allowSupplyUser, bool):
+            kvp["allowSupplyUser"] = self.allowSupplyUser
         if self.recordingIncludeKeys is not None and isinstance(self.recordingIncludeKeys, bool):
             kvp["recordingIncludeKeys"] = self.recordingIncludeKeys
         if self.disableCopy is not None and isinstance(self.disableCopy, bool):
@@ -3337,6 +3334,7 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
     def __init__(
         self,
         port: Optional[str] = None,  # Override port from host
+        allowSupplyUser: Optional[bool] = None,
         userRecords: Optional[List[str]] = None,
         recordingIncludeKeys: Optional[bool] = None,
         disableCopy: Optional[bool] = None,
@@ -3348,7 +3346,7 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
         autofillConfiguration: Optional[str] = None,
         ignoreInitialSslCert: Optional[bool] = None
     ):
-        BaseConnectionSettings.__init__(self, port, userRecords, recordingIncludeKeys)
+        BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
         ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
         self.allowUrlManipulation = allowUrlManipulation
         self.allowedUrlPatterns = allowedUrlPatterns
@@ -3368,6 +3366,7 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
         bcs = BaseConnectionSettings.load(data)
         if bcs:
             # obj.port = bcs.port # not yet in web UI of RBI
+            obj.allowSupplyUser = bcs.allowSupplyUser
             obj.userRecords = bcs.userRecords
             obj.recordingIncludeKeys = bcs.recordingIncludeKeys
 
@@ -3397,6 +3396,8 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
         # port - unused for RBI
         # if self.port and isinstance(self.port, str) and self.port.strip():
         #     kvp["port"] = self.port.strip()
+        if self.allowSupplyUser is not None and isinstance(self.allowSupplyUser, bool):
+            kvp["allowSupplyUser"] = self.allowSupplyUser
         if self.recordingIncludeKeys is not None and isinstance(self.recordingIncludeKeys, bool):
             kvp["recordingIncludeKeys"] = self.recordingIncludeKeys
         if self.disableCopy is not None and isinstance(self.disableCopy, bool):
@@ -3427,6 +3428,7 @@ class ConnectionSettingsVNC(BaseConnectionSettings, ClipboardConnectionSettings)
     def __init__( # pylint: disable=R0917
         self,
         port: Optional[str] = None,  # Override port from host
+        allowSupplyUser: Optional[bool] = None,
         userRecords: Optional[List[str]] = None,
         recordingIncludeKeys: Optional[bool] = None,
         disableCopy: Optional[bool] = None,
@@ -3435,7 +3437,7 @@ class ConnectionSettingsVNC(BaseConnectionSettings, ClipboardConnectionSettings)
         destPort: Optional[str] = None,
         sftp: Optional[SFTPConnectionSettings] = None
     ):
-        BaseConnectionSettings.__init__(self, port, userRecords, recordingIncludeKeys)
+        BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
         ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
         self.destHost = destHost
         self.destPort = destPort
@@ -3451,6 +3453,7 @@ class ConnectionSettingsVNC(BaseConnectionSettings, ClipboardConnectionSettings)
         bcs = BaseConnectionSettings.load(data)
         if bcs:
             obj.port = bcs.port
+            obj.allowSupplyUser = bcs.allowSupplyUser
             obj.userRecords = bcs.userRecords
             obj.recordingIncludeKeys = bcs.recordingIncludeKeys
 
@@ -3480,6 +3483,8 @@ class ConnectionSettingsVNC(BaseConnectionSettings, ClipboardConnectionSettings)
 
         if self.port and isinstance(self.port, str) and self.port.strip():
             kvp["port"] = self.port.strip()
+        if self.allowSupplyUser is not None and isinstance(self.allowSupplyUser, bool):
+            kvp["allowSupplyUser"] = self.allowSupplyUser
         if self.recordingIncludeKeys is not None and isinstance(self.recordingIncludeKeys, bool):
             kvp["recordingIncludeKeys"] = self.recordingIncludeKeys
         if self.disableCopy is not None and isinstance(self.disableCopy, bool):
@@ -3509,6 +3514,7 @@ class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettin
     def __init__( # pylint: disable=R0917
         self,
         port: Optional[str] = None,  # Override port from host
+        allowSupplyUser: Optional[bool] = None,
         userRecords: Optional[List[str]] = None,
         recordingIncludeKeys: Optional[bool] = None,
         disableCopy: Optional[bool] = None,
@@ -3520,7 +3526,7 @@ class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettin
         loginSuccessRegex: Optional[str] = None,
         loginFailureRegex: Optional[str] = None
     ):
-        BaseConnectionSettings.__init__(self, port, userRecords, recordingIncludeKeys)
+        BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
         ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
         TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize)
         self.usernameRegex = usernameRegex
@@ -3538,6 +3544,7 @@ class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettin
         bcs = BaseConnectionSettings.load(data)
         if bcs:
             obj.port = bcs.port
+            obj.allowSupplyUser = bcs.allowSupplyUser
             obj.userRecords = bcs.userRecords
             obj.recordingIncludeKeys = bcs.recordingIncludeKeys
 
@@ -3573,6 +3580,8 @@ class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettin
 
         if self.port and isinstance(self.port, str) and self.port.strip():
             kvp["port"] = self.port.strip()
+        if self.allowSupplyUser is not None and isinstance(self.allowSupplyUser, bool):
+            kvp["allowSupplyUser"] = self.allowSupplyUser
         if self.recordingIncludeKeys is not None and isinstance(self.recordingIncludeKeys, bool):
             kvp["recordingIncludeKeys"] = self.recordingIncludeKeys
         if self.disableCopy is not None and isinstance(self.disableCopy, bool):
@@ -3605,6 +3614,7 @@ class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings,
     def __init__( # pylint: disable=R0917
         self,
         port: Optional[str] = None,  # Override port from host
+        allowSupplyUser: Optional[bool] = None,
         userRecords: Optional[List[str]] = None,
         recordingIncludeKeys: Optional[bool] = None,
         disableCopy: Optional[bool] = None,
@@ -3615,7 +3625,7 @@ class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings,
         command: Optional[str] = None,
         sftp: Optional[SFTPRootDirectorySettings] = None
     ):
-        BaseConnectionSettings.__init__(self, port, userRecords, recordingIncludeKeys)
+        BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
         ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
         TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize)
         self.hostKey = hostKey
@@ -3632,6 +3642,7 @@ class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings,
         bcs = BaseConnectionSettings.load(data)
         if bcs:
             obj.port = bcs.port
+            obj.allowSupplyUser = bcs.allowSupplyUser
             obj.userRecords = bcs.userRecords
             obj.recordingIncludeKeys = bcs.recordingIncludeKeys
 
@@ -3665,6 +3676,8 @@ class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings,
 
         if self.port and isinstance(self.port, str) and self.port.strip():
             kvp["port"] = self.port.strip()
+        if self.allowSupplyUser is not None and isinstance(self.allowSupplyUser, bool):
+            kvp["allowSupplyUser"] = self.allowSupplyUser
         if self.recordingIncludeKeys is not None and isinstance(self.recordingIncludeKeys, bool):
             kvp["recordingIncludeKeys"] = self.recordingIncludeKeys
         if self.disableCopy is not None and isinstance(self.disableCopy, bool):
@@ -3698,6 +3711,7 @@ class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnec
     def __init__( # pylint: disable=R0917
         self,
         port: Optional[str] = None,  # Override port from host
+        allowSupplyUser: Optional[bool] = None,
         userRecords: Optional[List[str]] = None,
         recordingIncludeKeys: Optional[bool] = None,
         colorScheme: Optional[str] = None,
@@ -3710,7 +3724,7 @@ class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnec
         clientCert: Optional[str] = None,
         clientKey: Optional[str] = None
     ):
-        BaseConnectionSettings.__init__(self, port, userRecords, recordingIncludeKeys)
+        BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
         TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize)
         self.ignoreCert = ignoreCert
         self.caCert = caCert
@@ -3730,6 +3744,7 @@ class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnec
         bcs = BaseConnectionSettings.load(data)
         if bcs:
             obj.port = bcs.port
+            obj.allowSupplyUser = bcs.allowSupplyUser
             obj.userRecords = bcs.userRecords
             obj.recordingIncludeKeys = bcs.recordingIncludeKeys
 
@@ -3762,6 +3777,8 @@ class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnec
 
         if self.port and isinstance(self.port, str) and self.port.strip():
             kvp["port"] = self.port.strip()
+        if self.allowSupplyUser is not None and isinstance(self.allowSupplyUser, bool):
+            kvp["allowSupplyUser"] = self.allowSupplyUser
         if self.recordingIncludeKeys is not None and isinstance(self.recordingIncludeKeys, bool):
             kvp["recordingIncludeKeys"] = self.recordingIncludeKeys
         if self.colorScheme and isinstance(self.colorScheme, str) and self.colorScheme.strip():
@@ -3795,6 +3812,7 @@ class BaseDatabaseConnectionSettings(BaseConnectionSettings, ClipboardConnection
     def __init__( # pylint: disable=R0917
         self,
         port: Optional[str] = None,  # Override port from host
+        allowSupplyUser: Optional[bool] = None,
         userRecords: Optional[List[str]] = None,
         recordingIncludeKeys: Optional[bool] = None,
         disableCopy: Optional[bool] = None,
@@ -3803,7 +3821,7 @@ class BaseDatabaseConnectionSettings(BaseConnectionSettings, ClipboardConnection
         disableCsvExport: Optional[bool] = None,
         disableCsvImport: Optional[bool] = None
     ):
-        BaseConnectionSettings.__init__(self, port, userRecords, recordingIncludeKeys)
+        BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
         ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
         self.database = database
         self.disableCsvExport = disableCsvExport
@@ -3819,6 +3837,7 @@ class BaseDatabaseConnectionSettings(BaseConnectionSettings, ClipboardConnection
         bcs = BaseConnectionSettings.load(data)
         if bcs:
             obj.port = bcs.port
+            obj.allowSupplyUser = bcs.allowSupplyUser
             obj.userRecords = bcs.userRecords
             obj.recordingIncludeKeys = bcs.recordingIncludeKeys
 
@@ -3845,6 +3864,8 @@ class BaseDatabaseConnectionSettings(BaseConnectionSettings, ClipboardConnection
 
         if self.port and isinstance(self.port, str) and self.port.strip():
             kvp["port"] = self.port.strip()
+        if self.allowSupplyUser is not None and isinstance(self.allowSupplyUser, bool):
+            kvp["allowSupplyUser"] = self.allowSupplyUser
         if self.recordingIncludeKeys is not None and isinstance(self.recordingIncludeKeys, bool):
             kvp["recordingIncludeKeys"] = self.recordingIncludeKeys
         if self.disableCopy is not None and isinstance(self.disableCopy, bool):
@@ -3870,6 +3891,7 @@ class ConnectionSettingsSqlServer(BaseDatabaseConnectionSettings):
     def __init__( # pylint: disable=W0246
         self,
         port: Optional[str] = None,  # Override port from host
+        allowSupplyUser: Optional[bool] = None,
         userRecords: Optional[List[str]] = None,
         recordingIncludeKeys: Optional[bool] = None,
         disableCopy: Optional[bool] = None,
@@ -3878,7 +3900,7 @@ class ConnectionSettingsSqlServer(BaseDatabaseConnectionSettings):
         disableCsvExport: Optional[bool] = None,
         disableCsvImport: Optional[bool] = None
     ):
-        super().__init__(port, userRecords, recordingIncludeKeys,
+        super().__init__(port, allowSupplyUser, userRecords, recordingIncludeKeys,
                          disableCopy, disablePaste, database,
                          disableCsvExport, disableCsvImport)
 
@@ -3892,6 +3914,7 @@ class ConnectionSettingsSqlServer(BaseDatabaseConnectionSettings):
         bdcs = BaseDatabaseConnectionSettings.load(data)
         if bdcs:
             obj.port = bdcs.port
+            obj.allowSupplyUser = bdcs.allowSupplyUser
             obj.userRecords = bdcs.userRecords
             obj.recordingIncludeKeys = bdcs.recordingIncludeKeys
             obj.disableCopy = bdcs.disableCopy
@@ -3912,6 +3935,7 @@ class ConnectionSettingsPostgreSQL(BaseDatabaseConnectionSettings):
     def __init__( # pylint: disable=W0246,R0917
         self,
         port: Optional[str] = None,  # Override port from host
+        allowSupplyUser: Optional[bool] = None,
         userRecords: Optional[List[str]] = None,
         recordingIncludeKeys: Optional[bool] = None,
         disableCopy: Optional[bool] = None,
@@ -3920,7 +3944,7 @@ class ConnectionSettingsPostgreSQL(BaseDatabaseConnectionSettings):
         disableCsvExport: Optional[bool] = None,
         disableCsvImport: Optional[bool] = None
     ):
-        super().__init__(port, userRecords, recordingIncludeKeys,
+        super().__init__(port, allowSupplyUser, userRecords, recordingIncludeKeys,
                          disableCopy, disablePaste, database,
                          disableCsvExport, disableCsvImport)
 
@@ -3934,6 +3958,7 @@ class ConnectionSettingsPostgreSQL(BaseDatabaseConnectionSettings):
         bdcs = BaseDatabaseConnectionSettings.load(data)
         if bdcs:
             obj.port = bdcs.port
+            obj.allowSupplyUser = bdcs.allowSupplyUser
             obj.userRecords = bdcs.userRecords
             obj.recordingIncludeKeys = bdcs.recordingIncludeKeys
             obj.disableCopy = bdcs.disableCopy
@@ -3954,6 +3979,7 @@ class ConnectionSettingsMySQL(BaseDatabaseConnectionSettings):
     def __init__( # pylint: disable=W0246,R0917
         self,
         port: Optional[str] = None,  # Override port from host
+        allowSupplyUser: Optional[bool] = None,
         userRecords: Optional[List[str]] = None,
         recordingIncludeKeys: Optional[bool] = None,
         disableCopy: Optional[bool] = None,
@@ -3962,7 +3988,7 @@ class ConnectionSettingsMySQL(BaseDatabaseConnectionSettings):
         disableCsvExport: Optional[bool] = None,
         disableCsvImport: Optional[bool] = None
     ):
-        super().__init__(port, userRecords, recordingIncludeKeys,
+        super().__init__(port, allowSupplyUser, userRecords, recordingIncludeKeys,
                          disableCopy, disablePaste, database,
                          disableCsvExport, disableCsvImport)
 
@@ -3976,6 +4002,7 @@ class ConnectionSettingsMySQL(BaseDatabaseConnectionSettings):
         bdcs = BaseDatabaseConnectionSettings.load(data)
         if bdcs:
             obj.port = bdcs.port
+            obj.allowSupplyUser = bdcs.allowSupplyUser
             obj.userRecords = bdcs.userRecords
             obj.recordingIncludeKeys = bdcs.recordingIncludeKeys
             obj.disableCopy = bdcs.disableCopy
@@ -4075,10 +4102,12 @@ class PamRemoteBrowserSettings:
 class PamSettingsFieldData:
     def __init__(
         self,
+        allowSupplyHost: Optional[bool] = None,
         connection: PamConnectionSettings = None,  # Optional[PamConnectionSettings]
         portForward: Optional[PamPortForwardSettings] = None,
         options: Optional[DagSettingsObject] = None,
     ):
+        self.allowSupplyHost = allowSupplyHost
         self.connection = connection
         self.portForward = portForward
         self.options = options
@@ -4121,6 +4150,7 @@ class PamSettingsFieldData:
         except: logging.error(f"PAM Settings Field failed to load from: {str(data)[:80]}...")
         if not isinstance(data, dict): return obj
 
+        obj.allowSupplyHost = utils.value_to_boolean(data.get("allow_supply_host", None))
         options = DagSettingsObject.load(data.get("options", {}))
         if not is_empty_instance(options):
             obj.options = options
