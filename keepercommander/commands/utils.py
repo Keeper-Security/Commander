@@ -271,7 +271,7 @@ class SyncDownCommand(Command):
 
         api.sync_down(params, record_types=force)
         if force:
-            from keepercommander.loginv3 import LoginV3Flow
+            from ..loginv3 import LoginV3Flow
             LoginV3Flow.populateAccountSummary(params)
 
         accepted = False
@@ -962,7 +962,7 @@ class HelpCommand(Command):
     def execute(self, params, **kwargs):
         help_commands = kwargs.get('command')
         if not help_commands:
-            from keepercommander.cli import display_command_help
+            from ..cli import display_command_help
             display_command_help(params.enterprise_ec_key)
             return
 
