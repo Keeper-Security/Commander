@@ -13,6 +13,7 @@ from functools import wraps
 from typing import Callable, Any
 import logging
 import sys, os, yaml
+import re
 from enum import Enum
 from ... import utils
 
@@ -79,6 +80,8 @@ class GlobalLogger:
             )
             handler.setFormatter(formatter)
             self._logger.addHandler(handler)
+            # Prevent log propagation to parent loggers to avoid duplicate entries
+            self._logger.propagate = False
             # self._logger.setLevel(logging.INFO) # Change for debug
             log_level_str = self._config.get("level", "INFO").upper()
             log_level = getattr(logging, log_level_str, logging.INFO)
@@ -130,5 +133,32 @@ def catch_all(fn: Callable) -> Callable:
             logger.exception(f"Unhandled error in {fn.__name__}")
             raise
     return wrapper
+
+
+def sanitize_debug_data(data: str) -> str:
+    """Sanitize sensitive data from debug output."""
+    if not data:
+        return data
+    
+    sanitized = data
+    
+    # Sanitize common password patterns
+    patterns = [
+        (r'"password"\s*:\s*"[^"]*"', '"password": "***"'),
+        (r'"login"\s*:\s*"[^"]*"', '"login": "***"'),  
+        (r'"secret"\s*:\s*"[^"]*"', '"secret": "***"'),
+        (r'"token"\s*:\s*"[^"]*"', '"token": "***"'),
+        (r'"key"\s*:\s*"[^"]*"', '"key": "***"'),
+        (r'password=[^\s]*', 'password=***'),
+        (r'login=[^\s]*', 'login=***'),
+        # Sanitize email addresses in logs to protect PII
+        (r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '***@***.***'),
+    ]
+    
+    for pattern, replacement in patterns:
+        sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+    
+    return sanitized
+
 
 logger = GlobalLogger()
