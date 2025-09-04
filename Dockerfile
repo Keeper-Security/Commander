@@ -21,11 +21,19 @@ COPY . /commander
 # Install the package as root
 RUN pip install --no-cache-dir -e .
 
+# Copy and set up entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Change ownership of the application directory to the commander user
 RUN chown -R commander:commander /commander
+# Create .keeper directory with proper permissions for the commander user
+RUN mkdir -p /home/commander/.keeper && \
+    chown -R commander:commander /home/commander/.keeper && \
+    chmod -R 755 /home/commander/.keeper
 
 # Switch to non-root user
 USER commander
 
 # Set up an entrypoint
-ENTRYPOINT ["python3", "keeper.py"]
+ENTRYPOINT ["docker-entrypoint.sh"]
