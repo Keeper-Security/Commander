@@ -212,9 +212,7 @@ Commands requiring file input can use the `FILEDATA` placeholder with JSON conte
 **Supported Commands:**
 - **PAM Project Import**: `pam project import --filename=FILEDATA`
 - **Import**: `import FILEDATA --format=json`
-- **Enterprise Push**: `enterprise-push FILEDATA`
-- **Upload Attachment**: `upload-attachment --file=FILEDATA <record_uid>`
-- **Record Add**: `add --from-file=FILEDATA` or `add --attach=FILEDATA`
+- **Enterprise Push**: `enterprise-push FILEDATA --email [userID or user mail]`
 
 **Example:**
 ```bash

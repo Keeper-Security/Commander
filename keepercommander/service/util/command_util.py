@@ -18,7 +18,7 @@ from .config_reader import ConfigReader
 from .exceptions import CommandExecutionError
 from .parse_keeper_response import parse_keeper_response
 from ..core.globals import get_current_params
-from ..decorators.logging import logger, debug_decorator
+from ..decorators.logging import logger, debug_decorator, sanitize_debug_data
 from ... import cli, utils
 from ...__main__ import get_params_from_config
 from ...service.config.service_config import ServiceConfig
@@ -43,15 +43,35 @@ class CommandExecutor:
     @staticmethod
     @debug_decorator
     def capture_output(params: Any, command: str) -> Tuple[Any, str]:
-        captured_output = io.StringIO()
-        sys.stdout = captured_output
+        captured_stdout = io.StringIO()
+        captured_stderr = io.StringIO()
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+        
+        sys.stdout = captured_stdout
+        sys.stderr = captured_stderr
+        
         try:
             return_value = cli.do_command(params, command)
-            return return_value, captured_output.getvalue()
+            stdout_content = captured_stdout.getvalue()
+            stderr_content = captured_stderr.getvalue()
+            
+            # Combine stdout and stderr, prioritizing stderr for error messages
+            combined_output = stderr_content if stderr_content.strip() else stdout_content
+            
+            return return_value, combined_output
         except Exception as e:
+            # If there's an exception, capture any error output
+            stderr_content = captured_stderr.getvalue()
+            if stderr_content.strip():
+                # Re-raise with the captured error message
+                raise CommandExecutionError(f"Command failed: {stderr_content.strip()}")
             raise
         finally:
-            sys.stdout = sys.__stdout__
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+
+
 
     @staticmethod
     @debug_decorator
@@ -92,32 +112,36 @@ class CommandExecutor:
 
         try:
             command = html.unescape(command)
-            return_value, printed_output = cls.capture_output(params, command)
+            return_value, printed_output = CommandExecutor.capture_output(params, command)
             response = return_value if return_value else printed_output
+
+            # Debug logging with sanitization
+            sanitized_output = sanitize_debug_data(printed_output)
+            logger.debug(f"After capture_output - return_value: '{return_value}', printed_output: '{sanitized_output}'")
+            sanitized_response = sanitize_debug_data(str(response))
+            logger.debug(f"Final response: '{sanitized_response}', response type: {type(response)}")
 
             cli.do_command(params, 'sync-down')
             
-            # Handle silent success cases (commands that succeed but produce no output)
-            if not response or str(response).strip() == "":
-                silent_success_commands = ["import", "record-add", "mkdir", "mv", "rm"]
-                if any(cmd in command for cmd in silent_success_commands):
-                    response = {
-                        "status": "success",
-                        "command": command.split()[0] if command.split() else command,
-                        "message": "Command executed successfully",
-                        "data": None
-                    }
-                else:
-                    busy_response = {
-                        "success": False,
-                        "error": "The server is temporarily busy. Please try again shortly."
-                    }
-                    return busy_response, 503
-            else:
-                response = parse_keeper_response(command, response)
+            # Always let the parser handle the response (including empty responses)
+            response = parse_keeper_response(command, response)
             
-            response = cls.encrypt_response(response)
+            response = CommandExecutor.encrypt_response(response)
             logger.debug("Command executed successfully")
             return response, 200
+        except CommandExecutionError as e:
+            # Return the actual command error instead of generic "server busy"
+            logger.error(f"Command execution error: {e}")
+            error_response = {
+                "success": False,
+                "error": str(e)
+            }
+            return error_response, 400
         except Exception as e:
-            raise CommandExecutionError(f"Command execution failed: {str(e)}")
+            # Log unexpected errors and return a proper error response
+            logger.error(f"Unexpected error during command execution: {e}")
+            error_response = {
+                "success": False,
+                "error": f"Unexpected error: {str(e)}"
+            }
+            return error_response, 500
