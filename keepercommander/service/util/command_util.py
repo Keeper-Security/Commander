@@ -97,16 +97,27 @@ class CommandExecutor:
 
             cli.do_command(params, 'sync-down')
             
-            response = parse_keeper_response(command, response)
-            response = cls.encrypt_response(response)
-            if response:
-                logger.debug("Command executed successfully")
-                return response, 200
+            # Handle silent success cases (commands that succeed but produce no output)
+            if not response or str(response).strip() == "":
+                silent_success_commands = ["import", "record-add", "mkdir", "mv", "rm"]
+                if any(cmd in command for cmd in silent_success_commands):
+                    response = {
+                        "status": "success",
+                        "command": command.split()[0] if command.split() else command,
+                        "message": "Command executed successfully",
+                        "data": None
+                    }
+                else:
+                    busy_response = {
+                        "success": False,
+                        "error": "The server is temporarily busy. Please try again shortly."
+                    }
+                    return busy_response, 503
             else:
-                busy_response = {
-                    "success": False,
-                    "error": "The server is temporarily busy. Please try again shortly."
-                }
-                return busy_response, 503
+                response = parse_keeper_response(command, response)
+            
+            response = cls.encrypt_response(response)
+            logger.debug("Command executed successfully")
+            return response, 200
         except Exception as e:
             raise CommandExecutionError(f"Command execution failed: {str(e)}")

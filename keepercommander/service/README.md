@@ -205,6 +205,33 @@ result_retention: 3600       # Result retention (1 hour)
 - **500 Internal Server Error**: Command execution failed
 - **429 Too Many Requests**: Rate limit exceeded
 
+### File Input Parameters (FILEDATA)
+
+Commands requiring file input can use the `FILEDATA` placeholder with JSON content sent in the `filedata` field.
+
+**Supported Commands:**
+- **PAM Project Import**: `pam project import --filename=FILEDATA`
+- **Import**: `import FILEDATA --format=json`
+- **Enterprise Push**: `enterprise-push FILEDATA`
+- **Upload Attachment**: `upload-attachment --file=FILEDATA <record_uid>`
+- **Record Add**: `add --from-file=FILEDATA` or `add --attach=FILEDATA`
+
+**Example:**
+```bash
+curl -X POST 'http://localhost:<port>/api/v1/executecommand' \
+--header 'Content-Type: application/json' \
+--header 'api-key: <your-api-key>' \
+--data '{
+  "command": "import FILEDATA --format=json",
+  "filedata": {
+    "records": [{"title": "My Website", "login": "user@example.com", "password": "MyPassword123!"}]
+  }
+}'
+```
+
+- Automatic temporary file creation and cleanup
+- Sensitive data automatically masked in logs
+
 ## Configuration
 
 The service configuration is stored as an attachment to a vault record in JSON/YAML format and includes:

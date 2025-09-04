@@ -79,6 +79,8 @@ class GlobalLogger:
             )
             handler.setFormatter(formatter)
             self._logger.addHandler(handler)
+            # Prevent log propagation to parent loggers to avoid duplicate entries
+            self._logger.propagate = False
             # self._logger.setLevel(logging.INFO) # Change for debug
             log_level_str = self._config.get("level", "INFO").upper()
             log_level = getattr(logging, log_level_str, logging.INFO)
