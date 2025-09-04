@@ -14,6 +14,12 @@ import re, json
 
 class KeeperResponseParser:
     @staticmethod
+    def _clean_ansi_codes(text: str) -> str:
+        """Remove ANSI escape codes from text."""
+        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+        return ansi_escape.sub('', text)
+    
+    @staticmethod
     def parse_response(command: str, response: Any) -> Dict[str, Any]:
         """
         Main parser that routes to specific command parsers based on the command type.
@@ -32,9 +38,14 @@ class KeeperResponseParser:
             }
         
         response_str = str(response).strip()
+        # Clean ANSI codes from all responses
+        response_str = KeeperResponseParser._clean_ansi_codes(response_str)
+        
         if '--format=json' in command:
             return KeeperResponseParser._parse_json_format_command(command, response_str)
-        if command.startswith("ls"):
+        elif "pam project import" in command:
+            return KeeperResponseParser._parse_pam_project_import_command(command, response_str)
+        elif command.startswith("ls"):
             return KeeperResponseParser._parse_ls_command(response_str)
         elif command.startswith("tree"):
             return KeeperResponseParser._parse_tree_command(response_str)
@@ -269,6 +280,80 @@ class KeeperResponseParser:
                 key, value = line.split(":", 1)
                 result["data"][key.strip().lower().replace(" ", "_")] = value.strip()
                 
+        return result
+    
+    @staticmethod
+    def _parse_pam_project_import_command(command: str, response: str) -> Dict[str, Any]:
+        """Parse 'pam project import' command output."""
+        result = {
+            "status": "success",
+            "command": "pam project import",
+            "data": {
+                "dry_run": "--dry-run" in command,
+                "messages": [],
+                "access_token": None,
+                "device_uid": None,
+                "shared_folder_resources_uid": None,
+                "shared_folder_users_uid": None,
+                "note": None,
+                "documentation_url": None
+            }
+        }
+        
+        lines = response.strip().split('\n')
+        
+        # Check if this is a dry run
+        if "[DRY RUN]" in response:
+            result["data"]["dry_run"] = True
+            # Extract dry run messages
+            for line in lines:
+                if line.strip() and not line.startswith('[DRY RUN COMPLETE]'):
+                    if line.startswith('[DRY RUN]'):
+                        result["data"]["messages"].append(line.strip())
+                    elif line.startswith('Will '):
+                        result["data"]["messages"].append(line.strip())
+                    elif 'Started parsing import data' in line or 'Will import file data here' in line:
+                        result["data"]["messages"].append(line.strip())
+        else:
+            # Parse actual execution output
+            json_start = -1
+            for i, line in enumerate(lines):
+                # Look for JSON output (starts with {)
+                if line.strip().startswith('{'):
+                    json_start = i
+                    break
+                elif line.strip():
+                    result["data"]["messages"].append(line.strip())
+            
+            # Extract JSON data if found
+            if json_start >= 0:
+                json_lines = []
+                brace_count = 0
+                for line in lines[json_start:]:
+                    json_lines.append(line)
+                    brace_count += line.count('{') - line.count('}')
+                    if brace_count == 0 and line.strip().endswith('}'):
+                        break
+                
+                json_text = '\n'.join(json_lines)
+                try:
+                    json_data = json.loads(json_text)
+                    result["data"]["access_token"] = json_data.get("access_token")
+                    result["data"]["device_uid"] = json_data.get("device_uid")
+                    result["data"]["shared_folder_resources_uid"] = json_data.get("shared_folder_resources_uid")
+                    result["data"]["shared_folder_users_uid"] = json_data.get("shared_folder_users_uid")
+                    result["data"]["note"] = json_data.get("note")
+                except json.JSONDecodeError:
+                    # If JSON parsing fails, add it as a message
+                    result["data"]["messages"].append(json_text)
+            
+            # Extract documentation URL
+            for line in lines:
+                if "https://docs.keeper.io" in line:
+                    result["data"]["documentation_url"] = line.split("https://docs.keeper.io")[1].strip()
+                    result["data"]["documentation_url"] = "https://docs.keeper.io" + result["data"]["documentation_url"]
+                    break
+        
         return result
     
     @staticmethod
