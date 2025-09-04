@@ -32,10 +32,7 @@ class KeeperResponseParser:
             Dict[str, Any]: Structured JSON response
         """
         if not response:
-            return {
-                "success": False,
-                "error": "The server is temporarily busy. Please try again shortly."
-            }
+            return KeeperResponseParser._handle_empty_response(command)
         
         response_str = str(response).strip()
         # Clean ANSI codes from all responses
@@ -45,6 +42,8 @@ class KeeperResponseParser:
             return KeeperResponseParser._parse_json_format_command(command, response_str)
         elif "pam project import" in command:
             return KeeperResponseParser._parse_pam_project_import_command(command, response_str)
+        elif "enterprise-push" in command:
+            return KeeperResponseParser._parse_enterprise_push_command(command, response_str)
         elif command.startswith("ls"):
             return KeeperResponseParser._parse_ls_command(response_str)
         elif command.startswith("tree"):
@@ -392,6 +391,58 @@ class KeeperResponseParser:
             
         finally:
             return result
+
+    @staticmethod
+    def _handle_empty_response(command: str) -> Dict[str, Any]:
+        """Handle commands that produce no output but are successful."""
+        # Commands that succeed but produce no output
+        silent_success_commands = ["import", "enterprise-push"]
+        
+        if any(cmd in command for cmd in silent_success_commands):
+            # Command-specific success messages
+            if "enterprise-push" in command:
+                message = "Records pushed successfully to specified users"
+            elif "import" in command:
+                message = "Import completed successfully"
+            else:
+                message = "Command executed successfully"
+            
+            return {
+                "status": "success",
+                "command": command.split()[0] if command.split() else command,
+                "message": message,
+                "data": None
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Command produced no output. This may indicate a command error or invalid syntax."
+            }
+
+    @staticmethod
+    def _parse_enterprise_push_command(command: str, response_str: str) -> Dict[str, Any]:
+        """Parse enterprise-push command responses."""
+
+        if "Pushed" in response_str and "record(s)" in response_str:
+            # Extract the actual push message
+            lines = response_str.split('\n')
+            for line in lines:
+                if "Pushed" in line and "record(s)" in line:
+                    return {
+                        "status": "success",
+                        "command": "enterprise-push",
+                        "message": line.strip(),
+                        "data": None
+                    }
+        
+        # Fallback for other enterprise-push responses
+        return {
+            "status": "success",
+            "command": "enterprise-push", 
+            "message": response_str if response_str else "Records pushed successfully to specified users",
+            "data": None
+        }
+
 
 def parse_keeper_response(command: str, response: Any) -> Dict[str, Any]:
     """

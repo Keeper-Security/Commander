@@ -79,8 +79,8 @@ class RequestValidator:
                     temp_files.append(temp_file_path)
                     
                     # Replace FILEDATA placeholder with temporary file path, but only when it's used as a file parameter
-                    # Supports: PAM import (--filename), Record add/edit (--from-file), Upload attachment (--file), Record add (--attach)
-                    file_param_pattern = r'(--(?:filename|from-file|file|attach)[=\s]+["\']?)FILEDATA(["\']?)'
+                    # Supports: PAM import (--filename), Import (positional), Enterprise-push (positional)
+                    file_param_pattern = r'(--filename[=\s]+["\']?)FILEDATA(["\']?)'
                     processed_command = re.sub(file_param_pattern, f'\\1{temp_file_path}\\2', processed_command)
                     
                     # Also handle standalone FILEDATA (not in quotes)
