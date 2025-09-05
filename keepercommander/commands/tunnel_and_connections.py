@@ -66,6 +66,14 @@ class PAMConnectionCommand(GroupCommand):
         self.default_verb = 'edit'
 
 
+class PAMRbiCommand(GroupCommand):
+
+    def __init__(self):
+        super(PAMRbiCommand, self).__init__()
+        self.register_command('edit', PAMRbiEditCommand(), 'Edit Remote Browser Isolation settings', 'e')
+        self.default_verb = 'edit'
+
+
 # Individual Commands
 class PAMTunnelLogLevelCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel loglevel', 
@@ -737,7 +745,7 @@ class PAMConnectionEditCommand(Command):
         if record_type not in ("pamMachine pamDatabase pamDirectory pamNetworkConfiguration pamAwsConfiguration "
                                "pamRemoteBrowser pamAzureConfiguration").split():
             raise CommandError('', f"{bcolors.FAIL}This record's type is not supported for connections. "
-                                   f"Connectins are only supported on pamMachine, pamDatabase, pamDirectory, "
+                                   f"Connections are only supported on pamMachine, pamDatabase, pamDirectory, "
                                    f"pamRemoteBrowser, pamNetworkConfiguration pamAwsConfiguration, and "
                                    f"pamAzureConfiguration records{bcolors.ENDC}")
 
@@ -876,6 +884,184 @@ class PAMConnectionEditCommand(Command):
 
             # Print out PAM Settings
             if not kwargs.get("silent", False): tdag.print_tunneling_config(record_uid, record.get_typed_field('pamSettings'), config_uid)
+
+class PAMRbiEditCommand(Command):
+    choices = ['on', 'off', 'default']
+    parser = argparse.ArgumentParser(prog='pam rbi edit')
+    parser.add_argument('--record', '-r', type=str, required=True, dest='record', action='store',
+                        help='The record UID or path of the RBI record.')
+    parser.add_argument('--configuration', '-c', required=False, dest='config', action='store',
+                        help='The PAM Configuration UID or path to use for connections. '
+                        'Use command `pam config list` to view available PAM Configurations.')
+    parser.add_argument('--autofill-credentials', '-a', type=str, required=False, dest='autofill', action='store',
+                        help='The record UID or path of the RBI Autofill Credentials record.')
+    parser.add_argument('--remote-browser-isolation', '-rbi', dest='rbi', choices=choices,
+                        help='Set RBI permissions')
+    parser.add_argument('--silent', '-s', required=False, dest='silent', action='store_true',
+                        help='Silent mode - don\'t print PAM User, PAM Config etc.')
+
+    def get_parser(self):
+        return PAMRbiEditCommand.parser
+
+    def execute(self, params, **kwargs):
+        record_name = kwargs.get('record') or ''
+        config_name = kwargs.get('config') or ''
+        autofill = kwargs.get('autofill') or ''
+        silent = kwargs.get('silent') or False
+        rbi = kwargs.get('rbi')  # on/off/default
+
+        if not record_name:
+            raise CommandError('pam rbi edit', 'Record parameter is required.')
+        if not (autofill or config_name or rbi):
+            raise CommandError('pam rbi edit', 'At least one parameter is required (-a -c -rbi) '
+                               ' and if the record is not linked to PAM Config -c option is required.')
+
+        record = RecordMixin.resolve_single_record(params, record_name)
+        if not record:
+            raise CommandError('pam rbi edit', f'{bcolors.FAIL}Record \"{record_name}\" not found.{bcolors.ENDC}')
+        if not isinstance(record, vault.TypedRecord):
+            raise CommandError('pam rbi edit', f'Record \"{record_name}\" can not be edited.')
+
+        record_uid = record.record_uid
+        record_type = record.record_type
+        if record_type != "pamRemoteBrowser":
+            raise CommandError('pam rbi edit', f"{bcolors.FAIL}Record {record_uid} of type {record_type} "
+                               "cannot be set up for RBI connections. "
+                               f"RBI connection records must be of type: pamRemoteBrowser{bcolors.ENDC}")
+
+        encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
+        existing_config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
+        existing_config_uid = str(existing_config_uid) if existing_config_uid else ''
+
+        # config parameter is optional and may be (auto)resolved from RBI record
+        cfg_rec = None
+        if config_name:
+            cfg_rec = RecordMixin.resolve_single_record(params, config_name)
+            msg = ("not found" if cfg_rec is None else "not the right type"
+                   if not isinstance(cfg_rec, vault.TypedRecord) or cfg_rec.version != 6 else "")
+            if msg:
+                logging.warning(f'{bcolors.FAIL}PAM Config record "{config_name}" {msg} {bcolors.ENDC}')
+                cfg_rec = None
+        if not cfg_rec:
+            logging.debug(f"PAM Config - using config from record {record_uid}")
+            cfg_rec = RecordMixin.resolve_single_record(params, existing_config_uid)
+            msg = ("not found" if cfg_rec is None else "not the right type"
+                   if not isinstance(cfg_rec, vault.TypedRecord) or cfg_rec.version != 6 else "")
+            if msg:
+                logging.warning(f'{bcolors.FAIL}PAM Config record "{existing_config_uid}" {msg} {bcolors.ENDC}')
+                cfg_rec = None
+
+        config_uid = cfg_rec.record_uid if cfg_rec else None
+        if not config_uid:
+            raise CommandError('pam rbi edit', f'{bcolors.FAIL}PAM Config record not found.{bcolors.ENDC}')
+
+        dirty = False
+        traffic_encryption_key = record.get_typed_field('trafficEncryptionSeed')
+        if not traffic_encryption_key or not traffic_encryption_key.value:
+            seed = os.urandom(32)
+            base64_seed = bytes_to_base64(seed)
+            record_seed = vault.TypedField.new_field('trafficEncryptionSeed', base64_seed, "")
+            if traffic_encryption_key:
+                traffic_encryption_key.value = [base64_seed]
+            else:
+                record.fields.append(record_seed)
+            dirty = True
+
+        rbs_fld = record.get_typed_field('pamRemoteBrowserSettings')
+        if not rbs_fld:
+            rbsettings = {'connection': {'protocol': 'http', 'httpCredentialsUid': ''}}
+            pam_rbsettings = vault.TypedField.new_field('pamRemoteBrowserSettings', rbsettings, '')
+            record.fields.append(pam_rbsettings)
+            dirty = True
+        elif not rbs_fld.value:
+            rbs_fld.value.append({'connection': {'protocol': 'http'}}) # type: ignore
+            dirty = True
+
+        if autofill:
+            af_rec = RecordMixin.resolve_single_record(params, autofill)
+            if not af_rec:
+                raise CommandError('pam rbi edit', f'{bcolors.FAIL}Record \"{autofill}\" not found.{bcolors.ENDC}')
+            if not isinstance(af_rec, vault.TypedRecord) or af_rec.version != 3 or af_rec.record_type not in ("login", "pamUser"):
+                raise CommandError('pam rbi edit', f'Autofill credentials record \"{af_rec.record_uid}\" can not be linked. '
+                                ' RBI autofill credential records must be of type "login" or "pamUser"')
+
+            rbs_fld = record.get_typed_field('pamRemoteBrowserSettings')
+            val1 = rbs_fld.value[0] if isinstance(rbs_fld, vault.TypedField) and rbs_fld.value else {}
+            hcuid = val1.get('connection', {}).get('httpCredentialsUid') or '' if isinstance(val1, dict) else ''
+            if af_rec.record_uid == hcuid:
+                logging.debug(f'httpCredentialsUid={af_rec.record_uid} is already set up on record={record_uid}')
+            elif rbs_fld and rbs_fld.value and isinstance(rbs_fld.value[0], dict):
+                rbs_fld.value[0]["connection"]["httpCredentialsUid"] = af_rec.record_uid
+                dirty = True
+                if hcuid:
+                    logging.debug(f'Updated existing httpCredentialsUid from: {hcuid} to: {af_rec.record_uid}')
+            else:
+                raise CommandError('pam rbi edit', f'{bcolors.FAIL}Failed to set httpCredentialsUid={af_rec.record_uid}{bcolors.ENDC}')
+
+        if dirty:
+            record_management.update_record(params, record)
+            api.sync_down(params)
+
+            traffic_encryption_key = record.get_typed_field('trafficEncryptionSeed')
+            if not traffic_encryption_key:
+                raise CommandError('', f"{bcolors.FAIL}Unable to add Seed to record {record_uid}. "
+                                f"Please make sure you have edit rights to record {record_uid} {bcolors.ENDC}")
+        dirty = False
+
+        tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, config_uid)
+        if tdag is None or not tdag.linking_dag.has_graph:
+            raise CommandError('', f"{bcolors.FAIL}No valid PAM Configuration UID set. "
+                               "This must be set or supplied for connections to work. "
+                               "The ConfigUID can be found by running "
+                               f"{bcolors.OKBLUE}'pam config list'{bcolors.ENDC}")
+
+        if config_uid:
+            if existing_config_uid and existing_config_uid != config_uid:
+                old_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, existing_config_uid)
+                old_dag.remove_from_dag(record_uid)
+                logging.debug(f'Updated existing PAM Config UID from: {existing_config_uid} to: {config_uid}')
+            tdag.link_resource_to_config(record_uid)
+
+        # connections=on needed alongside remoteBrowserIsolation=on in PAM Config for RBI to work
+        cfg_con_state = tdag.get_resource_setting(config_uid, 'allowedSettings', 'connections')
+        cfg_rbi_state = tdag.get_resource_setting(config_uid, 'allowedSettings', 'remoteBrowserIsolation')
+        if cfg_con_state != 'on' or cfg_rbi_state != 'on':
+            if not silent:
+                tdag.print_tunneling_config(config_uid, None)
+            command = f"{bcolors.OKBLUE}'pam connection edit {config_uid}"
+            command += ' --connections=on' if cfg_con_state != 'on' else ''
+            command += ' --remote-browser-isolation=on' if cfg_rbi_state != 'on' else ''
+            print(f"{bcolors.FAIL}Some settings may be denied by PAM Configuration: {config_uid} "
+                  f" [ --connections={cfg_con_state} --remote-browser-isolation={cfg_rbi_state} ] "
+                  f"To enable these settings for the configuration run\n"
+                  f"{command}'{bcolors.ENDC}")
+
+        if not tdag.is_tunneling_config_set_up(record_uid):
+            tdag.link_resource_to_config(record_uid)
+
+        if not tdag.is_tunneling_config_set_up(record_uid):
+            print(f"{bcolors.FAIL}No PAM Configuration UID set. This must be set for connections to work. "
+                f"This can be done by running {bcolors.OKBLUE}"
+                f"'pam connection edit {record_uid} --config [ConfigUID] --enable-connections' "
+                f"{bcolors.FAIL}The ConfigUID can be found by running {bcolors.OKBLUE}'pam config list'{bcolors.ENDC}")
+            return
+
+        if rbi is not None and rbi != tdag.get_resource_setting(record_uid, 'allowedSettings', 'connections'):
+            dirty = True
+
+        allowed_settings_name = "allowedSettings"
+        # NB! Currently for remoteBrowserIsolation to work rec needs only "allowedSettings": {"connections": true}
+        # allowed_settings_name = "pamRemoteBrowserSettings"
+        # if rbi and rbi != tdag.get_resource_setting(record_uid, 'pamRemoteBrowserSettings', 'remoteBrowserIsolation'):
+        #     dirty = True
+
+        if dirty:
+            tdag.set_resource_allowed(resource_uid=record_uid,
+                                    allowed_settings_name=allowed_settings_name,
+                                    connections=rbi)
+        # if not kwargs.get("silent", False):
+        #     tdag.print_tunneling_config(record_uid, record.get_typed_field('pamRemoteBrowserSettings'), config_uid)
+        params.sync_data = True
 
 class PAMSplitCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='pam split')
