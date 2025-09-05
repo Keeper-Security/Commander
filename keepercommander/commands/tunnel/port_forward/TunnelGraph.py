@@ -327,6 +327,28 @@ class TunnelDAG:
         content = get_vertex_content(resource_vertex)
         return content.get('allowedSettings', {}).get(setting, False) if content else False
 
+    def get_resource_setting(self, resource_uid: str, settings_name: str, setting: str) -> str:
+        # Settings are tri-state (on|off|default) mapped to true|false|missing in JSON
+        # When set to "default" (missing from JSON) that means look higher up the hierarchy
+        # ex. rotation: user -> machine -> pam_config -> Gobal Default settings
+        # Note: Different clients (even different client versions)
+        # may have different view on these defaults (Commander, Web Vault, etc.)
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        content = get_vertex_content(resource_vertex)
+        res = ''
+        if content and isinstance(content, dict):
+            if settings_name in content and isinstance(content[settings_name], dict):
+                if setting in content[settings_name]:
+                    value = content[settings_name][setting]
+                    if isinstance(value, bool):
+                        res = {True: 'on', False: 'off'}[value]
+                    else:
+                        res = str(value)
+                else:
+                    res = 'default'
+
+        return res
+
     def set_resource_allowed(self, resource_uid, tunneling=None, connections=None, rotation=None,
                              session_recording=None, typescript_recording=None, remote_browser_isolation=None,
                              allowed_settings_name='allowedSettings', is_config=False,

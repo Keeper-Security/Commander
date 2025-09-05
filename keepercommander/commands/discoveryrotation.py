@@ -77,7 +77,7 @@ from .pam_saas.user import PAMActionSaasUserCommand
 from .pam_saas.remove import PAMActionSaasRemoveCommand
 from .pam_saas.config import PAMActionSaasConfigCommand
 from .pam_saas.update import PAMActionSaasUpdateCommand
-from .tunnel_and_connections import PAMTunnelCommand, PAMConnectionCommand, PAMSplitCommand
+from .tunnel_and_connections import PAMTunnelCommand, PAMConnectionCommand, PAMRbiCommand, PAMSplitCommand
 
 
 # These characters are based on the Vault
@@ -104,6 +104,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('split', PAMSplitCommand(), 'Split credentials from legacy PAM Machine', 's')
         self.register_command('legacy', PAMLegacyCommand(), 'Switch to legacy PAM commands')
         self.register_command('connection', PAMConnectionCommand(), 'Manage Connections', 'n')
+        self.register_command('rbi', PAMRbiCommand(), 'Manage Remote Browser Isolation', 'b')
         self.register_command('project', PAMProjectCommand(), 'PAM Project Import/Export', 'p')
 
 
