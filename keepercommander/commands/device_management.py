@@ -5,7 +5,7 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2024 Keeper Security Inc.
+# Copyright 2025 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -23,10 +23,6 @@ from ..display import bcolors
 from ..params import KeeperParams
 from ..error import KeeperApiError
 
-
-# ============================================================================
-# Utility Classes and Mixins
-# ============================================================================
 
 class StatusMapper:
     """Centralized status mapping utility."""
@@ -286,8 +282,12 @@ class ErrorHandler:
     """Centralized error handling for device management commands."""
     
     @staticmethod
-    def handle_api_error(error: KeeperApiError, operation: str):
-        """Handle KeeperApiError with consistent messaging."""
+    def handle_api_error(error: KeeperApiError, operation: str) -> bool:
+        """Handle KeeperApiError with consistent messaging.
+        
+        Returns:
+            bool: True if error was handled gracefully and should not be re-raised, False otherwise
+        """
         if error.result_code == 'forbidden':
             logging.error(f"{bcolors.FAIL}Error: {error.message}{bcolors.ENDC}")
             if operation == 'device_admin_action':
@@ -295,10 +295,16 @@ class ErrorHandler:
                 print("- The device tokens are invalid or not owned by the specified user")
                 print("- The admin doesn't have permission to perform actions on this user's devices")
                 print("- The target devices are not accessible")
+            return False
         elif error.result_code == 'bad_request':
             logging.error(f"{bcolors.FAIL}Bad Request: {error.message}{bcolors.ENDC}")
+            return False
+        elif error.result_code == 404 or error.result_code == '404' or error.result_code == 'invalid_path_or_method':
+            logging.info(f"{bcolors.WARNING}Notice: This feature is not in production yet. It will be available soon.{bcolors.ENDC}")
+            return True  # Handle gracefully, don't re-raise
         else:
             logging.error(f"{bcolors.FAIL}API Error: {error.message} (Code: {error.result_code}){bcolors.ENDC}")
+            return False
     
     @staticmethod
     def handle_general_error(error: Exception, operation: str):
@@ -343,13 +349,135 @@ class BaseDeviceCommand(Command, DisplayMixin, ABC):
         """Validate command inputs - can be overridden by subclasses."""
         pass
     
+    def _show_updated_device_list(self, params: KeeperParams, enterprise_user_id: Optional[int] = None):
+        """Show updated device list after an action."""
+        print()  # Add a blank line for better readability
+        
+        if enterprise_user_id is not None:
+            # Show admin device list for specific user
+            print(f"Updated device list for user {enterprise_user_id}:")
+            list_request = DeviceManagement_pb2.DeviceAdminRequest()
+            list_request.enterpriseUserIds.append(enterprise_user_id)
+            
+            response = self._make_api_call(
+                params, list_request, 'dm/device_admin_list', DeviceManagement_pb2.DeviceAdminResponse
+            )
+            
+            if response is None:
+                return
+            
+            # Filter devices for the specific user
+            user_devices = []
+            for device_user_group in response.deviceUserList:
+                if device_user_group.enterpriseUserId == enterprise_user_id:
+                    for device_group in device_user_group.deviceGroups:
+                        for device in device_group.devices:
+                            device_info = {
+                                'enterprise_user_id': enterprise_user_id,
+                                'device': device
+                            }
+                            user_devices.append(device_info)
+            
+            if user_devices:
+                self._display_admin_device_table(user_devices)
+            else:
+                print("No devices found for this user.")
+        else:
+            # Show user device list
+            print("Updated device list:")
+            response = self._make_api_call(
+                params, None, 'dm/device_user_list', DeviceManagement_pb2.DeviceUserResponse
+            )
+            
+            if response is None:
+                return
+            
+            devices = DeviceResolver.extract_devices_from_response(response)
+            
+            if devices:
+                self._display_user_device_table(devices)
+            else:
+                print("No devices found.")
+    
+    def _display_user_device_table(self, devices: List):
+        """Display user devices in a compact table format."""
+        headers = ['ID', 'Device Name', 'Client Type', 'Login Status', 'Last Accessed']
+        
+        device_data = []
+        for device in devices:
+            device_data.append({
+                'name': device.deviceName or 'N/A',
+                'client_type': DeviceManagement_pb2.ClientType.Name(device.clientType),
+                'login_status': StatusMapper.get_login_status_display(device.loginState),
+                'last_accessed': TimestampFormatter.format_timestamp(device.lastModifiedTime),
+                'timestamp': device.lastModifiedTime or 0
+            })
+        
+        device_data.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+        table_data = []
+        for i, device in enumerate(device_data, 1):
+            table_data.append([
+                str(i),
+                device['name'],
+                device['client_type'],
+                device['login_status'],
+                device['last_accessed']
+            ])
+        
+        dump_report_data(table_data, headers=headers, fmt='table', title=f'Your Devices ({len(table_data)} found)')
+    
+    def _display_admin_device_table(self, devices: List):
+        """Display admin devices in a compact table format."""
+        headers = ['ID', 'Device Name', 'UI Category', 'Device Status', 'Login Status', 'Last Accessed']
+        
+        device_data = []
+        for device_info in devices:
+            device = device_info['device']
+            
+            device_data.append({
+                'name': device.deviceName or 'N/A',
+                'ui_category': UICategory.get_ui_category(device),
+                'device_status': StatusMapper.get_device_status_display(device.deviceStatus),
+                'login_status': StatusMapper.get_login_status_display(device.loginState),
+                'last_accessed': TimestampFormatter.format_timestamp(device.lastModifiedTime),
+                'timestamp': device.lastModifiedTime or 0
+            })
+        
+        device_data.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+        table_data = []
+        for i, device in enumerate(device_data, 1):
+            table_data.append([
+                str(i),
+                device['name'],
+                device['ui_category'],
+                device['device_status'],
+                device['login_status'],
+                device['last_accessed']
+            ])
+        
+        dump_report_data(table_data, headers=headers, fmt='table', title=f'User Devices ({len(table_data)} found)')
+    
+    def _has_successful_operations(self, results: List) -> bool:
+        """Check if any operations were successful."""
+        if not results:
+            return False
+        
+        for result in results:
+            if result.deviceActionStatus == DeviceManagement_pb2.SUCCESS:
+                return True
+        return False
+    
     def _make_api_call(self, params: KeeperParams, request: Any, endpoint: str, response_type: Any) -> Any:
         """Make API call with consistent error handling."""
         try:
             return api.communicate_rest(params, request, endpoint, rs_type=response_type)
         except KeeperApiError as kae:
-            ErrorHandler.handle_api_error(kae, endpoint.split('/')[-1])
-            raise
+            handled_gracefully = ErrorHandler.handle_api_error(kae, endpoint.split('/')[-1])
+            if not handled_gracefully:
+                raise
+            return None  # Return None for gracefully handled errors
         except Exception as e:
             ErrorHandler.handle_general_error(e, endpoint.split('/')[-1])
             raise
@@ -391,10 +519,6 @@ device_admin_action_parser.add_argument('enterprise_user_id', type=int,
                                         help='Enterprise User ID whose devices to act on')
 device_admin_action_parser.add_argument('devices', nargs='+', 
                                         help='Device IDs, tokens, or names (supports partial matches)')
-device_admin_action_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], 
-                                        default='table', help='output format')
-device_admin_action_parser.add_argument('--output', dest='output', action='store',
-                                        help='output file name. (ignored for table format)')
 
 
 
@@ -424,6 +548,9 @@ class DeviceUserListCommand(BaseDeviceCommand):
         response = self._make_api_call(
             params, None, 'dm/device_user_list', DeviceManagement_pb2.DeviceUserResponse
         )
+        
+        if response is None:
+            return  # Error was handled gracefully
         
         devices = DeviceResolver.extract_devices_from_response(response)
         
@@ -482,7 +609,7 @@ class DeviceUserListCommand(BaseDeviceCommand):
             del device['timestamp']
         
         result = {'devices': device_list}
-        self._display_json(result, output_file)
+        super()._display_json(result, output_file)
 
 
 class DeviceUserActionCommand(BaseDeviceCommand):
@@ -512,6 +639,9 @@ class DeviceUserActionCommand(BaseDeviceCommand):
             params, None, 'dm/device_user_list', DeviceManagement_pb2.DeviceUserResponse
         )
         
+        if devices_response is None:
+            return  # Error was handled gracefully
+        
         # Resolve device identifiers to tokens and keep device info for success messages
         all_devices = DeviceResolver.extract_devices_from_response(devices_response)
         resolved_devices = DeviceResolver.resolve_device_identifiers_with_info(
@@ -535,11 +665,18 @@ class DeviceUserActionCommand(BaseDeviceCommand):
             params, request, 'dm/device_user_action', DeviceManagement_pb2.DeviceActionResponse
         )
         
+        if response is None:
+            return  # Error was handled gracefully
+        
         # Store device info for success messages
         self._device_info = {token: device for token, device in resolved_devices}
         self._action = action
         
         self._display_results(response.deviceActionResult, **kwargs)
+        
+        # Show updated device list after action (only if there were successful operations)
+        if self._has_successful_operations(response.deviceActionResult):
+            self._show_updated_device_list(params)
 
     def _display_table(self, results: List, output_file: Optional[str] = None):
         """Display action results - only show success messages."""
@@ -602,23 +739,6 @@ class DeviceUserActionCommand(BaseDeviceCommand):
                         device_name = device.deviceName or "Unknown Device"
                         print(f"{bcolors.FAIL}✗{bcolors.ENDC} Device '{device_name}': {error_msg}")
 
-    def _display_json(self, results: List, output_file: Optional[str] = None):
-        """Display action results in JSON format."""
-        result_list = []
-        for result in results:
-            result_info = {
-                'actionType': DeviceManagement_pb2.DeviceActionType.Name(result.deviceActionType),
-                'status': DeviceManagement_pb2.DeviceActionStatus.Name(result.deviceActionStatus),
-                'success': result.deviceActionStatus == DeviceManagement_pb2.SUCCESS,
-            }
-            result_list.append(result_info)
-        
-        output_data = {
-            'deviceActionResults': result_list,
-            'totalActions': len(result_list)
-        }
-        
-        super()._display_json(output_data, output_file)
 
 
 class DeviceUserRenameCommand(BaseDeviceCommand):
@@ -648,7 +768,9 @@ class DeviceUserRenameCommand(BaseDeviceCommand):
             params, None, 'dm/device_user_list', DeviceManagement_pb2.DeviceUserResponse
         )
         
-        # Resolve device identifier to token and keep device info for success messages
+        if devices_response is None:
+            return  
+        
         all_devices = DeviceResolver.extract_devices_from_response(devices_response)
         resolved_devices = DeviceResolver.resolve_device_identifiers_with_info(
             all_devices, [device_identifier], allow_multiple=False
@@ -671,11 +793,18 @@ class DeviceUserRenameCommand(BaseDeviceCommand):
             params, request, 'dm/device_user_rename', DeviceManagement_pb2.DeviceRenameResponse
         )
         
+        if response is None:
+            return  # Error was handled gracefully
+        
         # Store device info for success messages
         self._old_name = old_name
         self._new_name = new_name
         
         self._display_results(response.deviceRenameResult, **kwargs)
+        
+        # Show updated device list after rename (only if there were successful operations)
+        if self._has_successful_operations(response.deviceRenameResult):
+            self._show_updated_device_list(params)
 
     def _display_table(self, results: List, output_file: Optional[str] = None):
         """Display rename results - only show success messages."""
@@ -713,24 +842,7 @@ class DeviceUserRenameCommand(BaseDeviceCommand):
                 
                 print(f"{bcolors.FAIL}✗{bcolors.ENDC} Device '{self._old_name}': {error_msg}")
 
-    def _display_json(self, results: List, output_file: Optional[str] = None):
-        """Display rename results in JSON format."""
-        result_list = []
-        for result in results:
-            result_info = {
-                'status': DeviceManagement_pb2.DeviceActionStatus.Name(result.deviceActionStatus),
-                'success': result.deviceActionStatus == DeviceManagement_pb2.SUCCESS,
-                'newDeviceName': result.deviceNewName,
-                'encryptedDeviceToken': result.encryptedDeviceToken.hex() if result.encryptedDeviceToken else None
-            }
-            result_list.append(result_info)
-        
-        output_data = {
-            'deviceRenameResults': result_list,
-            'totalOperations': len(result_list)
-        }
-        
-        super()._display_json(output_data, output_file)
+
 
 class DeviceAdminListCommand(BaseDeviceCommand):
     """Command to list all devices across users that the Admin has control of."""
@@ -749,6 +861,9 @@ class DeviceAdminListCommand(BaseDeviceCommand):
         response = self._make_api_call(
             params, request, 'dm/device_admin_list', DeviceManagement_pb2.DeviceAdminResponse
         )
+        
+        if response is None:
+            return  # Error was handled gracefully
         
         # Flatten the device data structure
         all_devices = []
@@ -878,6 +993,9 @@ class DeviceAdminActionCommand(BaseDeviceCommand):
             params, list_request, 'dm/device_admin_list', DeviceManagement_pb2.DeviceAdminResponse
         )
         
+        if devices_response is None:
+            return  # Error was handled gracefully
+        
         # Resolve device identifiers to device tokens and keep device info for success messages
         all_devices = DeviceResolver.extract_devices_from_response(devices_response, enterprise_user_id)
         resolved_devices = DeviceResolver.resolve_device_identifiers_with_info(
@@ -904,12 +1022,18 @@ class DeviceAdminActionCommand(BaseDeviceCommand):
             params, request, 'dm/device_admin_action', DeviceManagement_pb2.DeviceAdminActionResponse
         )
         
-        # Store device info for success messages
+        if response is None:
+            return  # Error was handled gracefully
+        
         self._device_info = {token: device for token, device in resolved_devices}
         self._action = action
         self._enterprise_user_id = enterprise_user_id
         
         self._display_results(response.deviceAdminActionResults, **kwargs)
+        
+        # Show updated device list after admin action (only if there were successful operations)
+        if self._has_successful_operations(response.deviceAdminActionResults):
+            self._show_updated_device_list(params, enterprise_user_id)
 
 
     def _display_table(self, results: List, output_file: Optional[str] = None):
@@ -918,10 +1042,8 @@ class DeviceAdminActionCommand(BaseDeviceCommand):
             print("No results returned.")
             return
         
-        # Only show success messages, no detailed table
         self._show_success_messages(results)
         
-        # Show errors if any
         self._show_error_messages(results)
     
     def _show_success_messages(self, results: List):
@@ -984,26 +1106,3 @@ class DeviceAdminActionCommand(BaseDeviceCommand):
                 else:
                     # Show count for multiple devices
                     print(f"{bcolors.FAIL}✗{bcolors.ENDC} {device_count} devices for user {self._enterprise_user_id}: {error_msg}")
-
-    def _display_json(self, results: List, output_file: Optional[str] = None):
-        """Display admin action results in JSON format."""
-        result_list = []
-        for result in results:
-            result_info = {
-                'enterpriseUserId': result.enterpriseUserId,
-                'actionType': DeviceManagement_pb2.DeviceActionType.Name(result.deviceActionType),
-                'status': DeviceManagement_pb2.DeviceActionStatus.Name(result.deviceActionStatus),
-                'success': result.deviceActionStatus == DeviceManagement_pb2.SUCCESS,
-                'deviceTokens': [
-                    {'encryptedToken': token.hex()} for token in result.encryptedDeviceToken
-                ],
-                'deviceCount': len(result.encryptedDeviceToken)
-            }
-            result_list.append(result_info)
-        
-        output_data = {
-            'deviceAdminActionResults': result_list,
-            'totalActions': len(result_list)
-        }
-        
-        super()._display_json(output_data, output_file)
