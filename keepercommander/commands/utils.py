@@ -75,6 +75,7 @@ def register_commands(commands):
     commands['sync-security-data'] = SyncSecurityDataCommand()
     commands['blank-records'] = BlankRecordCommand()
     commands['run-as'] = RunAsCommand()
+    commands['login-status'] = LoginStatusCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -87,7 +88,7 @@ def register_command_info(aliases, command_info):
     aliases['ssd'] = 'sync-security-data'
     for p in [sync_down_parser, whoami_parser, this_device_parser, proxy_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
               version_parser, ksm_parser, keepalive_parser, generate_parser, reset_password_parser,
-              sync_security_data_parser]:
+              sync_security_data_parser, loginstatus_parser]:
         command_info[p.prog] = p.description
 
 
@@ -248,6 +249,11 @@ sync_security_data_parser.add_argument('--force', '-f', action='store_true', hel
 sync_security_data_parser.add_argument('--quiet', '-q', action='store_true', help='run command w/ minimal output')
 sync_security_data_parser.error = raise_parse_exception
 sync_security_data_parser.exit = suppress_exit
+
+
+loginstatus_parser = argparse.ArgumentParser(prog='loginstatus', description='Check user login status.')
+loginstatus_parser.error = raise_parse_exception
+loginstatus_parser.exit = suppress_exit
 
 
 class SyncDownCommand(Command):
@@ -618,8 +624,6 @@ class WhoamiCommand(Command):
         else:
             print('{0:>20s}:'.format('Not logged in'))
     
-    def is_authorised(self):
-        return False
 
 class VersionCommand(Command):
     def get_parser(self):
@@ -693,9 +697,6 @@ class KeepAliveCommand(Command):
     def execute(self, params, **kwargs):  # type: (KeeperParams, **any) -> any
         """Just send the keepalive."""
         api.send_keepalive(params)
-    
-    def is_authorised(self):
-        return False
 
 
 class ProxyCommand(Command):
@@ -1411,3 +1412,58 @@ class RunAsCommand(Command):
             native.run_as(username, password, kwargs.get('application'))
         except OSError as e:
             raise CommandError('', str(e))
+
+
+class LoginStatusCommand(Command):
+    def get_parser(self):
+        return loginstatus_parser
+
+    def is_authorised(self):
+        return False
+
+    def execute(self, params, **kwargs):
+        if not params.user:
+            print("Not logged in")
+            return
+        
+        has_clone_code = bool(params.clone_code)
+        has_session = bool(params.session_token)
+        
+        if not has_clone_code and not has_session:
+            print("Not logged in")
+            return
+        
+        if has_session:
+            print("Logged in")
+            return
+        
+        if has_clone_code:
+            try:
+                class NonInteractiveLoginUi:
+                    def on_device_approval(self, step):
+                        step.cancel()
+                    
+                    def on_two_factor(self, step):
+                        step.cancel()
+                    
+                    def on_password(self, step):
+                        step.cancel()
+                    
+                    def on_sso_redirect(self, step):
+                        step.cancel()
+                    
+                    def on_sso_data_key(self, step):
+                        step.cancel()
+                
+                api.login(params, new_login=False, login_ui=NonInteractiveLoginUi())
+                
+                if params.session_token:
+                    print("Logged in")
+                else:
+                    print("Not logged in")
+                    
+            except Exception as e:
+                logging.debug(f"Non-interactive login failed: {e}")
+                print("Not logged in")
+        else:
+            print("Not logged in")
