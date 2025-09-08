@@ -251,7 +251,7 @@ sync_security_data_parser.error = raise_parse_exception
 sync_security_data_parser.exit = suppress_exit
 
 
-loginstatus_parser = argparse.ArgumentParser(prog='loginstatus', description='Check user login status.')
+loginstatus_parser = argparse.ArgumentParser(prog='login-status', description='Check user login status.')
 loginstatus_parser.error = raise_parse_exception
 loginstatus_parser.exit = suppress_exit
 
