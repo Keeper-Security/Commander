@@ -45,6 +45,7 @@ class CommandExecutor:
     def capture_output(params: Any, command: str) -> Tuple[Any, str]:
         captured_stdout = io.StringIO()
         captured_stderr = io.StringIO()
+        
         original_stdout = sys.stdout
         original_stderr = sys.stderr
         
@@ -56,16 +57,18 @@ class CommandExecutor:
             stdout_content = captured_stdout.getvalue()
             stderr_content = captured_stderr.getvalue()
             
-            # Combine stdout and stderr, prioritizing stderr for error messages
-            combined_output = stderr_content if stderr_content.strip() else stdout_content
+            # Prioritize stderr over stdout for error messages
+            combined_output = stderr_content.strip() or stdout_content.strip()
             
             return return_value, combined_output
         except Exception as e:
             # If there's an exception, capture any error output
             stderr_content = captured_stderr.getvalue()
-            if stderr_content.strip():
+            error_output = stderr_content.strip()
+            
+            if error_output:
                 # Re-raise with the captured error message
-                raise CommandExecutionError(f"Command failed: {stderr_content.strip()}")
+                raise CommandExecutionError(f"Command failed: {error_output}")
             raise
         finally:
             sys.stdout = original_stdout
