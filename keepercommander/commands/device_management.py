@@ -237,7 +237,6 @@ class DeviceResolver:
         """Find devices matching the given identifier."""
         matched_devices = []
         
-        # Try to match by device ID (numeric index)
         try:
             device_id = int(identifier)
             if 1 <= device_id <= len(all_devices):
@@ -248,9 +247,7 @@ class DeviceResolver:
         except ValueError:
             pass
         
-        # Try other matching methods
         for device in all_devices:
-            # Check if it's a direct token match (base64 encoded)
             try:
                 decoded_token = utils.base64_url_decode(identifier)
                 if device.encryptedDeviceToken == decoded_token:
@@ -258,7 +255,6 @@ class DeviceResolver:
             except:
                 pass
                 
-            # Check for name match (case insensitive, partial match)
             if device.deviceName and identifier.lower() in device.deviceName.lower():
                 matched_devices.append(device)
         
@@ -483,10 +479,6 @@ class BaseDeviceCommand(Command, DisplayMixin, ABC):
             raise
 
 
-# ============================================================================
-# Argument Parsers
-# ============================================================================
-
 device_user_list_parser = argparse.ArgumentParser(prog='device-list', description='List all active devices for the current user')
 device_user_list_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], 
                                      default='table', help='output format')
@@ -497,7 +489,7 @@ device_user_action_parser = argparse.ArgumentParser(prog='device-action', descri
 device_user_action_parser.add_argument('action', choices=['logout', 'remove', 'lock', 'unlock', 'account-lock', 'account-unlock', 'link', 'unlink'], 
                                        help='Action to perform on devices')
 device_user_action_parser.add_argument('devices', nargs='+', 
-                                       help='Device IDs (1, 2, 3...), device tokens, or device names (supports partial matches)')
+                                       help='Device IDs (1, 2, 3...) or device names ')
 
 device_user_rename_parser = argparse.ArgumentParser(prog='device-rename', description='Rename user devices')
 device_user_rename_parser.add_argument('device', help='Device ID (1, 2, 3...), device token, or device name')
@@ -505,8 +497,8 @@ device_user_rename_parser.add_argument('new_name', help='New name for the device
 
 
 device_admin_list_parser = argparse.ArgumentParser(prog='device-admin-list', description='List all devices across users that the Admin has control of')
-device_admin_list_parser.add_argument('enterprise_user_ids', nargs='*', type=int, 
-                                      help='List of Enterprise User IDs (optional - if not provided, lists all users)')
+device_admin_list_parser.add_argument('enterprise_user_ids', nargs='+', type=int, 
+                                     help='List of Enterprise User IDs (required). You can get enterprise user IDs by running "ei --users" command')
 device_admin_list_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], 
                                      default='table', help='output format')
 device_admin_list_parser.add_argument('--output', dest='output', action='store',
@@ -518,7 +510,7 @@ device_admin_action_parser.add_argument('action', choices=['logout', 'remove', '
 device_admin_action_parser.add_argument('enterprise_user_id', type=int,
                                         help='Enterprise User ID whose devices to act on')
 device_admin_action_parser.add_argument('devices', nargs='+', 
-                                        help='Device IDs, tokens, or names (supports partial matches)')
+                                        help='Device IDs or devicenames')
 
 
 
@@ -850,13 +842,20 @@ class DeviceAdminListCommand(BaseDeviceCommand):
     def get_parser(self):
         return device_admin_list_parser
 
-    def execute(self, params: KeeperParams, **kwargs):
+    def _validate_inputs(self, **kwargs):
+        """Validate required inputs."""
         enterprise_user_ids = kwargs.get('enterprise_user_ids', [])
         
-        request = None
-        if enterprise_user_ids:
-            request = DeviceManagement_pb2.DeviceAdminRequest()
-            request.enterpriseUserIds.extend(enterprise_user_ids)
+        if not enterprise_user_ids:
+            raise ValueError("Enterprise User ID is required. You can get enterprise user IDs by running: ei --users")
+
+    def execute(self, params: KeeperParams, **kwargs):
+        self._validate_inputs(**kwargs)
+        
+        enterprise_user_ids = kwargs.get('enterprise_user_ids', [])
+        
+        request = DeviceManagement_pb2.DeviceAdminRequest()
+        request.enterpriseUserIds.extend(enterprise_user_ids)
         
         response = self._make_api_call(
             params, request, 'dm/device_admin_list', DeviceManagement_pb2.DeviceAdminResponse
@@ -935,12 +934,7 @@ class DeviceAdminListCommand(BaseDeviceCommand):
                 'uiCategory': UICategory.get_ui_category(device),
                 'deviceStatus': StatusMapper.get_device_status_display(device.deviceStatus),
                 'loginStatus': StatusMapper.get_login_status_display(device.loginState),
-                'clientType': DeviceManagement_pb2.ClientType.Name(device.clientType),
-                'clientTypeCategory': DeviceManagement_pb2.ClientTypeCategory.Name(device.clientTypeCategory) if device.clientTypeCategory else None,
-                'clientFormFactor': APIRequest_pb2.ClientFormFactor.Name(device.clientFormFactor) if device.clientFormFactor else None,
-                'clientVersion': device.clientVersion,
-                'devicePlatform': device.devicePlatform,
-                'lastModifiedTime': TimestampFormatter.format_timestamp(device.lastModifiedTime),
+                'lastAccessedTimestamp': TimestampFormatter.format_timestamp(device.lastModifiedTime),
                 'timestamp': device.lastModifiedTime or 0
             }
             device_list.append(device_info_json)
