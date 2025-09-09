@@ -270,10 +270,12 @@ class FolderListCommand(Command, RecordMixin):
                         row = [f.uid, f.name, folder_flags(f), f.parent_uid or '/']
                         table.append(row)
                     table.sort(key=lambda x: (x[1] or '').lower())
-                    for i in range(len(table)):
-                        name = table[i][1]
-                        if name in colors:
-                            table[i][1] = display.keeper_colorize(name, colors[name])
+                    # Only apply colorization if not JSON format
+                    if fmt not in ('json', 'csv'):
+                        for i in range(len(table)):
+                            name = table[i][1]
+                            if name in colors:
+                                table[i][1] = display.keeper_colorize(name, colors[name])
                     if fmt != 'json':
                         headers = base.fields_to_titles(headers)
                     if fmt in ('json', 'csv'):

@@ -22,6 +22,24 @@ class TestFolder(TestCase):
         with mock.patch('builtins.print'), mock.patch('keepercommander.api.get_record_shares'):
             cmd.execute(params)
             cmd.execute(params, detail=True)
+            
+    def test_list_json_no_ansi_colors(self):
+        """Test that ls command with JSON format doesn't include ANSI color codes."""
+        params = get_synced_params()
+        cmd = folder.FolderListCommand()
+        
+        # Execute with JSON format - this should not include ANSI color codes
+        with mock.patch('keepercommander.api.get_record_shares'):
+            result = cmd.execute(params, detail=True, format='json')
+            
+            # If result is returned (JSON/CSV format), check it doesn't contain ANSI codes
+            if result:
+                import json
+                # Convert to JSON string to check for ANSI escape sequences
+                json_str = json.dumps(result)
+                # Check that no ANSI escape sequences are present
+                self.assertNotIn('\u001b[', json_str, "JSON output should not contain ANSI escape sequences")
+                self.assertNotIn('\\u001b[', json_str, "JSON output should not contain ANSI escape sequences")
 
     def test_change_directory(self):
         params = get_synced_params()
