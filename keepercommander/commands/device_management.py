@@ -485,8 +485,63 @@ device_user_list_parser.add_argument('--format', dest='format', action='store', 
 device_user_list_parser.add_argument('--output', dest='output', action='store',
                                      help='output file name. (ignored for table format)')
 
+# Action definitions for device-action command
+DEVICE_ACTION_DEFINITIONS = {
+    'logout': {
+        'description': 'Logout the enterprise user from the device',
+        'help': 'Device IDs (1, 2, 3...) or device names to logout from',
+        'min_devices': 1
+    },
+    'remove': {
+        'description': 'Logout & Remove the enterprise user from that device',
+        'help': 'Device IDs (1, 2, 3...) or device names to remove user from',
+        'min_devices': 1
+    },
+    'lock': {
+        'description': 'Lock the device for all users and auto linked devices. Logout all users',
+        'help': 'Device IDs (1, 2, 3...) or device names to lock',
+        'min_devices': 1
+    },
+    'unlock': {
+        'description': 'Unlock the devices and auto linked devices for the enterprise user',
+        'help': 'Device IDs (1, 2, 3...) or device names to unlock',
+        'min_devices': 1
+    },
+    'account-lock': {
+        'description': 'Lock the device for the calling user only. If calling user is logged in, logout the calling user.',
+        'help': 'Device IDs (1, 2, 3...) or device names to account-lock',
+        'min_devices': 1
+    },
+    'account-unlock': {
+        'description': 'Unlock the device for the calling user.',
+        'help': 'Device IDs (1, 2, 3...) or device names to account-unlock',
+        'min_devices': 1
+    },
+    'link': {
+        'description': 'Link the devices and the associated auto linked devices for the calling user',
+        'help': 'Device IDs (1, 2, 3...) or device names to link (minimum 2 devices required)',
+        'min_devices': 2
+    },
+    'unlink': {
+        'description': 'Unlink the devices and the associated auto linked devices for the calling user',
+        'help': 'Device IDs (1, 2, 3...) or device names to unlink (minimum 2 devices required)',
+        'min_devices': 2
+    }
+}
+
+# Generate action-specific parsers dynamically
+device_action_parsers = {}
+for action, config in DEVICE_ACTION_DEFINITIONS.items():
+    parser = argparse.ArgumentParser(
+        prog=f'device-action {action}', 
+        description=config['description']
+    )
+    parser.add_argument('devices', nargs='+', help=config['help'])
+    device_action_parsers[action] = parser
+
+# Main device-action parser
 device_user_action_parser = argparse.ArgumentParser(prog='device-action', description='Perform actions on user devices')
-device_user_action_parser.add_argument('action', choices=['logout', 'remove', 'lock', 'unlock', 'account-lock', 'account-unlock', 'link', 'unlink'], 
+device_user_action_parser.add_argument('action', choices=list(DEVICE_ACTION_DEFINITIONS.keys()), 
                                        help='Action to perform on devices')
 device_user_action_parser.add_argument('devices', nargs='+', 
                                        help='Device IDs (1, 2, 3...) or device names ')
@@ -504,8 +559,55 @@ device_admin_list_parser.add_argument('--format', dest='format', action='store',
 device_admin_list_parser.add_argument('--output', dest='output', action='store',
                                      help='output file name. (ignored for table format)')
 
+# Action definitions for device-admin-action command
+DEVICE_ADMIN_ACTION_DEFINITIONS = {
+    'logout': {
+        'description': 'Logout the enterprise user from the device',
+        'help': 'Device IDs (1, 2, 3...) or device names to logout from',
+        'min_devices': 1
+    },
+    'remove': {
+        'description': 'Logout & Remove the enterprise user from that device',
+        'help': 'Device IDs (1, 2, 3...) or device names to remove user from',
+        'min_devices': 1
+    },
+    'lock': {
+        'description': 'Lock the device for all users and auto linked devices. Logout all users',
+        'help': 'Device IDs (1, 2, 3...) or device names to lock',
+        'min_devices': 1
+    },
+    'unlock': {
+        'description': 'Unlock the devices and auto linked devices for the enterprise user',
+        'help': 'Device IDs (1, 2, 3...) or device names to unlock',
+        'min_devices': 1
+    },
+    'account-lock': {
+        'description': 'Lock the device for the enterprise user only. If user is logged in, logout',
+        'help': 'Device IDs (1, 2, 3...) or device names to account-lock',
+        'min_devices': 1
+    },
+    'account-unlock': {
+        'description': 'Unlock the device for the enterprise user',
+        'help': 'Device IDs (1, 2, 3...) or device names to account-unlock',
+        'min_devices': 1
+    }
+}
+
+# Generate admin action-specific parsers dynamically
+device_admin_action_parsers = {}
+for action, config in DEVICE_ADMIN_ACTION_DEFINITIONS.items():
+    parser = argparse.ArgumentParser(
+        prog=f'device-admin-action {action}', 
+        description=config['description']
+    )
+    parser.add_argument('enterprise_user_id', type=int,
+                       help='Enterprise User ID whose devices to act on')
+    parser.add_argument('devices', nargs='+', help=config['help'])
+    device_admin_action_parsers[action] = parser
+
+# Main device-admin-action parser
 device_admin_action_parser = argparse.ArgumentParser(prog='device-admin-action', description='Perform actions on devices across enterprise users')
-device_admin_action_parser.add_argument('action', choices=['logout', 'remove', 'lock', 'unlock', 'account-lock', 'account-unlock'], 
+device_admin_action_parser.add_argument('action', choices=list(DEVICE_ADMIN_ACTION_DEFINITIONS.keys()), 
                                         help='Action to perform on devices')
 device_admin_action_parser.add_argument('enterprise_user_id', type=int,
                                         help='Enterprise User ID whose devices to act on')
@@ -609,6 +711,36 @@ class DeviceUserActionCommand(BaseDeviceCommand):
 
     def get_parser(self):
         return device_user_action_parser
+    
+    def get_action_parser(self, action):
+        """Get action-specific parser for detailed help."""
+        return device_action_parsers.get(action)
+
+    def execute_args(self, params: KeeperParams, args, **kwargs):
+        """Override to handle action-specific help."""
+        import shlex
+        from .base import expand_cmd_args, normalize_output_param, ParseError
+        
+        try:
+            # Parse arguments to check for action-specific help
+            args = '' if args is None else args
+            args = expand_cmd_args(args, params.environment_variables)
+            args = normalize_output_param(args)
+            
+            parsed_args = shlex.split(args)
+            
+            # Check if this is action-specific help (e.g., "logout --help")
+            if len(parsed_args) >= 2 and parsed_args[1] in ['--help', '-h']:
+                action = parsed_args[0]
+                action_parser = self.get_action_parser(action)
+                if action_parser:
+                    action_parser.print_help()
+                    return
+            
+            # Fall back to default parsing
+            return super().execute_args(params, args, **kwargs)
+        except ParseError as e:
+            logging.error(e)
 
     def _validate_inputs(self, **kwargs):
         """Validate required inputs."""
@@ -619,6 +751,15 @@ class DeviceUserActionCommand(BaseDeviceCommand):
             raise ValueError("Action is required")
         if not devices:
             raise ValueError("At least one device must be specified")
+        
+        # Validate minimum device requirements based on action configuration
+        if action in DEVICE_ACTION_DEFINITIONS:
+            min_devices = DEVICE_ACTION_DEFINITIONS[action]['min_devices']
+            if len(devices) < min_devices:
+                if min_devices == 1:
+                    raise ValueError(f"At least {min_devices} device must be specified")
+                else:
+                    raise ValueError(f"{action.capitalize()} action requires at least {min_devices} devices. Please provide {min_devices} or more device IDs or device names.")
 
     def execute(self, params: KeeperParams, **kwargs):
         self._validate_inputs(**kwargs)
@@ -958,6 +1099,36 @@ class DeviceAdminActionCommand(BaseDeviceCommand):
     
     def get_parser(self):
         return device_admin_action_parser
+    
+    def get_action_parser(self, action):
+        """Get action-specific parser for detailed help."""
+        return device_admin_action_parsers.get(action)
+
+    def execute_args(self, params: KeeperParams, args, **kwargs):
+        """Override to handle action-specific help."""
+        import shlex
+        from .base import expand_cmd_args, normalize_output_param, ParseError
+        
+        try:
+            # Parse arguments to check for action-specific help
+            args = '' if args is None else args
+            args = expand_cmd_args(args, params.environment_variables)
+            args = normalize_output_param(args)
+            
+            parsed_args = shlex.split(args)
+            
+            # Check if this is action-specific help (e.g., "logout 123456 --help")
+            if len(parsed_args) >= 3 and parsed_args[2] in ['--help', '-h']:
+                action = parsed_args[0]
+                action_parser = self.get_action_parser(action)
+                if action_parser:
+                    action_parser.print_help()
+                    return
+            
+            # Fall back to default parsing
+            return super().execute_args(params, args, **kwargs)
+        except ParseError as e:
+            logging.error(e)
 
     def _validate_inputs(self, **kwargs):
         """Validate required inputs."""
