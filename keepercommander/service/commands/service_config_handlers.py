@@ -53,6 +53,12 @@ class ServiceConfigHandler:
                 if args.ngrok else ""
             ),
             "ngrok_custom_domain": args.ngrok_custom_domain,
+            "cloudflare": "y" if args.cloudflare else "n",
+            "cloudflare_tunnel_token": (
+                self.service_config.validator.validate_cloudflare_token(args.cloudflare)
+                if args.cloudflare else ""
+            ),
+            "cloudflare_custom_domain": args.cloudflare_custom_domain,
             "certfile": args.certfile,
             "certpassword": args.certpassword,
             "fileformat": args.fileformat,  # Keep original logic - can be None
@@ -64,6 +70,7 @@ class ServiceConfigHandler:
     def handle_interactive_config(self, config_data: Dict[str, Any], params: KeeperParams) -> None:
         self._configure_port(config_data)
         self._configure_ngrok(config_data)
+        self._configure_cloudflare(config_data)
         self._configure_tls(config_data)
         self._configure_queue(config_data)
         
@@ -95,6 +102,22 @@ class ServiceConfigHandler:
                     print(f"{self.validation_messages['invalid_ngrok_token']} {str(e)}")
         else:
             config_data["ngrok_auth_token"] = ""
+
+    def _configure_cloudflare(self, config_data: Dict[str, Any]) -> None:
+        config_data["cloudflare"] = self.service_config._get_yes_no_input(self.messages.get('cloudflare_prompt', 'Do you want to use Cloudflare tunnel? (y/n): '))
+        
+        if config_data["cloudflare"] == "y":
+            while True:
+                try:
+                    token = input(self.messages.get('cloudflare_token_prompt', 'Enter Cloudflare tunnel token (or press Enter for temporary tunnel): '))
+                    config_data["cloudflare_tunnel_token"] = self.service_config.validator.validate_cloudflare_token(token)
+                    config_data["cloudflare_custom_domain"] = input(self.messages.get('cloudflare_custom_domain_prompt', 'Enter Cloudflare custom domain (optional): '))
+                    break
+                except ValidationError as e:
+                    print(f"{self.validation_messages.get('invalid_cloudflare_token', 'Invalid Cloudflare token')} {str(e)}")
+        else:
+            config_data["cloudflare_tunnel_token"] = ""
+            config_data["cloudflare_custom_domain"] = ""
         
     def _configure_tls(self, config_data: Dict[str, Any]) -> None:
         config_data["tls_certificate"] = self.service_config._get_yes_no_input(self.messages['tls_certificate'])

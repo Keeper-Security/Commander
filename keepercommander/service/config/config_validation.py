@@ -104,6 +104,25 @@ class ConfigValidator:
         return token
 
     @staticmethod
+    def validate_cloudflare_token(token: str) -> str:
+        """Validate Cloudflare tunnel token"""
+        logger.debug("Validating Cloudflare tunnel token")
+        
+        # Allow empty token for temporary tunnels
+        if not token or not token.strip():
+            logger.debug("Empty Cloudflare token - will use temporary tunnel")
+            return ""
+            
+        # Cloudflare tunnel tokens are typically long base64-encoded strings
+        # They usually start with "ey" (base64 for '{"') or are alphanumeric with dashes/underscores
+        if not re.match(r'^[0-9a-zA-Z_\-=+/]{32,}$', token):
+            msg = "Invalid Cloudflare tunnel token format. Must be a valid tunnel token from Cloudflare dashboard."
+            raise ValidationError(msg)
+            
+        logger.debug("Cloudflare token validation successful")
+        return token
+
+    @staticmethod
     def validate_rate_limit(rate_limit: str) -> str:
         """Validate rate limiting format"""
         if not rate_limit:
