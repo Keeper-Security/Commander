@@ -95,7 +95,7 @@ class ServiceManager:
                 return
             
             from ..config.ngrok_config import NgrokConfigurator
-            
+            from ..config.cloudflare_config import CloudflareConfigurator
             
             is_running = True
             queue_enabled = config_data.get("queue_enabled", "y")
@@ -108,6 +108,7 @@ class ServiceManager:
             print(f"Commander Service starting on {protocol}://localhost:{port}/api/{api_version}/")
             
             ngrok_pid = NgrokConfigurator.configure_ngrok(config_data, service_config)
+            cloudflare_pid = CloudflareConfigurator.configure_cloudflare(config_data, service_config)
             
             # Custom logging filter to replace SSL handshake errors with user-friendly message
             class SSLHandshakeFilter(logging.Filter):
@@ -181,7 +182,7 @@ class ServiceManager:
                 )
                 
             # Save the process ID for future reference
-            ProcessInfo.save(cls.pid, is_running, ngrok_pid)
+            ProcessInfo.save(cls.pid, is_running, ngrok_pid, cloudflare_pid)
             
         except FileNotFoundError:
             logging.info("Error: Service configuration file not found. Please use 'service-create' command to create a service_config file.")
@@ -196,7 +197,7 @@ class ServiceManager:
         """Stop the service if running."""
         process_info = ProcessInfo.load()
         
-        logger.debug(f"Loaded process info - Service PID: {process_info.pid}, Ngrok PID: {process_info.ngrok_pid}")
+        logger.debug(f"Loaded process info - Service PID: {process_info.pid}, Ngrok PID: {process_info.ngrok_pid}, Cloudflare PID: {process_info.cloudflare_pid}")
         
         if not process_info.pid:
             print("Error: No running service found to stop")
@@ -264,6 +265,41 @@ class ServiceManager:
             if not ngrok_stopped:
                 logger.debug("No ngrok processes found to stop")
 
+            # Stop Cloudflare tunnel process if it exists
+            cloudflare_stopped = False
+            if process_info.cloudflare_pid:
+                try:
+                    logger.debug(f"Attempting to stop Cloudflare tunnel process (PID: {process_info.cloudflare_pid})")
+                    
+                    # Check if Cloudflare process is actually running first
+                    try:
+                        cloudflare_process = psutil.Process(process_info.cloudflare_pid)
+                        logger.debug(f"Cloudflare tunnel process {process_info.cloudflare_pid} is running: {cloudflare_process.name()}")
+                    except psutil.NoSuchProcess:
+                        logger.debug(f"Cloudflare tunnel process {process_info.cloudflare_pid} is not running")
+                        
+                    logger.debug(f"Calling kill_process_by_pid for Cloudflare PID {process_info.cloudflare_pid}")
+                    if ServiceManager.kill_process_by_pid(process_info.cloudflare_pid):
+                        logger.debug(f"Cloudflare tunnel process stopped (PID: {process_info.cloudflare_pid})")
+                        print("Cloudflare tunnel stopped")
+                        cloudflare_stopped = True
+                    else:
+                        logger.warning(f"Failed to stop Cloudflare tunnel process (PID: {process_info.cloudflare_pid})")
+                except Exception as e:
+                    logger.warning(f"Error stopping Cloudflare tunnel process: {str(e)}")
+            else:
+                logger.debug("No Cloudflare tunnel PID found in process info")
+            
+            # Fallback: Try to kill any remaining cloudflared processes
+            if not cloudflare_stopped:
+                logger.debug("Attempting fallback Cloudflare tunnel cleanup...")
+                if ServiceManager.kill_cloudflare_processes():
+                    print("Cloudflare tunnel stopped (via cleanup)")
+                    cloudflare_stopped = True
+            
+            if not cloudflare_stopped:
+                logger.debug("No Cloudflare tunnel processes found to stop")
+
             # Stop the main service process
             if ServiceManager.kill_process_by_pid(process_info.pid):
                 logger.debug(f"Commander Service stopped (PID: {process_info.pid})")
@@ -307,6 +343,14 @@ class ServiceManager:
                             status += f"\nNgrok tunnel is Running (PID: {process_info.ngrok_pid})"
                     except psutil.NoSuchProcess:
                         status += f"\nNgrok tunnel is Stopped (was PID: {process_info.ngrok_pid})"
+                
+                # Check Cloudflare tunnel status if available
+                if process_info.cloudflare_pid:
+                    try:
+                        psutil.Process(process_info.cloudflare_pid)
+                        status += f"\nCloudflare tunnel is Running (PID: {process_info.cloudflare_pid})"
+                    except psutil.NoSuchProcess:
+                        status += f"\nCloudflare tunnel is Stopped (was PID: {process_info.cloudflare_pid})"
                 
                 logger.debug(f"Service status check: {status}")
                 return status
@@ -395,4 +439,41 @@ class ServiceManager:
                 
         except Exception as e:
             logger.error(f"Exception while killing ngrok processes: {str(e)}")
+            return False
+
+    @staticmethod
+    def kill_cloudflare_processes():
+        """Kill all cloudflared processes as a fallback method."""
+        killed_count = 0
+        try:
+            logger.debug("Looking for cloudflared processes to kill...")
+            
+            # Find all cloudflared processes
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    if proc.info['name'] and 'cloudflared' in proc.info['name'].lower():
+                        pid = proc.info['pid']
+                        logger.debug(f"Found cloudflared process by name: PID {pid}")
+                        if ServiceManager.kill_process_by_pid(pid):
+                            killed_count += 1
+                    elif proc.info['cmdline']:
+                        # Check if cloudflared is in the command line
+                        cmdline_str = ' '.join(proc.info['cmdline'])
+                        if 'cloudflared' in cmdline_str.lower() and ('tunnel' in cmdline_str.lower() or 'http' in cmdline_str.lower()):
+                            pid = proc.info['pid']
+                            logger.debug(f"Found cloudflared process by cmdline: PID {pid}")
+                            if ServiceManager.kill_process_by_pid(pid):
+                                killed_count += 1
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+            
+            if killed_count > 0:
+                logger.info(f"Killed {killed_count} cloudflared processes")
+                return True
+            else:
+                logger.debug("No cloudflared processes found to kill")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Exception while killing cloudflared processes: {str(e)}")
             return False

@@ -89,6 +89,10 @@ class ServiceConfig:
             ngrok_auth_token="",
             ngrok_custom_domain="",
             ngrok_public_url="",
+            cloudflare="n",
+            cloudflare_tunnel_token="",
+            cloudflare_custom_domain="",
+            cloudflare_public_url="",
             tls_certificate="n",
             certfile="",
             certpassword="",
@@ -221,6 +225,23 @@ class ServiceConfig:
         if 'queue_enabled' not in config:
             config['queue_enabled'] = 'y'  # Default to enabled for existing configs
             logger.debug("Added default queue_enabled=y for backwards compatibility")
+
+        # Add backwards compatibility for missing Cloudflare fields
+        if 'cloudflare' not in config:
+            config['cloudflare'] = 'n'  # Default to disabled for existing configs
+            logger.debug("Added default cloudflare=n for backwards compatibility")
+        
+        if 'cloudflare_tunnel_token' not in config:
+            config['cloudflare_tunnel_token'] = ''
+            logger.debug("Added default cloudflare_tunnel_token for backwards compatibility")
+        
+        if 'cloudflare_custom_domain' not in config:
+            config['cloudflare_custom_domain'] = ''
+            logger.debug("Added default cloudflare_custom_domain for backwards compatibility")
+        
+        if 'cloudflare_public_url' not in config:
+            config['cloudflare_public_url'] = ''
+            logger.debug("Added default cloudflare_public_url for backwards compatibility")
         
         self._validate_config_structure(config)
         return config
@@ -236,6 +257,10 @@ class ServiceConfig:
         if config_data.ngrok == 'y':
             logger.debug("Validating ngrok configuration")
             self.validator.validate_ngrok_token(config_data.ngrok_auth_token)
+
+        if config_data.cloudflare == 'y':
+            logger.debug("Validating cloudflare configuration")
+            self.validator.validate_cloudflare_token(config_data.cloudflare_tunnel_token)
 
         if config_data.is_advanced_security_enabled == 'y':
             logger.debug("Validating advanced security settings")

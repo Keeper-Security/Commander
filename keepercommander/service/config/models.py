@@ -20,10 +20,10 @@ class ServiceConfigData:
     ngrok: str
     ngrok_auth_token: str
     ngrok_custom_domain: str
+    ngrok_public_url: str
     tls_certificate: str
     certfile: str
     certpassword: str
-    ngrok_public_url: str
     is_advanced_security_enabled: str
     rate_limiting: str
     ip_allowed_list: str
@@ -34,3 +34,7 @@ class ServiceConfigData:
     run_mode: str
     queue_enabled: str
     records: List[Dict[str, Any]]
+    cloudflare: str = "n"
+    cloudflare_tunnel_token: str = ""
+    cloudflare_custom_domain: str = ""
+    cloudflare_public_url: str = ""
