@@ -57,8 +57,14 @@ class CommandExecutor:
             stdout_content = captured_stdout.getvalue()
             stderr_content = captured_stderr.getvalue()
             
-            # Prioritize stderr over stdout for error messages
-            combined_output = stderr_content.strip() or stdout_content.strip()
+            # Combine both stderr and stdout to capture all command output
+            stdout_clean = stdout_content.strip()
+            stderr_clean = stderr_content.strip()
+            
+            if stderr_clean and stdout_clean:
+                combined_output = stderr_clean + '\n' + stdout_clean
+            else:
+                combined_output = stderr_clean or stdout_clean
             
             return return_value, combined_output
         except Exception as e:
