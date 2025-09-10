@@ -12,6 +12,7 @@
 import argparse
 import json
 import logging
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional, Any, List, Dict, Union, Tuple
@@ -22,6 +23,86 @@ from .base import Command, dump_report_data
 from ..display import bcolors
 from ..params import KeeperParams
 from ..error import KeeperApiError
+
+
+class DeviceManagementError(Exception):
+    """Base exception for device management operations."""
+    pass
+
+
+class InvalidDeviceIdentifierError(DeviceManagementError):
+    """Raised when a device identifier is invalid or malformed."""
+    pass
+
+
+class DeviceNotFoundError(DeviceManagementError):
+    """Raised when a specified device cannot be found."""
+    pass
+
+
+class ValidationError(DeviceManagementError):
+    """Raised when input validation fails."""
+    pass
+
+
+class DeviceInputValidator:
+    """Centralized input validation and sanitization for device management."""
+    
+    @staticmethod
+    def validate_device_identifier(identifier: str) -> bool:
+        """Validate device identifier for security and format."""
+        if not isinstance(identifier, str):
+            return False
+        if not identifier or not identifier.strip():
+            return False
+        if re.search(r'[<>"\'\x00-\x1f\x7f-\x9f]', identifier):
+            return False
+        return True
+    
+    @staticmethod
+    def sanitize_device_name(name: str) -> str:
+        """Sanitize device name by removing dangerous characters."""
+        if not isinstance(name, str):
+            return ""
+        sanitized = re.sub(r'[<>"\'\x00-\x1f\x7f-\x9f]', '', name)
+        return sanitized.strip()
+    
+    @staticmethod
+    def validate_enterprise_user_id(user_id: Any) -> bool:
+        """Validate enterprise user ID."""
+        if not isinstance(user_id, int):
+            try:
+                user_id = int(user_id)
+            except (ValueError, TypeError):
+                return False
+        return user_id >= 1
+    
+    @staticmethod
+    def validate_action(action: str) -> bool:
+        """Validate action name."""
+        if not isinstance(action, str):
+            return False
+        if not action or not action.strip():
+            return False
+        return bool(re.match(r'^[a-z0-9-]+$', action.strip().lower()))
+    
+    @staticmethod
+    def validate_device_identifiers_list(identifiers: List[str]) -> List[str]:
+        """Validate and filter a list of device identifiers."""
+        if not isinstance(identifiers, list):
+            raise ValidationError("Device identifiers must be provided as a list")
+        
+        valid_identifiers = []
+        for identifier in identifiers:
+            if DeviceInputValidator.validate_device_identifier(identifier):
+                valid_identifiers.append(identifier.strip())
+            else:
+                logging.warning(f"Invalid device identifier skipped: '{identifier}'")
+        
+        if not valid_identifiers:
+            raise ValidationError("No valid device identifiers provided")
+        
+        return valid_identifiers
 
 
 class StatusMapper:
@@ -55,12 +136,12 @@ class StatusMapper:
     }
     
     ACTION_DESCRIPTIONS = {
-        'logout': 'Logout the enterprise user from the device',
-        'remove': 'Logout & Remove the enterprise user from that device',
+        'logout': 'Logout the user from the device',
+        'remove': 'Logout & Remove the user from that device',
         'lock': 'Lock the device for all users and auto linked devices. Logout all users',
-        'unlock': 'Unlock the devices and auto linked devices for the enterprise user',
-        'account-lock': 'Lock the device for the enterprise user only. If user is logged in, logout',
-        'account-unlock': 'Unlock the device for the enterprise user',
+        'unlock': 'Unlock the devices and auto linked devices for the user',
+        'account-lock': 'Lock the device for the user only. If user is logged in, logout',
+        'account-unlock': 'Unlock the device for the user',
     }
     
     @classmethod
@@ -101,62 +182,54 @@ class TimestampFormatter:
 class UICategory:
     """Utility for determining UI categories based on device properties."""
     
+    CATEGORY_RULES = [
+        (lambda d: d.clientTypeCategory == DeviceManagement_pb2.CAT_EXTENSION, "Browser Extension"),
+        (lambda d: d.clientTypeCategory == DeviceManagement_pb2.CAT_DESKTOP, "Desktop"),
+        (lambda d: d.clientTypeCategory == DeviceManagement_pb2.CAT_WEB_VAULT, "Web Vault"),
+        (lambda d: (d.clientType == DeviceManagement_pb2.ENTERPRISE_MANAGEMENT_CONSOLE and 
+                   d.clientTypeCategory == DeviceManagement_pb2.CAT_ADMIN), "Admin Console"),
+        (lambda d: (d.clientType == DeviceManagement_pb2.COMMANDER and 
+                   d.clientTypeCategory == DeviceManagement_pb2.CAT_ADMIN), "Commander CLI"),
+        (lambda d: (d.clientType == DeviceManagement_pb2.IOS and 
+                   d.clientTypeCategory == DeviceManagement_pb2.CAT_MOBILE), "iOS App"),
+        (lambda d: (d.clientType == DeviceManagement_pb2.ANDROID and 
+                   d.clientTypeCategory == DeviceManagement_pb2.CAT_MOBILE), "Android App"),
+        (lambda d: (d.clientTypeCategory == DeviceManagement_pb2.CAT_MOBILE and 
+                   d.clientFormFactor == APIRequest_pb2.FF_PHONE), "Mobile"),
+        (lambda d: (d.clientTypeCategory == DeviceManagement_pb2.CAT_MOBILE and 
+                   d.clientFormFactor == APIRequest_pb2.FF_TABLET), "Tablet"),
+        (lambda d: (d.clientTypeCategory == DeviceManagement_pb2.CAT_MOBILE and 
+                   d.clientFormFactor == APIRequest_pb2.FF_WATCH), "Wear OS"),
+    ]
+    
     @staticmethod
     def get_ui_category(device) -> str:
-        """Determine UI category based on client type, client type category, and client form factor."""
-        client_type = device.clientType
-        client_type_category = device.clientTypeCategory
-        client_form_factor = device.clientFormFactor
-        
-        # Browser Extension
-        if client_type_category == DeviceManagement_pb2.CAT_EXTENSION:
-            return "Browser Extension"
-        
-        # Mobile
-        if (client_type_category == DeviceManagement_pb2.CAT_MOBILE and 
-            client_form_factor == APIRequest_pb2.FF_PHONE):
-            return "Mobile"
-        
-        # Tablet
-        if (client_type_category == DeviceManagement_pb2.CAT_MOBILE and 
-            client_form_factor == APIRequest_pb2.FF_TABLET):
-            return "Tablet"
-        
-        # Desktop
-        if client_type_category == DeviceManagement_pb2.CAT_DESKTOP:
-            return "Desktop"
-        
-        # Web Vault
-        if client_type_category == DeviceManagement_pb2.CAT_WEB_VAULT:
-            return "Web Vault"
-        
-        # Admin Console
-        if (client_type == DeviceManagement_pb2.ENTERPRISE_MANAGEMENT_CONSOLE and 
-            client_type_category == DeviceManagement_pb2.CAT_ADMIN):
-            return "Admin Console"
-        
-        # Wear OS
-        if (client_type_category == DeviceManagement_pb2.CAT_MOBILE and 
-            client_form_factor == APIRequest_pb2.FF_WATCH):
-            return "Wear OS"
-        
-        # iOS App
-        if client_type == DeviceManagement_pb2.IOS and client_type_category == DeviceManagement_pb2.CAT_MOBILE:
-            return "iOS App"
-        
-        # Android App
-        if client_type == DeviceManagement_pb2.ANDROID and client_type_category == DeviceManagement_pb2.CAT_MOBILE:
-            return "Android App"
-        
-        # Commander CLI
-        if client_type == DeviceManagement_pb2.COMMANDER and client_type_category == DeviceManagement_pb2.CAT_ADMIN:
-            return "Commander CLI"
-        
-        return "Unknown Device"
+        """Determine UI category based on device properties using rule-based mapping."""
+        try:
+            for rule_check, category_name in UICategory.CATEGORY_RULES:
+                if rule_check(device):
+                    return category_name
+            return "Unknown Device"
+        except (AttributeError, TypeError) as e:
+            logging.debug(f"Error determining UI category for device: {e}")
+            return "Unknown Device"
 
 
 class DeviceResolver:
     """Service for resolving device identifiers to device tokens."""
+    
+    @staticmethod
+    def _safe_int_conversion(value: str) -> Optional[int]:
+        """Safely convert string to integer with validation."""
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            result = int(value.strip())
+            if result < 1:  
+                return None
+            return result
+        except ValueError:
+            return None
     
     @staticmethod
     def extract_devices_from_response(devices_response, enterprise_user_id: Optional[int] = None) -> List:
@@ -177,26 +250,34 @@ class DeviceResolver:
         return sorted(all_devices, key=lambda x: x.lastModifiedTime or 0, reverse=True)
     
     @staticmethod
+    def _resolve_single_identifier(all_devices: List, identifier: str, allow_multiple: bool, 
+                                 enterprise_user_id: Optional[int]) -> Optional[Any]:
+        """Resolve a single device identifier and handle multiple matches."""
+        matched_devices = DeviceResolver._find_matching_devices(all_devices, identifier)
+        
+        if not matched_devices:
+            user_context = f" for user {enterprise_user_id}" if enterprise_user_id else ""
+            logging.warning(f"Warning: No device found matching '{identifier}'{user_context}")
+            return None
+        elif len(matched_devices) > 1 and not allow_multiple:
+            DeviceResolver._handle_multiple_matches(matched_devices, all_devices, identifier, enterprise_user_id)
+            return None
+        elif len(matched_devices) > 1:
+            logging.warning(f"Warning: Multiple devices found matching '{identifier}'. Using first match.")
+            return matched_devices[0]
+        else:
+            return matched_devices[0]
+    
+    @staticmethod
     def resolve_device_identifiers(all_devices: List, device_identifiers: List[str], 
                                  allow_multiple: bool = True, enterprise_user_id: Optional[int] = None) -> List[bytes]:
         """Resolve device identifiers to device tokens."""
         resolved_tokens = []
         
         for identifier in device_identifiers:
-            matched_devices = DeviceResolver._find_matching_devices(all_devices, identifier)
-            
-            if not matched_devices:
-                user_context = f" for user {enterprise_user_id}" if enterprise_user_id else ""
-                logging.warning(f"Warning: No device found matching '{identifier}'{user_context}")
-                continue
-            elif len(matched_devices) > 1 and not allow_multiple:
-                DeviceResolver._handle_multiple_matches(matched_devices, all_devices, identifier, enterprise_user_id)
-                continue
-            elif len(matched_devices) > 1:
-                logging.warning(f"Warning: Multiple devices found matching '{identifier}'. Using first match.")
-                resolved_tokens.append(matched_devices[0].encryptedDeviceToken)
-            else:
-                resolved_tokens.append(matched_devices[0].encryptedDeviceToken)
+            device = DeviceResolver._resolve_single_identifier(all_devices, identifier, allow_multiple, enterprise_user_id)
+            if device:
+                resolved_tokens.append(device.encryptedDeviceToken)
                 
         return resolved_tokens
     
@@ -207,20 +288,9 @@ class DeviceResolver:
         resolved_devices = []
         
         for identifier in device_identifiers:
-            matched_devices = DeviceResolver._find_matching_devices(all_devices, identifier)
-            
-            if not matched_devices:
-                user_context = f" for user {enterprise_user_id}" if enterprise_user_id else ""
-                logging.warning(f"Warning: No device found matching '{identifier}'{user_context}")
-                continue
-            elif len(matched_devices) > 1 and not allow_multiple:
-                DeviceResolver._handle_multiple_matches(matched_devices, all_devices, identifier, enterprise_user_id)
-                continue
-            elif len(matched_devices) > 1:
-                logging.warning(f"Warning: Multiple devices found matching '{identifier}'. Using first match.")
-                resolved_devices.append((matched_devices[0].encryptedDeviceToken, matched_devices[0]))
-            else:
-                resolved_devices.append((matched_devices[0].encryptedDeviceToken, matched_devices[0]))
+            device = DeviceResolver._resolve_single_identifier(all_devices, identifier, allow_multiple, enterprise_user_id)
+            if device:
+                resolved_devices.append((device.encryptedDeviceToken, device))
                 
         return resolved_devices
     
@@ -237,23 +307,22 @@ class DeviceResolver:
         """Find devices matching the given identifier."""
         matched_devices = []
         
-        try:
-            device_id = int(identifier)
+        device_id = DeviceResolver._safe_int_conversion(identifier)
+        if device_id is not None:
             if 1 <= device_id <= len(all_devices):
                 return [all_devices[device_id - 1]]
             else:
                 logging.warning(f"Device ID {device_id} is out of range (1-{len(all_devices)})")
                 return []
-        except ValueError:
-            pass
         
         for device in all_devices:
             try:
                 decoded_token = utils.base64_url_decode(identifier)
                 if device.encryptedDeviceToken == decoded_token:
                     return [device]
-            except:
-                pass
+            except (ValueError, TypeError, AttributeError) as e:
+                logging.debug(f"Failed to decode device token '{identifier}': {e}")
+                continue
                 
             if device.deviceName and identifier.lower() in device.deviceName.lower():
                 matched_devices.append(device)
@@ -287,19 +356,18 @@ class ErrorHandler:
         if error.result_code == 'forbidden':
             logging.error(f"{bcolors.FAIL}Error: {error.message}{bcolors.ENDC}")
             if operation == 'device_admin_action':
-                print("This error typically occurs when:")
-                print("- The device tokens are invalid or not owned by the specified user")
-                print("- The admin doesn't have permission to perform actions on this user's devices")
-                print("- The target devices are not accessible")
+                logging.info("This error typically occurs when:")
+                logging.info("- The device tokens are invalid or not owned by the specified user")
+                logging.info("- The admin doesn't have permission to perform actions on this user's devices")
+                logging.info("- The target devices are not accessible")
             return False
         elif error.result_code == 'bad_request':
             logging.error(f"{bcolors.FAIL}Bad Request: {error.message}{bcolors.ENDC}")
             return False
         elif error.result_code == 404 or error.result_code == '404' or error.result_code == 'invalid_path_or_method':
             logging.info(f"{bcolors.WARNING}Notice: This feature is not in production yet. It will be available soon.{bcolors.ENDC}")
-            return True  # Handle gracefully, don't re-raise
+            return True  
         else:
-            logging.error(f"{bcolors.FAIL}API Error: {error.message} (Code: {error.result_code}){bcolors.ENDC}")
             return False
     
     @staticmethod
@@ -350,7 +418,6 @@ class BaseDeviceCommand(Command, DisplayMixin, ABC):
         print()  # Add a blank line for better readability
         
         if enterprise_user_id is not None:
-            # Show admin device list for specific user
             print(f"Updated device list for user {enterprise_user_id}:")
             list_request = DeviceManagement_pb2.DeviceAdminRequest()
             list_request.enterpriseUserIds.append(enterprise_user_id)
@@ -362,7 +429,6 @@ class BaseDeviceCommand(Command, DisplayMixin, ABC):
             if response is None:
                 return
             
-            # Filter devices for the specific user
             user_devices = []
             for device_user_group in response.deviceUserList:
                 if device_user_group.enterpriseUserId == enterprise_user_id:
@@ -488,12 +554,12 @@ device_user_list_parser.add_argument('--output', dest='output', action='store',
 # Action definitions for device-action command
 DEVICE_ACTION_DEFINITIONS = {
     'logout': {
-        'description': 'Logout the enterprise user from the device',
+        'description': 'Logout the user from the device',
         'help': 'Device IDs (1, 2, 3...) or device names to logout from',
         'min_devices': 1
     },
     'remove': {
-        'description': 'Logout & Remove the enterprise user from that device',
+        'description': 'Logout & Remove the user from that device',
         'help': 'Device IDs (1, 2, 3...) or device names to remove user from',
         'min_devices': 1
     },
@@ -503,7 +569,7 @@ DEVICE_ACTION_DEFINITIONS = {
         'min_devices': 1
     },
     'unlock': {
-        'description': 'Unlock the devices and auto linked devices for the enterprise user',
+        'description': 'Unlock the devices and auto linked devices for the user',
         'help': 'Device IDs (1, 2, 3...) or device names to unlock',
         'min_devices': 1
     },
@@ -562,12 +628,12 @@ device_admin_list_parser.add_argument('--output', dest='output', action='store',
 # Action definitions for device-admin-action command
 DEVICE_ADMIN_ACTION_DEFINITIONS = {
     'logout': {
-        'description': 'Logout the enterprise user from the device',
+        'description': 'Logout the user from the device',
         'help': 'Device IDs (1, 2, 3...) or device names to logout from',
         'min_devices': 1
     },
     'remove': {
-        'description': 'Logout & Remove the enterprise user from that device',
+        'description': 'Logout & Remove the user from that device',
         'help': 'Device IDs (1, 2, 3...) or device names to remove user from',
         'min_devices': 1
     },
@@ -577,17 +643,17 @@ DEVICE_ADMIN_ACTION_DEFINITIONS = {
         'min_devices': 1
     },
     'unlock': {
-        'description': 'Unlock the devices and auto linked devices for the enterprise user',
+        'description': 'Unlock the devices and auto linked devices for the user',
         'help': 'Device IDs (1, 2, 3...) or device names to unlock',
         'min_devices': 1
     },
     'account-lock': {
-        'description': 'Lock the device for the enterprise user only. If user is logged in, logout',
+        'description': 'Lock the device for the user only. If user is logged in, logout',
         'help': 'Device IDs (1, 2, 3...) or device names to account-lock',
         'min_devices': 1
     },
     'account-unlock': {
-        'description': 'Unlock the device for the enterprise user',
+        'description': 'Unlock the device for the user',
         'help': 'Device IDs (1, 2, 3...) or device names to account-unlock',
         'min_devices': 1
     }
@@ -606,7 +672,7 @@ for action, config in DEVICE_ADMIN_ACTION_DEFINITIONS.items():
     device_admin_action_parsers[action] = parser
 
 # Main device-admin-action parser
-device_admin_action_parser = argparse.ArgumentParser(prog='device-admin-action', description='Perform actions on devices across enterprise users')
+device_admin_action_parser = argparse.ArgumentParser(prog='device-admin-action', description='Perform various action on one or more devices that the Admin has control of.')
 device_admin_action_parser.add_argument('action', choices=list(DEVICE_ADMIN_ACTION_DEFINITIONS.keys()), 
                                         help='Action to perform on devices')
 device_admin_action_parser.add_argument('enterprise_user_id', type=int,
@@ -620,14 +686,17 @@ def register_commands(commands):
     commands['device-list'] = DeviceUserListCommand()
     commands['device-action'] = DeviceUserActionCommand()
     commands['device-rename'] = DeviceUserRenameCommand()
+
+def register_enterprise_commands(commands):
     commands['device-admin-list'] = DeviceAdminListCommand()
     commands['device-admin-action'] = DeviceAdminActionCommand()
-
 
 def register_command_info(aliases, command_info):
     command_info['device-list'] = 'List all active devices for the current user'
     command_info['device-action'] = 'Perform actions on user devices'
     command_info['device-rename'] = 'Rename user devices'
+
+def register_enterprise_command_info(aliases, command_info):
     command_info['device-admin-list'] = 'List all devices across users that the Admin has control of'
     command_info['device-admin-action'] = 'Perform actions on devices across enterprise users'
 
@@ -644,7 +713,7 @@ class DeviceUserListCommand(BaseDeviceCommand):
         )
         
         if response is None:
-            return  # Error was handled gracefully
+            return
         
         devices = DeviceResolver.extract_devices_from_response(response)
         
@@ -729,7 +798,6 @@ class DeviceUserActionCommand(BaseDeviceCommand):
             
             parsed_args = shlex.split(args)
             
-            # Check if this is action-specific help (e.g., "logout --help")
             if len(parsed_args) >= 2 and parsed_args[1] in ['--help', '-h']:
                 action = parsed_args[0]
                 action_parser = self.get_action_parser(action)
@@ -737,7 +805,6 @@ class DeviceUserActionCommand(BaseDeviceCommand):
                     action_parser.print_help()
                     return
             
-            # Fall back to default parsing
             return super().execute_args(params, args, **kwargs)
         except ParseError as e:
             logging.error(e)
@@ -747,35 +814,48 @@ class DeviceUserActionCommand(BaseDeviceCommand):
         action = kwargs.get('action')
         devices = kwargs.get('devices', [])
         
+        # Validate action
         if not action:
-            raise ValueError("Action is required")
-        if not devices:
-            raise ValueError("At least one device must be specified")
+            raise ValidationError("Action is required")
+        if not DeviceInputValidator.validate_action(action):
+            raise ValidationError(f"Invalid action: '{action}'")
         
-        # Validate minimum device requirements based on action configuration
+        # Validate and sanitize device identifiers
+        if not devices:
+            raise ValidationError("At least one device must be specified")
+        
+        try:
+            validated_devices = DeviceInputValidator.validate_device_identifiers_list(devices)
+        except ValidationError as e:
+            raise ValidationError(f"Device validation failed: {e}")
+        
         if action in DEVICE_ACTION_DEFINITIONS:
             min_devices = DEVICE_ACTION_DEFINITIONS[action]['min_devices']
-            if len(devices) < min_devices:
+            if len(validated_devices) < min_devices:
                 if min_devices == 1:
-                    raise ValueError(f"At least {min_devices} device must be specified")
+                    raise ValidationError(f"At least {min_devices} device must be specified")
                 else:
-                    raise ValueError(f"{action.capitalize()} action requires at least {min_devices} devices. Please provide {min_devices} or more device IDs or device names.")
+                    raise ValidationError(f"{action.capitalize()} action requires at least {min_devices} devices. Please provide {min_devices} or more device IDs or device names.")
+        
+        kwargs['devices'] = validated_devices
 
     def execute(self, params: KeeperParams, **kwargs):
-        self._validate_inputs(**kwargs)
+        try:
+            self._validate_inputs(**kwargs)
+        except ValidationError as e:
+            logging.error(f"{e}")
+            return
         
         action = kwargs.get('action')
         device_identifiers = kwargs.get('devices', [])
         
-        # Get all devices for the user
         devices_response = self._make_api_call(
             params, None, 'dm/device_user_list', DeviceManagement_pb2.DeviceUserResponse
         )
         
         if devices_response is None:
-            return  # Error was handled gracefully
+            return  
         
-        # Resolve device identifiers to tokens and keep device info for success messages
         all_devices = DeviceResolver.extract_devices_from_response(devices_response)
         resolved_devices = DeviceResolver.resolve_device_identifiers_with_info(
             all_devices, device_identifiers, allow_multiple=False
@@ -787,7 +867,6 @@ class DeviceUserActionCommand(BaseDeviceCommand):
         
         device_tokens = [token for token, _ in resolved_devices]
         
-        # Create and execute the action request
         action_type = StatusMapper.get_action_type(action)
         request = DeviceManagement_pb2.DeviceActionRequest()
         device_action = request.deviceAction.add()
@@ -799,15 +878,13 @@ class DeviceUserActionCommand(BaseDeviceCommand):
         )
         
         if response is None:
-            return  # Error was handled gracefully
+            return  
         
-        # Store device info for success messages
         self._device_info = {token: device for token, device in resolved_devices}
         self._action = action
         
         self._display_results(response.deviceActionResult, **kwargs)
         
-        # Show updated device list after action (only if there were successful operations)
         if self._has_successful_operations(response.deviceActionResult):
             self._show_updated_device_list(params)
 
@@ -817,10 +894,8 @@ class DeviceUserActionCommand(BaseDeviceCommand):
             print("No results returned.")
             return
         
-        # Only show success messages, no detailed table
         self._show_success_messages(results)
         
-        # Show errors if any
         self._show_error_messages(results)
     
     def _show_success_messages(self, results: List):
@@ -830,7 +905,6 @@ class DeviceUserActionCommand(BaseDeviceCommand):
             
         for result in results:
             if result.deviceActionStatus == DeviceManagement_pb2.SUCCESS:
-                # Find the device info for each successful token
                 for token in result.encryptedDeviceToken:
                     if token in self._device_info:
                         device = self._device_info[token]
@@ -865,7 +939,6 @@ class DeviceUserActionCommand(BaseDeviceCommand):
                 else:
                     error_msg = f"Action failed ({status_name})"
                 
-                # Find the device info for each failed token
                 for token in result.encryptedDeviceToken:
                     if token in self._device_info:
                         device = self._device_info[token]
@@ -885,13 +958,29 @@ class DeviceUserRenameCommand(BaseDeviceCommand):
         device_identifier = kwargs.get('device')
         new_name = kwargs.get('new_name')
         
+        # Validate device identifier
         if not device_identifier:
-            raise ValueError("Device identifier is required")
+            raise ValidationError("Device identifier is required")
+        if not DeviceInputValidator.validate_device_identifier(device_identifier):
+            raise ValidationError(f"Invalid device identifier: '{device_identifier}'")
+        
+        # Validate and sanitize new device name
         if not new_name:
-            raise ValueError("New device name is required")
+            raise ValidationError("New device name is required")
+        
+        sanitized_name = DeviceInputValidator.sanitize_device_name(new_name)
+        if not sanitized_name:
+            raise ValidationError("Device name contains only invalid characters")
+        
+        # Update kwargs with sanitized name
+        kwargs['new_name'] = sanitized_name
 
     def execute(self, params: KeeperParams, **kwargs):
-        self._validate_inputs(**kwargs)
+        try:
+            self._validate_inputs(**kwargs)
+        except ValidationError as e:
+            logging.error(f"Input validation failed: {e}")
+            return
         
         device_identifier = kwargs.get('device')
         new_name = kwargs.get('new_name')
@@ -988,10 +1077,19 @@ class DeviceAdminListCommand(BaseDeviceCommand):
         enterprise_user_ids = kwargs.get('enterprise_user_ids', [])
         
         if not enterprise_user_ids:
-            raise ValueError("Enterprise User ID is required. You can get enterprise user IDs by running: ei --users")
+            raise ValidationError("Enterprise User ID is required. You can get enterprise user IDs by running: ei --users")
+        
+        # Validate each enterprise user ID
+        for user_id in enterprise_user_ids:
+            if not DeviceInputValidator.validate_enterprise_user_id(user_id):
+                raise ValidationError(f"Invalid enterprise user ID: {user_id}")
 
     def execute(self, params: KeeperParams, **kwargs):
-        self._validate_inputs(**kwargs)
+        try:
+            self._validate_inputs(**kwargs)
+        except ValidationError as e:
+            logging.error(f"Input validation failed: {e}")
+            return
         
         enterprise_user_ids = kwargs.get('enterprise_user_ids', [])
         
@@ -1112,13 +1210,22 @@ class DeviceAdminActionCommand(BaseDeviceCommand):
         try:
             # Parse arguments to check for action-specific help
             args = '' if args is None else args
-            args = expand_cmd_args(args, params.environment_variables)
+            if params and hasattr(params, 'environment_variables'):
+                args = expand_cmd_args(args, params.environment_variables)
             args = normalize_output_param(args)
             
             parsed_args = shlex.split(args)
             
-            # Check if this is action-specific help (e.g., "logout 123456 --help")
-            if len(parsed_args) >= 3 and parsed_args[2] in ['--help', '-h']:
+            # Check for action-specific help in different positions:
+            # "logout --help" (help in 2nd position)
+            # "logout 123456 --help" (help in 3rd position)
+            if len(parsed_args) >= 2 and parsed_args[1] in ['--help', '-h']:
+                action = parsed_args[0]
+                action_parser = self.get_action_parser(action)
+                if action_parser:
+                    action_parser.print_help()
+                    return
+            elif len(parsed_args) >= 3 and parsed_args[2] in ['--help', '-h']:
                 action = parsed_args[0]
                 action_parser = self.get_action_parser(action)
                 if action_parser:
@@ -1136,15 +1243,36 @@ class DeviceAdminActionCommand(BaseDeviceCommand):
         enterprise_user_id = kwargs.get('enterprise_user_id')
         devices = kwargs.get('devices', [])
         
+        # Validate action
         if not action:
-            raise ValueError("Action is required")
+            raise ValidationError("Action is required")
+        if not DeviceInputValidator.validate_action(action):
+            raise ValidationError(f"Invalid action: '{action}'")
+        
+        # Validate enterprise user ID
         if not enterprise_user_id:
-            raise ValueError("Enterprise User ID is required")
+            raise ValidationError("Enterprise User ID is required")
+        if not DeviceInputValidator.validate_enterprise_user_id(enterprise_user_id):
+            raise ValidationError(f"Invalid enterprise user ID: {enterprise_user_id}")
+        
+        # Validate and sanitize device identifiers
         if not devices:
-            raise ValueError("At least one device must be specified")
+            raise ValidationError("At least one device must be specified")
+        
+        try:
+            validated_devices = DeviceInputValidator.validate_device_identifiers_list(devices)
+        except ValidationError as e:
+            raise ValidationError(f"Device validation failed: {e}")
+        
+        # Update kwargs with validated devices
+        kwargs['devices'] = validated_devices
 
     def execute(self, params: KeeperParams, **kwargs):
-        self._validate_inputs(**kwargs)
+        try:
+            self._validate_inputs(**kwargs)
+        except ValidationError as e:
+            logging.error(f"Input validation failed: {e}")
+            return
         
         action = kwargs.get('action')
         enterprise_user_id = kwargs.get('enterprise_user_id')
@@ -1269,5 +1397,4 @@ class DeviceAdminActionCommand(BaseDeviceCommand):
                             print(f"{bcolors.FAIL}✗{bcolors.ENDC} Device '{device_name}' for user {self._enterprise_user_id}: {error_msg}")
                             break
                 else:
-                    # Show count for multiple devices
                     print(f"{bcolors.FAIL}✗{bcolors.ENDC} {device_count} devices for user {self._enterprise_user_id}: {error_msg}")
