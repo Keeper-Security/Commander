@@ -138,7 +138,7 @@ aging_report_parser.error = raise_parse_exception
 aging_report_parser.exit = suppress_exit
 
 action_report_parser = argparse.ArgumentParser(prog='action-report', description='Run a user action report.', parents=[report_output_parser])
-action_report_target_statuses = ['no-logon', 'no-update', 'locked', 'invited', 'no-security-question-update', 'blocked']
+action_report_target_statuses = ['no-logon', 'no-update', 'locked', 'invited', 'no-security-question-update']
 action_report_parser.add_argument('--target', '-t', dest='target_user_status', action='store',
                                   choices=action_report_target_statuses, default='no-logon',
                                   help='user status to report on')
@@ -2114,8 +2114,6 @@ class ActionReportCommand(EnterpriseCommand):
         locked = [u for u in users if u.get('username') in emails_locked]
         emails_invited = {c.get('email') for c in candidates if c.get('status', '').lower() == 'invited'}
         invited = [u for u in users if u.get('username') in emails_invited]
-        emails_blocked = {c.get('email') for c in candidates if c.get('transfer_status', '').lower() == 'blocked'}
-        blocked = [u for u in users if u.get('username') in emails_blocked]
 
         target_status = kwargs.get('target_user_status', 'no-logon')
         days = kwargs.get('days_since')
@@ -2127,8 +2125,7 @@ class ActionReportCommand(EnterpriseCommand):
             'no-update': [active, days, ['record_add', 'record_update']],
             'locked': [locked, days, ['lock_user'], 'to_username'],
             'invited': [invited, days, ['send_invitation', 'auto_invite_user'], 'email'],
-            'no-security-question-update': [active, days, ['change_security_question']],
-            'blocked': [blocked, days, ['accept_transfer']]
+            'no-security-question-update': [active, days, ['change_security_question']]
         }
         args = args_by_status.get(target_status)
 
