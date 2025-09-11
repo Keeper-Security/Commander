@@ -306,7 +306,7 @@ _DEFAULT_PASSWORD_COMPLEXITY = """[
 def get_user_status_dict(user):
 
     def lock_text(lock):
-        return 'Locked' if lock == 1 else 'Disabled' if lock == 2 else ''
+        return 'Locked' if lock == 1 else 'Locked by IdP' if lock == 2 else ''
 
     account_status = 'Invited' if user['status'] == 'invited' else 'Active'
 
@@ -3470,13 +3470,7 @@ class UserReportCommand(EnterpriseCommand):
         if lock == 1:
             status = 'Locked'
         elif lock == 2:
-            status = 'Disabled'
-        if 'account_share_expiration' in user:
-            expire_at = datetime.datetime.fromtimestamp(user['account_share_expiration']/1000.0)
-            if expire_at < datetime.datetime.now():
-                status = 'Blocked'
-            else:
-                status = 'Pending Transfer'
+            status = 'Locked by IdP'
         return status
 
 
