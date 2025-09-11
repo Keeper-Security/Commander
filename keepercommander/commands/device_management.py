@@ -1186,7 +1186,6 @@ class DeviceAdminListCommand(BaseDeviceCommand):
         
         result = {
             'devices': device_list,
-            'totalDevices': len(device_list)
         }
         
         super()._display_json(result, output_file)
