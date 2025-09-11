@@ -48,6 +48,7 @@ class QueuedRequest:
     completed_at: Optional[datetime] = None
     result: Optional[Any] = None
     error_message: Optional[str] = None
+    temp_files: list = None  # List of temporary file paths to clean up
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert request to dictionary for JSON serialization."""
@@ -118,11 +119,12 @@ class RequestQueueManager:
         logger.info("Request queue worker stopped")
     
     @debug_decorator
-    def submit_request(self, command: str) -> str:
+    def submit_request(self, command: str, temp_files: list = None) -> str:
         """Submit a new command request to the queue.
         
         Args:
             command: The command string to execute
+            temp_files: List of temporary file paths to clean up after execution
             
         Returns:
             str: Unique request ID
@@ -135,7 +137,8 @@ class RequestQueueManager:
             request_id=request_id,
             command=command,
             status=RequestStatus.QUEUED,
-            created_at=datetime.now()
+            created_at=datetime.now(),
+            temp_files=temp_files or []
         )
         
         try:
@@ -231,6 +234,8 @@ class RequestQueueManager:
         Args:
             request: The request to process
         """
+        from ..util.request_validation import RequestValidator
+        
         self.current_request_id = request.request_id
         request.status = RequestStatus.PROCESSING
         request.started_at = datetime.now()
@@ -257,6 +262,10 @@ class RequestQueueManager:
             logger.error(f"Request {request.request_id} failed: {e}")
         
         finally:
+            # Clean up temporary files
+            if request.temp_files:
+                RequestValidator.cleanup_temp_files(request.temp_files)
+            
             # Move from active to completed
             with self.data_lock:
                 if request.request_id in self.active_requests:

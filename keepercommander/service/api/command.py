@@ -32,6 +32,7 @@ def create_legacy_command_blueprint():
     @unified_api_decorator()
     def execute_command_direct(**kwargs) -> Tuple[Union[Response, bytes], int]:
         """Execute command directly and return result immediately (legacy behavior)."""
+        temp_files = []
         try:
             logger.warning("LEGACY: /api/v1/ usage - migrate to /api/v2/")
             
@@ -42,8 +43,11 @@ def create_legacy_command_blueprint():
             command, validation_error = RequestValidator.validate_and_escape_command(request.json)
             if validation_error:
                 return validation_error
+            
+            # Process file data if present
+            processed_command, temp_files = RequestValidator.process_file_data(request.json, command)
                 
-            response, status_code = CommandExecutor.execute(command)
+            response, status_code = CommandExecutor.execute(processed_command)
             
             # If we get a busy response, add v1-specific message
             if (isinstance(response, dict) and 
@@ -56,6 +60,9 @@ def create_legacy_command_blueprint():
         except Exception as e:
             logger.error(f"Error executing command: {e}")
             return jsonify({"success": False, "error": f"Error: {str(e)}"}), 500
+        finally:
+            # Clean up temporary files
+            RequestValidator.cleanup_temp_files(temp_files)
 
     return bp
 
@@ -67,6 +74,7 @@ def create_command_blueprint():
     @unified_api_decorator()
     def execute_command(**kwargs) -> Tuple[Response, int]:
         """Submit a command for execution and return request ID immediately."""
+        temp_files = []
         try:
             json_error = RequestValidator.validate_request_json()
             if json_error:
@@ -76,9 +84,12 @@ def create_command_blueprint():
             if validation_error:
                 return validation_error
             
+            # Process file data if present
+            processed_command, temp_files = RequestValidator.process_file_data(request.json, command)
+            
             # Submit to queue and return request ID immediately
             try:
-                request_id = queue_manager.submit_request(command)
+                request_id = queue_manager.submit_request(processed_command, temp_files)
                 return jsonify({
                     "success": True,
                     "request_id": request_id,
@@ -86,6 +97,8 @@ def create_command_blueprint():
                     "message": "Request queued successfully. Use /api/v2/status/<request_id> to check progress, /api/v2/result/<request_id> to get results, or /api/v2/queue/status for queue info."
                 }), 202  # 202 Accepted
             except queue.Full:
+                # Clean up temp files if queue is full
+                RequestValidator.cleanup_temp_files(temp_files)
                 return jsonify({
                     "success": False, 
                     "error": "Error: Request queue is full. Please try again later."
@@ -93,6 +106,8 @@ def create_command_blueprint():
                 
         except Exception as e:
             logger.error(f"Error submitting request: {e}")
+            # Clean up temp files on error
+            RequestValidator.cleanup_temp_files(temp_files)
             return jsonify({"success": False, "error": f"{str(e)}"}), 500
 
     @bp.route("/status/<request_id>", methods=["GET"])

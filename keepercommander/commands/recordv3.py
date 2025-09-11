@@ -205,23 +205,23 @@ class RecordAddCommand(Command, recordv2.RecordUtils):
             # invalid options - no '=' or empty key or value
             inv = [x for x in options if len([s for s in (x or '').split('=', 1) if s.strip() != '']) != 2]
             if inv:
-                logging.error(bcolors.FAIL + 'Invalid option(s): ' + str(inv) + bcolors.ENDC)
+                # logging.error(bcolors.FAIL + 'Invalid option(s): ' + str(inv) + bcolors.ENDC)
                 logging.info('Record type options must be in the following format: key1=value1 key2=value2 ...')
-                return
+                raise CommandError('add', f'Invalid option(s): {inv}')
 
             # check for a single valid v3 record type
             types = [x for x in options if 'type' == (x or '').split('=', 1)[0].strip().lower()]
             uniq = list({x.split('=', 1)[1].strip() for x in types if x.__contains__('=')})
             if len(uniq) != 1: # RT either missing or specified more than once
-                logging.error(bcolors.FAIL + 'Please specify a valid record type: ' + str(types) + bcolors.ENDC)
-                return
+                # logging.error(bcolors.FAIL + 'Please specify a valid record type: ' + str(types) + bcolors.ENDC)
+                raise CommandError('add', f'Please specify a valid record type: {types}')
 
             rt = types[0].split('=', 1)[1].strip()
             rt_def = recordv3.RecordV3.resolve_record_type_by_name(params, rt)
             if not rt_def:
-                logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + rt +
-                    ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
-                return
+                # logging.error(bcolors.FAIL + 'Record type definition not found for type: ' + rt +
+                #     ' - to get list of all available record types use: record-type-info -lr' + bcolors.ENDC)
+                raise CommandError('add', f'Record type definition not found for type: {rt} - to get list of all available record types use: record-type-info -lr')
 
         data_json = str(kwargs['data']).strip() if 'data' in kwargs and kwargs['data'] else None
         data_file = str(kwargs['data_file']).strip() if 'data_file' in kwargs and kwargs['data_file'] else None

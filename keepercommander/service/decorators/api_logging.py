@@ -17,18 +17,48 @@ import re
 from .logging import logger
 
 def sanitize_password_in_command(data):
-    """Sanitize password values in command string"""
-    if not data or 'command' not in data:
+    """Sanitize password values in command string and filedata"""
+    if not data:
         return data
     
     sanitized = data.copy()
-    command = sanitized['command']
     
-    # Pattern to match password=value (with or without quotes)
-    password_pattern = r"password=(['\"]?)([^'\"\s]{1,1024})\1"
-    sanitized['command'] = re.sub(password_pattern, r"password=\1***\1", command)
+    # Sanitize command string if present
+    if 'command' in sanitized:
+        command = sanitized['command']
+        # Pattern to match password=value (with or without quotes)
+        password_pattern = r"password=(['\"]?)([^'\"\s]{1,1024})\1"
+        sanitized['command'] = re.sub(password_pattern, r"password=\1***\1", command)
+    
+    # Sanitize filedata if present
+    if 'filedata' in sanitized:
+        sanitized['filedata'] = _sanitize_nested_data(sanitized['filedata'])
     
     return sanitized
+
+def _sanitize_nested_data(data):
+    """Recursively sanitize nested data structures"""
+    if isinstance(data, dict):
+        sanitized = {}
+        for key, value in data.items():
+            # Sanitize sensitive field names
+            if key.lower() in ['password', 'login', 'secret', 'token', 'key']:
+                if isinstance(value, str) and len(value) > 0:
+                    sanitized[key] = '*' * min(len(value), 15)
+                else:
+                    sanitized[key] = '***'
+            else:
+                sanitized[key] = _sanitize_nested_data(value)
+        return sanitized
+    elif isinstance(data, list):
+        return [_sanitize_nested_data(item) for item in data]
+    elif isinstance(data, str):
+        # Sanitize email addresses in string values to protect PII
+        import re
+        sanitized_str = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '***@***.***', data)
+        return sanitized_str
+    else:
+        return data
 
 def _get_sanitized_request_data():
     """Extract and sanitize request data for logging (only for JSON POST requests)"""
