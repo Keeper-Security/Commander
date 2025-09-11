@@ -138,8 +138,8 @@ class StatusMapper:
     ACTION_DESCRIPTIONS = {
         'logout': 'Logout the user from the device',
         'remove': 'Logout & Remove the user from that device',
-        'lock': 'Lock the device for all users and auto linked devices. Logout all users',
-        'unlock': 'Unlock the devices and auto linked devices for the user',
+        'lock': 'Lock the device for all users on the devices and the associated auto linked devices. Logout all users from the device',
+        'unlock': 'Unlock the devices and the associated auto linked devices for the calling user',
         'account-lock': 'Lock the device for the user only. If user is logged in, logout',
         'account-unlock': 'Unlock the device for the user',
     }
@@ -564,12 +564,12 @@ DEVICE_ACTION_DEFINITIONS = {
         'min_devices': 1
     },
     'lock': {
-        'description': 'Lock the device for all users and auto linked devices. Logout all users',
+        'description': 'Lock the device for all users on the devices and the associated auto linked devices. Logout all users from the device',
         'help': 'Device IDs (1, 2, 3...) or device names to lock',
         'min_devices': 1
     },
     'unlock': {
-        'description': 'Unlock the devices and auto linked devices for the user',
+        'description': 'Unlock the devices and the associated auto linked devices for the calling user',
         'help': 'Device IDs (1, 2, 3...) or device names to unlock',
         'min_devices': 1
     },
@@ -638,12 +638,12 @@ DEVICE_ADMIN_ACTION_DEFINITIONS = {
         'min_devices': 1
     },
     'lock': {
-        'description': 'Lock the device for all users and auto linked devices. Logout all users',
+        'description': 'Lock the device for all users on the devices and the associated auto linked devices. Logout all users from the device',
         'help': 'Device IDs (1, 2, 3...) or device names to lock',
         'min_devices': 1
     },
     'unlock': {
-        'description': 'Unlock the devices and auto linked devices for the user',
+        'description': 'Unlock the devices and the associated auto linked devices for the calling user',
         'help': 'Device IDs (1, 2, 3...) or device names to unlock',
         'min_devices': 1
     },
