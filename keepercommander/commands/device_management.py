@@ -755,8 +755,9 @@ class DeviceUserListCommand(BaseDeviceCommand):
     def _display_json(self, devices: List, output_file: Optional[str] = None):
         """Display devices in JSON format."""
         device_list = []
-        for device in devices:
+        for i, device in enumerate(devices, 1):
             device_info = {
+                'id': i,
                 'deviceName': device.deviceName,
                 'clientType': DeviceManagement_pb2.ClientType.Name(device.clientType),
                 'loginStatus': StatusMapper.get_login_status_display(device.loginState),
@@ -1163,11 +1164,12 @@ class DeviceAdminListCommand(BaseDeviceCommand):
     def _display_json(self, devices: List, output_file: Optional[str] = None):
         """Display admin devices in JSON format."""
         device_list = []
-        for device_info in devices:
+        for i, device_info in enumerate(devices, 1):
             device = device_info['device']
             enterprise_user_id = device_info['enterprise_user_id']
             
             device_info_json = {
+                'id': i,
                 'enterpriseUserId': enterprise_user_id,
                 'deviceName': device.deviceName,
                 'uiCategory': UICategory.get_ui_category(device),
