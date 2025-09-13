@@ -311,35 +311,163 @@ The service includes robust error handling for:
 
 ## Docker Deploy
 
-### Install, build and run docker image
- 
-  1. Install [Docker](https://www.docker.com/).
-  1. Clone the repository [git clone](https://github.com/Keeper-Security/Commander.git).
-  1. Build docker image using command  ``` docker build -t keeper-commander . ```
-  1. Verify docker image created. ``` docker images ```
-  1. Set two environment variables in your terminal window:
-      1. `KEEPER_USERNAME` - This is the username that can login to Keeper Commander
-      1. `KEEPER_PASSWORD` - This is the password for the above user
-  1. Run the keeper-commander docker image with ngrok using command
-      ```bash
-        docker run -d -p <port>:<port> keeper-commander \
-          service-create -p <port> -c '<comma separated commands like tree,ls>' \
-          -aip <allowed-ip-list-comma seprated>
-          -dip <denied-ip-list-comma seprated>
-          -ng <ngrok-auth-token>
-          -cd <ngrok-custom-domain>
-          --user $KEEPER_USERNAME \
-          --password $KEEPER_PASSWORD
-      ```  
-   1. Verify keeper-commander image is started using command  `docker ps`
-   1. Check the logs using command
-      ```bash
-       docker logs <docker container name or ID>
-       ```
-      and get the API key from logs. The API key will show up like this:
-      ```
-      Generated API key: <API-KEY>
-      ```
+The Docker container provides a streamlined way to deploy Keeper Commander Service with automatic device registration and persistent login setup.
+
+### Prerequisites
+
+1. Install [Docker](https://www.docker.com/)
+2. Clone the repository: `git clone https://github.com/Keeper-Security/Commander.git`
+3. Navigate to the Commander directory: `cd Commander`
+
+### Build Docker Image
+
+Build the Docker image:
+```bash
+docker build -t keeper-commander .
+```
+
+Verify the image was created:
+```bash
+docker images
+```
+
+### Authentication Methods
+
+The Docker container supports two authentication methods:
+
+#### Method 1: Using Credentials (Recommended for new deployments)
+Pass credentials directly via command line arguments. The container will automatically:
+- Register the device with Keeper
+- Enable persistent login
+- Start the service
+
+#### Method 2: Using Config File (For existing configurations)
+Mount an existing Keeper configuration file to the container.
+
+### Run Docker Container
+
+#### With User/Password Authentication
+
+```bash
+docker run -d -p <port>:<port> keeper-commander \
+  service-create \
+  -p <port> \
+  -c '<comma-separated-commands>' \
+  -f <json-or-yaml> \
+  --user <keeper-username> \
+  --password <keeper-password> \
+  --server <keeper-server>
+```
+
+**Parameters:**
+- `-p, --port`: Port number for the service
+- `-c, --commands`: Comma-separated list of allowed commands
+- `-f, --fileformat`: Configuration file format (json/yaml)
+- `--user`: Keeper username for authentication
+- `--password`: Keeper password for authentication  
+- `--server`: Keeper server (optional, defaults to `keepersecurity.com`)
+
+**Example:**
+```bash
+docker run -d -p 9009:9009 keeper-commander \
+  service-create \
+  -p 9009 \
+  -c 'tree,ls' \
+  -f json \
+  --user myuser@company.com \
+  --password mypassword
+```
+
+#### With Config File Authentication
+
+**Prerequisites:**
+
+Before using config file authentication, you must first create a properly configured `config.json` file on your host machine:
+
+1. **Login to Keeper on your host machine:**
+   ```bash
+   keeper shell
+   # Then login with your credentials
+   login user@example.com
+   ```
+
+2. **Register device:**
+   ```bash
+   this-device register
+   ```
+
+3. **Enable persistent login:**
+   ```bash
+   this-device persistent-login on
+   ```
+
+4. **Copy config file:**
+   Once configured, locate the `config.json` file in `.keeper` directory in your host machine and copy the contents of the `config.json` file to your desired path (e.g., `/path/to/local/config.json`) for Docker mounting.
+
+Mount your existing Keeper config file:
+```bash
+docker run -d -p <port>:<port> \
+  -v /path/to/local/config.json:/home/commander/.keeper/config.json \
+  keeper-commander \
+  service-create -p <port> -c '<commands>' -f <json-or-yaml>
+```
+
+#### Interactive Keeper Shell Mode
+
+Run Keeper Commander in interactive mode for manual configuration and testing:
+```bash
+docker run -it keeper-commander shell
+```
+
+This will start the container with an interactive terminal session, allowing you to:
+- Configure the service interactively using the `service-create` command
+- Test commands manually before setting up the service
+- Access the full Keeper Commander CLI interface
+- Debug configuration issues
+
+**Example interactive session:**
+```bash
+docker run -it keeper-commander shell
+# Inside the container:
+My Vault> login user@example.com
+```
+
+### Verify Deployment
+
+1. **Check container status:**
+   ```bash
+   docker ps
+   ```
+
+2. **View container logs:**
+   ```bash
+   docker logs <container-name-or-id>
+   ```
+
+3. **Get API key from logs:**
+   Look for the API key in the container logs:
+   ```
+   Generated API key: <API-KEY>
+   ```
+
+4. **Follow logs in real-time:**
+   ```bash
+   docker logs -f <container-name-or-id>
+   ```
+
+### Container Architecture
+
+- **Base Image**: `python:3.11-slim`
+- **User**: Non-root user `commander` (UID: 1000, GID: 1000)
+- **Working Directory**: `/commander`
+- **Config Directory**: `/home/commander/.keeper/`
+- **Entrypoint**: `docker-entrypoint.sh` with automatic authentication setup
+
+### Security Features
+
+- **Non-root execution**: Container runs as user `commander` for enhanced security
+- **Persistent login**: Maintains authentication across container restarts
+- **Flexible authentication**: Supports both credential and config file authentication
 
 ### Execute Command Endpoint
 
