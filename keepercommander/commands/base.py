@@ -114,6 +114,10 @@ def register_commands(commands, aliases, command_info):
     commands['2fa'] = TwoFaCommand()
     command_info['2fa'] = '2FA management'
 
+    from . import device_management
+    device_management.register_commands(commands)
+    device_management.register_command_info(aliases, command_info)
+
     if sys.version_info.major == 3 and sys.version_info.minor >= 10 and (utils.is_windows_11() or sys.platform == 'darwin'):
         from ..biometric import BiometricCommand
         commands['biometric'] = BiometricCommand()
@@ -164,6 +168,10 @@ def register_enterprise_commands(commands, aliases, command_info):
     commands['risk-management'] = RiskManagementReportCommand()
     command_info['risk-management'] = 'Risk Management Reports'
     aliases['rmd'] = 'risk-management'
+    
+    from . import device_management
+    device_management.register_enterprise_commands(commands)
+    device_management.register_enterprise_command_info(aliases, command_info)
 
 
 def register_msp_commands(commands, aliases, command_info):
