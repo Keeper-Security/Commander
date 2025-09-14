@@ -101,11 +101,29 @@ class ServiceManager:
             queue_enabled = config_data.get("queue_enabled", "y")
             api_version = "v2" if queue_enabled == "y" else "v1"
             
-            print(f"Commander Service starting on https://localhost:{port}/api/{api_version}/")
+            # Check if SSL is configured to determine the correct protocol
+            ssl_context = cls.get_ssl_context(config_data)
+            protocol = "https" if ssl_context else "http"
+            
+            print(f"Commander Service starting on {protocol}://localhost:{port}/api/{api_version}/")
             
             ngrok_pid = NgrokConfigurator.configure_ngrok(config_data, service_config)
             
-            logging.getLogger('werkzeug').setLevel(logging.WARNING)
+            # Custom logging filter to replace SSL handshake errors with user-friendly message
+            class SSLHandshakeFilter(logging.Filter):
+                def filter(self, record):
+                    # Replace "Bad request version" errors with a clearer message
+                    if hasattr(record, 'getMessage'):
+                        message = record.getMessage()
+                        if "Bad request version" in message and any(ord(c) > 127 for c in message):
+                            # Replace the ugly SSL handshake error with a user-friendly message
+                            record.msg = "HTTPS request received but HTTPS protocol is not enabled on this service"
+                            record.args = ()
+                    return True
+            
+            werkzeug_logger = logging.getLogger('werkzeug')
+            werkzeug_logger.setLevel(logging.WARNING)
+            werkzeug_logger.addFilter(SSLHandshakeFilter())
 
             if config_data.get("run_mode") == "background":
 

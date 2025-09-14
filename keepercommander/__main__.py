@@ -220,6 +220,16 @@ def main(from_package=False):
 
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
     opts, flags = parser.parse_known_args(sys.argv[1:])
+    # Store the original command arguments for proper reconstruction
+    if opts.command:
+        # Find where the command starts in the original args and take everything after it
+        try:
+            cmd_index = sys.argv[1:].index(opts.command)
+            original_args_after_command = sys.argv[1:][cmd_index+1:]
+        except ValueError:
+            original_args_after_command = []
+    else:
+        original_args_after_command = []
     if opts.launched_with_shortcut:
         os.chdir(Path.home())
 
@@ -290,11 +300,10 @@ def main(from_package=False):
             params.commands.append('q')
             params.batch_mode = True
         else:
-            flags = ' '.join([shlex.quote(x) for x in flags]) if flags is not None else ''
-            options = ' '.join([shlex.quote(x) for x in opts.options]) if opts.options is not None else ''
             if opts.command:
-                options = ' -- ' + options if options.startswith('-') else options
-                command = ' '.join([opts.command or '', options, flags])
+                # Use the original argument order instead of the parsed/split version
+                options = ' '.join(original_args_after_command) if original_args_after_command else ''
+                command = ' '.join([opts.command or '', options]).strip()
                 params.commands.append(command)
             params.commands.append('q')
             params.batch_mode = True

@@ -50,6 +50,8 @@ class KeeperResponseParser:
             return KeeperResponseParser._parse_ls_command(response_str)
         elif command.startswith("tree"):
             return KeeperResponseParser._parse_tree_command(response_str)
+        elif command.startswith("whoami"):
+            return KeeperResponseParser._parse_whoami_command(response_str)
         elif command.startswith("mkdir"):
             return KeeperResponseParser._parse_mkdir_command(response_str)
         elif command.startswith("record-add"):
@@ -160,6 +162,97 @@ class KeeperResponseParser:
                 "name": name,
                 "path": "/".join(current_path)
             })
+        
+        return result
+
+    @staticmethod
+    def _parse_whoami_command(response: str) -> Dict[str, Any]:
+        """Parse 'whoami' command output into structured format."""
+        result = {
+            "status": "success",
+            "command": "whoami",
+            "data": {}
+        }
+        
+        if "Not logged in" in response:
+            result["data"]["logged_in"] = False
+            result["data"]["message"] = "Not logged in"
+            return result
+        
+        result["data"]["logged_in"] = True
+        
+        # Parse each line of the whoami output
+        for line in response.strip().split("\n"):
+            line = line.strip()
+            if not line or line == "":
+                continue
+                
+            if ":" in line:
+                # Split on first colon only
+                key, value = line.split(":", 1)
+                key = key.strip()
+                value = value.strip()
+                
+                # Convert key to snake_case and normalize
+                key_normalized = key.lower().replace(" ", "_").replace("&", "and")
+                
+                # Handle special cases
+                if key_normalized == "user":
+                    result["data"]["user"] = value
+                elif key_normalized == "server":
+                    result["data"]["server"] = value
+                elif key_normalized == "data_center":
+                    result["data"]["data_center"] = value
+                elif key_normalized == "environment":
+                    result["data"]["environment"] = value
+                elif key_normalized == "admin":
+                    result["data"]["admin"] = value.lower() == "yes"
+                elif key_normalized == "account_type":
+                    result["data"]["account_type"] = value
+                elif key_normalized == "renewal_date":
+                    result["data"]["renewal_date"] = value
+                elif key_normalized == "storage_capacity":
+                    result["data"]["storage_capacity"] = value
+                elif key_normalized == "usage":
+                    result["data"]["storage_usage"] = value
+                elif key_normalized == "storage_renewal_date":
+                    result["data"]["storage_renewal_date"] = value
+                elif key_normalized == "breachwatch":
+                    result["data"]["breachwatch"] = value.lower() == "yes"
+                elif key_normalized == "reporting_and_alerts":
+                    result["data"]["reporting_and_alerts"] = value.lower() == "yes"
+                elif key_normalized == "records":
+                    try:
+                        result["data"]["records_count"] = int(value)
+                    except ValueError:
+                        result["data"]["records_count"] = value
+                elif key_normalized == "shared_folders":
+                    try:
+                        result["data"]["shared_folders_count"] = int(value)
+                    except ValueError:
+                        result["data"]["shared_folders_count"] = value
+                elif key_normalized == "teams":
+                    try:
+                        result["data"]["teams_count"] = int(value)
+                    except ValueError:
+                        result["data"]["teams_count"] = value
+                elif key_normalized == "base_plan":
+                    result["data"]["base_plan"] = value
+                elif key_normalized == "expires":
+                    result["data"]["license_expires"] = value
+                elif key_normalized == "user_licenses":
+                    result["data"]["user_licenses"] = value
+                elif key_normalized == "secure_file_storage":
+                    result["data"]["secure_file_storage"] = value
+                elif "secure_add_ons" in key_normalized or key_normalized == "":
+                    # Handle add-ons (multiple lines with same key or empty key)
+                    if "add_ons" not in result["data"]:
+                        result["data"]["add_ons"] = []
+                    if value:  # Only add non-empty values
+                        result["data"]["add_ons"].append(value)
+                else:
+                    # Generic handling for other fields
+                    result["data"][key_normalized] = value
         
         return result
 
