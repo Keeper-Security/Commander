@@ -105,20 +105,24 @@ class CommandExecutor:
         
         service_config = ServiceConfig()
         config_data = service_config.load_config()
-
+        try:
+            params = get_current_params()
+        except Exception as e:
+            logger.debug(f"Failed to get params from globals: {e}")
+            params = None
         if config_data.get("run_mode") == "background":
             try:
-                config_path = utils.get_default_path() / "config.json"
-                params = get_params_from_config(config_path)
+                if not params:
+                    config_path = utils.get_default_path() / "config.json"
+                    params = get_params_from_config(config_path)
+                    from ..core.globals import init_globals
+                    init_globals(params)
             except FileNotFoundError:
                 logger.error(f"Config file not found at {config_path}")
                 raise
             except Exception as e:
                 logger.error(f"Failed to load params from config file: {e}")
                 raise
-        else:
-            params = get_current_params()
-
         try:
             command = html.unescape(command)
             return_value, printed_output = CommandExecutor.capture_output(params, command)
