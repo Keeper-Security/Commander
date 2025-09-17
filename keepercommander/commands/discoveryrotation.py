@@ -1324,6 +1324,8 @@ gcp_group = common_parser.add_argument_group('gcp', 'GCP configuration')
 gcp_group.add_argument('--gcp-id', dest='gcp_id', action='store', help='GCP Id')
 gcp_group.add_argument('--service-account-key', dest='service_account_key', action='store',
                          help='Service Account Key (JSON format)')
+gcp_group.add_argument('--google-admin-email', dest='google_admin_email', action='store',
+                         help='Google Workspace Administrator Email Address')
 gcp_group.add_argument('--gcp-region', dest='region_names', action='append', help='GCP Region Names')
 
 class PamConfigurationEditMixin(RecordEditMixin):
@@ -1462,6 +1464,9 @@ class PamConfigurationEditMixin(RecordEditMixin):
             service_account_key = kwargs.get('service_account_key')
             if service_account_key:
                 extra_properties.append(f'json.pamServiceAccountKey={service_account_key}')
+            google_admin_email = kwargs.get('google_admin_email')
+            if google_admin_email:
+                extra_properties.append(f'email.pamGoogleAdminEmail={google_admin_email}')
             gcp_region = kwargs.get('region_names')
             if gcp_region:
                 regions = '\n'.join(gcp_region)
