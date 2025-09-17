@@ -110,14 +110,14 @@ Examples:
   public-api-key revoke 12345 -f
 
 Tips:
-  - Use 'public-api-key list' to find the token ID you want to revoke
+  - Use 'public-api-key list' to find the Token you want to revoke
   - Revoked keys cannot be restored, only new keys can be generated
   - Use --force to skip the confirmation prompt (useful for scripts)
     ''',
     formatter_class=argparse.RawDescriptionHelpFormatter
 )
-api_key_revoke_parser.add_argument('token_id', 
-                                   help='API key token ID (get this from "api-key list" command). Example: 12345')
+api_key_revoke_parser.add_argument('token', 
+                                   help='API key Token (get this from "api-key list" command). Example: 12345')
 api_key_revoke_parser.add_argument('--force', '-f', dest='force', action='store_true', 
                                    help='Revoke without confirmation prompt (useful for automated scripts)')
 
@@ -177,7 +177,7 @@ class ApiKeyListCommand(EnterpriseCommand):
 
     def execute(self, params, **kwargs):
         fmt = kwargs.get('format') or ''
-        headers = ['token_id', 'enterprise_id', 'name', 'status', 'issued_date', 'expiration_date', 'roles']
+        headers = ['token', 'enterprise_id', 'name', 'status', 'issued_date', 'expiration_date', 'roles']
         if fmt != 'json':
             headers = [field_to_title(x) for x in headers]
 
@@ -191,7 +191,7 @@ class ApiKeyListCommand(EnterpriseCommand):
             rs = api.communicate_rest(
                 params, rq, 
                 'public_api/list_token',
-                rs_type=publicapi_pb2.PublicApiTokens
+                rs_type=publicapi_pb2.PublicApiTokenResponseList
             )
             
             for token in rs.tokens:
@@ -215,7 +215,7 @@ class ApiKeyListCommand(EnterpriseCommand):
                 
                 
                 row = [
-                    token.enterprisePublicApiTokenId,
+                    token.token,
                     token.enterprise_id,
                     token.name,
                     status,
@@ -270,7 +270,7 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
             # Parse roles - now required
             roles_str = kwargs.get('roles')
             if not roles_str:
-                print("At least one role is required. Example: --roles 'SIEM:2,Admin:1'")
+                print("At least one role is required. Example: --roles 'SIEM:2,CSPM:1'")
                 return
             
             for role_spec in roles_str.split(','):
@@ -317,13 +317,12 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
             rs = api.communicate_rest(
                 params, rq,
                 'public_api/generate_token',
-                rs_type=publicapi_pb2.PublicApiToken
+                rs_type=publicapi_pb2.PublicApiTokenResponse
             )
             
             fmt = kwargs.get('format') or 'table'
             if fmt == 'json':
                 output = {
-                    'token_id': rs.enterprisePublicApiTokenId,
                     'name': rs.name,
                     'token': rs.token,
                     'enterprise_id': rs.enterprise_id,
@@ -347,7 +346,7 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
                     return json.dumps(output, indent=2)
             else:
                 print(f"{bcolors.OKGREEN}API Key generated successfully{bcolors.ENDC}")
-                print(f"Token ID: {rs.enterprisePublicApiTokenId}")
+                print(f"Token: {rs.token}")
                 print(f"Name: {rs.name}")
                 print(f"Token: {rs.token}")
                 print(f"Enterprise ID: {rs.enterprise_id}")
@@ -373,22 +372,16 @@ class ApiKeyRevokeCommand(EnterpriseCommand):
         return api_key_revoke_parser
 
     def execute(self, params, **kwargs):
-        token_id = kwargs.get('token_id')
-        if not token_id:
-            print("Token ID is required")
-            return
-        
-        try:
-            token_id = int(token_id)
-        except ValueError:
-            print("Token ID must be a number")
+        token = kwargs.get('token')
+        if not token:
+            print("Token is required")
             return
         
         # Confirm revocation unless force flag is set
         if not kwargs.get('force'):
             answer = user_choice(
                 bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
-                f'You are about to revoke API key with ID {token_id}' +
+                f'You are about to revoke API key with Token {token}' +
                 '\n\nDo you want to proceed with revocation?', 'yn', 'n'
             )
             if answer.lower() != 'y':
@@ -397,7 +390,7 @@ class ApiKeyRevokeCommand(EnterpriseCommand):
         try:
             # Create the revoke token request
             rq = publicapi_pb2.RevokeTokenRequest()
-            rq.id = token_id
+            rq.token = token
             
             # Send the request
             rs = api.communicate_rest(
@@ -406,7 +399,7 @@ class ApiKeyRevokeCommand(EnterpriseCommand):
                 rs_type=publicapi_pb2.RevokeTokenResponse
             )
             
-            print(f"{bcolors.OKGREEN}API Key with ID {token_id} revoked successfully{bcolors.ENDC}")
+            print(f"{bcolors.OKGREEN}API Key with Token {token} revoked successfully{bcolors.ENDC}")
             if rs.message:
                 print(f"Message: {rs.message}")
                 

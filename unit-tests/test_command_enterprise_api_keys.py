@@ -44,7 +44,7 @@ class TestEnterpriseApiKeys(TestCase):
         
         # Verify the table output contains expected headers and data
         output = captured_output.getvalue()
-        self.assertIn('Token ID', output)
+        self.assertIn('Token', output)
         self.assertIn('Enterprise ID', output)
         self.assertIn('Name', output)
         self.assertIn('Status', output)
@@ -53,7 +53,7 @@ class TestEnterpriseApiKeys(TestCase):
         self.assertIn('Roles', output)
         
         # Verify sample data appears in output
-        self.assertIn('43', output)  # Token ID
+        self.assertIn('expired_token_43', output)  # Token
         self.assertIn('8560', output)  # Enterprise ID
         self.assertIn('Token Test', output)  # Name
         self.assertIn('Expired', output)  # Status
@@ -73,7 +73,7 @@ class TestEnterpriseApiKeys(TestCase):
         # Assert that the JSON result matches the expected values for all entries
         expected_json = [
             {
-                "token_id": 43,
+                "token": "expired_token_43",
                 "enterprise_id": 8560,
                 "name": "Token Test",
                 "status": "Expired",
@@ -82,7 +82,7 @@ class TestEnterpriseApiKeys(TestCase):
                 "roles": "SIEM:2, CSPM:2"
             },
             {
-                "token_id": 44,
+                "token": "expired_token_44",
                 "enterprise_id": 8560,
                 "name": "Token Test",
                 "status": "Expired",
@@ -91,7 +91,7 @@ class TestEnterpriseApiKeys(TestCase):
                 "roles": "SIEM:2, CSPM:2"
             },
             {
-                "token_id": 45,
+                "token": "expired_token_45",
                 "enterprise_id": 8560,
                 "name": "Token Test 2",
                 "status": "Expired",
@@ -100,7 +100,7 @@ class TestEnterpriseApiKeys(TestCase):
                 "roles": "SIEM:2, CSPM:2"
             },
             {
-                "token_id": 53,
+                "token": "active_token_53",
                 "enterprise_id": 8560,
                 "name": "CSPM Tool",
                 "status": "Active",
@@ -109,7 +109,7 @@ class TestEnterpriseApiKeys(TestCase):
                 "roles": "SIEM:2, CSPM:1"
             },
             {
-                "token_id": 54,
+                "token": "permanent_token_54",
                 "enterprise_id": 8560,
                 "name": "Token For My Tests 111",
                 "status": "Active",
@@ -137,9 +137,8 @@ class TestEnterpriseApiKeys(TestCase):
         # Verify output matches Commander terminal example
         output = captured_output.getvalue()
         self.assertIn('API Key generated successfully', output)
-        self.assertIn('Token ID: 55', output)
-        self.assertIn('Name: SIEM Tool', output)
         self.assertIn('Token: fmrQMBA6w-l_b-ODp6I4KUM2Pk5OJzJtgwWmawFq', output)
+        self.assertIn('Name: SIEM Tool', output)
         self.assertIn('Enterprise ID: 8560', output)
         self.assertIn('Expires: 2025-08-09', output)  # Date format
         self.assertIn('Roles:', output)
@@ -258,7 +257,7 @@ class TestEnterpriseApiKeys(TestCase):
         with mock.patch('builtins.print') as mock_print:
             cmd.execute(params, name='Test Key')
         
-        mock_print.assert_called_with("At least one role is required. Example: --roles 'SIEM:2,Admin:1'")
+        mock_print.assert_called_with("At least one role is required. Example: --roles 'SIEM:2,CSPM:1'")
 
     def test_api_key_generate_invalid_role_format(self):
         """Test API key generation fails with invalid role format"""
@@ -292,7 +291,7 @@ class TestEnterpriseApiKeys(TestCase):
         TestEnterpriseApiKeys.expected_commands = ['revoke_token']
         
         with mock.patch('builtins.print'):
-            cmd.execute(params, token_id='12345', force=True)
+            cmd.execute(params, token='12345', force=True)
         
         self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
 
@@ -305,17 +304,16 @@ class TestEnterpriseApiKeys(TestCase):
         
         # Capture print output to verify exact format from terminal example
         captured_output = io.StringIO()
-        with mock.patch('builtins.input', return_value='y') as mock_input:
+        with mock.patch('keepercommander.commands.enterprise_api_keys.user_choice', return_value='y') as mock_input:
             with mock.patch('sys.stdout', captured_output):
-                cmd.execute(params, token_id='55')
+                cmd.execute(params, token='55')
         
         self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
         mock_input.assert_called_once()
         
         # Verify output matches Commander terminal example
         output = captured_output.getvalue()
-        self.assertIn('API Key with ID 55 revoked successfully', output)
-        self.assertIn('Message: Token revoked successfully', output)
+        self.assertIn('API Key with Token 55 revoked successfully', output)
 
     def test_api_key_revoke_cancelled_by_user(self):
         """Test API key revocation cancelled by user"""
@@ -323,8 +321,8 @@ class TestEnterpriseApiKeys(TestCase):
         
         cmd = enterprise_api_keys.ApiKeyRevokeCommand()
         
-        with mock.patch('builtins.input', return_value='n') as mock_input:
-            cmd.execute(params, token_id='12345')
+        with mock.patch('keepercommander.commands.enterprise_api_keys.user_choice', return_value='n') as mock_input:
+            cmd.execute(params, token='12345')
         
         # Should not have made any API calls
         self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
@@ -339,18 +337,8 @@ class TestEnterpriseApiKeys(TestCase):
         with mock.patch('builtins.print') as mock_print:
             cmd.execute(params)
         
-        mock_print.assert_called_with("Token ID is required")
+        mock_print.assert_called_with("Token is required")
 
-    def test_api_key_revoke_invalid_token_id(self):
-        """Test API key revocation fails with invalid token ID"""
-        params = get_connected_params()
-        
-        cmd = enterprise_api_keys.ApiKeyRevokeCommand()
-        
-        with mock.patch('builtins.print') as mock_print:
-            cmd.execute(params, token_id='invalid_id')
-        
-        mock_print.assert_called_with("Token ID must be a number")
 
     def test_api_key_main_command_default_list_behavior(self):
         """Test main API key command defaults to list behavior like terminal example"""
@@ -371,9 +359,9 @@ class TestEnterpriseApiKeys(TestCase):
         # Verify output contains list data like terminal example
         output = captured_output.getvalue()
         # Should show the table with all tokens
-        self.assertIn('Token ID', output)
+        self.assertIn('Token', output)
         self.assertIn('Enterprise ID', output)
-        self.assertIn('43', output)  # First token ID
+        self.assertIn('expired_token_43', output)  # First token
         self.assertIn('8560', output)  # Enterprise ID
         self.assertIn('Token Test', output)  # Token name
         self.assertIn('CSPM Tool', output)  # Another token name
@@ -439,9 +427,9 @@ class TestEnterpriseApiKeys(TestCase):
         self.assertIsInstance(data, list)
         self.assertGreaterEqual(len(data), 5)  # Should have 5 tokens from terminal example
         
-        # Validate first token (ID 43)
+        # Validate first token
         token = data[0]
-        self.assertEqual(token['token_id'], 43)
+        self.assertEqual(token['token'], 'expired_token_43')
         self.assertEqual(token['enterprise_id'], 8560)
         self.assertEqual(token['name'], 'Token Test')
         self.assertEqual(token['status'], 'Expired')
@@ -468,7 +456,6 @@ class TestEnterpriseApiKeys(TestCase):
         self.assertIsInstance(data, dict)
         
         # Validate all fields match terminal example
-        self.assertEqual(data['token_id'], 55)
         self.assertEqual(data['name'], 'SIEM Tool')
         self.assertEqual(data['token'], 'fmrQMBA6w-l_b-ODp6I4KUM2Pk5OJzJtgwWmawFq')
         self.assertEqual(data['enterprise_id'], 8560)
@@ -517,14 +504,18 @@ class TestEnterpriseApiKeys(TestCase):
         
         output = captured_output.getvalue()
         
-        # Verify expired tokens show as Expired (tokens 43, 44, 45 expired in 2025-04-15)
-        self.assertIn('43             8560  Token Test              Expired', output)
-        self.assertIn('44             8560  Token Test              Expired', output)
-        self.assertIn('45             8560  Token Test 2            Expired', output)
+        # Verify expired tokens show as Expired
+        self.assertIn('expired_token_43', output)
+        self.assertIn('expired_token_44', output) 
+        self.assertIn('expired_token_45', output)
+        self.assertIn('Token Test              Expired', output)
+        self.assertIn('Token Test 2            Expired', output)
         
-        # Verify active tokens show as Active (tokens 53, 54)
-        self.assertIn('53             8560  CSPM Tool               Active', output)
-        self.assertIn('54             8560  Token For My Tests 111  Active', output)
+        # Verify active tokens show as Active
+        self.assertIn('active_token_53', output)
+        self.assertIn('permanent_token_54', output)
+        self.assertIn('CSPM Tool               Active', output)
+        self.assertIn('Token For My Tests 111  Active', output)
         
         # Verify never expires shows "Never"
         self.assertIn('Never', output)
@@ -539,14 +530,13 @@ class TestEnterpriseApiKeys(TestCase):
         captured_output = io.StringIO()
         with mock.patch('sys.stdout', captured_output):
             # Force flag should bypass confirmation
-            cmd.execute(params, token_id='55', force=True)
+            cmd.execute(params, token='55', force=True)
         
         self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
         
         # Verify output shows successful revocation
         output = captured_output.getvalue()
-        self.assertIn('API Key with ID 55 revoked successfully', output)
-        self.assertIn('Message: Token revoked successfully', output)
+        self.assertIn('API Key with Token 55 revoked successfully', output)
 
     @staticmethod
     def communicate_rest_success(params, request, path, rs_type=None):
@@ -555,14 +545,13 @@ class TestEnterpriseApiKeys(TestCase):
         
         if path == 'public_api/list_token' and expected_path == 'list_token':
             # Mock list tokens response matching Commander terminal example
-            rs = publicapi_pb2.PublicApiTokens()
+            rs = publicapi_pb2.PublicApiTokenResponseList()
             
             # Add sample tokens matching the terminal example
             # Token 43 - Expired
             token1 = rs.tokens.add()
-            token1.enterprisePublicApiTokenId = 43
-            token1.name = "Token Test"
             token1.token = "expired_token_43"
+            token1.name = "Token Test"
             token1.enterprise_id = 8560
             token1.issuedDate = int(datetime.datetime(2025, 4, 14, 12, 48, 26).timestamp() * 1000)
             token1.expirationDate = int(datetime.datetime(2025, 4, 15, 12, 48, 26).timestamp() * 1000)
@@ -575,9 +564,8 @@ class TestEnterpriseApiKeys(TestCase):
             
             # Token 44 - Expired
             token2 = rs.tokens.add()
-            token2.enterprisePublicApiTokenId = 44
-            token2.name = "Token Test"
             token2.token = "expired_token_44"
+            token2.name = "Token Test"
             token2.enterprise_id = 8560
             token2.issuedDate = int(datetime.datetime(2025, 4, 14, 12, 48, 26).timestamp() * 1000)
             token2.expirationDate = int(datetime.datetime(2025, 4, 15, 12, 48, 26).timestamp() * 1000)
@@ -590,9 +578,8 @@ class TestEnterpriseApiKeys(TestCase):
             
             # Token 45 - Expired
             token3 = rs.tokens.add()
-            token3.enterprisePublicApiTokenId = 45
-            token3.name = "Token Test 2"
             token3.token = "expired_token_45"
+            token3.name = "Token Test 2"
             token3.enterprise_id = 8560
             token3.issuedDate = int(datetime.datetime(2025, 4, 14, 12, 48, 26).timestamp() * 1000)
             token3.expirationDate = int(datetime.datetime(2025, 4, 15, 12, 48, 26).timestamp() * 1000)
@@ -605,9 +592,8 @@ class TestEnterpriseApiKeys(TestCase):
             
             # Token 53 - Active
             token4 = rs.tokens.add()
-            token4.enterprisePublicApiTokenId = 53
-            token4.name = "CSPM Tool"
             token4.token = "active_token_53"
+            token4.name = "CSPM Tool"
             token4.enterprise_id = 8560
             token4.issuedDate = int(datetime.datetime(2025, 7, 8, 14, 16, 7).timestamp() * 1000)
             token4.expirationDate = int(datetime.datetime(2026, 7, 8, 14, 16, 7).timestamp() * 1000)
@@ -620,9 +606,8 @@ class TestEnterpriseApiKeys(TestCase):
             
             # Token 54 - Active, Never expires
             token5 = rs.tokens.add()
-            token5.enterprisePublicApiTokenId = 54
-            token5.name = "Token For My Tests 111"
             token5.token = "permanent_token_54"
+            token5.name = "Token For My Tests 111"
             token5.enterprise_id = 8560
             token5.issuedDate = int(datetime.datetime(2025, 7, 9, 14, 33, 26).timestamp() * 1000)
             # No expiration date for never expires
@@ -640,8 +625,7 @@ class TestEnterpriseApiKeys(TestCase):
             
         elif path == 'public_api/generate_token' and expected_path == 'generate_token':
             # Mock generate token response matching Commander terminal example
-            rs = publicapi_pb2.PublicApiToken()
-            rs.enterprisePublicApiTokenId = 55
+            rs = publicapi_pb2.PublicApiTokenResponse()
             rs.name = request.tokenName  # Should be "SIEM Tool"
             rs.token = "fmrQMBA6w-l_b-ODp6I4KUM2Pk5OJzJtgwWmawFq"
             rs.enterprise_id = 8560
