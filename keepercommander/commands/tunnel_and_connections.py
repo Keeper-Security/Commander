@@ -897,6 +897,8 @@ class PAMRbiEditCommand(Command):
                         help='The record UID or path of the RBI Autofill Credentials record.')
     parser.add_argument('--remote-browser-isolation', '-rbi', dest='rbi', choices=choices,
                         help='Set RBI permissions')
+    parser.add_argument('--connections-recording', '-cr', dest='recording', choices=choices,
+                        help='Set recording connections permissions for the resource')
     parser.add_argument('--silent', '-s', required=False, dest='silent', action='store_true',
                         help='Silent mode - don\'t print PAM User, PAM Config etc.')
 
@@ -909,11 +911,12 @@ class PAMRbiEditCommand(Command):
         autofill = kwargs.get('autofill') or ''
         silent = kwargs.get('silent') or False
         rbi = kwargs.get('rbi')  # on/off/default
+        recording = kwargs.get('recording')  # on/off/default
 
         if not record_name:
             raise CommandError('pam rbi edit', 'Record parameter is required.')
-        if not (autofill or config_name or rbi):
-            raise CommandError('pam rbi edit', 'At least one parameter is required (-a -c -rbi) '
+        if not (autofill or config_name or rbi or recording):
+            raise CommandError('pam rbi edit', 'At least one parameter is required (-a -c -cr -rbi) '
                                ' and if the record is not linked to PAM Config -c option is required.')
 
         record = RecordMixin.resolve_single_record(params, record_name)
@@ -1025,14 +1028,17 @@ class PAMRbiEditCommand(Command):
         # connections=on needed alongside remoteBrowserIsolation=on in PAM Config for RBI to work
         cfg_con_state = tdag.get_resource_setting(config_uid, 'allowedSettings', 'connections')
         cfg_rbi_state = tdag.get_resource_setting(config_uid, 'allowedSettings', 'remoteBrowserIsolation')
-        if cfg_con_state != 'on' or cfg_rbi_state != 'on':
+        cfg_rec_state = tdag.get_resource_setting(config_uid, 'allowedSettings', 'sessionRecording')
+        if cfg_con_state != 'on' or cfg_rbi_state != 'on' or cfg_rec_state != 'on':
             if not silent:
                 tdag.print_tunneling_config(config_uid, None)
             command = f"{bcolors.OKBLUE}'pam connection edit {config_uid}"
             command += ' --connections=on' if cfg_con_state != 'on' else ''
             command += ' --remote-browser-isolation=on' if cfg_rbi_state != 'on' else ''
+            command += ' --connections-recording=on' if cfg_rec_state != 'on' else ''
             print(f"{bcolors.FAIL}Some settings may be denied by PAM Configuration: {config_uid} "
-                  f" [ --connections={cfg_con_state} --remote-browser-isolation={cfg_rbi_state} ] "
+                  f" [ --connections={cfg_con_state} --remote-browser-isolation={cfg_rbi_state} "
+                  f" --connections-recording={cfg_rec_state} ] "
                   f"To enable these settings for the configuration run\n"
                   f"{command}'{bcolors.ENDC}")
 
@@ -1046,7 +1052,12 @@ class PAMRbiEditCommand(Command):
                 f"{bcolors.FAIL}The ConfigUID can be found by running {bcolors.OKBLUE}'pam config list'{bcolors.ENDC}")
             return
 
-        if rbi is not None and rbi != tdag.get_resource_setting(record_uid, 'allowedSettings', 'connections'):
+        con_val, rec_val = None, None
+        rec_con_state = tdag.get_resource_setting(record_uid, 'allowedSettings', 'connections')
+        rec_rec_state = tdag.get_resource_setting(record_uid, 'allowedSettings', 'sessionRecording')
+        if (rbi is not None and rbi != rec_con_state) or (recording is not None and recording != rec_rec_state):
+            con_val = rbi if rbi != rec_con_state else None
+            rec_val = recording if recording != rec_rec_state else None
             dirty = True
 
         allowed_settings_name = "allowedSettings"
@@ -1058,7 +1069,8 @@ class PAMRbiEditCommand(Command):
         if dirty:
             tdag.set_resource_allowed(resource_uid=record_uid,
                                     allowed_settings_name=allowed_settings_name,
-                                    connections=rbi)
+                                    connections=con_val,
+                                    session_recording=rec_val)
         # if not kwargs.get("silent", False):
         #     tdag.print_tunneling_config(record_uid, record.get_typed_field('pamRemoteBrowserSettings'), config_uid)
         params.sync_data = True
