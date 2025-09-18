@@ -23,28 +23,28 @@ def auth_check(fn):
         api_key = request.headers.get('api-key')
         if not api_key:
             return {
-                'status': 'fail',
-                'message': 'Please provide a valid api key.'
+                'status': 'error',
+                'error': 'Please provide a valid api key'
             }, 401
 
         stored_key = ConfigReader.read_config('api-key', api_key)
         if not stored_key or api_key.strip() != stored_key.strip():
             return {
-                'status': 'fail',
-                'message': 'Please provide a valid api key.'
+                'status': 'error',
+                'error': 'Please provide a valid api key'
             }, 401
 
         expiration_timestamp = ConfigReader.read_config('expiration_timestamp', api_key)
         if not expiration_timestamp:
             return {
-                'status': 'fail',
-                'message': 'Invalid or expired API key.'
+                'status': 'error',
+                'error': 'Invalid or expired API key'
             }, 401
         
         if datetime.now() > datetime.fromisoformat(expiration_timestamp):
             return {
-                'status': 'fail',
-                'message': 'API key has expired.'
+                'status': 'error',
+                'error': 'API key has expired'
             }, 401
 
         kwargs['api-key'] = True
@@ -66,16 +66,29 @@ def policy_check(fn):
         api_key = request.headers.get('api-key')
         policy = ConfigReader.read_config('command_list', api_key)
         command_content = request_data.get("command")
+        
+        if command_content is None:
+            return {
+                'status': 'error',
+                'error': 'Missing required field "command"'
+            }, 400
+            
+        if not isinstance(command_content, str):
+            return {
+                'status': 'error',
+                'error': 'Command must be a string'
+            }, 400
+            
         if len(command_content) > 4096:
             return {
-                'status': 'fail',
-                'message': 'Command length exceeded'
+                'status': 'error',
+                'error': 'Command length exceeded'
             }, 400
         command = command_content.split(" ")
         if not policy or not policy.strip():
             return {
-                'status': 'fail',
-                'message': 'Not permitted to perform this function'
+                'status': 'error',
+                'error': 'Not permitted to perform this function'
             }, 403
         allowed_commands = split_to_list(policy, ',')
 
@@ -84,15 +97,15 @@ def policy_check(fn):
 
         if not any(command[0] == cmd.strip() for cmd in allowed_commands):
             return {
-                'status': 'fail',
-                'message': 'Not permitted to perform this function'
+                'status': 'error',
+                'error': 'Not permitted to perform this function'
             }, 403
         
         if Verifycommand.is_append_command(command):
             logger.debug(f"Command : {command[0]}")
             return {
-                'status': 'fail',
-                'message': 'Invalid command'
+                'status': 'error',
+                'error': 'Invalid command'
             }, 400
             
         return fn(*args, **kwargs)
