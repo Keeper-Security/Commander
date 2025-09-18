@@ -20,7 +20,7 @@ from ..decorators.logging import logger, debug_decorator
 from .process_info import ProcessInfo
 from .terminal_handler import TerminalHandler
 from .signal_handler import SignalHandler
-import sys, os, subprocess
+import sys, subprocess
 
 class ServiceManager:
     """Manages the lifecycle of the service including start, stop, and status operations."""
@@ -108,7 +108,25 @@ class ServiceManager:
             print(f"Commander Service starting on {protocol}://localhost:{port}/api/{api_version}/")
             
             ngrok_pid = NgrokConfigurator.configure_ngrok(config_data, service_config)
-            cloudflare_pid = CloudflareConfigurator.configure_cloudflare(config_data, service_config)
+            cloudflare_pid = None
+            
+            try:
+                cloudflare_pid = CloudflareConfigurator.configure_cloudflare(config_data, service_config)
+            except Exception as e:
+                if ngrok_pid and psutil:
+                    try:
+                        process = psutil.Process(ngrok_pid)
+                        process.terminate()
+                        logger.debug(f"Terminated ngrok process {ngrok_pid}")
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError) as ngrok_error:
+                        logger.debug(f"Error terminating ngrok process: {type(ngrok_error).__name__}")
+                elif ngrok_pid:
+                    logger.warning("Cannot terminate ngrok process: psutil not available")
+                
+                ProcessInfo.clear()
+                
+                logger.info(f"\n{str(e)}")
+                return
             
             # Custom logging filter to replace SSL handshake errors with user-friendly message
             class SSLHandshakeFilter(logging.Filter):
