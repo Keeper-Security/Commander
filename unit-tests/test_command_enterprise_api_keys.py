@@ -137,7 +137,7 @@ class TestEnterpriseApiKeys(TestCase):
         # Verify output matches Commander terminal example
         output = captured_output.getvalue()
         self.assertIn('API Key generated successfully', output)
-        self.assertIn('Token: fmrQMBA6w-l_b-ODp6I4KUM2Pk5OJzJtgwWmawFq', output)
+        self.assertIn('Token: token_generated_for_test', output)
         self.assertIn('Name: SIEM Tool', output)
         self.assertIn('Enterprise ID: 8560', output)
         self.assertIn('Expires: 2025-08-09', output)  # Date format
@@ -457,7 +457,7 @@ class TestEnterpriseApiKeys(TestCase):
         
         # Validate all fields match terminal example
         self.assertEqual(data['name'], 'SIEM Tool')
-        self.assertEqual(data['token'], 'fmrQMBA6w-l_b-ODp6I4KUM2Pk5OJzJtgwWmawFq')
+        self.assertEqual(data['token'], 'token_generated_for_test')
         self.assertEqual(data['enterprise_id'], 8560)
         self.assertIn('issued_date', data)
         self.assertIn('expiration_date', data)
@@ -627,7 +627,7 @@ class TestEnterpriseApiKeys(TestCase):
             # Mock generate token response matching Commander terminal example
             rs = publicapi_pb2.PublicApiTokenResponse()
             rs.name = request.tokenName  # Should be "SIEM Tool"
-            rs.token = "fmrQMBA6w-l_b-ODp6I4KUM2Pk5OJzJtgwWmawFq"
+            rs.token = "token_generated_for_test"
             rs.enterprise_id = 8560
             rs.issuedDate = request.issuedDate
             if hasattr(request, 'expirationDate') and request.expirationDate:
