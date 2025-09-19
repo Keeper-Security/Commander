@@ -26,6 +26,8 @@ class StreamlineArgs:
     commands: Optional[str]
     ngrok: Optional[str]
     ngrok_custom_domain: Optional[str]
+    cloudflare: Optional[str]
+    cloudflare_custom_domain: Optional[str]
     certfile: Optional[str]
     certpassword : Optional[str]
     fileformat : Optional[str]
@@ -63,6 +65,8 @@ class CreateService(Command):
         parser.add_argument('-c', '--commands', type=str, help='command list for policy')
         parser.add_argument('-ng', '--ngrok', type=str, help='ngrok auth token to generate public URL (optional)')
         parser.add_argument('-cd', '--ngrok_custom_domain', type=str, help='ngrok custom domain name(optional)')
+        parser.add_argument('-cf', '--cloudflare', type=str, help='cloudflare tunnel token to generate public URL (required when using cloudflare)')
+        parser.add_argument('-cfd', '--cloudflare_custom_domain', type=str, help='cloudflare custom domain name (required when using cloudflare)')
         parser.add_argument('-crtf', '--certfile', type=str, help='certificate file path')
         parser.add_argument('-crtp', '--certpassword', type=str, help='certificate password')
         parser.add_argument('-f', '--fileformat', type=str, help='file format')
@@ -82,7 +86,7 @@ class CreateService(Command):
 
             config_data = self.service_config.create_default_config()
 
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'certfile', 'certpassword', 'fileformat', 'run_mode', 'queue_enabled']}
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'cloudflare', 'cloudflare_custom_domain', 'certfile', 'certpassword', 'fileformat', 'run_mode', 'queue_enabled']}
             args = StreamlineArgs(**filtered_kwargs)
             self._handle_configuration(config_data, params, args)
             self._create_and_save_record(config_data, params, args)
