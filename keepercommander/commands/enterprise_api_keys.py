@@ -127,7 +127,7 @@ def register_commands(commands):
 
 
 def register_command_info(aliases, command_info):
-    command_info['public-api-key'] = 'Manage enterprise API keys - generate, list, and revoke API keys for integrations'
+    command_info['public-api-key'] = 'Manage Admin REST API keys for 3rd party integrations'
 
 
 class ApiKeyCommand(GroupCommand):
