@@ -64,9 +64,10 @@ def register_command_info(aliases, command_info):
     aliases['share'] = 'one-time-share'
 
     for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser,
-              find_duplicate_parser]:
+              find_duplicate_parser, find_ownerless_parser, create_account_parser]:
         command_info[p.prog] = p.description
 
+    command_info['one-time-share'] = 'Manage One-Time Shares'
     command_info['share'] = 'Manage One-Time Shares'
 
 
