@@ -76,7 +76,7 @@ def register_command_info(aliases, command_info):
     for p in [get_info_parser, search_parser, list_parser, list_sf_parser, list_team_parser,
               record_history_parser, shared_records_report_parser, record_edit.record_add_parser,
               record_edit.record_update_parser, record_edit.append_parser, record_edit.download_parser,
-              record_edit.delete_attachment_parser, clipboard_copy_parser, record_totp.totp_parser]:
+              record_edit.upload_parser, record_edit.delete_attachment_parser, clipboard_copy_parser, record_totp.totp_parser]:
         command_info[p.prog] = p.description
     command_info['trash'] = 'Manage deleted items.'
 
