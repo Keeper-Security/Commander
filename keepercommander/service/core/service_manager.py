@@ -187,17 +187,68 @@ class ServiceManager:
                     raise
 
             else:
+                cleanup_done = False
+                
+                def cleanup_cloudflare_on_foreground_exit():
+                    """Clean up Cloudflare tunnel when foreground service exits."""
+                    nonlocal cleanup_done
+                    if cleanup_done:
+                        return
+                    cleanup_done = True
+                    
+                    try:
+                        
+                        # Try to load PID from ProcessInfo first (more reliable)
+                        try:
+                            process_info = ProcessInfo.load()
+                            saved_cloudflare_pid = process_info.cloudflare_pid
+                        except:
+                            saved_cloudflare_pid = None
+                        
+                        # Kill Cloudflare tunnel if running
+                        cf_pid = saved_cloudflare_pid or cloudflare_pid
+                        if cf_pid:
+                            print(f"Stopping Cloudflare tunnel (PID: {cf_pid})...")
+                            if ServiceManager.kill_process_by_pid(cf_pid):
+                                print("Cloudflare tunnel stopped")
+                            else:
+                                if ServiceManager.kill_cloudflare_processes():
+                                    print("Cloudflare tunnel stopped")
+                        else:
+                            # Always try fallback cleanup for Cloudflare
+                            if ServiceManager.kill_cloudflare_processes():
+                                print("Cloudflare tunnel stopped")
+                        
+                        # Clear process info
+                        ProcessInfo.clear()
+                        
+                    except Exception as e:
+                        print(f"Error during Cloudflare cleanup: {e}")
+
+                def foreground_signal_handler(signum, frame):
+                    """Handle interrupt signals in foreground mode."""
+                    cleanup_cloudflare_on_foreground_exit()
+                    sys.exit(0)
+                
+                # Set up signal handlers for foreground mode
+                import signal
+                signal.signal(signal.SIGINT, foreground_signal_handler)   # Ctrl+C
+                signal.signal(signal.SIGTERM, foreground_signal_handler)  # Termination
+                
                 from ...service.app import create_app
                 cls._flask_app = create_app()
                 cls._is_running = True
 
                 ssl_context = ServiceManager.get_ssl_context(config_data)
                 
-                cls._flask_app.run(
-                    host='0.0.0.0',
-                    port=port,
-                    ssl_context=ssl_context
-                )
+                try:
+                    cls._flask_app.run(
+                        host='0.0.0.0',
+                        port=port,
+                        ssl_context=ssl_context
+                    )
+                finally:
+                    cleanup_cloudflare_on_foreground_exit()
                 
             # Save the process ID for future reference
             ProcessInfo.save(cls.pid, is_running, ngrok_pid, cloudflare_pid)

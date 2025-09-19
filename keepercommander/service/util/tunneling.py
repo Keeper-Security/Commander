@@ -420,22 +420,12 @@ def generate_cloudflare_url(port, tunnel_token, custom_domain, run_mode):
         os.dup2(devnull.fileno(), 2)
         
         try:
-            if run_mode == "background":
-                # Background mode: use subprocess approach
-                tunnel_pid, public_url = start_cloudflare_tunnel_with_url(
-                    port=port, 
-                    tunnel_token=tunnel_token, 
-                    custom_domain=custom_domain
-                )
-                return public_url, tunnel_pid
-            else:
-                # Foreground mode: use subprocess approach
-                tunnel_pid, public_url = start_cloudflare_tunnel_with_url(
-                    port=port, 
-                    tunnel_token=tunnel_token, 
-                    custom_domain=custom_domain
-                )
-                return public_url, tunnel_pid
+            tunnel_pid, public_url = start_cloudflare_tunnel_with_url(
+                port=port, 
+                tunnel_token=tunnel_token, 
+                custom_domain=custom_domain
+            )
+            return public_url, tunnel_pid
             
         finally:
             os.dup2(old_stdout_fd, 1)
