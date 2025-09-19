@@ -2393,7 +2393,10 @@ class OneTimeShareCreateCommand(Command):
                 query = 'editable=true'
 
             api.communicate_rest(params, rq, 'vault/external_share_add', rs_type=APIRequest_pb2.Device)
-            url = urlunparse(('https', params.server, '/vault/share/', None, query, utils.base64_url_encode(client_key)))
+            # Extract hostname from params.server in case it contains full URL with protocol
+            from urllib.parse import urlparse
+            server_netloc = urlparse(params.server).netloc if urlparse(params.server).netloc else params.server
+            url = urlunparse(('https', server_netloc, '/vault/share/', None, query, utils.base64_url_encode(client_key)))
             urls[record_uid] = str(url)
 
         if params.batch_mode:
