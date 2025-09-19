@@ -73,7 +73,7 @@ external_share_report_parser.add_argument('-t', '--share-type', action='store', 
 external_share_report_parser.add_argument('-f', '--force', action='store_true', help='apply action w/o confirmation')
 external_share_report_parser.add_argument('-r', '--refresh-data', action='store_true', help='retrieve fresh data')
 
-license_consumption_report_desc = 'Generate a report of users consuming feature licenses based on role enforcement policies.'
+license_consumption_report_desc = 'Report of users consuming feature licenses based on policy.'
 license_consumption_report_parser = argparse.ArgumentParser(prog='license-consumption-report', description=license_consumption_report_desc,
                                                            parents=[base.report_output_parser])
 license_consumption_report_parser.add_argument('--feature', dest='feature', action='store', 
