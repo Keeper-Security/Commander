@@ -67,8 +67,8 @@ def register_command_info(aliases, command_info):
               find_duplicate_parser, find_ownerless_parser, create_account_parser]:
         command_info[p.prog] = p.description
 
-    command_info['one-time-share'] = 'Manage One-Time Shares'
-    command_info['share'] = 'Manage One-Time Shares'
+    command_info['one-time-share'] = 'Manage and create One-Time Shares'
+    command_info['share'] = 'Manage and create One-Time Shares'
 
 
 share_record_parser = argparse.ArgumentParser(prog='share-record', description='Change the sharing permissions of an individual record')
@@ -90,7 +90,7 @@ expiration.add_argument('--expire-in', dest='expire_in', action='store',
                         help='share expiration: never or period')
 share_record_parser.add_argument('record', nargs='?', type=str, action='store', help='record/shared folder path/UID')
 
-share_folder_parser = argparse.ArgumentParser(prog='share-folder', description='Change a shared folders permissions.')
+share_folder_parser = argparse.ArgumentParser(prog='share-folder', description='Change the permissions of a shared folder')
 share_folder_parser.add_argument('-a', '--action', dest='action', choices=['grant','remove'],
                                  default='grant', action='store', help='shared folder action. \'grant\' if omitted')
 share_folder_parser.add_argument('-e', '--email', dest='user', action='append',
@@ -117,7 +117,7 @@ expiration.add_argument('--expire-in', dest='expire_in', action='store', metavar
                         help='share expiration: never or period (<NUMBER>[(y)ears|(mo)nths|(d)ays|(h)ours(mi)nutes]')
 share_folder_parser.add_argument('folder', nargs='+', type=str, action='store', help='shared folder path or UID')
 
-share_report_parser = argparse.ArgumentParser(prog='share-report', description='Display report of shared records.',
+share_report_parser = argparse.ArgumentParser(prog='share-report', description='Generates a report of shared records',
                                               parents=[base.report_output_parser])
 share_report_parser.add_argument('-r', '--record', dest='record', action='append', help='record name or UID')
 share_report_parser.add_argument('-e', '--email', dest='user', action='append', help='user email or team name')
@@ -139,7 +139,7 @@ share_report_parser.add_argument('-tu', '--show-team-users', action='store_true'
 container_filter_help = 'path(s) or UID(s) of container(s) by which to filter records'
 share_report_parser.add_argument('container', nargs='*', type=str, action='store', help=container_filter_help)
 
-record_permission_parser = argparse.ArgumentParser(prog='record-permission', description='Modify a records permissions.')
+record_permission_parser = argparse.ArgumentParser(prog='record-permission', description='Modify the permissions of a record')
 record_permission_parser.add_argument('--dry-run', dest='dry_run', action='store_true',
                                       help='Display the permissions changes without committing them')
 record_permission_parser.add_argument('--force', dest='force', action='store_true',

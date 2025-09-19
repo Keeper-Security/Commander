@@ -54,7 +54,7 @@ def register_commands(commands):
 
 def register_command_info(aliases, command_info):
     aliases['bw'] = 'breachwatch'
-    command_info['breachwatch'] = 'BreachWatch.'
+    command_info['breachwatch'] = 'Manager vault scan results or perform a one-time check'
 
 
 class BreachWatchCommand(GroupCommand):

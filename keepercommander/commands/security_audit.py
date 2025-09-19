@@ -26,7 +26,7 @@ def register_command_info(aliases, command_info):
     aliases['sar'] = ('security-audit', 'report')
     aliases['security-audit-report'] = ('security-audit', 'report')
     aliases['sas'] = ('security-audit', 'sync')
-    command_info['security-audit'] = 'Security Audit.'
+    command_info['security-audit'] = 'Run a security audit report'
 
 
 report_parser = argparse.ArgumentParser(prog='security-audit-report', description='Run a security audit report.',

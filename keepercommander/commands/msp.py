@@ -56,10 +56,10 @@ def register_command_info(aliases, command_info):
 
 
 msp_down_parser = argparse.ArgumentParser(prog='msp-down', usage='msp-down',
-                                          description='Download current MSP data from the Keeper Cloud.')
+                                          description='Download current MSP data from the Keeper Cloud')
 
 msp_info_parser = argparse.ArgumentParser(prog='msp-info', usage='msp-info', parents=[report_output_parser],
-                                          description='Displays MSP details, such as managed companies and pricing.')
+                                          description='Displays MSP details, such as managed companies and pricing')
 msp_info_parser.add_argument('-p', '--pricing', dest='pricing', action='store_true', help='Display pricing information')
 msp_info_parser.add_argument('-r', '--restriction', dest='restriction', action='store_true',
                              help='Display MSP restriction information')
@@ -67,7 +67,7 @@ msp_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_tr
 # msp_info_parser.add_argument('-u', '--users', dest='users', action='store_true', help='print user list')
 
 msp_update_parser = argparse.ArgumentParser(prog='msp-update', usage='msp-update',
-                                            description='Modify Managed Company license.')
+                                            description='Modify a Managed Company license')
 msp_update_parser.add_argument('--node', dest='node', action='store', help='node name or node ID')
 msp_update_parser.add_argument('-p', '--plan', dest='plan', action='store',
                                choices=[x[1] for x in constants.MSP_PLANS],
@@ -85,7 +85,7 @@ msp_update_parser.add_argument('mc', action='store',
 
 ranges = ['today', 'yesterday', 'last_7_days', 'last_30_days', 'month_to_date', 'last_month', 'year_to_date', 'last_year']
 msp_legacy_report_parser = argparse.ArgumentParser(prog='msp-legacy-report', parents=[report_output_parser],
-                                                   description='Generate MSP Legacy Report.')
+                                                   description='Generate MSP legacy billing report')
 group = msp_legacy_report_parser.add_argument_group('Pre-defined date ranges')
 group.add_argument('--range', dest='range', choices=ranges, default='last_30_days',
                    help="Pre-defined data ranges to run the report.")
@@ -101,13 +101,13 @@ group.add_argument('--to', dest='to_date',
                         'Example: `2020-08-18` or `1596265200`')
 
 msp_billing_report_parser = argparse.ArgumentParser(prog='msp-billing-report', parents=[report_output_parser],
-                                                    description='Generate MSP Billing Reports.')
+                                                    description='Generate MSP billing reports')
 msp_billing_report_parser.add_argument('--month', dest='month', action='store', metavar='YYYY-MM', help='Month for billing report: 2022-02')
 msp_billing_report_parser.add_argument('-d', '--show-date', dest='show_date', action='store_true', help='Breakdown report by date')
 msp_billing_report_parser.add_argument('-c', '--show-company', dest='show_company', action='store_true', help='Breakdown report by managed company')
 
 
-msp_add_parser = argparse.ArgumentParser(prog='msp-add', description='Add Managed Company.')
+msp_add_parser = argparse.ArgumentParser(prog='msp-add', description='Add a Managed Company to the tenant')
 msp_add_parser.add_argument('--node', dest='node', action='store', help='node name or node ID')
 msp_add_parser.add_argument('-s', '--seats', dest='seats', action='store', type=int,
                             help='Maximum licences allowed. -1: unlimited')
@@ -120,7 +120,7 @@ msp_add_parser.add_argument('-a', '--addon', dest='addon', action='append', meta
                             help=f'Add-ons: {", ".join((x[0]+(":N" if x[2] else "") for x in constants.MSP_ADDONS))}')
 msp_add_parser.add_argument('name', action='store', help='Managed Company name')
 
-msp_remove_parser = argparse.ArgumentParser(prog='msp-remove', description='Remove Managed Company.')
+msp_remove_parser = argparse.ArgumentParser(prog='msp-remove', description='Remove a managed company (MC) tenant')
 msp_remove_parser.add_argument('-f', '--force', dest='force', action='store_true',
                                help='do not prompt for confirmation')
 msp_remove_parser.add_argument('mc', action='store',
@@ -136,18 +136,18 @@ msp_convert_node_parser.add_argument('-p', '--plan', dest='plan', action='store'
 msp_convert_node_parser.add_argument('node', action='store', help='node name or node ID')
 
 msp_copy_role_parser = argparse.ArgumentParser(
-    prog='msp-copy-role', description='Copy role with enforcements to Managed Companies.')
+    prog='msp-copy-role', description='Copy role with enforcements to a Managed Company')
 msp_copy_role_parser.add_argument('-r', '--role', dest='role', action='append',
                                   help='Role Name or ID. Can be repeated.')
 msp_copy_role_parser.add_argument(
     'mc', action='store', nargs='+', help='Managed Company identifier (name or id)."')
 
 switch_to_mc_parser = argparse.ArgumentParser(prog='switch-to-mc',
-                                              description='Switch user\'s context to Managed Company.')
+                                              description='Switch user\'s context to a Managed Company')
 switch_to_mc_parser.add_argument('mc', action='store',
                                  help='Managed Company identifier (name or id). Ex. 3862 OR "Keeper Security, Inc."')
 switch_to_msp_parser = argparse.ArgumentParser(prog='switch-to-msp',
-                                               description='Switch user\'s context back to MSP Company.')
+                                               description='Switch user\'s context back to the MSP tenant')
 
 
 msp_params = None

@@ -92,10 +92,10 @@ def register_command_info(aliases, command_info):
         command_info[p.prog] = p.description
 
 
-sync_down_parser = argparse.ArgumentParser(prog='sync-down', description='Download & decrypt data.')
+sync_down_parser = argparse.ArgumentParser(prog='sync-down', description='Download and decrypt vault data')
 sync_down_parser.add_argument('-f', '--force', dest='force', action='store_true', help='full data sync')
 
-whoami_parser = argparse.ArgumentParser(prog='whoami', description='Display information about the currently logged in user.')
+whoami_parser = argparse.ArgumentParser(prog='whoami', description='Display information about the current user')
 whoami_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 whoami_parser.add_argument('--json', dest='json_output', action='store_true', help='output in JSON format')
 whoami_parser.error = raise_parse_exception
@@ -103,7 +103,7 @@ whoami_parser.exit = suppress_exit
 
 
 this_device_available_command_verbs = ['rename', 'register', 'persistent-login', 'ip-auto-approve', 'no-yubikey-pin', 'timeout']
-this_device_parser = argparse.ArgumentParser(prog='this-device', description='Display and modify settings of the current device.')
+this_device_parser = argparse.ArgumentParser(prog='this-device', description='Display and modify settings of the current device')
 this_device_parser.add_argument('ops', nargs='*', help="operation str: " + ", ".join(this_device_available_command_verbs))
 this_device_parser.error = raise_parse_exception
 this_device_parser.exit = suppress_exit
@@ -117,7 +117,7 @@ proxy_parser.error = raise_parse_exception
 proxy_parser.exit = suppress_exit
 
 
-login_parser = argparse.ArgumentParser(prog='login', description='Login to Keeper.')
+login_parser = argparse.ArgumentParser(prog='login', description='Start a login session on Commander')
 login_parser.add_argument('-p', '--pass', dest='password', action='store', help='master password')
 login_parser.add_argument('email', nargs='?', type=str, help='account email')
 login_parser.error = raise_parse_exception
@@ -153,7 +153,7 @@ set_parser.error = raise_parse_exception
 set_parser.exit = suppress_exit
 
 
-help_parser = argparse.ArgumentParser(prog='help', description='Displays help on a specific command.')
+help_parser = argparse.ArgumentParser(prog='help', description='Displays help on a specific command')
 help_help = 'Commander\'s command (Optional -- if not specified, list of available commands is displayed)'
 help_parser.add_argument('command', action='store', type=str, nargs='*',  help=help_help)
 help_parser.add_argument('--legacy', dest='legacy', action='store_true', help='Show legacy/deprecated commands')
@@ -161,17 +161,15 @@ help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
 
 
-version_parser = argparse.ArgumentParser(prog='version', description='Displays version of the installed Commander.')
+version_parser = argparse.ArgumentParser(prog='version', description='Displays version of the installed Commander')
 version_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 version_parser.add_argument('-p', '--packages', action='store_true', help='Show installed Python packages')
 version_parser.error = raise_parse_exception
 version_parser.exit = suppress_exit
 
-
-keepalive_parser = argparse.ArgumentParser(prog='keep-alive', description='Tell the server we are here, forestalling a timeout.')
+keepalive_parser = argparse.ArgumentParser(prog='keep-alive', description='Tell the server we are here, forestalling a timeout')
 keepalive_parser.error = raise_parse_exception
 keepalive_parser.exit = suppress_exit
-
 
 generate_parser = argparse.ArgumentParser(prog='generate', description='Generate a new password')
 generate_parser.add_argument('--clipboard', '-cc', dest='clipboard', action='store_true', help='Copy to clipboard')
@@ -243,7 +241,7 @@ reset_password_parser.add_argument('--delete-sso', dest='delete_alternate', acti
 reset_password_parser.add_argument('--current', '-c', dest='current_password', action='store', help='current password')
 reset_password_parser.add_argument('--new', '-n', dest='new_password', action='store', help='new password')
 
-sync_security_data_parser = argparse.ArgumentParser(prog='sync-security-data', description='Sync security data.')
+sync_security_data_parser = argparse.ArgumentParser(prog='sync-security-data', description='Sync security audit data')
 record_name_help = 'Path or UID of record whose security data is to be updated. Multiple values allowed. ' \
                    'Set to "@all" to update security data for all records.'
 sync_security_data_parser.add_argument('record', type=str, action='store', nargs="+", help=record_name_help)
@@ -253,7 +251,7 @@ sync_security_data_parser.error = raise_parse_exception
 sync_security_data_parser.exit = suppress_exit
 
 
-loginstatus_parser = argparse.ArgumentParser(prog='login-status', description='Check user login status.')
+loginstatus_parser = argparse.ArgumentParser(prog='login-status', description='Check the user login status')
 loginstatus_parser.error = raise_parse_exception
 loginstatus_parser.exit = suppress_exit
 

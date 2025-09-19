@@ -67,7 +67,7 @@ def register_commands(commands):
 
 
 def register_command_info(_, command_info):
-    command_info['automator'] = 'Manage Automator endpoints'
+    command_info['automator'] = 'Manage Automator endpoints for SSO Cloud'
 
 
 class AutomatorCommand(GroupCommand):
