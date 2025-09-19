@@ -41,6 +41,7 @@ from ..display import bcolors
 from ..error import CommandError
 from ..params import LAST_RECORD_UID
 from ..subfolder import find_folders
+from ..utils import value_to_boolean
 
 # Group Commands
 class PAMTunnelCommand(GroupCommand):
@@ -895,6 +896,8 @@ class PAMRbiEditCommand(Command):
                         'Use command `pam config list` to view available PAM Configurations.')
     parser.add_argument('--autofill-credentials', '-a', type=str, required=False, dest='autofill', action='store',
                         help='The record UID or path of the RBI Autofill Credentials record.')
+    parser.add_argument('--key-events', '-k', dest='key_events', choices=choices,
+                        help='Toggle Key Events settings')
     parser.add_argument('--remote-browser-isolation', '-rbi', dest='rbi', choices=choices,
                         help='Set RBI permissions')
     parser.add_argument('--connections-recording', '-cr', dest='recording', choices=choices,
@@ -909,14 +912,15 @@ class PAMRbiEditCommand(Command):
         record_name = kwargs.get('record') or ''
         config_name = kwargs.get('config') or ''
         autofill = kwargs.get('autofill') or ''
-        silent = kwargs.get('silent') or False
+        key_events = kwargs.get('key_events')  # on/off/default
         rbi = kwargs.get('rbi')  # on/off/default
         recording = kwargs.get('recording')  # on/off/default
+        silent = kwargs.get('silent') or False
 
         if not record_name:
             raise CommandError('pam rbi edit', 'Record parameter is required.')
-        if not (autofill or config_name or rbi or recording):
-            raise CommandError('pam rbi edit', 'At least one parameter is required (-a -c -cr -rbi) '
+        if not (autofill or key_events or config_name or rbi or recording):
+            raise CommandError('pam rbi edit', 'At least one parameter is required (-a -k -c -cr -rbi) '
                                ' and if the record is not linked to PAM Config -c option is required.')
 
         record = RecordMixin.resolve_single_record(params, record_name)
@@ -932,32 +936,7 @@ class PAMRbiEditCommand(Command):
                                "cannot be set up for RBI connections. "
                                f"RBI connection records must be of type: pamRemoteBrowser{bcolors.ENDC}")
 
-        encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
-        existing_config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
-        existing_config_uid = str(existing_config_uid) if existing_config_uid else ''
-
-        # config parameter is optional and may be (auto)resolved from RBI record
-        cfg_rec = None
-        if config_name:
-            cfg_rec = RecordMixin.resolve_single_record(params, config_name)
-            msg = ("not found" if cfg_rec is None else "not the right type"
-                   if not isinstance(cfg_rec, vault.TypedRecord) or cfg_rec.version != 6 else "")
-            if msg:
-                logging.warning(f'{bcolors.FAIL}PAM Config record "{config_name}" {msg} {bcolors.ENDC}')
-                cfg_rec = None
-        if not cfg_rec:
-            logging.debug(f"PAM Config - using config from record {record_uid}")
-            cfg_rec = RecordMixin.resolve_single_record(params, existing_config_uid)
-            msg = ("not found" if cfg_rec is None else "not the right type"
-                   if not isinstance(cfg_rec, vault.TypedRecord) or cfg_rec.version != 6 else "")
-            if msg:
-                logging.warning(f'{bcolors.FAIL}PAM Config record "{existing_config_uid}" {msg} {bcolors.ENDC}')
-                cfg_rec = None
-
-        config_uid = cfg_rec.record_uid if cfg_rec else None
-        if not config_uid:
-            raise CommandError('pam rbi edit', f'{bcolors.FAIL}PAM Config record not found.{bcolors.ENDC}')
-
+        # record data (JSON) manipulations: autofill, key_events
         dirty = False
         traffic_encryption_key = record.get_typed_field('trafficEncryptionSeed')
         if not traffic_encryption_key or not traffic_encryption_key.value:
@@ -1001,6 +980,32 @@ class PAMRbiEditCommand(Command):
             else:
                 raise CommandError('pam rbi edit', f'{bcolors.FAIL}Failed to set httpCredentialsUid={af_rec.record_uid}{bcolors.ENDC}')
 
+        if key_events:
+            rbs_fld = record.get_typed_field('pamRemoteBrowserSettings')
+            val1 = rbs_fld.value[0] if isinstance(rbs_fld, vault.TypedField) and rbs_fld.value else {}
+            vcon = val1.get('connection', {}) if isinstance(val1, dict) else {}
+            rik = vcon.get('recordingIncludeKeys') if isinstance(vcon, dict) else None
+            if key_events == 'default':
+                if rik is not None:
+                    rbs_fld.value[0]["connection"].pop('recordingIncludeKeys', None)
+                    dirty = True
+                else:
+                    logging.debug(f'recordingIncludeKeys is already set to "default" on record={record_uid}')
+            elif key_events == 'on':
+                if value_to_boolean(key_events) != value_to_boolean(rik):
+                    rbs_fld.value[0]["connection"]["recordingIncludeKeys"] = True
+                    dirty = True
+                else:
+                    logging.debug(f'recordingIncludeKeys is already enabled on record={record_uid}')
+            elif key_events == 'off':
+                if value_to_boolean(key_events) != value_to_boolean(rik):
+                    rbs_fld.value[0]["connection"]["recordingIncludeKeys"] = False
+                    dirty = True
+                else:
+                    logging.debug(f'recordingIncludeKeys is already disabled on record={record_uid}')
+            else:
+                logging.debug(f'Unexpected value for --key-events {key_events} (ignored)')
+
         if dirty:
             record_management.update_record(params, record)
             api.sync_down(params)
@@ -1009,7 +1014,39 @@ class PAMRbiEditCommand(Command):
             if not traffic_encryption_key:
                 raise CommandError('', f"{bcolors.FAIL}Unable to add Seed to record {record_uid}. "
                                 f"Please make sure you have edit rights to record {record_uid} {bcolors.ENDC}")
+            params.sync_data = True
+
+        # DAG manipulation options: config, rbi/connections, recording
         dirty = False
+        if not (config_name or rbi or recording):
+            return
+
+        # resolve PAM Config
+        encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
+        existing_config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
+        existing_config_uid = str(existing_config_uid) if existing_config_uid else ''
+
+        # config parameter is optional and may be (auto)resolved from RBI record
+        cfg_rec = None
+        if config_name:
+            cfg_rec = RecordMixin.resolve_single_record(params, config_name)
+            msg = ("not found" if cfg_rec is None else "not the right type"
+                   if not isinstance(cfg_rec, vault.TypedRecord) or cfg_rec.version != 6 else "")
+            if msg:
+                logging.warning(f'{bcolors.FAIL}PAM Config record "{config_name}" {msg} {bcolors.ENDC}')
+                cfg_rec = None
+        if not cfg_rec:
+            logging.debug(f"PAM Config - using config from record {record_uid}")
+            cfg_rec = RecordMixin.resolve_single_record(params, existing_config_uid)
+            msg = ("not found" if cfg_rec is None else "not the right type"
+                   if not isinstance(cfg_rec, vault.TypedRecord) or cfg_rec.version != 6 else "")
+            if msg:
+                logging.warning(f'{bcolors.FAIL}PAM Config record "{existing_config_uid}" {msg} {bcolors.ENDC}')
+                cfg_rec = None
+
+        config_uid = cfg_rec.record_uid if cfg_rec else None
+        if not config_uid:
+            raise CommandError('pam rbi edit', f'{bcolors.FAIL}PAM Config record not found.{bcolors.ENDC}')
 
         tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, config_uid)
         if tdag is None or not tdag.linking_dag.has_graph:
