@@ -88,7 +88,7 @@ def register_command_info(aliases, command_info):
     aliases['ssd'] = 'sync-security-data'
     for p in [sync_down_parser, whoami_parser, this_device_parser, proxy_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
               version_parser, ksm_parser, keepalive_parser, generate_parser, reset_password_parser,
-              sync_security_data_parser, loginstatus_parser]:
+              sync_security_data_parser, loginstatus_parser, run_as_parser]:
         command_info[p.prog] = p.description
 
 
@@ -156,6 +156,7 @@ set_parser.exit = suppress_exit
 help_parser = argparse.ArgumentParser(prog='help', description='Displays help on a specific command.')
 help_help = 'Commander\'s command (Optional -- if not specified, list of available commands is displayed)'
 help_parser.add_argument('command', action='store', type=str, nargs='*',  help=help_help)
+help_parser.add_argument('--legacy', dest='legacy', action='store_true', help='Show legacy/deprecated commands')
 help_parser.error = raise_parse_exception
 help_parser.exit = suppress_exit
 
@@ -255,6 +256,14 @@ sync_security_data_parser.exit = suppress_exit
 loginstatus_parser = argparse.ArgumentParser(prog='login-status', description='Check user login status.')
 loginstatus_parser.error = raise_parse_exception
 loginstatus_parser.exit = suppress_exit
+
+run_as_parser = argparse.ArgumentParser(
+    prog='run-as', description='Runs application with user credentials stored on a record')
+run_as_parser.add_argument('--record', '-r', dest='record', action='store', required=True,
+                           help='Record name or UID')
+run_as_parser.add_argument('application', help="Application to run")
+run_as_parser.error = raise_parse_exception
+run_as_parser.exit = suppress_exit
 
 
 class SyncDownCommand(Command):
@@ -1090,9 +1099,10 @@ class HelpCommand(Command):
 
     def execute(self, params, **kwargs):
         help_commands = kwargs.get('command')
+        show_legacy = kwargs.get('legacy', False)
         if not help_commands:
             from ..cli import display_command_help
-            display_command_help(params.enterprise_ec_key)
+            display_command_help(params.enterprise_ec_key, show_legacy=show_legacy)
             return
 
         if isinstance(help_commands, list) and len(help_commands) > 0:
@@ -1512,14 +1522,8 @@ class BlankRecordCommand(Command):
 
 
 class RunAsCommand(Command):
-    run_as_parser = argparse.ArgumentParser(
-        prog='run-as', description='Runs application with user credentials stored on a record')
-    run_as_parser.add_argument('--record', '-r', dest='record', action='store', required=True,
-                               help='Record name or UID')
-    run_as_parser.add_argument('application', help="Application to run")
-
     def get_parser(self):
-        return RunAsCommand.run_as_parser
+        return run_as_parser
 
     def execute(self, params, **kwargs):
         from .. import native

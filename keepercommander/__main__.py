@@ -98,7 +98,7 @@ def get_params_from_config(config_filename=None, launched_with_shortcut=False): 
 def usage(m):
     print(m)
     parser.print_help()
-    cli.display_command_help(show_enterprise=True, show_shell=True)
+    cli.display_command_help(show_enterprise=True, show_shell=True, show_legacy=True)
     sys.exit(1)
 
 

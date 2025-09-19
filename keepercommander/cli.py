@@ -56,42 +56,137 @@ command_info['server'] = 'Sets or displays current Keeper region.'
 logging.getLogger('asyncio').setLevel(logging.WARNING)
 
 
-def display_command_help(show_enterprise=False, show_shell=False):
-    headers = ['Category', 'Command', 'Alias', '', 'Description']
+def display_command_help(show_enterprise=False, show_shell=False, show_legacy=False):
+    from .command_categories import get_command_category, get_category_order
+    from .display import bcolors
+    
     alias_lookup = {x[1]: x[0] for x in aliases.items()}
-    table = []
-    cmds = list(command_info.keys())
-    cmds.sort()
-    group_shown = False
-    for cmd in cmds:
-        table.append(['Vault' if not group_shown else '', cmd, alias_lookup.get(cmd) or '', '...', command_info.get(cmd, '')])
-        group_shown = True
-
+    
+    # Collect all commands from all sources
+    all_commands = {}
+    all_commands.update(command_info)
     if show_enterprise:
-        cmds = list(enterprise_command_info.keys())
-        cmds.sort()
-        group_shown = False
-        for cmd in cmds:
-            table.append(['Enterprise' if not group_shown else '', cmd, alias_lookup.get(cmd) or '', '...', enterprise_command_info.get(cmd, '')])
-            group_shown = True
+        all_commands.update(enterprise_command_info)
+        all_commands.update(msp_command_info)
+    
+    # Group commands by category
+    categorized_commands = {}
+    for cmd, description in all_commands.items():
+        category = get_command_category(cmd)
+        if category not in categorized_commands:
+            categorized_commands[category] = []
+        categorized_commands[category].append((cmd, description))
+    
+    # Define colors for different categories - more variety and visual appeal
+    category_colors = {
+        'Record Commands': bcolors.OKGREEN,           # Green - primary functionality
+        'Sharing Commands': bcolors.OKBLUE,           # Blue - collaboration  
+        'Record Type Commands': bcolors.HEADER,       # Purple/Magenta - special types
+        'Import and Exporting Data': bcolors.WARNING, # Yellow - data operations
+        'Reporting Commands': '\033[96m',             # Cyan - analytics
+        'MSP Management Commands': bcolors.HIGHINTENSITYRED, # Bright Red - MSP admin
+        'Enterprise Management Commands': '\033[94m',  # Blue - enterprise admin
+        'Secrets Manager Commands': '\033[95m',       # Magenta - KSM
+        'BreachWatch Commands': bcolors.FAIL,         # Red - security alerts
+        'Device Management Commands': '\033[93m',     # Bright Yellow - devices
+        'Service Mode REST API': '\033[36m',          # Dark Cyan - services
+        'Miscellaneous Commands': '\033[37m',         # Light Gray - utilities
+        'KeeperPAM Commands': '\033[92m',            # Bright Green - PAM
+        'Legacy Commands': '\033[90m',               # Dark Gray - deprecated
+        'Other': bcolors.WHITE
+    }
 
-        cmds = list(msp_command_info.keys())
-        cmds.sort()
-        group_shown = False
-        for cmd in cmds:
-            table.append(['MSP' if not group_shown else '', cmd, alias_lookup.get(cmd) or '', '...', msp_command_info.get(cmd, '')])
-            group_shown = True
+    print(f'\n{bcolors.BOLD}{bcolors.UNDERLINE}Commands:{bcolors.ENDC}')
+    print('=' * 80)
+    
+    # Display commands in category order with colors and separators
+    first_category = True
+    for category in get_category_order():
+        if category not in categorized_commands:
+            continue
+            
+        # Skip Legacy Commands unless specifically requested
+        if category == 'Legacy Commands' and not show_legacy:
+            continue
+            
+        # Add separator between categories (except for first one)
+        if not first_category:
+            print()  # Empty line between categories
+        first_category = False
+            
+        # Sort commands within each category
+        commands_in_category = sorted(categorized_commands[category], key=lambda x: x[0])
+        
+        # Display category header with color
+        color = category_colors.get(category, bcolors.WHITE)
+        print(f'{color}{bcolors.BOLD}{category}:{bcolors.ENDC}')
+        print(f'{color}{"-" * len(category)}{bcolors.ENDC}')
+        
+        # Special handling for KeeperPAM Commands to show sub-commands
+        if category == 'KeeperPAM Commands':
+            # Define PAM sub-commands with descriptions
+            pam_subcommands = [
+                ('pam action', 'Execute action on the Gateway'),
+                ('pam config', 'Manage PAM Configurations'),
+                ('pam connection', 'Manage Connections'),
+                ('pam gateway', 'Manage Gateways'),
+                ('pam legacy', 'Switch to legacy PAM commands'),
+                ('pam project', 'PAM Project Import/Export'),
+                ('pam rbi', 'Manage Remote Browser Isolation'),
+                ('pam rotation', 'Manage Rotations'),
+                ('pam split', 'Split credentials from legacy PAM Machine'),
+                ('pam tunnel', 'Manage Tunnels'),
+            ]
+            
+            # Calculate width for PAM commands
+            max_cmd_width = max(len(cmd) for cmd, _ in pam_subcommands)
+            
+            for cmd_display, description in sorted(pam_subcommands):
+                # Bold only the "pam" part
+                pam_part = cmd_display.split(' ')[0]  # "pam"
+                sub_part = cmd_display.split(' ', 1)[1]  # "action", "config", etc.
+                formatted_cmd = f'{bcolors.BOLD}{pam_part}{bcolors.ENDC} {sub_part}'
+                # Adjust spacing to account for formatting codes
+                spacing = max_cmd_width - len(cmd_display) + len(bcolors.BOLD) + len(bcolors.ENDC)
+                print(f'  {formatted_cmd}{" " * spacing}   {description}')
+        else:
+            # Regular command display for other categories
+            max_cmd_width = 0
+            cmd_display_list = []
+            for cmd, description in commands_in_category:
+                alias = alias_lookup.get(cmd) or ''
+                alias_str = f' ({alias})' if alias else ''
+                cmd_display = f'{cmd}{alias_str}'
+                cmd_display_list.append((cmd, alias_str, description))
+                max_cmd_width = max(max_cmd_width, len(cmd_display))
+            
+            # Display commands in this category with proper table alignment
+            for cmd, alias_str, description in cmd_display_list:
+                cmd_display = f'{cmd}{alias_str}'
+                print(f'  {bcolors.BOLD}{cmd_display:<{max_cmd_width}}{bcolors.ENDC}   {description}')
 
+    # Add shell commands if requested
     if show_shell:
-        table.append(['Misc', 'clear', 'c', '...', 'Clear the screen.'])
-        table.append(['', 'history', 'h', '...', 'Show command history.'])
-        table.append(['', 'shell', '', '...', 'Use Keeper interactive shell.'])
-        table.append(['', 'quit', 'q', '...', 'Quit.'])
+        print()  # Separator
+        color = bcolors.WHITE
+        print(f'{color}{bcolors.BOLD}Shell Commands:{bcolors.ENDC}')
+        print(f'{color}{"-" * 14}{bcolors.ENDC}')
+        # Calculate max width for shell commands too
+        shell_commands = [
+            ('clear (c)', 'Clear the screen.'),
+            ('history (h)', 'Show command history.'),
+            ('shell', 'Use Keeper interactive shell.'),
+            ('quit (q)', 'Quit.')
+        ]
+        shell_max_width = max(len(cmd) for cmd, _ in shell_commands)
+        
+        for cmd, description in shell_commands:
+            print(f'  {bcolors.BOLD}{cmd:<{shell_max_width}}{bcolors.ENDC}   {description}')
 
-    print('\nCommands:')
-    dump_report_data(table, headers, no_header=True)
-    print('')
-    print('Type \'help <command>\' to display help on command')
+    print(f'\n{bcolors.UNDERLINE}Usage:{bcolors.ENDC}')
+    print(f"Type '{bcolors.BOLD}help <command>{bcolors.ENDC}' to display help on a specific command")
+    if not show_legacy:
+        print(f"Type '{bcolors.BOLD}help --legacy{bcolors.ENDC}' to show legacy/deprecated commands")
 
 
 def is_executing_as_msp_admin():
