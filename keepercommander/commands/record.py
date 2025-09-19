@@ -81,7 +81,7 @@ def register_command_info(aliases, command_info):
     command_info['trash'] = 'Manage records in the deleted items'
 
 
-get_info_parser = argparse.ArgumentParser(prog='get', description='Get the details of a record/folder/team by UID or title.')
+get_info_parser = argparse.ArgumentParser(prog='get', description='Get the details of a record/folder/team by UID or title')
 get_info_parser.add_argument('--unmask', dest='unmask', action='store_true', help='display hidden field content')
 get_info_parser.add_argument('--legacy', dest='legacy', action='store_true',
                              help='json output: display typed records as legacy')
@@ -91,7 +91,7 @@ get_info_parser.add_argument(
 get_info_parser.add_argument('uid', type=str, action='store', help='UID or title to search for')
 
 
-search_parser = argparse.ArgumentParser(prog='search', description='Search the vault. Can use a regular expression.')
+search_parser = argparse.ArgumentParser(prog='search', description='Search the vault using a regular expression')
 search_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 search_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 search_parser.add_argument('-c', '--categories', dest='categories', action='store',
@@ -99,7 +99,7 @@ search_parser.add_argument('-c', '--categories', dest='categories', action='stor
                                 '"s" = shared folders, "t" = teams')
 
 
-list_parser = argparse.ArgumentParser(prog='list', description='List records.', parents=[base.report_output_parser])
+list_parser = argparse.ArgumentParser(prog='list', description='List all records', parents=[base.report_output_parser])
 list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 list_parser.add_argument('-t', '--type', dest='record_type', action='append',
                          help='List records of certain types. Can be repeated')
@@ -107,11 +107,11 @@ list_parser.add_argument('--field', dest='field', action='append', help='Filter 
 list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 
 
-list_sf_parser = argparse.ArgumentParser(prog='list-sf', description='List shared folders.', parents=[base.report_output_parser])
+list_sf_parser = argparse.ArgumentParser(prog='list-sf', description='List all shared folders', parents=[base.report_output_parser])
 list_sf_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 
 
-list_team_parser = argparse.ArgumentParser(prog='list-team', description='List teams.', parents=[base.report_output_parser])
+list_team_parser = argparse.ArgumentParser(prog='list-team', description='List all teams', parents=[base.report_output_parser])
 verbose_group = list_team_parser.add_mutually_exclusive_group()
 verbose_group.add_argument('-v', '--verbose', action='store_true', help="verbose output (include team membership info)")
 verbose_group.add_argument('-vv', '--very-verbose', action='store_true', help="more verbose output (fetches team membership info not in cache)")
@@ -122,7 +122,7 @@ list_team_parser.add_argument('--sort', dest='sort', choices=['company', 'team_u
 
 
 record_history_parser = argparse.ArgumentParser(prog='record-history', parents=[base.report_output_parser],
-                                                description='Show the history of a record modifications.')
+                                                description='Show the revision history of a record')
 record_history_parser.add_argument(
     '-a', '--action', dest='action', choices=['list', 'diff', 'view', 'restore'], action='store',
     help="filter by record history type. (default: 'list'). --revision required with 'restore' action.",
@@ -135,7 +135,7 @@ record_history_parser.add_argument('record', nargs='?', type=str, action='store'
 
 
 shared_records_report_parser = argparse.ArgumentParser(prog='shared-records-report', parents=[base.report_output_parser],
-                                                       description='Report shared records for a logged-in user.')
+                                                       description='Report shared records for a logged-in user')
 shared_records_report_parser.add_argument('-tu', '--show-team-users', dest='show_team_users', action='store_true',
                                           help='show members of team for records shared via share team folders.')
 shared_records_report_parser.add_argument('--all-records', dest='all_records', action='store_true',
@@ -144,7 +144,7 @@ shared_folder_help = 'Optional (w/ multiple values allowed). Path or UID of fold
 shared_records_report_parser.add_argument('folder', type=str, nargs='*', help=shared_folder_help)
 
 clipboard_copy_parser = argparse.ArgumentParser(
-    prog='clipboard-copy', description='Retrieve the password for a specific record.')
+    prog='clipboard-copy', description='Retrieve the password for a specific record')
 clipboard_copy_parser.add_argument('--username', dest='username', action='store', help='match login name (optional)')
 clipboard_copy_parser.add_argument(
     '--output', dest='output', choices=['clipboard', 'stdout', 'stdouthidden', 'variable'], default='clipboard', action='store',
@@ -165,7 +165,7 @@ clipboard_copy_parser.add_argument(
 clipboard_copy_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 
 
-rm_parser = argparse.ArgumentParser(prog='rm', description='Remove a record.')
+rm_parser = argparse.ArgumentParser(prog='rm', description='Remove or delete a record from the vault')
 rm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
 rm_parser.add_argument('records', nargs='*', type=str, help='record path or UID. Can be repeated.')
 
@@ -957,30 +957,30 @@ class RecordListTeamCommand(Command):
 
 
 
-trash_list_parser = argparse.ArgumentParser(prog='trash list', description='Displays a list of deleted records.',
+trash_list_parser = argparse.ArgumentParser(prog='trash list', description='Displays a list of deleted records',
                                             parents=[base.report_output_parser])
 trash_list_parser.add_argument('--reload', dest='reload', action='store_true', help='reload deleted records')
 trash_list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help="verbose output")
 trash_list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 
 
-trash_get_parser = argparse.ArgumentParser(prog='trash get', description='Get the details of a deleted record.')
+trash_get_parser = argparse.ArgumentParser(prog='trash get', description='Get the details of a deleted record')
 trash_get_parser.add_argument('record', action='store', help='Deleted record UID')
 
-trash_restore_parser = argparse.ArgumentParser(prog='trash restore', description='Restores deleted records.')
+trash_restore_parser = argparse.ArgumentParser(prog='trash restore', description='Restores deleted records')
 trash_restore_parser.add_argument('-f', '--force', dest='force', action='store_true',
                                   help='do not prompt for confirmation')
 trash_restore_parser.add_argument('records', nargs='+', type=str, action='store',
                                   help='Record UID or search pattern')
 
-trash_unshare_parser = argparse.ArgumentParser(prog='trash unshare', description='Remove shares from deleted records.')
+trash_unshare_parser = argparse.ArgumentParser(prog='trash unshare', description='Remove shares from deleted records')
 trash_unshare_parser.add_argument('-f', '--force', dest='force', action='store_true',
                                   help='do not prompt for confirmation')
 trash_unshare_parser.add_argument('records', nargs='+', type=str, action='store',
                                   help='Record UID or search pattern. \"*\" ')
 
 trash_purge_parser = argparse.ArgumentParser(prog='trash purge',
-                                             description='Removes all deleted record from the trash bin.')
+                                             description='Removes all deleted records from the trash bin')
 trash_purge_parser.add_argument('-f', '--force', dest='force', action='store_true',
                                 help='do not prompt for confirmation')
 
