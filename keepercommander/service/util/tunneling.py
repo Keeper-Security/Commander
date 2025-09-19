@@ -344,8 +344,6 @@ def _start_cloudflare_with_binary(port, tunnel_token, custom_domain=None):
                 env=os.environ.copy()
             )
     
-    # Get the tunnel URL from logs
-    time.sleep(3)  # Give tunnel time to start
     tunnel_url = get_cloudflare_url_from_log(log_file, custom_domain)
     
     return process.pid, tunnel_url

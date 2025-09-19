@@ -28,6 +28,8 @@ class CloudflareConfigurator:
         "tunnel started",
         "Connection established", 
         "Tunnel connection established",
+        "Registered tunnel connection",
+        "Updated to new configuration",
         "trycloudflare.com",
         "cfargotunnel.com"
     ]
