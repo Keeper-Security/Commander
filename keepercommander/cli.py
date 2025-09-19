@@ -51,7 +51,7 @@ not_msp_admin_error_msg = 'This command is restricted to Keeper MSP administrato
                           'Company. \nIf you are an MSP administrator then try to run `switch-to-msp` ' \
                           'command before executing this command.'
 
-command_info['server'] = 'Sets or displays current Keeper region.'
+command_info['server'] = 'Sets or displays current Keeper region'
 
 logging.getLogger('asyncio').setLevel(logging.WARNING)
 

@@ -123,7 +123,7 @@ def register_commands(commands, aliases, command_info):
     if sys.version_info.major == 3 and sys.version_info.minor >= 10 and (utils.is_windows_11() or sys.platform == 'darwin'):
         from ..biometric import BiometricCommand
         commands['biometric'] = BiometricCommand()
-        command_info['biometric'] = 'Biometric management'
+        command_info['biometric'] = 'Biometric (Passkey) login management'
 
     if sys.version_info.major == 3 and sys.version_info.minor >= 8:
         from .start_service import register_commands as service_commands, register_command_info as service_command_info
@@ -182,7 +182,7 @@ def register_msp_commands(commands, aliases, command_info):
     msp_command_info(aliases, command_info)
     from . import distributor
     commands['distributor'] = distributor.DistributorCommand()
-    command_info['distributor'] = 'Manage distributors'
+    command_info['distributor'] = 'Manage distributor-specific features'
     aliases['ds'] = 'distributor'
 
 

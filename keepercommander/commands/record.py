@@ -78,7 +78,7 @@ def register_command_info(aliases, command_info):
               record_edit.record_update_parser, record_edit.append_parser, record_edit.download_parser,
               record_edit.upload_parser, record_edit.delete_attachment_parser, clipboard_copy_parser, record_totp.totp_parser]:
         command_info[p.prog] = p.description
-    command_info['trash'] = 'Manage deleted items.'
+    command_info['trash'] = 'Manage records in the deleted items'
 
 
 get_info_parser = argparse.ArgumentParser(prog='get', description='Get the details of a record/folder/team by UID or title.')

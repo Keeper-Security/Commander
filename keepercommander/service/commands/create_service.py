@@ -56,7 +56,7 @@ class CreateService(Command):
 
     @debug_decorator
     def get_parser(self):
-        parser = argparse.ArgumentParser(prog='service-create', parents=[report_output_parser], description='Creates and initializes the Commander API service.')
+        parser = argparse.ArgumentParser(prog='service-create', parents=[report_output_parser], description='Creates and initializes the Commander REST API service')
         parser.add_argument('-p', '--port', type=int, help='port number for the service (required)')
         parser.add_argument('-aip', '--allowedip', type=str, help='allowed ip to access service')
         parser.add_argument('-dip', '--deniedip', type=str, help='denied ip to access service')

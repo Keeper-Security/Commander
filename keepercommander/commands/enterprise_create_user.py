@@ -31,7 +31,7 @@ def register_commands(commands):
 
 
 def register_command_info(_, command_info):
-    command_info['create-user'] = 'Create Enterprise User'
+    command_info['create-user'] = 'Create an Enterprise User with a reserved domain'
 
 
 register_parser = argparse.ArgumentParser(prog='create-user', description='Creates enterprise user')

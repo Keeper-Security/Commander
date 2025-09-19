@@ -49,7 +49,7 @@ from ..sox.sox_types import SharedFolder
 from ..sox.storage_types import StorageRecordAging
 from ..subfolder import get_contained_record_uids
 
-audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run an audit trail report.', parents=[report_output_parser])
+audit_report_parser = argparse.ArgumentParser(prog='audit-report', description='Run an audit trail report', parents=[report_output_parser])
 audit_report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
 audit_report_parser.add_argument('--report-type', dest='report_type', action='store', choices=['raw', 'dim', 'hour', 'day', 'week', 'month', 'span'],
                                  help='report type. (Default value: raw)', default='raw')
@@ -95,7 +95,7 @@ audit_report_parser.add_argument('pattern', nargs='?', type=str, help=search_hel
 audit_report_parser.error = raise_parse_exception
 audit_report_parser.exit = suppress_exit
 
-audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export the enterprise audit log.')
+audit_log_parser = argparse.ArgumentParser(prog='audit-log', description='Export the enterprise audit log')
 audit_log_parser.add_argument('--anonymize', dest='anonymize', action='store_true',
                               help='Anonymizes audit log by replacing email and user name with corresponding enterprise user id. '
                                    'If user was removed or if user\'s email was changed then the audit report will show that particular entry as deleted user.')
@@ -114,7 +114,7 @@ audit_log_parser.error = raise_parse_exception
 audit_log_parser.exit = suppress_exit
 
 
-aging_report_parser = argparse.ArgumentParser(prog='aging-report', description='Run an aging report.', parents=[report_output_parser])
+aging_report_parser = argparse.ArgumentParser(prog='aging-report', description='Run a password aging report', parents=[report_output_parser])
 aging_report_parser.add_argument('-r', '--rebuild', dest='rebuild', action='store_true',
                                  help='Rebuild record database')
 aging_report_parser.add_argument('--delete', dest='delete', action='store_true',
@@ -137,7 +137,7 @@ aging_report_parser.add_argument('--in-shared-folder', action='store_true', help
 aging_report_parser.error = raise_parse_exception
 aging_report_parser.exit = suppress_exit
 
-action_report_parser = argparse.ArgumentParser(prog='action-report', description='Run a user action report.', parents=[report_output_parser])
+action_report_parser = argparse.ArgumentParser(prog='action-report', description='Run an action based on user activity', parents=[report_output_parser])
 action_report_target_statuses = ['no-logon', 'no-update', 'locked', 'invited', 'no-security-question-update']
 action_report_parser.add_argument('--target', '-t', dest='target_user_status', action='store',
                                   choices=action_report_target_statuses, default='no-logon',

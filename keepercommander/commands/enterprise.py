@@ -107,7 +107,7 @@ enterprise_data_parser = argparse.ArgumentParser(prog='enterprise-down',
 enterprise_data_parser.add_argument('-f', '--force', dest='force', action='store_true', help='full data sync')
 
 enterprise_info_parser = argparse.ArgumentParser(prog='enterprise-info', parents=[report_output_parser],
-                                                 description='Display a tree structure of your enterprise.',
+                                                 description='Display a tree structure of the enterprise tenant',
                                                  formatter_class=RawTextHelpFormatter)
 enterprise_info_parser.add_argument('-n', '--nodes', dest='nodes', action='store_true', help='print node tree')
 enterprise_info_parser.add_argument('-u', '--users', dest='users', action='store_true', help='print user list')
@@ -127,7 +127,7 @@ enterprise_info_parser.add_argument('pattern', nargs='?', type=str,
                                     help='search pattern. applicable to users, teams, and roles.')
 
 
-enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node', description='Manage an enterprise node(s).')
+enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node', description='Manage an enterprise node')
 enterprise_node_parser.add_argument('--wipe-out', dest='wipe_out', action='store_true', help='wipe out node content')
 enterprise_node_parser.add_argument('--add', dest='add', action='store_true', help='create node')
 enterprise_node_parser.add_argument('--parent', dest='parent', action='store', help='Parent Node Name or ID')
@@ -143,7 +143,7 @@ enterprise_node_parser.error = raise_parse_exception
 enterprise_node_parser.exit = suppress_exit
 
 
-enterprise_user_parser = argparse.ArgumentParser(prog='enterprise-user', description='Manage an enterprise user(s).')
+enterprise_user_parser = argparse.ArgumentParser(prog='enterprise-user', description='Manage an enterprise user')
 enterprise_user_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_user_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_user_parser.add_argument('--expire', dest='expire', action='store_true', help='expire master password')
@@ -173,7 +173,7 @@ enterprise_user_parser.error = raise_parse_exception
 enterprise_user_parser.exit = suppress_exit
 
 
-enterprise_role_parser = argparse.ArgumentParser(prog='enterprise-role', description='Manage an enterprise role(s).')
+enterprise_role_parser = argparse.ArgumentParser(prog='enterprise-role', description='Manage an enterprise role policy')
 enterprise_role_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_role_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_role_parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'],
@@ -207,7 +207,7 @@ enterprise_role_parser.error = raise_parse_exception
 enterprise_role_parser.exit = suppress_exit
 
 
-enterprise_team_parser = argparse.ArgumentParser(prog='enterprise-team', description='Manage an enterprise team(s).')
+enterprise_team_parser = argparse.ArgumentParser(prog='enterprise-team', description='Manage an enterprise team')
 enterprise_team_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_team_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_team_parser.add_argument('--add', dest='add', action='store_true', help='create team')
@@ -232,7 +232,7 @@ enterprise_team_parser.error = raise_parse_exception
 enterprise_team_parser.exit = suppress_exit
 
 team_approve_parser = argparse.ArgumentParser(prog='team-approve', parents=[report_output_parser],
-                                              description='Enable or disable automated team and user approval.')
+                                              description='Enable or disable automated team and user approvals')
 team_approve_parser.add_argument('--team', dest='team', action='store_true', help='Approve teams only.')
 team_approve_parser.add_argument('--email', dest='user', action='store_true', help='Approve team users only.')
 team_approve_parser.add_argument('--restrict-edit', dest='restrict_edit', choices=['on', 'off'], action='store',
