@@ -31,11 +31,9 @@ def create_legacy_command_blueprint():
     @bp.route("/executecommand", methods=["POST"])
     @unified_api_decorator()
     def execute_command_direct(**kwargs) -> Tuple[Union[Response, bytes], int]:
-        """Execute command directly and return result immediately (legacy behavior)."""
+        """Execute command directly and return result immediately (V1 API behavior)."""
         temp_files = []
         try:
-            logger.warning("LEGACY: /api/v1/ usage - migrate to /api/v2/")
-            
             json_error = RequestValidator.validate_request_json()
             if json_error:
                 return json_error
