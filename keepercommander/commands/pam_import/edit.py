@@ -498,7 +498,7 @@ class PAMProjectImportCommand(Command):
                 if pce.az_client_secret: args["client_secret"] = pce.az_client_secret
                 if pce.az_subscription_id: args["subscription_id"] = pce.az_subscription_id
                 if pce.az_tenant_id: args["tenant_id"] = pce.az_tenant_id
-                if pce.az_resource_groups: args["resource_group"] = pce.az_resource_groups
+                if pce.az_resource_groups: args["resource_groups"] = pce.az_resource_groups
 
             if pce.default_rotation_schedule: args["default_schedule"] = pce.default_rotation_schedule
 
@@ -1681,16 +1681,16 @@ class PamConfigEnvironment():
         self.attachments = None # PamAttachmentsObject
 
         # common settings (local, aws, az)
-        self.pam_resources = {} # {"controllerUid": "", "controllerUid": ""} - "resourceRef": unused/legacy
+        self.pam_resources = {} # {"folderUid": "", "controllerUid": ""} - "resourceRef": unused/legacy
 
         # Local environment
-        self.network_id: str = ""   # text:networkId prefix for naming resources during discovery
-        self.network_cidr: str = "" # text:networkCIDR network CIDR used for discovery
+        self.network_id: str = ""   # required, text:networkId prefix for naming resources during discovery
+        self.network_cidr: str = "" # required, text:networkCIDR network CIDR used for discovery
         # AWS environment
-        self.aws_id: str = ""                 # required, text:awsId
-        self.aws_access_key_id: str = ""      # secret:accessKeyId
-        self.aws_secret_access_key: str = ""  # secret:accessSecretKey
-        self.aws_region_names: List[str] = [] # multiline:regionNames
+        self.aws_id: str = ""                   # required, text:awsId
+        self.aws_access_key_id: str = ""        # required, secret:accessKeyId
+        self.aws_secret_access_key: str = ""    # required, secret:accessSecretKey
+        self.aws_region_names: List[str] = []   # optional, multiline:regionNames
         # Azure environment
         self.az_entra_id: str = ""              # required, text:azureId
         self.az_client_id: str = ""             # required, secret:clientId
@@ -1698,6 +1698,21 @@ class PamConfigEnvironment():
         self.az_subscription_id: str = ""       # required, secret:subscriptionId
         self.az_tenant_id: str = ""             # required, secret:tenantId
         self.az_resource_groups: List[str] = [] # optional, multiline:resourceGroups
+        # Domain environment: pamDomainConfiguration
+        self.dom_domain_id: str = ''            # required, text:pamDomainId
+        self.dom_hostname: str = ''             # required, pamHostname:
+        self.dom_port: str = ''                 # required, pamHostname:
+        self.dom_use_ssl: bool = False          # required, checkbox:useSSL
+        self.dom_scan_dc_cidr: bool = False     # optional, checkbox:scanDCCIDR
+        self.dom_network_cidr: str = ''         # optional, multiline:networkCIDR
+        # Oracle Cloud Infrastructure (OCI) environment: pamOciConfiguration
+        # NB! OCI settings subject to change:
+        self.oci_oci_id: str = ''               # required, text:pamOciId
+        self.oci_admin_oci_id: str = ''         # required, secret:adminOcid
+        self.oci_admin_public_key: str = ''     # required, secret:adminPublicKey
+        self.oci_admin_private_key: str = ''    # required, secret:adminPrivateKey
+        self.oci_tenancy_oci: str = ''          # required, text:tenancyOci
+        self.oci_region_oci: str = ''           # required, text:regionOci
 
     def __init__(self, environment_type:str, settings:dict, controller_uid:str, folder_uid:str) -> None:
         self._initialize()
