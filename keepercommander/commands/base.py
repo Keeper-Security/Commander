@@ -134,9 +134,9 @@ def register_commands(commands, aliases, command_info):
 
 
 def toggle_pam_legacy_commands(legacy: bool):
-    from . import discoveryrotation
-    from . import discoveryrotation_v1
     if sys.version_info.major > 3 or (sys.version_info.major == 3 and sys.version_info.minor >= 8):
+        from . import discoveryrotation
+        from . import discoveryrotation_v1
         if legacy is True:
             discoveryrotation_v1.register_commands(commands)
             discoveryrotation_v1.register_command_info(aliases, command_info)
