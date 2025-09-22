@@ -23,7 +23,7 @@ import requests
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
 from .base import (Command, GroupCommand, user_choice, dump_report_data, report_output_parser, field_to_title,
-                   FolderMixin, RecordMixin, register_pam_legacy_commands)
+                   FolderMixin, RecordMixin, toggle_pam_legacy_commands)
 from .folder import FolderMoveCommand
 from .ksm import KSMCommand
 from .pam import gateway_helper, router_helper
@@ -102,7 +102,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('action', GatewayActionCommand(), 'Execute action on the Gateway', 'a')
         self.register_command('tunnel', PAMTunnelCommand(), 'Manage Tunnels', 't')
         self.register_command('split', PAMSplitCommand(), 'Split credentials from legacy PAM Machine', 's')
-        self.register_command('legacy', PAMLegacyCommand(), 'Switch to legacy PAM commands')
+        self.register_command('legacy', PAMLegacyCommand(), 'Toggle PAM Legacy commands: ON/OFF')
         self.register_command('connection', PAMConnectionCommand(), 'Manage Connections', 'n')
         self.register_command('rbi', PAMRbiCommand(), 'Manage Remote Browser Isolation', 'b')
         self.register_command('project', PAMProjectCommand(), 'PAM Project Import/Export', 'p')
@@ -231,13 +231,26 @@ class PAMDebugCommand(GroupCommand):
 
 
 class PAMLegacyCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam legacy', description="Switch to using obsolete PAM commands")
+    parser = argparse.ArgumentParser(prog='pam legacy', description="Toggle PAM Legacy mode: ON/OFF - PAM Legacy commands are obsolete")
+    parser.add_argument('--status', '-s', required=False, dest='status', action='store_true', help='Show the current status - Legacy mode: ON/OFF')
 
     def get_parser(self):
         return PAMLegacyCommand.parser
 
     def execute(self, params, **kwargs):
-        register_pam_legacy_commands()
+        from .base import commands
+        status = kwargs.get('status') or False
+        pamc = commands.get("pam")
+        # Legacy mode is missing: connection, split, rbi, project (tunnel - commented out)
+        conn = pamc.subcommands.get("connection") if pamc and pamc.subcommands else None
+        legacy = False if conn and isinstance(conn, PAMConnectionCommand) else True
+        if status:
+            if legacy:
+                print("PAM Legacy mode: ON")
+            else:
+                print ("PAM Legacy mode: OFF")
+            return
+        toggle_pam_legacy_commands(not legacy)
 
 
 class PAMCmdListJobs(Command):
@@ -1611,7 +1624,7 @@ azure_group.add_argument('--client-secret', dest='client_secret', action='store'
 azure_group.add_argument('--subscription_id', dest='subscription_id', action='store',
                          help='Subscription Id')
 azure_group.add_argument('--tenant-id', dest='tenant_id', action='store', help='Tenant Id')
-azure_group.add_argument('--resource-group', dest='resource_group', action='append', help='Resource Group')
+azure_group.add_argument('--resource-group', dest='resource_groups', action='append', help='Resource Group')
 
 
 class PamConfigurationEditMixin(RecordEditMixin):
@@ -1643,7 +1656,7 @@ class PamConfigurationEditMixin(RecordEditMixin):
             record.fields.append(field)
 
         if len(field.value) == 0:
-            field.value.append(dict())
+            field.value.append({})
         value = field.value[0]
 
         gateway_uid = None  # type: Optional[str]
@@ -1720,7 +1733,7 @@ class PamConfigurationEditMixin(RecordEditMixin):
         if schedule:
             extra_properties.append(f'schedule.defaultRotationSchedule={schedule}')
         else:
-            extra_properties.append(f'schedule.defaultRotationSchedule=On-Demand')
+            extra_properties.append('schedule.defaultRotationSchedule=On-Demand')
 
         if record.record_type == 'pamNetworkConfiguration':
             network_id = kwargs.get('network_id')
@@ -1759,9 +1772,9 @@ class PamConfigurationEditMixin(RecordEditMixin):
             tenant_id = kwargs.get('tenant_id')
             if tenant_id:
                 extra_properties.append(f'secret.tenantId={tenant_id}')
-            resource_group = kwargs.get('resource_group')
-            if isinstance(resource_group, list) and len(resource_group) > 0:
-                rg = '\n'.join(resource_group)
+            resource_groups = kwargs.get('resource_groups')
+            if isinstance(resource_groups, list) and len(resource_groups) > 0:
+                rg = '\n'.join(resource_groups)
                 extra_properties.append(f'multiline.resourceGroups={rg}')
         if extra_properties:
             self.assign_typed_fields(record, [RecordEditMixin.parse_field(x) for x in extra_properties])

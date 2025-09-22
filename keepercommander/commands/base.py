@@ -130,16 +130,21 @@ def register_commands(commands, aliases, command_info):
         service_commands(commands)
         service_command_info(aliases, command_info)
 
-    if sys.version_info.major == 3 and sys.version_info.minor >= 8:
+    toggle_pam_legacy_commands(legacy=False)
+
+
+def toggle_pam_legacy_commands(legacy: bool):
+    if sys.version_info.major > 3 or (sys.version_info.major == 3 and sys.version_info.minor >= 8):
         from . import discoveryrotation
-        discoveryrotation.register_commands(commands)
-        discoveryrotation.register_command_info(aliases, command_info)
-
-
-def register_pam_legacy_commands():
-    from . import discoveryrotation_v1
-    discoveryrotation_v1.register_commands(commands)
-    discoveryrotation_v1.register_command_info(aliases, command_info)
+        from . import discoveryrotation_v1
+        if legacy is True:
+            discoveryrotation_v1.register_commands(commands)
+            discoveryrotation_v1.register_command_info(aliases, command_info)
+        else:
+            discoveryrotation.register_commands(commands)
+            discoveryrotation.register_command_info(aliases, command_info)
+    else:
+        logging.debug('pam commands require Python 3.8 or newer')
 
 
 def register_enterprise_commands(commands, aliases, command_info):
