@@ -520,14 +520,14 @@ class DAGVertex:
         :return:
         """
 
-        self.debug(f"connect {self.uid} to {vertex.uid} with edge type {edge_type.value}", level=1)
+        self.dag.logger.debug(f"connect {self.uid} to {vertex.uid} with edge type {edge_type.value}", level=1)
 
         if vertex is None:
             raise ValueError("Vertex is blank.")
         if self.uid == self.dag.uid and not (edge_type == EdgeType.DATA or edge_type == EdgeType.DELETION):
             if from_load is False:
                 raise DAGIllegalEdgeException(f"Cannot create edge to self for edge type {edge_type}.")
-            self.dag.debug(f"vertex {self.uid} , the root vertex, "
+            self.dag.logger.debug(f"vertex {self.uid} , the root vertex, "
                            f"attempted to create '{edge_type.value}' edge to self, skipping.")
             return
 
@@ -538,7 +538,7 @@ class DAGVertex:
         if self.uid == vertex.uid and not (edge_type == EdgeType.DATA or edge_type == EdgeType.DELETION):
             if from_load is False:
                 raise DAGIllegalEdgeException(f"Cannot create edge to self for edge type {edge_type}.")
-            self.dag.debug(f"vertex {self.uid} attempted to make '{edge_type.value}' to self, skipping.")
+            self.dag.logger.debug(f"vertex {self.uid} attempted to make '{edge_type.value}' to self, skipping.")
             return
 
         # Figure out what version of the edge we are.
