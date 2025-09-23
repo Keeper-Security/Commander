@@ -200,10 +200,17 @@ result_retention: 3600       # Result retention (1 hour)
 - **Example**: Setting `"20/minute"` effectively provides ~20 requests per minute across all endpoints
 
 #### Error Responses
-- **503 Service Unavailable**: Queue is full
+
+**Client Errors (4xx):**
+- **400 Bad Request**: Invalid request format, missing required fields, or malformed JSON
+- **401 Unauthorized**: Missing, invalid, or expired API key; no active session
+- **403 Forbidden**: IP not allowed, access denied, or command not in allowed list
 - **404 Not Found**: Request ID not found
-- **500 Internal Server Error**: Command execution failed
 - **429 Too Many Requests**: Rate limit exceeded
+
+**Server Errors (5xx):**
+- **500 Internal Server Error**: Command execution failed or unexpected server error
+- **503 Service Unavailable**: Queue is full or service temporarily unavailable
 
 ### File Input Parameters (FILEDATA)
 
