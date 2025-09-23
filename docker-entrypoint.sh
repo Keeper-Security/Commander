@@ -40,19 +40,28 @@ setup_device() {
     log "Setting up device registration and persistent login..."
 
     # Step 1: Register device
-    log "Running: python3 keeper.py this-device register --user $user --password [HIDDEN] --server $server"
-    if ! python3 keeper.py this-device register --user "$user" --password "$password" --server $server; then
+    log "Registering device..."
+    if ! python3 keeper.py --user "$user" --password "$password" --server $server this-device register; then
         log "ERROR: Device registration failed"
         exit 1
     fi
     
     # Step 2: Enable persistent login
-    log "Running: python3 keeper.py this-device persistent-login on --user $user --password [HIDDEN] --server $server"
-    if ! python3 keeper.py this-device persistent-login on --user "$user" --password "$password" --server $server; then
+    log "Enabling persistent login..."
+    if ! python3 keeper.py --user "$user" --password "$password" --server $server this-device persistent-login on; then
         log "ERROR: Persistent login setup failed"
         exit 1
     fi
-    
+
+    # Step 3: Set timeout
+    log "Setting device logout timeout to 30 Days..."
+    if ! python3 keeper.py --user "$user" --password "$password" --server "$server" \
+        this-device timeout 43200 \
+        > /dev/null; then
+        log "ERROR: Timeout setup failed"
+        exit 1
+    fi
+    log "Device Logout Timeout set successfully"
     log "Device setup completed successfully"
 }
 
