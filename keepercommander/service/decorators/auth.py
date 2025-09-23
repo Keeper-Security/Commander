@@ -101,11 +101,31 @@ def policy_check(fn):
                 'error': 'Not permitted to perform this function'
             }, 403
         
-        if Verifycommand.is_append_command(command):
-            logger.debug(f"Command : {command[0]}")
+        # Validate append-notes command
+        append_error = Verifycommand.validate_append_command(command)
+        if append_error:
+            logger.debug(f"Command validation failed: {command[0]} - {append_error}")
             return {
                 'status': 'error',
-                'error': 'Invalid command'
+                'error': append_error
+            }, 400
+        
+        # Validate mkdir command
+        mkdir_error = Verifycommand.validate_mkdir_command(command)
+        if mkdir_error:
+            logger.debug(f"Command validation failed: {command[0]} - {mkdir_error}")
+            return {
+                'status': 'error',
+                'error': mkdir_error
+            }, 400
+        
+        # Validate transform-folder command
+        transform_folder_error = Verifycommand.validate_transform_folder_command(command)
+        if transform_folder_error:
+            logger.debug(f"Command validation failed: {command[0]} - {transform_folder_error}")
+            return {
+                'status': 'error',
+                'error': transform_folder_error
             }, 400
             
         return fn(*args, **kwargs)

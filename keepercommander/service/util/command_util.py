@@ -13,6 +13,7 @@ import io, html
 from pathlib import Path
 import sys
 import json
+import logging
 from typing import Any, Tuple, Optional
 from .config_reader import ConfigReader
 from .exceptions import CommandExecutionError
@@ -42,9 +43,20 @@ class CommandExecutor:
 
     @staticmethod
     @debug_decorator
-    def capture_output(params: Any, command: str) -> Tuple[Any, str]:
+    def capture_output_and_logs(params: Any, command: str) -> Tuple[Any, str, str]:
+        """Capture both stdout/stderr and logging output from command execution."""
         captured_stdout = io.StringIO()
         captured_stderr = io.StringIO()
+        captured_logs = io.StringIO()
+        
+        # Create a temporary log handler to capture command logs
+        temp_handler = logging.StreamHandler(captured_logs)
+        temp_handler.setFormatter(logging.Formatter('%(message)s'))
+        
+        # Get the root logger to capture all logging output
+        root_logger = logging.getLogger()
+        original_level = root_logger.level
+        original_handlers = root_logger.handlers[:]
         
         original_stdout = sys.stdout
         original_stderr = sys.stderr
@@ -53,33 +65,43 @@ class CommandExecutor:
         sys.stderr = captured_stderr
         
         try:
+            # Add our temporary handler and set appropriate level
+            root_logger.addHandler(temp_handler)
+            root_logger.setLevel(logging.INFO)
+            
             return_value = cli.do_command(params, command)
+            
             stdout_content = captured_stdout.getvalue()
             stderr_content = captured_stderr.getvalue()
+            log_content = captured_logs.getvalue()
             
-            # Combine both stderr and stdout to capture all command output
+            # Combine stdout and stderr
             stdout_clean = stdout_content.strip()
             stderr_clean = stderr_content.strip()
+            log_clean = log_content.strip()
             
             if stderr_clean and stdout_clean:
                 combined_output = stderr_clean + '\n' + stdout_clean
             else:
                 combined_output = stderr_clean or stdout_clean
             
-            return return_value, combined_output
+            return return_value, combined_output, log_clean
         except Exception as e:
             # If there's an exception, capture any error output
             stderr_content = captured_stderr.getvalue()
+            log_content = captured_logs.getvalue()
             error_output = stderr_content.strip()
             
             if error_output:
-                # Re-raise with the captured error message
                 raise CommandExecutionError(f"Command failed: {error_output}")
             raise
         finally:
             sys.stdout = original_stdout
             sys.stderr = original_stderr
-
+            # Restore original logging configuration
+            root_logger.removeHandler(temp_handler)
+            root_logger.setLevel(original_level)
+            temp_handler.close()
 
 
     @staticmethod
@@ -103,41 +125,24 @@ class CommandExecutor:
         if validation_error:
             return validation_error
         
-        service_config = ServiceConfig()
-        config_data = service_config.load_config()
+        from ..core.globals import ensure_params_loaded
         try:
-            params = get_current_params()
-        except Exception as e:
-            logger.debug(f"Failed to get params from globals: {e}")
-            params = None
-        if config_data.get("run_mode") == "background":
-            try:
-                if not params:
-                    config_path = utils.get_default_path() / "config.json"
-                    params = get_params_from_config(config_path)
-                    from ..core.globals import init_globals
-                    init_globals(params)
-            except FileNotFoundError:
-                logger.error(f"Config file not found at {config_path}")
-                raise
-            except Exception as e:
-                logger.error(f"Failed to load params from config file: {e}")
-                raise
-        try:
+            params = ensure_params_loaded()
             command = html.unescape(command)
-            return_value, printed_output = CommandExecutor.capture_output(params, command)
+            return_value, printed_output, log_output = CommandExecutor.capture_output_and_logs(params, command)
             response = return_value if return_value else printed_output
 
             # Debug logging with sanitization
             sanitized_output = sanitize_debug_data(printed_output)
-            logger.debug(f"After capture_output - return_value: '{return_value}', printed_output: '{sanitized_output}'")
+            sanitized_logs = sanitize_debug_data(log_output)
+            logger.debug(f"After capture_output - return_value: '{return_value}', printed_output: '{sanitized_output}', log_output: '{sanitized_logs}'")
             sanitized_response = sanitize_debug_data(str(response))
             logger.debug(f"Final response: '{sanitized_response}', response type: {type(response)}")
 
             cli.do_command(params, 'sync-down')
             
-            # Always let the parser handle the response (including empty responses)
-            response = parse_keeper_response(command, response)
+            # Always let the parser handle the response (including empty responses and logs)
+            response = parse_keeper_response(command, response, log_output)
             
             response = CommandExecutor.encrypt_response(response)
             logger.debug("Command executed successfully")
@@ -146,7 +151,7 @@ class CommandExecutor:
             # Return the actual command error instead of generic "server busy"
             logger.error(f"Command execution error: {e}")
             error_response = {
-                "success": False,
+                "status": "error",
                 "error": str(e)
             }
             return error_response, 400
@@ -154,7 +159,7 @@ class CommandExecutor:
             # Log unexpected errors and return a proper error response
             logger.error(f"Unexpected error during command execution: {e}")
             error_response = {
-                "success": False,
+                "status": "error",
                 "error": f"Unexpected error: {str(e)}"
             }
             return error_response, 500
