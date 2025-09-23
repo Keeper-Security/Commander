@@ -555,13 +555,14 @@ class PAMCreateRecordRotationCommand(Command):
                 [target_record.record_uid, target_record.title, not disabled, record_config_uid, record_resource_uid, schedule,
                  complexity])
 
-            # 6. Construct Request object
+            # 6. Construct Request object for IAM: empty resourceUid and noop=False
             rq = router_pb2.RouterRecordRotationRequest()
             if current_record_rotation:
                 rq.revision = current_record_rotation.get('revision', 0)
             rq.recordUid = utils.base64_url_decode(target_record.record_uid)
             rq.configurationUid = utils.base64_url_decode(record_config_uid)
-            rq.resourceUid = utils.base64_url_decode(record_resource_uid) if record_resource_uid else b''
+            rq.resourceUid = b''  # non-empty resourceUid sets is as General rotation
+            rq.noop = False  # True sets it as NOOP
             rq.schedule = json.dumps(record_schedule_data) if record_schedule_data else ''
             rq.pwdComplexity = pwd_complexity_rule_list_encrypted
             rq.disabled = disabled
@@ -1004,6 +1005,9 @@ class PAMCreateRecordRotationCommand(Command):
 
         r_requests = []   # type: List[router_pb2.RouterRecordRotationRequest]
 
+        # Note: --folder, -fd FOLDER_NAME sets up General rotation
+        # use --schedule-only, -so to preserve individual setups (General, IAM, NOOP)
+        # use --iam-aad-config, -iac IAM_AAD_CONFIG_UID to convert to IAM User
         for _record in pam_records:
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, _record.record_uid)
             if _record.record_type in ['pamMachine', 'pamDatabase', 'pamDirectory', 'pamRemoteBrowser']:
@@ -1019,6 +1023,7 @@ class PAMCreateRecordRotationCommand(Command):
                                            ' --resource is used to configure users found on a resource.'
                                            ' --iam-aad-config-uid is used to configure AWS IAM or Azure AD users')
 
+                # NB! --folder=UID without --iam-aad-config, or --schedule-only converts to General rotation
                 if iam_aad_config_uid:
                     config_iam_aad_user(tmp_dag, _record, iam_aad_config_uid)
                 else:
