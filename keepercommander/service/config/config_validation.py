@@ -123,6 +123,37 @@ class ConfigValidator:
         return token
 
     @staticmethod
+    def validate_domain(domain: str) -> str:
+        """Validate domain name format"""
+        logger.debug(f"Validating domain: {domain}")
+        
+        if not domain or not domain.strip():
+            raise ValidationError("Domain cannot be empty")
+        
+        domain = domain.strip().lower()
+        
+        if len(domain) > 253:
+            raise ValidationError("Domain name too long (max 253 characters)")
+        
+        domain_pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$'
+        
+        if not re.match(domain_pattern, domain):
+            raise ValidationError("Invalid domain format. Domain must contain only letters, numbers, hyphens, and dots.")
+        
+        labels = domain.split('.')
+        for label in labels:
+            if len(label) > 63:
+                raise ValidationError(f"Domain label '{label}' too long (max 63 characters)")
+            if label.startswith('-') or label.endswith('-'):
+                raise ValidationError(f"Domain label '{label}' cannot start or end with hyphen")
+        
+        if '.' not in domain:
+            raise ValidationError("Please provide a valid domain name")
+            
+        logger.debug("Domain validation successful")
+        return domain
+
+    @staticmethod
     def validate_rate_limit(rate_limit: str) -> str:
         """Validate rate limiting format"""
         if not rate_limit:

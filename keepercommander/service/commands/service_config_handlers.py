@@ -27,6 +27,23 @@ class ServiceConfigHandler:
         self.messages = self.config['Messages']
         self.validation_messages = self.config['Validation_Messages']
 
+    def _get_validated_input(self, prompt_key: str, validation_func, error_key: str, required: bool = False):
+        """Get and validate user input with consistent error handling."""
+        while True:
+            try:
+                value = input(self.messages.get(prompt_key, '')).strip()
+                if required and not value:
+                    print(self.validation_messages.get(f'{error_key}_required', 'This field is required.'))
+                    continue
+                return validation_func(value) if value else ""
+            except ValidationError as e:
+                print(f"{self.validation_messages.get(error_key, 'Invalid input')} {str(e)}")
+            except (KeyboardInterrupt, EOFError):
+                print("\nInput cancelled by user.")
+                raise
+            except Exception as e:
+                print(f"Unexpected error: {str(e)}")
+
     @debug_decorator
     def handle_streamlined_config(self, config_data: Dict[str, Any], args, params: KeeperParams) -> None:
         if args.allowedip is None:
@@ -68,7 +85,7 @@ class ServiceConfigHandler:
             certfile = ""
             certpassword = ""
             cloudflare_token = self.service_config.validator.validate_cloudflare_token(args.cloudflare)
-            cloudflare_domain = args.cloudflare_custom_domain
+            cloudflare_domain = self.service_config.validator.validate_domain(args.cloudflare_custom_domain)
             logger.debug("Cloudflare enabled - disabling TLS")
         else:
             # Both ngrok and cloudflare disabled → allow TLS
@@ -166,29 +183,24 @@ class ServiceConfigHandler:
             config_data["ngrok_auth_token"] = ""
 
     def _configure_cloudflare(self, config_data: Dict[str, Any]) -> None:
-        config_data["cloudflare"] = self.service_config._get_yes_no_input(self.messages.get('cloudflare_prompt', 'Do you want to use Cloudflare tunnel? (y/n): '))
+        config_data["cloudflare"] = self.service_config._get_yes_no_input(
+            self.messages.get('cloudflare_prompt', 'Do you want to use Cloudflare tunnel? (y/n): ')
+        )
         
         if config_data["cloudflare"] == "y":
-            # Get tunnel token first
-            while True:
-                try:
-                    token = input(self.messages.get('cloudflare_token_prompt', 'Enter Cloudflare tunnel token : ')).strip()
-                    if not token:
-                        print("Error: Cloudflare tunnel token is required when using Cloudflare tunnel.")
-                        continue
-                    config_data["cloudflare_tunnel_token"] = self.service_config.validator.validate_cloudflare_token(token)
-                    break  # Token is valid, exit this loop
-                except ValidationError as e:
-                    print(f"{self.validation_messages.get('invalid_cloudflare_token', 'Invalid Cloudflare token')} {str(e)}")
+            config_data["cloudflare_tunnel_token"] = self._get_validated_input(
+                prompt_key='cloudflare_token_prompt',
+                validation_func=self.service_config.validator.validate_cloudflare_token,
+                error_key='invalid_cloudflare_token',
+                required=True
+            )
             
-            # Get domain name second (separate loop)
-            while True:
-                domain = input(self.messages.get('cloudflare_custom_domain_prompt', 'Enter Cloudflare custom domain : ')).strip()
-                if not domain:
-                    print("Error: Cloudflare custom domain is required when using Cloudflare tunnel.")
-                    continue
-                config_data["cloudflare_custom_domain"] = domain
-                break  # Domain is provided, exit this loop
+            config_data["cloudflare_custom_domain"] = self._get_validated_input(
+                prompt_key='cloudflare_custom_domain_prompt', 
+                validation_func=self.service_config.validator.validate_domain,
+                error_key='invalid_cloudflare_domain',
+                required=True
+            )
         else:
             config_data["cloudflare_tunnel_token"] = ""
             config_data["cloudflare_custom_domain"] = ""

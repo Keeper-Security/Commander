@@ -236,9 +236,7 @@ def _download_cloudflared():
             return result.stdout.strip()
     except:
         pass
-    
-    # Use cloudflared binary directly
-    
+        
     # Download cloudflared binary
     import platform
     import urllib.request
@@ -314,8 +312,11 @@ def _start_cloudflare_with_binary(port, tunnel_token, custom_domain=None):
             # For named tunnels, domain is configured in Cloudflare dashboard
             logging.info(f"Using custom domain: {custom_domain} (configured in Cloudflare dashboard)")
     else:
-        # Quick tunnel (temporary)
-        cloudflared_cmd = [cloudflared_path, "tunnel", "--url", f"http://localhost:{port}"]
+        raise Exception(
+            "Tunnel token is required for secure tunnel operation. "
+            "Quick tunnels are not supported for production use. "
+            "Please provide a valid Cloudflare tunnel token."
+        )
     
     service_core_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core")
     log_dir = os.path.join(service_core_dir, "logs")
@@ -409,7 +410,10 @@ def generate_cloudflare_url(port, tunnel_token, custom_domain, run_mode):
         raise ValueError("Port must be provided for Cloudflare tunnel.")
     
     if not tunnel_token or not tunnel_token.strip():
-        logging.warning("No tunnel token provided, using temporary tunnel")
+        raise ValueError(
+            "Tunnel token is required for secure Cloudflare tunnel operation. "
+            "Temporary tunnels are not supported for production use."
+        )
     
     # Cloudflare tunnel configuration
     

@@ -261,6 +261,7 @@ class ServiceConfig:
         if config_data.cloudflare == 'y':
             logger.debug("Validating cloudflare configuration")
             self.validator.validate_cloudflare_token(config_data.cloudflare_tunnel_token)
+            self.validator.validate_domain(config_data.cloudflare_custom_domain)
 
         if config_data.is_advanced_security_enabled == 'y':
             logger.debug("Validating advanced security settings")

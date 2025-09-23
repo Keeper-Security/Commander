@@ -197,33 +197,65 @@ class ServiceManager:
                     cleanup_done = True
                     
                     try:
-                        
                         # Try to load PID from ProcessInfo first (more reliable)
                         try:
                             process_info = ProcessInfo.load()
                             saved_cloudflare_pid = process_info.cloudflare_pid
-                        except:
+                        except (KeyboardInterrupt, SystemExit):
+                            raise
+                        except Exception as e:
+                            logger.debug(f"Could not load process info: {e}")
                             saved_cloudflare_pid = None
                         
                         # Kill Cloudflare tunnel if running
                         cf_pid = saved_cloudflare_pid or cloudflare_pid
                         if cf_pid:
                             print(f"Stopping Cloudflare tunnel (PID: {cf_pid})...")
-                            if ServiceManager.kill_process_by_pid(cf_pid):
-                                print("Cloudflare tunnel stopped")
-                            else:
+                            try:
+                                if ServiceManager.kill_process_by_pid(cf_pid):
+                                    print("Cloudflare tunnel stopped")
+                                else:
+                                    try:
+                                        if ServiceManager.kill_cloudflare_processes():
+                                            print("Cloudflare tunnel stopped")
+                                    except (KeyboardInterrupt, SystemExit):
+                                        raise
+                                    except Exception as e:
+                                        logger.debug(f"Fallback cloudflare cleanup failed: {e}")
+                            except (KeyboardInterrupt, SystemExit):
+                                raise  
+                            except Exception as e:
+                                logger.debug(f"Primary cloudflare cleanup failed: {e}")
+                                try:
+                                    if ServiceManager.kill_cloudflare_processes():
+                                        print("Cloudflare tunnel stopped")
+                                except (KeyboardInterrupt, SystemExit):
+                                    raise
+                                except Exception as e:
+                                    logger.debug(f"Fallback cloudflare cleanup also failed: {e}")
+                        else:
+                            try:
                                 if ServiceManager.kill_cloudflare_processes():
                                     print("Cloudflare tunnel stopped")
-                        else:
-                            # Always try fallback cleanup for Cloudflare
-                            if ServiceManager.kill_cloudflare_processes():
-                                print("Cloudflare tunnel stopped")
+                            except (KeyboardInterrupt, SystemExit):
+                                raise  
+                            except Exception as e:
+                                logger.debug(f"Fallback cloudflare cleanup failed: {e}")
                         
                         # Clear process info
-                        ProcessInfo.clear()
+                        try:
+                            ProcessInfo.clear()
+                        except (KeyboardInterrupt, SystemExit):
+                            raise
+                        except Exception as e:
+                            logger.debug(f"Could not clear process info: {e}")
                         
+                    except (KeyboardInterrupt, SystemExit):
+                        logger.info("Cloudflare cleanup interrupted by user or system")
+                        raise
                     except Exception as e:
-                        print(f"Error during Cloudflare cleanup: {e}")
+                        print(f"Unexpected error during Cloudflare cleanup: {e}")
+                        logger.error(f"Unexpected error during Cloudflare cleanup: {e}")
 
                 def foreground_signal_handler(signum, frame):
                     """Handle interrupt signals in foreground mode."""
