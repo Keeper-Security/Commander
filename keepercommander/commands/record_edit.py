@@ -821,7 +821,11 @@ class RecordAddCommand(Command, RecordEditMixin):
             rq.accessExpireOn = utils.current_milli_time() + int(expiration_period.total_seconds() * 1000)
             rq.isSelfDestruct = True
             api.communicate_rest(params, rq, 'vault/external_share_add', rs_type=APIRequest_pb2.Device)
-            url = urlunparse(('https', params.server, '/vault/share', None, None, utils.base64_url_encode(client_key)))
+            # Extract hostname from params.server in case it contains full URL with protocol
+            from urllib.parse import urlparse
+            parsed = urlparse(params.server)
+            server_netloc = parsed.netloc if parsed.netloc else parsed.path  # parsed.path for plain hostname
+            url = urlunparse(('https', server_netloc, '/vault/share', None, None, utils.base64_url_encode(client_key)))
             return url
         else:
             BreachWatch.scan_and_update_security_data(params, record.record_uid, params.breach_watch)

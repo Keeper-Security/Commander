@@ -138,7 +138,11 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
         if folder_name:
             folder_uid = FolderMixin.resolve_folder(params, folder_name)
 
-        keeper_url = urlunparse(('https', params.server, '/vault', None, None, f'email/{email}'))
+        # Extract hostname from params.server in case it contains full URL with protocol
+        from urllib.parse import urlparse
+        parsed = urlparse(params.server)
+        server_netloc = parsed.netloc if parsed.netloc else parsed.path  # parsed.path for plain hostname
+        keeper_url = urlunparse(('https', server_netloc, '/vault', None, None, f'email/{email}'))
         record = vault.TypedRecord()
         login_facade.assign_record(record)
         login_facade.title = f'Keeper Account: {email}'
