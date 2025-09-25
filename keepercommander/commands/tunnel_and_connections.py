@@ -705,6 +705,8 @@ class PAMConnectionEditCommand(Command):
     parser.add_argument('--connections-override-port', '-cop', required=False, dest='connections_override_port',
                         action='store', help='Port to use for connections. If not provided, '
                         'the port from the record will be used.')
+    parser.add_argument('--key-events', '-k', dest='key_events', choices=choices,
+                        help='Toggle Key Events settings')
     parser.add_argument('--silent', '-s', required=False, dest='silent', action='store_true',
 					help='Silent mode - don\'t print PAM User, PAM Config etc.')
 
@@ -792,6 +794,8 @@ class PAMConnectionEditCommand(Command):
             else:
                 if not pam_settings.value:
                     pam_settings.value.append({"connection": {}, "portForward": {}})
+                if not pam_settings.value[0]:
+                    pam_settings.value[0] = {"connection": {}, "portForward": {}}
                 if _connections:
                     if connection_override_port:
                         pam_settings.value[0]["connection"]["port"] = connection_override_port
@@ -805,6 +809,34 @@ class PAMConnectionEditCommand(Command):
                 elif protocol or connection_override_port:
                     logging.warning(f'Connection override port and protocol can be set only when connections are enabled '
                             f'with {bcolors.OKGREEN}--connections=on{bcolors.ENDC} option')
+
+            # pam_settings.value already initilized above
+            key_events = kwargs.get('key_events')  # on/off/default
+            if key_events:
+                psv = pam_settings.value[0] if pam_settings and pam_settings.value else {}
+                vcon = psv.get('connection', {}) if isinstance(psv, dict) else {}
+                rik = vcon.get('recordingIncludeKeys') if isinstance(vcon, dict) else None
+                if key_events == 'default':
+                    if rik is not None:
+                        pam_settings.value[0]["connection"].pop('recordingIncludeKeys', None)
+                        dirty = True
+                    else:
+                        logging.debug(f'recordingIncludeKeys is already set to "default" on record={record_uid}')
+                elif key_events == 'on':
+                    if value_to_boolean(key_events) != value_to_boolean(rik):
+                        pam_settings.value[0]["connection"]["recordingIncludeKeys"] = True
+                        dirty = True
+                    else:
+                        logging.debug(f'recordingIncludeKeys is already enabled on record={record_uid}')
+                elif key_events == 'off':
+                    if value_to_boolean(key_events) != value_to_boolean(rik):
+                        pam_settings.value[0]["connection"]["recordingIncludeKeys"] = False
+                        dirty = True
+                    else:
+                        logging.debug(f'recordingIncludeKeys is already disabled on record={record_uid}')
+                else:
+                    logging.debug(f'Unexpected value for --key-events {key_events} (ignored)')
+
             if dirty:
                 record_management.update_record(params, record)
                 api.sync_down(params)
