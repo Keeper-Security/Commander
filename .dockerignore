@@ -1,0 +1,115 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing
+.tox/
+.nox/
+.coverage
+.pytest_cache/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+tests/
+unit-tests/
+test_*.py
+*_test.py
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# Development tools and configs  
+.git/
+.gitignore
+.gitattributes
+pylintrc
+pytest.ini
+.pylintrc
+tox.ini
+.flake8
+.bandit
+mypy.ini
+.mypy.ini
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Documentation
+README.md
+*.md
+docs/
+RECORD_ADD_DOCUMENTATION.md
+record_types.md
+
+# Examples and sample data
+examples/
+sample_data/
+
+# Development dependencies
+requirements-dev.txt
+extra_dependencies.txt
+
+# Logs and temporary files
+*.log
+.log
+tmp/
+temp/
+logs/
+**/logs/
+keepercommander/service/core/bin/
+keepercommander/service/core/logs/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Docker related (to avoid recursive copies)
+Dockerfile*
+docker-compose*.yml
+docker-compose*.yaml
+.dockerignore
+
+# Other development artifacts
+.editorconfig
+.pre-commit-config.yaml
+.github/
+keeper_file.spec
+keeper_folder.spec
+keeper-win-file.spec
+desired-pylint-warnings
