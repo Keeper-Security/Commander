@@ -104,6 +104,56 @@ class ConfigValidator:
         return token
 
     @staticmethod
+    def validate_cloudflare_token(token: str) -> str:
+        """Validate Cloudflare tunnel token"""
+        logger.debug("Validating Cloudflare tunnel token")
+        
+        # Allow empty token for temporary tunnels
+        if not token or not token.strip():
+            logger.debug("Empty Cloudflare token - will use temporary tunnel")
+            return ""
+            
+        # Cloudflare tunnel tokens are typically long base64-encoded strings
+        # They usually start with "ey" (base64 for '{"') or are alphanumeric with dashes/underscores
+        if not re.match(r'^[0-9a-zA-Z_\-=+/]{32,}$', token):
+            msg = "Invalid Cloudflare tunnel token format. Must be a valid tunnel token from Cloudflare dashboard."
+            raise ValidationError(msg)
+            
+        logger.debug("Cloudflare token validation successful")
+        return token
+
+    @staticmethod
+    def validate_domain(domain: str) -> str:
+        """Validate domain name format"""
+        logger.debug(f"Validating domain: {domain}")
+        
+        if not domain or not domain.strip():
+            raise ValidationError("Domain cannot be empty")
+        
+        domain = domain.strip().lower()
+        
+        if len(domain) > 253:
+            raise ValidationError("Domain name too long (max 253 characters)")
+        
+        domain_pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$'
+        
+        if not re.match(domain_pattern, domain):
+            raise ValidationError("Invalid domain format. Domain must contain only letters, numbers, hyphens, and dots.")
+        
+        labels = domain.split('.')
+        for label in labels:
+            if len(label) > 63:
+                raise ValidationError(f"Domain label '{label}' too long (max 63 characters)")
+            if label.startswith('-') or label.endswith('-'):
+                raise ValidationError(f"Domain label '{label}' cannot start or end with hyphen")
+        
+        if '.' not in domain:
+            raise ValidationError("Please provide a valid domain name")
+            
+        logger.debug("Domain validation successful")
+        return domain
+
+    @staticmethod
     def validate_rate_limit(rate_limit: str) -> str:
         """Validate rate limiting format"""
         if not rate_limit:

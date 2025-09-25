@@ -39,7 +39,10 @@ You'll be prompted to configure:
 - Ngrok tunneling (y/n)
   - Ngrok auth token
   - Ngrok custom domain
-- Enable TLS Certificate (y/n)
+- Cloudflare tunneling (y/n) - *if ngrok is disabled*
+  - Cloudflare tunnel token (required)
+  - Cloudflare custom domain (required)
+- Enable TLS Certificate (y/n) - *if both ngrok and cloudflare are disabled*
   - TLS Certificate path 
   - TLS Certificate password
 - Enable Request Queue (y/n)
@@ -65,6 +68,12 @@ Configure the service streamlined with Ngrok:
 
 ```bash
   My Vault> service-create -p <port> -f <json-or-yaml> -c 'tree,record-add,audit-report' -ng <ngrok-token> -cd <ngrok_custom_domain> -rm <foreground-or-background> -q <y-or-n> -aip <allowed-ip-list> -dip <denied-ip-list>
+```
+
+Configure the service streamlined with Cloudflare:
+
+```bash
+  My Vault> service-create -p <port> -f <json-or-yaml> -c 'tree,record-add,audit-report' -cf <cloudflare-tunnel-token> -cfd <cloudflare-custom-domain> -rm <foreground-or-background> -q <y-or-n> -aip <allowed-ip-list> -dip <denied-ip-list>
 ``` 
 
 Parameters:
@@ -72,6 +81,8 @@ Parameters:
 - `-c, --commands`: Comma-separated list of allowed commands
 - `-ng, --ngrok`: Ngrok authentication token for public URL access
 - `-cd, --ngrok_custom_domain`: Ngrok custom domain name
+- `-cf, --cloudflare`: Cloudflare tunnel token (required when using cloudflare)
+- `-cfd, --cloudflare_custom_domain`: Cloudflare custom domain name (required when using cloudflare)
 - `-f, --fileformat`: File format (json/yaml)
 - `-crtf, --certfile`: Certificate file path
 - `-crtp, --certpassword`: Certificate password
@@ -249,6 +260,11 @@ The service configuration is stored as an attachment to a vault record in JSON/Y
   - Ngrok authentication token
   - Ngrok custom domain
   - Generated public URL
+- **Cloudflare Configuration** (optional):
+  - Cloudflare tunneling enabled/disabled
+  - Cloudflare tunnel token
+  - Cloudflare custom domain
+  - Generated public URL
 - **TLS Certificate Configuration** (optional):
   - TLS certificate enabled/disabled
   - Certificate file path
@@ -294,6 +310,13 @@ When ngrok tunneling is enabled, additional logs are maintained:
 - **Content**: Ngrok tunnel startup, connection events, public URL generation, and tunnel errors
 - **Includes**: Tunnel establishment, reconnection attempts, and ngrok-specific error messages
 - **Auto-created**: Created automatically when ngrok tunneling is configured and service starts
+
+### Cloudflare Logging
+When Cloudflare tunneling is enabled, additional logs are maintained:
+- **Location**: `keepercommander/service/core/logs/cloudflare_tunnel_subprocess.log`
+- **Content**: Cloudflare tunnel startup, connection events, public URL generation, and tunnel errors
+- **Includes**: Tunnel establishment, connection timeout detection, and firewall blocking diagnostics
+- **Auto-created**: Created automatically when Cloudflare tunneling is configured and service starts
 
 ### General Logging Configuration
 - **Configuration file**: `~/.keeper/logging_config.yaml` (auto-generated)
