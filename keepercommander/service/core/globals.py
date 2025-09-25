@@ -11,6 +11,7 @@
 
 from typing import Optional
 from ...params import KeeperParams
+from ... import utils
 
 _current_params: Optional[KeeperParams] = None
 
@@ -20,3 +21,13 @@ def init_globals(params: KeeperParams) -> None:
 
 def get_current_params() -> Optional[KeeperParams]:
     return _current_params
+
+def ensure_params_loaded() -> KeeperParams:
+    """Load params from config if not already loaded."""
+    params = get_current_params()
+    if not params: 
+        from ...__main__ import get_params_from_config
+        config_path = utils.get_default_path() / "config.json"
+        params = get_params_from_config(config_path)
+        init_globals(params)
+    return params
