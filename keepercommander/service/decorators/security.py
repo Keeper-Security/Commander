@@ -104,8 +104,8 @@ def security_check(fn):
             if is_allowed_ip(client_ip, allowed_ips_str, denied_ips_str):
                 return fn(*args, **kwargs)
                 
-            return jsonify({"error": "IP is not allowed to call API service"}), 403
+            return jsonify({"status": "error", "error": "IP is not allowed to call API service"}), 403
         except Exception as e:
             logger.error(f"Security check error: {e}")
-            return jsonify({"error": "Access denied"}), 403
+            return jsonify({"status": "error", "error": "Access denied"}), 403
     return wrapper

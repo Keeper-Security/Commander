@@ -57,7 +57,7 @@ def create_legacy_command_blueprint():
 
         except Exception as e:
             logger.error(f"Error executing command: {e}")
-            return jsonify({"success": False, "error": f"Error: {str(e)}"}), 500
+            return jsonify({"status": "error", "error": f"Error: {str(e)}"}), 500
         finally:
             # Clean up temporary files
             RequestValidator.cleanup_temp_files(temp_files)
@@ -98,7 +98,7 @@ def create_command_blueprint():
                 # Clean up temp files if queue is full
                 RequestValidator.cleanup_temp_files(temp_files)
                 return jsonify({
-                    "success": False, 
+                    "status": "error", 
                     "error": "Error: Request queue is full. Please try again later."
                 }), 503  # 503 Service Unavailable
                 
@@ -106,7 +106,7 @@ def create_command_blueprint():
             logger.error(f"Error submitting request: {e}")
             # Clean up temp files on error
             RequestValidator.cleanup_temp_files(temp_files)
-            return jsonify({"success": False, "error": f"{str(e)}"}), 500
+            return jsonify({"status": "error", "error": f"{str(e)}"}), 500
 
     @bp.route("/status/<request_id>", methods=["GET"])
     @unified_api_decorator()
@@ -116,7 +116,7 @@ def create_command_blueprint():
             status_info = queue_manager.get_request_status(request_id)
             if status_info is None:
                 return jsonify({
-                    "success": False,
+                    "status": "error",
                     "error": "Error: Request not found"
                 }), 404
                 
@@ -128,7 +128,7 @@ def create_command_blueprint():
             
         except Exception as e:
             logger.error(f"Error getting request status: {e}")
-            return jsonify({"success": False, "error": str(e)}), 500
+            return jsonify({"status": "error", "error": str(e)}), 500
 
     @bp.route("/result/<request_id>", methods=["GET"])
     @unified_api_decorator()
@@ -141,12 +141,12 @@ def create_command_blueprint():
                 status_info = queue_manager.get_request_status(request_id)
                 if status_info is None:
                     return jsonify({
-                        "success": False,
+                        "status": "error",
                         "error": "Error: Request not found"
                     }), 404
                 else:
                     return jsonify({
-                        "success": False,
+                        "status": "error",
                         "error": "Error: Request not completed yet",
                         "status": status_info["status"]
                     }), 202  # 202 Accepted (still processing)
@@ -156,7 +156,7 @@ def create_command_blueprint():
             
         except Exception as e:
             logger.error(f"Error getting request result: {e}")
-            return jsonify({"success": False, "error": str(e)}), 500
+            return jsonify({"status": "error", "error": str(e)}), 500
 
     @bp.route("/queue/status", methods=["GET"])
     @unified_api_decorator()
@@ -171,6 +171,6 @@ def create_command_blueprint():
             
         except Exception as e:
             logger.error(f"Error getting queue status: {e}")
-            return jsonify({"success": False, "error": str(e)}), 500
+            return jsonify({"status": "error", "error": str(e)}), 500
 
     return bp
