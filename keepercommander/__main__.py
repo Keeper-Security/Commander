@@ -220,12 +220,41 @@ def main(from_package=False):
 
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
     opts, flags = parser.parse_known_args(sys.argv[1:])
+    
     # Store the original command arguments for proper reconstruction
     if opts.command:
         # Find where the command starts in the original args and take everything after it
         try:
             cmd_index = sys.argv[1:].index(opts.command)
             original_args_after_command = sys.argv[1:][cmd_index+1:]
+            
+            # Filter out arguments that were consumed by the main parser
+            filtered_args = []
+            skip_next = False
+            for arg in original_args_after_command:
+                if skip_next:
+                    skip_next = False
+                    continue
+                    
+                # Skip arguments that were handled by main parser
+                main_parser_args = ['--config', '--server', '--user', '--password', '--version', '--debug', 
+                                  '--batch-mode', '--launched-with-shortcut', '--proxy', '--unmask-all', '--fail-on-throttle',
+                                  '-ks', '-ku', '-kp', '-lwsc']
+                
+                is_main_parser_arg = False
+                for main_arg in main_parser_args:
+                    if arg.startswith(main_arg + '=') or arg == main_arg:
+                        is_main_parser_arg = True
+                        if arg == main_arg:
+                            skip_next = True  # Skip the next argument too (the argument value)
+                        break
+                
+                if is_main_parser_arg:
+                    continue
+                    
+                filtered_args.append(arg)
+            
+            original_args_after_command = filtered_args
         except ValueError:
             original_args_after_command = []
     else:
@@ -301,8 +330,8 @@ def main(from_package=False):
             params.batch_mode = True
         else:
             if opts.command:
-                # Use the original argument order instead of the parsed/split version
-                options = ' '.join(original_args_after_command) if original_args_after_command else ''
+                # Use the filtered original argument order to preserve proper flag/value pairing
+                options = ' '.join([shlex.quote(x) for x in original_args_after_command]) if original_args_after_command else ''
                 command = ' '.join([opts.command or '', options]).strip()
                 params.commands.append(command)
             params.commands.append('q')
