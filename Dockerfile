@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-ENV PYTHONUNBUFFERED 1
+ENV PYTHONUNBUFFERED=1
 
 # Create a non-root user for security
 RUN groupadd --system --gid 1000 commander && \

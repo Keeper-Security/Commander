@@ -333,7 +333,7 @@ docker images
 
 ### Authentication Methods
 
-The Docker container supports two authentication methods:
+The Docker container supports four authentication methods:
 
 #### Method 1: Using Credentials (Recommended for new deployments)
 Pass credentials directly via command line arguments. The container will automatically:
@@ -343,6 +343,16 @@ Pass credentials directly via command line arguments. The container will automat
 
 #### Method 2: Using Config File (For existing configurations)
 Mount an existing Keeper configuration file to the container.
+
+#### Method 3: Using KSM Token
+Use a KSM one-time access token to download the `config.json` configuration from a Keeper record. The container will:
+- Download the `config.json` attachment from the specified record using the provided KSM token
+- Use the downloaded config for authentication
+
+#### Method 4: Using KSM Config File
+Use Keeper Secrets Manager (KSM) config file to download the `config.json` configuration from a Keeper record. The container will:
+- Download the `config.json` attachment from the specified record using the mounted KSM config file
+- Use the downloaded config for authentication
 
 ### Run Docker Container
 
@@ -401,8 +411,16 @@ Before using config file authentication, you must first create a properly config
    this-device persistent-login on
    ```
 
-4. **Copy config file:**
-   Once configured, locate the `config.json` file in `.keeper` directory in your host machine and copy the contents of the `config.json` file to your desired path (e.g., `/path/to/local/config.json`) for Docker mounting.
+4. **Set timeout:**
+   ```bash
+   this-device timeout 43200
+   ```
+
+5. **Copy config file:**
+   Once configured, locate the `config.json` file in the `.keeper` directory on your host machine and copy the contents of the `config.json` file to your desired path (e.g., `/path/to/local/config.json`) for Docker mounting.
+
+6. **Remove the original config file:**
+   After copying, delete the `config.json` file from the `.keeper` directory on your host machine to prevent duplicate configurations with the same device token/clone code.
 
 Mount your existing Keeper config file:
 ```bash
@@ -412,24 +430,135 @@ docker run -d -p <port>:<port> \
   service-create -p <port> -c '<commands>' -f <json-or-yaml>
 ```
 
-#### Interactive Keeper Shell Mode
+#### With KSM Token Authentication
+**Prerequisites:**
 
-Run Keeper Commander in interactive mode for manual configuration and testing:
+Before using KSM Token authentication, you must:
+
+1. **Create a KSM Application** in your Keeper vault
+2. **Store the generated access token securely**
+3. **Create a Keeper record** containing your `config.json` as an attachment
+4. **Share the record** with your KSM application
+
+**Setup Steps:**
+
+1. **Login to Keeper on your host machine:**
+   ```bash
+   keeper shell
+   # Then login with your credentials
+   login user@example.com
+   ```
+
+2. **Register device:**
+   ```bash
+   this-device register
+   ```
+
+3. **Enable persistent login:**
+   ```bash
+   this-device persistent-login on
+   ```
+
+4. **Set timeout:**
+   ```bash
+   this-device timeout 43200
+   ```
+
+5. **Upload config file:**
+   Once configured, locate the `config.json` file in the `.keeper` directory on your host machine. Upload this file as an attachment to a record within a shared folder in your vault.
+
+6. **Remove the original config file:**
+   After uploading, delete the `config.json` file from the `.keeper` directory on your host machine to prevent duplicate configurations with the same device token/clone code.
+
+7. **Create KSM Access Token:**
+   - Go to Vault → Secrets Manager → My Applications 
+   - Create new application and provide access to your shared folder
+   - Grant "Can Edit" permission and generate the access token
+   - Store the generated access token securely
+
+**Run Container:**
 ```bash
-docker run -it keeper-commander shell
+docker run -d -p <port>:<port> \
+  keeper-commander \
+  service-create -p <port> -c '<commands>' -f <json-or-yaml> \
+  --ksm-token <KSM_TOKEN> \
+  --record <RECORD_UID>
 ```
 
-This will start the container with an interactive terminal session, allowing you to:
-- Configure the service interactively using the `service-create` command
-- Test commands manually before setting up the service
-- Access the full Keeper Commander CLI interface
-- Debug configuration issues
-
-**Example interactive session:**
+**Example:**
 ```bash
-docker run -it keeper-commander shell
-# Inside the container:
-My Vault> login user@example.com
+docker run -d -p 9007:9007 \
+  keeper-commander \
+  service-create -p 9007 -c 'ls,tree' -f json \
+  --ksm-token US:odncsdcindsijiojijj32i3ij2iknm23 \
+  --record ABC123-DEF456-GHI789
+```
+
+#### With KSM Config File Authentication
+
+**Prerequisites:**
+
+Before using KSM config file authentication, you must:
+
+1. **Create a KSM Application** in your Keeper vault
+2. **Generate a KSM config file** (`ksm-config.json`)
+3. **Create a Keeper record** containing your service `config.json` as an attachment
+4. **Share the record** with your KSM application
+
+**Setup Steps:**
+
+1. **Login to Keeper on your host machine:**
+   ```bash
+   keeper shell
+   # Then login with your credentials
+   login user@example.com
+   ```
+
+2. **Register device:**
+   ```bash
+   this-device register
+   ```
+
+3. **Enable persistent login:**
+   ```bash
+   this-device persistent-login on
+   ```
+
+4. **Set timeout:**
+   ```bash
+   this-device timeout 43200
+   ```
+
+5. **Upload config file:**
+   Once configured, locate the `config.json` file in the `.keeper` directory on your host machine. Upload this file as an attachment to a record within a shared folder in your vault.
+
+6. **Remove the original config file:**
+   After uploading, delete the `config.json` file from the `.keeper` directory on your host machine to prevent duplicate configurations with the same device token/clone code.
+
+7. **Create KSM Configuration File:**
+   - Go to Vault → Secrets Manager → My Applications 
+   - Select your application, go to `Devices`, and click on `Add Device`.
+   - Use `Configuration File` method and download the JSON file.
+   - Rename the downloaded file to `ksm-config.json` to avoid any conflict with `.keeper/config.json`.
+
+**Run Container:**
+```bash
+docker run -d -p <port>:<port> \
+  -v /path/to/local/ksm-config.json:/home/commander/ksm-config.json \
+  keeper-commander \
+  service-create -p <port> -c '<commands>' -f <json-or-yaml> \
+  --ksm-config /home/commander/ksm-config.json \
+  --record <RECORD_UID>
+```
+
+**Example:**
+```bash
+docker run -d -p 9007:9007 \
+  -v /path/to/local/ksm-config.json:/home/commander/ksm-config.json \
+  keeper-commander \
+  service-create -p 9007 -c 'ls,tree' -f json \
+  --ksm-config /home/commander/ksm-config.json \
+  --record ABC123-DEF456-GHI789
 ```
 
 ### Verify Deployment
@@ -458,16 +587,9 @@ My Vault> login user@example.com
 ### Container Architecture
 
 - **Base Image**: `python:3.11-slim`
-- **User**: Non-root user `commander` (UID: 1000, GID: 1000)
 - **Working Directory**: `/commander`
 - **Config Directory**: `/home/commander/.keeper/`
 - **Entrypoint**: `docker-entrypoint.sh` with automatic authentication setup
-
-### Security Features
-
-- **Non-root execution**: Container runs as user `commander` for enhanced security
-- **Persistent login**: Maintains authentication across container restarts
-- **Flexible authentication**: Supports both credential and config file authentication
 
 ### Execute Command Endpoint
 
