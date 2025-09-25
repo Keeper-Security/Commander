@@ -60,29 +60,9 @@ class ServiceManager:
         """Start the service if not already running."""
         process_info = ProcessInfo.load()
         
-        if process_info.pid:
-            try:
-                process = psutil.Process(process_info.pid)
-                
-                # Check if process is actually running
-                if process.is_running():
-                    try:
-                        cmdline = process.cmdline()
-                        if (len(cmdline) >= 2 and 
-                            cmdline[0] == sys.executable and 
-                            any("service_app.py" in str(arg) for arg in cmdline)):
-                            print(f"Error: Commander Service is already running (PID: {process_info.pid})")
-                            return
-                    except (psutil.AccessDenied, psutil.ZombieProcess):
-                        pass
-                
-                # Clear the stored process info if process exists but isn't our service
-                ProcessInfo.clear()
-            except psutil.NoSuchProcess:
-                ProcessInfo.clear()
-            except Exception as e:
-                logger.error(f"Error checking process: {str(e)}")
-                ProcessInfo.clear()
+        if process_info.pid and process_info.is_running:
+            print(f"Error: Commander Service is already running (PID: {process_info.pid})")
+            return
             
         SignalHandler.setup_signal_handlers(cls._handle_shutdown)
             
@@ -162,6 +142,7 @@ class ServiceManager:
                     
                     logger.debug(f"Service subprocess logs available at: {log_file}")
                     print(f"Commander Service started with PID: {cls.pid}")
+                    ProcessInfo.save(cls.pid, is_running, ngrok_pid)
                     
                 except Exception as e:
                     logger.error(f"Failed to start service subprocess: {e}")
@@ -172,6 +153,7 @@ class ServiceManager:
                 cls._flask_app = create_app()
                 cls._is_running = True
 
+                ProcessInfo.save(os.getpid(), is_running, ngrok_pid)
                 ssl_context = ServiceManager.get_ssl_context(config_data)
                 
                 cls._flask_app.run(
@@ -179,9 +161,6 @@ class ServiceManager:
                     port=port,
                     ssl_context=ssl_context
                 )
-                
-            # Save the process ID for future reference
-            ProcessInfo.save(cls.pid, is_running, ngrok_pid)
             
         except FileNotFoundError:
             logging.info("Error: Service configuration file not found. Please use 'service-create' command to create a service_config file.")

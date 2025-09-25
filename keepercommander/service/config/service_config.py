@@ -154,17 +154,6 @@ class ServiceConfig:
 
         except Exception as e:
             logging.info(f"Error updating service configuration: {e}")
-
-    # decrypt the ecnrypted config file , and update configuration and encrypt agin
-    def read_decrypted_config_file(self, config_path: str, file_format: str, updates: Dict[str, str]):
-         """ decrypt the ecnrypted config file , and update configuration and encrypt agin """
-         config_dir = utils.get_default_path()
-         decrypted_content = ConfigFormatHandler.decrypt_config_file(config_path.read_bytes(), config_dir)
-         config_data = json.loads(decrypted_content) if file_format == "json" else yaml.safe_load(decrypted_content) or {}
-         config_data.update(updates)
-         encrypted_content = ConfigFormatHandler.encrypted_content(config_data, config_path, config_dir)
-         with open(config_path, "wb") as f:
-               f.write(encrypted_content)
     
     # Read plain text config file and update configuration
     def read_plain_text_config_file(self, config_path: str, file_format: str, updates: Dict[str, str]) -> None:
