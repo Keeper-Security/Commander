@@ -299,6 +299,7 @@ def do_command(params, command_line):
             print("\nToggle debug mode")
             print("\noptional arguments:")
             print("  -h, --help            show this help message and exit")
+            print("  --file=PATH           write DEBUG logs to PATH (does not enable terminal DEBUG)")
             return
         elif command_line.lower().startswith('q ') or command_line.lower().startswith('quit '):
             print("usage: quit|q [-h]")
@@ -314,10 +315,13 @@ def do_command(params, command_line):
     if command_line.lower() == 'c' or command_line.lower() == 'cls' or command_line.lower() == 'clear':
         print(chr(27) + "[2J")
 
-    elif command_line == 'debug':
-        is_debug = logging.getLogger().level <= logging.DEBUG
-        logging.getLogger().setLevel((logging.WARNING if params.batch_mode else logging.INFO) if is_debug else logging.DEBUG)
-        logging.info('Debug %s', 'OFF' if is_debug else 'ON')
+    elif command_line.startswith('debug'):
+        try:
+            tokens = shlex.split(command_line)
+            debug_manager.process_command(tokens, params.batch_mode)
+        except Exception as e:
+            logging.error(f"Error processing debug command: {e}")
+
 
     else:
         cmd, args = command_and_args_from_cmd(command_line)
@@ -432,6 +436,98 @@ def force_quit():
 
 
 prompt_session = None
+
+class DebugManager:
+    """Debug manager for console and file logging."""
+    
+    def __init__(self):
+        self.logger = logging.getLogger()
+    
+    def has_file_logging(self):
+        """Check if file logging is active."""
+        return any(getattr(h, '_debug_file', False) for h in self.logger.handlers)
+    
+    def is_console_debug_on(self, batch_mode):
+        """Check if console debug is enabled."""
+        for h in self.logger.handlers:
+            if isinstance(h, logging.StreamHandler) and not getattr(h, '_debug_file', False):
+                return h.level == logging.DEBUG
+        return self.logger.level == logging.DEBUG and not self.has_file_logging()
+    
+    def set_console_debug(self, enabled, batch_mode):
+        """Set console debug level."""
+        level = logging.DEBUG if enabled else (logging.WARNING if batch_mode else logging.INFO)
+        for h in self.logger.handlers:
+            if isinstance(h, logging.StreamHandler) and not getattr(h, '_debug_file', False):
+                h.setLevel(level)
+    
+    def setup_file_logging(self, file_path):
+        """Setup debug file logging."""
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+            
+            for h in list(self.logger.handlers):
+                if getattr(h, '_debug_file', False):
+                    self.logger.removeHandler(h)
+                    try:
+                        h.close()
+                    except:
+                        pass
+            
+            # Add new file handler
+            fh = logging.FileHandler(file_path, mode='a', encoding='utf-8')
+            fh.setLevel(logging.DEBUG)
+            fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s'))
+            fh.addFilter(lambda record: record.levelno != logging.INFO)  # Filter out INFO
+            fh._debug_file = True
+            self.logger.addHandler(fh)
+            self.logger.setLevel(logging.DEBUG)
+            
+            logging.info(f'Debug file logging enabled: {file_path}')
+            return True
+        except Exception as e:
+            logging.error(f'Failed to setup file logging: {e}')
+            return False
+    
+    def toggle_console_debug(self, batch_mode):
+        """Toggle console debug on/off."""
+        current = self.is_console_debug_on(batch_mode)
+        new_state = not current
+        
+        self.set_console_debug(new_state, batch_mode)
+        
+        if not self.has_file_logging():
+            level = logging.DEBUG if new_state else (logging.WARNING if batch_mode else logging.INFO)
+            self.logger.setLevel(level)
+        
+        logging.info(f'Debug {"ON" if new_state else "OFF"}')
+        return new_state
+    
+    def process_command(self, tokens, batch_mode):
+        """Process debug command."""
+        # Look for --file argument
+        file_path = None
+        for i, token in enumerate(tokens[1:], 1):
+            if token == '--file' and i + 1 < len(tokens):
+                file_path = tokens[i + 1]
+                break
+            elif token.startswith('--file='):
+                file_path = token.split('=', 1)[1]
+                break
+        
+        if file_path:
+            return self.setup_file_logging(file_path)
+        else:
+            if len(tokens) > 1:
+                for token in tokens[1:]:
+                    if not token.startswith('-') and ('.' in token or len(token) > 0):
+                        print(f"Please specify the --file flag for logging to file: debug --file {token}")
+                        return False
+            
+            self.toggle_console_debug(batch_mode)
+            return True
+
+debug_manager = DebugManager()
 
 
 def read_command_with_continuation(prompt_session, params):
