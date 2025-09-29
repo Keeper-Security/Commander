@@ -6,6 +6,34 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
+# Function to run keeper service with intelligent lifecycle management
+run_keeper_service() {
+    local config_arg="$1"
+    local command_args="$2"
+    
+    # Check if command contains service-create
+    if [[ "$command_args" =~ service-create ]]; then
+        log "Service command detected, checking service status..."
+        
+        # Get service status
+        local service_status=$(python3 keeper.py $config_arg service-status 2>/dev/null)
+        
+        if echo "$service_status" | grep -q "Stopped"; then
+            log "Service exists but is stopped, starting it..."
+            python3 keeper.py $config_arg service-start
+        elif echo "$service_status" | grep -q "Running"; then
+            log "Service is already running, no action needed."
+        else
+            log "Service not found, creating new service..."
+            log "Running: python3 keeper.py $config_arg $command_args"
+            python3 keeper.py $config_arg $command_args
+        fi
+    else
+        # Not a service command, run as normal
+        python3 keeper.py $config_arg $command_args
+    fi
+}
+
 # Function to parse --user, --password, --server, --ksm-config, --ksm-token, and --record from arguments
 parse_credentials() {
     USER=""
@@ -86,91 +114,84 @@ download_config_from_ksm() {
     
     log "Downloading config.json from KSM record: $record_uid"
     
-    # Create a temporary Python script to handle KSM operations
-    local temp_script="/tmp/ksm_download.py"
-    cat > "$temp_script" << 'EOF'
-import sys
-import os
-from keeper_secrets_manager_core import SecretsManager
-from keeper_secrets_manager_core.storage import FileKeyValueStorage
-
-def main():
-    if len(sys.argv) != 4:
-        print("Usage: python3 ksm_download.py <ksm_config_path|token> <record_uid> <auth_type>")
-        sys.exit(1)
+    # Use the KSM helper script for download
+    local helper_args="download --record-uid $record_uid --config-file /home/commander/.keeper/config.json"
     
-    auth_param = sys.argv[1]
-    record_uid = sys.argv[2]
-    auth_type = sys.argv[3]  # 'config' or 'token'
-    
-    try:
-        # Initialize SecretsManager based on auth type
-        if auth_type == 'config':
-            if not os.path.exists(auth_param):
-                print(f"ERROR: KSM config file not found: {auth_param}")
-                sys.exit(1)
-            secrets_manager = SecretsManager(config=FileKeyValueStorage(auth_param))
-        elif auth_type == 'token':
-            secrets_manager = SecretsManager(token=auth_param)
-        else:
-            print(f"ERROR: Invalid auth type: {auth_type}")
-            sys.exit(1)
-        
-        # Get the record
-        secrets = secrets_manager.get_secrets([record_uid])
-        if not secrets:
-            print(f"ERROR: Record not found or no access to record: {record_uid}")
-            sys.exit(1)
-            
-        secret = secrets[0]
-        
-        # Find and download config.json attachment
-        config_found = False
-        for file in secret.files:
-            if file.name.lower() == 'config.json':
-                print(f"Found config.json attachment: {file.name}")
-                file.save_file("/home/commander/.keeper/config.json", True)
-                config_found = True
-                print("Successfully downloaded config.json to /home/commander/.keeper/config.json")
-                break
-        
-        if not config_found:
-            print(f"ERROR: config.json attachment not found in record: {record_uid}")
-            available_files = [f.name for f in secret.files]
-            print(f"Available attachments: {available_files}")
-            sys.exit(1)
-            
-    except Exception as e:
-        print(f"ERROR: Failed to download config from KSM: {str(e)}")
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
-EOF
-
-    # Execute the Python script
     if [[ -n "$ksm_config_path" ]]; then
-        if ! python3 "$temp_script" "$ksm_config_path" "$record_uid" "config"; then
-            log "ERROR: Failed to download config using KSM config file"
-            rm -f "$temp_script"
-            exit 1
-        fi
+        helper_args="$helper_args --ksm-config $ksm_config_path"
     elif [[ -n "$ksm_token" ]]; then
-        if ! python3 "$temp_script" "$ksm_token" "$record_uid" "token"; then
-            log "ERROR: Failed to download config using KSM token"
-            rm -f "$temp_script"
-            exit 1
-        fi
+        helper_args="$helper_args --ksm-token $ksm_token"
     else
         log "ERROR: Neither KSM config path nor KSM token provided"
-        rm -f "$temp_script"
         exit 1
     fi
     
-    # Clean up temporary script
-    rm -f "$temp_script"
+    if ! python3 docker_ksm_utility.py $helper_args; then
+        log "ERROR: Failed to download config from KSM"
+        exit 1
+    fi
+    
     log "Config.json downloaded successfully from KSM record"
 }
+
+# Function to start config.json monitoring and upload changes
+start_config_monitor() {
+    local ksm_config_path="$1"
+    local ksm_token="$2"
+    local record_uid="$3"
+    local config_file_path="/home/commander/.keeper/config.json"
+    
+    log "Starting config.json monitoring for changes..."
+    
+    # Use the KSM helper script for monitoring
+    local helper_args="monitor --record-uid $record_uid --config-file $config_file_path"
+    
+    if [[ -n "$ksm_config_path" ]]; then
+        helper_args="$helper_args --ksm-config $ksm_config_path"
+    elif [[ -n "$ksm_token" ]]; then
+        helper_args="$helper_args --ksm-token $ksm_token"
+    else
+        log "ERROR: Neither KSM config path nor KSM token provided"
+        return 1
+    fi
+    
+    # Start the monitoring in the background
+    nohup python3 docker_ksm_utility.py $helper_args > /home/commander/.keeper/config_monitor.log 2>&1 &
+    local monitor_pid=$!
+    echo "$monitor_pid" > /home/commander/.keeper/config_monitor.pid
+
+    log "Monitor logs available at: /home/commander/.keeper/config_monitor.log"
+}
+
+# Function to stop config.json monitoring
+stop_config_monitor() {
+    local pid_file="/home/commander/.keeper/config_monitor.pid"
+    
+    if [[ -f "$pid_file" ]]; then
+        local monitor_pid=$(cat "$pid_file")
+        if kill -0 "$monitor_pid" 2>/dev/null; then
+            log "Stopping config monitor with PID: $monitor_pid"
+            kill "$monitor_pid" 2>/dev/null
+            log "Config monitor stopped successfully"
+        else
+            log "Config monitor process (PID: $monitor_pid) not found"
+        fi
+        rm -f "$pid_file"
+    fi
+    
+    # Clean up any remaining helper processes
+    pkill -f "docker_ksm_utility.py.*monitor" 2>/dev/null || true
+}
+
+# Function to handle cleanup on exit
+cleanup_on_exit() {
+    log "Performing cleanup on exit..."
+    stop_config_monitor
+    log "Cleanup completed"
+}
+
+# Set up exit trap
+trap cleanup_on_exit EXIT INT TERM
 
 # Function to remove --user, --password, --server, --ksm-config, --ksm-token, and --record from arguments and return the rest
 filter_args() {
@@ -231,6 +252,9 @@ if [[ (-n "$KSM_CONFIG" || -n "$KSM_TOKEN") && -n "$RECORD" ]]; then
     # Download config.json from KSM record
     download_config_from_ksm "$KSM_CONFIG" "$KSM_TOKEN" "$RECORD"
     
+    # Start monitoring for config.json changes to upload back to KSM
+    start_config_monitor "$KSM_CONFIG" "$KSM_TOKEN" "$RECORD"
+    
     # Filter out KSM arguments from command args
     COMMAND_ARGS=$(filter_args "$@")
     
@@ -240,8 +264,7 @@ if [[ (-n "$KSM_CONFIG" || -n "$KSM_TOKEN") && -n "$RECORD" ]]; then
         sleep infinity
     else
         # Run the service command with downloaded config file
-        log "Running: python3 keeper.py --config /home/commander/.keeper/config.json $COMMAND_ARGS"
-        python3 keeper.py --config "/home/commander/.keeper/config.json" $COMMAND_ARGS
+        run_keeper_service "--config /home/commander/.keeper/config.json" "$COMMAND_ARGS"
         log "Keeping container alive..."
         sleep infinity
     fi
@@ -259,8 +282,7 @@ elif [[ -f "/home/commander/.keeper/config.json" ]]; then
         sleep infinity
     else
         # Run the service command with config file
-        log "Running: python3 keeper.py --config $CONFIG_FILE $COMMAND_ARGS"
-        python3 keeper.py --config "$CONFIG_FILE" $COMMAND_ARGS
+        run_keeper_service "--config $CONFIG_FILE" "$COMMAND_ARGS"
         log "Keeping container alive..."
         sleep infinity
     fi
@@ -285,9 +307,8 @@ elif [[ -n "$USER" && -n "$PASSWORD" ]]; then
         log "Keeping container alive..."
         sleep infinity
     else
-        # Run the service-create command without credentials (device is now registered)
-        log "Running: python3 keeper.py $COMMAND_ARGS"
-        python3 keeper.py $COMMAND_ARGS
+        # Run the service command without credentials (device is now registered)
+        run_keeper_service "" "$COMMAND_ARGS"
         log "Keeping container alive..."
         sleep infinity
     fi
@@ -303,8 +324,7 @@ else
         sleep infinity
     else
         # Run the command directly without any authentication setup
-        log "Running: python3 keeper.py $COMMAND_ARGS"
-        python3 keeper.py $COMMAND_ARGS
+        run_keeper_service "" "$COMMAND_ARGS"
         log "Keeping container alive..."
         sleep infinity
     fi
