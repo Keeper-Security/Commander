@@ -1606,7 +1606,7 @@ class PAMConfigurationListCommand(Command):
 
 common_parser = argparse.ArgumentParser(add_help=False)
 common_parser.add_argument('--environment', '-env', dest='config_type', action='store',
-                           choices=['local', 'aws', 'azure'], help='PAM Configuration Type', )
+                           choices=['local', 'aws', 'azure', 'domain', 'oci'], help='PAM Configuration Type', )
 common_parser.add_argument('--title', '-t', dest='title', action='store', help='Title of the PAM Configuration')
 common_parser.add_argument('--gateway', '-g', dest='gateway_uid', action='store', help='Gateway UID or Name')
 common_parser.add_argument('--shared-folder', '-sf', dest='shared_folder_uid', action='store',
@@ -1630,6 +1630,21 @@ azure_group.add_argument('--subscription_id', dest='subscription_id', action='st
                          help='Subscription Id')
 azure_group.add_argument('--tenant-id', dest='tenant_id', action='store', help='Tenant Id')
 azure_group.add_argument('--resource-group', dest='resource_groups', action='append', help='Resource Group')
+domain_group = common_parser.add_argument_group('domain', 'Domain configuration')
+domain_group.add_argument('--domain-id', dest='domain_id', action='store', help='Domain ID')
+domain_group.add_argument('--domain-hostname', dest='domain_hostname', action='store', help='Domain hostname')
+domain_group.add_argument('--domain-port', dest='domain_port', action='store', help='Domain port')
+domain_group.add_argument('--domain-use-ssl', dest='domain_use_ssl', choices=['true', 'false'], help='Domain use SSL flag')
+domain_group.add_argument('--domain-scan-dc-cidr', dest='domain_scan_dc_cidr', choices=['true', 'false'], help='Domain scan DC CIDR flag')
+domain_group.add_argument('--domain-network-cidr', dest='domain_network_cidr', action='store', help='Domain Network CIDR')
+domain_group.add_argument('--domain-admin', dest='domain_administrative_credential', action='store', help='Domain administrative credential')
+oci_group = common_parser.add_argument_group('oci', 'OCI configuration')
+oci_group.add_argument('--oci-id', dest='oci_id', action='store', help='OCI ID')
+oci_group.add_argument('--oci-admin-id', dest='oci_admin_id', action='store', help='OCI Admin ID')
+oci_group.add_argument('--oci-admin-public-key', dest='oci_admin_public_key', action='store', help='OCI admin public key')
+oci_group.add_argument('--oci-admin-private-key', dest='oci_admin_private_key', action='store', help='OCI admin private key')
+oci_group.add_argument('--oci-tenancy', dest='oci_tenancy', action='store', help='OCI tenancy')
+oci_group.add_argument('--oci-region', dest='oci_region', action='store', help='OCI region')
 
 
 class PamConfigurationEditMixin(RecordEditMixin):
@@ -1727,6 +1742,20 @@ class PamConfigurationEditMixin(RecordEditMixin):
 
             value['resourceRef'] = list(record_uids)
 
+    @staticmethod
+    def resolve_single_record(params, record_name, rec_type=''): # type: (KeeperParams, str, str) -> Optional[vault.KeeperRecord]
+        rec = RecordMixin.resolve_single_record(params, record_name)
+        if not rec:
+            recs = []
+            for rec in params.record_cache:
+                vrec = vault.KeeperRecord.load(params, rec)
+                if vrec and vrec.title == record_name and (not rec_type or rec_type == vrec.record_type):
+                    recs.append(vrec)
+                    if len(recs) > 1: break
+            if len(recs) == 1:
+                rec = recs[0]
+        return rec
+
     def parse_properties(self, params, record, **kwargs):  # type: (KeeperParams, vault.TypedRecord, ...) -> None
         extra_properties = []
         self.parse_pam_configuration(params, record, **kwargs)
@@ -1781,6 +1810,64 @@ class PamConfigurationEditMixin(RecordEditMixin):
             if isinstance(resource_groups, list) and len(resource_groups) > 0:
                 rg = '\n'.join(resource_groups)
                 extra_properties.append(f'multiline.resourceGroups={rg}')
+        elif record.record_type == 'pamDomainConfiguration':
+            domain_id = kwargs.get('domain_id')
+            if domain_id:
+                extra_properties.append(f'text.pamDomainId={domain_id}')
+            host = str(kwargs.get('domain_hostname') or '').strip()
+            port = str(kwargs.get('domain_port') or '').strip()
+            if host or port:
+                val = json.dumps({"hostName": host, "port": port})
+                extra_properties.append(f"f.pamHostname=$JSON:{val}")
+            domain_use_ssl = utils.value_to_boolean(kwargs.get('domain_use_ssl'))
+            if domain_use_ssl is not None:
+                val = 'true' if domain_use_ssl else 'false'
+                extra_properties.append(f'checkbox.useSSL={val}')
+            domain_scan_dc_cidr = utils.value_to_boolean(kwargs.get('domain_scan_dc_cidr'))
+            if domain_scan_dc_cidr is not None:
+                val = 'true' if domain_scan_dc_cidr else 'false'
+                extra_properties.append(f'checkbox.scanDCCIDR={val}')
+            domain_network_cidr = kwargs.get('domain_network_cidr')
+            if domain_network_cidr:
+                extra_properties.append(f'text.networkCIDR={domain_network_cidr}')
+            domain_administrative_credential = kwargs.get('domain_administrative_credential')
+            dac = str(domain_administrative_credential or '')
+            if dac:
+                # pam import will link it later (once admin pamUser is created)
+                if kwargs.get('force_domain_admin', False) is True:
+                    if bool(re.search('^[A-Za-z0-9-_]{22}$', dac)) is not True:
+                        logging.warning(f'Invalid Domain Admin User UID: "{dac}" (skipped)')
+                        dac = ''
+                else:
+                    adm_rec = PamConfigurationEditMixin.resolve_single_record(params, dac, 'pamUser')
+                    if adm_rec and isinstance(adm_rec, vault.TypedRecord) and adm_rec.record_type == 'pamUser':
+                        dac = adm_rec.record_uid
+                    else:
+                        logging.warning(f'Domain Admin User UID: "{dac}" not found (skipped).')
+                        dac = ''
+            if dac:
+                prf = record.get_typed_field('pamResources')
+                prf.value = prf.value or [{}]
+                prf.value[0]["adminCredentialRef"] = dac
+        elif record.record_type == 'pamOciConfiguration':
+            oci_id = kwargs.get('oci_id')
+            if oci_id:
+                extra_properties.append(f'text.pamOciId={oci_id}')
+            oci_admin_id = kwargs.get('oci_admin_id')
+            if oci_admin_id:
+                extra_properties.append(f'secret.adminOcid={oci_admin_id}')
+            oci_admin_public_key = kwargs.get('oci_admin_public_key')
+            if oci_admin_public_key:
+                extra_properties.append(f'secret.adminPublicKey={oci_admin_public_key}')
+            oci_admin_private_key = kwargs.get('oci_admin_private_key')
+            if oci_admin_private_key:
+                extra_properties.append(f'secret.adminPrivateKey={oci_admin_private_key}')
+            oci_tenancy = kwargs.get('oci_tenancy')
+            if oci_tenancy:
+                extra_properties.append(f'text.tenancyOci={oci_tenancy}')
+            oci_region = kwargs.get('oci_region')
+            if oci_region:
+                extra_properties.append(f'text.regionOci={oci_region}')
         if extra_properties:
             self.assign_typed_fields(record, [RecordEditMixin.parse_field(x) for x in extra_properties])
 
@@ -1833,9 +1920,13 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
             record_type = 'pamAzureConfiguration'
         elif config_type == 'local':
             record_type = 'pamNetworkConfiguration'
+        elif config_type == 'domain':
+            record_type = 'pamDomainConfiguration'
+        elif config_type == 'oci':
+            record_type = 'pamOciConfiguration'
         else:
             raise CommandError('pam-config-new', f'--environment {config_type} is not supported'
-                                                 f' supported options are aws, azure, or local')
+                               ' - supported options: local, aws, azure, domain, oci')
 
         title = kwargs.get('title')
         if not title:
@@ -1866,19 +1957,26 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
 
         gateway_uid = None
         shared_folder_uid = None
+        admin_cred_ref = None
         value = field.get_default_value(dict)
         if value:
             gateway_uid = value.get('controllerUid')
             shared_folder_uid = value.get('folderUid')
+            if record.record_type == 'pamDomainConfiguration' and not kwargs.get('force_domain_admin', False) is True:
+                # pamUser must exist or "403 Insufficient PAM access to perform this operation"
+                admin_cred_ref = value.get('adminCredentialRef')
 
         if not shared_folder_uid:
             raise CommandError('pam-config-new', '--shared-folder parameter is required to create a PAM configuration')
+        gw_name = kwargs.get('gateway_uid') or ''
+        if not gateway_uid:
+            logging.warning(f'Gateway "{gw_name}" not found.')
 
         self.verify_required(record)
 
         pam_configuration_create_record_v6(params, record, shared_folder_uid)
 
-        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
         # Add DAG for configuration
         tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid=record.record_uid,
                             is_config=True)
@@ -1890,6 +1988,8 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
             kwargs.get('typescriptrecording'),
             kwargs.get('remotebrowserisolation')
         )
+        if admin_cred_ref:
+            tmp_dag.link_user_to_config_with_options(admin_cred_ref, is_admin='on')
         tmp_dag.print_tunneling_config(record.record_uid, None)
 
         # Moving v6 record into the folder
@@ -1960,14 +2060,16 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
 
         config_type = kwargs.get('config_type')
         if config_type:
-            if not config_type:
-                raise CommandError('pam-config-new', '--environment parameter is required')
             if config_type == 'aws':
                 record_type = 'pamAwsConfiguration'
             elif config_type == 'azure':
                 record_type = 'pamAzureConfiguration'
             elif config_type == 'local':
                 record_type = 'pamNetworkConfiguration'
+            elif config_type == 'domain':
+                record_type = 'pamDomainConfiguration'
+            elif config_type == 'oci':
+                record_type = 'pamOciConfiguration'
             else:
                 record_type = configuration.record_type
 
@@ -1987,16 +2089,19 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
 
         orig_gateway_uid = ''
         orig_shared_folder_uid = ''
+        orig_admin_cred_ref = ''  # only if pamDomainConfiguration
         value = field.get_default_value(dict)
         if value:
             orig_gateway_uid = value.get('controllerUid') or ''
             orig_shared_folder_uid = value.get('folderUid') or ''
+            orig_admin_cred_ref = value.get('adminCredentialRef') or ''
 
         self.parse_properties(params, configuration, **kwargs)
         self.verify_required(configuration)
 
         record_management.update_record(params, configuration)
 
+        admin_cred_ref = ''
         value = field.get_default_value(dict)
         if value:
             gateway_uid = value.get('controllerUid') or ''
@@ -2008,6 +2113,9 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
             shared_folder_uid = value.get('folderUid') or ''
             if shared_folder_uid != orig_shared_folder_uid:
                 FolderMoveCommand().execute(params, src=configuration.record_uid, dst=shared_folder_uid)
+            if configuration.type_name == 'pamDomainConfiguration' and not kwargs.get('force_domain_admin', False) is True:
+                # pamUser must exist or "403 Insufficient PAM access to perform this operation"
+                admin_cred_ref = value.get('adminCredentialRef') or ''
 
         # check if there are any permission changes
         _connections = kwargs.get('connections', None)
@@ -2018,11 +2126,16 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
         _typescript_recording = kwargs.get('typescriptrecording', None)
 
         if (_connections is not None or _tunneling is not None or _rotation is not None or _rbi is not None or
-                _recording is not None or _typescript_recording is not None):
-            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+            _recording is not None or _typescript_recording is not None or orig_admin_cred_ref != admin_cred_ref):
+            encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key,
                                 configuration.record_uid, is_config=True)
             tmp_dag.edit_tunneling_config(_connections, _tunneling, _rotation, _recording, _typescript_recording, _rbi)
+            if orig_admin_cred_ref != admin_cred_ref:
+                if orig_admin_cred_ref:  # just drop is_admin from old Domain
+                    tmp_dag.link_user_to_config_with_options(orig_admin_cred_ref, is_admin='default')
+                if admin_cred_ref:  # set is_admin=true for new Domain Admin
+                    tmp_dag.link_user_to_config_with_options(admin_cred_ref, is_admin='on')
             tmp_dag.print_tunneling_config(configuration.record_uid, None)
         for w in self.warnings:
             logging.warning(w)

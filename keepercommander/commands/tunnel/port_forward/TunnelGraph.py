@@ -121,7 +121,7 @@ class TunnelDAG:
         # When no value in allowedSettings: client will substitute with default
         # rotation defaults to True, everything else defaults to False
 
-        # switching to 3-state on/off/default: on/true, off/false
+        # switching to 3-state on/off/default: on/true, off/false,
         # None = Keep existing, 'default' = Reset to default (remove from dict)
         if connections is not None:
             connections = self._convert_allowed_setting(connections)
@@ -227,6 +227,55 @@ class TunnelDAG:
         if config_vertex is None:
             config_vertex = self.linking_dag.add_vertex(uid=self.record.record_uid)
         self.link_user(user_uid, config_vertex, belongs_to=True, is_iam_user=True)
+
+    def link_user_to_config_with_options(self, user_uid, is_admin=None, belongs_to=None, is_iam_user=None):
+        config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
+        if config_vertex is None:
+            config_vertex = self.linking_dag.add_vertex(uid=self.record.record_uid)
+
+        # self.link_user(user_uid, config_vertex, is_admin, belongs_to, is_iam_user)
+        source_vertex = config_vertex
+        user_vertex = self.linking_dag.get_vertex(user_uid)
+        if user_vertex is None:
+            user_vertex = self.linking_dag.add_vertex(uid=user_uid, vertex_type=RefType.PAM_USER)
+
+        # switching to 3-state on/off/default: on/true, off/false,
+        # None = Keep existing, 'default' = Reset to default (remove from dict)
+        states = {'on': True, 'off': False, 'default': '', 'none': None}
+
+        content = {
+            "belongs_to": states.get(str(belongs_to).lower()),
+            "is_admin": states.get(str(is_admin).lower()),
+            "is_iam_user": states.get(str(is_iam_user).lower())
+        }
+        if user_vertex.vertex_type != RefType.PAM_USER:
+            user_vertex.vertex_type = RefType.PAM_USER
+
+        dirty = False
+        if source_vertex.has(user_vertex, EdgeType.ACL):
+            acl_edge = user_vertex.get_edge(source_vertex, EdgeType.ACL)
+            existing_content = acl_edge.content_as_dict or {}
+            old_content = existing_content.copy()
+            for key in list(existing_content.keys()):
+                if content.get(key) is not None:
+                    if content[key] == '':
+                        existing_content.pop(key)
+                    elif content[key] in (True, False):
+                        existing_content[key] = content[key]
+            content = {k: v for k, v in content.items() if v not in (None, '')}
+            for k, v in content.items():
+                existing_content.setdefault(k, v)
+            if existing_content != old_content:
+                dirty = True
+
+            if dirty:
+                user_vertex.belongs_to(source_vertex, EdgeType.ACL, content=existing_content)
+                # user_vertex.add_data(content=existing_content, needs_encryption=False)
+                self.linking_dag.save()
+        else:
+            content = {k: v for k, v in content.items() if v not in (None, '')}
+            user_vertex.belongs_to(source_vertex, EdgeType.ACL, content=content)
+            self.linking_dag.save()
 
     def unlink_user_from_resource(self, user_uid, resource_uid) -> bool:
         resource_vertex = self.linking_dag.get_vertex(resource_uid)
@@ -381,7 +430,7 @@ class TunnelDAG:
         # When no value in allowedSettings: client will substitute with default
         # rotation defaults to True, everything else defaults to False
 
-        # switching to 3-state on/off/default: on/true, off/false
+        # switching to 3-state on/off/default: on/true, off/false,
         # None = Keep existing, 'default' = Reset to default (remove from dict)
         if connections is not None:
             connections = self._convert_allowed_setting(connections)

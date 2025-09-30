@@ -810,7 +810,7 @@ class PAMConnectionEditCommand(Command):
                     logging.warning(f'Connection override port and protocol can be set only when connections are enabled '
                             f'with {bcolors.OKGREEN}--connections=on{bcolors.ENDC} option')
 
-            # pam_settings.value already initilized above
+            # pam_settings.value already initialized above
             key_events = kwargs.get('key_events')  # on/off/default
             if key_events:
                 psv = pam_settings.value[0] if pam_settings and pam_settings.value else {}
