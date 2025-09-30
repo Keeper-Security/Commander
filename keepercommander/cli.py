@@ -596,7 +596,6 @@ class DebugManager:
                     file_path = None
                 break
         
-        # If --file flag is present but no valid file path provided, fall back to console debugging
         if file_flag_present and not file_path:
             print("Please specify the file path for logging to file: debug --file <file_path>")
             return False
