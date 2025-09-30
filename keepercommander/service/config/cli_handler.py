@@ -24,6 +24,10 @@ class CommandHandler:
         output = io.StringIO()
         sys.stdout = output
         try:
+            # Set service mode flag to bypass master password enforcement
+            original_service_mode = getattr(params, 'service_mode', False)
+            params.service_mode = True
+            
             from ... import cli
             cli.do_command(params, command)
             return output.getvalue()
@@ -32,6 +36,8 @@ class CommandHandler:
             return ''
         finally:
             sys.stdout = sys.__stdout__
+            # Restore original service mode flag
+            params.service_mode = original_service_mode
 
     @debug_decorator
     def find_config_record(self, params: KeeperParams, title: str) -> Optional[str]:
@@ -50,10 +56,18 @@ class CommandHandler:
         """Get help output from CLI."""
         output = io.StringIO()
         sys.stdout = output
-        from ... import cli
-        cli.do_command(params, 'help')
-        sys.stdout = sys.__stdout__
-        return output.getvalue()
+        try:
+            # Set service mode flag to bypass master password enforcement
+            original_service_mode = getattr(params, 'service_mode', False)
+            params.service_mode = True
+            
+            from ... import cli
+            cli.do_command(params, 'help')
+            return output.getvalue()
+        finally:
+            sys.stdout = sys.__stdout__
+            # Restore original service mode flag
+            params.service_mode = original_service_mode
     
     @debug_decorator
     def download_config_from_vault(self, params: KeeperParams, title: str, config_dir: Path) -> bool:

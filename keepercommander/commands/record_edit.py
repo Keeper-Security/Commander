@@ -852,7 +852,7 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
         
         from ..enforcement import MasterPasswordReentryEnforcer
         if not MasterPasswordReentryEnforcer.check_and_enforce(params, "record_level"):
-            raise CommandError('record-update', 'Operation cancelled: Master password validation failed')
+            raise CommandError('record-update', 'Operation cancelled: Re-authentication failed')
 
         record = RecordMixin.resolve_single_record(params, record_name)
         if not record:

@@ -389,7 +389,7 @@ class FolderRenameCommand(Command):
             raise CommandError('', 'Enter the path or UID of existing folder.')
         from ..enforcement import MasterPasswordReentryEnforcer
         if not MasterPasswordReentryEnforcer.check_and_enforce(params, "record_level"):
-            raise CommandError('rndir', 'Operation cancelled: Master password validation failed')
+            raise CommandError('rndir', 'Operation cancelled: Re-authentication failed')
 
         folder_uid = None
         if folder_name in params.folder_cache:
@@ -602,7 +602,7 @@ class FolderRemoveCommand(Command):
     def execute(self, params, **kwargs):
         from ..enforcement import MasterPasswordReentryEnforcer
         if not MasterPasswordReentryEnforcer.check_and_enforce(params, "record_level"):
-            raise CommandError('rmdir', 'Operation cancelled: Master password validation failed')
+            raise CommandError('rmdir', 'Operation cancelled: Re-authentication failed')
 
         folder = params.folder_cache.get(params.current_folder, params.root_folder)
         folders = []
