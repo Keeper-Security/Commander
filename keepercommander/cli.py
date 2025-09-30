@@ -12,12 +12,14 @@
 import datetime
 import logging
 import os
+import re
 import shlex
 import subprocess
 import sys
 import threading
 import time
 from collections import OrderedDict
+from pathlib import Path
 from typing import Union
 
 from prompt_toolkit import PromptSession
@@ -464,18 +466,23 @@ class DebugManager:
     def setup_file_logging(self, file_path):
         """Setup debug file logging."""
         try:
-            os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+            validated_path = self._validate_log_file_path(file_path)
+            
+            log_dir = os.path.dirname(validated_path)
+            os.makedirs(log_dir, mode=0o750, exist_ok=True)
             
             for h in list(self.logger.handlers):
                 if getattr(h, '_debug_file', False):
                     self.logger.removeHandler(h)
                     try:
                         h.close()
-                    except:
-                        pass
+                    except (OSError, IOError) as close_error:
+                        logging.warning(f'Failed to close log handler: {close_error}')
+                    except Exception as unexpected_error:
+                        logging.error(f'Unexpected error closing log handler: {unexpected_error}')
             
             # Add new file handler
-            fh = logging.FileHandler(file_path, mode='a', encoding='utf-8')
+            fh = logging.FileHandler(validated_path, mode='a', encoding='utf-8')
             fh.setLevel(logging.DEBUG)
             fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s'))
             fh.addFilter(lambda record: record.levelno != logging.INFO)  # Filter out INFO
@@ -483,11 +490,75 @@ class DebugManager:
             self.logger.addHandler(fh)
             self.logger.setLevel(logging.DEBUG)
             
-            logging.info(f'Debug file logging enabled: {file_path}')
+            logging.info(f'Debug file logging enabled: {validated_path}')
             return True
-        except Exception as e:
+        except (ValueError, OSError, IOError) as e:
             logging.error(f'Failed to setup file logging: {e}')
             return False
+        except Exception as e:
+            logging.error(f'Unexpected error setting up file logging: {e}')
+            return False
+
+    def _validate_log_file_path(self, file_path):
+        """Validate and sanitize log file path to prevent security issues."""
+        if not file_path or not isinstance(file_path, str):
+            raise ValueError("File path must be a non-empty string")
+        
+        sanitized_path = ''.join(char for char in file_path if ord(char) >= 32 and char != '\x7f')
+        
+        if not sanitized_path:
+            raise ValueError("File path contains only invalid characters")
+        
+        try:
+            path_obj = Path(sanitized_path)
+            
+            resolved_path = path_obj.resolve()
+                        
+            resolved_str = str(resolved_path).lower()
+            forbidden_paths = ['/etc/', '/bin/', '/sbin/', '/usr/bin/', '/usr/sbin/', 
+                             '/boot/', '/dev/', '/proc/', '/sys/', '/root/']
+            
+            for forbidden in forbidden_paths:
+                if resolved_str.startswith(forbidden):
+                    raise ValueError(f"Access to system directory '{forbidden}' is not allowed")
+            
+            filename = path_obj.name
+            if not filename or filename in ('.', '..'):
+                raise ValueError("Invalid filename")
+            
+            suspicious_patterns = ['..', '~/', '$', '`', ';', '|', '&', '<', '>', '*', '?']
+            for pattern in suspicious_patterns:
+                if pattern in filename:
+                    raise ValueError(f"Filename contains suspicious pattern: '{pattern}'")
+            
+            valid_extensions = ['.log', '.txt', '.out']
+            if not any(filename.lower().endswith(ext) for ext in valid_extensions):
+                logging.warning(f"Log file '{filename}' does not have a standard log extension")
+            
+            return str(resolved_path)
+            
+        except (OSError, RuntimeError) as e:
+            raise ValueError(f"Invalid file path: {e}")
+        except Exception as e:
+            raise ValueError(f"Path validation failed: {e}")
+    
+    def _looks_like_filename(self, token):
+        """Check if a token looks like a filename with proper validation."""
+        if not token or not isinstance(token, str):
+            return False
+        
+        token = token.strip()
+        
+        if len(token) < 1:
+            return False
+        
+        has_extension = re.search(r'\.[a-zA-Z0-9]{1,10}$', token)
+        
+        has_path_separator = '/' in token or '\\' in token
+        
+        looks_like_name = len(token) > 2 and re.match(r'^[a-zA-Z0-9._-]+$', token)
+        
+        return bool(has_extension or has_path_separator or looks_like_name)
     
     def toggle_console_debug(self, batch_mode):
         """Toggle console debug on/off."""
@@ -507,20 +578,36 @@ class DebugManager:
         """Process debug command."""
         # Look for --file argument
         file_path = None
+        file_flag_present = False
+        
         for i, token in enumerate(tokens[1:], 1):
-            if token == '--file' and i + 1 < len(tokens):
-                file_path = tokens[i + 1]
+            if token == '--file':
+                file_flag_present = True
+                if i + 1 < len(tokens):
+                    next_token = tokens[i + 1]
+                    if not next_token.startswith('-'):
+                        file_path = next_token
                 break
             elif token.startswith('--file='):
+                file_flag_present = True
                 file_path = token.split('=', 1)[1]
+                # Handle empty value after equals sign
+                if not file_path.strip():
+                    file_path = None
                 break
         
-        if file_path:
+        # If --file flag is present but no valid file path provided, fall back to console debugging
+        if file_flag_present and not file_path:
+            print("Please specify the file path for logging to file: debug --file <file_path>")
+            return False
+        elif file_path:
             return self.setup_file_logging(file_path)
         else:
+            # No --file flag present, check for potential filename arguments
             if len(tokens) > 1:
                 for token in tokens[1:]:
-                    if not token.startswith('-') and ('.' in token or len(token) > 0):
+                    # Check if token looks like a filename
+                    if not token.startswith('-') and self._looks_like_filename(token):
                         print(f"Please specify the --file flag for logging to file: debug --file {token}")
                         return False
             
