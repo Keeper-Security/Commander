@@ -202,8 +202,6 @@ class FolderListCommand(Command, RecordMixin):
         fmt = kwargs.get('format') or ''
         if fmt in ('json', 'csv'):
             show_detail = True
-            if show_folders and show_records:
-                fmt = 'table'
 
         folder = params.folder_cache[params.current_folder] if params.current_folder in params.folder_cache else params.root_folder
         pattern = kwargs['pattern'] if 'pattern' in kwargs else None
@@ -253,47 +251,65 @@ class FolderListCommand(Command, RecordMixin):
                 raise CommandError('ls', '{0}: No such folder or record'.format(pattern))
         else:
             if show_detail:
-                if len(folders) > 0:
-                    table = []
-                    headers = ['folder_uid', 'name', 'flags', 'parent_uid']
+                if fmt in ('json', 'csv'):
+                    combined_table = []
+                    combined_headers = ['type', 'uid', 'name', 'details']
+                    
+                    if len(folders) > 0:
+                        def folder_flags(f):
+                            if f.type == 'shared_folder':
+                                flags = 'S'
+                            else:
+                                flags = ''
+                            return flags
+                        
+                        for f in folders:
+                            row = ['folder', f.uid, f.name, f'Flags: {folder_flags(f)}, Parent: {f.parent_uid or "/"}']
+                            combined_table.append(row)
+                    
+                    if len(records) > 0:
+                        for record in records:
+                            row = ['record', record.record_uid, record.title, 
+                                   f'Type: {record.record_type}, Description: {vault_extensions.get_record_description(record)}']
+                            combined_table.append(row)
+                    
+                    combined_table.sort(key=lambda x: (x[2] or '').lower())
+                    return dump_report_data(combined_table, combined_headers, fmt=fmt, filename=kwargs.get('output'))
+                
+                else:
+                    if len(folders) > 0:
+                        table = []
+                        headers = ['folder_uid', 'name', 'flags', 'parent_uid']
 
-                    def folder_flags(f):
-                        if f.type == 'shared_folder':
-                            flags = 'S'
-                        else:
-                            flags = ''
-                        return flags
-                    colors = {}
-                    for f in folders:
-                        if f.color:
-                            colors[f.name] = f.color
-                        row = [f.uid, f.name, folder_flags(f), f.parent_uid or '/']
-                        table.append(row)
-                    table.sort(key=lambda x: (x[1] or '').lower())
-                    # Only apply colorization if not JSON format
-                    if fmt not in ('json', 'csv'):
+                        def folder_flags(f):
+                            if f.type == 'shared_folder':
+                                flags = 'S'
+                            else:
+                                flags = ''
+                            return flags
+                        colors = {}
+                        for f in folders:
+                            if f.color:
+                                colors[f.name] = f.color
+                            row = [f.uid, f.name, folder_flags(f), f.parent_uid or '/']
+                            table.append(row)
+                        table.sort(key=lambda x: (x[1] or '').lower())
+                        # Only apply colorization if not JSON format
                         for i in range(len(table)):
                             name = table[i][1]
                             if name in colors:
                                 table[i][1] = display.keeper_colorize(name, colors[name])
-                    if fmt != 'json':
                         headers = base.fields_to_titles(headers)
-                    if fmt in ('json', 'csv'):
-                        return dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'))
-                    else:
                         dump_report_data(table, headers, row_number=True)
-                if len(records) > 0:
-                    table = []
-                    headers = ['record_uid', 'type', 'title', 'description']
-                    for record in records:
-                        row = [record.record_uid, record.record_type, record.title, vault_extensions.get_record_description(record)]
-                        table.append(row)
-                    table.sort(key=lambda x: (x[2] or '').lower())
-                    if fmt != 'json':
+                    
+                    if len(records) > 0:
+                        table = []
+                        headers = ['record_uid', 'type', 'title', 'description']
+                        for record in records:
+                            row = [record.record_uid, record.record_type, record.title, vault_extensions.get_record_description(record)]
+                            table.append(row)
+                        table.sort(key=lambda x: (x[2] or '').lower())
                         headers = base.fields_to_titles(headers)
-                    if fmt in ('json', 'csv'):
-                        return dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'))
-                    else:
                         dump_report_data(table, headers, row_number=True, append=True)
             else:
                 names = []   # type: List[Tuple[str, Optional[str]]]
