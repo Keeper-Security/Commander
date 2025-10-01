@@ -498,6 +498,8 @@ class ThisDeviceCommand(Command):
 
         print('{:>32}: {}'.format('Is SSO User', params.settings['sso_user'] if 'sso_user' in params.settings else False))
 
+        print('{:>32}: {}'.format('Config file', params.config_filename))
+
         print("\nAvailable sub-commands: ", bcolors.OKBLUE + (", ".join(this_device_available_command_verbs)) + bcolors.ENDC)
 
 
