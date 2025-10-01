@@ -47,7 +47,7 @@ class ServiceConfigHandler:
     @debug_decorator
     def handle_streamlined_config(self, config_data: Dict[str, Any], args, params: KeeperParams) -> None:
         if args.allowedip is None:
-            args.allowedip = '0.0.0.0/0'
+            args.allowedip = '0.0.0.0/0,::/0'
         
         run_mode = args.run_mode if args.run_mode is not None else "foreground"
         if args.run_mode is not None and run_mode not in ['foreground', 'background']:
