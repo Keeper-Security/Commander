@@ -97,6 +97,8 @@ search_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true
 search_parser.add_argument('-c', '--categories', dest='categories', action='store',
                            help='One or more of these letters for categories to search: "r" = records, '
                                 '"s" = shared folders, "t" = teams')
+search_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
+                           default='table', help='output format')
 
 
 list_parser = argparse.ArgumentParser(prog='list', description='List all records', parents=[base.report_output_parser])
@@ -760,38 +762,96 @@ class SearchCommand(Command):
         categories = (kwargs.get('categories') or 'rst').lower()
         verbose = kwargs.get('verbose') is True
         skip_details = not verbose
+        fmt = kwargs.get('format', 'table')
+
+        all_results = []
 
         if 'r' in categories:
             records = list(vault_extensions.find_records(params, pattern))
             if records:
-                logging.info('')
-                table = []
-                headers = ['Record UID', 'Type', 'Title', 'Description']
-                for record in records:
-                    row = [record.record_uid, record.record_type, record.title,
-                           vault_extensions.get_record_description(record)]
-                    table.append(row)
-                table.sort(key=lambda x: (x[2] or '').lower())
-
-                base.dump_report_data(table, headers, row_number=True, column_width=None if verbose else 40)
-                if verbose and len(records) < 5:
-                    get_command = RecordGetUidCommand()
+                if fmt == 'json':
                     for record in records:
-                        get_command.execute(params, uid=record.record_uid)
+                        result_item = {
+                            'type': 'record',
+                            'record_uid': record.record_uid,
+                            'record_type': record.record_type,
+                            'title': record.title,
+                            'description': vault_extensions.get_record_description(record)
+                        }
+                        all_results.append(result_item)
+                else:
+                    logging.info('')
+                    table = []
+                    headers = ['Record UID', 'Type', 'Title', 'Description']
+                    for record in records:
+                        row = [record.record_uid, record.record_type, record.title,
+                               vault_extensions.get_record_description(record)]
+                        table.append(row)
+                    table.sort(key=lambda x: (x[2] or '').lower())
+
+                    base.dump_report_data(table, headers, row_number=True, column_width=None if verbose else 40)
+                    if verbose and len(records) < 5:
+                        get_command = RecordGetUidCommand()
+                        for record in records:
+                            get_command.execute(params, uid=record.record_uid)
 
         # Search shared folders
         if 's' in categories:
             results = api.search_shared_folders(params, pattern)
             if results:
-                logging.info('')
-                display.formatted_shared_folders(results, params=params, skip_details=skip_details)
+                if fmt == 'json':
+                    for sf in results:
+                        result_item = {
+                            'type': 'shared_folder',
+                            'shared_folder_uid': sf.shared_folder_uid,
+                            'name': sf.name,
+                            'can_edit': getattr(sf, 'can_edit', False),
+                            'can_share': getattr(sf, 'can_share', False)
+                        }
+                        all_results.append(result_item)
+                else:
+                    logging.info('')
+                    display.formatted_shared_folders(results, params=params, skip_details=skip_details)
 
         # Search teams
         if 't' in categories:
             results = api.search_teams(params, pattern)
             if results:
-                logging.info('')
-                display.formatted_teams(results, params=params, skip_details=skip_details)
+                if fmt == 'json':
+                    for team in results:
+                        result_item = {
+                            'type': 'team',
+                            'team_uid': team.team_uid,
+                            'name': team.name,
+                            'restrict_edit': getattr(team, 'restrict_edit', False),
+                            'restrict_view': getattr(team, 'restrict_view', False),
+                            'restrict_share': getattr(team, 'restrict_share', False)
+                        }
+                        all_results.append(result_item)
+                else:
+                    logging.info('')
+                    display.formatted_teams(results, params=params, skip_details=skip_details)
+
+        if fmt == 'json':
+            if all_results:
+                table = []
+                headers = ['type', 'uid', 'name', 'details']
+                
+                for item in all_results:
+                    if item['type'] == 'record':
+                        row = [item['type'], item['record_uid'], item['title'], 
+                               f"Type: {item['record_type']}, Description: {item['description']}"]
+                    elif item['type'] == 'shared_folder':
+                        row = [item['type'], item['shared_folder_uid'], item['name'],
+                               f"Can Edit: {item['can_edit']}, Can Share: {item['can_share']}"]
+                    elif item['type'] == 'team':
+                        row = [item['type'], item['team_uid'], item['name'],
+                               f"Restrict Edit: {item['restrict_edit']}, Restrict View: {item['restrict_view']}"]
+                    table.append(row)
+                
+                return base.dump_report_data(table, headers, fmt='json')
+            else:
+                return base.dump_report_data([], ['type', 'uid', 'name', 'details'], fmt='json')
 
 
 class RecordListCommand(Command):
