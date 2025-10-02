@@ -8,22 +8,7 @@
 # Copyright 2023 Keeper Security Inc.
 # Contact: sm@keepersecurity.com
 #
-# RUST WEBRTC LOGGING:
-# - Enhanced logging with initialize_rust_logger() function
-# - Use 'pam tunnel loglevel --trace' to configure session-wide trace logging
-# - IMPORTANT: Rust logger can only be initialized ONCE per process
-# - Loglevel command must be run before any tunnel operations
-# - If loglevel is not set, tunnel start will use default logging
-#
-# USAGE EXAMPLES:
-# - For detailed logging:
-#   pam tunnel loglevel --trace       (configure session)
-#   pam tunnel start RECORD_UID       (start with trace logging)
-#   pam tunnel list                   (list with trace logging)
-# - For normal logging:
-#   pam tunnel start RECORD_UID       (start with default logging)
-# - Alternative: RUST_LOG=trace pam tunnel start RECORD_UID  (environment variable)
-#
+
 import argparse
 import logging
 import os
@@ -33,9 +18,8 @@ from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes
 from .base import Command, GroupCommand, dump_report_data, RecordMixin
 from .tunnel.port_forward.TunnelGraph import TunnelDAG
 from .tunnel.port_forward.tunnel_helpers import find_open_port, get_config_uid, get_keeper_tokens, \
-    get_or_create_tube_registry, get_gateway_uid_from_record, initialize_rust_logger, RUST_LOGGER_INITIALIZED, \
-    get_rust_logger_state, resolve_record, resolve_pam_config, resolve_folder, remove_field, start_rust_tunnel, \
-    get_tunnel_session, CloseConnectionReasons, create_rust_webrtc_settings
+    get_or_create_tube_registry, get_gateway_uid_from_record, resolve_record, resolve_pam_config, resolve_folder, \
+    remove_field, start_rust_tunnel, get_tunnel_session, CloseConnectionReasons, create_rust_webrtc_settings
 from .. import api, vault, record_management
 from ..display import bcolors
 from ..error import CommandError
@@ -48,7 +32,6 @@ class PAMTunnelCommand(GroupCommand):
 
     def __init__(self):
         super(PAMTunnelCommand, self).__init__()
-        self.register_command('loglevel', PAMTunnelLogLevelCommand(), 'Set logging level for tunnel session', 'g')
         self.register_command('start', PAMTunnelStartCommand(), 'Start Tunnel', 's')
         self.register_command('list', PAMTunnelListCommand(), 'List all Tunnels', 'l')
         self.register_command('stop', PAMTunnelStopCommand(), 'Stop Tunnel to the server', 'x')
@@ -76,54 +59,6 @@ class PAMRbiCommand(GroupCommand):
 
 
 # Individual Commands
-class PAMTunnelLogLevelCommand(Command):
-    pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel loglevel', 
-                                           description='Set logging level for tunnel session. '
-                                                       'Run this before starting tunnels to configure logging.')
-    pam_cmd_parser.add_argument('--trace', '-t', required=False, dest='trace', action='store_true',
-                                help='Enable detailed WebRTC trace logging for the entire session. '
-                                     'This setting cannot be changed once tunnels are started.')
-
-    def get_parser(self):
-        return PAMTunnelLogLevelCommand.pam_cmd_parser
-
-    def execute(self, params, **kwargs):
-        trace_logging = kwargs.get('trace', False)
-        
-        # Check if logger is already initialized
-        if RUST_LOGGER_INITIALIZED:
-            current_settings = get_rust_logger_state()
-            if current_settings['verbose'] == trace_logging:
-                if trace_logging:
-                    print(f"{bcolors.OKGREEN}Tunnel session is already configured with trace logging enabled.{bcolors.ENDC}")
-                else:
-                    print(f"{bcolors.OKGREEN}Tunnel session is already configured with normal logging.{bcolors.ENDC}")
-            else:
-                if trace_logging:
-                    print(f"{bcolors.FAIL}Cannot enable trace logging - tunnel session already configured with normal logging.{bcolors.ENDC}")
-                    print(f"{bcolors.WARNING}Restart Commander to change logging configuration.{bcolors.ENDC}")
-                else:
-                    print(f"{bcolors.WARNING}Tunnel session is already configured with trace logging enabled.{bcolors.ENDC}")
-                    print(f"{bcolors.OKBLUE}To disable trace logging, restart Commander.{bcolors.ENDC}")
-            return
-        
-        # Initialize the Rust logger for the session
-        debug_level = hasattr(params, 'debug') and params.debug
-        log_level = logging.DEBUG if debug_level else logging.INFO
-        
-        if initialize_rust_logger(logger_name="keeper-pam-webrtc-rs", verbose=trace_logging, level=log_level):
-             if trace_logging:
-                 print(f"{bcolors.OKGREEN}Tunnel session configured with trace logging enabled.{bcolors.ENDC}")
-                 print(f"{bcolors.OKBLUE}Detailed WebRTC logs will be shown for all tunnel operations.{bcolors.ENDC}")
-                 print(f"{bcolors.OKBLUE}Now you can run: pam tunnel start RECORD_UID{bcolors.ENDC}")
-             else:
-                 print(f"{bcolors.OKGREEN}Tunnel session configured with normal logging.{bcolors.ENDC}")
-                 print(f"{bcolors.OKBLUE}Use 'pam tunnel loglevel --trace' for detailed logging.{bcolors.ENDC}")
-                 print(f"{bcolors.OKBLUE}Now you can run: pam tunnel start RECORD_UID{bcolors.ENDC}")
-        else:
-            print(f"{bcolors.FAIL}Failed to configure tunnel session logging.{bcolors.ENDC}")
-
-
 class PAMTunnelListCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel list')
 
@@ -131,14 +66,8 @@ class PAMTunnelListCommand(Command):
         return PAMTunnelListCommand.pam_cmd_parser
 
     def execute(self, params, **kwargs):
-        # Rust logger should already be initialized by the loglevel command
-        # If not initialized, use default settings
-        if not RUST_LOGGER_INITIALIZED:
-            debug_level = hasattr(params, 'debug') and params.debug
-            log_level = logging.DEBUG if debug_level else logging.INFO
-            initialize_rust_logger(logger_name="keeper-pam-webrtc-rs", verbose=False, level=log_level)
-        
         # Try to get active tunnels from Rust PyTubeRegistry
+        # Logger initialization is handled by get_or_create_tube_registry()
         tube_registry = get_or_create_tube_registry(params)
         if tube_registry:
             if not tube_registry.has_active_tubes():
@@ -413,6 +342,9 @@ class PAMTunnelStartCommand(Command):
                                 type=int, default=0,
                                 help='The port number on which the server will be listening for incoming connections. '
                                      'If not set, random open port on the machine will be used.')
+    pam_cmd_parser.add_argument('--no-trickle-ice', '-nti', required=False, dest='no_trickle_ice', action='store_true',
+                                help='Disable trickle ICE for WebRTC connections. By default, trickle ICE is enabled '
+                                     'for real-time candidate exchange.')
 
     def get_parser(self):
         return PAMTunnelStartCommand.pam_cmd_parser
@@ -435,22 +367,18 @@ class PAMTunnelStartCommand(Command):
             return
 
         # Check for Rust WebRTC library availability
+        # Logger initialization is handled by get_or_create_tube_registry()
         tube_registry = get_or_create_tube_registry(params)
         if not tube_registry:
             print(f"{bcolors.FAIL}This command requires the Rust WebRTC library (keeper_pam_webrtc_rs).{bcolors.ENDC}")
             print(f"{bcolors.OKBLUE}Please ensure the keeper_pam_webrtc_rs module is installed and available.{bcolors.ENDC}")
             return
 
-        # Initialize Rust logger with defaults if not already set by loglevel command
-        if not RUST_LOGGER_INITIALIZED:
-            debug_level = hasattr(params, 'debug') and params.debug
-            log_level = logging.DEBUG if debug_level else logging.INFO
-            initialize_rust_logger(logger_name="keeper-pam-webrtc-rs", verbose=False, level=log_level)
-
         record_uid = kwargs.get('uid')
         host = kwargs.get('host')
         port = kwargs.get('port')
-        
+        no_trickle_ice = kwargs.get('no_trickle_ice', False)
+
         if port is not None and port > 0:
             try:
                 port = find_open_port(tried_ports=[], preferred_port=port, host=host)
@@ -513,9 +441,13 @@ class PAMTunnelStartCommand(Command):
             print(f"{bcolors.FAIL}Gateway not found for record {record_uid}.{bcolors.ENDC}")
             return
 
-        # Use Rust WebRTC implementation with trickle ICE
-        print(f"{bcolors.OKBLUE}Using trickle ICE with HTTP POST sending and WebSocket receiving{bcolors.ENDC}")
-        result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks)
+        # Use Rust WebRTC implementation with configurable trickle ICE
+        trickle_ice = not no_trickle_ice
+        if trickle_ice:
+            print(f"{bcolors.OKBLUE}Using trickle ICE with HTTP POST sending and WebSocket receiving{bcolors.ENDC}")
+        else:
+            print(f"{bcolors.OKBLUE}Using standard ICE (trickle ICE disabled){bcolors.ENDC}")
+        result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice)
         
         if result and result.get("success"):
             # The helper will show endpoint table when local socket is actually listening
@@ -565,17 +497,12 @@ class PAMTunnelDiagnoseCommand(Command):
             raise CommandError('pam tunnel diagnose', '"record" parameter is required.')
 
         # Check for Rust WebRTC library availability
+        # Logger initialization is handled by get_or_create_tube_registry()
         tube_registry = get_or_create_tube_registry(params)
         if not tube_registry:
             print(f"{bcolors.FAIL}This command requires the Rust WebRTC library (keeper_pam_webrtc_rs).{bcolors.ENDC}")
             print(f"{bcolors.OKBLUE}Please ensure the keeper_pam_webrtc_rs module is installed and available.{bcolors.ENDC}")
             return 1
-
-        # Initialize Rust logger if not already done
-        if not RUST_LOGGER_INITIALIZED:
-            debug_level = hasattr(params, 'debug') and params.debug
-            log_level = logging.DEBUG if debug_level else logging.INFO
-            initialize_rust_logger(logger_name="keeper-pam-webrtc-rs", verbose=verbose, level=log_level)
 
         # Resolve and validate the record
         api.sync_down(params)

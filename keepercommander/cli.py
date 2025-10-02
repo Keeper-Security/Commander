@@ -325,6 +325,17 @@ def do_command(params, command_line):
             logging.error(f"Error processing debug command: {e}")
 
 
+        # Toggle Rust verbose logging if available
+        try:
+            import keeper_pam_webrtc_rs
+            new_debug_state = debug_manager.is_console_debug_on(params.batch_mode)
+            keeper_pam_webrtc_rs.set_verbose_logging(new_debug_state)
+            logging.debug('Rust verbose logging %s', 'ON' if new_debug_state else 'OFF')
+        except ImportError:
+            pass  # Rust library not available, skip
+        except Exception as e:
+            logging.debug(f'Failed to toggle Rust verbose logging: {e}')
+
     else:
         cmd, args = command_and_args_from_cmd(command_line)
         if cmd:
