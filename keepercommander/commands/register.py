@@ -244,6 +244,10 @@ class ShareFolderCommand(Command):
         return share_folder_parser
 
     def execute(self, params, **kwargs):
+        from ..enforcement import MasterPasswordReentryEnforcer
+        if not MasterPasswordReentryEnforcer.check_and_enforce(params, "record_level"):
+            raise CommandError('share-folder', 'Operation cancelled: Re-authentication failed')
+
         def get_share_admin_obj_uids(obj_names, obj_type):
             # type: (List[Optional[str], int], int) -> Optional[Set[str]]
             if not obj_names:
@@ -907,6 +911,10 @@ class ShareRecordCommand(Command):
         emails = kwargs.get('email') or []
         if not emails:
             raise CommandError('share-record', '\'email\' parameter is missing')
+
+        from ..enforcement import MasterPasswordReentryEnforcer
+        if not MasterPasswordReentryEnforcer.check_and_enforce(params, "record_level"):
+            raise CommandError('share-record', 'Operation cancelled: Re-authentication failed')
 
         force = kwargs.get('force') is True
         action = kwargs.get('action') or 'grant'

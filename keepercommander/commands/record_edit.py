@@ -849,6 +849,11 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
         record_name = kwargs.get('record')
         if not record_name:
             raise CommandError('record-update', 'Record parameter is required.')
+        
+        from ..enforcement import MasterPasswordReentryEnforcer
+        if not MasterPasswordReentryEnforcer.check_and_enforce(params, "record_level"):
+            raise CommandError('record-update', 'Operation cancelled: Re-authentication failed')
+
         record = RecordMixin.resolve_single_record(params, record_name)
         if not record:
             raise CommandError('record-update', f'Record \"{record_name}\" not found.')
