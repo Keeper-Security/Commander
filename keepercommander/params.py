@@ -170,6 +170,7 @@ class KeeperParams:
         self.salt = None
         self.iterations = 0
         self.biometric = None
+        self.service_mode = False  # Flag to indicate if running in service mode
         self.thread_local = threading.local()
         self._pedm_plugin = None    # type:
 

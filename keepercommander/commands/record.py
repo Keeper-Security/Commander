@@ -2112,6 +2112,10 @@ class RecordRemoveCommand(Command):
         return rm_parser
 
     def execute(self, params, **kwargs):
+        from ..enforcement import MasterPasswordReentryEnforcer
+        if not MasterPasswordReentryEnforcer.check_and_enforce(params, "record_level"):
+            raise CommandError('rm', 'Operation cancelled: Re-authentication failed')
+
         records_to_delete = []     # type: List[Tuple[BaseFolderNode, str]]
         record_names = kwargs.get('records')
         rq_obj_limit = 999
