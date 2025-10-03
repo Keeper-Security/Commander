@@ -12,6 +12,7 @@
 import json
 import logging
 import getpass
+import threading
 from datetime import datetime, timedelta
 from typing import Tuple
 
@@ -25,8 +26,9 @@ from .error import KeeperApiError
 class MasterPasswordReentryEnforcer:
     """Handler for MASTER_PASSWORD_REENTRY enforcement with multi-factor authentication support."""
     
-    # Class variable to store the last successful validation time per user
+    # Class variable to store the last successful validation time per user (thread-safe)
     _last_validation_time = {}
+    _validation_lock = threading.RLock()
     
     @classmethod
     def requires_master_password_reentry(cls, params: KeeperParams, operation: str = "record_level") -> bool:
@@ -40,12 +42,19 @@ class MasterPasswordReentryEnforcer:
         Returns:
             bool: True if master password reentry is required
         """
+        # Input validation for operation parameter
+        if not operation or not isinstance(operation, str) or len(operation.strip()) == 0:
+            logging.error("Invalid operation parameter provided")
+            return False
+            
+        # Sanitize operation string to prevent injection attacks
+        operation = operation.strip()[:100]  # Limit length and strip whitespace
         # Bypass enforcement when running in service mode
-        if hasattr(params, 'service_mode') and params.service_mode:
+        if params and hasattr(params, 'service_mode') and params.service_mode:
             logging.info(f"Bypassing master password enforcement for operation '{operation}' - running in service mode")
             return False
 
-        if not params.enforcements:
+        if not params or not params.enforcements:
             return False
             
         # Look for MASTER_PASSWORD_REENTRY enforcement
@@ -58,19 +67,29 @@ class MasterPasswordReentryEnforcer:
                     operations = enforcement_value.get('operations', [])
                     timeout_minutes = enforcement_value.get('timeout', 5)
                     
+                    # Validate timeout to prevent integer overflow and ensure reasonable bounds
+                    if not isinstance(timeout_minutes, (int, float)) or timeout_minutes < 0 or timeout_minutes > 999:  # Max 999 minutes
+                        logging.error("Invalid timeout value in enforcement policy, timeout value must be more than or equal to 0 and less than or equal to 999 minutes, timeout value will be set to 5 minutes")
+                        timeout_minutes = 5  # Default fallback
+                    
                     # Check if the current operation requires master password reentry
                     if operation in operations:
-                        # Check if we're still within the timeout period
-                        user_key = params.user
-                        if user_key in cls._last_validation_time:
-                            last_validation = cls._last_validation_time[user_key]
-                            if datetime.now() - last_validation < timedelta(minutes=timeout_minutes):
-                                return False  # Still within timeout, no need to reenter
+                        # Check if we're still within the timeout period (thread-safe)
+                        user_key = params.user if params.user else None
+                        if not user_key:
+                            logging.error("User key not available")
+                            return True  # Enforcement required if user key is missing
+                            
+                        with cls._validation_lock:
+                            if user_key in cls._last_validation_time:
+                                last_validation = cls._last_validation_time[user_key]
+                                if datetime.now() - last_validation < timedelta(minutes=timeout_minutes):
+                                    return False  # Still within timeout, no need to reenter
                         
                         return True  # Enforcement required
                         
-                except (json.JSONDecodeError, KeyError, TypeError) as e:
-                    logging.warning(f"Failed to parse MASTER_PASSWORD_REENTRY enforcement: {e}")
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    logging.error("Failed to parse MASTER_PASSWORD_REENTRY enforcement")
                     
         return False
 
@@ -104,8 +123,8 @@ class MasterPasswordReentryEnforcer:
             credentials = client.get_available_credentials(params)
             return len(credentials) > 0
             
-        except (ImportError, Exception) as e:
-            logging.debug(f"Biometric not available: {e}")
+        except (ImportError, Exception):
+            logging.debug("Biometric not available")
             return False
     
     @classmethod 
@@ -134,8 +153,11 @@ class MasterPasswordReentryEnforcer:
             auth_response = client.perform_authentication(auth_options)
             
             if auth_response:
-                # Store successful validation time
-                cls._last_validation_time[params.user] = datetime.now()
+                # Store successful validation time (thread-safe)
+                user_key = params.user if params and params.user else None
+                if user_key:
+                    with cls._validation_lock:
+                        cls._last_validation_time[user_key] = datetime.now()
                 print(f'{bcolors.OKGREEN}Biometric authentication successful.{bcolors.ENDC}')
                 return True
             else:
@@ -145,8 +167,8 @@ class MasterPasswordReentryEnforcer:
         except KeyboardInterrupt:
             logging.info("Biometric authentication cancelled by user")
             return False
-        except Exception as e:
-            logging.debug(f"Biometric authentication failed: {e}")
+        except Exception:
+            logging.debug("Biometric authentication failed")
             return False
     
     @classmethod
@@ -183,8 +205,6 @@ class MasterPasswordReentryEnforcer:
         else:
             has_regular = False
         
-        logging.debug(f"Regular user auth check - has_salt: {has_salt}, has_iterations: {has_iterations}, has_regular: {has_regular}")
-        
         # Check if SSO user has alternate password
         has_alternate = False
         if is_sso_user:
@@ -192,12 +212,12 @@ class MasterPasswordReentryEnforcer:
                 current_salt = api.communicate_rest(params, None, 'authentication/get_salt_and_iterations',
                                                   rs_type=APIRequest_pb2.Salt)
                 has_alternate = current_salt is not None
-                logging.debug(f"SSO user - API call successful, has_alternate: {has_alternate}")
+                logging.debug(f"SSO user - API call successful")
             except KeeperApiError as kae:
                 has_alternate = kae.result_code != 'doesnt_exist'
-                logging.debug(f"SSO user - API error: {kae.result_code}, has_alternate: {has_alternate}")
-            except Exception as e:
-                logging.debug(f"SSO user - Exception checking alternate password: {e}")
+                logging.debug(f"SSO user - API error: {kae.result_code}")
+            except Exception:
+                logging.debug("SSO user - Exception checking alternate password")
                 pass
                 
         return has_regular, has_alternate
@@ -228,7 +248,7 @@ class MasterPasswordReentryEnforcer:
                     salt = current_salt.salt
                     iterations = current_salt.iterations
                 except Exception:
-                    logging.warning("Cannot validate alternate SSO master password: no salt information available")
+                    logging.error("Cannot validate alternate SSO master password: no salt information available")
                     return False
                     
                 prompt_text = f'{bcolors.WARNING}Alternate SSO master password reentry required for this operation.{bcolors.ENDC}\nEnter alternate SSO master password: '
@@ -248,8 +268,8 @@ class MasterPasswordReentryEnforcer:
                         salt = current_salt.salt
                         iterations = current_salt.iterations
                         logging.debug("Successfully fetched salt/iterations from server")
-                    except Exception as e:
-                        logging.warning(f"Cannot validate master password: failed to get salt information from server: {e}")
+                    except Exception:
+                        logging.error("Cannot validate master password: failed to get salt information from server")
                         return False
                     
                 prompt_text = f'{bcolors.WARNING}Master password reentry required for this operation.{bcolors.ENDC}\nEnter master password: '
@@ -258,31 +278,43 @@ class MasterPasswordReentryEnforcer:
             master_password = getpass.getpass(prompt=prompt_text).strip()
             
             if not master_password:
-                logging.warning("Password is required")
+                logging.error("Password is required")
                 return False
             
-            # Create authentication hash
-            auth_hash = crypto.derive_keyhash_v1(master_password, salt, iterations)
-            
-            # Create master password reentry request
-            rq = APIRequest_pb2.MasterPasswordReentryRequest()
-            rq.pbkdf2Password = utils.base64_url_encode(auth_hash)
-            rq.action = APIRequest_pb2.UNMASK
-            
-            # Validate with server
-            rs = api.communicate_rest(params, rq, 'authentication/validate_master_password',
-                                    rs_type=APIRequest_pb2.MasterPasswordReentryResponse, payload_version=1)
-            
-            if rs.status == APIRequest_pb2.MP_SUCCESS:
-                # Store successful validation time
-                cls._last_validation_time[params.user] = datetime.now()
-                return True
-            else:
-                logging.error("Password validation failed")
-                return False
+            try:
+                # Create authentication hash
+                auth_hash = crypto.derive_keyhash_v1(master_password, salt, iterations)
                 
-        except Exception as e:
-            logging.error(f"Password validation failed: {e}")
+                # Create master password reentry request
+                rq = APIRequest_pb2.MasterPasswordReentryRequest()
+                rq.pbkdf2Password = utils.base64_url_encode(auth_hash)
+                rq.action = APIRequest_pb2.UNMASK
+                
+                # Validate with server
+                rs = api.communicate_rest(params, rq, 'authentication/validate_master_password',
+                                        rs_type=APIRequest_pb2.MasterPasswordReentryResponse, payload_version=1)
+                
+                if rs.status == APIRequest_pb2.MP_SUCCESS:
+                    # Store successful validation time (thread-safe)
+                    user_key = params.user if params and params.user else None
+                    if user_key:
+                        with cls._validation_lock:
+                            cls._last_validation_time[user_key] = datetime.now()
+                    return True
+                else:
+                    logging.error("Password validation failed")
+                    return False
+                    
+            finally:
+                # Clear sensitive data from memory
+                master_password = 'x' * len(master_password)
+                del master_password
+                if 'auth_hash' in locals():
+                    auth_hash = b'x' * len(auth_hash)
+                    del auth_hash
+                
+        except Exception:
+            logging.error("Password validation failed")
             return False
     
     @classmethod
