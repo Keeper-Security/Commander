@@ -846,7 +846,7 @@ class SearchCommand(Command):
                                f"Can Edit: {item['can_edit']}, Can Share: {item['can_share']}"]
                     elif item['type'] == 'team':
                         row = [item['type'], item['team_uid'], item['name'],
-                               f"Restrict Edit: {item['restrict_edit']}, Restrict View: {item['restrict_view']}"]
+                               f"Restrict Edit: {item['restrict_edit']}, Restrict View: {item['restrict_view']}, Restrict Share: {item['restrict_share']}"]
                     table.append(row)
                 
                 return base.dump_report_data(table, headers, fmt='json')
