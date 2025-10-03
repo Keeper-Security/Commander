@@ -84,6 +84,76 @@ from .tunnel_and_connections import PAMTunnelCommand, PAMConnectionCommand, PAMR
 PAM_DEFAULT_SPECIAL_CHAR = '''!@#$%^?();',.=+[]<>{}-_/\\*&:"`~|'''
 
 
+def validate_cron_field(field, min_val, max_val):
+    # Accept *, single number, range, step, list
+    pattern = r'^(\*|\d+|\d+-\d+|\*/\d+|\d+(,\d+)*|\d+-\d+/\d+)$'
+    if not re.match(pattern, field):
+        return False
+
+    def is_valid_number(n):
+        return n.isdigit() and min_val <= int(n) <= max_val
+
+    parts = re.split(r'[,\-/]', field)
+    return all(part == '*' or is_valid_number(part) for part in parts if part != '*')
+
+def validate_cron_expression(expr, for_rotation=False):
+    parts = expr.strip().split()
+
+    # All internal docs, MRD etc. specify that rotation schedule is using CRON format
+    # but actually back-end don't accept all valid standard CRON and uses unspecified custom CRON format
+    if for_rotation is True:
+        if len(parts) != 6:
+            return False, f"CRON: Rotation schedules require all 6 parts incl. seconds - ex. Daily at 04:00:00 cron: 0 0 4 * * ? got {len(parts)} parts"
+        if not(parts[3] == '?' or parts[5] == "?"):
+            logging.warning("CRON: Rotation schedule CRON format - must use ? character in one of these fields: day-of-week, day-of-month")
+        parts[3] = '*' if parts[3] == '?' else parts[3]
+        parts[5] = '*' if parts[5] == '?' else parts[5]
+        logging.debug("WARNING! Validating CRON expression for rotation - if you get 500 type errors make sure to validate your CRON using web vault UI")
+
+    if len(parts) not in [5, 6]:
+        return False, f"CRON: Expected 5 or 6 fields, got {len(parts)}"
+
+    if len(parts) == 6:
+        seconds, minute, hour, dom, month, dow = parts
+        if not validate_cron_field(seconds, 0, 59):
+            return False, "CRON: Invalid seconds field"
+    else:
+        minute, hour, dom, month, dow = parts
+
+    validators = [
+        (minute, 0, 59, "minute"),
+        (hour, 0, 23, "hour"),
+        (dom, 1, 31, "day of month"),
+        (month, 1, 12, "month"),
+        (dow, 0, 7, "day of week")
+    ]
+
+    for field, min_val, max_val, name in validators:
+        if not validate_cron_field(field, min_val, max_val):
+            return False, f"CRON: Invalid {name} field"
+
+    return True, "Valid cron expression"
+
+def parse_schedule_data(kwargs):
+    schedule_json_data = kwargs.get('schedule_json_data')
+    schedule_cron_data = kwargs.get('schedule_cron_data')
+    schedule_on_demand = kwargs.get('on_demand') is True
+    schedule_data = None   # type: Optional[List]
+    if isinstance(schedule_json_data, list):
+        schedule_data = [json.loads(x) for x in schedule_json_data]
+    elif isinstance(schedule_cron_data, list):
+        # more details: http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html#examples
+        if schedule_cron_data and isinstance(schedule_cron_data[0], str):
+            valid, err = validate_cron_expression(schedule_cron_data[0], for_rotation=True)
+            if valid:
+               schedule_data = [{"type": "CRON", "cron": schedule_cron_data[0], "tz": "Etc/UTC"}]
+            else:
+               logging.error('', f'Invalid CRON "{schedule_cron_data[0]}" Error: {err}')
+    elif schedule_on_demand is True:
+        schedule_data = []
+    return schedule_data
+
+
 def register_commands(commands):
     commands['pam'] = PAMControllerCommand()
 
@@ -946,22 +1016,8 @@ class PAMCreateRecordRotationCommand(Command):
             else:
                 raise CommandError('', f'Record uid {config_uid} is not a PAM Configuration record.')
 
-        schedule_json_data = kwargs.get('schedule_json_data')
-        schedule_cron_data = kwargs.get('schedule_cron_data')    # See this page for more details: http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html#examples
-        schedule_on_demand = kwargs.get('on_demand') is True
         schedule_config = kwargs.get('schedule_config') is True
-        schedule_data = None   # type: Optional[List]
-        if isinstance(schedule_json_data, list):
-            schedule_data = [json.loads(x) for x in schedule_json_data]
-        elif isinstance(schedule_cron_data, list):
-            schedule_data = []
-            for cron in schedule_cron_data:
-                comps = [x.strip() for x in cron.split(' ')]
-                if len(comps) != 5:
-                    raise CommandError('', f'Cron value is expected to have 5 components: minute hour day_of_month month day_of_week')
-                schedule_data.append(TypedField.import_schedule_field(cron))
-        elif schedule_on_demand is True:
-            schedule_data = []
+        schedule_data = parse_schedule_data(kwargs)
 
         pwd_complexity = kwargs.get("pwd_complexity")
         pwd_complexity_rule_list = None     # type: Optional[dict]
@@ -1763,9 +1819,13 @@ class PamConfigurationEditMixin(RecordEditMixin):
         if isinstance(port_mapping, list) and len(port_mapping) > 0:
             pm = "\n".join(port_mapping)
             extra_properties.append(f'multiline.portMapping={pm}')
-        schedule = kwargs.get('default_schedule')
+        schedule = kwargs.get('default_schedule')  # Default Schedule: Use CRON syntax
         if schedule:
-            extra_properties.append(f'schedule.defaultRotationSchedule={schedule}')
+            valid, err = validate_cron_expression(schedule, for_rotation=True)
+            if not valid:
+                raise CommandError('', f'Invalid CRON "{schedule}" Error: {err}')
+        if schedule:
+            extra_properties.append(f'schedule.defaultRotationSchedule=$JSON:{{"type": "CRON", "cron": "{schedule}", "tz": "Etc/UTC"}}')
         else:
             extra_properties.append('schedule.defaultRotationSchedule=On-Demand')
 
