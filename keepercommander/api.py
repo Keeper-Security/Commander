@@ -17,9 +17,12 @@ import logging
 import math
 import os
 import re
+import requests
 import time
 from datetime import datetime
 from functools import reduce
+from urllib.parse import urlunparse, urlparse
+
 from typing import Optional, Tuple, Iterable, List, Dict, Any, Union
 
 import google
@@ -30,7 +33,7 @@ from .display import bcolors
 from .enterprise import query_enterprise as qe
 from .error import KeeperApiError
 from .params import KeeperParams, PublicKeys, LAST_RECORD_UID
-from .proto import APIRequest_pb2, record_pb2, enterprise_pb2
+from .proto import APIRequest_pb2, record_pb2, enterprise_pb2, router_pb2
 from .proto.record_pb2 import GetShareObjectsRequest, GetShareObjectsResponse
 from .record import Record
 from .recordv3 import RecordV3
@@ -532,7 +535,7 @@ def prepare_record(params, record):
     record_object = {
         'version': 2,
         'client_modified_time': current_milli_time()
-    }
+    }  # type: Dict[str, Any]
 
     if not record.record_uid:
         logging.debug('Generated Record UID: %s', record.record_uid)
@@ -686,6 +689,63 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
         pass
 
     return record_object, audit_data
+
+
+def execute_router(params, endpoint, request, *, rs_type=None):
+    logger = logging.getLogger('keeper.router')
+    if logger.level <= logging.DEBUG:
+        js = google.protobuf.json_format.MessageToJson(request) if request else ''
+        logger.debug('>>> [ROUTER RQ] \"%s\": %s', endpoint, js)
+
+    transmission_key = utils.generate_aes_key()
+    encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
+    encrypted_transmission_key = rest_api.encrypt_with_keeper_key(params.rest_context, transmission_key)
+
+    headers = {
+        'TransmissionKey': base64.b64encode(encrypted_transmission_key).decode('ascii'),
+        'Authorization': 'KeeperUser ' + base64.b64encode(encrypted_session_token).decode('ascii'),
+    }
+
+    if 'ROUTER_URL' in os.environ:
+        up = urlparse(os.environ['ROUTER_URL'])
+        url_comp = (up.scheme, up.netloc, f'api/user/{endpoint}', None, None, None)
+    else:
+        up = urlparse(params.rest_context.server_base)
+        url_comp = ('https', f'connect.{up.hostname}', f'api/user/{endpoint}', None, None, None)
+    url = urlunparse(url_comp)
+
+    payload = request.SerializeToString() if request else None
+    if payload is not None:
+        payload = crypto.encrypt_aes_v2(payload, transmission_key)
+
+    rs = requests.post(url, data=payload, headers=headers, proxies=params.rest_context.proxies,
+                       verify=params.rest_context.certificate_check)
+    if rs.status_code == 200:
+        rs_body = rs.content
+        if rs_body:
+            router_response = router_pb2.RouterResponse()
+            router_response.ParseFromString(rs_body)
+            if router_response.responseCode == router_pb2.RouterResponseCode.RRC_OK:
+                if router_response.encryptedPayload:
+                    decrypted_response = crypto.decrypt_aes_v2(router_response.encryptedPayload, transmission_key)
+                    if rs_type:
+                        response = rs_type()
+                        response.ParseFromString(decrypted_response)
+                        if logger.level <= logging.DEBUG:
+                            js = google.protobuf.json_format.MessageToJson(response)
+                            logger.debug('>>> [ROUTER RS] \"%s\": %s', endpoint, js)
+                        return response
+            else:
+                if router_response.responseCode == router_pb2.RouterResponseCode.RRC_BAD_REQUEST:
+                    code = 'bad_request'
+                elif router_response.responseCode == router_pb2.RouterResponseCode.RRC_NOT_ALLOWED:
+                    code = 'not_allowed'
+                else:
+                    code = 'router_error'
+                raise KeeperApiError(code, router_response.errorMessage)
+    else:
+        message = rs.reason
+        raise KeeperApiError('router_error', f'{message}: {rs.status_code}')
 
 
 def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version=None):
@@ -887,7 +947,7 @@ def get_pb2_record_update(params, rec, **kwargs):
 
 
 def get_record_v3_response(params, rq, endpoint, record_rq_by_uid, silent=True):
-    # type: (KeeperParams, Any, str, dict[dict], bool) -> Optional[bool]
+    # type: (KeeperParams, Any, str, dict[str, dict], bool) -> Optional[bool]
     rs = communicate_rest(params, rq, endpoint)
     records_modify_rs = record_pb2.RecordsModifyResponse()
     records_modify_rs.ParseFromString(rs)
@@ -1284,7 +1344,7 @@ def enumerate_record_access_paths(params, record_uid):
 
 
 def get_record_shares(params, record_uids, is_share_admin=False):
-    # type: (KeeperParams, Iterable[str], bool) -> List[dict]
+    # type: (KeeperParams, Iterable[str], bool) -> Optional[List[Dict[str, Any]]]
     def need_share_info(uid):
         if uid in params.record_cache:
             r = params.record_cache[uid]
