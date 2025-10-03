@@ -251,18 +251,19 @@ class FolderListCommand(Command, RecordMixin):
                 raise CommandError('ls', '{0}: No such folder or record'.format(pattern))
         else:
             if show_detail:
+                # Helper function to get folder flags
+                def folder_flags(f):
+                    if f.type == 'shared_folder':
+                        flags = 'S'
+                    else:
+                        flags = ''
+                    return flags
+                
                 if fmt in ('json', 'csv'):
                     combined_table = []
                     combined_headers = ['type', 'uid', 'name', 'details']
                     
                     if len(folders) > 0:
-                        def folder_flags(f):
-                            if f.type == 'shared_folder':
-                                flags = 'S'
-                            else:
-                                flags = ''
-                            return flags
-                        
                         for f in folders:
                             row = ['folder', f.uid, f.name, f'Flags: {folder_flags(f)}, Parent: {f.parent_uid or "/"}']
                             combined_table.append(row)
@@ -273,20 +274,13 @@ class FolderListCommand(Command, RecordMixin):
                                    f'Type: {record.record_type}, Description: {vault_extensions.get_record_description(record)}']
                             combined_table.append(row)
                     
-                    combined_table.sort(key=lambda x: (x[2] or '').lower())
+                    combined_table.sort(key=lambda x: (x[0], (x[2] or '').lower()))
                     return dump_report_data(combined_table, combined_headers, fmt=fmt, filename=kwargs.get('output'))
                 
                 else:
                     if len(folders) > 0:
                         table = []
                         headers = ['folder_uid', 'name', 'flags', 'parent_uid']
-
-                        def folder_flags(f):
-                            if f.type == 'shared_folder':
-                                flags = 'S'
-                            else:
-                                flags = ''
-                            return flags
                         colors = {}
                         for f in folders:
                             if f.color:
