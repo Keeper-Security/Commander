@@ -167,6 +167,7 @@ class KeeperParams:
         self.salt = None
         self.iterations = 0
         self.biometric = None
+        self.service_mode = False  # Flag to indicate if running in service mode
 
 
     def clear_session(self):

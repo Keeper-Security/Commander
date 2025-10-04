@@ -128,6 +128,10 @@ class CommandExecutor:
         from ..core.globals import ensure_params_loaded
         try:
             params = ensure_params_loaded()
+            # Set service mode flag to bypass master password enforcement
+            if params:
+                params.service_mode = True
+
             command = html.unescape(command)
             return_value, printed_output, log_output = CommandExecutor.capture_output_and_logs(params, command)
             response = return_value if return_value else printed_output
