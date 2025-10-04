@@ -31,6 +31,8 @@ totp_parser.add_argument('record', nargs='?', type=str, action='store', help='re
 totp_parser.add_argument('--legacy', dest='legacy', action='store_true', help='work with legacy records only')
 totp_parser.add_argument('--details', dest='details', action='store_true', help='display 2FA details')
 totp_parser.add_argument('--range', dest='range', type=int, action='store', help='display last and next [x] codes')
+totp_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
+                         default='table', help='output format')
 
 
 class TotpEndpoint:
@@ -89,6 +91,8 @@ class TotpCommand(Command):
             if not totp_url:
                 raise CommandError('totp', f'Record \"{record.title}\" does not contain TOTP codes')
 
+            fmt = kwargs.get('format', 'table')
+            
             if kwargs['details']:
                 record_common.display_totp_details(totp_url)
             x_range = kwargs.get('range')
@@ -100,28 +104,41 @@ class TotpCommand(Command):
                     title = 'Current' if offset == 0 else str(offset)
                     code, _, _ = get_totp_code(totp_url, offset)
                     table.append([title, code])
-                dump_report_data(table, headers=('key', 'value'), no_header=True, right_align=(0,))
+                
+                if fmt == 'json':
+                    headers = ['key', 'value'] 
+                    return dump_report_data(table, headers=headers, fmt='json')
+                else:
+                    dump_report_data(table, headers=('key', 'value'), no_header=True, right_align=(0,))
             else:
-                tmer = None     # type: Optional[threading.Timer]
-                done = False
+                if fmt == 'json':
+                    # For JSON format, just return current code without interactive display
+                    code, remains, total = get_totp_code(totp_url)
+                    table = [['Current', code]]
+                    headers = ['key', 'value']
+                    return dump_report_data(table, headers=headers, fmt='json')
+                else:
+                    # Interactive display for table format
+                    tmer = None     # type: Optional[threading.Timer]
+                    done = False
 
-                def print_code():
-                    nonlocal tmer
-                    if not done:
-                        TotpCommand.display_code(totp_url)
-                        tmer = threading.Timer(1, print_code).start()
+                    def print_code():
+                        nonlocal tmer
+                        if not done:
+                            TotpCommand.display_code(totp_url)
+                            tmer = threading.Timer(1, print_code).start()
 
-                try:
-                    print('Press <Enter> to exit\n')
-                    print_code()
-                    input()
-                finally:
-                    done = True
-                    if tmer:
-                        tmer.cancel()
+                    try:
+                        print('Press <Enter> to exit\n')
+                        print_code()
+                        input()
+                    finally:
+                        done = True
+                        if tmer:
+                            tmer.cancel()
         else:
+            fmt = kwargs.get('format', 'table')
             TotpCommand.find_endpoints(params)
-            logging.info('')
             headers = ['Record UID', 'Record Title', 'Folder(s)']
             table = []
             for endpoint in TotpCommand.Endpoints:
@@ -130,7 +147,13 @@ class TotpCommand(Command):
                     title = title[:20] + '...'
                 folder = endpoint.paths[0] if len(endpoint.paths) > 0 else '/'
                 table.append([endpoint.record_uid, title, folder])
-            dump_report_data(table, headers=headers, row_number=True, sort_by=1)
+            
+            if fmt == 'json':
+                headers = ['record_uid', 'record_title', 'folders']
+                return dump_report_data(table, headers=headers, fmt='json')
+            else:
+                logging.info('')
+                dump_report_data(table, headers=headers, row_number=True, sort_by=1)
 
     LastDisplayedCode = ''
 
