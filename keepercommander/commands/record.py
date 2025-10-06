@@ -76,9 +76,11 @@ def register_command_info(aliases, command_info):
     for p in [get_info_parser, search_parser, list_parser, list_sf_parser, list_team_parser,
               record_history_parser, shared_records_report_parser, record_edit.record_add_parser,
               record_edit.record_update_parser, record_edit.append_parser, record_edit.download_parser,
-              record_edit.upload_parser, record_edit.delete_attachment_parser, clipboard_copy_parser, record_totp.totp_parser]:
+              record_edit.upload_parser, record_edit.delete_attachment_parser, clipboard_copy_parser, record_totp.totp_parser,
+              rm_parser, record_file_report.file_report_parser]:
         command_info[p.prog] = p.description
     command_info['trash'] = 'Manage records in the deleted items'
+    command_info['find-password'] = 'Find and display password for a record'
 
 
 get_info_parser = argparse.ArgumentParser(prog='get', description='Get the details of a record/folder/team by UID or title')

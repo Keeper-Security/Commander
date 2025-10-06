@@ -40,7 +40,7 @@ def register_enterprise_commands(commands):
 
 
 def register_command_info(aliases, command_info):
-    for p in [import_parser, export_parser, download_membership_parser, apply_membership_parser, download_record_type_parser]:
+    for p in [import_parser, export_parser, download_membership_parser, apply_membership_parser, download_record_type_parser, load_record_type_parser]:
         command_info[p.prog] = p.description
 
 
@@ -137,7 +137,7 @@ download_record_type_parser.add_argument(
 
 
 load_record_type_parser = argparse.ArgumentParser(
-    prog='load_record_types', description='Loads custom record types from JSON file into Keeper.')
+    prog='load-record-types', description='Loads custom record types from JSON file into Keeper.')
 load_record_type_parser.add_argument(
     'name', type=str, nargs='?', help='Input file name. "record_types.json" if omitted.')
 
