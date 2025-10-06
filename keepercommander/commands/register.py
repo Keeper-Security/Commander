@@ -68,7 +68,6 @@ def register_command_info(aliases, command_info):
         command_info[p.prog] = p.description
 
     command_info['one-time-share'] = 'Manage and create One-Time Shares'
-    command_info['share'] = 'Manage and create One-Time Shares'
 
 
 share_record_parser = argparse.ArgumentParser(prog='share-record', description='Change the sharing permissions of an individual record')
