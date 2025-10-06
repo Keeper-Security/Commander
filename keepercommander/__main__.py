@@ -202,6 +202,9 @@ def main(from_package=False):
         except:
             pass
     logging.basicConfig(format='%(message)s', force=True)
+    logger = logging.getLogger()
+    if logger:
+        logger.name = 'keepercommander'
 
     # Use system CA certificates when available (supports Zscaler), fallback to certifi
     ssl_cert_file = get_ssl_cert_file()

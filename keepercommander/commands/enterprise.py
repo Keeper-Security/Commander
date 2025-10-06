@@ -91,6 +91,8 @@ def register_command_info(aliases, command_info):
               user_report_parser]:
         command_info[p.prog] = p.description
 
+    command_info['audit-alert'] = 'Manage audit alerts and notifications'
+
     compliance.register_command_info(aliases, command_info)
     security_audit.register_command_info(aliases, command_info)
 
