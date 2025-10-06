@@ -34,7 +34,7 @@ COMMAND_CATEGORIES = {
     
     # Reporting Commands
     'Reporting Commands': {
-        'audit-log', 'audit-report', 'user-report', 'security-audit-report',
+        'audit-log', 'audit-report', 'audit-alert', 'user-report', 'security-audit-report',
         'share-report', 'shared-records-report', 'aging-report', 'action-report',
         'compliance-report', 'compliance', 'external-shares-report', 'risk-management',
         'security-audit'
@@ -52,7 +52,7 @@ COMMAND_CATEGORIES = {
         'enterprise-info', 'enterprise-user', 'enterprise-role', 'enterprise-team',
         'enterprise-node', 'enterprise-push', 'team-approve', 'device-approve',
         'create-user', 'transfer-user', 'automator', 'scim', 'enterprise-down',
-        'public-api-key', 'audit-alert'
+        'public-api-key'
     },
     
     # Secrets Manager Commands
