@@ -18,7 +18,7 @@ COMMAND_CATEGORIES = {
     # Sharing Commands
     'Sharing Commands': {
         'share-record', 'share-folder', 'record-permissions', 'record-permission', 'one-time-share',
-        'external-shares-report', 'share'
+        'external-shares-report'
     },
     
     # Record Type Commands
