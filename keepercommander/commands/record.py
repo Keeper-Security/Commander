@@ -911,7 +911,10 @@ class RecordListCommand(Command):
             return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
                                          row_number=True, column_width=None if verbose else 40)
         else:
-            logging.info('No records are found')
+            if fmt == 'json':
+                return {"message": "No records are found"}
+            else:
+                logging.info('No records are found')
 
 
 class RecordListSfCommand(Command):
@@ -933,7 +936,10 @@ class RecordListSfCommand(Command):
             return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
                                     row_number=True)
         else:
-            logging.info('No shared folders are found')
+            if fmt == 'json':
+                return {"message": "No shared folders are found"}
+            else:
+                logging.info('No shared folders are found')
 
 
 class RecordListTeamCommand(Command):
@@ -985,7 +991,10 @@ class RecordListTeamCommand(Command):
             return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
                                     row_number=True)
         else:
-            logging.info('No teams are found')
+            if fmt == 'json':
+                return {"message": "No teams are found"}
+            else:
+                logging.info('No teams are found')
 
     @classmethod
     def get_team_members(self, params, teams, allow_fetch):
@@ -1250,8 +1259,12 @@ class TrashListCommand(Command, TrashMixin):
         verbose = kwargs.get('verbose') is True
 
         if len(deleted_records) == 0 and len(orphaned_records) == 0 and len(shared_folders) == 0:
-            logging.info('Trash is empty')
-            return
+            fmt = kwargs.get('format', 'table')
+            if fmt == 'json':
+                return {"message": "Trash is empty"}
+            else:
+                logging.info('Trash is empty')
+                return
 
         pattern = kwargs.get('pattern')
         if pattern:
