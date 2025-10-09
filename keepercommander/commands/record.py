@@ -16,6 +16,7 @@ import fnmatch
 import itertools
 import json
 import logging
+import os
 import re
 from functools import reduce
 from typing import Dict, Any, List, Optional, Iterable, Tuple, Set
@@ -34,6 +35,32 @@ from ..subfolder import try_resolve_path, get_folder_path, find_folders, find_al
     get_folder_uids
 from ..team import Team
 
+def handle_empty_result(fmt, message, filename=None):
+    """
+    Handle 'no data found' scenarios for different output formats.
+    
+    Args:
+        fmt (str): Output format ('json', 'table', etc.)
+        message (str): Message to display/return
+        filename (str, optional): Output filename for JSON format
+    
+    Returns:
+        dict: For JSON format, returns {"message": message}
+        None: For other formats, logs the message and returns None
+    """
+    if fmt == 'json':
+        result = {"message": message}
+        if filename:
+            _, ext = os.path.splitext(filename)
+            if not ext:
+                filename += '.json'
+            logging.info('Report path: %s', os.path.abspath(filename))
+            with open(filename, 'w') as fd:
+                json.dump(result, fd, indent=2, default=base.json_serialized)
+            return None
+        return result
+    logging.info(message)
+    return None
 
 def register_commands(commands):
     commands['search'] = SearchCommand()
@@ -911,10 +938,7 @@ class RecordListCommand(Command):
             return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
                                          row_number=True, column_width=None if verbose else 40)
         else:
-            if fmt == 'json':
-                return {"message": "No records are found"}
-            else:
-                logging.info('No records are found')
+            return handle_empty_result(fmt, 'No records are found', kwargs.get('output'))
 
 
 class RecordListSfCommand(Command):
@@ -936,10 +960,7 @@ class RecordListSfCommand(Command):
             return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
                                     row_number=True)
         else:
-            if fmt == 'json':
-                return {"message": "No shared folders are found"}
-            else:
-                logging.info('No shared folders are found')
+            return handle_empty_result(fmt, 'No shared folders are found', kwargs.get('output'))
 
 
 class RecordListTeamCommand(Command):
@@ -991,10 +1012,7 @@ class RecordListTeamCommand(Command):
             return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
                                     row_number=True)
         else:
-            if fmt == 'json':
-                return {"message": "No teams are found"}
-            else:
-                logging.info('No teams are found')
+            return handle_empty_result(fmt, 'No teams are found', kwargs.get('output'))
 
     @classmethod
     def get_team_members(self, params, teams, allow_fetch):
@@ -1260,11 +1278,7 @@ class TrashListCommand(Command, TrashMixin):
 
         if len(deleted_records) == 0 and len(orphaned_records) == 0 and len(shared_folders) == 0:
             fmt = kwargs.get('format', 'table')
-            if fmt == 'json':
-                return {"message": "Trash is empty"}
-            else:
-                logging.info('Trash is empty')
-                return
+            return handle_empty_result(fmt, 'Trash is empty', kwargs.get('output'))
 
         pattern = kwargs.get('pattern')
         if pattern:
