@@ -1600,7 +1600,7 @@ class PAMConfigurationListCommand(Command):
                 headers.append('Fields')
 
         for c in configurations:  # type: vault.TypedRecord
-            if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamNetworkConfiguration'):
+            if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration'):
                 facade.record = c
                 shared_folder_parents = find_parent_top_folder(params, c.record_uid)
                 if shared_folder_parents:
