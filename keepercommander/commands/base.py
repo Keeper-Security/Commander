@@ -192,10 +192,11 @@ def register_enterprise_commands(commands, aliases, command_info):
     device_management.register_enterprise_commands(commands)
     device_management.register_enterprise_command_info(aliases, command_info)
 
-    from .pedm import pedm_admin
-    pedm_command = pedm_admin.PedmCommand()
-    commands['pedm'] = pedm_command
-    command_info['pedm'] = pedm_command.description
+    if sys.version_info.major > 3 or (sys.version_info.major == 3 and sys.version_info.minor >= 9):
+        from.pedm import pedm_admin
+        pedm_command = pedm_admin.PedmCommand()
+        commands['pedm'] = pedm_command
+        command_info['pedm'] = pedm_command.description
 
 
 def register_msp_commands(commands, aliases, command_info):

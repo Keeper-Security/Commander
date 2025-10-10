@@ -12,7 +12,6 @@
 import abc
 from typing import TypeVar, Generic, Iterable, Optional, Tuple, Union
 
-from deprecated import deprecated
 
 K = TypeVar('K', int, str, bytes)
 
@@ -69,7 +68,6 @@ class IEntityReader(Generic[T, K], abc.ABC):
     def get_entity(self, key: K) -> Optional[T]:
         pass
 
-    @deprecated
     def get_all(self) -> Iterable[T]:
         return self.get_all_entities()
 
