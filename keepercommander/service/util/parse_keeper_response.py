@@ -43,7 +43,10 @@ class KeeperResponseParser:
             tuple: (cleaned_response_str, is_from_log_output)
         """
         # Priority: use log_output if no regular response OR if response is empty/whitespace
-        response_str = str(response).strip() if response else ""
+        if isinstance(response, dict):
+            response_str = json.dumps(response)
+        else:
+            response_str = str(response).strip() if response else ""
         log_str = log_output.strip() if log_output else ""
         
         # Use log_output if response is empty/whitespace but log_output has content
