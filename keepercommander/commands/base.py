@@ -27,7 +27,7 @@ from typing import Optional, Sequence, Callable, List, Any, Iterable, Dict, Set
 import sys
 from tabulate import tabulate
 
-from .. import api, crypto, utils, vault, resources
+from .. import api, crypto, utils, vault, resources, error
 from ..params import KeeperParams
 from ..subfolder import try_resolve_path, BaseFolderNode
 
@@ -38,11 +38,23 @@ msp_commands = {}            # type: Dict[str, Command]
 command_info = OrderedDict()
 
 
+json_output_parser = argparse.ArgumentParser(add_help=False)
+json_output_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
+                                default='table', help='format of output')
+json_output_parser.add_argument('--output', dest='output', action='store',
+                                help='path to resulting output file (ignored for "table" format)')
+
+
 report_output_parser = argparse.ArgumentParser(add_help=False)
 report_output_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json', 'pdf'],
                                   default='table', help='format of output')
 report_output_parser.add_argument('--output', dest='output', action='store',
                                   help='path to resulting output file (ignored for "table" format)')
+
+
+class CommandError(error.CommandError):
+    def __init__(self, message):
+        super().__init__('', message)
 
 
 class ParseError(Exception):
@@ -179,6 +191,12 @@ def register_enterprise_commands(commands, aliases, command_info):
     from . import device_management
     device_management.register_enterprise_commands(commands)
     device_management.register_enterprise_command_info(aliases, command_info)
+
+    if sys.version_info.major > 3 or (sys.version_info.major == 3 and sys.version_info.minor >= 9):
+        from.pedm import pedm_admin
+        pedm_command = pedm_admin.PedmCommand()
+        commands['pedm'] = pedm_command
+        command_info['pedm'] = pedm_command.description
 
 
 def register_msp_commands(commands, aliases, command_info):
@@ -752,6 +770,15 @@ class Command(CliCommand):
     _ensure_parser = staticmethod(_ensure_parser)
 
 
+class ArgparseCommand(Command):
+    def __init__(self, parser):
+        super().__init__()
+        self.parser = parser
+
+    def get_parser(self):
+        return self.parser
+
+
 class GroupCommand(CliCommand):
     def __init__(self):
         self._commands = collections.OrderedDict()     # type: dict[str, CliCommand]
@@ -832,6 +859,15 @@ class GroupCommand(CliCommand):
     @property
     def subcommands(self):
         return self._commands
+
+
+class GroupCommandNew(GroupCommand):
+    def __init__(self, description):
+        super().__init__()
+        self.description = description
+
+    def register_command_new(self, command, verb, alias=None):
+        super().register_command(verb, command, None, alias)
 
 
 class RecordMixin:
