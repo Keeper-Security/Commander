@@ -9,7 +9,7 @@ import hmac
 from .. import utils
 from ..proto import pedm_pb2
 
-@dataclass(kw_only=True)
+@dataclass
 class DeploymentAgentInformation:
     hash_key: bytes
     peer_public_key: bytes
