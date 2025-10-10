@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from ..storage import types as storage_types, in_memory, sqlite, sqlite_dao
 
 
-@dataclass(kw_only=True)
+@dataclass
 class PedmAdminSettings(storage_types.IUid[str]):
     key: str = ''
     value: str = ''
@@ -14,7 +14,7 @@ class PedmAdminSettings(storage_types.IUid[str]):
         return self.key
 
 
-@dataclass(kw_only=True)
+@dataclass
 class PedmStorageDeployment(storage_types.IUid[str]):
     deployment_uid: str = ''
     encrypted_key: bytes = b''
@@ -27,7 +27,7 @@ class PedmStorageDeployment(storage_types.IUid[str]):
         return self.deployment_uid
 
 
-@dataclass(kw_only=True)
+@dataclass
 class PedmStorageAgent(storage_types.IUid[str]):
     agent_uid: str = ''
     machine_id: str = ''
@@ -41,7 +41,7 @@ class PedmStorageAgent(storage_types.IUid[str]):
         return self.agent_uid
 
 
-@dataclass(kw_only=True)
+@dataclass
 class PedmStoragePolicy(storage_types.IUid[str]):
     policy_uid: str = ''
     admin_data: bytes = b''
@@ -54,7 +54,7 @@ class PedmStoragePolicy(storage_types.IUid[str]):
         return self.policy_uid
 
 
-@dataclass(kw_only=True)
+@dataclass
 class PedmStorageCollection(storage_types.IUid[str]):
     collection_uid: str = ''
     collection_type: int = 0
@@ -64,7 +64,7 @@ class PedmStorageCollection(storage_types.IUid[str]):
         return self.collection_uid
 
 
-@dataclass(kw_only=True)
+@dataclass
 class PedmStorageCollectionLink(storage_types.IUidLink[str, str]):
     collection_uid: str = ''
     link_uid: str = ''
@@ -75,7 +75,7 @@ class PedmStorageCollectionLink(storage_types.IUidLink[str, str]):
         return self.link_uid
 
 
-@dataclass(kw_only=True)
+@dataclass
 class PedmStorageApproval(storage_types.IUid[str]):
     approval_uid: str = ''
     approval_type: int = 0
@@ -88,7 +88,7 @@ class PedmStorageApproval(storage_types.IUid[str]):
     def uid(self) -> str:
         return self.approval_uid
 
-@dataclass(kw_only=True)
+@dataclass
 class PedmStorageApprovalStatus(storage_types.IUid[str]):
     approval_uid: str = ''
     approval_status: int = 0

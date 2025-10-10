@@ -10,7 +10,7 @@ from ..proto import pedm_pb2
 from ..storage import types as storage_types
 
 
-@dataclass(kw_only=True, frozen=True)
+@dataclass(frozen=True)
 class PedmDeployment(storage_types.IUid[str]):
     deployment_uid: str
     name: str
@@ -23,7 +23,7 @@ class PedmDeployment(storage_types.IUid[str]):
     def uid(self) -> str:
         return self.deployment_uid
 
-@dataclass(kw_only=True, frozen=True)
+@dataclass(frozen=True)
 class PedmAgent(storage_types.IUid[str]):
     agent_uid: str
     machine_id: str
@@ -36,7 +36,7 @@ class PedmAgent(storage_types.IUid[str]):
         return self.agent_uid
 
 
-@dataclass(kw_only=True, frozen=True)
+@dataclass(frozen=True)
 class PedmDeploymentAgent(storage_types.IUidLink[str, str]):
     deployment_uid: str
     agent_uid: str
@@ -46,7 +46,7 @@ class PedmDeploymentAgent(storage_types.IUidLink[str, str]):
         return self.agent_uid
 
 
-@dataclass(kw_only=True, frozen=True)
+@dataclass(frozen=True)
 class PedmPolicy(storage_types.IUid[str]):
     policy_uid: str
     policy_key: bytes
@@ -57,7 +57,7 @@ class PedmPolicy(storage_types.IUid[str]):
         return self.policy_uid
 
 
-@dataclass(kw_only=True, frozen=True)
+@dataclass(frozen=True)
 class PedmUpdatePolicy:
     policy_uid: str
     admin_data: Optional[Dict[str, Any]] = None
@@ -65,7 +65,7 @@ class PedmUpdatePolicy:
     data: Optional[Dict[str, Any]] = None
 
 
-@dataclass(kw_only=True, frozen=True)
+@dataclass(frozen=True)
 class PedmCollection(storage_types.IUid[str]):
     collection_uid: str
     collection_type: int
@@ -75,7 +75,7 @@ class PedmCollection(storage_types.IUid[str]):
         return self.collection_uid
 
 
-@dataclass(kw_only=True, frozen=True)
+@dataclass(frozen=True)
 class PedmApproval(storage_types.IUid[str]):
     approval_uid: str
     approval_type: int
@@ -89,14 +89,14 @@ class PedmApproval(storage_types.IUid[str]):
         return self.approval_uid
 
 
-@dataclass(kw_only=True)
+@dataclass()
 class AddDeployment:
     name: str
-    spiffe_cert: Optional[bytes] = None
     agent_info: pedm_shared.DeploymentAgentInformation
+    spiffe_cert: Optional[bytes]
 
 
-@dataclass(kw_only=True)
+@dataclass
 class UpdateDeployment:
     deployment_uid: str
     name: Optional[str] = None
@@ -104,27 +104,27 @@ class UpdateDeployment:
     spiffe_cert: Optional[bytes] = None
 
 
-@dataclass(kw_only=True)
+@dataclass
 class UpdateAgent:
     agent_uid: str
     deployment_uid: Optional[str] = None
     disabled: Optional[bool] = None
 
 
-@dataclass(kw_only=True)
+@dataclass
 class CollectionData:
     collection_uid: str
     collection_type: int
     collection_data: str
 
 
-@dataclass(kw_only=True)
+@dataclass
 class CollectionLink:
     collection_uid: str
     link_uid: str
     link_type: int
 
-@dataclass(kw_only=True)
+@dataclass
 class CollectionLinkData:
     collection_link: CollectionLink
     link_data: Optional[bytes] = None
@@ -133,13 +133,13 @@ class PedmStatus(Protocol):
     success: bool
     message: str
 
-@dataclass(kw_only=True, frozen=True)
+@dataclass(frozen=True)
 class EntityStatus(PedmStatus):
     entity_uid: str
     success: bool
     message: str
 
-@dataclass(kw_only=True, frozen=True)
+@dataclass(frozen=True)
 class LinkStatus(PedmStatus):
     subject_uid: str
     object_uid: str
@@ -157,7 +157,7 @@ def parse_pedm_status(status: pedm_pb2.PedmStatus) -> Optional[Union[EntityStatu
     return None
 
 
-@dataclass(kw_only=True)
+@dataclass
 class ModifyStatus:
     add: List[Union[EntityStatus, LinkStatus]]
     update: List[Union[EntityStatus, LinkStatus]]
