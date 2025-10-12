@@ -38,3 +38,10 @@ class ServiceConfigData:
     cloudflare_tunnel_token: str = ""
     cloudflare_custom_domain: str = ""
     cloudflare_public_url: str = ""
+    # Slack integration settings
+    slack_bot_token: str = ""
+    slack_signing_secret: str = ""
+    slack_approval_channel: str = ""
+    slack_eligible_requestors: List[str] = None
+    slack_approvers: List[str] = None
+    slack_required_approvals: int = 1

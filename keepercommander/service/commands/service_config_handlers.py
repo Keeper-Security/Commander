@@ -96,6 +96,14 @@ class ServiceConfigHandler:
             cloudflare_domain = ""
             logger.debug("No tunnels enabled - TLS configuration allowed")
 
+        # Process Slack configuration
+        slack_eligible_requestors = []
+        slack_approvers = []
+        if args.slack_eligible_requestors:
+            slack_eligible_requestors = [email.strip() for email in args.slack_eligible_requestors.split(',') if email.strip()]
+        if args.slack_approvers:
+            slack_approvers = [email.strip() for email in args.slack_approvers.split(',') if email.strip()]
+
         config_data.update({
             "port": self.service_config.validator.validate_port(args.port),
             "ip_allowed_list": self.service_config.validator.validate_ip_list(args.allowedip),
@@ -114,7 +122,14 @@ class ServiceConfigHandler:
             "certpassword": certpassword,
             "fileformat": args.fileformat,  # Keep original logic - can be None
             "run_mode": run_mode,
-            "queue_enabled": queue_enabled
+            "queue_enabled": queue_enabled,
+            # Slack configuration
+            "slack_bot_token": args.slack_bot_token or "",
+            "slack_signing_secret": args.slack_signing_secret or "",
+            "slack_approval_channel": args.slack_approval_channel or "",
+            "slack_eligible_requestors": slack_eligible_requestors,
+            "slack_approvers": slack_approvers,
+            "slack_required_approvals": args.slack_required_approvals or 1
         })
 
     @debug_decorator
@@ -122,6 +137,7 @@ class ServiceConfigHandler:
         self._configure_port(config_data)
         self._configure_tunneling_and_tls(config_data)  # New consolidated method
         self._configure_queue(config_data)
+        self._configure_slack(config_data)  # Add Slack configuration
         
         config_data["fileformat"] = None
     
@@ -237,3 +253,69 @@ class ServiceConfigHandler:
                 logger.debug(f"Run mode set to: {run_mode}")
                 break
             print(f"{self.validation_messages['invalid_run_mode']} Must be 'foreground' or 'background'.")
+
+    def _configure_slack(self, config_data: Dict[str, Any]) -> None:
+        """Configure Slack integration settings."""
+        print("\n--- Slack Integration Configuration ---")
+        slack_enabled = self.service_config._get_yes_no_input("Enable Slack integration? (y/n): ")
+        
+        if slack_enabled == "y":
+            # Bot token
+            while True:
+                bot_token = input("Enter Slack Bot Token (xoxb-...): ").strip()
+                if bot_token:
+                    config_data["slack_bot_token"] = bot_token
+                    break
+                print("Bot token is required for Slack integration.")
+            
+            # Signing secret
+            while True:
+                signing_secret = input("Enter Slack Signing Secret: ").strip()
+                if signing_secret:
+                    config_data["slack_signing_secret"] = signing_secret
+                    break
+                print("Signing secret is required for Slack integration.")
+            
+            # Approval channel
+            while True:
+                approval_channel = input("Enter Slack Approval Channel ID (C...): ").strip()
+                if approval_channel:
+                    config_data["slack_approval_channel"] = approval_channel
+                    break
+                print("Approval channel ID is required for Slack integration.")
+            
+            # Eligible requestors (optional)
+            requestors_input = input("Enter eligible requestor emails (comma-separated, or press Enter for all users): ").strip()
+            config_data["slack_eligible_requestors"] = [email.strip() for email in requestors_input.split(',') if email.strip()] if requestors_input else []
+            
+            # Approvers (optional)
+            approvers_input = input("Enter approver emails (comma-separated, or press Enter for any channel member): ").strip()
+            config_data["slack_approvers"] = [email.strip() for email in approvers_input.split(',') if email.strip()] if approvers_input else []
+            
+            # Required approvals
+            while True:
+                try:
+                    approvals_input = input("Number of required approvals (default: 1): ").strip()
+                    if not approvals_input:
+                        config_data["slack_required_approvals"] = 1
+                        break
+                    approvals = int(approvals_input)
+                    if approvals > 0:
+                        config_data["slack_required_approvals"] = approvals
+                        break
+                    print("Number of approvals must be greater than 0.")
+                except ValueError:
+                    print("Please enter a valid number.")
+            
+            print("✅ Slack integration configured successfully!")
+        else:
+            # Set default empty values
+            config_data["slack_bot_token"] = ""
+            config_data["slack_signing_secret"] = ""
+            config_data["slack_approval_channel"] = ""
+            config_data["slack_eligible_requestors"] = []
+            config_data["slack_approvers"] = []
+            config_data["slack_required_approvals"] = 1
+            print("Slack integration disabled.")
+        
+        logger.debug("Slack configuration completed")

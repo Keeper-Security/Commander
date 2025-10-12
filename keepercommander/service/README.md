@@ -51,6 +51,13 @@ You'll be prompted to configure:
   - Allowed IP List (comma-separated)
   - Denied IP List (comma-separated)
   - Enable Encryption (y/n) 
+- Slack Integration (y/n)
+  - Slack Bot Token (xoxb-...)
+  - Slack Signing Secret
+  - Slack Approval Channel ID (C...)
+  - Eligible Requestor Emails (optional, comma-separated)
+  - Approver Emails (optional, comma-separated)
+  - Required Number of Approvals (default: 1)
 - List of supported commands (comma separated)
 - Run mode (foreground/background)
 - Token Expiration Time (Xm, Xh, Xd) or empty for no expiration
@@ -74,6 +81,12 @@ Configure the service streamlined with Cloudflare:
 
 ```bash
   My Vault> service-create -p <port> -f <json-or-yaml> -c 'tree,record-add,audit-report' -cf <cloudflare-tunnel-token> -cfd <cloudflare-custom-domain> -rm <foreground-or-background> -q <y-or-n> -aip <allowed-ip-list> -dip <denied-ip-list>
+```
+
+Configure the service streamlined with Slack integration:
+
+```bash
+  My Vault> service-create -p <port> -f <json-or-yaml> -c 'tree,get,share-record' -sbt <slack-bot-token> -sss <slack-signing-secret> -sac <slack-channel-id> -ser <requestor-emails> -sap <approver-emails> -sra <num-approvals>
 ``` 
 
 Parameters:
@@ -90,6 +103,12 @@ Parameters:
 - `-q, --queue_enabled`: Enable request queue (y/n)
 - `-dip, --deniedip`: Denied IP list to access service
 - `-aip, --allowedip`: Allowed IP list to access service
+- `-sbt, --slack_bot_token`: Slack bot token for integration
+- `-sss, --slack_signing_secret`: Slack signing secret for verification
+- `-sac, --slack_approval_channel`: Slack channel ID for approval requests
+- `-ser, --slack_eligible_requestors`: Comma-separated list of eligible requestor emails
+- `-sap, --slack_approvers`: Comma-separated list of approver emails
+- `-sra, --slack_required_approvals`: Number of required approvals (default: 1)
 
 ### Service Management
 
@@ -229,24 +248,61 @@ Commands requiring file input can use the `FILEDATA` placeholder with JSON conte
 
 **Supported Commands:**
 - **PAM Project Import**: `pam project import --filename=FILEDATA`
-- **Import**: `import FILEDATA --format=json`
-- **Enterprise Push**: `enterprise-push FILEDATA --email [userID or user mail]`
 
-**Example:**
+## Slack Integration
+
+The Commander Service Mode includes built-in Slack integration for approval-based record access workflows.
+
+### Features
+
+- **Interactive Access Requests**: Users mention the bot to request temporary access to Keeper records
+- **Approval Workflow**: Designated approvers can approve/deny requests through interactive Slack buttons  
+- **Configurable Security**: Optional lists of eligible requestors and approvers
+- **Automatic Expiration**: Access is automatically revoked when the specified duration expires
+- **Audit Trail**: All requests and approvals are logged for compliance
+
+### Usage
+
+1. **Request Access**: `@keeper-bot request access <record_uid> for <duration>`
+2. **Examples**:
+   - `@keeper-bot request access ABC123 for 30m` (30 minutes)
+   - `@keeper-bot request access DEF456 for 2h` (2 hours) 
+   - `@keeper-bot request access GHI789 for 1d` (1 day)
+
+### Configuration
+
+Configure Slack integration during `service-create` or via command line parameters:
+
+**Interactive Setup:**
 ```bash
-curl -X POST 'http://localhost:<port>/api/v1/executecommand' \
---header 'Content-Type: application/json' \
---header 'api-key: <your-api-key>' \
---data '{
-  "command": "import FILEDATA --format=json",
-  "filedata": {
-    "records": [{"title": "My Website", "login": "user@example.com", "password": "MyPassword123!"}]
-  }
-}'
+My Vault> service-create
+# ... follow prompts including Slack Integration (y/n)
 ```
 
-- Automatic temporary file creation and cleanup
-- Sensitive data automatically masked in logs
+**Streamlined Setup:**
+```bash
+My Vault> service-create -p 8080 -sbt xoxb-your-token -sss your-secret -sac C1234567890 -c 'get,share-record'
+```
+
+### Slack App Setup
+
+1. Create a Slack App at [api.slack.com](https://api.slack.com/apps)
+2. Configure OAuth scopes: `app_mentions:read`, `chat:write`, `users:read`, `users:read.email`
+3. Set event subscriptions URL: `https://your-commander-url/api/slack/events`
+4. Set interactive components URL: `https://your-commander-url/api/slack/interactive`
+5. Install the app to your workspace and note the bot token and signing secret
+
+### Security Settings
+
+- **Eligible Requestors**: Optional list of email addresses who can request access (empty = all users)
+- **Approvers**: Optional list of email addresses who can approve requests (empty = any channel member)
+- **Required Approvals**: Number of approvals needed before granting access (default: 1)
+
+### API Endpoints
+
+- `GET /api/slack/status` - Check Slack integration status
+- `POST /api/slack/events` - Slack Events API webhook
+- `POST /api/slack/interactive` - Slack Interactive Components webhook
 
 ## Configuration
 

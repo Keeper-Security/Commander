@@ -12,6 +12,7 @@
 from flask import Flask
 from typing import Optional
 from .command import create_command_blueprint, create_legacy_command_blueprint
+from .slack import create_slack_blueprint
 from ..decorators.logging import logger, debug_decorator
 
 def _setup_queue_mode(app: Flask) -> None:
@@ -28,6 +29,21 @@ def _setup_legacy_mode(app: Flask) -> None:
     legacy_bp = create_legacy_command_blueprint()
     app.register_blueprint(legacy_bp, url_prefix='/api/v1')
     logger.info("Using /api/v1 - Enable queue mode (-q y) for /api/v2")
+
+def _setup_slack_integration(app: Flask) -> None:
+    """Setup Slack integration endpoints."""
+    try:
+        from ..slack.config import slack_config
+        
+        if slack_config.is_configured():
+            slack_bp = create_slack_blueprint()
+            app.register_blueprint(slack_bp, url_prefix='/api/slack')
+            logger.info("Slack integration enabled - registered /api/slack endpoints")
+        else:
+            logger.info("Slack integration not configured - skipping Slack endpoints")
+            
+    except Exception as e:
+        logger.warning(f"Failed to setup Slack integration: {e}")
 
 @debug_decorator
 def init_routes(app: Optional[Flask] = None) -> None:
@@ -53,5 +69,8 @@ def init_routes(app: Optional[Flask] = None) -> None:
     except Exception as e:
         logger.warning(f"Could not load service config, defaulting to queue mode: {e}")
         _setup_queue_mode(app)
+    
+    # Initialize Slack integration
+    _setup_slack_integration(app)
     
     logger.debug("Route initialization completed successfully")

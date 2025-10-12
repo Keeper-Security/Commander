@@ -105,7 +105,14 @@ class ServiceConfig:
             fileformat="yaml",
             run_mode="foreground",
             queue_enabled="y",
-            records=[]
+            records=[],
+            # Slack integration defaults
+            slack_bot_token="",
+            slack_signing_secret="",
+            slack_approval_channel="",
+            slack_eligible_requestors=[],
+            slack_approvers=[],
+            slack_required_approvals=1
         ).__dict__
         return config
 

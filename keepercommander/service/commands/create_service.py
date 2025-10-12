@@ -33,6 +33,12 @@ class StreamlineArgs:
     fileformat : Optional[str]
     run_mode: Optional[str]
     queue_enabled: Optional[str]
+    slack_bot_token: Optional[str]
+    slack_signing_secret: Optional[str]
+    slack_approval_channel: Optional[str]
+    slack_eligible_requestors: Optional[str]
+    slack_approvers: Optional[str]
+    slack_required_approvals: Optional[int]
     
 class CreateService(Command):
     """Command to create a new service configuration."""
@@ -72,6 +78,13 @@ class CreateService(Command):
         parser.add_argument('-f', '--fileformat', type=str, help='file format')
         parser.add_argument('-rm', '--run_mode', type=str, help='run mode')
         parser.add_argument('-q', '--queue_enabled', type=str, help='enable request queue (y/n)')
+        # Slack integration parameters
+        parser.add_argument('-sbt', '--slack_bot_token', type=str, help='Slack bot token for integration')
+        parser.add_argument('-sss', '--slack_signing_secret', type=str, help='Slack signing secret for verification')
+        parser.add_argument('-sac', '--slack_approval_channel', type=str, help='Slack channel ID for approval requests')
+        parser.add_argument('-ser', '--slack_eligible_requestors', type=str, help='comma-separated list of eligible requestor emails')
+        parser.add_argument('-sap', '--slack_approvers', type=str, help='comma-separated list of approver emails')
+        parser.add_argument('-sra', '--slack_required_approvals', type=int, help='number of required approvals (default: 1)')
         return parser
     
     def execute(self, params: KeeperParams, **kwargs) -> None:
@@ -86,7 +99,7 @@ class CreateService(Command):
 
             config_data = self.service_config.create_default_config()
 
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'cloudflare', 'cloudflare_custom_domain', 'certfile', 'certpassword', 'fileformat', 'run_mode', 'queue_enabled']}
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'cloudflare', 'cloudflare_custom_domain', 'certfile', 'certpassword', 'fileformat', 'run_mode', 'queue_enabled', 'slack_bot_token', 'slack_signing_secret', 'slack_approval_channel', 'slack_eligible_requestors', 'slack_approvers', 'slack_required_approvals']}
             args = StreamlineArgs(**filtered_kwargs)
             self._handle_configuration(config_data, params, args)
             self._create_and_save_record(config_data, params, args)

@@ -16,6 +16,23 @@ from .decorators.security import limiter
 from .api.routes import init_routes
 from .decorators.logging import logger
 
+
+def _init_slack_services():
+    """Initialize Slack integration services if configured."""
+    try:
+        from .slack.config import slack_config
+        from .slack.scheduled_tasks import scheduled_tasks
+        
+        if slack_config.is_configured():
+            logger.debug("Starting Slack scheduled tasks")
+            scheduled_tasks.start()
+            logger.info("Slack integration services initialized")
+        else:
+            logger.debug("Slack not configured - skipping Slack services initialization")
+            
+    except Exception as e:
+        logger.warning(f"Failed to initialize Slack services: {e}")
+
     
 def create_app():
     """Create and configure the Keeper Commander Service."""
@@ -46,6 +63,9 @@ def create_app():
         
         logger.debug("Initializing API routes")
         init_routes(app)
+        
+        # Initialize Slack services
+        _init_slack_services()
         
         print("Keeper Commander Service initialization complete")
         return app
