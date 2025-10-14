@@ -520,7 +520,7 @@ class DAGVertex:
         :return:
         """
 
-        self.dag.logger.debug(f"connect {self.uid} to {vertex.uid} with edge type {edge_type.value}", level=1)
+        self.dag.debug(f"connect {self.uid} to {vertex.uid} with edge type {edge_type.value}", level=1)  # DAG_DEBUG_LEVEL env var
 
         if vertex is None:
             raise ValueError("Vertex is blank.")

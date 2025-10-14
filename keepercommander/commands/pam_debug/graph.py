@@ -233,10 +233,11 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                             else:
                                 print(f"{pad}      . looks like directory user")
 
-                            if acl.rotation_settings.noop is True:
-                                print(f"{pad}      . is a NOOP")
-                            if acl.rotation_settings.disabled is True:
-                                print(f"{pad}      . rotation is disabled")
+                            if acl.rotation_settings:
+                                if acl.rotation_settings.noop is True:
+                                    print(f"{pad}      . is a NOOP")
+                                if acl.rotation_settings.disabled is True:
+                                    print(f"{pad}      . rotation is disabled")
                         continue
 
                     if vertex.has_data is True:
