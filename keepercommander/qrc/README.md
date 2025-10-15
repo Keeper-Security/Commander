@@ -23,7 +23,7 @@ qrc_key_id = get_qrc_mlkem_key_id(server_url)
 # Returns: 100 (dev), 101 (qa), 102 (staging), 103 (prod), 104/105 (gov)
 
 # Check if we have the ML-KEM key for this server
-if qrc_key_id in SERVER_PUBLIC_KEYS and isinstance(SERVER_PUBLIC_KEYS[qrc_key_id], bytes):
+if qrc_key_id in SERVER_PUBLIC_KEYS:
     use_qrc = True
 else:
     use_qrc = False  # Fallback to EC encryption
