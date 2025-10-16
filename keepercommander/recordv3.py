@@ -486,6 +486,10 @@ class RecordV3:
             '$id': 'multiline',
             'type': 'multiline'
         },
+        'json': {
+            '$id': 'json',
+            'type': 'json'
+        },
         'passkey': {
             '$id': 'passkey',
             'type': 'passkey'
@@ -512,6 +516,11 @@ class RecordV3:
         'multiline': {
             'type': 'multiline',
             'value_description': 'multiline text',
+            'value': ''  # string
+        },
+        'json': {
+            'type': 'json',
+            'value_description': 'json text, only validated data persisted',
             'value': ''  # string
         },
         # 2021-05-06 Unused file type - removed for compatibility with web vault
