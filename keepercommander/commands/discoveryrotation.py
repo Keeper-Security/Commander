@@ -2001,22 +2001,15 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
             record_type = 'pamAzureConfiguration'
         elif config_type == 'local':
             record_type = 'pamNetworkConfiguration'
-<<<<<<< HEAD
         elif config_type == 'gcp':
             record_type = 'pamGcpConfiguration'
-=======
->>>>>>> release
         elif config_type == 'domain':
             record_type = 'pamDomainConfiguration'
         elif config_type == 'oci':
             record_type = 'pamOciConfiguration'
         else:
             raise CommandError('pam-config-new', f'--environment {config_type} is not supported'
-<<<<<<< HEAD
                                ' - supported options: local, aws, azure, gcp, domain, oci')
-=======
-                               ' - supported options: local, aws, azure, domain, oci')
->>>>>>> release
 
         title = kwargs.get('title')
         if not title:
@@ -2156,11 +2149,8 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
                 record_type = 'pamAzureConfiguration'
             elif config_type == 'local':
                 record_type = 'pamNetworkConfiguration'
-<<<<<<< HEAD
             elif config_type == 'gcp':
                 record_type = 'pamGcpConfiguration'
-=======
->>>>>>> release
             elif config_type == 'domain':
                 record_type = 'pamDomainConfiguration'
             elif config_type == 'oci':
