@@ -8,6 +8,7 @@ from ...discovery_common.record_link import RecordLink
 from ...discovery_common.constants import PAM_USER, PAM_MACHINE
 from ...discovery_common.types import ServiceAcl
 from ...keeper_dag.types import RefType, EdgeType
+from ... import __version__
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:

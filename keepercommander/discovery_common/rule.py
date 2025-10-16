@@ -2,7 +2,7 @@ from __future__ import annotations
 from .constants import DIS_RULES_GRAPH_ID
 from .types import (RuleTypeEnum, RuleItem, ActionRuleSet, ActionRuleItem, ScheduleRuleSet, ComplexityRuleSet,
                     Statement, RuleActionEnum)
-from .utils import value_to_boolean, get_connection
+from .utils import value_to_boolean, get_connection, make_agent
 from ..keeper_dag import DAG, EdgeType
 from ..keeper_dag.exceptions import DAGException
 from time import time

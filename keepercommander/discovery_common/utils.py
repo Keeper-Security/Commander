@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+from .__version__ import __version__
 from .constants import PAM_USER
 from .types import DiscoveryObject
 from ..keeper_dag.vertex import DAGVertex
@@ -37,18 +38,19 @@ def get_connection(**kwargs):
 
     ksm = kwargs.get("ksm")
     params = kwargs.get("params")
-    if value_to_boolean(os.environ.get("USE_LOCAL_DAG")) is True:
+    logger = kwargs.get("logger")
+    if value_to_boolean(os.environ.get("USE_LOCAL_DAG")):
         from ..keeper_dag.connection.local import Connection
-        conn = Connection()
+        conn = Connection(logger=logger)
     else:
         if ksm is not None:
             from ..keeper_dag.connection.ksm import Connection
-            conn = Connection(config=ksm.storage_config)
+            conn = Connection(config=ksm.storage_config, logger=logger)
         elif params is not None:
             from ..keeper_dag.connection.commander import Connection
-            conn = Connection(params=params)
+            conn = Connection(params=params, logger=logger)
         else:
-            raise ValueError("Must pass 'ksm' for KSK, 'params' for Commander. Found neither.")
+            raise ValueError("Must pass 'ksm' for KSM, 'params' for Commander. Found neither.")
     return conn
 
 

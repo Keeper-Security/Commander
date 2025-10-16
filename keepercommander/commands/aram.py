@@ -140,7 +140,7 @@ aging_report_parser.error = raise_parse_exception
 aging_report_parser.exit = suppress_exit
 
 action_report_parser = argparse.ArgumentParser(prog='action-report', description='Run an action based on user activity', parents=[report_output_parser])
-action_report_target_statuses = ['no-logon', 'no-update', 'locked', 'invited', 'no-security-question-update']
+action_report_target_statuses = ['no-logon', 'no-update', 'locked', 'invited', 'no-recovery']
 action_report_parser.add_argument('--target', '-t', dest='target_user_status', action='store',
                                   choices=action_report_target_statuses, default='no-logon',
                                   help='user status to report on')
@@ -2053,7 +2053,7 @@ class ActionReportCommand(EnterpriseCommand):
                 'no-update':    {*default_allowed},
                 'locked':       {*default_allowed, 'delete', 'transfer'},
                 'invited':      {*default_allowed, 'delete'},
-                'no-security-question-update': default_allowed,
+                'no-recovery': default_allowed,
                 'blocked':      {*default_allowed, 'delete'}
             }
 
@@ -2122,7 +2122,7 @@ class ActionReportCommand(EnterpriseCommand):
             'no-update': [active, days, ['record_add', 'record_update']],
             'locked': [locked, days, ['lock_user'], 'to_username'],
             'invited': [invited, days, ['send_invitation', 'auto_invite_user'], 'email'],
-            'no-security-question-update': [active, days, ['change_security_question']]
+            'no-recovery': [active, days, ['change_security_question','account_recovery_setup']]
         }
         args = args_by_status.get(target_status)
 

@@ -6,6 +6,7 @@ from ... import vault
 from ...discovery_common.user_service import UserService
 from ...discovery_common.constants import PAM_MACHINE
 from ...keeper_dag import EdgeType
+from ... import __version__
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:

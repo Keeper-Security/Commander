@@ -5,6 +5,7 @@ from ... import vault
 from ...discovery_common.constants import PAM_USER, PAM_MACHINE
 from ...discovery_common.user_service import UserService
 from ...display import bcolors
+from ... import __version__
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:

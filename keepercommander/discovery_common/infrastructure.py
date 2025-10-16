@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
 from .constants import DIS_INFRA_GRAPH_ID
-from .utils import get_connection
+from .utils import get_connection, make_agent
 from ..keeper_dag import DAG, EdgeType
 from ..keeper_dag.exceptions import DAGVertexException
 from ..keeper_dag.crypto import urlsafe_str_to_bytes
