@@ -222,10 +222,18 @@ def execute_rest(context, endpoint, payload):
                 if rs.status_code == 401:
                     if failure.get('error') == 'key':
                         server_key_id = failure['key_id']
-                        if server_key_id != context.server_key_id:
-                            context.server_key_id = server_key_id
-                            run_request = True
-                            continue
+                        if 'qrc_ec_key_id' in failure:
+                            qrc_ec_key_id = failure['qrc_ec_key_id']
+                            logging.debug(f"QRC key mismatch: ML-KEM key {server_key_id}, EC key {qrc_ec_key_id}")
+                            if server_key_id != context.server_key_id:
+                                context.server_key_id = server_key_id
+                                run_request = True
+                                continue
+                        else:
+                            if server_key_id != context.server_key_id:
+                                context.server_key_id = server_key_id
+                                run_request = True
+                                continue
                 elif rs.status_code == 403:
                     if failure.get('error') == 'throttled' and not context.fail_on_throttle:
                         logging.info('Throttled. sleeping for 10 seconds')
