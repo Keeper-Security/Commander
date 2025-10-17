@@ -114,6 +114,8 @@ get_info_parser = argparse.ArgumentParser(prog='get', description='Get the detai
 get_info_parser.add_argument('--unmask', dest='unmask', action='store_true', help='display hidden field content')
 get_info_parser.add_argument('--legacy', dest='legacy', action='store_true',
                              help='json output: display typed records as legacy')
+get_info_parser.add_argument('--include-dag', dest='include_dag', action='store_true',
+                             help='include DAG/GraphSync information in json output')
 get_info_parser.add_argument(
     '--format', dest='format', action='store', choices=['detail', 'json', 'password', 'fields'],
     default='detail', help='output format')
@@ -433,6 +435,8 @@ class RecordGetUidCommand(Command):
                         ro['share_admins'] = admins
 
                     ro['revision'] = r.revision
+                    if version == 3 and kwargs.get('include_dag') is True:
+                        self.include_dag(params, ro, r)
 
                     print(json.dumps(ro, indent=2))
                 elif fmt == 'password':
@@ -777,6 +781,99 @@ class RecordGetUidCommand(Command):
                 # Display a helpful message about using UID for precise access
                 logging.info('\nTo view details of a specific item, use the get command with its UID.')
             return
+
+    def include_dag(self, params, ro, r):
+        """Include DAG/GraphSync information for the record.
+
+        Args:
+            params: Command parameters
+            ro: Record output dictionary to be modified
+            r: Record object
+        """
+        valid_record_types = {'pamDatabase', 'pamDirectory', 'pamMachine'}
+        if r.record_type not in valid_record_types:
+            return
+
+        # Initialize structures once - always present with nullable values
+        ro['associatedCredentials'] = {
+            'adminCredential': None,
+            'launchCredential': None,
+            'linkedCredentials': None
+        }
+        ro['pamSettingsEnabled'] = {
+            'connections': None,
+            'tunneling': None,
+            'rotation': None,
+            'sessionRecording': None,
+            'typescriptRecording': None,
+            'remoteBrowserIsolation': None
+        }
+
+        try:
+            # Get keeper tokens for DAG access
+            from .tunnel.port_forward.tunnel_helpers import get_keeper_tokens
+            from .tunnel.port_forward.TunnelGraph import TunnelDAG
+            from ..keeper_dag import EdgeType
+
+            encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
+            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, r.record_uid)
+
+            if not tdag.linking_dag.has_graph:
+                return
+
+            record_vertex = tdag.linking_dag.get_vertex(r.record_uid)
+            if record_vertex is None:
+                return
+
+            # Extract allowedSettings from vertex content
+            try:
+                content = record_vertex.content_as_dict
+                if content and 'allowedSettings' in content:
+                    allowed_settings = content['allowedSettings']
+                    if isinstance(allowed_settings, dict):
+                        ro['pamSettingsEnabled']['connections'] = allowed_settings.get('connections')
+                        ro['pamSettingsEnabled']['tunneling'] = allowed_settings.get('portForwards')
+                        ro['pamSettingsEnabled']['rotation'] = allowed_settings.get('rotation')
+                        ro['pamSettingsEnabled']['sessionRecording'] = allowed_settings.get('sessionRecording')
+                        ro['pamSettingsEnabled']['typescriptRecording'] = allowed_settings.get('typescriptRecording')
+                        ro['pamSettingsEnabled']['remoteBrowserIsolation'] = allowed_settings.get('remoteBrowserIsolation')
+            except Exception:
+                pass
+
+            # Find all ACL links where Head is recordUID
+            admin_credential = None
+            launch_credential = None
+            linked_credentials = []
+
+            # Get vertices that have ACL edges pointing to this record (has_vertices)
+            for user_vertex in record_vertex.has_vertices(EdgeType.ACL):
+                acl_edge = user_vertex.get_edge(record_vertex, EdgeType.ACL)
+                if acl_edge:
+                    try:
+                        content = acl_edge.content_as_dict or {}
+                        # belongs_to = content.get('belongs_to', False)
+                        is_admin = content.get('is_admin', False)
+                        is_launch_credential = content.get('is_launch_credential', None)
+
+                        # Add to linked credentials list
+                        if user_vertex.uid not in linked_credentials:
+                            linked_credentials.append(user_vertex.uid)
+
+                        if is_admin and admin_credential is None:
+                            admin_credential = user_vertex.uid
+
+                        if is_launch_credential and launch_credential is None:
+                            launch_credential = user_vertex.uid
+                    except Exception:
+                        pass
+
+            # Update associatedCredentials with found values
+            ro['associatedCredentials']['adminCredential'] = admin_credential
+            ro['associatedCredentials']['launchCredential'] = launch_credential
+            ro['associatedCredentials']['linkedCredentials'] = linked_credentials if linked_credentials else None
+
+        except Exception as e:
+            logging.debug(f"Error accessing DAG for record {r.record_uid}: {e}")
 
 
 class SearchCommand(Command):
