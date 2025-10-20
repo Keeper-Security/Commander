@@ -1600,7 +1600,7 @@ class PAMConfigurationListCommand(Command):
                 headers.append('Fields')
 
         for c in configurations:  # type: vault.TypedRecord
-            if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration'):
+            if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamGcpConfiguration', 'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration'):
                 facade.record = c
                 shared_folder_parents = find_parent_top_folder(params, c.record_uid)
                 if shared_folder_parents:
@@ -1662,7 +1662,7 @@ class PAMConfigurationListCommand(Command):
 
 common_parser = argparse.ArgumentParser(add_help=False)
 common_parser.add_argument('--environment', '-env', dest='config_type', action='store',
-                           choices=['local', 'aws', 'azure', 'domain', 'oci'], help='PAM Configuration Type', )
+                           choices=['local', 'aws', 'azure', 'gcp', 'domain', 'oci'], help='PAM Configuration Type')
 common_parser.add_argument('--title', '-t', dest='title', action='store', help='Title of the PAM Configuration')
 common_parser.add_argument('--gateway', '-g', dest='gateway_uid', action='store', help='Gateway UID or Name')
 common_parser.add_argument('--shared-folder', '-sf', dest='shared_folder_uid', action='store',
@@ -1702,6 +1702,13 @@ oci_group.add_argument('--oci-admin-private-key', dest='oci_admin_private_key', 
 oci_group.add_argument('--oci-tenancy', dest='oci_tenancy', action='store', help='OCI tenancy')
 oci_group.add_argument('--oci-region', dest='oci_region', action='store', help='OCI region')
 
+gcp_group = common_parser.add_argument_group('gcp', 'GCP configuration')
+gcp_group.add_argument('--gcp-id', dest='gcp_id', action='store', help='GCP Id')
+gcp_group.add_argument('--service-account-key', dest='service_account_key', action='store',
+                         help='Service Account Key (JSON format)')
+gcp_group.add_argument('--google-admin-email', dest='google_admin_email', action='store',
+                         help='Google Workspace Administrator Email Address')
+gcp_group.add_argument('--gcp-region', dest='region_names', action='append', help='GCP Region Names')
 
 class PamConfigurationEditMixin(RecordEditMixin):
     pam_record_types = None
@@ -1850,6 +1857,20 @@ class PamConfigurationEditMixin(RecordEditMixin):
             if region_names:
                 regions = '\n'.join(region_names)
                 extra_properties.append(f'multiline.regionNames={regions}')
+        elif record.record_type == 'pamGcpConfiguration':
+            gcp_id = kwargs.get('gcp_id')
+            if gcp_id:
+                extra_properties.append(f'text.pamGcpId={gcp_id}')
+            service_account_key = kwargs.get('service_account_key')
+            if service_account_key:
+                extra_properties.append(f'json.pamServiceAccountKey={service_account_key}')
+            google_admin_email = kwargs.get('google_admin_email')
+            if google_admin_email:
+                extra_properties.append(f'email.pamGoogleAdminEmail={google_admin_email}')
+            gcp_region = kwargs.get('region_names')
+            if gcp_region:
+                regions = '\n'.join(gcp_region)
+                extra_properties.append(f'multiline.pamGcpRegionName={regions}')
         elif record.record_type == 'pamAzureConfiguration':
             azure_id = kwargs.get('azure_id')
             if azure_id:
@@ -1980,13 +2001,15 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
             record_type = 'pamAzureConfiguration'
         elif config_type == 'local':
             record_type = 'pamNetworkConfiguration'
+        elif config_type == 'gcp':
+            record_type = 'pamGcpConfiguration'
         elif config_type == 'domain':
             record_type = 'pamDomainConfiguration'
         elif config_type == 'oci':
             record_type = 'pamOciConfiguration'
         else:
             raise CommandError('pam-config-new', f'--environment {config_type} is not supported'
-                               ' - supported options: local, aws, azure, domain, oci')
+                               ' - supported options: local, aws, azure, gcp, domain, oci')
 
         title = kwargs.get('title')
         if not title:
@@ -2126,6 +2149,8 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
                 record_type = 'pamAzureConfiguration'
             elif config_type == 'local':
                 record_type = 'pamNetworkConfiguration'
+            elif config_type == 'gcp':
+                record_type = 'pamGcpConfiguration'
             elif config_type == 'domain':
                 record_type = 'pamDomainConfiguration'
             elif config_type == 'oci':
