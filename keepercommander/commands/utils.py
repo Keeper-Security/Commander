@@ -1144,9 +1144,7 @@ class HelpCommand(Command):
                                 break
                             elif isinstance(subcommand, GroupCommand):
                                 command = subcommand
-                        else:
-                            command.print_help(command=cmd)
-                            break
+                    command.print_help(command=cmd)
 
     def is_authorised(self):
         return False

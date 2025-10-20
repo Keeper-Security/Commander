@@ -236,8 +236,8 @@ class PedmDeploymentAddCommand(base.ArgparseCommand):
         parser = argparse.ArgumentParser(prog='add', description='Add PEDM deployments')
         parser.add_argument('-f', '--force', dest='force', action='store_true',
                             help='do not prompt for confirmation')
-        parser.add_argument('--spiffe-cert', dest='spiffe', action='store',
-                            help='File containing SPIFFE server certificate')
+        # parser.add_argument('--spiffe-cert', dest='spiffe', action='store',
+        #                     help='File containing SPIFFE server certificate')
         parser.add_argument('name', help='Deployment name')
         super().__init__(parser)
 
@@ -288,8 +288,8 @@ class PedmDeploymentUpdateCommand(base.ArgparseCommand):
         parser = argparse.ArgumentParser(prog='update', description='Update PEDM deployment')
         parser.add_argument('--disable', dest='disable', action='store', choices=['on', 'off'],
                             help='do not prompt for confirmation')
-        parser.add_argument('--spiffe-cert', dest='spiffe', action='store',
-                            help='File containing SPIFFE server certificate')
+        # parser.add_argument('--spiffe-cert', dest='spiffe', action='store',
+        #                     help='File containing SPIFFE server certificate')
         parser.add_argument('--name',action='store', help='Deployment name')
         parser.add_argument('deployment', metavar='DEPLOYMENT', help='Deployment name or UID')
         super().__init__(parser)
@@ -1679,7 +1679,7 @@ class PedmCollectionViewCommand(base.ArgparseCommand):
 
 class PedmApprovalCommand(base.GroupCommandNew):
     def __init__(self):
-        super().__init__('Manage PEDM approval requests')
+        super().__init__('Manage PEDM approval requests and approvals')
         self.register_command_new(PedmApprovalListCommand(), 'list', 'l')
         self.register_command_new(PedmApprovalStatusCommand(), 'action', 'a')
         self.default_verb = 'list'
