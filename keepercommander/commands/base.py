@@ -791,7 +791,9 @@ class GroupCommand(CliCommand):
         verb = verb.lower()
         self._commands[verb] = command
         if not description:
-            if isinstance(command, Command):
+            if isinstance(command, GroupCommandNew):
+                description = command.description
+            elif isinstance(command, Command):
                 parser = command.get_parser()
                 if parser:
                     description = parser.description
