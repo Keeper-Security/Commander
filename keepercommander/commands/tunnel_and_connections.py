@@ -352,7 +352,6 @@ class PAMTunnelStartCommand(Command):
     def execute(self, params, **kwargs):
         # Python version validation (same as before)
         from_version = [3, 8, 0]   # including
-        to_version = [3, 13, 0]    # excluding
         major_version = sys.version_info.major
         minor_version = sys.version_info.minor
         micro_version = sys.version_info.micro
@@ -360,10 +359,6 @@ class PAMTunnelStartCommand(Command):
         if (major_version, minor_version, micro_version) < (from_version[0], from_version[1], from_version[2]):
             print(f"{bcolors.FAIL}This command requires Python {from_version[0]}.{from_version[1]}.{from_version[2]} or higher. "
                   f"You are using {major_version}.{minor_version}.{micro_version}.{bcolors.ENDC}")
-            return
-        if (major_version, minor_version, micro_version) >= (to_version[0], to_version[1], to_version[2]):
-            print(f"{bcolors.FAIL}This command is compatible with Python versions below {to_version[0]}.{to_version[1]}.{to_version[2]} "
-                  f"(Current Python version: {major_version}.{minor_version}.{micro_version}){bcolors.ENDC}")
             return
 
         # Check for Rust WebRTC library availability
