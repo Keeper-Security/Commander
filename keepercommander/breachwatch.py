@@ -16,7 +16,7 @@ from typing import Iterator, Tuple, Optional, List, Callable, Dict, Iterable, Un
 from .commands.helpers.enterprise import user_has_privilege, is_addon_enabled
 from .constants import KEEPER_PUBLIC_HOSTS
 from . import api, crypto, utils, rest_api, vault
-from .proto import breachwatch_pb2, client_pb2, APIRequest_pb2, enterprise_pb2
+from .proto import breachwatch_pb2, client_pb2, APIRequest_pb2
 from .error import KeeperApiError, CommandError
 from .params import KeeperParams
 from .security_audit import needs_security_audit, update_security_audit_data
