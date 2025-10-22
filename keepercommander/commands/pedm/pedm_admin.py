@@ -8,8 +8,10 @@ import fnmatch
 import json
 import os.path
 import re
+from urllib.parse import urlparse, urlunparse
 from typing import Any, List, Optional, Dict, Union, Tuple, Set, Pattern
 
+import requests
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
@@ -18,7 +20,7 @@ from ...params import KeeperParams
 from ...pedm import admin_plugin, pedm_shared, admin_types, admin_storage
 from ...proto import NotificationCenter_pb2, pedm_pb2
 from .. import base
-from ..helpers import report_utils, prompt_utils
+from ..helpers import report_utils, prompt_utils, whoami
 
 
 def get_pedm_plugin(context: KeeperParams) -> admin_plugin.PedmPlugin:
@@ -377,11 +379,13 @@ class PedmDeploymentDeleteCommand(base.ArgparseCommand):
 class PedmDeploymentDownloadCommand(base.ArgparseCommand):
     def __init__(self):
         parser = argparse.ArgumentParser(prog='download', description='Download PEDM deployment package')
-        parser.add_argument('--file', dest='file', action='store', help='File name')
+        grp = parser.add_mutually_exclusive_group()
+        grp.add_argument('--file', dest='file', action='store', help='File name')
+        grp.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='Verbose output')
         parser.add_argument('deployment', metavar='DEPLOYMENT', help='Deployment name or UID')
         super().__init__(parser)
 
-    def execute(self, context: KeeperParams, **kwargs):
+    def execute(self, context: KeeperParams, **kwargs) -> Optional[str]:
         plugin = get_pedm_plugin(context)
 
         deployment = PedmUtils.resolve_single_deployment(plugin, kwargs.get('deployment'))
@@ -391,8 +395,50 @@ class PedmDeploymentDownloadCommand(base.ArgparseCommand):
         if filename:
             with open(filename, 'wt') as f:
                 f.write(token)
-        else:
+                return None
+
+        if not kwargs.get('verbose'):
             return token
+
+        path = ''
+        windows = ''
+        macos = ''
+        linux = ''
+
+        try:
+            hostname = whoami.get_hostname(context.rest_context.server_base)
+            for dc in constants.KEEPER_PUBLIC_HOSTS.values():
+                if hostname.endswith(dc):
+                    us = constants.KEEPER_PUBLIC_HOSTS['US']
+                    hostname = hostname[:-len(us)] + us
+                    break
+
+            manifest_url = urlunparse(('https', hostname, '/pam/pedm/package-manifest.json', None, None, None))
+            rs = requests.get(manifest_url)
+            manifest = rs.json()
+            core = manifest.get('Core')
+            if isinstance(core, list) and len(core) > 0:
+                latest = core[0]
+                path = latest.get('Path')
+                windows = latest.get('WindowsZip')
+                macos = latest.get('MacOsZip')
+                linux = latest.get('LinuxZip')
+        except:
+            pass
+
+        table = [['', '']]
+        if path:
+            if windows:
+                table.append(['Windows download URL', path + windows])
+            if macos:
+                table.append(['MacOS download URL', path + macos])
+            if linux:
+                table.append(['Linux download URL', path + linux])
+            table.append(['', ''])
+        table.append(['Deployment Token', token])
+        base.dump_report_data(table, ['key', 'value'], no_header=True)
+        return None
+
 
 class PedmAgentCommand(base.GroupCommandNew):
     def __init__(self):
