@@ -88,7 +88,7 @@ def register_command_info(aliases, command_info):
     aliases['ssd'] = 'sync-security-data'
     for p in [sync_down_parser, whoami_parser, this_device_parser, proxy_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
               version_parser, ksm_parser, keepalive_parser, generate_parser, reset_password_parser,
-              sync_security_data_parser, loginstatus_parser, run_as_parser]:
+              sync_security_data_parser, delete_all_parser, loginstatus_parser, run_as_parser]:
         command_info[p.prog] = p.description
 
 
@@ -250,6 +250,12 @@ sync_security_data_parser.add_argument('--quiet', '-q', action='store_true', hel
 sync_security_data_parser.error = raise_parse_exception
 sync_security_data_parser.exit = suppress_exit
 
+
+delete_all_parser = argparse.ArgumentParser(prog='delete-all', description='Delete all records and folders from the vault')
+delete_all_parser.add_argument('--force', '-f', dest='force', action='store_true', 
+                               help='Force deletion without confirmation prompt')
+delete_all_parser.error = raise_parse_exception
+delete_all_parser.exit = suppress_exit
 
 loginstatus_parser = argparse.ArgumentParser(prog='login-status', description='Check the user login status')
 loginstatus_parser.error = raise_parse_exception
@@ -504,28 +510,352 @@ class ThisDeviceCommand(Command):
 
 
 class RecordDeleteAllCommand(Command):
+    def get_parser(self):
+        return delete_all_parser
+
     def execute(self, params, **kwargs):
-        uc = user_choice('Are you sure you want to delete all Keeper records on the server?', 'yn', default='n')
-        if uc.lower() == 'y':
-            api.sync_down(params)
-            if len(params.record_cache) == 0:
-                raise CommandError('delete-all', 'No records to delete')
+        # Single confirmation prompt with clear messaging and colored output
+        from ..display import bcolors
+        
+        # Security check: Ensure params are valid
+        if not params or not hasattr(params, 'record_cache'):
+            logging.error("Invalid parameters provided")
+            return
+        
+        confirmation_msg = (
+            f"{bcolors.FAIL}{bcolors.BOLD}WARNING: This will permanently delete ALL records and ALL folders from your vault!{bcolors.ENDC}\n"
+            f"{bcolors.WARNING}This action cannot be undone.{bcolors.ENDC}\n"
+            f"Are you sure you want to proceed?"
+        )
+        
+        uc = user_choice(confirmation_msg, 'yn', default='n')
+        if uc.lower() != 'y':
+            logging.info("Operation cancelled by user")
+            return
+            
+        # Set force flag internally after confirmation to skip all subsequent prompts
+        kwargs['force'] = True
+        
+        api.sync_down(params)
+        
+        # Import required modules for folder handling
+        from ..subfolder import BaseFolderNode, find_all_folders
 
-            request = {
-                'command': 'record_update',
-                'delete_records': [key for key in params.record_cache.keys()]
+        # Collect all records and their folder contexts (if any records exist)
+        records_to_delete = []
+        if len(params.record_cache) > 0:
+            for record_uid in params.record_cache.keys():
+                # Security check: Validate record_uid is not empty
+                if not record_uid:
+                    logging.warning("Skipping invalid record UID")
+                    continue
+                
+                # Find all folders containing this record
+                folders = list(find_all_folders(params, record_uid))
+                if folders:
+                    # Use the first folder found (records can be in multiple places)
+                    folder = folders[0]
+                else:
+                    # If no folder found, assume it's in root
+                    folder = params.root_folder
+                
+                # Security check: Ensure folder is valid
+                if not folder or not hasattr(folder, 'type'):
+                    logging.warning("Skipping record with invalid folder context: %s", record_uid)
+                    continue
+                
+                records_to_delete.append((folder, record_uid))
+
+            logging.info('Preparing to delete %s records from Keeper', len(records_to_delete))
+        else:
+            logging.info('No records found to delete')
+
+        # Process records in chunks due to API limits (if any records exist)
+        rq_obj_limit = 999
+        vault_changed = False
+        total_deleted = 0
+        total_failed = 0
+
+        while len(records_to_delete) > 0:
+            # Prepare pre_delete request
+            rq = {
+                'command': 'pre_delete',
+                'objects': []
             }
-            logging.info('removing %s records from Keeper', len(params.record_cache))
-            response_json = api.communicate(params, request)
-            success = [info for info in response_json['delete_records'] if info['status'] == 'success']
-            if len(success) > 0:
-                logging.info("%s records deleted successfully", len(success))
-            failures = [info for info in response_json['delete_records'] if info['status'] != 'success']
-            if len(failures) > 0:
-                logging.warning("%s records failed to delete", len(failures))
 
+            # Process chunk of records
+            chunk = records_to_delete[:rq_obj_limit]
+            records_to_delete = records_to_delete[rq_obj_limit:]
+
+            for folder, record_uid in chunk:
+                # Security check: Validate folder has required attributes
+                if not hasattr(folder, 'type'):
+                    logging.warning("Skipping record with invalid folder type")
+                    continue
+                
+                del_obj = {
+                    'delete_resolution': 'unlink',
+                    'object_uid': record_uid,
+                    'object_type': 'record'
+                }
+                
+                # Set folder context based on folder type
+                if folder.type in {BaseFolderNode.RootFolderType, BaseFolderNode.UserFolderType}:
+                    del_obj['from_type'] = 'user_folder'
+                    if folder.type == BaseFolderNode.UserFolderType:
+                        if hasattr(folder, 'uid') and folder.uid:
+                            del_obj['from_uid'] = folder.uid
+                else:
+                    # Shared folder or shared folder subfolder
+                    del_obj['from_type'] = 'shared_folder_folder'
+                    if hasattr(folder, 'uid') and folder.uid:
+                        del_obj['from_uid'] = folder.uid
+                
+                rq['objects'].append(del_obj)
+
+            # Skip empty batches (all records were filtered out by security checks)
+            if not rq['objects']:
+                logging.info("No valid records in this batch to delete")
+                continue
+
+            # Send pre_delete request
+            try:
+                rs = api.communicate(params, rq)
+                # Security check: Validate API response
+                if not isinstance(rs, dict) or 'result' not in rs:
+                    logging.error("Invalid API response received")
+                    total_failed += len(chunk)
+                    continue
+                
+                if rs['result'] == 'success':
+                    pdr = rs.get('pre_delete_response')
+                    if not pdr:
+                        logging.error("Missing pre_delete_response in API response")
+                        total_failed += len(chunk)
+                        continue
+
+                    # Show what would be deleted
+                    would_delete = pdr.get('would_delete', {})
+                    summary = would_delete.get('deletion_summary', [])
+                    for x in summary:
+                        print(x)
+
+                    # Security check: Validate pre_delete_token exists
+                    pre_delete_token = pdr.get('pre_delete_token')
+                    if not pre_delete_token:
+                        logging.error("Missing pre_delete_token in API response")
+                        total_failed += len(chunk)
+                        continue
+
+                    # Execute deletion automatically (force is always True after initial confirmation)
+                    delete_rq = {
+                        'command': 'delete',
+                        'pre_delete_token': pre_delete_token
+                    }
+                    delete_rs = api.communicate(params, delete_rq)
+                    # Security check: Validate deletion response
+                    if not isinstance(delete_rs, dict) or 'result' not in delete_rs:
+                        logging.error("Invalid deletion response received")
+                        total_failed += len(chunk)
+                    elif delete_rs['result'] == 'success':
+                        total_deleted += len(chunk)
+                        vault_changed = True
+                        logging.info("Batch of %s records deleted successfully", len(chunk))
+                    else:
+                        total_failed += len(chunk)
+                        logging.warning("Failed to delete batch of %s records: %s", 
+                                      len(chunk), delete_rs.get('message', 'Unknown error'))
+                else:
+                    total_failed += len(chunk)
+                    logging.warning("Pre-delete failed for batch of %s records: %s", 
+                                  len(chunk), rs.get('message', 'Unknown error'))
+            except Exception as e:
+                total_failed += len(chunk)
+                logging.error("Error processing batch of %s records: %s", len(chunk), str(e))
+
+        # Summary
+        if total_deleted > 0:
+            logging.info("Total records deleted successfully: %s", total_deleted)
+        if total_failed > 0:
+            logging.warning("Total records failed to delete: %s", total_failed)
+
+        # Always check for and delete folders (even if no records were deleted)
+        total_folders_deleted = self._delete_empty_folders(params, **kwargs)
+        if total_folders_deleted > 0:
+            logging.info("Total folders deleted: %s", total_folders_deleted)
+            vault_changed = True
+
+        if vault_changed:
             params.revision = 0
             params.sync_data = True
+
+    def _delete_empty_folders(self, params, **kwargs):
+        """Delete all folders after records have been deleted"""
+        from ..subfolder import BaseFolderNode
+        
+        # Security check: Ensure params are valid
+        if not params or not hasattr(params, 'folder_cache'):
+            logging.error("Invalid parameters provided to _delete_empty_folders")
+            return 0
+        
+        # Sync down to get latest folder state after record deletion
+        api.sync_down(params)
+        
+        # Find all folders that are safe to delete
+        empty_folders = []
+        for folder_uid, folder in params.folder_cache.items():
+            # Security check: Skip if folder or folder_uid is invalid
+            if not folder_uid or not folder or not hasattr(folder, 'type'):
+                logging.warning("Skipping invalid folder entry")
+                continue
+            
+            # Security check: Do not attempt to delete root folder
+            # Delete all other folder types (user folders, shared folders, shared folder subfolders)
+            if folder.type == BaseFolderNode.RootFolderType:
+                continue
+            
+            # Check if folder is empty (no records)
+            records_in_folder = params.subfolder_record_cache.get(folder_uid, set())
+            if len(records_in_folder) == 0:
+                # Also check if it has any subfolders - only delete if completely empty
+                if not folder.subfolders or len(folder.subfolders) == 0:
+                    empty_folders.append(folder)
+        
+        if not empty_folders:
+            logging.info("No folders found to delete")
+            return 0
+        
+        logging.info('Found %s folders to delete', len(empty_folders))
+        
+        # Sort folders by depth (deepest first) to avoid parent-child dependency issues
+        # Folders with longer paths are deeper in the hierarchy
+        from ..subfolder import get_folder_path
+        empty_folders.sort(key=lambda f: len(get_folder_path(params, f.uid).split('/')), reverse=True)
+        
+        total_folders_deleted = 0
+        total_folders_failed = 0
+        rq_obj_limit = 999
+        
+        folders_to_delete = empty_folders[:]
+        while len(folders_to_delete) > 0:
+            # Prepare pre_delete request for folders
+            rq = {
+                'command': 'pre_delete',
+                'objects': []
+            }
+            
+            # Process chunk of folders
+            chunk = folders_to_delete[:rq_obj_limit]
+            folders_to_delete = folders_to_delete[rq_obj_limit:]
+            
+            for folder in chunk:
+                # Security check: Validate folder has required attributes
+                if not hasattr(folder, 'uid') or not hasattr(folder, 'type'):
+                    logging.warning("Skipping folder without required attributes")
+                    continue
+                
+                # Security check: Validate folder type is deletable (not root)
+                if folder.type == BaseFolderNode.RootFolderType:
+                    logging.warning("Skipping root folder - cannot be deleted")
+                    continue
+                
+                del_obj = {
+                    'delete_resolution': 'unlink',
+                    'object_uid': folder.uid,
+                    'object_type': folder.type
+                }
+                
+                # Set folder context based on parent folder
+                if hasattr(folder, 'parent_uid') and folder.parent_uid:
+                    parent = params.folder_cache.get(folder.parent_uid)
+                    if parent and hasattr(parent, 'uid') and hasattr(parent, 'type'):
+                        del_obj['from_uid'] = parent.uid
+                        # Shared folder containers need special handling
+                        if parent.type == BaseFolderNode.SharedFolderType:
+                            del_obj['from_type'] = 'shared_folder_folder'
+                        else:
+                            del_obj['from_type'] = parent.type
+                    else:
+                        # Parent not found, assume user folder
+                        del_obj['from_type'] = 'user_folder'
+                else:
+                    # No parent, it's a top-level user folder
+                    del_obj['from_type'] = 'user_folder'
+                
+                rq['objects'].append(del_obj)
+            
+            # Skip empty batches (all folders were filtered out by security checks)
+            if not rq['objects']:
+                logging.info("No valid folders in this batch to delete")
+                continue
+            
+            # Send pre_delete request for folders
+            try:
+                rs = api.communicate(params, rq)
+                # Security check: Validate API response
+                if not isinstance(rs, dict) or 'result' not in rs:
+                    logging.error("Invalid API response received")
+                    total_folders_failed += len(chunk)
+                    continue
+                
+                if rs['result'] == 'success':
+                    pdr = rs.get('pre_delete_response')
+                    if not pdr:
+                        logging.error("Missing pre_delete_response in API response")
+                        total_folders_failed += len(chunk)
+                        continue
+                    
+                    # Show what would be deleted
+                    would_delete = pdr.get('would_delete', {})
+                    summary = would_delete.get('deletion_summary', [])
+                    for x in summary:
+                        print(x)
+                    
+                    # Execute deletion automatically (force is always True after initial confirmation in execute())
+                    force = kwargs.get('force', False)
+                    if force:
+                        # Security check: Validate pre_delete_token exists
+                        pre_delete_token = pdr.get('pre_delete_token')
+                        if not pre_delete_token:
+                            logging.error("Missing pre_delete_token in API response")
+                            total_folders_failed += len(chunk)
+                            continue
+                        
+                        # Execute actual folder deletion
+                        delete_rq = {
+                            'command': 'delete',
+                            'pre_delete_token': pre_delete_token
+                        }
+                        delete_rs = api.communicate(params, delete_rq)
+                        # Security check: Validate deletion response
+                        if not isinstance(delete_rs, dict) or 'result' not in delete_rs:
+                            logging.error("Invalid deletion response received")
+                            total_folders_failed += len(chunk)
+                        elif delete_rs['result'] == 'success':
+                            total_folders_deleted += len(chunk)
+                            logging.info("Batch of %s folders deleted successfully", len(chunk))
+                        else:
+                            total_folders_failed += len(chunk)
+                            logging.warning("Failed to delete batch of %s folders: %s", 
+                                          len(chunk), delete_rs.get('message', 'Unknown error'))
+                    else:
+                        # If force is not set (should not happen in delete all context), prompt user
+                        np = user_choice('Do you want to proceed with deletion of these folders?', 'yn', default='n')
+                        if np.lower() != 'y':
+                            logging.info("Deletion cancelled by user")
+                            break
+                else:
+                    total_folders_failed += len(chunk)
+                    logging.warning("Pre-delete failed for batch of %s folders: %s", 
+                                  len(chunk), rs.get('message', 'Unknown error'))
+            except Exception as e:
+                total_folders_failed += len(chunk)
+                logging.error("Error processing batch of %s folders: %s", len(chunk), str(e))
+        
+        if total_folders_failed > 0:
+            logging.warning("Total folders failed to delete: %s", total_folders_failed)
+        
+        return total_folders_deleted
 
 
 class WhoamiCommand(Command):
