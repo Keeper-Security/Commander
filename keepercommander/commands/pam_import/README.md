@@ -67,8 +67,8 @@ Text UI (TUI) elements (a.k.a. JSON Keys) match their Web UI counterparts so you
 </details>
 
 #### PAM Configurations:
-_You can have only one `pam_configuration` section and the only required parameter is `environment` (`"local"`, `"aws"`, or `"azure"`) Expand the corresponding section below to see specific details._
-  > **Note:** Full details are shown on `pam_configuration: local` but the common section on top is the same across all configuration types.  
+_You can have only one `pam_configuration` section and the only required parameter is `environment` (`"local"`, `"aws"`, `"azure"`, `"domain"`, `"gcp"`, or `"oci"`) Expand the corresponding section below to see specific details._
+  > **Note:** Full details are shown on `pam_configuration: local` but the common section on top is the same across all configuration types. _(ex. local specific configuration starts with `network_id`/`network_cidr`)_  
 <details>
 <summary>pam_configuration: local</summary>
 
@@ -134,6 +134,62 @@ _You can have only one `pam_configuration` section and the only required paramet
 		"az_subscription_id": "my-az_subscription_id",
 		"az_tenant_id": "my-az_tenant_id",
 		"az_resource_groups": ["rg-WebApp1-Dev", "rg-WebApp1-Prod"]
+	}
+}
+```
+</details>
+<details>
+<summary>pam_configuration: domain</summary>
+
+```json
+{
+	"pam_configuration": {
+		"environment": "domain",
+		"title": "Project1 Domain PAM Configuration",
+
+		"dom_domain_id": "my-domain_id",
+		"dom_hostname": "my-hostname",
+		"dom_port": "my-port",
+		"dom_use_ssl": true,
+		"dom_scan_dc_cidr": true,
+		"dom_network_cidr": "192.168.1.0/28",
+		"dom_administrative_credential": "admin1"
+	}
+}
+```
+</details>
+<details>
+<summary>pam_configuration: gcp</summary>
+
+```json
+{
+	"pam_configuration": {
+		"environment": "gcp",
+		"title": "Project1 GCP PAM Configuration",
+
+		"gcp_id": "my-gcp_id",
+		"gcp_service_account_key": "my-gcp_service_account_key",
+		"gcp_google_admin_email": "my-gcp_google_admin_email",
+		"gcp_region_names": ["us-east1", "us-central1"]
+	}
+}
+```
+</details>
+<details>
+<summary>pam_configuration: oci</summary>
+
+```json
+{
+	"pam_configuration": {
+		"environment": "oci",
+		"title": "Project1 OCI PAM Configuration",
+
+		"oci_id": "my-oci_id",
+		"oci_admin_id": "my-oci_admin_id",
+		"oci_admin_public_key": "my-oci_admin_public_key",
+		"oci_admin_private_key": "my-oci_admin_private_key",
+		"oci_tenancy": "my-oci_tenancy",
+		"oci_region": "my-oci_region"
 	}
 }
 ```
