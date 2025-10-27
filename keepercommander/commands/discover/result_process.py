@@ -2,6 +2,7 @@ from __future__ import annotations
 import logging
 import argparse
 import json
+import sys
 import os.path
 
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
@@ -441,6 +442,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 item_count: int = 0,
                 items_left: int = 0,
                 indent: int = 0,
+                block_auto_add: bool = False,
                 context: Optional[Any] = None) -> PromptResult:
 
         if context is None:
@@ -453,7 +455,9 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         params = context.get("params")
         gateway_context = context.get("gateway_context")
         dry_run = context.get("dry_run", False)
-        add_all = context.get("add_all")
+        add_all = context.get("add_all", False)
+        if block_auto_add:
+            add_all = False
 
         # If auto add is True, there are sometime we don't want to add the object.
         # If we get a result, we want to return it.
@@ -894,7 +898,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     content=content,
                     acl=acl,
                     context=context,
-                    indent=indent + 2
+                    indent=indent + 2,
+                    block_auto_add=True
                 )
                 login = content.get_field_value("login")
                 if login is None or login == "":
@@ -1066,13 +1071,19 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
         add_results = []  # type: List[record_pb2.RecordModifyResult]
         logging.debug("adding record in batches")
+        print("batch record create: ", end="")
+        sys.stdout.flush()
         while record_add_list:
+            print(".", end="")
+            sys.stdout.flush()
             logging.debug(f"* adding batch")
             rq = get_records_add_request(params)
             rq.records.extend(record_add_list[:records_per_request])
             record_add_list = record_add_list[records_per_request:]
             rs = api.communicate_rest(params, rq, 'vault/records_add', rs_type=record_pb2.RecordsModifyResponse)
             add_results.extend(rs.records)
+        print("")
+        sys.stdout.flush()
 
         logging.debug(f"add_result: {add_results}")
 
@@ -1087,10 +1098,14 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         created_cache = []
 
         # For the records passed in to be created.
+        print("add rotation settings: ", end="")
+        sys.stdout.flush()
         for bulk_record in bulk_add_records:
             if bulk_record.record_uid in created_cache:
                 logging.debug(f"found a duplicate of record uid: {bulk_record.record_uid}")
                 continue
+            print(".", end="")
+            sys.stdout.flush()
 
             # Grab the type Keeper record instance, and title from that record.
             pb_add_record = bulk_record.record
@@ -1158,6 +1173,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     record_uid=bulk_record.record_uid
                 )
             )
+        print("")
+        sys.stdout.flush()
 
         params.sync_data = True
 
