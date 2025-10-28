@@ -10,7 +10,7 @@ from prompt_toolkit import print_formatted_text, HTML
 # from keepersdk.authentication import keeper_auth
 # from keepersdk.enterprise import enterprise_types
 from ... import utils, crypto, api
-from ...proto import pedm_pb2
+from ...proto import pedm_pb2, NotificationCenter_pb2
 from .. import base
 from . import pedm_admin
 from ..helpers import report_utils
@@ -355,10 +355,39 @@ class PedmEventReportCommand(base.ArgparseCommand):
                     username = AuditMixin.get_enterprise_user_email(user_id)
                     if isinstance(username, str):
                         event['admin_uid'] = username
+            if 'request_status' in event:
+                status = event['request_status']
+                status_info = None
+                if isinstance(status, int):
+                    if status == NotificationCenter_pb2.NotificationApprovalStatus.NAS_APPROVED:
+                        status_info = '"Approved"'
+                    elif status == NotificationCenter_pb2.NotificationApprovalStatus.NAS_DENIED:
+                        status_info = '"Denied"'
+                if status_info:
+                    event['request_status'] = status_info
+            if 'evaluation_status' in event:
+                status = event['evaluation_status']
+                status_info = None
+                if isinstance(status, int):
+                    if status == 1:
+                        status_info = '"Allowed"'
+                    elif status == 2:
+                        status_info = '"Denied"'
+                    elif status == 3:
+                        status_info = '"Denied - Failed MFA"'
+                    elif status == 4:
+                        status_info = '"Denied - Failed Justification"'
+                if status_info:
+                    event['evaluation_status'] = status_info
+
+            event_type = event.get('audit_event_type')
+            if event_type == 'approval_request_status_changed':
+                if 'admin_uid' not in event and 'admin_info' in event:
+                    event['admin_uid'] = event['admin_info']
 
         if kwargs.get('format') == 'json':
             return json.dumps(events, indent=2)
-
+        
         rows: List[List[Any]] = []
         headers: List[str] = []
         if kwargs.get('report_format') == 'message':
