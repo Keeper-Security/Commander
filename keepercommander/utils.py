@@ -13,8 +13,11 @@ import base64
 import json
 import logging
 import math
+import os
 import re
+import stat
 import time
+from typing import Dict, Union
 from urllib.parse import urlparse, parse_qs, unquote
 from pathlib import Path
 import sys
@@ -43,6 +46,38 @@ def generate_uid():             # type: () -> str
 
 def generate_aes_key():         # type: () -> bytes
     return crypto.get_random_bytes(32)
+
+
+def set_file_permissions(file_path):     # type: (str) -> None
+    """
+    Set secure file permissions (600) for configuration files containing sensitive data.
+    This ensures only the owner can read and write the file.
+    """
+    try:
+        # Set permissions to 600 (owner read/write only)
+        os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
+        logging.debug(f'Set secure permissions (600) for file: {file_path}')
+    except OSError as e:
+        logging.warning(f'Failed to set secure permissions for {file_path}: {e}')
+
+
+def ensure_config_permissions(file_path):     # type: (str) -> None
+    """
+    Check and fix file permissions for existing configuration files.
+    If the file has overly permissive permissions, log a warning and fix them.
+    """
+    if not os.path.exists(file_path):
+        return
+    
+    try:
+        current_permissions = os.stat(file_path).st_mode & 0o777
+        # Check if file is readable by group or others (anything other than 600)
+        if current_permissions != 0o600:
+            logging.warning(f'Configuration file {file_path} has insecure permissions '
+                          f'{oct(current_permissions)}. Setting to secure permissions (600).')
+            set_file_permissions(file_path)
+    except OSError as e:
+        logging.warning(f'Failed to check permissions for {file_path}: {e}')
 
 
 def current_milli_time():       # type: () -> int
