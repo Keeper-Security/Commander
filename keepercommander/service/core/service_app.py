@@ -19,6 +19,16 @@ flask_app = create_app()
 if __name__ == '__main__':
     service_config = ServiceConfig()
     config_data = service_config.load_config()
+    
+    try:
+        from ...service.core.globals import ensure_params_loaded
+        print("Pre-loading Keeper parameters for background mode...")
+        ensure_params_loaded()
+        print("Keeper parameters loaded successfully")
+    except Exception as e:
+        print(f"Warning: Failed to pre-load parameters during startup: {e}")
+        print("Parameters will be loaded on first API call if needed")
+    
     ssl_context = None
     
     if not (port := config_data.get("port")):

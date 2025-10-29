@@ -48,7 +48,7 @@ class Maintenance:
                     found_key_edge = True
                     break
                 except Exception as err:
-                    self.logger.error(f"could not decrypt key for {v.uid}, {keychain[-1]['key']}: {err}", level=1)
+                    self.logger.debug(f"could not decrypt key for {v.uid}, {keychain[-1]['key']}: {err}", level=1)  # DAG_DEBUG_LEVEL env var
                     keychain += [
                         {
                             "uid": v.uid,

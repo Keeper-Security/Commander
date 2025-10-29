@@ -23,7 +23,7 @@ from ..record import get_totp_code
 from ..api import get_records_update_request
 from ..security_audit import attach_security_data
 
-verify_shared_folders_parser = argparse.ArgumentParser(prog='verify-shared-folders')
+verify_shared_folders_parser = argparse.ArgumentParser(prog='verify-shared-folders', description='Verify and fix shared folder record key issues')
 verify_shared_folders_parser.add_argument('--dry-run', dest='dry_run', action='store_true',
                                           help='Display the the found problems without fixing')
 verify_shared_folders_parser.add_argument('target', nargs='*', help='Shared folder UID or name.')

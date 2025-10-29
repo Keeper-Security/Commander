@@ -24,10 +24,6 @@ from .proto import APIRequest_pb2 as proto
 from . import crypto, utils
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
 
-from . import __version__
-
-
-# CLIENT_VERSION = 'c' + __version__
 CLIENT_VERSION = 'c17.1.9'
 
 SERVER_PUBLIC_KEYS = {
@@ -114,8 +110,18 @@ SERVER_PUBLIC_KEYS = {
 }   # type: Dict[int, Union[rsa.RSAPublicKey, ec.EllipticCurvePublicKey]]
 
 
+def encrypt_with_keeper_key(context, data: bytes) -> bytes:
+    key_id = context.server_key_id
+    if 1 <= key_id <= 6:
+        return crypto.encrypt_rsa(data, SERVER_PUBLIC_KEYS[key_id])
+    elif 7 <= key_id <= 17:
+        return crypto.encrypt_ec(data, SERVER_PUBLIC_KEYS[key_id])
+    else:
+        raise KeeperApiError('invalid_key_id', f'Key ID \"{key_id}\" is not valid.')
+
+
 def execute_rest(context, endpoint, payload):
-    # type: (RestApiContext, str, proto.ApiRequestPayload) -> Union[bytes, dict]
+    # type: (RestApiContext, str, proto.ApiRequestPayload) -> Optional[Union[bytes, dict]]
     if not context.transmission_key:
         context.transmission_key = os.urandom(32)
 
@@ -199,7 +205,7 @@ def execute_rest(context, endpoint, payload):
 
 
 def v2_execute(context, rq):
-    # type: (RestApiContext, dict) -> dict
+    # type: (RestApiContext, dict) -> Optional[dict]
 
     api_request_payload = proto.ApiRequestPayload()
     api_request_payload.payload = json.dumps(rq).encode('utf-8')

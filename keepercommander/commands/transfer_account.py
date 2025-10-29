@@ -22,7 +22,7 @@ from .base import suppress_exit, raise_parse_exception, user_choice
 from .enterprise_common import EnterpriseCommand
 from ..display import bcolors
 
-transfer_user_parser = argparse.ArgumentParser(prog='transfer-user', description='Transfer user account(s).')
+transfer_user_parser = argparse.ArgumentParser(prog='transfer-user', description='Perform a vault transfer of a user account')
 transfer_user_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 transfer_user_parser.add_argument('--target-user', dest='target_user', action='store', help='email to transfer user(s) to')
 transfer_user_parser.add_argument('email', type=str, nargs='+', metavar="user@company.com OR @filename",

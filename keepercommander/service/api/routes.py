@@ -27,7 +27,7 @@ def _setup_legacy_mode(app: Flask) -> None:
     """Setup legacy mode with v1 API endpoints."""
     legacy_bp = create_legacy_command_blueprint()
     app.register_blueprint(legacy_bp, url_prefix='/api/v1')
-    logger.info("Using LEGACY /api/v1 - Enable queue mode (-q y) for /api/v2")
+    logger.info("Using /api/v1 - Enable queue mode (-q y) for /api/v2")
 
 @debug_decorator
 def init_routes(app: Optional[Flask] = None) -> None:

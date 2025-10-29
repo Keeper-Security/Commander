@@ -33,16 +33,16 @@ class RequestValidator:
         """
         if not request_data:
             logger.info("Request validation failed: No JSON data provided")
-            return None, (jsonify({"success": False, "error": "Error: No JSON data provided"}), 400)
+            return None, (jsonify({"status": "error", "error": "No JSON data provided"}), 400)
         
         command = request_data.get("command")
         if not command:
-            logger.info("Request validation failed: No command provided")
-            return None, (jsonify({"success": False, "error": "Error: No command provided"}), 400)
+            logger.info("Request validation failed: Missing required field 'command' or incorrect field name")
+            return None, (jsonify({"status": "error", "error": "Missing required field \"command\" or incorrect field name"}), 400)
         
         if not isinstance(command, str):
             logger.warning("Request validation failed: Command must be a string")
-            return None, (jsonify({"success": False, "error": "Error: Command must be a string"}), 400)
+            return None, (jsonify({"status": "error", "error": "Command must be a string"}), 400)
             
         # Escape HTML to prevent XSS
         escaped_command = escape(command)
@@ -125,10 +125,10 @@ class RequestValidator:
         """
         if not request.is_json:
             logger.info("Request validation failed: Content-Type must be application/json")
-            return jsonify({"success": False, "error": "Error: Content-Type must be application/json"}), 400
+            return jsonify({"status": "error", "error": "Content-Type must be application/json"}), 400
         
         if not request.json:
             logger.info("Request validation failed: Invalid or empty JSON")
-            return jsonify({"success": False, "error": "Error: Invalid or empty JSON"}), 400
+            return jsonify({"status": "error", "error": "Invalid or empty JSON"}), 400
         
         return None

@@ -23,7 +23,7 @@ import requests
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
 from .base import (Command, GroupCommand, user_choice, dump_report_data, report_output_parser, field_to_title,
-                   FolderMixin, RecordMixin, register_pam_legacy_commands)
+                   FolderMixin, RecordMixin, toggle_pam_legacy_commands)
 from .folder import FolderMoveCommand
 from .ksm import KSMCommand
 from .pam import gateway_helper, router_helper
@@ -84,6 +84,76 @@ from .tunnel_and_connections import PAMTunnelCommand, PAMConnectionCommand, PAMR
 PAM_DEFAULT_SPECIAL_CHAR = '''!@#$%^?();',.=+[]<>{}-_/\\*&:"`~|'''
 
 
+def validate_cron_field(field, min_val, max_val):
+    # Accept *, single number, range, step, list
+    pattern = r'^(\*|\d+|\d+-\d+|\*/\d+|\d+(,\d+)*|\d+-\d+/\d+)$'
+    if not re.match(pattern, field):
+        return False
+
+    def is_valid_number(n):
+        return n.isdigit() and min_val <= int(n) <= max_val
+
+    parts = re.split(r'[,\-/]', field)
+    return all(part == '*' or is_valid_number(part) for part in parts if part != '*')
+
+def validate_cron_expression(expr, for_rotation=False):
+    parts = expr.strip().split()
+
+    # All internal docs, MRD etc. specify that rotation schedule is using CRON format
+    # but actually back-end don't accept all valid standard CRON and uses unspecified custom CRON format
+    if for_rotation is True:
+        if len(parts) != 6:
+            return False, f"CRON: Rotation schedules require all 6 parts incl. seconds - ex. Daily at 04:00:00 cron: 0 0 4 * * ? got {len(parts)} parts"
+        if not(parts[3] == '?' or parts[5] == "?"):
+            logging.warning("CRON: Rotation schedule CRON format - must use ? character in one of these fields: day-of-week, day-of-month")
+        parts[3] = '*' if parts[3] == '?' else parts[3]
+        parts[5] = '*' if parts[5] == '?' else parts[5]
+        logging.debug("WARNING! Validating CRON expression for rotation - if you get 500 type errors make sure to validate your CRON using web vault UI")
+
+    if len(parts) not in [5, 6]:
+        return False, f"CRON: Expected 5 or 6 fields, got {len(parts)}"
+
+    if len(parts) == 6:
+        seconds, minute, hour, dom, month, dow = parts
+        if not validate_cron_field(seconds, 0, 59):
+            return False, "CRON: Invalid seconds field"
+    else:
+        minute, hour, dom, month, dow = parts
+
+    validators = [
+        (minute, 0, 59, "minute"),
+        (hour, 0, 23, "hour"),
+        (dom, 1, 31, "day of month"),
+        (month, 1, 12, "month"),
+        (dow, 0, 7, "day of week")
+    ]
+
+    for field, min_val, max_val, name in validators:
+        if not validate_cron_field(field, min_val, max_val):
+            return False, f"CRON: Invalid {name} field"
+
+    return True, "Valid cron expression"
+
+def parse_schedule_data(kwargs):
+    schedule_json_data = kwargs.get('schedule_json_data')
+    schedule_cron_data = kwargs.get('schedule_cron_data')
+    schedule_on_demand = kwargs.get('on_demand') is True
+    schedule_data = None   # type: Optional[List]
+    if isinstance(schedule_json_data, list):
+        schedule_data = [json.loads(x) for x in schedule_json_data]
+    elif isinstance(schedule_cron_data, list):
+        # more details: http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html#examples
+        if schedule_cron_data and isinstance(schedule_cron_data[0], str):
+            valid, err = validate_cron_expression(schedule_cron_data[0], for_rotation=True)
+            if valid:
+               schedule_data = [{"type": "CRON", "cron": schedule_cron_data[0], "tz": "Etc/UTC"}]
+            else:
+               logging.error('', f'Invalid CRON "{schedule_cron_data[0]}" Error: {err}')
+    elif schedule_on_demand is True:
+        schedule_data = []
+    return schedule_data
+
+
 def register_commands(commands):
     commands['pam'] = PAMControllerCommand()
 
@@ -102,7 +172,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('action', GatewayActionCommand(), 'Execute action on the Gateway', 'a')
         self.register_command('tunnel', PAMTunnelCommand(), 'Manage Tunnels', 't')
         self.register_command('split', PAMSplitCommand(), 'Split credentials from legacy PAM Machine', 's')
-        self.register_command('legacy', PAMLegacyCommand(), 'Switch to legacy PAM commands')
+        self.register_command('legacy', PAMLegacyCommand(), 'Toggle PAM Legacy commands: ON/OFF')
         self.register_command('connection', PAMConnectionCommand(), 'Manage Connections', 'n')
         self.register_command('rbi', PAMRbiCommand(), 'Manage Remote Browser Isolation', 'b')
         self.register_command('project', PAMProjectCommand(), 'PAM Project Import/Export', 'p')
@@ -231,13 +301,26 @@ class PAMDebugCommand(GroupCommand):
 
 
 class PAMLegacyCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam legacy', description="Switch to using obsolete PAM commands")
+    parser = argparse.ArgumentParser(prog='pam legacy', description="Toggle PAM Legacy mode: ON/OFF - PAM Legacy commands are obsolete")
+    parser.add_argument('--status', '-s', required=False, dest='status', action='store_true', help='Show the current status - Legacy mode: ON/OFF')
 
     def get_parser(self):
         return PAMLegacyCommand.parser
 
     def execute(self, params, **kwargs):
-        register_pam_legacy_commands()
+        from .base import commands
+        status = kwargs.get('status') or False
+        pamc = commands.get("pam")
+        # Legacy mode is missing: connection, split, rbi, project (tunnel - commented out)
+        conn = pamc.subcommands.get("connection") if pamc and pamc.subcommands else None
+        legacy = False if conn and isinstance(conn, PAMConnectionCommand) else True
+        if status:
+            if legacy:
+                print("PAM Legacy mode: ON")
+            else:
+                print ("PAM Legacy mode: OFF")
+            return
+        toggle_pam_legacy_commands(not legacy)
 
 
 class PAMCmdListJobs(Command):
@@ -542,13 +625,14 @@ class PAMCreateRecordRotationCommand(Command):
                 [target_record.record_uid, target_record.title, not disabled, record_config_uid, record_resource_uid, schedule,
                  complexity])
 
-            # 6. Construct Request object
+            # 6. Construct Request object for IAM: empty resourceUid and noop=False
             rq = router_pb2.RouterRecordRotationRequest()
             if current_record_rotation:
                 rq.revision = current_record_rotation.get('revision', 0)
             rq.recordUid = utils.base64_url_decode(target_record.record_uid)
             rq.configurationUid = utils.base64_url_decode(record_config_uid)
-            rq.resourceUid = utils.base64_url_decode(record_resource_uid) if record_resource_uid else b''
+            rq.resourceUid = b''  # non-empty resourceUid sets is as General rotation
+            rq.noop = False  # True sets it as NOOP
             rq.schedule = json.dumps(record_schedule_data) if record_schedule_data else ''
             rq.pwdComplexity = pwd_complexity_rule_list_encrypted
             rq.disabled = disabled
@@ -932,22 +1016,8 @@ class PAMCreateRecordRotationCommand(Command):
             else:
                 raise CommandError('', f'Record uid {config_uid} is not a PAM Configuration record.')
 
-        schedule_json_data = kwargs.get('schedule_json_data')
-        schedule_cron_data = kwargs.get('schedule_cron_data')    # See this page for more details: http://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html#examples
-        schedule_on_demand = kwargs.get('on_demand') is True
         schedule_config = kwargs.get('schedule_config') is True
-        schedule_data = None   # type: Optional[List]
-        if isinstance(schedule_json_data, list):
-            schedule_data = [json.loads(x) for x in schedule_json_data]
-        elif isinstance(schedule_cron_data, list):
-            schedule_data = []
-            for cron in schedule_cron_data:
-                comps = [x.strip() for x in cron.split(' ')]
-                if len(comps) != 5:
-                    raise CommandError('', f'Cron value is expected to have 5 components: minute hour day_of_month month day_of_week')
-                schedule_data.append(TypedField.import_schedule_field(cron))
-        elif schedule_on_demand is True:
-            schedule_data = []
+        schedule_data = parse_schedule_data(kwargs)
 
         pwd_complexity = kwargs.get("pwd_complexity")
         pwd_complexity_rule_list = None     # type: Optional[dict]
@@ -991,6 +1061,9 @@ class PAMCreateRecordRotationCommand(Command):
 
         r_requests = []   # type: List[router_pb2.RouterRecordRotationRequest]
 
+        # Note: --folder, -fd FOLDER_NAME sets up General rotation
+        # use --schedule-only, -so to preserve individual setups (General, IAM, NOOP)
+        # use --iam-aad-config, -iac IAM_AAD_CONFIG_UID to convert to IAM User
         for _record in pam_records:
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, _record.record_uid)
             if _record.record_type in ['pamMachine', 'pamDatabase', 'pamDirectory', 'pamRemoteBrowser']:
@@ -1006,6 +1079,7 @@ class PAMCreateRecordRotationCommand(Command):
                                            ' --resource is used to configure users found on a resource.'
                                            ' --iam-aad-config-uid is used to configure AWS IAM or Azure AD users')
 
+                # NB! --folder=UID without --iam-aad-config, or --schedule-only converts to General rotation
                 if iam_aad_config_uid:
                     config_iam_aad_user(tmp_dag, _record, iam_aad_config_uid)
                 else:
@@ -1526,7 +1600,7 @@ class PAMConfigurationListCommand(Command):
                 headers.append('Fields')
 
         for c in configurations:  # type: vault.TypedRecord
-            if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamNetworkConfiguration'):
+            if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamGcpConfiguration', 'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration'):
                 facade.record = c
                 shared_folder_parents = find_parent_top_folder(params, c.record_uid)
                 if shared_folder_parents:
@@ -1588,7 +1662,7 @@ class PAMConfigurationListCommand(Command):
 
 common_parser = argparse.ArgumentParser(add_help=False)
 common_parser.add_argument('--environment', '-env', dest='config_type', action='store',
-                           choices=['local', 'aws', 'azure'], help='PAM Configuration Type', )
+                           choices=['local', 'aws', 'azure', 'gcp', 'domain', 'oci'], help='PAM Configuration Type')
 common_parser.add_argument('--title', '-t', dest='title', action='store', help='Title of the PAM Configuration')
 common_parser.add_argument('--gateway', '-g', dest='gateway_uid', action='store', help='Gateway UID or Name')
 common_parser.add_argument('--shared-folder', '-sf', dest='shared_folder_uid', action='store',
@@ -1611,8 +1685,30 @@ azure_group.add_argument('--client-secret', dest='client_secret', action='store'
 azure_group.add_argument('--subscription_id', dest='subscription_id', action='store',
                          help='Subscription Id')
 azure_group.add_argument('--tenant-id', dest='tenant_id', action='store', help='Tenant Id')
-azure_group.add_argument('--resource-group', dest='resource_group', action='append', help='Resource Group')
+azure_group.add_argument('--resource-group', dest='resource_groups', action='append', help='Resource Group')
+domain_group = common_parser.add_argument_group('domain', 'Domain configuration')
+domain_group.add_argument('--domain-id', dest='domain_id', action='store', help='Domain ID')
+domain_group.add_argument('--domain-hostname', dest='domain_hostname', action='store', help='Domain hostname')
+domain_group.add_argument('--domain-port', dest='domain_port', action='store', help='Domain port')
+domain_group.add_argument('--domain-use-ssl', dest='domain_use_ssl', choices=['true', 'false'], help='Domain use SSL flag')
+domain_group.add_argument('--domain-scan-dc-cidr', dest='domain_scan_dc_cidr', choices=['true', 'false'], help='Domain scan DC CIDR flag')
+domain_group.add_argument('--domain-network-cidr', dest='domain_network_cidr', action='store', help='Domain Network CIDR')
+domain_group.add_argument('--domain-admin', dest='domain_administrative_credential', action='store', help='Domain administrative credential')
+oci_group = common_parser.add_argument_group('oci', 'OCI configuration')
+oci_group.add_argument('--oci-id', dest='oci_id', action='store', help='OCI ID')
+oci_group.add_argument('--oci-admin-id', dest='oci_admin_id', action='store', help='OCI Admin ID')
+oci_group.add_argument('--oci-admin-public-key', dest='oci_admin_public_key', action='store', help='OCI admin public key')
+oci_group.add_argument('--oci-admin-private-key', dest='oci_admin_private_key', action='store', help='OCI admin private key')
+oci_group.add_argument('--oci-tenancy', dest='oci_tenancy', action='store', help='OCI tenancy')
+oci_group.add_argument('--oci-region', dest='oci_region', action='store', help='OCI region')
 
+gcp_group = common_parser.add_argument_group('gcp', 'GCP configuration')
+gcp_group.add_argument('--gcp-id', dest='gcp_id', action='store', help='GCP Id')
+gcp_group.add_argument('--service-account-key', dest='service_account_key', action='store',
+                         help='Service Account Key (JSON format)')
+gcp_group.add_argument('--google-admin-email', dest='google_admin_email', action='store',
+                         help='Google Workspace Administrator Email Address')
+gcp_group.add_argument('--gcp-region', dest='region_names', action='append', help='GCP Region Names')
 
 class PamConfigurationEditMixin(RecordEditMixin):
     pam_record_types = None
@@ -1643,7 +1739,7 @@ class PamConfigurationEditMixin(RecordEditMixin):
             record.fields.append(field)
 
         if len(field.value) == 0:
-            field.value.append(dict())
+            field.value.append({})
         value = field.value[0]
 
         gateway_uid = None  # type: Optional[str]
@@ -1709,6 +1805,20 @@ class PamConfigurationEditMixin(RecordEditMixin):
 
             value['resourceRef'] = list(record_uids)
 
+    @staticmethod
+    def resolve_single_record(params, record_name, rec_type=''): # type: (KeeperParams, str, str) -> Optional[vault.KeeperRecord]
+        rec = RecordMixin.resolve_single_record(params, record_name)
+        if not rec:
+            recs = []
+            for rec in params.record_cache:
+                vrec = vault.KeeperRecord.load(params, rec)
+                if vrec and vrec.title == record_name and (not rec_type or rec_type == vrec.record_type):
+                    recs.append(vrec)
+                    if len(recs) > 1: break
+            if len(recs) == 1:
+                rec = recs[0]
+        return rec
+
     def parse_properties(self, params, record, **kwargs):  # type: (KeeperParams, vault.TypedRecord, ...) -> None
         extra_properties = []
         self.parse_pam_configuration(params, record, **kwargs)
@@ -1716,11 +1826,15 @@ class PamConfigurationEditMixin(RecordEditMixin):
         if isinstance(port_mapping, list) and len(port_mapping) > 0:
             pm = "\n".join(port_mapping)
             extra_properties.append(f'multiline.portMapping={pm}')
-        schedule = kwargs.get('default_schedule')
+        schedule = kwargs.get('default_schedule')  # Default Schedule: Use CRON syntax
         if schedule:
-            extra_properties.append(f'schedule.defaultRotationSchedule={schedule}')
+            valid, err = validate_cron_expression(schedule, for_rotation=True)
+            if not valid:
+                raise CommandError('', f'Invalid CRON "{schedule}" Error: {err}')
+        if schedule:
+            extra_properties.append(f'schedule.defaultRotationSchedule=$JSON:{{"type": "CRON", "cron": "{schedule}", "tz": "Etc/UTC"}}')
         else:
-            extra_properties.append(f'schedule.defaultRotationSchedule=On-Demand')
+            extra_properties.append('schedule.defaultRotationSchedule=On-Demand')
 
         if record.record_type == 'pamNetworkConfiguration':
             network_id = kwargs.get('network_id')
@@ -1743,6 +1857,20 @@ class PamConfigurationEditMixin(RecordEditMixin):
             if region_names:
                 regions = '\n'.join(region_names)
                 extra_properties.append(f'multiline.regionNames={regions}')
+        elif record.record_type == 'pamGcpConfiguration':
+            gcp_id = kwargs.get('gcp_id')
+            if gcp_id:
+                extra_properties.append(f'text.pamGcpId={gcp_id}')
+            service_account_key = kwargs.get('service_account_key')
+            if service_account_key:
+                extra_properties.append(f'json.pamServiceAccountKey={service_account_key}')
+            google_admin_email = kwargs.get('google_admin_email')
+            if google_admin_email:
+                extra_properties.append(f'email.pamGoogleAdminEmail={google_admin_email}')
+            gcp_region = kwargs.get('region_names')
+            if gcp_region:
+                regions = '\n'.join(gcp_region)
+                extra_properties.append(f'multiline.pamGcpRegionName={regions}')
         elif record.record_type == 'pamAzureConfiguration':
             azure_id = kwargs.get('azure_id')
             if azure_id:
@@ -1759,10 +1887,68 @@ class PamConfigurationEditMixin(RecordEditMixin):
             tenant_id = kwargs.get('tenant_id')
             if tenant_id:
                 extra_properties.append(f'secret.tenantId={tenant_id}')
-            resource_group = kwargs.get('resource_group')
-            if isinstance(resource_group, list) and len(resource_group) > 0:
-                rg = '\n'.join(resource_group)
+            resource_groups = kwargs.get('resource_groups')
+            if isinstance(resource_groups, list) and len(resource_groups) > 0:
+                rg = '\n'.join(resource_groups)
                 extra_properties.append(f'multiline.resourceGroups={rg}')
+        elif record.record_type == 'pamDomainConfiguration':
+            domain_id = kwargs.get('domain_id')
+            if domain_id:
+                extra_properties.append(f'text.pamDomainId={domain_id}')
+            host = str(kwargs.get('domain_hostname') or '').strip()
+            port = str(kwargs.get('domain_port') or '').strip()
+            if host or port:
+                val = json.dumps({"hostName": host, "port": port})
+                extra_properties.append(f"f.pamHostname=$JSON:{val}")
+            domain_use_ssl = utils.value_to_boolean(kwargs.get('domain_use_ssl'))
+            if domain_use_ssl is not None:
+                val = 'true' if domain_use_ssl else 'false'
+                extra_properties.append(f'checkbox.useSSL={val}')
+            domain_scan_dc_cidr = utils.value_to_boolean(kwargs.get('domain_scan_dc_cidr'))
+            if domain_scan_dc_cidr is not None:
+                val = 'true' if domain_scan_dc_cidr else 'false'
+                extra_properties.append(f'checkbox.scanDCCIDR={val}')
+            domain_network_cidr = kwargs.get('domain_network_cidr')
+            if domain_network_cidr:
+                extra_properties.append(f'text.networkCIDR={domain_network_cidr}')
+            domain_administrative_credential = kwargs.get('domain_administrative_credential')
+            dac = str(domain_administrative_credential or '')
+            if dac:
+                # pam import will link it later (once admin pamUser is created)
+                if kwargs.get('force_domain_admin', False) is True:
+                    if bool(re.search('^[A-Za-z0-9-_]{22}$', dac)) is not True:
+                        logging.warning(f'Invalid Domain Admin User UID: "{dac}" (skipped)')
+                        dac = ''
+                else:
+                    adm_rec = PamConfigurationEditMixin.resolve_single_record(params, dac, 'pamUser')
+                    if adm_rec and isinstance(adm_rec, vault.TypedRecord) and adm_rec.record_type == 'pamUser':
+                        dac = adm_rec.record_uid
+                    else:
+                        logging.warning(f'Domain Admin User UID: "{dac}" not found (skipped).')
+                        dac = ''
+            if dac:
+                prf = record.get_typed_field('pamResources')
+                prf.value = prf.value or [{}]
+                prf.value[0]["adminCredentialRef"] = dac
+        elif record.record_type == 'pamOciConfiguration':
+            oci_id = kwargs.get('oci_id')
+            if oci_id:
+                extra_properties.append(f'text.pamOciId={oci_id}')
+            oci_admin_id = kwargs.get('oci_admin_id')
+            if oci_admin_id:
+                extra_properties.append(f'secret.adminOcid={oci_admin_id}')
+            oci_admin_public_key = kwargs.get('oci_admin_public_key')
+            if oci_admin_public_key:
+                extra_properties.append(f'secret.adminPublicKey={oci_admin_public_key}')
+            oci_admin_private_key = kwargs.get('oci_admin_private_key')
+            if oci_admin_private_key:
+                extra_properties.append(f'secret.adminPrivateKey={oci_admin_private_key}')
+            oci_tenancy = kwargs.get('oci_tenancy')
+            if oci_tenancy:
+                extra_properties.append(f'text.tenancyOci={oci_tenancy}')
+            oci_region = kwargs.get('oci_region')
+            if oci_region:
+                extra_properties.append(f'text.regionOci={oci_region}')
         if extra_properties:
             self.assign_typed_fields(record, [RecordEditMixin.parse_field(x) for x in extra_properties])
 
@@ -1815,9 +2001,15 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
             record_type = 'pamAzureConfiguration'
         elif config_type == 'local':
             record_type = 'pamNetworkConfiguration'
+        elif config_type == 'gcp':
+            record_type = 'pamGcpConfiguration'
+        elif config_type == 'domain':
+            record_type = 'pamDomainConfiguration'
+        elif config_type == 'oci':
+            record_type = 'pamOciConfiguration'
         else:
             raise CommandError('pam-config-new', f'--environment {config_type} is not supported'
-                                                 f' supported options are aws, azure, or local')
+                               ' - supported options: local, aws, azure, gcp, domain, oci')
 
         title = kwargs.get('title')
         if not title:
@@ -1848,19 +2040,26 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
 
         gateway_uid = None
         shared_folder_uid = None
+        admin_cred_ref = None
         value = field.get_default_value(dict)
         if value:
             gateway_uid = value.get('controllerUid')
             shared_folder_uid = value.get('folderUid')
+            if record.record_type == 'pamDomainConfiguration' and not kwargs.get('force_domain_admin', False) is True:
+                # pamUser must exist or "403 Insufficient PAM access to perform this operation"
+                admin_cred_ref = value.get('adminCredentialRef')
 
         if not shared_folder_uid:
             raise CommandError('pam-config-new', '--shared-folder parameter is required to create a PAM configuration')
+        gw_name = kwargs.get('gateway_uid') or ''
+        if not gateway_uid:
+            logging.warning(f'Gateway "{gw_name}" not found.')
 
         self.verify_required(record)
 
         pam_configuration_create_record_v6(params, record, shared_folder_uid)
 
-        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
         # Add DAG for configuration
         tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid=record.record_uid,
                             is_config=True)
@@ -1872,6 +2071,8 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
             kwargs.get('typescriptrecording'),
             kwargs.get('remotebrowserisolation')
         )
+        if admin_cred_ref:
+            tmp_dag.link_user_to_config_with_options(admin_cred_ref, is_admin='on')
         tmp_dag.print_tunneling_config(record.record_uid, None)
 
         # Moving v6 record into the folder
@@ -1942,14 +2143,18 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
 
         config_type = kwargs.get('config_type')
         if config_type:
-            if not config_type:
-                raise CommandError('pam-config-new', '--environment parameter is required')
             if config_type == 'aws':
                 record_type = 'pamAwsConfiguration'
             elif config_type == 'azure':
                 record_type = 'pamAzureConfiguration'
             elif config_type == 'local':
                 record_type = 'pamNetworkConfiguration'
+            elif config_type == 'gcp':
+                record_type = 'pamGcpConfiguration'
+            elif config_type == 'domain':
+                record_type = 'pamDomainConfiguration'
+            elif config_type == 'oci':
+                record_type = 'pamOciConfiguration'
             else:
                 record_type = configuration.record_type
 
@@ -1969,16 +2174,19 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
 
         orig_gateway_uid = ''
         orig_shared_folder_uid = ''
+        orig_admin_cred_ref = ''  # only if pamDomainConfiguration
         value = field.get_default_value(dict)
         if value:
             orig_gateway_uid = value.get('controllerUid') or ''
             orig_shared_folder_uid = value.get('folderUid') or ''
+            orig_admin_cred_ref = value.get('adminCredentialRef') or ''
 
         self.parse_properties(params, configuration, **kwargs)
         self.verify_required(configuration)
 
         record_management.update_record(params, configuration)
 
+        admin_cred_ref = ''
         value = field.get_default_value(dict)
         if value:
             gateway_uid = value.get('controllerUid') or ''
@@ -1990,6 +2198,9 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
             shared_folder_uid = value.get('folderUid') or ''
             if shared_folder_uid != orig_shared_folder_uid:
                 FolderMoveCommand().execute(params, src=configuration.record_uid, dst=shared_folder_uid)
+            if configuration.type_name == 'pamDomainConfiguration' and not kwargs.get('force_domain_admin', False) is True:
+                # pamUser must exist or "403 Insufficient PAM access to perform this operation"
+                admin_cred_ref = value.get('adminCredentialRef') or ''
 
         # check if there are any permission changes
         _connections = kwargs.get('connections', None)
@@ -2000,11 +2211,16 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
         _typescript_recording = kwargs.get('typescriptrecording', None)
 
         if (_connections is not None or _tunneling is not None or _rotation is not None or _rbi is not None or
-                _recording is not None or _typescript_recording is not None):
-            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+            _recording is not None or _typescript_recording is not None or orig_admin_cred_ref != admin_cred_ref):
+            encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key,
                                 configuration.record_uid, is_config=True)
             tmp_dag.edit_tunneling_config(_connections, _tunneling, _rotation, _recording, _typescript_recording, _rbi)
+            if orig_admin_cred_ref != admin_cred_ref:
+                if orig_admin_cred_ref:  # just drop is_admin from old Domain
+                    tmp_dag.link_user_to_config_with_options(orig_admin_cred_ref, is_admin='default')
+                if admin_cred_ref:  # set is_admin=true for new Domain Admin
+                    tmp_dag.link_user_to_config_with_options(admin_cred_ref, is_admin='on')
             tmp_dag.print_tunneling_config(configuration.record_uid, None)
         for w in self.warnings:
             logging.warning(w)

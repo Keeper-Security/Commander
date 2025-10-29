@@ -11,6 +11,7 @@
 
 import base64
 import json
+import logging
 import math
 import re
 import time
@@ -23,6 +24,9 @@ from .constants import EMAIL_PATTERN
 
 
 VALID_URL_SCHEME_CHARS = '+-.:'
+
+def get_logger():
+    return logging.getLogger('keeper')
 
 def get_default_path():
     default_path = Path.home().joinpath('.keeper')

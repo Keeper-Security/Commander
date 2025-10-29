@@ -79,7 +79,9 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
     @staticmethod
     def _show_list(plugins: dict[str, SaasCatalog]):
 
-        sorted_catalog = dict(sorted(plugins.items(), key=lambda i: i[1].name))
+        sorted_catalog = {}  # type: dict[str, SaasCatalog]
+        if plugins:
+            sorted_catalog = dict(sorted(plugins.items(), key=lambda i: i[1].name))
 
         sort_results = {
             "custom": {"title": "Custom", "using": [], "not_using": [], "color": bcolors.WARNING},
@@ -89,7 +91,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
 
         print("")
         print(f"{bcolors.HEADER}Available SaaS Plugins{bcolors.ENDC}")
-        for key, plugin in sorted_catalog.items():  # type: SaasCatalog
+        for _, plugin in sorted_catalog.items():
             plugin_type = plugin.type
             status = "using" if len(plugin.used_by) is True else "not_using"
             sort_results[plugin_type][status].append(plugin)

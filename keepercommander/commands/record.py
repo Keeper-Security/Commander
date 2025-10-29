@@ -16,6 +16,7 @@ import fnmatch
 import itertools
 import json
 import logging
+import os
 import re
 from functools import reduce
 from typing import Dict, Any, List, Optional, Iterable, Tuple, Set
@@ -34,6 +35,32 @@ from ..subfolder import try_resolve_path, get_folder_path, find_folders, find_al
     get_folder_uids
 from ..team import Team
 
+def handle_empty_result(fmt, message, filename=None):
+    """
+    Handle 'no data found' scenarios for different output formats.
+    
+    Args:
+        fmt (str): Output format ('json', 'table', etc.)
+        message (str): Message to display/return
+        filename (str, optional): Output filename for JSON format
+    
+    Returns:
+        dict: For JSON format, returns {"message": message}
+        None: For other formats, logs the message and returns None
+    """
+    if fmt == 'json':
+        result = {"message": message}
+        if filename:
+            _, ext = os.path.splitext(filename)
+            if not ext:
+                filename += '.json'
+            logging.info('Report path: %s', os.path.abspath(filename))
+            with open(filename, 'w') as fd:
+                json.dump(result, fd, indent=2, default=base.json_serialized)
+            return None
+        return result
+    logging.info(message)
+    return None
 
 def register_commands(commands):
     commands['search'] = SearchCommand()
@@ -76,30 +103,36 @@ def register_command_info(aliases, command_info):
     for p in [get_info_parser, search_parser, list_parser, list_sf_parser, list_team_parser,
               record_history_parser, shared_records_report_parser, record_edit.record_add_parser,
               record_edit.record_update_parser, record_edit.append_parser, record_edit.download_parser,
-              record_edit.delete_attachment_parser, clipboard_copy_parser, record_totp.totp_parser]:
+              record_edit.upload_parser, record_edit.delete_attachment_parser, clipboard_copy_parser, record_totp.totp_parser,
+              rm_parser, record_file_report.file_report_parser]:
         command_info[p.prog] = p.description
-    command_info['trash'] = 'Manage deleted items.'
+    command_info['trash'] = 'Manage records in the deleted items'
+    command_info['find-password'] = 'Find and display password for a record'
 
 
-get_info_parser = argparse.ArgumentParser(prog='get', description='Get the details of a record/folder/team by UID or title.')
+get_info_parser = argparse.ArgumentParser(prog='get', description='Get the details of a record/folder/team by UID or title')
 get_info_parser.add_argument('--unmask', dest='unmask', action='store_true', help='display hidden field content')
 get_info_parser.add_argument('--legacy', dest='legacy', action='store_true',
                              help='json output: display typed records as legacy')
+get_info_parser.add_argument('--include-dag', dest='include_dag', action='store_true',
+                             help='include DAG/GraphSync information in json output')
 get_info_parser.add_argument(
     '--format', dest='format', action='store', choices=['detail', 'json', 'password', 'fields'],
     default='detail', help='output format')
 get_info_parser.add_argument('uid', type=str, action='store', help='UID or title to search for')
 
 
-search_parser = argparse.ArgumentParser(prog='search', description='Search the vault. Can use a regular expression.')
+search_parser = argparse.ArgumentParser(prog='search', description='Search the vault using a regular expression')
 search_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 search_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 search_parser.add_argument('-c', '--categories', dest='categories', action='store',
                            help='One or more of these letters for categories to search: "r" = records, '
                                 '"s" = shared folders, "t" = teams')
+search_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
+                           default='table', help='output format')
 
 
-list_parser = argparse.ArgumentParser(prog='list', description='List records.', parents=[base.report_output_parser])
+list_parser = argparse.ArgumentParser(prog='list', description='List all records', parents=[base.report_output_parser])
 list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 list_parser.add_argument('-t', '--type', dest='record_type', action='append',
                          help='List records of certain types. Can be repeated')
@@ -107,11 +140,11 @@ list_parser.add_argument('--field', dest='field', action='append', help='Filter 
 list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 
 
-list_sf_parser = argparse.ArgumentParser(prog='list-sf', description='List shared folders.', parents=[base.report_output_parser])
+list_sf_parser = argparse.ArgumentParser(prog='list-sf', description='List all shared folders', parents=[base.report_output_parser])
 list_sf_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 
 
-list_team_parser = argparse.ArgumentParser(prog='list-team', description='List teams.', parents=[base.report_output_parser])
+list_team_parser = argparse.ArgumentParser(prog='list-team', description='List all teams', parents=[base.report_output_parser])
 verbose_group = list_team_parser.add_mutually_exclusive_group()
 verbose_group.add_argument('-v', '--verbose', action='store_true', help="verbose output (include team membership info)")
 verbose_group.add_argument('-vv', '--very-verbose', action='store_true', help="more verbose output (fetches team membership info not in cache)")
@@ -122,7 +155,7 @@ list_team_parser.add_argument('--sort', dest='sort', choices=['company', 'team_u
 
 
 record_history_parser = argparse.ArgumentParser(prog='record-history', parents=[base.report_output_parser],
-                                                description='Show the history of a record modifications.')
+                                                description='Show the revision history of a record')
 record_history_parser.add_argument(
     '-a', '--action', dest='action', choices=['list', 'diff', 'view', 'restore'], action='store',
     help="filter by record history type. (default: 'list'). --revision required with 'restore' action.",
@@ -135,7 +168,7 @@ record_history_parser.add_argument('record', nargs='?', type=str, action='store'
 
 
 shared_records_report_parser = argparse.ArgumentParser(prog='shared-records-report', parents=[base.report_output_parser],
-                                                       description='Report shared records for a logged-in user.')
+                                                       description='Report shared records for a logged-in user')
 shared_records_report_parser.add_argument('-tu', '--show-team-users', dest='show_team_users', action='store_true',
                                           help='show members of team for records shared via share team folders.')
 shared_records_report_parser.add_argument('--all-records', dest='all_records', action='store_true',
@@ -144,7 +177,7 @@ shared_folder_help = 'Optional (w/ multiple values allowed). Path or UID of fold
 shared_records_report_parser.add_argument('folder', type=str, nargs='*', help=shared_folder_help)
 
 clipboard_copy_parser = argparse.ArgumentParser(
-    prog='clipboard-copy', description='Retrieve the password for a specific record.')
+    prog='clipboard-copy', description='Retrieve the password for a specific record')
 clipboard_copy_parser.add_argument('--username', dest='username', action='store', help='match login name (optional)')
 clipboard_copy_parser.add_argument(
     '--output', dest='output', choices=['clipboard', 'stdout', 'stdouthidden', 'variable'], default='clipboard', action='store',
@@ -165,7 +198,7 @@ clipboard_copy_parser.add_argument(
 clipboard_copy_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 
 
-rm_parser = argparse.ArgumentParser(prog='rm', description='Remove a record.')
+rm_parser = argparse.ArgumentParser(prog='rm', description='Remove or delete a record from the vault')
 rm_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt')
 rm_parser.add_argument('records', nargs='*', type=str, help='record path or UID. Can be repeated.')
 
@@ -402,6 +435,8 @@ class RecordGetUidCommand(Command):
                         ro['share_admins'] = admins
 
                     ro['revision'] = r.revision
+                    if version == 3 and kwargs.get('include_dag') is True:
+                        self.include_dag(params, ro, r)
 
                     print(json.dumps(ro, indent=2))
                 elif fmt == 'password':
@@ -747,6 +782,99 @@ class RecordGetUidCommand(Command):
                 logging.info('\nTo view details of a specific item, use the get command with its UID.')
             return
 
+    def include_dag(self, params, ro, r):
+        """Include DAG/GraphSync information for the record.
+
+        Args:
+            params: Command parameters
+            ro: Record output dictionary to be modified
+            r: Record object
+        """
+        valid_record_types = {'pamDatabase', 'pamDirectory', 'pamMachine'}
+        if r.record_type not in valid_record_types:
+            return
+
+        # Initialize structures once - always present with nullable values
+        ro['associatedCredentials'] = {
+            'adminCredential': None,
+            'launchCredential': None,
+            'linkedCredentials': None
+        }
+        ro['pamSettingsEnabled'] = {
+            'connections': None,
+            'tunneling': None,
+            'rotation': None,
+            'sessionRecording': None,
+            'typescriptRecording': None,
+            'remoteBrowserIsolation': None
+        }
+
+        try:
+            # Get keeper tokens for DAG access
+            from .tunnel.port_forward.tunnel_helpers import get_keeper_tokens
+            from .tunnel.port_forward.TunnelGraph import TunnelDAG
+            from ..keeper_dag import EdgeType
+
+            encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
+            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, r.record_uid)
+
+            if not tdag.linking_dag.has_graph:
+                return
+
+            record_vertex = tdag.linking_dag.get_vertex(r.record_uid)
+            if record_vertex is None:
+                return
+
+            # Extract allowedSettings from vertex content
+            try:
+                content = record_vertex.content_as_dict
+                if content and 'allowedSettings' in content:
+                    allowed_settings = content['allowedSettings']
+                    if isinstance(allowed_settings, dict):
+                        ro['pamSettingsEnabled']['connections'] = allowed_settings.get('connections')
+                        ro['pamSettingsEnabled']['tunneling'] = allowed_settings.get('portForwards')
+                        ro['pamSettingsEnabled']['rotation'] = allowed_settings.get('rotation')
+                        ro['pamSettingsEnabled']['sessionRecording'] = allowed_settings.get('sessionRecording')
+                        ro['pamSettingsEnabled']['typescriptRecording'] = allowed_settings.get('typescriptRecording')
+                        ro['pamSettingsEnabled']['remoteBrowserIsolation'] = allowed_settings.get('remoteBrowserIsolation')
+            except Exception:
+                pass
+
+            # Find all ACL links where Head is recordUID
+            admin_credential = None
+            launch_credential = None
+            linked_credentials = []
+
+            # Get vertices that have ACL edges pointing to this record (has_vertices)
+            for user_vertex in record_vertex.has_vertices(EdgeType.ACL):
+                acl_edge = user_vertex.get_edge(record_vertex, EdgeType.ACL)
+                if acl_edge:
+                    try:
+                        content = acl_edge.content_as_dict or {}
+                        # belongs_to = content.get('belongs_to', False)
+                        is_admin = content.get('is_admin', False)
+                        is_launch_credential = content.get('is_launch_credential', None)
+
+                        # Add to linked credentials list
+                        if user_vertex.uid not in linked_credentials:
+                            linked_credentials.append(user_vertex.uid)
+
+                        if is_admin and admin_credential is None:
+                            admin_credential = user_vertex.uid
+
+                        if is_launch_credential and launch_credential is None:
+                            launch_credential = user_vertex.uid
+                    except Exception:
+                        pass
+
+            # Update associatedCredentials with found values
+            ro['associatedCredentials']['adminCredential'] = admin_credential
+            ro['associatedCredentials']['launchCredential'] = launch_credential
+            ro['associatedCredentials']['linkedCredentials'] = linked_credentials if linked_credentials else None
+
+        except Exception as e:
+            logging.debug(f"Error accessing DAG for record {r.record_uid}: {e}")
+
 
 class SearchCommand(Command):
     def get_parser(self):
@@ -760,38 +888,96 @@ class SearchCommand(Command):
         categories = (kwargs.get('categories') or 'rst').lower()
         verbose = kwargs.get('verbose') is True
         skip_details = not verbose
+        fmt = kwargs.get('format', 'table')
+
+        all_results = []
 
         if 'r' in categories:
             records = list(vault_extensions.find_records(params, pattern))
             if records:
-                logging.info('')
-                table = []
-                headers = ['Record UID', 'Type', 'Title', 'Description']
-                for record in records:
-                    row = [record.record_uid, record.record_type, record.title,
-                           vault_extensions.get_record_description(record)]
-                    table.append(row)
-                table.sort(key=lambda x: (x[2] or '').lower())
-
-                base.dump_report_data(table, headers, row_number=True, column_width=None if verbose else 40)
-                if verbose and len(records) < 5:
-                    get_command = RecordGetUidCommand()
+                if fmt == 'json':
                     for record in records:
-                        get_command.execute(params, uid=record.record_uid)
+                        result_item = {
+                            'type': 'record',
+                            'record_uid': record.record_uid,
+                            'record_type': record.record_type,
+                            'title': record.title,
+                            'description': vault_extensions.get_record_description(record)
+                        }
+                        all_results.append(result_item)
+                else:
+                    logging.info('')
+                    table = []
+                    headers = ['Record UID', 'Type', 'Title', 'Description']
+                    for record in records:
+                        row = [record.record_uid, record.record_type, record.title,
+                               vault_extensions.get_record_description(record)]
+                        table.append(row)
+                    table.sort(key=lambda x: (x[2] or '').lower())
+
+                    base.dump_report_data(table, headers, row_number=True, column_width=None if verbose else 40)
+                    if verbose and len(records) < 5:
+                        get_command = RecordGetUidCommand()
+                        for record in records:
+                            get_command.execute(params, uid=record.record_uid)
 
         # Search shared folders
         if 's' in categories:
             results = api.search_shared_folders(params, pattern)
             if results:
-                logging.info('')
-                display.formatted_shared_folders(results, params=params, skip_details=skip_details)
+                if fmt == 'json':
+                    for sf in results:
+                        result_item = {
+                            'type': 'shared_folder',
+                            'shared_folder_uid': sf.shared_folder_uid,
+                            'name': sf.name,
+                            'can_edit': getattr(sf, 'can_edit', False),
+                            'can_share': getattr(sf, 'can_share', False)
+                        }
+                        all_results.append(result_item)
+                else:
+                    logging.info('')
+                    display.formatted_shared_folders(results, params=params, skip_details=skip_details)
 
         # Search teams
         if 't' in categories:
             results = api.search_teams(params, pattern)
             if results:
-                logging.info('')
-                display.formatted_teams(results, params=params, skip_details=skip_details)
+                if fmt == 'json':
+                    for team in results:
+                        result_item = {
+                            'type': 'team',
+                            'team_uid': team.team_uid,
+                            'name': team.name,
+                            'restrict_edit': getattr(team, 'restrict_edit', False),
+                            'restrict_view': getattr(team, 'restrict_view', False),
+                            'restrict_share': getattr(team, 'restrict_share', False)
+                        }
+                        all_results.append(result_item)
+                else:
+                    logging.info('')
+                    display.formatted_teams(results, params=params, skip_details=skip_details)
+
+        if fmt == 'json':
+            if all_results:
+                table = []
+                headers = ['type', 'uid', 'name', 'details']
+                
+                for item in all_results:
+                    if item['type'] == 'record':
+                        row = [item['type'], item['record_uid'], item['title'], 
+                               f"Type: {item['record_type']}, Description: {item['description']}"]
+                    elif item['type'] == 'shared_folder':
+                        row = [item['type'], item['shared_folder_uid'], item['name'],
+                               f"Can Edit: {item['can_edit']}, Can Share: {item['can_share']}"]
+                    elif item['type'] == 'team':
+                        row = [item['type'], item['team_uid'], item['name'],
+                               f"Restrict Edit: {item['restrict_edit']}, Restrict View: {item['restrict_view']}, Restrict Share: {item['restrict_share']}"]
+                    table.append(row)
+                
+                return base.dump_report_data(table, headers, fmt='json')
+            else:
+                return base.dump_report_data([], ['type', 'uid', 'name', 'details'], fmt='json')
 
 
 class RecordListCommand(Command):
@@ -849,7 +1035,7 @@ class RecordListCommand(Command):
             return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
                                          row_number=True, column_width=None if verbose else 40)
         else:
-            logging.info('No records are found')
+            return handle_empty_result(fmt, 'No records are found', kwargs.get('output'))
 
 
 class RecordListSfCommand(Command):
@@ -871,7 +1057,7 @@ class RecordListSfCommand(Command):
             return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
                                     row_number=True)
         else:
-            logging.info('No shared folders are found')
+            return handle_empty_result(fmt, 'No shared folders are found', kwargs.get('output'))
 
 
 class RecordListTeamCommand(Command):
@@ -923,7 +1109,7 @@ class RecordListTeamCommand(Command):
             return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'),
                                     row_number=True)
         else:
-            logging.info('No teams are found')
+            return handle_empty_result(fmt, 'No teams are found', kwargs.get('output'))
 
     @classmethod
     def get_team_members(self, params, teams, allow_fetch):
@@ -957,30 +1143,30 @@ class RecordListTeamCommand(Command):
 
 
 
-trash_list_parser = argparse.ArgumentParser(prog='trash list', description='Displays a list of deleted records.',
+trash_list_parser = argparse.ArgumentParser(prog='trash list', description='Displays a list of deleted records',
                                             parents=[base.report_output_parser])
 trash_list_parser.add_argument('--reload', dest='reload', action='store_true', help='reload deleted records')
 trash_list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help="verbose output")
 trash_list_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
 
 
-trash_get_parser = argparse.ArgumentParser(prog='trash get', description='Get the details of a deleted record.')
+trash_get_parser = argparse.ArgumentParser(prog='trash get', description='Get the details of a deleted record')
 trash_get_parser.add_argument('record', action='store', help='Deleted record UID')
 
-trash_restore_parser = argparse.ArgumentParser(prog='trash restore', description='Restores deleted records.')
+trash_restore_parser = argparse.ArgumentParser(prog='trash restore', description='Restores deleted records')
 trash_restore_parser.add_argument('-f', '--force', dest='force', action='store_true',
                                   help='do not prompt for confirmation')
 trash_restore_parser.add_argument('records', nargs='+', type=str, action='store',
                                   help='Record UID or search pattern')
 
-trash_unshare_parser = argparse.ArgumentParser(prog='trash unshare', description='Remove shares from deleted records.')
+trash_unshare_parser = argparse.ArgumentParser(prog='trash unshare', description='Remove shares from deleted records')
 trash_unshare_parser.add_argument('-f', '--force', dest='force', action='store_true',
                                   help='do not prompt for confirmation')
 trash_unshare_parser.add_argument('records', nargs='+', type=str, action='store',
                                   help='Record UID or search pattern. \"*\" ')
 
 trash_purge_parser = argparse.ArgumentParser(prog='trash purge',
-                                             description='Removes all deleted record from the trash bin.')
+                                             description='Removes all deleted records from the trash bin')
 trash_purge_parser.add_argument('-f', '--force', dest='force', action='store_true',
                                 help='do not prompt for confirmation')
 
@@ -1188,8 +1374,8 @@ class TrashListCommand(Command, TrashMixin):
         verbose = kwargs.get('verbose') is True
 
         if len(deleted_records) == 0 and len(orphaned_records) == 0 and len(shared_folders) == 0:
-            logging.info('Trash is empty')
-            return
+            fmt = kwargs.get('format', 'table')
+            return handle_empty_result(fmt, 'Trash is empty', kwargs.get('output'))
 
         pattern = kwargs.get('pattern')
         if pattern:
@@ -2112,6 +2298,10 @@ class RecordRemoveCommand(Command):
         return rm_parser
 
     def execute(self, params, **kwargs):
+        from ..enforcement import MasterPasswordReentryEnforcer
+        if not MasterPasswordReentryEnforcer.check_and_enforce(params, "record_level"):
+            raise CommandError('rm', 'Operation cancelled: Re-authentication failed')
+
         records_to_delete = []     # type: List[Tuple[BaseFolderNode, str]]
         record_names = kwargs.get('records')
         rq_obj_limit = 999

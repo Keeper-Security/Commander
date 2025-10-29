@@ -571,6 +571,7 @@ class LoginV3Flow:
 
         # license
         params.license = acct_summary_dict_snake_case['license']
+        params.enterprise_id = params.license.get('enterprise_id')
 
     @staticmethod
     def verifyDevice(params,                 # type: KeeperParams

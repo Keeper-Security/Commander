@@ -92,7 +92,8 @@ if sys.version_info >= (3, 8):
             tree_response = "Root\n  Folder1\n    SubFolder1"
             parsed = parse_keeper_response("tree", tree_response)
             self.assertEqual(parsed["command"], "tree")
-            self.assertIsInstance(parsed["data"], list)
+            self.assertIsInstance(parsed["data"], dict)
+            self.assertIn("tree", parsed["data"])
 
         def test_capture_output(self):
             """Test command output capture"""
@@ -101,7 +102,7 @@ if sys.version_info >= (3, 8):
             mock_params = {"session": "active"}
 
             with mock.patch('keepercommander.cli.do_command', return_value=expected_output):
-                return_value, output = CommandExecutor.capture_output(mock_params, test_command)
+                return_value, output, logs = CommandExecutor.capture_output_and_logs(mock_params, test_command)
                 self.assertEqual(return_value, expected_output)
 
         @unittest.skip

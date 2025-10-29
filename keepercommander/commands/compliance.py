@@ -84,7 +84,7 @@ def register_commands(commands):
 def register_command_info(aliases, command_info):
     aliases['cr'] = ('compliance', 'report')
     aliases['compliance-report'] = ('compliance', 'report')
-    command_info['compliance'] = 'Compliance Reporting'
+    command_info['compliance'] = 'Compliance Reporting for auditing'
 
 
 def get_email(sdata, user_uid):    # type: (SoxData, int) -> str

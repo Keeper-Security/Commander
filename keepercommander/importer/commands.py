@@ -40,11 +40,11 @@ def register_enterprise_commands(commands):
 
 
 def register_command_info(aliases, command_info):
-    for p in [import_parser, export_parser, download_membership_parser, apply_membership_parser, download_record_type_parser]:
+    for p in [import_parser, export_parser, download_membership_parser, apply_membership_parser, download_record_type_parser, load_record_type_parser]:
         command_info[p.prog] = p.description
 
 
-import_parser = argparse.ArgumentParser(prog='import', description='Import data from a local file into Keeper.')
+import_parser = argparse.ArgumentParser(prog='import', description='Import vault data from a local file into Keeper')
 import_parser.add_argument('--display-csv', '-dc', dest='display_csv', action='store_true',
                            help='display Keeper CSV import instructions')
 import_parser.add_argument('--display-json', '-dj', dest='display_json', action='store_true',
@@ -86,7 +86,7 @@ import_parser.error = raise_parse_exception
 import_parser.exit = suppress_exit
 
 
-export_parser = argparse.ArgumentParser(prog='export', description='Export data from Keeper to a local file.')
+export_parser = argparse.ArgumentParser(prog='export', description='Export vault data from Keeper to a local file')
 export_parser.add_argument('--format', dest='format', choices=['json', 'csv', 'keepass'], required=True,
                            help='file format')
 export_parser.add_argument('--max-size', dest='max_size',
@@ -104,7 +104,7 @@ export_parser.error = raise_parse_exception
 export_parser.exit = suppress_exit
 
 
-download_membership_parser = argparse.ArgumentParser(prog='download-membership', description='Unload shared folder membership to JSON file.')
+download_membership_parser = argparse.ArgumentParser(prog='download-membership', description='Unload shared folder membership to a JSON file')
 download_membership_parser.add_argument('--source', dest='source', choices=['keeper', 'lastpass', 'thycotic'], required=True, help='Shared folder membership source')
 download_membership_parser.add_argument('--folder', dest='folder', action='store', help='import into a separate folder.')
 download_membership_parser.add_argument('-p', '--permissions', dest='permissions', action='store', help='force shared folder permissions: manage (U)sers, manage (R)ecords')
@@ -119,14 +119,14 @@ download_membership_parser.error = raise_parse_exception
 download_membership_parser.exit = suppress_exit
 
 
-apply_membership_parser = argparse.ArgumentParser(prog='apply-membership', description='Loads shared folder membership from JSON file into Keeper.')
+apply_membership_parser = argparse.ArgumentParser(prog='apply-membership', description='Loads shared folder membership from JSON file')
 apply_membership_parser.add_argument('--full-sync', dest='full_sync', action='store_true', help='Update and remove membership also.')
 apply_membership_parser.add_argument('name', type=str, nargs='?', help='Input file name. "shared_folder_membership.json" if omitted.')
 apply_membership_parser.error = raise_parse_exception
 apply_membership_parser.exit = suppress_exit
 
 download_record_type_parser = argparse.ArgumentParser(
-    prog='download-record-types', description='Unload custom record types to JSON file.')
+    prog='download-record-types', description='Unload custom record types to a JSON file')
 download_record_type_parser.add_argument(
     '--source', dest='source', choices=['keeper', 'thycotic'], required=True, help='Record type source')
 download_record_type_parser.add_argument(
@@ -137,7 +137,7 @@ download_record_type_parser.add_argument(
 
 
 load_record_type_parser = argparse.ArgumentParser(
-    prog='load_record_types', description='Loads custom record types from JSON file into Keeper.')
+    prog='load-record-types', description='Loads custom record types from JSON file into Keeper.')
 load_record_type_parser.add_argument(
     'name', type=str, nargs='?', help='Input file name. "record_types.json" if omitted.')
 

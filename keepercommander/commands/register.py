@@ -64,10 +64,10 @@ def register_command_info(aliases, command_info):
     aliases['share'] = 'one-time-share'
 
     for p in [share_record_parser, share_folder_parser, share_report_parser, record_permission_parser,
-              find_duplicate_parser]:
+              find_duplicate_parser, find_ownerless_parser, create_account_parser]:
         command_info[p.prog] = p.description
 
-    command_info['share'] = 'Manage One-Time Shares'
+    command_info['one-time-share'] = 'Manage and create One-Time Shares'
 
 
 share_record_parser = argparse.ArgumentParser(prog='share-record', description='Change the sharing permissions of an individual record')
@@ -89,7 +89,7 @@ expiration.add_argument('--expire-in', dest='expire_in', action='store',
                         help='share expiration: never or period')
 share_record_parser.add_argument('record', nargs='?', type=str, action='store', help='record/shared folder path/UID')
 
-share_folder_parser = argparse.ArgumentParser(prog='share-folder', description='Change a shared folders permissions.')
+share_folder_parser = argparse.ArgumentParser(prog='share-folder', description='Change the permissions of a shared folder')
 share_folder_parser.add_argument('-a', '--action', dest='action', choices=['grant','remove'],
                                  default='grant', action='store', help='shared folder action. \'grant\' if omitted')
 share_folder_parser.add_argument('-e', '--email', dest='user', action='append',
@@ -116,7 +116,7 @@ expiration.add_argument('--expire-in', dest='expire_in', action='store', metavar
                         help='share expiration: never or period (<NUMBER>[(y)ears|(mo)nths|(d)ays|(h)ours(mi)nutes]')
 share_folder_parser.add_argument('folder', nargs='+', type=str, action='store', help='shared folder path or UID')
 
-share_report_parser = argparse.ArgumentParser(prog='share-report', description='Display report of shared records.',
+share_report_parser = argparse.ArgumentParser(prog='share-report', description='Generates a report of shared records',
                                               parents=[base.report_output_parser])
 share_report_parser.add_argument('-r', '--record', dest='record', action='append', help='record name or UID')
 share_report_parser.add_argument('-e', '--email', dest='user', action='append', help='user email or team name')
@@ -138,7 +138,7 @@ share_report_parser.add_argument('-tu', '--show-team-users', action='store_true'
 container_filter_help = 'path(s) or UID(s) of container(s) by which to filter records'
 share_report_parser.add_argument('container', nargs='*', type=str, action='store', help=container_filter_help)
 
-record_permission_parser = argparse.ArgumentParser(prog='record-permission', description='Modify a records permissions.')
+record_permission_parser = argparse.ArgumentParser(prog='record-permission', description='Modify the permissions of a record')
 record_permission_parser.add_argument('--dry-run', dest='dry_run', action='store_true',
                                       help='Display the permissions changes without committing them')
 record_permission_parser.add_argument('--force', dest='force', action='store_true',
@@ -243,6 +243,10 @@ class ShareFolderCommand(Command):
         return share_folder_parser
 
     def execute(self, params, **kwargs):
+        from ..enforcement import MasterPasswordReentryEnforcer
+        if not MasterPasswordReentryEnforcer.check_and_enforce(params, "record_level"):
+            raise CommandError('share-folder', 'Operation cancelled: Re-authentication failed')
+
         def get_share_admin_obj_uids(obj_names, obj_type):
             # type: (List[Optional[str], int], int) -> Optional[Set[str]]
             if not obj_names:
@@ -907,6 +911,10 @@ class ShareRecordCommand(Command):
         if not emails:
             raise CommandError('share-record', '\'email\' parameter is missing')
 
+        from ..enforcement import MasterPasswordReentryEnforcer
+        if not MasterPasswordReentryEnforcer.check_and_enforce(params, "record_level"):
+            raise CommandError('share-record', 'Operation cancelled: Re-authentication failed')
+
         force = kwargs.get('force') is True
         action = kwargs.get('action') or 'grant'
         use_contacts = kwargs.get('contacts_only')
@@ -935,9 +943,12 @@ class ShareRecordCommand(Command):
                     emails = [*good_emails, *replacements]
 
         if action == 'cancel':
-            answer = base.user_choice(
-                bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC + 'This action cannot be undone.\n\n' +
-                'Do you want to cancel all shares with user(s): ' + ', '.join(emails) + ' ?', 'yn', 'n')
+            if not force:
+                answer = base.user_choice(
+                    bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC + 'This action cannot be undone.\n\n' +
+                    'Do you want to cancel all shares with user(s): ' + ', '.join(emails) + ' ?', 'yn', 'n')
+            else:
+                answer = 'y'
             if answer.lower() in {'y', 'yes'}:
                 for email in emails:
                     rq = {
@@ -2393,7 +2404,11 @@ class OneTimeShareCreateCommand(Command):
                 query = 'editable=true'
 
             api.communicate_rest(params, rq, 'vault/external_share_add', rs_type=APIRequest_pb2.Device)
-            url = urlunparse(('https', params.server, '/vault/share/', None, query, utils.base64_url_encode(client_key)))
+            # Extract hostname from params.server in case it contains full URL with protocol
+            from urllib.parse import urlparse
+            parsed = urlparse(params.server)
+            server_netloc = parsed.netloc if parsed.netloc else parsed.path  # parsed.path for plain hostname
+            url = urlunparse(('https', server_netloc, '/vault/share/', None, query, utils.base64_url_encode(client_key)))
             urls[record_uid] = str(url)
 
         if params.batch_mode:

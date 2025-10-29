@@ -24,8 +24,8 @@ if sys.version_info >= (3, 8):
             with self.app.test_request_context('/test', method='POST'):
                 response = auth_check(lambda *args, **kwargs: ({'status': 'success'}, 200))()
                 self.assertEqual(response[1], 401)
-                self.assertEqual(response[0]['status'], 'fail')
-                self.assertIn('api key', response[0]['message'])
+                self.assertEqual(response[0]['status'], 'error')
+                self.assertIn('api key', response[0]['error'])
 
         @mock.patch.object(ConfigReader, 'read_config')
         def test_auth_check_invalid_api_key(self, mock_read_config):
@@ -36,7 +36,7 @@ if sys.version_info >= (3, 8):
                                             headers={'api-key': 'test_key'}):
                 response = auth_check(lambda *args, **kwargs: ({'status': 'success'}, 200))()
                 self.assertEqual(response[1], 401)
-                self.assertEqual(response[0]['status'], 'fail')
+                self.assertEqual(response[0]['status'], 'error')
 
         @mock.patch.object(ConfigReader, 'read_config')
         def test_auth_check_expired_key(self, mock_read_config):
@@ -50,8 +50,8 @@ if sys.version_info >= (3, 8):
                                             headers={'api-key': 'test_key'}):
                 response = auth_check(lambda *args, **kwargs: ({'status': 'success'}, 200))()
                 self.assertEqual(response[1], 401)
-                self.assertEqual(response[0]['status'], 'fail')
-                self.assertIn('expired', response[0]['message'])
+                self.assertEqual(response[0]['status'], 'error')
+                self.assertIn('expired', response[0]['error'])
 
         # def test_security_check_blocked_ip(self):
         #     """Test security check with blocked IP"""
@@ -98,5 +98,5 @@ if sys.version_info >= (3, 8):
                                             json={"command": "delete"}):
                 response = policy_check(lambda *args, **kwargs: ({'status': 'success'}, 200))()
                 self.assertEqual(response[1], 403)
-                self.assertEqual(response[0]['status'], 'fail')
-                self.assertIn('Not permitted', response[0]['message'])
+                self.assertEqual(response[0]['status'], 'error')
+                self.assertIn('Not permitted', response[0]['error'])

@@ -22,6 +22,7 @@ import requests
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
 from .base import Command, GroupCommand, user_choice, dump_report_data, report_output_parser, field_to_title, FolderMixin
+from .discoveryrotation import PAMLegacyCommand
 from .folder import FolderMoveCommand
 from .ksm import KSMCommand
 from .pam import gateway_helper, router_helper
@@ -49,7 +50,7 @@ def register_commands(commands):
 
 
 def register_command_info(_, command_info):
-    command_info['pam'] = 'Manage PAM Components.'
+    command_info['pam'] = 'Manage PAM Components (Legacy).'
 
 
 class PAMControllerCommand(GroupCommand):
@@ -60,6 +61,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('config', PAMConfigurationsCommand(), 'Manage PAM Configurations', 'c')
         self.register_command('rotation', PAMRotationCommand(), 'Manage Rotations', 'r')
         self.register_command('action', GatewayActionCommand(), 'Execute action on the Gateway', 'a')
+        self.register_command('legacy', PAMLegacyCommand(), 'Toggle PAM Legacy commands: ON/OFF')
         # self.register_command('tunnel', PAMTunnelCommand(), 'Manage Tunnels', 't')
 
 
