@@ -329,6 +329,10 @@ def do_command(params, command_line):
         try:
             import keeper_pam_webrtc_rs
             new_debug_state = debug_manager.is_console_debug_on(params.batch_mode)
+
+            level = logging.DEBUG if new_debug_state else logging.INFO
+            logging.getLogger('keeper_pam_webrtc_rs').setLevel(level)
+
             keeper_pam_webrtc_rs.set_verbose_logging(new_debug_state)
             logging.debug('Rust verbose logging %s', 'ON' if new_debug_state else 'OFF')
         except ImportError:

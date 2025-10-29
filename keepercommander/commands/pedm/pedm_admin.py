@@ -8,8 +8,10 @@ import fnmatch
 import json
 import os.path
 import re
+from urllib.parse import urlparse, urlunparse
 from typing import Any, List, Optional, Dict, Union, Tuple, Set, Pattern
 
+import requests
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
@@ -18,15 +20,8 @@ from ...params import KeeperParams
 from ...pedm import admin_plugin, pedm_shared, admin_types, admin_storage
 from ...proto import NotificationCenter_pb2, pedm_pb2
 from .. import base
-from ..helpers import report_utils, prompt_utils
-
-
-def get_pedm_plugin(context: KeeperParams) -> admin_plugin.PedmPlugin:
-    if context._pedm_plugin is None:
-        context._pedm_plugin = admin_plugin.PedmPlugin(context)
-    if context._pedm_plugin.need_sync:
-        context._pedm_plugin.sync_down()
-    return context._pedm_plugin
+from ..helpers import report_utils, prompt_utils, whoami
+from . import pedm_aram
 
 
 class PedmUtils:
@@ -171,7 +166,7 @@ class PedmCommand(base.GroupCommandNew):
         self.register_command_new(PedmPolicyCommand(), 'policy', 'p')
         self.register_command_new(PedmCollectionCommand(), 'collection', 'c')
         self.register_command_new(PedmApprovalCommand(), 'approval')
-        #self.register_command_new(pedm_aram.PedmReportCommand(), 'report')
+        self.register_command_new(pedm_aram.PedmReportCommand(), 'report')
         #self.register_command_new(PedmBICommand(), 'bi')
 
 
@@ -182,7 +177,7 @@ class PedmSyncDownCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs):
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
         plugin.sync_down(reload=kwargs.get('reload') is True)
 
 
@@ -205,7 +200,7 @@ class PedmDeploymentListCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs):
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         verbose = kwargs.get('verbose') is True
         table: List[List[Any]] = []
@@ -236,15 +231,15 @@ class PedmDeploymentAddCommand(base.ArgparseCommand):
         parser = argparse.ArgumentParser(prog='add', description='Add PEDM deployments')
         parser.add_argument('-f', '--force', dest='force', action='store_true',
                             help='do not prompt for confirmation')
-        parser.add_argument('--spiffe-cert', dest='spiffe', action='store',
-                            help='File containing SPIFFE server certificate')
+        # parser.add_argument('--spiffe-cert', dest='spiffe', action='store',
+        #                     help='File containing SPIFFE server certificate')
         parser.add_argument('name', help='Deployment name')
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs):
         enterprise_data = context.enterprise
         assert enterprise_data is not None
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
         deployment_name = kwargs.get('name')
         if not deployment_name:
             raise base.CommandError('Deployment name is required')
@@ -288,14 +283,14 @@ class PedmDeploymentUpdateCommand(base.ArgparseCommand):
         parser = argparse.ArgumentParser(prog='update', description='Update PEDM deployment')
         parser.add_argument('--disable', dest='disable', action='store', choices=['on', 'off'],
                             help='do not prompt for confirmation')
-        parser.add_argument('--spiffe-cert', dest='spiffe', action='store',
-                            help='File containing SPIFFE server certificate')
+        # parser.add_argument('--spiffe-cert', dest='spiffe', action='store',
+        #                     help='File containing SPIFFE server certificate')
         parser.add_argument('--name',action='store', help='Deployment name')
         parser.add_argument('deployment', metavar='DEPLOYMENT', help='Deployment name or UID')
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs):
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
         deployment = PedmUtils.resolve_single_deployment(plugin, kwargs.get('deployment'))
         name = kwargs.get('name')
         disable_choice = kwargs.get('disable')
@@ -338,7 +333,7 @@ class PedmDeploymentDeleteCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs):
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
         deployment_names = kwargs.get('deployment')
         if isinstance(deployment_names, str):
             deployment_names = [deployment_names]
@@ -377,12 +372,14 @@ class PedmDeploymentDeleteCommand(base.ArgparseCommand):
 class PedmDeploymentDownloadCommand(base.ArgparseCommand):
     def __init__(self):
         parser = argparse.ArgumentParser(prog='download', description='Download PEDM deployment package')
-        parser.add_argument('--file', dest='file', action='store', help='File name')
+        grp = parser.add_mutually_exclusive_group()
+        grp.add_argument('--file', dest='file', action='store', help='File name')
+        grp.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='Verbose output')
         parser.add_argument('deployment', metavar='DEPLOYMENT', help='Deployment name or UID')
         super().__init__(parser)
 
-    def execute(self, context: KeeperParams, **kwargs):
-        plugin = get_pedm_plugin(context)
+    def execute(self, context: KeeperParams, **kwargs) -> Optional[str]:
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         deployment = PedmUtils.resolve_single_deployment(plugin, kwargs.get('deployment'))
         host = next((host for host, server in constants.KEEPER_PUBLIC_HOSTS.items() if server == context.server), context.server)
@@ -391,8 +388,50 @@ class PedmDeploymentDownloadCommand(base.ArgparseCommand):
         if filename:
             with open(filename, 'wt') as f:
                 f.write(token)
-        else:
+                return None
+
+        if not kwargs.get('verbose'):
             return token
+
+        path = ''
+        windows = ''
+        macos = ''
+        linux = ''
+
+        try:
+            hostname = whoami.get_hostname(context.rest_context.server_base)
+            for dc in constants.KEEPER_PUBLIC_HOSTS.values():
+                if hostname.endswith(dc):
+                    us = constants.KEEPER_PUBLIC_HOSTS['US']
+                    hostname = hostname[:-len(us)] + us
+                    break
+
+            manifest_url = urlunparse(('https', hostname, '/pam/pedm/package-manifest.json', None, None, None))
+            rs = requests.get(manifest_url)
+            manifest = rs.json()
+            core = manifest.get('Core')
+            if isinstance(core, list) and len(core) > 0:
+                latest = core[0]
+                path = latest.get('Path')
+                windows = latest.get('WindowsZip')
+                macos = latest.get('MacOsZip')
+                linux = latest.get('LinuxZip')
+        except:
+            pass
+
+        table = [['', '']]
+        if path:
+            if windows:
+                table.append(['Windows download URL', path + windows])
+            if macos:
+                table.append(['MacOS download URL', path + macos])
+            if linux:
+                table.append(['Linux download URL', path + linux])
+            table.append(['', ''])
+        table.append(['Deployment Token', token])
+        base.dump_report_data(table, ['key', 'value'], no_header=True)
+        return None
+
 
 class PedmAgentCommand(base.GroupCommandNew):
     def __init__(self):
@@ -417,7 +456,7 @@ class PedmAgentCollectionCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> Any:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         verbose = kwargs.get('verbose') is True
         collection_type: Optional[int] = kwargs.get('type')
@@ -471,7 +510,7 @@ class PedmAgentDeleteCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> Any:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
         agents = kwargs['agent']
         if isinstance(agents, str):
             agents = [agents]
@@ -503,7 +542,7 @@ class PedmAgentEditCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> Any:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         deployment_uid = kwargs.get('deployment')
         if deployment_uid:
@@ -554,7 +593,7 @@ class PedmAgentListCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> Any:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         verbose = kwargs.get('verbose') is True
         table = []
@@ -888,7 +927,7 @@ class PedmPolicyListCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> Any:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
         table: List[List[Any]] = []
         all_agents = utils.base64_url_encode(plugin.all_agents)
         headers = ['policy_uid', 'policy_name', 'policy_type', 'status', 'controls', 'users', 'machines', 'applications', 'collections']
@@ -935,7 +974,7 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         p_type = kwargs.get('policy_type')
         if p_type == 'elevation':
@@ -1051,7 +1090,7 @@ class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         policy = PedmUtils.resolve_single_policy(plugin, kwargs.get('policy'))
 
@@ -1101,7 +1140,7 @@ class PedmPolicyViewCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> Any:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         policy = PedmUtils.resolve_single_policy(plugin, kwargs.get('policy'))
 
@@ -1121,7 +1160,7 @@ class PedmPolicyDeleteCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         policies = PedmUtils.resolve_existing_policies(plugin, kwargs.get('policy'))
         to_delete = [x.policy_uid for x in policies]
@@ -1140,7 +1179,7 @@ class PedmPolicyAgentsCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         policy_args = kwargs.get('policy')
         if not isinstance(policy_args, list):
@@ -1189,7 +1228,7 @@ class PedmPolicyAssignCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         policies = PedmUtils.resolve_existing_policies(plugin, kwargs.get('policy'))
         policy_uids = [utils.base64_url_decode(x.policy_uid) for x in policies]
@@ -1240,7 +1279,7 @@ class PedmCollectionWipeOutCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         collection_type = kwargs.get('type')
         if isinstance(collection_type, int):
@@ -1263,7 +1302,7 @@ class PedmCollectionAddCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         collection: Any = kwargs.get('collection')
         collection_type = kwargs.get('type')
@@ -1304,7 +1343,7 @@ class PedmCollectionUpdateCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         collection = kwargs.get('collection')
         collection_type = kwargs.get('type')
@@ -1340,7 +1379,7 @@ class PedmCollectionDeleteCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         collection = kwargs.get('collection')
         if not collection:
@@ -1393,7 +1432,7 @@ class PedmCollectionConnectCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         col_name = kwargs.get('collection')
         collections = PedmUtils.resolve_existing_collections(plugin, [col_name])
@@ -1441,7 +1480,7 @@ class PedmCollectionDisconnectCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         col_name = kwargs.get('collection')
         collections = PedmUtils.resolve_existing_collections(plugin, [col_name])
@@ -1498,7 +1537,7 @@ class PedmCollectionListCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> Any:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         table: List[List[Any]] = []
         row: List[Any]
@@ -1593,7 +1632,7 @@ class PedmCollectionViewCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> Any:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         collection_uid = kwargs.get('collection')
         if isinstance(collection_uid, str):
@@ -1679,7 +1718,7 @@ class PedmCollectionViewCommand(base.ArgparseCommand):
 
 class PedmApprovalCommand(base.GroupCommandNew):
     def __init__(self):
-        super().__init__('Manage PEDM approval requests')
+        super().__init__('Manage PEDM approval requests and approvals')
         self.register_command_new(PedmApprovalListCommand(), 'list', 'l')
         self.register_command_new(PedmApprovalStatusCommand(), 'action', 'a')
         self.default_verb = 'list'
@@ -1695,7 +1734,7 @@ class PedmApprovalListCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> Any:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         approval_type = kwargs.get('type')
         if isinstance(approval_type, str):
@@ -1746,7 +1785,7 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
-        plugin = get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context)
 
         logger = utils.get_logger()
         def verify_uid(uids: Any) -> Optional[List[bytes]]:

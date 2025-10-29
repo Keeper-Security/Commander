@@ -34,7 +34,7 @@ import requests
 
 from .base import user_choice, suppress_exit, raise_parse_exception, dump_report_data, Command, field_to_title, report_output_parser
 from .enterprise_common import EnterpriseCommand
-from .helpers import audit_report
+from .helpers import audit_report, reporting
 from .transfer_account import EnterpriseTransferUserCommand
 from .. import api, vault, record_management
 from ..constants import EMAIL_PATTERN
@@ -89,8 +89,10 @@ help_text = 'allow retrieval of additional record-detail data if not in cache'
 audit_report_parser.add_argument('--max-record-details', dest='max_record_details', action='store_true', help=help_text)
 # Ignored / superfluous flag (kept for backward-compatibility)
 audit_report_parser.add_argument('--minimal', action='store_true', help=argparse.SUPPRESS)
-search_help = 'limit results to rows that contain the specified string'
-audit_report_parser.add_argument('pattern', nargs='?', type=str, help=search_help)
+audit_report_parser.add_argument('--regex', action='store_true', help='use regular expressions as row filter')
+search_help = ('limit results to rows that contain the specified string(s)/pattern(s). A union of keywords'
+               ' (using OR to combine the criteria) is used to filter rows when multiple keywords are specified')
+audit_report_parser.add_argument('pattern', nargs='*', type=str, help=search_help)
 
 audit_report_parser.error = raise_parse_exception
 audit_report_parser.exit = suppress_exit
@@ -138,7 +140,7 @@ aging_report_parser.error = raise_parse_exception
 aging_report_parser.exit = suppress_exit
 
 action_report_parser = argparse.ArgumentParser(prog='action-report', description='Run an action based on user activity', parents=[report_output_parser])
-action_report_target_statuses = ['no-logon', 'no-update', 'locked', 'invited', 'no-security-question-update']
+action_report_target_statuses = ['no-logon', 'no-update', 'locked', 'invited', 'no-recovery']
 action_report_parser.add_argument('--target', '-t', dest='target_user_status', action='store',
                                   choices=action_report_target_statuses, default='no-logon',
                                   help='user status to report on')
@@ -1293,13 +1295,8 @@ class AuditReportCommand(Command):
             has_aram = any((True for x in licenses[0].get('add_ons', [])
                             if x.get('name') == 'enterprise_audit_and_reporting'))
 
-        def filter_rows(rows, search_pattern):
-            if not search_pattern:
-                return rows
-            else:
-                return [r for r in rows if any(1 for f in r if f and str(f).lower().find(search_pattern) >= 0)]
-
-        pattern = (kwargs.get('pattern') or '').lower()
+        patterns = kwargs.get('pattern', '')
+        use_regex = kwargs.get('regex', False)
         report_type = kwargs.get('report_type', 'raw')
         if report_type == 'dim':
             columns = kwargs['columns']
@@ -1326,7 +1323,7 @@ class AuditReportCommand(Command):
                             table.append([row.get(x) for x in fields])
                         else:
                             table.append([row])
-                    table = filter_rows(table, pattern)
+                    table = reporting.filter_rows(table, patterns, use_regex)
                     return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
             return
@@ -1605,7 +1602,7 @@ class AuditReportCommand(Command):
                         reqs.append(rq)
                 if reqs:
                     rss = api.execute_batch(params, reqs)
-            table = filter_rows(table, pattern)
+            table = reporting.filter_rows(table, patterns, use_regex)
             return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
         else:
             if aggregates:
@@ -1629,7 +1626,7 @@ class AuditReportCommand(Command):
                         else:
                             row.append('')
                     table.append(row)
-            table = filter_rows(table, pattern)
+            table = reporting.filter_rows(table, patterns, use_regex)
             return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
     @staticmethod
@@ -2056,7 +2053,7 @@ class ActionReportCommand(EnterpriseCommand):
                 'no-update':    {*default_allowed},
                 'locked':       {*default_allowed, 'delete', 'transfer'},
                 'invited':      {*default_allowed, 'delete'},
-                'no-security-question-update': default_allowed,
+                'no-recovery': default_allowed,
                 'blocked':      {*default_allowed, 'delete'}
             }
 
@@ -2125,7 +2122,7 @@ class ActionReportCommand(EnterpriseCommand):
             'no-update': [active, days, ['record_add', 'record_update']],
             'locked': [locked, days, ['lock_user'], 'to_username'],
             'invited': [invited, days, ['send_invitation', 'auto_invite_user'], 'email'],
-            'no-security-question-update': [active, days, ['change_security_question']]
+            'no-recovery': [active, days, ['change_security_question','account_recovery_setup']]
         }
         args = args_by_status.get(target_status)
 

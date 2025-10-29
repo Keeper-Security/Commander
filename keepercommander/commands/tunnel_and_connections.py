@@ -75,37 +75,49 @@ class PAMTunnelListCommand(Command):
                 return
 
             table = []
-            headers = ['Tunnel ID', 'Listening On', 'Conversation IDs', 'Status']
+            headers = ['Record', 'Remote Target', 'Local Address', 'Conversation ID', 'Status']
 
             # Get all tube IDs
             tube_ids = tube_registry.all_tube_ids()
-            
+
             for tube_id in tube_ids:
                 # Get conversation IDs for this tube
                 conversation_ids = tube_registry.get_conversation_ids_by_tube_id(tube_id)
-                
-                # Get listening address from tunnel session
+
+                # Get tunnel session for detailed info
                 tunnel_session = get_tunnel_session(tube_id)
-                if tunnel_session and tunnel_session.host and tunnel_session.port:
-                    listening_on = f"{bcolors.OKGREEN}{tunnel_session.host}:{tunnel_session.port}{bcolors.ENDC}"
+
+                # Record title
+                record_title = tunnel_session.record_title if tunnel_session and tunnel_session.record_title else f"{bcolors.WARNING}unknown{bcolors.ENDC}"
+
+                # Remote target
+                if tunnel_session and tunnel_session.target_host and tunnel_session.target_port:
+                    remote_target = f"{tunnel_session.target_host}:{tunnel_session.target_port}"
                 else:
-                    listening_on = f"{bcolors.WARNING}unknown{bcolors.ENDC}"
-                
-                # Try to get connection state
+                    remote_target = f"{bcolors.WARNING}unknown{bcolors.ENDC}"
+
+                # Local listening address
+                if tunnel_session and tunnel_session.host and tunnel_session.port:
+                    local_addr = f"{bcolors.OKGREEN}{tunnel_session.host}:{tunnel_session.port}{bcolors.ENDC}"
+                else:
+                    local_addr = f"{bcolors.WARNING}unknown{bcolors.ENDC}"
+
+                # Conversation ID
+                conv_id = conversation_ids[0] if conversation_ids else (tunnel_session.conversation_id if tunnel_session else 'none')
+
+                # Connection state
                 try:
                     state = tube_registry.get_connection_state(tube_id)
                     status_color = f"{bcolors.OKGREEN}" if state.lower() == "connected" else f"{bcolors.WARNING}"
                     status = f"{status_color}{state}{bcolors.ENDC}"
                 except:
                     status = f"{bcolors.WARNING}unknown{bcolors.ENDC}"
-                
-                # Format conversation IDs for display
-                conv_ids_str = ', '.join(conversation_ids) if conversation_ids else 'none'
-                
+
                 row = [
-                    f"{bcolors.OKBLUE}{tube_id}{bcolors.ENDC}",
-                    listening_on,
-                    conv_ids_str,
+                    record_title,
+                    remote_target,
+                    local_addr,
+                    conv_id,
                     status,
                 ]
                 table.append(row)
@@ -352,7 +364,6 @@ class PAMTunnelStartCommand(Command):
     def execute(self, params, **kwargs):
         # Python version validation (same as before)
         from_version = [3, 8, 0]   # including
-        to_version = [3, 13, 0]    # excluding
         major_version = sys.version_info.major
         minor_version = sys.version_info.minor
         micro_version = sys.version_info.micro
@@ -360,10 +371,6 @@ class PAMTunnelStartCommand(Command):
         if (major_version, minor_version, micro_version) < (from_version[0], from_version[1], from_version[2]):
             print(f"{bcolors.FAIL}This command requires Python {from_version[0]}.{from_version[1]}.{from_version[2]} or higher. "
                   f"You are using {major_version}.{minor_version}.{micro_version}.{bcolors.ENDC}")
-            return
-        if (major_version, minor_version, micro_version) >= (to_version[0], to_version[1], to_version[2]):
-            print(f"{bcolors.FAIL}This command is compatible with Python versions below {to_version[0]}.{to_version[1]}.{to_version[2]} "
-                  f"(Current Python version: {major_version}.{minor_version}.{micro_version}){bcolors.ENDC}")
             return
 
         # Check for Rust WebRTC library availability
@@ -443,11 +450,7 @@ class PAMTunnelStartCommand(Command):
 
         # Use Rust WebRTC implementation with configurable trickle ICE
         trickle_ice = not no_trickle_ice
-        if trickle_ice:
-            print(f"{bcolors.OKBLUE}Using trickle ICE with HTTP POST sending and WebSocket receiving{bcolors.ENDC}")
-        else:
-            print(f"{bcolors.OKBLUE}Using standard ICE (trickle ICE disabled){bcolors.ENDC}")
-        result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice)
+        result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title)
         
         if result and result.get("success"):
             # The helper will show endpoint table when local socket is actually listening
