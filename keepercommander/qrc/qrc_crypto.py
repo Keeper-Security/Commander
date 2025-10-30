@@ -12,7 +12,6 @@
 import logging
 import base64
 from typing import Tuple
-from urllib.parse import urlparse
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.hashes import Hash, SHA256
@@ -23,24 +22,6 @@ QRC_MESSAGE_VERSION = 1
 QRC_CIPHER_SUITE = "HPKE_ML-KEM-768_ECDH-P256_HKDF-SHA256_AES-GCM-256"
 
 logger = logging.getLogger(__name__)
-
-def get_qrc_mlkem_key_id(server_url):
-    if not server_url:
-        return 100
-    try:
-        hostname = urlparse(server_url).netloc.lower().split(':')[0]
-        if 'govcloud.keepersecurity.us' in hostname:
-            return 104 if hostname.startswith('dev.') else 105
-        if 'keepersecurity.' in hostname:
-            if hostname.startswith('qa.'):
-                return 101
-            elif hostname.startswith('staging.'):
-                return 102
-            elif not hostname.startswith('dev.'):
-                return 103
-    except Exception:
-        pass
-    return 100
 
 def _extract_raw_key(public_key: bytes) -> bytes:
     if public_key.startswith(b'-----BEGIN PUBLIC KEY-----'):
@@ -82,13 +63,14 @@ def encrypt_qrc(transmission_key: bytes, client_ec_private_key: ec.EllipticCurve
 
 def _mlkem_encapsulation(server_mlkem_public_key: bytes) -> Tuple[bytes, bytes]:
     try:
-        from .mlkem.mlkem_core import MLKEM_768_PARAMETERS, ML_KEM
+        #from .mlkem import MLKEM_768_PARAMETERS, ML_KEM
+        from mlkem import MLKEM_768_PARAMETERS, ML_KEM
         
         raw_key = _extract_raw_key(server_mlkem_public_key)
         if len(raw_key) != 1184:
             raise ValueError(f"Invalid ML-KEM-768 key size: {len(raw_key)} bytes (expected 1184)")
         
-        ml_kem = ML_KEM(MLKEM_768_PARAMETERS, fast=True)
+        ml_kem = ML_KEM(MLKEM_768_PARAMETERS)
         return ml_kem.encaps(raw_key)
     except ImportError as e:
         logger.error(f"ML-KEM implementation not available: {e}")

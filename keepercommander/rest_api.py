@@ -23,7 +23,6 @@ from .params import RestApiContext
 from .error import KeeperApiError, Error
 from .proto import APIRequest_pb2 as proto
 from . import crypto, utils
-from .qrc.qrc_crypto import get_qrc_mlkem_key_id
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
 
 CLIENT_VERSION = 'c17.2.0'
@@ -132,13 +131,6 @@ def execute_rest(context, endpoint, payload):
     if not context.transmission_key:
         context.transmission_key = os.urandom(32)
 
-    if sys.version_info >= (3, 11):
-        qrc_key_id = get_qrc_mlkem_key_id(context.server_base)
-        if qrc_key_id in SERVER_PUBLIC_KEYS:
-            context.server_key_id = qrc_key_id
-        else:
-            logging.debug(f"QRC key {qrc_key_id} not available")
-
     if not context.server_key_id:
         context.server_key_id = 7
 
@@ -147,38 +139,43 @@ def execute_rest(context, endpoint, payload):
         run_request = False
 
         api_request = proto.ApiRequest()
-        server_public_key = SERVER_PUBLIC_KEYS[context.server_key_id]
         qrc_success = False
-        if context.server_key_id >= 100 and isinstance(server_public_key, bytes):
-            try:
-                logging.debug(f"Using QRC hybrid encryption (ML-KEM key ID: {context.server_key_id}, EC key ID: 7)")
-
-                if not hasattr(context, 'client_ec_private_key') or not context.client_ec_private_key:
-                    context.client_ec_private_key = crypto.generate_ec_key()[0]
-                
-                from .qrc.qrc_crypto import encrypt_qrc
-                qrc_message = encrypt_qrc(context.transmission_key, context.client_ec_private_key, SERVER_PUBLIC_KEYS[7], server_public_key)
-
-                api_request.qrcMessageKey.clientEcPublicKey = qrc_message['client_ec_public_key']
-                api_request.qrcMessageKey.mlKemEncapsulatedKey = qrc_message['ml_kem_encapsulated_key']
-                api_request.qrcMessageKey.data = qrc_message['data']
-                api_request.qrcMessageKey.msgVersion = qrc_message['msg_version']
-                api_request.qrcMessageKey.ecKeyId = 7
-                
-                qrc_success = True
-            except Exception as e:
-                logging.warning(f"QRC encryption failed ({e}), falling back to EC encryption")
-                context.server_key_id = 7
-                server_public_key = SERVER_PUBLIC_KEYS[7]
         
+        # Try QRC encryption if qrc_key_id is available
+        if context.qrc_key_id and context.qrc_key_id >= 100:
+            qrc_mlkem_key = SERVER_PUBLIC_KEYS.get(context.qrc_key_id)
+            if qrc_mlkem_key and isinstance(qrc_mlkem_key, bytes):
+                try:
+                    logging.debug(f"Using QRC hybrid encryption (ML-KEM key ID: {context.qrc_key_id}, EC key ID: {context.server_key_id})")
+
+                    if not hasattr(context, 'client_ec_private_key') or not context.client_ec_private_key:
+                        context.client_ec_private_key = crypto.generate_ec_key()[0]
+                    
+                    from .qrc.qrc_crypto import encrypt_qrc
+                    ec_public_key = SERVER_PUBLIC_KEYS[context.server_key_id]
+                    qrc_message = encrypt_qrc(context.transmission_key, context.client_ec_private_key, ec_public_key, qrc_mlkem_key)
+
+                    api_request.qrcMessageKey.clientEcPublicKey = qrc_message['client_ec_public_key']
+                    api_request.qrcMessageKey.mlKemEncapsulatedKey = qrc_message['ml_kem_encapsulated_key']
+                    api_request.qrcMessageKey.data = qrc_message['data']
+                    api_request.qrcMessageKey.msgVersion = qrc_message['msg_version']
+                    api_request.qrcMessageKey.ecKeyId = context.server_key_id
+                    
+                    qrc_success = True
+                except Exception as e:
+                    logging.warning(f"QRC encryption failed ({e}), falling back to EC encryption")
+        
+        # Fallback to EC encryption if QRC not available or failed
         if not qrc_success:
+            server_public_key = SERVER_PUBLIC_KEYS[context.server_key_id]
             if isinstance(server_public_key, rsa.RSAPublicKey):
                 api_request.encryptedTransmissionKey = crypto.encrypt_rsa(context.transmission_key, server_public_key)
             elif isinstance(server_public_key, ec.EllipticCurvePublicKey):
                 api_request.encryptedTransmissionKey = crypto.encrypt_ec(context.transmission_key, server_public_key)
             else:
                 raise ValueError('Invalid server public key')
-        api_request.publicKeyId = context.server_key_id
+        
+        api_request.publicKeyId = context.qrc_key_id if qrc_success else context.server_key_id
         api_request.locale = context.locale or 'en_US'
 
         api_request.encryptedPayload = crypto.encrypt_aes_v2(payload.SerializeToString(), context.transmission_key)

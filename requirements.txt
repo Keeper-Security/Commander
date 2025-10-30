@@ -24,4 +24,3 @@ pyobjc-framework-LocalAuthentication; sys_platform == "darwin" and python_versio
 winrt-runtime; sys_platform == "win32"
 winrt-Windows.Foundation; sys_platform == "win32"
 winrt-Windows.Security.Credentials.UI; sys_platform == "win32"
-setuptools

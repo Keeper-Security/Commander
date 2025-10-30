@@ -17,23 +17,37 @@ Hybrid encryption using ECDH-P256 + ML-KEM-768 for quantum-resistant security in
 ## How QRC Works
 
 ### 1. Server Detection & Key Selection
+Key selection is automatically handled by `RestApiContext` in `params.py`:
 ```python
-# rest_api.py detects server and gets appropriate key ID
-qrc_key_id = get_qrc_mlkem_key_id(server_url)
-# Returns: 100 (dev), 101 (qa), 102 (staging), 103 (prod), 104/105 (gov)
+# RestApiContext has two separate key IDs:
+#   context.server_key_id = 7 (EC key - always available as fallback)
+#   context.qrc_key_id = None or 100-105 (QRC ML-KEM key if available)
 
-# Check if we have the ML-KEM key for this server
-if qrc_key_id in SERVER_PUBLIC_KEYS:
-    use_qrc = True
-else:
-    use_qrc = False  # Fallback to EC encryption
+# QRC key determined lazily on first access based on server URL:
+#   dev.keepersecurity.com -> 100
+#   qa.keepersecurity.com -> 101
+#   staging.keepersecurity.com -> 102
+#   keepersecurity.com -> 103
+#   dev.govcloud.keepersecurity.us -> 104
+#   govcloud.keepersecurity.us -> 105
+#   other/unavailable -> None (EC only)
+
+# Determined once per context/session and reused for all subsequent calls
 ```
 
-### 2. QRC Confirmation Check
+### 2. QRC Encryption with Fallback
 ```python
-# Only proceed with QRC if:
-if context.server_key_id >= 100 and isinstance(server_public_key, bytes):
-    # QRC confirmed - proceed with hybrid encryption
+# In rest_api.py:
+# 1. Try QRC if qrc_key_id is available (>= 100)
+if context.qrc_key_id and context.qrc_key_id >= 100:
+    try:
+        # Use QRC hybrid encryption
+        # publicKeyId = context.qrc_key_id
+    except:
+        # Fall back to EC if QRC fails
+
+# 2. Use EC encryption (server_key_id=7) as fallback
+#    publicKeyId = 7
 ```
 
 ### 3. ECDH (Existing EC Implementation)
