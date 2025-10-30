@@ -40,6 +40,7 @@ class RestApiContext:
         self.server_base = server
         self.transmission_key = None
         self.__server_key_id = 7
+        self.__qrc_key_id = -1  # -1 = not determined, None = not available, 100-105 = available
         self.locale = locale
         self.__store_server_key = False
         self.proxies = None
@@ -62,8 +63,54 @@ class RestApiContext:
         self.__server_key_id = key_id
         self.__store_server_key = True
 
+    def __get_qrc_key_id(self):
+        if self.__qrc_key_id == -1:
+            self._determine_qrc_key()
+        return self.__qrc_key_id
+
     def __get_store_server_key(self):
         return self.__store_server_key
+    
+    def _determine_qrc_key(self):
+        import sys
+        
+        if sys.version_info < (3, 11) or not self.__server_base:
+            self.__qrc_key_id = None
+            return
+            
+        try:
+            hostname = urlparse(self.__server_base).netloc.lower().split(':')[0]
+            
+            # Hostname to QRC key ID mapping
+            qrc_key_map = {
+                'dev.keepersecurity.com': 100,
+                'qa.keepersecurity.com': 101,
+                'staging.keepersecurity.com': 102,
+                'keepersecurity.com': 103,
+            }
+            
+            # Check exact match first
+            qrc_key_id = qrc_key_map.get(hostname)
+            
+            # Check govcloud pattern if no exact match
+            if qrc_key_id is None and 'govcloud.keepersecurity.us' in hostname:
+                qrc_key_id = 104 if hostname.startswith('dev.') else 105
+            
+            # If still no match, QRC not available
+            if qrc_key_id is None:
+                self.__qrc_key_id = None
+                return
+            
+            from .rest_api import SERVER_PUBLIC_KEYS
+            if qrc_key_id in SERVER_PUBLIC_KEYS:
+                self.__qrc_key_id = qrc_key_id
+            else:
+                import logging
+                logging.debug(f"QRC key {qrc_key_id} not available, will use EC key 7")
+                self.__qrc_key_id = None
+                
+        except Exception:
+            self.__qrc_key_id = None
 
     def set_proxy(self, proxy_server):
         if proxy_server:
@@ -89,6 +136,7 @@ class RestApiContext:
 
     server_base = property(__get_server_base, __set_server_base)
     server_key_id = property(__get_server_key_id, __set_server_key_id)
+    qrc_key_id = property(__get_qrc_key_id)
     store_server_key = property(__get_store_server_key)
 
 
