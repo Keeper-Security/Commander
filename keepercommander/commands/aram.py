@@ -2116,35 +2116,30 @@ class ActionReportCommand(EnterpriseCommand):
 
         node_name = kwargs.get('node')
         if node_name:
-            target_node_id = None
-            if node_name.isdigit():
-                target_node_id = int(node_name)
-            else:
-                for node in params.enterprise.get('nodes', []):
-                    if node['data'].get('displayname', '').lower() == node_name.lower():
-                        target_node_id = node['node_id']
-                        break
-            
-            if target_node_id is not None:
-                def get_descendant_nodes(node_id):
-                    descendants = {node_id}
-                    for node in params.enterprise.get('nodes', []):
-                        if node.get('parent_id') == node_id:
-                            descendants.update(get_descendant_nodes(node['node_id']))
-                    return descendants
-                
-                target_nodes = get_descendant_nodes(target_node_id)
-                filtered_user_ids = {user['enterprise_user_id'] for user in params.enterprise.get('users', [])
-                                   if user.get('node_id') in target_nodes}
-                
-                active = [u for u in active if u.get('enterprise_user_id') in filtered_user_ids]
-                locked = [u for u in locked if u.get('enterprise_user_id') in filtered_user_ids]
-                invited = [u for u in invited if u.get('enterprise_user_id') in filtered_user_ids]
-            else:
+            nodes = list(self.resolve_nodes(params, node_name))
+            if len(nodes) == 0:
                 logging.warning(f'Node "{node_name}" not found')
-                active = []
-                locked = []
-                invited = []
+                return
+            if len(nodes) > 1:
+                logging.warning(f'More than one node "{node_name}" found. Use Node ID.')
+                return
+            
+            target_node_id = nodes[0]['node_id']
+            
+            def get_descendant_nodes(node_id):
+                descendants = {node_id}
+                for node in params.enterprise.get('nodes', []):
+                    if node.get('parent_id') == node_id:
+                        descendants.update(get_descendant_nodes(node['node_id']))
+                return descendants
+            
+            target_nodes = get_descendant_nodes(target_node_id)
+            filtered_user_ids = {user['enterprise_user_id'] for user in params.enterprise.get('users', [])
+                            if user.get('node_id') in target_nodes}
+            
+            active = [u for u in active if u.get('enterprise_user_id') in filtered_user_ids]
+            locked = [u for u in locked if u.get('enterprise_user_id') in filtered_user_ids]
+            invited = [u for u in invited if u.get('enterprise_user_id') in filtered_user_ids]
 
         target_status = kwargs.get('target_user_status', 'no-logon')
         days = kwargs.get('days_since')
