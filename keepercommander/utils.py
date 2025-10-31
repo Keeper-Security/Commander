@@ -14,8 +14,10 @@ import json
 import logging
 import math
 import os
+import platform
 import re
 import stat
+import subprocess
 import time
 from typing import Dict, Union
 from urllib.parse import urlparse, parse_qs, unquote
@@ -53,12 +55,29 @@ def set_file_permissions(file_path):     # type: (str) -> None
     Set secure file permissions (600) for configuration files containing sensitive data.
     This ensures only the owner can read and write the file.
     """
+    file_path = os.path.abspath(file_path)
+    
     try:
-        # Set permissions to 600 (owner read/write only)
-        os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
-        logging.debug(f'Set secure permissions (600) for file: {file_path}')
-    except OSError as e:
-        logging.warning(f'Failed to set secure permissions for {file_path}: {e}')
+        if os.path.islink(file_path):
+            logging.warning(f'Skipping permission setting on symbolic link: {file_path}')
+            return
+        
+        if platform.system() != 'Windows':
+            file_stat = os.stat(file_path)
+            if file_stat.st_uid != os.getuid():
+                logging.warning(f'Skipping permission setting on file not owned by current user: {file_path}')
+                return
+            
+            os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
+            logging.debug(f'Set secure permissions (600) for file: {file_path}')
+        else:
+            username = os.getlogin()
+            subprocess.run(["icacls", file_path, "/inheritance:r"], check=True, capture_output=True)
+            subprocess.run(["icacls", file_path, "/remove", "NT AUTHORITY\\SYSTEM", "BUILTIN\\Administrators"], check=False, capture_output=True)
+            subprocess.run(["icacls", file_path, "/grant", f"{username}:RW"], check=True, capture_output=True)
+            logging.debug(f'Set secure permissions (owner RW only) for Windows file: {file_path}')
+    except Exception:
+        logging.warning(f'Failed to set file permissions for {file_path}')
 
 
 def ensure_config_permissions(file_path):     # type: (str) -> None
@@ -66,18 +85,33 @@ def ensure_config_permissions(file_path):     # type: (str) -> None
     Check and fix file permissions for existing configuration files.
     If the file has overly permissive permissions, log a warning and fix them.
     """
+    file_path = os.path.abspath(file_path)
+    
     if not os.path.exists(file_path):
         return
     
     try:
-        current_permissions = os.stat(file_path).st_mode & 0o777
-        # Check if file is readable by group or others (anything other than 600)
-        if current_permissions != 0o600:
-            logging.warning(f'Configuration file {file_path} has insecure permissions '
-                          f'{oct(current_permissions)}. Setting to secure permissions (600).')
+        if os.path.islink(file_path):
+            logging.warning(f'Skipping permission check on symbolic link: {file_path}')
+            return
+        
+        if platform.system() != 'Windows':
+            file_stat = os.stat(file_path)
+            if file_stat.st_uid != os.getuid():
+                logging.warning(f'Skipping permission check on file not owned by current user: {file_path} (owner: {file_stat.st_uid}, current: {os.getuid()})')
+                return
+            
+            current_permissions = file_stat.st_mode & 0o777
+            if current_permissions != 0o600:
+                logging.warning(f'Configuration file {file_path} has insecure permissions '
+                              f'{oct(current_permissions)}. Setting to secure permissions (600).')
+                set_file_permissions(file_path)
+        else:
+            logging.debug(f'Checking Windows file permissions for: {file_path}')
             set_file_permissions(file_path)
-    except OSError as e:
-        logging.warning(f'Failed to check permissions for {file_path}: {e}')
+            
+    except OSError:
+        logging.warning(f'Failed to check file permissions for {file_path}')
 
 
 def current_milli_time():       # type: () -> int
