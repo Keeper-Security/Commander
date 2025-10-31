@@ -28,6 +28,6 @@ def ensure_params_loaded() -> KeeperParams:
     if not params: 
         from ...__main__ import get_params_from_config
         config_path = utils.get_default_path() / "config.json"
-        params = get_params_from_config(config_path)
+        params = get_params_from_config(str(config_path))
         init_globals(params)
     return params
