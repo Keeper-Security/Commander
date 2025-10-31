@@ -2116,6 +2116,11 @@ class ActionReportCommand(EnterpriseCommand):
 
         node_name = kwargs.get('node')
         if node_name:
+            # Validate input type
+            if not isinstance(node_name, str):
+                logging.warning(f'Invalid node parameter type: expected string, got {type(node_name).__name__}')
+                return
+            
             nodes = list(self.resolve_nodes(params, node_name))
             if len(nodes) == 0:
                 logging.warning(f'Node "{node_name}" not found')
@@ -2126,11 +2131,32 @@ class ActionReportCommand(EnterpriseCommand):
             
             target_node_id = nodes[0]['node_id']
             
+            # Validate target_node_id
+            if not isinstance(target_node_id, int) or target_node_id <= 0:
+                logging.warning(f'Invalid node ID: {target_node_id}')
+                return
+            
+            # Build parent-child lookup dictionary once to avoid deep recursion
+            all_nodes = params.enterprise.get('nodes', [])
+            children_by_parent = {}
+            for node in all_nodes:
+                parent_id = node.get('parent_id')
+                if parent_id is not None:
+                    if parent_id not in children_by_parent:
+                        children_by_parent[parent_id] = []
+                    children_by_parent[parent_id].append(node['node_id'])
+            
+            # Get all descendant nodes using iterative approach (BFS) instead of recursion
             def get_descendant_nodes(node_id):
                 descendants = {node_id}
-                for node in params.enterprise.get('nodes', []):
-                    if node.get('parent_id') == node_id:
-                        descendants.update(get_descendant_nodes(node['node_id']))
+                queue = [node_id]
+                while queue:
+                    current_id = queue.pop(0)
+                    child_ids = children_by_parent.get(current_id, [])
+                    for child_id in child_ids:
+                        if child_id not in descendants:
+                            descendants.add(child_id)
+                            queue.append(child_id)
                 return descendants
             
             target_nodes = get_descendant_nodes(target_node_id)
