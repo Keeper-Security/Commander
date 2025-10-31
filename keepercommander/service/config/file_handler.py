@@ -93,6 +93,8 @@ class ConfigFormatHandler:
     def _save_json(self, config_data: Dict[str, Any], config_path) -> Path:
         """Save configuration as JSON."""
         config_path.write_text(json.dumps(config_data, indent=4))
+        from ... import utils
+        utils.set_file_permissions(str(config_path))
         logger.debug(f"Configuration saved to {config_path}")
         # self.encrypt_config_file(config_path, self.config_dir)
         return config_path
@@ -101,6 +103,8 @@ class ConfigFormatHandler:
         """Save configuration as YAML."""
         with open(config_path, 'w') as yaml_file:
             yaml.dump(config_data, yaml_file, default_flow_style=False)
+        from ... import utils
+        utils.set_file_permissions(str(config_path))
         logger.debug(f"Configuration saved to {config_path}")
         # self.encrypt_config_file(config_path, self.config_dir)
         return config_path
@@ -110,6 +114,9 @@ class ConfigFormatHandler:
         config_path = self.config_path
         if not config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
+        
+        from ... import utils
+        utils.ensure_config_permissions(str(config_path))
         
         format_type = self.get_config_format()
         try:
