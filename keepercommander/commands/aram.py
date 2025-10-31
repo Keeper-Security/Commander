@@ -2115,10 +2115,14 @@ class ActionReportCommand(EnterpriseCommand):
         invited = [u for u in users if u.get('username') in emails_invited]
 
         node_name = kwargs.get('node')
-        if node_name:
+        if node_name is not None:
             # Validate input type
             if not isinstance(node_name, str):
                 logging.warning(f'Invalid node parameter type: expected string, got {type(node_name).__name__}')
+                return
+            
+            if not node_name.strip():
+                logging.warning('Please provide node name or node ID. The --node parameter cannot be empty.')
                 return
             
             nodes = list(self.resolve_nodes(params, node_name))
