@@ -21,7 +21,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from typing import Optional, Callable, List, Iterable, Tuple
+from typing import Optional, Callable, List, Iterable, Tuple, Union
 
 from .base import Command, RecordMixin, dump_report_data, field_to_title, report_output_parser, user_choice
 from .record import find_record, RecordListCommand
@@ -218,19 +218,26 @@ class ConnectSshCommand(BaseConnectCommand):
 
     @staticmethod
     def extract_hostname_from_host_field(host_field):
-        # type: (dict) -> str
+        # type: (Union[dict, str]) -> str
+        hostname = ''
         if isinstance(host_field, dict):
-            return host_field.get('hostName', '')
+            hostname = host_field.get('hostName', '')
         elif isinstance(host_field, str):
             hostname, _, _ = host_field.partition(':')
-            return hostname
-        return ''
+        
+        return hostname.strip() if hostname else ''
 
     @staticmethod
     def find_records_by_hostname_from_json(json_records, hostname):
         # type: (list, str) -> List[dict]
+        if not json_records or not hostname:
+            return []
+        
+        hostname_lower = hostname.strip().lower()
+        if not hostname_lower:
+            return []
+            
         matching_records = []
-        hostname_lower = hostname.lower()
         
         for rec in json_records:
             if not isinstance(rec, dict):
