@@ -19,6 +19,8 @@ class RiskManagementReportCommand(base.GroupCommand):
                               'a comparison to the previous 30 days.', 'sas')
         self.register_command('security-alerts-detail', RiskManagementSecurityAlertDetailCommand(), 'Gets the details of event that happened in the last 30 days with a '
                               'comparison to the previous 30 days. The response is paginated with a page size of 10000 users.', 'sad')
+        self.register_command('security-benchmarks-get', RiskManagementSecurityBenchmarksGetCommand(), 'Get the list of security benchmark set for the calling enterprise.', 'sbg')
+        self.register_command('security-benchmarks-set', RiskManagementSecurityBenchmarksGetCommand(), 'Set a list of security benchmark.  Corresponding audit events will be logged.', 'sbs')
 
 
 rmd_user_parser = argparse.ArgumentParser(prog='risk-management user', description='Risk management user report', parents=[base.report_output_parser])
@@ -33,6 +35,8 @@ rmd_security_alerts_detail_parser = argparse.ArgumentParser(prog='risk-managemen
 rmd_security_alerts_detail_parser.add_argument(
     '--aetid', dest='aetid', type=int, action='store',
     help='show the details for audit event type ID.')
+
+rmd_security_benchmarks_get_parser = argparse.ArgumentParser(prog='risk-management security-benchmarks-get', description='Risk management get security benchmarks', parents=[base.report_output_parser])
 
 class RiskManagementUserReportCommand(enterprise_common.EnterpriseCommand):
     def get_parser(self):
@@ -227,4 +231,26 @@ class RiskManagementSecurityAlertDetailCommand(enterprise_common.EnterpriseComma
                     node.previousCount,
                     node.lastOccurrence,
                     ])
+        return base.dump_report_data(rows, headers=header, fmt=out_format, filename=kwargs.get('output'))
+
+
+class RiskManagementSecurityBenchmarksGetCommand(enterprise_common.EnterpriseCommand):
+    def get_parser(self):
+        return rmd_security_benchmarks_get_parser
+
+    def execute(self, params, **kwargs):
+        header = [
+                'security_benchmark',
+                'status',
+                ]
+        out_format = kwargs.get('format')
+        if out_format != 'json':
+            header = [base.field_to_title(x) for x in header]
+        rows = []
+        response = api.communicate_rest(params, None, 'rmd/get_security_benchmarks', rs_type=rmd_pb2.GetSecurityBenchmarksResponse)
+        for node in response.enterpriseSecurityBenchmarks:
+            rows.append([
+                rmd_pb2.SecurityBenchmark.Name(node.securityBenchmark),
+                rmd_pb2.SecurityBenchmarkStatus.Name(node.securityBenchmarkStatus),
+                ])
         return base.dump_report_data(rows, headers=header, fmt=out_format, filename=kwargs.get('output'))
