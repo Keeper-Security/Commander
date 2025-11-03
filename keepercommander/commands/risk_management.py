@@ -20,7 +20,7 @@ class RiskManagementReportCommand(base.GroupCommand):
         self.register_command('security-alerts-detail', RiskManagementSecurityAlertDetailCommand(), 'Gets the details of event that happened in the last 30 days with a '
                               'comparison to the previous 30 days. The response is paginated with a page size of 10000 users.', 'sad')
         self.register_command('security-benchmarks-get', RiskManagementSecurityBenchmarksGetCommand(), 'Get the list of security benchmark set for the calling enterprise.', 'sbg')
-        self.register_command('security-benchmarks-set', RiskManagementSecurityBenchmarksGetCommand(), 'Set a list of security benchmark.  Corresponding audit events will be logged.', 'sbs')
+        self.register_command('security-benchmarks-set', RiskManagementSecurityBenchmarksSetCommand(), 'Set a list of security benchmark. Corresponding audit events will be logged.', 'sbs')
 
 
 rmd_user_parser = argparse.ArgumentParser(prog='risk-management user', description='Risk management user report', parents=[base.report_output_parser])
@@ -35,6 +35,9 @@ rmd_security_alerts_detail_parser = argparse.ArgumentParser(prog='risk-managemen
 rmd_security_alerts_detail_parser.add_argument('aetid', nargs='?', type=int, action='store', help='show the details for audit event type ID.')
 
 rmd_security_benchmarks_get_parser = argparse.ArgumentParser(prog='risk-management security-benchmarks-get', description='Risk management get security benchmarks', parents=[base.report_output_parser])
+
+rmd_security_benchmarks_set_parser = argparse.ArgumentParser(prog='risk-management security-benchmarks-set', description='Risk management set security benchmarks', parents=[base.report_output_parser])
+rmd_security_benchmarks_set_parser.add_argument('fields', nargs='*', type=str, action='store', help='fields to set for benchmark results.')
 
 class RiskManagementUserReportCommand(enterprise_common.EnterpriseCommand):
     def get_parser(self):
@@ -240,6 +243,8 @@ class RiskManagementSecurityBenchmarksGetCommand(enterprise_common.EnterpriseCom
         header = [
                 'security_benchmark',
                 'status',
+                'last_updated',
+                'auto_resolve',
                 ]
         out_format = kwargs.get('format')
         if out_format != 'json':
@@ -250,5 +255,23 @@ class RiskManagementSecurityBenchmarksGetCommand(enterprise_common.EnterpriseCom
             rows.append([
                 rmd_pb2.SecurityBenchmark.Name(node.securityBenchmark),
                 rmd_pb2.SecurityBenchmarkStatus.Name(node.securityBenchmarkStatus),
+                node.lastUpdated,
+                node.autoResolve,
                 ])
         return base.dump_report_data(rows, headers=header, fmt=out_format, filename=kwargs.get('output'))
+
+
+class RiskManagementSecurityBenchmarksSetCommand(enterprise_common.EnterpriseCommand):
+    def get_parser(self):
+        return rmd_security_benchmarks_set_parser
+
+    def execute(self, params, **kwargs):
+        request = rmd_pb2.SetSecurityBenchmarksRequest()
+        fields = kwargs.get('fields', [])
+        for field in fields:
+            k, v = field.strip().split(":")
+            esb = rmd_pb2.EnterpriseSecurityBenchmark()
+            esb.securityBenchmark = rmd_pb2.SecurityBenchmark.Value(k)
+            esb.securityBenchmarkStatus = rmd_pb2.SecurityBenchmarkStatus.Value(v)
+            request.enterpriseSecurityBenchmarks.append(esb)
+        api.communicate_rest(params, request, 'rmd/set_security_benchmarks', rs_type=None)
