@@ -32,9 +32,7 @@ rmd_enterprise_stat_detail_parser = argparse.ArgumentParser(prog='risk-managemen
 rmd_security_alerts_summary_parser = argparse.ArgumentParser(prog='risk-management security-alerts-summary', description='Risk management security alerts summary', parents=[base.report_output_parser])
 
 rmd_security_alerts_detail_parser = argparse.ArgumentParser(prog='risk-management security-alerts-detail', description='Risk management security alerts detail', parents=[base.report_output_parser])
-rmd_security_alerts_detail_parser.add_argument(
-    '--aetid', dest='aetid', type=int, action='store',
-    help='show the details for audit event type ID.')
+rmd_security_alerts_detail_parser.add_argument('aetid', nargs='?', type=int, action='store', help='show the details for audit event type ID.')
 
 rmd_security_benchmarks_get_parser = argparse.ArgumentParser(prog='risk-management security-benchmarks-get', description='Risk management get security benchmarks', parents=[base.report_output_parser])
 
