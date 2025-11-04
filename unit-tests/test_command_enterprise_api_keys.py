@@ -55,7 +55,7 @@ class TestEnterpriseApiKeys(TestCase):
         self.assertIn('8560', output)  # Enterprise ID
         self.assertIn('Token Test', output)  # Name
         self.assertIn('Expired', output)  # Status
-        self.assertIn('SIEM:2', output)  # Integration
+        self.assertIn('SIEM', output)  # Integration
 
     def test_api_key_list_json_format(self):
         """Test listing API keys in JSON format"""
@@ -76,7 +76,7 @@ class TestEnterpriseApiKeys(TestCase):
                 "status": "Expired",
                 "issued_date": "2025-04-14 12:48:26",
                 "expiration_date": "2025-04-15 12:48:26",
-                "integration": "SIEM:2, CSPM:2"
+                "integration": "SIEM:2"
             },
             {
                 "enterprise_id": 8560,
@@ -84,7 +84,7 @@ class TestEnterpriseApiKeys(TestCase):
                 "status": "Expired",
                 "issued_date": "2025-04-14 12:48:26",
                 "expiration_date": "2025-04-15 12:48:26",
-                "integration": "SIEM:2, CSPM:2"
+                "integration": "SIEM:2"
             },
             {
                 "enterprise_id": 8560,
@@ -92,15 +92,15 @@ class TestEnterpriseApiKeys(TestCase):
                 "status": "Expired",
                 "issued_date": "2025-04-14 12:48:26",
                 "expiration_date": "2025-04-15 12:48:26",
-                "integration": "SIEM:2, CSPM:2"
+                "integration": "SIEM:2"
             },
             {
                 "enterprise_id": 8560,
-                "name": "CSPM Tool",
+                "name": "SIEM Tool",
                 "status": "Active",
                 "issued_date": "2025-07-08 14:16:07",
                 "expiration_date": "2026-07-08 14:16:07",
-                "integration": "SIEM:2, CSPM:1"
+                "integration": "SIEM:2"
             },
             {
                 "enterprise_id": 8560,
@@ -108,7 +108,7 @@ class TestEnterpriseApiKeys(TestCase):
                 "status": "Active",
                 "issued_date": "2025-07-09 14:33:26",
                 "expiration_date": "Never",
-                "integration": "SIEM:2, CSPM:2, Billing:2"
+                "integration": "SIEM:2"
             }
         ]
         self.assertEqual(json.loads(result), expected_json)
@@ -149,7 +149,7 @@ class TestEnterpriseApiKeys(TestCase):
         # Mock get_enterprise_id to avoid API call - enterprise_id 8560 in 32-bit shifted format
         with mock.patch.object(cmd, 'get_enterprise_id', return_value=8560 << 32):
             with mock.patch('builtins.print'):
-                cmd.execute(params, name='Weekly API Key', integrations='CSPM:2', expires='7d')
+                cmd.execute(params, name='Weekly API Key', integrations='SIEM:2', expires='7d')
         
         self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
 
@@ -163,7 +163,7 @@ class TestEnterpriseApiKeys(TestCase):
         # Mock get_enterprise_id to avoid API call - enterprise_id 8560 in 32-bit shifted format
         with mock.patch.object(cmd, 'get_enterprise_id', return_value=8560 << 32):
             with mock.patch('builtins.print'):
-                cmd.execute(params, name='Monthly API Key', integrations='BILLING:1', expires='30d')
+                cmd.execute(params, name='Monthly API Key', integrations='SIEM:1', expires='30d')
         
         self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
 
@@ -191,7 +191,7 @@ class TestEnterpriseApiKeys(TestCase):
         # Mock get_enterprise_id to avoid API call - enterprise_id 8560 in 32-bit shifted format
         with mock.patch.object(cmd, 'get_enterprise_id', return_value=8560 << 32):
             with mock.patch('builtins.print'):
-                cmd.execute(params, name='Permanent API Key', integrations='CSPM:2', expires='never')
+                cmd.execute(params, name='Permanent API Key', integrations='SIEM:2', expires='never')
         
         self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
 
@@ -205,7 +205,7 @@ class TestEnterpriseApiKeys(TestCase):
         # Mock get_enterprise_id to avoid API call - enterprise_id 8560 in 32-bit shifted format
         with mock.patch.object(cmd, 'get_enterprise_id', return_value=8560 << 32):
             with mock.patch('builtins.print'):
-                cmd.execute(params, name='Multi-Role Key', integrations='SIEM:2,CSPM:1,BILLING:1', expires='30d')
+                cmd.execute(params, name='Multi-Role Key', integrations='SIEM:2', expires='30d')
         
         self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
 
@@ -233,7 +233,7 @@ class TestEnterpriseApiKeys(TestCase):
         
         try:
             with mock.patch('builtins.print'):
-                cmd.execute(params, name='File Output Key', integrations='CSPM:2', expires='1y', 
+                cmd.execute(params, name='File Output Key', integrations='SIEM:2', expires='1y', 
                           format='json', output=temp_filename)
             
             self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
@@ -262,7 +262,7 @@ class TestEnterpriseApiKeys(TestCase):
         with mock.patch('builtins.print') as mock_print:
             cmd.execute(params, name='Test Key')
         
-        mock_print.assert_called_with("At least one integration is required. Example: --integrations 'SIEM:2,CSPM:1'")
+        mock_print.assert_called_with("At least one integration is required. Example: --integrations 'SIEM:2'")
 
     def test_api_key_generate_invalid_role_format(self):
         """Test API key generation fails with invalid integration format"""
@@ -367,7 +367,7 @@ class TestEnterpriseApiKeys(TestCase):
         self.assertIn('Enterprise ID', output)
         self.assertIn('8560', output)  # Enterprise ID
         self.assertIn('Token Test', output)  # Token name
-        self.assertIn('CSPM Tool', output)  # Another token name
+        self.assertIn('SIEM Tool', output)  # Another token name
         self.assertIn('Expired', output)  # Status
         self.assertIn('Active', output)  # Status
         self.assertIn('Never', output)  # Never expires
@@ -439,7 +439,6 @@ class TestEnterpriseApiKeys(TestCase):
         self.assertIn('expiration_date', token)
         self.assertIn('integration', token)
         self.assertIn('SIEM:2', token['integration'])
-        self.assertIn('CSPM:2', token['integration'])
 
     def test_api_key_generate_json_comprehensive_fields(self):
         """Test API key generation in JSON format with all field validation"""
@@ -484,15 +483,13 @@ class TestEnterpriseApiKeys(TestCase):
         # Mock get_enterprise_id to avoid API call - enterprise_id 8560 in 32-bit shifted format
         with mock.patch.object(cmd, 'get_enterprise_id', return_value=8560 << 32):
             with mock.patch('sys.stdout', captured_output):
-                cmd.execute(params, name='Multi Role Key', integrations='SIEM:2,CSPM:1,BILLING:2', expires='never')
+                cmd.execute(params, name='Multi Role Key', integrations='SIEM:2', expires='never')
         
         self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
         
         # Verify output shows all integrations
         output = captured_output.getvalue()
         self.assertIn('SIEM: READ_WRITE (2)', output)
-        self.assertIn('CSPM: READ (1)', output)
-        self.assertIn('BILLING: READ_WRITE (2)', output)
         self.assertIn('Expires: Never', output)  # Never expires
 
     def test_api_key_status_detection_expired_vs_active(self):
@@ -513,7 +510,7 @@ class TestEnterpriseApiKeys(TestCase):
         self.assertIn('Token Test 2            Expired', output)
         
         # Verify active tokens show as Active
-        self.assertIn('CSPM Tool               Active', output)
+        self.assertIn('SIEM Tool               Active', output)
         self.assertIn('Token For My Tests 111  Active', output)
         
         # Verify never expires shows "Never"
@@ -558,10 +555,6 @@ class TestEnterpriseApiKeys(TestCase):
             integration1.roleName = "SIEM"
             integration1.apiIntegrationTypeName = "SIEM"
             integration1.actionType = 2
-            integration2 = token1.integrations.add()
-            integration2.roleName = "CSPM"
-            integration2.apiIntegrationTypeName = "CSPM"
-            integration2.actionType = 2
             
             # Token 44 - Expired
             token2 = rs.tokens.add()
@@ -574,10 +567,6 @@ class TestEnterpriseApiKeys(TestCase):
             integration3.roleName = "SIEM"
             integration3.apiIntegrationTypeName = "SIEM"
             integration3.actionType = 2
-            integration4 = token2.integrations.add()
-            integration4.roleName = "CSPM"
-            integration4.apiIntegrationTypeName = "CSPM"
-            integration4.actionType = 2
             
             # Token 45 - Expired
             token3 = rs.tokens.add()
@@ -590,15 +579,11 @@ class TestEnterpriseApiKeys(TestCase):
             integration5.roleName = "SIEM"
             integration5.apiIntegrationTypeName = "SIEM"
             integration5.actionType = 2
-            integration6 = token3.integrations.add()
-            integration6.roleName = "CSPM"
-            integration6.apiIntegrationTypeName = "CSPM"
-            integration6.actionType = 2
             
             # Token 53 - Active
             token4 = rs.tokens.add()
             token4.token = "active_token_53"
-            token4.name = "CSPM Tool"
+            token4.name = "SIEM Tool"
             token4.enterprise_id = 8560
             token4.issuedDate = int(datetime.datetime(2025, 7, 8, 14, 16, 7).timestamp() * 1000)
             token4.expirationDate = int(datetime.datetime(2026, 7, 8, 14, 16, 7).timestamp() * 1000)
@@ -606,10 +591,6 @@ class TestEnterpriseApiKeys(TestCase):
             integration7.roleName = "SIEM"
             integration7.apiIntegrationTypeName = "SIEM"
             integration7.actionType = 2
-            integration8 = token4.integrations.add()
-            integration8.roleName = "CSPM"
-            integration8.apiIntegrationTypeName = "CSPM"
-            integration8.actionType = 1
             
             # Token 54 - Active, Never expires
             token5 = rs.tokens.add()
@@ -622,14 +603,6 @@ class TestEnterpriseApiKeys(TestCase):
             integration9.roleName = "SIEM"
             integration9.apiIntegrationTypeName = "SIEM"
             integration9.actionType = 2
-            integration10 = token5.integrations.add()
-            integration10.roleName = "CSPM"
-            integration10.apiIntegrationTypeName = "CSPM"
-            integration10.actionType = 2
-            integration11 = token5.integrations.add()
-            integration11.roleName = "Billing"
-            integration11.apiIntegrationTypeName = "Billing"
-            integration11.actionType = 2
             
             return rs
             
@@ -666,8 +639,6 @@ class TestEnterpriseApiKeys(TestCase):
     def _get_role_name_by_id(role_id):
         """Helper method to map role IDs to names"""
         role_map = {
-            1: "SIEM",
-            2: "CSPM", 
-            3: "BILLING"
+            1: "SIEM"
         }
         return role_map.get(role_id, f"Role_{role_id}") 

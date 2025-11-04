@@ -48,29 +48,26 @@ Examples:
   # Generate API key with SIEM role and 30-day expiration
   public-api-key generate --name "SIEM Integration" --integrations "SIEM:2" --expires 30d
   
-  # Generate API key with multiple integrations and 24-hour expiration
-  public-api-key generate --name "Temp Access" --integrations "Admin:1,SIEM:2" --expires 24h
+  # Generate API key with 24-hour expiration
+  public-api-key generate --name "Temp Access" --integrations "SIEM:2" --expires 24h
   
   # Generate permanent API key with read-only access
-  public-api-key generate --name "Monitoring Tool" --integrations "ReadOnly:1" --expires never
+  public-api-key generate --name "Monitoring Tool" --integrations "SIEM:1" --expires never
   
   # Generate API key and save details to JSON file
-  public-api-key generate --name "Backup Tool" --integrations "Backup:2" --expires 1y --format json --output backup_key.json
+  public-api-key generate --name "Backup Tool" --integrations "SIEM:2" --expires 1y --format json --output backup_key.json
     ''',
     formatter_class=argparse.RawDescriptionHelpFormatter
 )
 api_key_generate_parser.add_argument('--name', dest='name', required=True, 
                                      help='API key name. Examples: "SIEM Integration", "Backup Tool", "Monitoring Service"')
 api_key_generate_parser.add_argument('--integrations', dest='integrations', required=True, action='store', 
-                                     help='''Comma-separated list of role IDs with action types. 
-Format: "RoleID:ActionType" or "RoleName:ActionType"
-Action types: 0=NONE (no permissions), 1=READ (read-only), 2=READ_WRITE (full access)
+                                     help='''Integration with action type. 
+Format: "RoleName:ActionType"
+Action types: 1=READ (read-only), 2=READ_WRITE (full access)
 Examples: 
   --integrations "SIEM:2"                    # SIEM role with read-write access
-  --integrations "Admin:1,SIEM:2"            # Multiple integrations with different permissions
-  --integrations "123:1,456:2"               # Using role IDs instead of names
-  --integrations "ReadOnly:1"                # Read-only access
-  --integrations "Backup:2,Monitor:1"        # Backup with full access, Monitor with read-only''')
+  --integrations "SIEM:1"                    # SIEM role with read-only access''')
 api_key_generate_parser.add_argument('--expires', dest='expires', action='store',
                                      choices=['24h', '7d', '30d', '1y', 'never'],
                                      default='never',
@@ -244,7 +241,7 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
             # Create the generate token request
             rq = publicapi_pb2.GenerateTokenRequest()
             rq.tokenName = name
-            rq.issuedDate = int(datetime.datetime.now().timestamp() * 1000) + 3000
+            rq.issuedDate = int(datetime.datetime.now().timestamp() * 1000) + 300
             
             # Set expiration based on the selected option
             expires = kwargs.get('expires', 'never')
@@ -268,7 +265,7 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
             # Parse integrations - now required
             integrations_str = kwargs.get('integrations')
             if not integrations_str:
-                print("At least one integration is required. Example: --integrations 'SIEM:2,CSPM:1'")
+                print("At least one integration is required. Example: --integrations 'SIEM:2'")
                 return
             
             for integration_spec in integrations_str.split(','):
@@ -278,7 +275,7 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
 
                 if ':' in integration_spec:
                     integration_id_str, action_type_str = integration_spec.split(':', 1)
-                    allowed_integrations = [("SIEM", 1), ("CSPM", 2), ("BILLING", 3)]
+                    allowed_integrations = [("SIEM", 1)]
                     allowed_integration_names = [integration[0].upper() for integration in allowed_integrations]
                     if integration_id_str.strip().upper() not in allowed_integration_names:
                         print(f"Integration '{integration_id_str.strip()}' does not match allowed integrations: {', '.join(allowed_integration_names)}. Skipping.")
@@ -289,7 +286,7 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
                 else:
                     # If no action type specified, default to READ-write (2)
                     print(f"Error: Integration specification must include action type. Got: '{integration_spec}'")
-                    print("Required format: 'IntegrationName:ActionType' (e.g., 'SIEM:1,CSPM:2,Billing:1')")
+                    print("Required format: 'IntegrationName:ActionType' (e.g., 'SIEM:1')")
                     return
                 
                 # Map action type number to enum
@@ -360,7 +357,12 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
                         print(f"  - {integration.roleName}: {action_name} ({integration.actionType})")
                         
         except Exception as e:
-            logging.error(f"Failed to generate API key: {e}")
+            err = str(e)
+            if "(" in err and ")" in err and err.find("(") < err.find(")"):
+                idx1 = err.find("(") + 1
+                idx2 = err.find(")", idx1)
+                err = err[idx1:idx2]
+            logging.error(f"Failed to generate API key: {err}")
             raise CommandError("public-api-key generate", "Failed to generate API key")
 
 
@@ -402,5 +404,10 @@ class ApiKeyRevokeCommand(EnterpriseCommand):
                 print(f"Message: {rs.message}")
                 
         except Exception as e:
-            logging.error(f"Failed to revoke API key: {e}")
+            err = str(e)
+            if "(" in err and ")" in err and err.find("(") < err.find(")"):
+                idx1 = err.find("(") + 1
+                idx2 = err.find(")", idx1)
+                err = err[idx1:idx2]
+            logging.error(f"Failed to revoke API key: {err}")
             raise CommandError("public-api-key revoke", "Failed to revoke API key") 
