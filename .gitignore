@@ -16,3 +16,4 @@ Makefile
 dr-logs
 /.venv*
 *.swp
+CLAUDE.md
