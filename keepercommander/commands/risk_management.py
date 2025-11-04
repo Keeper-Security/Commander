@@ -275,3 +275,4 @@ class RiskManagementSecurityBenchmarksSetCommand(enterprise_common.EnterpriseCom
             esb.securityBenchmarkStatus = rmd_pb2.SecurityBenchmarkStatus.Value(v)
             request.enterpriseSecurityBenchmarks.append(esb)
         api.communicate_rest(params, request, 'rmd/set_security_benchmarks', rs_type=None)
+        print("Done")
