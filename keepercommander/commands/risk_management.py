@@ -32,7 +32,7 @@ rmd_enterprise_stat_detail_parser = argparse.ArgumentParser(prog='risk-managemen
 rmd_security_alerts_summary_parser = argparse.ArgumentParser(prog='risk-management security-alerts-summary', description='Risk management security alerts summary', parents=[base.report_output_parser])
 
 rmd_security_alerts_detail_parser = argparse.ArgumentParser(prog='risk-management security-alerts-detail', description='Risk management security alerts detail', parents=[base.report_output_parser])
-rmd_security_alerts_detail_parser.add_argument('aetid', nargs='?', type=int, action='store', help='show the details for audit event type ID.')
+rmd_security_alerts_detail_parser.add_argument('aet', nargs='?', type=str, action='store', help='show the details for audit event type.')
 
 rmd_security_benchmarks_get_parser = argparse.ArgumentParser(prog='risk-management security-benchmarks-get', description='Risk management get security benchmarks', parents=[base.report_output_parser])
 
@@ -208,9 +208,12 @@ class RiskManagementSecurityAlertDetailCommand(enterprise_common.EnterpriseComma
         return rmd_security_alerts_detail_parser
 
     def execute(self, params, **kwargs):
+        audit_alerts.AuditSettingMixin.load_settings(params, False)
+        event_lookup = {x[1]: x[0] for x in audit_alerts.AuditSettingMixin.EVENT_TYPES}
         user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise.get('users', [])}
         request = rmd_pb2.SecurityAlertsDetailRequest()
-        aetid = kwargs.get('aetid') or 0
+        aet = kwargs.get('aet')
+        aetid = event_lookup.get(aet, 0)
         if aetid < 1:
             raise ValueError(f'Invalid aetid {aetid}: valid aetid > 0')
         request.auditEventTypeId = aetid
