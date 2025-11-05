@@ -177,6 +177,8 @@ class RiskManagementSecurityAlertsSummaryCommand(enterprise_common.EnterpriseCom
         return rmd_security_alerts_summary_parser
 
     def execute(self, params, **kwargs):
+        audit_alerts.AuditSettingMixin.load_settings(params, False)
+        event_lookup = {x[0]: x[1] for x in audit_alerts.AuditSettingMixin.EVENT_TYPES}
         header = [
                 'audit_event_type_id',
                 'current_count',
@@ -190,8 +192,9 @@ class RiskManagementSecurityAlertsSummaryCommand(enterprise_common.EnterpriseCom
         rows = []
         response = api.communicate_rest(params, None, 'rmd/get_security_alerts_summary', rs_type=rmd_pb2.SecurityAlertsSummaryResponse)
         for node in response.securityAlertsSummary:
+            event_id = event_lookup.get(node.auditEventTypeId, str(node.auditEventTypeId))
             rows.append([
-                node.auditEventTypeId,
+                event_id,
                 node.currentCount,
                 node.currentUserCount,
                 node.previousCount,
