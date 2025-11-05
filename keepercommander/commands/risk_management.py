@@ -205,6 +205,7 @@ class RiskManagementSecurityAlertDetailCommand(enterprise_common.EnterpriseComma
         return rmd_security_alerts_detail_parser
 
     def execute(self, params, **kwargs):
+        user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise.get('users', [])}
         request = rmd_pb2.SecurityAlertsDetailRequest()
         aetid = kwargs.get('aetid') or 0
         if aetid < 1:
@@ -226,11 +227,16 @@ class RiskManagementSecurityAlertDetailCommand(enterprise_common.EnterpriseComma
             done = not response.hasMore
             request.continuationToken = response.continuationToken
             for node in response.securityAlertDetails:
+                enterprise_user_id = node.enterpriseUserId
+                username = user_lookup.get(enterprise_user_id) or str(enterprise_user_id)
+                last_occurrence = None
+                if node.lastOccurrence and node.lastOccurrence > 0:
+                    last_occurrence = datetime.datetime.fromtimestamp(node.lastOccurrence // 1000)
                 rows.append([
-                    node.enterpriseUserId,
+                    username,
                     node.currentCount,
                     node.previousCount,
-                    node.lastOccurrence,
+                    last_occurrence,
                     ])
         return base.dump_report_data(rows, headers=header, fmt=out_format, filename=kwargs.get('output'))
 
