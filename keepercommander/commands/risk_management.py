@@ -252,10 +252,13 @@ class RiskManagementSecurityBenchmarksGetCommand(enterprise_common.EnterpriseCom
         rows = []
         response = api.communicate_rest(params, None, 'rmd/get_security_benchmarks', rs_type=rmd_pb2.GetSecurityBenchmarksResponse)
         for node in response.enterpriseSecurityBenchmarks:
+            last_updated = None
+            if node.lastUpdated and node.lastUpdated > 0:
+                last_updated = datetime.datetime.fromtimestamp(node.lastUpdated // 1000)
             rows.append([
                 rmd_pb2.SecurityBenchmark.Name(node.securityBenchmark),
                 rmd_pb2.SecurityBenchmarkStatus.Name(node.securityBenchmarkStatus),
-                node.lastUpdated,
+                last_updated,
                 node.autoResolve,
                 ])
         return base.dump_report_data(rows, headers=header, fmt=out_format, filename=kwargs.get('output'))
