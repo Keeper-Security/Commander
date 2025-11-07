@@ -21,36 +21,12 @@ ent_env = EnterpriseEnvironment()
 class TestRiskManagement(TestCase):
     expected_commands = []
 
-    def setUp(self):
-        TestRiskManagement.use_data_key = True
-        TestRiskManagement.expected_commands.clear()
-        self.query_enterprise_mock = mock.patch('keepercommander.api.query_enterprise').start()
-        self.query_enterprise_mock.side_effect = TestRiskManagement.query_enterprise
-        self.communicate_rest_mock = mock.patch('keepercommander.api.communicate_rest').start()
-        self.communicate_rest_mock.side_effect = TestRiskManagement.communicate_rest_success
-
-    def tearDown(self):
-        mock.patch.stopall()
-
-    def test_risk_management_user_report(self):
-        params = get_connected_params()
-        api.query_enterprise(params)
-
-        cmd = risk_management.RiskManagementUserReportCommand()
-        TestRiskManagement.expected_commands = ['get_enterprise_stat_details']
-        captured_output = io.StringIO()
-        with mock.patch('sys.stdout', captured_output):
-            cmd.execute(params)
-        self.assertEqual(len(TestRiskManagement.expected_commands), 0)
-
-        output = captured_output.getvalue()
-        self.assertIn('unit.test@company.com', output)
-        self.assertIn('1969-12-31 16:00:00', output)
 
     @staticmethod
     def query_enterprise(params, force=False, tree_key=None):
         # type: (KeeperParams, Optional[bool], Optional[bytes]) -> None
         params.enterprise = get_enterprise_data(params)
+
 
     @staticmethod
     def communicate_rest_success(params, request, path, rs_type=None):
@@ -66,3 +42,30 @@ class TestRiskManagement(TestCase):
             node.hasRecords = False
             rs.enterpriseStatDetails.append(node)
             return rs
+
+    def setUp(self):
+        TestRiskManagement.use_data_key = True
+        TestRiskManagement.expected_commands.clear()
+        self.query_enterprise_mock = mock.patch('keepercommander.api.query_enterprise').start()
+        self.query_enterprise_mock.side_effect = TestRiskManagement.query_enterprise
+        self.communicate_rest_mock = mock.patch('keepercommander.api.communicate_rest').start()
+        self.communicate_rest_mock.side_effect = TestRiskManagement.communicate_rest_success
+
+    def tearDown(self):
+        mock.patch.stopall()
+
+
+    def test_risk_management_user_report(self):
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        cmd = risk_management.RiskManagementUserReportCommand()
+        TestRiskManagement.expected_commands = ['get_enterprise_stat_details']
+        captured_output = io.StringIO()
+        with mock.patch('sys.stdout', captured_output):
+            cmd.execute(params)
+        self.assertEqual(len(TestRiskManagement.expected_commands), 0)
+
+        output = captured_output.getvalue()
+        self.assertIn('unit.test@company.com', output)
+        self.assertIn('1969-12-31 16:00:00', output)
