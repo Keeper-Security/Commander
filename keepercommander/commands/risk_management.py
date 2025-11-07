@@ -10,7 +10,6 @@ from ..proto import rmd_pb2
 class RiskManagementReportCommand(base.GroupCommand):
     def __init__(self):
         super().__init__()
-        self.register_command('user', RiskManagementUserReportCommand(), 'Show Risk Management User report', 'u')
         self.register_command('alert', RiskManagementAlertReportCommand(), 'Show Risk Management Alert report', 'a')
         self.register_command('enterprise-stat', RiskManagementEnterpriseStatCommand(), 'Show Risk Management recent login count', 'es')
         self.register_command('enterprise-stat-details', RiskManagementEnterpriseStatDetailsCommand(), 'Gets the recent login count (users who logged in the last 30 days) '
@@ -22,8 +21,6 @@ class RiskManagementReportCommand(base.GroupCommand):
         self.register_command('security-benchmarks-get', RiskManagementSecurityBenchmarksGetCommand(), 'Get the list of security benchmark set for the calling enterprise.', 'sbg')
         self.register_command('security-benchmarks-set', RiskManagementSecurityBenchmarksSetCommand(), 'Set a list of security benchmark. Corresponding audit events will be logged.', 'sbs')
 
-
-rmd_user_parser = argparse.ArgumentParser(prog='risk-management user', description='Risk management user report', parents=[base.report_output_parser])
 
 rmd_alert_parser = argparse.ArgumentParser(prog='risk-management alert', description='Risk management alert report', parents=[base.report_output_parser])
 
@@ -39,9 +36,9 @@ rmd_security_benchmarks_get_parser = argparse.ArgumentParser(prog='risk-manageme
 rmd_security_benchmarks_set_parser = argparse.ArgumentParser(prog='risk-management security-benchmarks-set', description='Risk management set security benchmarks', parents=[base.report_output_parser])
 rmd_security_benchmarks_set_parser.add_argument('fields', nargs='*', type=str, action='store', help='fields to set for benchmark results.')
 
-class RiskManagementUserReportCommand(enterprise_common.EnterpriseCommand):
+class RiskManagementEnterpriseStatDetailsCommand(enterprise_common.EnterpriseCommand):
     def get_parser(self):
-        return rmd_user_parser
+        return rmd_enterprise_stat_detail_parser
 
     def execute(self, params, **kwargs):
         user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise.get('users', [])}
@@ -144,32 +141,6 @@ class RiskManagementEnterpriseStatCommand(enterprise_common.EnterpriseCommand):
         print('{0:>20s}:'.format('Users Enterprise Stat'))
         print('{0:>20s}: {1:<20d}'.format('Logged in', rs.usersLoggedRecent))
         print('{0:>20s}: {1:<20d}'.format('Has records', rs.usersHasRecords))
-
-
-class RiskManagementEnterpriseStatDetailsCommand(enterprise_common.EnterpriseCommand):
-    def get_parser(self):
-        return rmd_enterprise_stat_detail_parser
-
-    def execute(self, params, **kwargs):
-        request = rmd_pb2.EnterpriseStatDetailsRequest()
-        done = False
-        header = [
-                'enterprise_user_id',
-                'last_logged_in',
-                'has_records',
-                ]
-        out_format = kwargs.get('format')
-        if out_format != 'json':
-            header = [base.field_to_title(x) for x in header]
-        rows = []
-        while not done:
-            response = api.communicate_rest(params, request, 'rmd/get_enterprise_stat_details', rs_type=rmd_pb2.EnterpriseStatDetailsResponse)
-            done = not response.hasMore
-            request.continuationToken.lastUpdated = response.continuationToken.lastUpdated
-            request.continuationToken.enterpriseUserId = response.continuationToken.enterpriseUserId
-            for esd in response.enterpriseStatDetails:
-                rows.append([esd.enterpriseUserId, esd.lastLoggedIn, esd.hasRecords])
-        return base.dump_report_data(rows, headers=header, fmt=out_format, filename=kwargs.get('output'))
 
 
 class RiskManagementSecurityAlertsSummaryCommand(enterprise_common.EnterpriseCommand):
