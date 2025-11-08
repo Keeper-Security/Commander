@@ -47,6 +47,15 @@ class TestRiskManagement(TestCase):
             rs.usersLoggedRecent = 3
             rs.usersHasRecords = 5
             return rs
+        elif path == 'rmd/get_security_benchmarks' and expected_path == "RiskManagementSecurityBenchmarksGetCommand":
+            rs = rmd_pb2.GetSecurityBenchmarksResponse()
+            node = rmd_pb2.EnterpriseSecurityBenchmark()
+            node.securityBenchmark = rmd_pb2.SecurityBenchmark.SB_DEPLOY_ACROSS_ENTIRE_ORGANIZATION
+            node.securityBenchmarkStatus = rmd_pb2.SecurityBenchmarkStatus.RESOLVED
+            node.lastUpdated = 2
+            node.autoResolve = True
+            rs.enterpriseSecurityBenchmarks.append(node)
+            return rs
 #        elif path == 'rmd/get_security_alerts_summary' and expected_path == "get_security_alerts_summary":
 #            rs = rmd_pb2.SecurityAlertsSummaryResponse()
 #            return rs
@@ -94,3 +103,71 @@ class TestRiskManagement(TestCase):
         output = captured_output.getvalue()
         self.assertIn('unit.test@company.com', output)
         self.assertIn('1969-12-31 16:00:00', output)
+
+
+    def test_risk_management_security_alerts_summary(self):
+        return
+        #TODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODO
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        cmd = risk_management.RiskManagementSecurityAlertsSummaryCommand()
+        TestRiskManagement.expected_commands = ['RiskManagementSecurityAlertsSummaryCommand']
+        captured_output = io.StringIO()
+        with mock.patch('sys.stdout', captured_output):
+            cmd.execute(params)
+        self.assertEqual(len(TestRiskManagement.expected_commands), 0)
+
+        output = captured_output.getvalue()
+        self.assertIn('unit.test@company.com', output)
+        self.assertIn('1969-12-31 16:00:00', output)
+
+
+    def test_risk_management_security_alerts_detail(self):
+        return
+        #TODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODO
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        cmd = risk_management.RiskManagementSecurityAlertDetailCommand()
+        TestRiskManagement.expected_commands = ['RiskManagementSecurityAlertDetailCommand']
+        captured_output = io.StringIO()
+        with mock.patch('sys.stdout', captured_output):
+            cmd.execute(params)
+        self.assertEqual(len(TestRiskManagement.expected_commands), 0)
+
+        output = captured_output.getvalue()
+        self.assertIn('unit.test@company.com', output)
+        self.assertIn('1969-12-31 16:00:00', output)
+
+
+    def test_risk_management_get_security_benchmarks(self):
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        cmd = risk_management.RiskManagementSecurityBenchmarksGetCommand()
+        TestRiskManagement.expected_commands = ['RiskManagementSecurityBenchmarksGetCommand']
+        captured_output = io.StringIO()
+        with mock.patch('sys.stdout', captured_output):
+            cmd.execute(params)
+        self.assertEqual(len(TestRiskManagement.expected_commands), 0)
+
+        output = captured_output.getvalue()
+        self.assertIn('SB_DEPLOY_ACROSS_ENTIRE_ORGANIZATION', output)
+        self.assertIn('RESOLVED', output)
+        self.assertIn('1969-12-31 16:00:00', output)
+
+
+    def test_risk_management_set_security_benchmarks(self):
+        params = get_connected_params()
+        api.query_enterprise(params)
+
+        cmd = risk_management.RiskManagementSecurityBenchmarksSetCommand()
+        TestRiskManagement.expected_commands = ['RiskManagementSecurityBenchmarksSetCommand']
+        captured_output = io.StringIO()
+        with mock.patch('sys.stdout', captured_output):
+            cmd.execute(params)
+        self.assertEqual(len(TestRiskManagement.expected_commands), 0)
+
+        output = captured_output.getvalue()
+        self.assertIn('Done', output)
