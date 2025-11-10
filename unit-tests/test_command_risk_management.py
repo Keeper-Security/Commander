@@ -4,6 +4,7 @@ import io
 from datetime import datetime, timedelta
 from typing import Optional
 from unittest import TestCase, mock
+from unittest.mock import patch
 
 from data_enterprise import EnterpriseEnvironment, get_enterprise_data, enterprise_allocate_ids
 from keepercommander import api, crypto, utils, vault
@@ -27,6 +28,10 @@ class TestRiskManagement(TestCase):
         # type: (KeeperParams, Optional[bool], Optional[bytes]) -> None
         params.enterprise = get_enterprise_data(params)
 
+
+    @staticmethod
+    def audit_load_settings(params, reload=False):
+        pass
 
     @staticmethod
     def communicate_rest_success(params, request, path, rs_type=None):
@@ -56,9 +61,17 @@ class TestRiskManagement(TestCase):
             node.autoResolve = True
             rs.enterpriseSecurityBenchmarks.append(node)
             return rs
-#        elif path == 'rmd/get_security_alerts_summary' and expected_path == "get_security_alerts_summary":
-#            rs = rmd_pb2.SecurityAlertsSummaryResponse()
-#            return rs
+        elif path == 'rmd/get_security_alerts_summary' and expected_path == "RiskManagementSecurityAlertsSummaryCommand":
+            rs = rmd_pb2.SecurityAlertsSummaryResponse()
+            node = rmd_pb2.SecurityAlertsSummary()
+            node.auditEventTypeId = 123
+            node.currentCount = 123123
+            node.currentUserCount = 321321
+            node.previousCount = 123456
+            node.previousUserCount = 654321
+            rs.securityAlertsSummary.append(node)
+
+            return rs
 
 
     def setUp(self):
@@ -67,6 +80,8 @@ class TestRiskManagement(TestCase):
         query_enterprise_mock.side_effect = TestRiskManagement.query_enterprise
         communicate_rest_mock = mock.patch('keepercommander.api.communicate_rest').start()
         communicate_rest_mock.side_effect = TestRiskManagement.communicate_rest_success
+        communicate_rest_mock = mock.patch('keepercommander.commands.audit_alerts.AuditSettingMixin.load_settings').start()
+        communicate_rest_mock.side_effect = TestRiskManagement.audit_load_settings
 
 
     def tearDown(self):
@@ -104,10 +119,8 @@ class TestRiskManagement(TestCase):
         self.assertIn('unit.test@company.com', output)
         self.assertIn('1969-12-31 16:00:00', output)
 
-
+    @patch("keepercommander.commands.audit_alerts.AuditSettingMixin.EVENT_TYPES", [(123, "account_recovery_decline")])
     def test_risk_management_security_alerts_summary(self):
-        return
-        #TODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODO
         params = get_connected_params()
         api.query_enterprise(params)
 
@@ -119,8 +132,11 @@ class TestRiskManagement(TestCase):
         self.assertEqual(len(TestRiskManagement.expected_commands), 0)
 
         output = captured_output.getvalue()
-        self.assertIn('unit.test@company.com', output)
-        self.assertIn('1969-12-31 16:00:00', output)
+        self.assertIn('account_recovery_decline', output)
+        self.assertIn('123123', output)
+        self.assertIn('321321', output)
+        self.assertIn('123456', output)
+        self.assertIn('654321', output)
 
 
     def test_risk_management_security_alerts_detail(self):
