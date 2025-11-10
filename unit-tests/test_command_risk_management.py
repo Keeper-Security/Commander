@@ -70,7 +70,15 @@ class TestRiskManagement(TestCase):
             node.previousCount = 123456
             node.previousUserCount = 654321
             rs.securityAlertsSummary.append(node)
-
+            return rs
+        elif path == 'rmd/get_security_alerts_detail' and expected_path == "RiskManagementSecurityAlertDetailCommand":
+            rs = rmd_pb2.SecurityAlertsDetailResponse()
+            node = rmd_pb2.SecurityAlertsDetail()
+            node.enterpriseUserId = ent_env.user1_id
+            node.currentCount = 123123
+            node.previousCount = 321321
+            node.lastOccurrence = 2
+            rs.securityAlertDetails.append(node)
             return rs
 
 
@@ -153,6 +161,8 @@ class TestRiskManagement(TestCase):
 
         output = captured_output.getvalue()
         self.assertIn('unit.test@company.com', output)
+        self.assertIn('123123', output)
+        self.assertIn('321321', output)
         self.assertIn('1969-12-31 16:00:00', output)
 
 
