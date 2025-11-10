@@ -16,13 +16,19 @@ def filter_rows(rows, patterns, use_regex=False, match_all=False):
             regex_pattern = pattern_str[6:]  # Remove 'regex:' prefix
             try:
                 compiled_regex = re.compile(regex_pattern, re.IGNORECASE)
-                return lambda text: bool(compiled_regex.search(text))
+                return lambda row: bool(compiled_regex.search(to_string(row)))
             except re.error as e:
-                return lambda text: regex_pattern.lower() in text.lower()
+                return lambda row: regex_pattern.lower() in to_string(row).lower()
         
         elif pattern_str.startswith('exact:'):
             exact_pattern = pattern_str[6:]  # Remove 'exact:' prefix
-            return lambda text: text.lower() == exact_pattern.lower()
+            def exact_matcher(row):
+                # Check if exact pattern matches any individual field in the row
+                if is_a(row, list):
+                    return any(str(field).lower() == exact_pattern.lower() for field in row)
+                else:
+                    return str(row).lower() == exact_pattern.lower()
+            return exact_matcher
         
         elif pattern_str.startswith('not:'):
             not_pattern = pattern_str[4:]  # Remove 'not:' prefix
@@ -31,26 +37,32 @@ def filter_rows(rows, patterns, use_regex=False, match_all=False):
                 regex_pattern = not_pattern[6:]
                 try:
                     compiled_regex = re.compile(regex_pattern, re.IGNORECASE)
-                    return lambda text: not bool(compiled_regex.search(text))
+                    return lambda row: not bool(compiled_regex.search(to_string(row)))
                 except re.error:
-                    return lambda text: regex_pattern.lower() not in text.lower()
+                    return lambda row: regex_pattern.lower() not in to_string(row).lower()
             elif not_pattern.startswith('exact:'):
                 # Negated exact match
                 exact_pattern = not_pattern[6:]
-                return lambda text: text.lower() != exact_pattern.lower()
+                def negated_exact_matcher(row):
+                    # Check that exact pattern does NOT match any individual field in the row
+                    if is_a(row, list):
+                        return not any(str(field).lower() == exact_pattern.lower() for field in row)
+                    else:
+                        return str(row).lower() != exact_pattern.lower()
+                return negated_exact_matcher
             else:
                 # Negated substring match
-                return lambda text: not_pattern.lower() not in text.lower()
+                return lambda row: not_pattern.lower() not in to_string(row).lower()
         
         else:
             if use_regex:
                 try:
                     compiled_regex = re.compile(pattern_str, re.IGNORECASE)
-                    return lambda text: bool(compiled_regex.search(text))
+                    return lambda row: bool(compiled_regex.search(to_string(row)))
                 except re.error:
-                    return lambda text: pattern_str.lower() in text.lower()
+                    return lambda row: pattern_str.lower() in to_string(row).lower()
             else:
-                return lambda text: pattern_str.lower() in text.lower()
+                return lambda row: pattern_str.lower() in to_string(row).lower()
     
     pattern_matchers = []
     for pattern in patterns:
@@ -59,11 +71,10 @@ def filter_rows(rows, patterns, use_regex=False, match_all=False):
     
     def is_match(row):
         """Check if row matches according to the specified logic"""
-        row_text = to_string(row)
         results = []
         
         for matcher in pattern_matchers:
-            match_result = matcher(row_text)
+            match_result = matcher(row)
             results.append(match_result)
         
         # Apply AND/OR logic
