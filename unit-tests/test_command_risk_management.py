@@ -139,9 +139,8 @@ class TestRiskManagement(TestCase):
         self.assertIn('654321', output)
 
 
+    @patch("keepercommander.commands.audit_alerts.AuditSettingMixin.EVENT_TYPES", [(123, "account_recovery_decline")])
     def test_risk_management_security_alerts_detail(self):
-        return
-        #TODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODOTODO
         params = get_connected_params()
         api.query_enterprise(params)
 
@@ -149,7 +148,7 @@ class TestRiskManagement(TestCase):
         TestRiskManagement.expected_commands = ['RiskManagementSecurityAlertDetailCommand']
         captured_output = io.StringIO()
         with mock.patch('sys.stdout', captured_output):
-            cmd.execute(params)
+            cmd.execute(params, aet="account_recovery_decline")
         self.assertEqual(len(TestRiskManagement.expected_commands), 0)
 
         output = captured_output.getvalue()
