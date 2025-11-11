@@ -82,7 +82,7 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
     # Define colors for different categories - more variety and visual appeal
     category_colors = {
         'Record Commands': bcolors.OKGREEN,           # Green - primary functionality
-        'Sharing Commands': bcolors.OKBLUE,           # Blue - collaboration
+        'Sharing Commands': bcolors.OKBLUE,           # Blue - collaboration  
         'Record Type Commands': bcolors.HEADER,       # Purple/Magenta - special types
         'Import and Exporting Data': bcolors.WARNING, # Yellow - data operations
         'Reporting Commands': '\033[96m',             # Cyan - analytics
@@ -92,7 +92,6 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
         'BreachWatch Commands': bcolors.FAIL,         # Red - security alerts
         'Device Management Commands': '\033[93m',     # Bright Yellow - devices
         'Service Mode REST API': '\033[36m',          # Dark Cyan - services
-        'Email Configuration Commands': '\033[38;5;214m',  # Orange - email services
         'Miscellaneous Commands': '\033[37m',         # Light Gray - utilities
         'KeeperPAM Commands': '\033[92m',            # Bright Green - PAM
         'Legacy Commands': '\033[90m',               # Dark Gray - deprecated

@@ -12,14 +12,17 @@
 import argparse
 import json
 import logging
+import base64
 import os
 import datetime
+from typing import Optional, List, Dict, Any
 
 from .base import GroupCommand, dump_report_data, report_output_parser, field_to_title, user_choice
 from .enterprise_common import EnterpriseCommand
-from .. import api
+from .. import api, utils
 from ..display import bcolors
 from ..error import CommandError
+from ..params import KeeperParams
 from ..proto import publicapi_pb2
 
 api_key_list_parser = argparse.ArgumentParser(
@@ -46,28 +49,31 @@ api_key_generate_parser = argparse.ArgumentParser(
     epilog='''
 Examples:
   # Generate API key with SIEM role and 30-day expiration
-  public-api-key generate --name "SIEM Integration" --integrations "SIEM:2" --expires 30d
+  public-api-key generate --name "SIEM Integration" --roles "SIEM:2" --expires 30d
   
-  # Generate API key with 24-hour expiration
-  public-api-key generate --name "Temp Access" --integrations "SIEM:2" --expires 24h
+  # Generate API key with multiple roles and 24-hour expiration
+  public-api-key generate --name "Temp Access" --roles "Admin:1,SIEM:2" --expires 24h
   
   # Generate permanent API key with read-only access
-  public-api-key generate --name "Monitoring Tool" --integrations "SIEM:1" --expires never
+  public-api-key generate --name "Monitoring Tool" --roles "ReadOnly:1" --expires never
   
   # Generate API key and save details to JSON file
-  public-api-key generate --name "Backup Tool" --integrations "SIEM:2" --expires 1y --format json --output backup_key.json
+  public-api-key generate --name "Backup Tool" --roles "Backup:2" --expires 1y --format json --output backup_key.json
     ''',
     formatter_class=argparse.RawDescriptionHelpFormatter
 )
 api_key_generate_parser.add_argument('--name', dest='name', required=True, 
                                      help='API key name. Examples: "SIEM Integration", "Backup Tool", "Monitoring Service"')
-api_key_generate_parser.add_argument('--integrations', dest='integrations', required=True, action='store', 
-                                     help='''Integration with action type. 
-Format: "RoleName:ActionType"
-Action types: 1=READ (read-only), 2=READ_WRITE (full access)
+api_key_generate_parser.add_argument('--roles', dest='roles', required=True, action='store', 
+                                     help='''Comma-separated list of role IDs with action types. 
+Format: "RoleID:ActionType" or "RoleName:ActionType"
+Action types: 0=NONE (no permissions), 1=READ (read-only), 2=READ_WRITE (full access)
 Examples: 
-  --integrations "SIEM:2"                    # SIEM role with read-write access
-  --integrations "SIEM:1"                    # SIEM role with read-only access''')
+  --roles "SIEM:2"                    # SIEM role with read-write access
+  --roles "Admin:1,SIEM:2"            # Multiple roles with different permissions
+  --roles "123:1,456:2"               # Using role IDs instead of names
+  --roles "ReadOnly:1"                # Read-only access
+  --roles "Backup:2,Monitor:1"        # Backup with full access, Monitor with read-only''')
 api_key_generate_parser.add_argument('--expires', dest='expires', action='store',
                                      choices=['24h', '7d', '30d', '1y', 'never'],
                                      default='never',
@@ -95,23 +101,23 @@ api_key_revoke_parser = argparse.ArgumentParser(
     epilog='''
 Examples:
   # Revoke API key with confirmation prompt
-  public-api-key revoke "SIEM Integration"
+  public-api-key revoke 12345
   
   # Revoke API key without confirmation (force)
-  public-api-key revoke "SIEM Integration" --force
+  public-api-key revoke 12345 --force
   
   # Short form with force flag
-  public-api-key revoke "SIEM Integration" -f
+  public-api-key revoke 12345 -f
 
 Tips:
-  - Use 'public-api-key list' to find the Name you want to revoke
+  - Use 'public-api-key list' to find the Token you want to revoke
   - Revoked keys cannot be restored, only new keys can be generated
   - Use --force to skip the confirmation prompt (useful for scripts)
     ''',
     formatter_class=argparse.RawDescriptionHelpFormatter
 )
-api_key_revoke_parser.add_argument('name', 
-                                   help='API key Name (get this from "api-key list" command). Example: "SIEM Integration"')
+api_key_revoke_parser.add_argument('token', 
+                                   help='API key Token (get this from "api-key list" command). Example: 12345')
 api_key_revoke_parser.add_argument('--force', '-f', dest='force', action='store_true', 
                                    help='Revoke without confirmation prompt (useful for automated scripts)')
 
@@ -123,8 +129,6 @@ def register_commands(commands):
 def register_command_info(aliases, command_info):
     command_info['public-api-key'] = 'Manage Admin REST API keys for 3rd party integrations'
 
-def get_enterprise_id(enterprise_user_id):
-    return enterprise_user_id >> 32
 
 class ApiKeyCommand(GroupCommand):
     def __init__(self):
@@ -140,7 +144,7 @@ class ApiKeyCommand(GroupCommand):
         print()
         print('Commands:')
         print('  list      - Display all enterprise API keys')
-        print('  generate  - Create a new API key with specified integrations and expiration')
+        print('  generate  - Create a new API key with specified roles and expiration')
         print('  revoke    - Revoke an existing API key')
         print()
         print('Quick Start Examples:')
@@ -148,10 +152,10 @@ class ApiKeyCommand(GroupCommand):
         print('  public-api-key list')
         print()
         print('  # Generate a new API key for SIEM integration (30-day expiration)')
-        print('  public-api-key generate --name "SIEM Tool" --integrations "SIEM:2" --expires 30d')
+        print('  public-api-key generate --name "SIEM Tool" --roles "SIEM:2" --expires 30d')
         print()
         print('  # Revoke an API key')
-        print('  public-api-key revoke "SIEM Integration"')
+        print('  public-api-key revoke 12345')
         print()
         print('Role Action Types:')
         print('  1 = READ       (read-only access)')
@@ -173,7 +177,7 @@ class ApiKeyListCommand(EnterpriseCommand):
 
     def execute(self, params, **kwargs):
         fmt = kwargs.get('format') or ''
-        headers = ['enterprise_id', 'name', 'status', 'issued_date', 'expiration_date', 'integration']
+        headers = ['token', 'enterprise_id', 'name', 'status', 'issued_date', 'expiration_date', 'roles']
         if fmt != 'json':
             headers = [field_to_title(x) for x in headers]
 
@@ -189,7 +193,7 @@ class ApiKeyListCommand(EnterpriseCommand):
                 'public_api/list_token',
                 rs_type=publicapi_pb2.PublicApiTokenResponseList
             )
-
+            
             for token in rs.tokens:
                 issued_date = ''
                 if token.issuedDate:
@@ -201,7 +205,7 @@ class ApiKeyListCommand(EnterpriseCommand):
                     dt = datetime.datetime.fromtimestamp(token.expirationDate / 1000)
                     expiration_date = dt.strftime('%Y-%m-%d %H:%M:%S')
                 
-                api_integrations_str = ', '.join([f"{integration.apiIntegrationTypeName}:{integration.actionType}" 
+                roles_str = ', '.join([f"{integration.roleName}:{integration.actionType}" 
                                      for integration in token.integrations])
                 
                 if token.expirationDate and token.expirationDate < int(datetime.datetime.now().timestamp() * 1000):
@@ -211,18 +215,19 @@ class ApiKeyListCommand(EnterpriseCommand):
                 
                 
                 row = [
+                    token.token,
                     token.enterprise_id,
                     token.name,
                     status,
                     issued_date,
                     expiration_date,
-                    api_integrations_str
+                    roles_str
                 ]
                 table.append(row)
                 
         except Exception as e:
             logging.error(f"Failed to list API keys: {e}")
-            raise CommandError("public-api-key list", "Failed to retrieve API keys")
+            raise CommandError("Failed to retrieve API keys")
         
         return dump_report_data(table, headers=headers, fmt=fmt, filename=kwargs.get('output'))
 
@@ -241,7 +246,7 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
             # Create the generate token request
             rq = publicapi_pb2.GenerateTokenRequest()
             rq.tokenName = name
-            rq.issuedDate = int(datetime.datetime.now().timestamp() * 1000) + 300
+            rq.issuedDate = int(datetime.datetime.now().timestamp() * 1000)
             
             # Set expiration based on the selected option
             expires = kwargs.get('expires', 'never')
@@ -262,31 +267,31 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
                 rq.expirationDate = int(expiration_date.timestamp() * 1000)
             # If expires == 'never', don't set expirationDate (it remains unset/blank)
             
-            # Parse integrations - now required
-            integrations_str = kwargs.get('integrations')
-            if not integrations_str:
-                print("At least one integration is required. Example: --integrations 'SIEM:2'")
+            # Parse roles - now required
+            roles_str = kwargs.get('roles')
+            if not roles_str:
+                print("At least one role is required. Example: --roles 'SIEM:2,CSPM:1'")
                 return
             
-            for integration_spec in integrations_str.split(','):
-                integration_spec = integration_spec.strip()
+            for role_spec in roles_str.split(','):
+                role_spec = role_spec.strip()
                 
                 # Require format: "RoleName:ActionType" or "RoleID:ActionType"
 
-                if ':' in integration_spec:
-                    integration_id_str, action_type_str = integration_spec.split(':', 1)
-                    allowed_integrations = [("SIEM", 1)]
-                    allowed_integration_names = [integration[0].upper() for integration in allowed_integrations]
-                    if integration_id_str.strip().upper() not in allowed_integration_names:
-                        print(f"Integration '{integration_id_str.strip()}' does not match allowed integrations: {', '.join(allowed_integration_names)}. Skipping.")
+                if ':' in role_spec:
+                    role_id_str, action_type_str = role_spec.split(':', 1)
+                    allowed_roles = [("SIEM", 1), ("CSPM", 2), ("BILLING", 3)]
+                    allowed_role_names = [role[0].upper() for role in allowed_roles]
+                    if role_id_str.strip().upper() not in allowed_role_names:
+                        print(f"Role '{role_id_str.strip()}' does not match allowed roles: {', '.join(allowed_role_names)}. Skipping.")
                         return
-                    integration_id_str = integration_id_str.strip()
-                    integration_id = next(integration[1] for integration in allowed_integrations if integration[0].upper() == integration_id_str.upper())
+                    role_id_str = role_id_str.strip()
+                    role_id = next(role[1] for role in allowed_roles if role[0].upper() == role_id_str.upper())
                     action_type_str = action_type_str.strip()
                 else:
                     # If no action type specified, default to READ-write (2)
-                    print(f"Error: Integration specification must include action type. Got: '{integration_spec}'")
-                    print("Required format: 'IntegrationName:ActionType' (e.g., 'SIEM:1')")
+                    print(f"Error: Role specification must include action type. Got: '{role_spec}'")
+                    print("Required format: 'RoleName:ActionType' (e.g., 'SIEM:1,CSPM:2,Billing:1')")
                     return
                 
                 # Map action type number to enum
@@ -298,15 +303,15 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
                         action_type = publicapi_pb2.ActionType.READ_WRITE
                     else:
                         print(f"Invalid action type: '{action_type_str}'. Valid values are: 1=READ, 2=READ_WRITE. Defaulting to READ-write (2)")
-                        return
+                        action_type = publicapi_pb2.ActionType.READ_WRITE
                 except ValueError:
                     print(f"Invalid action type: '{action_type_str}'. Action type must be a number: 1=READ, 2=READ_WRITE. Defaulting to read-write (2)")
-                    return
+                    action_type = publicapi_pb2.ActionType.READ_WRITE
                 
-                integration = publicapi_pb2.IntegrationRequest()
-                integration.apiIntegrationTypeId = integration_id
-                integration.actionType = action_type
-                rq.integrationRequests.append(integration)
+                role = publicapi_pb2.Role()
+                role.roleId = role_id
+                role.actionType = action_type
+                rq.roles.append(role)
             
             # Send the request
             rs = api.communicate_rest(
@@ -325,7 +330,7 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
                     'expiration_date': rs.expirationDate if rs.expirationDate else 'never',
                     'integrations': [
                         {
-                            'api_integration_type_name': integration.apiIntegrationTypeName,
+                            'role_name': integration.roleName,
                             'action_type': integration.actionType,
                             'action_type_name': publicapi_pb2.ActionType.Name(integration.actionType)
                         } for integration in rs.integrations
@@ -341,9 +346,10 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
                     return json.dumps(output, indent=2)
             else:
                 print(f"{bcolors.OKGREEN}API Key generated successfully{bcolors.ENDC}")
+                print(f"Token: {rs.token}")
                 print(f"Name: {rs.name}")
                 print(f"Token: {rs.token}")
-                print(f"Enterprise ID: {get_enterprise_id(self.get_enterprise_id(params))}")
+                print(f"Enterprise ID: {rs.enterprise_id}")
                 if rs.expirationDate:
                     exp_date = datetime.datetime.fromtimestamp(rs.expirationDate / 1000)
                     print(f"Expires: {exp_date.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -351,19 +357,14 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
                     print("Expires: Never")
                 
                 if rs.integrations:
-                    print("Integrations:")
+                    print("Roles:")
                     for integration in rs.integrations:
                         action_name = publicapi_pb2.ActionType.Name(integration.actionType)
                         print(f"  - {integration.roleName}: {action_name} ({integration.actionType})")
                         
         except Exception as e:
-            err = str(e)
-            if "(" in err and ")" in err and err.find("(") < err.find(")"):
-                idx1 = err.find("(") + 1
-                idx2 = err.find(")", idx1)
-                err = err[idx1:idx2]
-            logging.error(f"Failed to generate API key: {err}")
-            raise CommandError("public-api-key generate", "Failed to generate API key")
+            logging.error(f"Failed to generate API key: {e}")
+            raise CommandError("Failed to generate API key")
 
 
 class ApiKeyRevokeCommand(EnterpriseCommand):
@@ -371,16 +372,16 @@ class ApiKeyRevokeCommand(EnterpriseCommand):
         return api_key_revoke_parser
 
     def execute(self, params, **kwargs):
-        name = kwargs.get('name')
-        if not name:
-            print("Name is required")
+        token = kwargs.get('token')
+        if not token:
+            print("Token is required")
             return
         
         # Confirm revocation unless force flag is set
         if not kwargs.get('force'):
             answer = user_choice(
                 bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
-                f'You are about to revoke API key with Name {name}' +
+                f'You are about to revoke API key with Token {token}' +
                 '\n\nDo you want to proceed with revocation?', 'yn', 'n'
             )
             if answer.lower() != 'y':
@@ -389,7 +390,7 @@ class ApiKeyRevokeCommand(EnterpriseCommand):
         try:
             # Create the revoke token request
             rq = publicapi_pb2.RevokeTokenRequest()
-            rq.name = name
+            rq.token = token
             
             # Send the request
             rs = api.communicate_rest(
@@ -398,16 +399,10 @@ class ApiKeyRevokeCommand(EnterpriseCommand):
                 rs_type=publicapi_pb2.RevokeTokenResponse
             )
             
-            print(f"{bcolors.OKGREEN}API Key with Name {name} revoked successfully{bcolors.ENDC}")
-            
+            print(f"{bcolors.OKGREEN}API Key with Token {token} revoked successfully{bcolors.ENDC}")
             if rs.message:
                 print(f"Message: {rs.message}")
                 
         except Exception as e:
-            err = str(e)
-            if "(" in err and ")" in err and err.find("(") < err.find(")"):
-                idx1 = err.find("(") + 1
-                idx2 = err.find(")", idx1)
-                err = err[idx1:idx2]
-            logging.error(f"Failed to revoke API key: {err}")
-            raise CommandError("public-api-key revoke", "Failed to revoke API key") 
+            logging.error(f"Failed to revoke API key: {e}")
+            raise CommandError("Failed to revoke API key") 
