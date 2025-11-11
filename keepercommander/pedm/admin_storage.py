@@ -97,6 +97,15 @@ class PedmStorageApprovalStatus(storage_types.IUid[str]):
     def uid(self) -> str:
         return self.approval_uid
 
+@dataclass
+class PedmAuditEventValue(storage_types.IUid[str]):
+    value_uid: str = ''
+    field_name: str = ''
+    encrypted_data: bytes = b''
+    created: int = 0
+    def uid(self) -> str:
+        return self.value_uid
+
 
 class IPedmStorage(abc.ABC):
     @property
@@ -139,6 +148,11 @@ class IPedmStorage(abc.ABC):
     def approval_status(self) -> storage_types.IEntityStorage[PedmStorageApprovalStatus, str]:
         pass
 
+    @property
+    @abc.abstractmethod
+    def audit_event_values(self) -> storage_types.IEntityStorage[PedmAuditEventValue, str]:
+        pass
+
     @abc.abstractmethod
     def reset(self):
         pass
@@ -154,6 +168,7 @@ class MemoryPedmStorage(IPedmStorage):
         self._collection_links = in_memory.InMemoryLinkStorage[PedmStorageCollectionLink, str, str]()
         self._approvals = in_memory.InMemoryEntityStorage[PedmStorageApproval, str]()
         self._approval_status = in_memory.InMemoryEntityStorage[PedmStorageApprovalStatus, str]()
+        self._audit_event_values = in_memory.InMemoryEntityStorage[PedmAuditEventValue, str]()
 
     @property
     def settings(self) -> storage_types.IEntityStorage[PedmAdminSettings, str]:
@@ -187,6 +202,10 @@ class MemoryPedmStorage(IPedmStorage):
     def approval_status(self) -> storage_types.IEntityStorage[PedmStorageApprovalStatus, str]:
         return self._approval_status
 
+    @property
+    def audit_event_values(self) -> storage_types.IEntityStorage[PedmAuditEventValue, str]:
+        return self._audit_event_values
+
     def reset(self):
         self._settings.clear()
         self._deployments.clear()
@@ -196,7 +215,7 @@ class MemoryPedmStorage(IPedmStorage):
         self._collection_links.clear()
         self._approvals.clear()
         self._approval_status.clear()
-
+        self._audit_event_values.clear()
 
 class SqlitePedmStorage(IPedmStorage):
     def __init__(self, get_connection: Callable[[], sqlite3.Connection], enterprise_id: int):
@@ -220,10 +239,13 @@ class SqlitePedmStorage(IPedmStorage):
             PedmStorageApproval, primary_key='approval_uid', owner_column=self.owner_column, owner_type=int)
         approval_status_schema = sqlite_dao.TableSchema.load_schema(
             PedmStorageApprovalStatus, primary_key='approval_uid', owner_column=self.owner_column, owner_type=int)
+        audit_event_value_schema = sqlite_dao.TableSchema.load_schema(
+            PedmAuditEventValue, primary_key='value_uid', owner_column=self.owner_column, owner_type=int)
 
         sqlite_dao.verify_database(
             self.get_connection(),(setting_schema, deployment_schema, agent_schema, policy_schema,
-                                   collection_schema, collection_link_schema, approval_schema, approval_status_schema))
+                                   collection_schema, collection_link_schema, approval_schema, approval_status_schema,
+                                   audit_event_value_schema))
 
         self._settings = sqlite.SqliteEntityStorage(self.get_connection, setting_schema, owner=self.enterprise_id)
         self._deployments = sqlite.SqliteEntityStorage(self.get_connection, deployment_schema, owner=self.enterprise_id)
@@ -233,6 +255,7 @@ class SqlitePedmStorage(IPedmStorage):
         self._collection_links = sqlite.SqliteLinkStorage(self.get_connection, collection_link_schema, owner=self.enterprise_id)
         self._approvals = sqlite.SqliteEntityStorage(self.get_connection, approval_schema, owner=self.enterprise_id)
         self._approval_status = sqlite.SqliteEntityStorage(self.get_connection, approval_status_schema, owner=self.enterprise_id)
+        self._audit_event_values = sqlite.SqliteEntityStorage(self.get_connection, audit_event_value_schema, owner=self.enterprise_id)
 
     @property
     def settings(self) -> storage_types.IEntityStorage[PedmAdminSettings, str]:
@@ -266,6 +289,10 @@ class SqlitePedmStorage(IPedmStorage):
     def approval_status(self) -> storage_types.IEntityStorage[PedmStorageApprovalStatus, str]:
         return self._approval_status
 
+    @property
+    def audit_event_values(self) -> storage_types.IEntityStorage[PedmStorageApprovalStatus, str]:
+        return self._audit_event_values
+
     def reset(self):
         self._settings.delete_all()
         self._deployments.delete_all()
@@ -275,3 +302,4 @@ class SqlitePedmStorage(IPedmStorage):
         self._collection_links.delete_all()
         self._approvals.delete_all()
         self._approval_status.delete_all()
+        self._audit_event_values.delete_all()
