@@ -128,6 +128,10 @@ def register_commands(commands, aliases, command_info):
     commands['2fa'] = TwoFaCommand()
     command_info['2fa'] = '2FA management'
 
+    from .email_commands import EmailConfigCommand
+    commands['email-config'] = EmailConfigCommand()
+    command_info['email-config'] = 'Email provider configuration management'
+
     from . import device_management
     device_management.register_commands(commands)
     device_management.register_command_info(aliases, command_info)
