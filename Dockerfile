@@ -35,8 +35,8 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh && \
     mkdir -p /home/commander/.keeper && \
     chown -R commander:commander /commander /home/commander/.keeper && \
     chmod -R 755 /home/commander/.keeper && \
-    # Install application with email dependencies
-    pip install --no-cache-dir -e .[email]
+    # Install application
+    pip install --no-cache-dir -e .
 
 # Switch to non-root user
 USER commander
