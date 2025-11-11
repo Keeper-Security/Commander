@@ -449,7 +449,7 @@ def create_onboarding_blueprint():
         except CommandError as e:
             # CommandError exceptions are user-facing validation errors, safe to expose
             logger.warning(f"Command error in onboarding: {e}")
-            return jsonify({"status": "error", "error": str(e)}), 400
+            return jsonify({"status": "error", "error": "Invalid request parameters"}), 400
 
         except Exception as e:
             # Generic exceptions may contain sensitive internal details, use generic message
