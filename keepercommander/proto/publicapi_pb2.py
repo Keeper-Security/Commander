@@ -15,7 +15,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0fpublicapi.proto\x12\tPublicApi\"A\n\x04Role\x12\x0e\n\x06roleId\x18\x01 \x01(\x05\x12)\n\nactionType\x18\x02 \x01(\x0e\x32\x15.PublicApi.ActionType\"]\n\x12IntegrationRequest\x12\x1c\n\x14\x61piIntegrationTypeId\x18\x01 \x01(\x05\x12)\n\nactionType\x18\x02 \x01(\x0e\x32\x15.PublicApi.ActionType\"\xb1\x01\n\x14GenerateTokenRequest\x12\x1e\n\x05roles\x18\x01 \x03(\x0b\x32\x0f.PublicApi.Role\x12\x11\n\ttokenName\x18\x02 \x01(\t\x12\x12\n\nissuedDate\x18\x03 \x01(\x03\x12\x16\n\x0e\x65xpirationDate\x18\x04 \x01(\x03\x12:\n\x13integrationRequests\x18\x05 \x03(\x0b\x32\x1d.PublicApi.IntegrationRequest\"\x89\x01\n\x0cIntegrations\x12\x10\n\x08roleName\x18\x01 \x01(\t\x12\x1c\n\x14\x61piIntegrationTypeId\x18\x02 \x01(\x05\x12)\n\nactionType\x18\x03 \x01(\x0e\x32\x15.PublicApi.ActionType\x12\x1e\n\x16\x61piIntegrationTypeName\x18\x04 \x01(\t\"\xe3\x01\n\x0ePublicApiToken\x12\"\n\x1a\x65nterprisePublicApiTokenId\x18\x01 \x01(\x05\x12\x15\n\renterprise_id\x18\x02 \x01(\x05\x12\x0c\n\x04name\x18\x03 \x01(\t\x12\r\n\x05token\x18\x04 \x01(\t\x12\x13\n\x06\x61\x63tive\x18\x05 \x01(\x08H\x00\x88\x01\x01\x12\x12\n\nissuedDate\x18\x06 \x01(\x03\x12\x16\n\x0e\x65xpirationDate\x18\x07 \x01(\x03\x12-\n\x0cintegrations\x18\x08 \x03(\x0b\x32\x17.PublicApi.IntegrationsB\t\n\x07_active\"\xc7\x01\n\x16PublicApiTokenResponse\x12\x15\n\renterprise_id\x18\x01 \x01(\x05\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\r\n\x05token\x18\x03 \x01(\t\x12\x13\n\x06\x61\x63tive\x18\x04 \x01(\x08H\x00\x88\x01\x01\x12\x12\n\nissuedDate\x18\x05 \x01(\x03\x12\x16\n\x0e\x65xpirationDate\x18\x06 \x01(\x03\x12-\n\x0cintegrations\x18\x07 \x03(\x0b\x32\x17.PublicApi.IntegrationsB\t\n\x07_active\"O\n\x1aPublicApiTokenResponseList\x12\x31\n\x06tokens\x18\x01 \x03(\x0b\x32!.PublicApi.PublicApiTokenResponse\"<\n\x0fPublicApiTokens\x12)\n\x06tokens\x18\x01 \x03(\x0b\x32\x19.PublicApi.PublicApiToken\"1\n\x12RevokeTokenRequest\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\r\n\x05token\x18\x02 \x01(\t\"&\n\x13RevokeTokenResponse\x12\x0f\n\x07message\x18\x01 \x01(\t\"D\n\x12\x41piIntegrationType\x12\x1c\n\x14\x61piIntegrationTypeId\x18\x01 \x01(\x05\x12\x10\n\x08roleName\x18\x02 \x01(\t\"Q\n\x13\x41piIntegrationTypes\x12:\n\x13\x61piIntegrationTypes\x18\x01 \x03(\x0b\x32\x1d.PublicApi.ApiIntegrationType\"+\n\x05Token\x12\"\n\x1a\x65nterprisePublicApiTokenId\x18\x01 \x01(\x05\"\xb0\x01\n\x19ListPublicApiTokenRequest\x12\x32\n\x0cstatusFilter\x18\x01 \x01(\x0e\x32\x17.PublicApi.StatusFilterH\x00\x88\x01\x01\x12\x17\n\nsortByName\x18\x02 \x01(\tH\x01\x88\x01\x01\x12\x17\n\nnameFilter\x18\x03 \x01(\tH\x02\x88\x01\x01\x42\x0f\n\r_statusFilterB\r\n\x0b_sortByNameB\r\n\x0b_nameFilter*0\n\nActionType\x12\x08\n\x04NONE\x10\x00\x12\x08\n\x04READ\x10\x01\x12\x0e\n\nREAD_WRITE\x10\x02*1\n\x0cStatusFilter\x12\n\n\x06\x41\x43TIVE\x10\x00\x12\x0c\n\x08INACTIVE\x10\x01\x12\x07\n\x03\x41LL\x10\x02\x42%\n\x18\x63om.keepersecurity.protoB\tPublicApib\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0fpublicapi.proto\x12\tPublicApi\"A\n\x04Role\x12\x0e\n\x06roleId\x18\x01 \x01(\x05\x12)\n\nactionType\x18\x02 \x01(\x0e\x32\x15.PublicApi.ActionType\"u\n\x14GenerateTokenRequest\x12\x1e\n\x05roles\x18\x01 \x03(\x0b\x32\x0f.PublicApi.Role\x12\x11\n\ttokenName\x18\x02 \x01(\t\x12\x12\n\nissuedDate\x18\x03 \x01(\x03\x12\x16\n\x0e\x65xpirationDate\x18\x04 \x01(\x03\"i\n\x0cIntegrations\x12\x10\n\x08roleName\x18\x01 \x01(\t\x12\x1c\n\x14\x61piIntegrationTypeId\x18\x02 \x01(\x05\x12)\n\nactionType\x18\x03 \x01(\x0e\x32\x15.PublicApi.ActionType\"\xe3\x01\n\x0ePublicApiToken\x12\"\n\x1a\x65nterprisePublicApiTokenId\x18\x01 \x01(\x05\x12\x15\n\renterprise_id\x18\x02 \x01(\x05\x12\x0c\n\x04name\x18\x03 \x01(\t\x12\r\n\x05token\x18\x04 \x01(\t\x12\x13\n\x06\x61\x63tive\x18\x05 \x01(\x08H\x00\x88\x01\x01\x12\x12\n\nissuedDate\x18\x06 \x01(\x03\x12\x16\n\x0e\x65xpirationDate\x18\x07 \x01(\x03\x12-\n\x0cintegrations\x18\x08 \x03(\x0b\x32\x17.PublicApi.IntegrationsB\t\n\x07_active\"\xc7\x01\n\x16PublicApiTokenResponse\x12\x15\n\renterprise_id\x18\x01 \x01(\x05\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\r\n\x05token\x18\x03 \x01(\t\x12\x13\n\x06\x61\x63tive\x18\x04 \x01(\x08H\x00\x88\x01\x01\x12\x12\n\nissuedDate\x18\x05 \x01(\x03\x12\x16\n\x0e\x65xpirationDate\x18\x06 \x01(\x03\x12-\n\x0cintegrations\x18\x07 \x03(\x0b\x32\x17.PublicApi.IntegrationsB\t\n\x07_active\"O\n\x1aPublicApiTokenResponseList\x12\x31\n\x06tokens\x18\x01 \x03(\x0b\x32!.PublicApi.PublicApiTokenResponse\"<\n\x0fPublicApiTokens\x12)\n\x06tokens\x18\x01 \x03(\x0b\x32\x19.PublicApi.PublicApiToken\"#\n\x12RevokeTokenRequest\x12\r\n\x05token\x18\x01 \x01(\t\"&\n\x13RevokeTokenResponse\x12\x0f\n\x07message\x18\x01 \x01(\t\"D\n\x12\x41piIntegrationType\x12\x1c\n\x14\x61piIntegrationTypeId\x18\x01 \x01(\x05\x12\x10\n\x08roleName\x18\x02 \x01(\t\"Q\n\x13\x41piIntegrationTypes\x12:\n\x13\x61piIntegrationTypes\x18\x01 \x03(\x0b\x32\x1d.PublicApi.ApiIntegrationType\"+\n\x05Token\x12\"\n\x1a\x65nterprisePublicApiTokenId\x18\x01 \x01(\x05\"\xb0\x01\n\x19ListPublicApiTokenRequest\x12\x32\n\x0cstatusFilter\x18\x01 \x01(\x0e\x32\x17.PublicApi.StatusFilterH\x00\x88\x01\x01\x12\x17\n\nsortByName\x18\x02 \x01(\tH\x01\x88\x01\x01\x12\x17\n\nnameFilter\x18\x03 \x01(\tH\x02\x88\x01\x01\x42\x0f\n\r_statusFilterB\r\n\x0b_sortByNameB\r\n\x0b_nameFilter*0\n\nActionType\x12\x08\n\x04NONE\x10\x00\x12\x08\n\x04READ\x10\x01\x12\x0e\n\nREAD_WRITE\x10\x02*1\n\x0cStatusFilter\x12\n\n\x06\x41\x43TIVE\x10\x00\x12\x0c\n\x08INACTIVE\x10\x01\x12\x07\n\x03\x41LL\x10\x02\x42%\n\x18\x63om.keepersecurity.protoB\tPublicApib\x06proto3')
 
 _ACTIONTYPE = DESCRIPTOR.enum_types_by_name['ActionType']
 ActionType = enum_type_wrapper.EnumTypeWrapper(_ACTIONTYPE)
@@ -30,7 +30,6 @@ ALL = 2
 
 
 _ROLE = DESCRIPTOR.message_types_by_name['Role']
-_INTEGRATIONREQUEST = DESCRIPTOR.message_types_by_name['IntegrationRequest']
 _GENERATETOKENREQUEST = DESCRIPTOR.message_types_by_name['GenerateTokenRequest']
 _INTEGRATIONS = DESCRIPTOR.message_types_by_name['Integrations']
 _PUBLICAPITOKEN = DESCRIPTOR.message_types_by_name['PublicApiToken']
@@ -49,13 +48,6 @@ Role = _reflection.GeneratedProtocolMessageType('Role', (_message.Message,), {
   # @@protoc_insertion_point(class_scope:PublicApi.Role)
   })
 _sym_db.RegisterMessage(Role)
-
-IntegrationRequest = _reflection.GeneratedProtocolMessageType('IntegrationRequest', (_message.Message,), {
-  'DESCRIPTOR' : _INTEGRATIONREQUEST,
-  '__module__' : 'publicapi_pb2'
-  # @@protoc_insertion_point(class_scope:PublicApi.IntegrationRequest)
-  })
-_sym_db.RegisterMessage(IntegrationRequest)
 
 GenerateTokenRequest = _reflection.GeneratedProtocolMessageType('GenerateTokenRequest', (_message.Message,), {
   'DESCRIPTOR' : _GENERATETOKENREQUEST,
@@ -145,36 +137,34 @@ if _descriptor._USE_C_DESCRIPTORS == False:
 
   DESCRIPTOR._options = None
   DESCRIPTOR._serialized_options = b'\n\030com.keepersecurity.protoB\tPublicApi'
-  _ACTIONTYPE._serialized_start=1555
-  _ACTIONTYPE._serialized_end=1603
-  _STATUSFILTER._serialized_start=1605
-  _STATUSFILTER._serialized_end=1654
+  _ACTIONTYPE._serialized_start=1352
+  _ACTIONTYPE._serialized_end=1400
+  _STATUSFILTER._serialized_start=1402
+  _STATUSFILTER._serialized_end=1451
   _ROLE._serialized_start=30
   _ROLE._serialized_end=95
-  _INTEGRATIONREQUEST._serialized_start=97
-  _INTEGRATIONREQUEST._serialized_end=190
-  _GENERATETOKENREQUEST._serialized_start=193
-  _GENERATETOKENREQUEST._serialized_end=370
-  _INTEGRATIONS._serialized_start=373
-  _INTEGRATIONS._serialized_end=510
-  _PUBLICAPITOKEN._serialized_start=513
-  _PUBLICAPITOKEN._serialized_end=740
-  _PUBLICAPITOKENRESPONSE._serialized_start=743
-  _PUBLICAPITOKENRESPONSE._serialized_end=942
-  _PUBLICAPITOKENRESPONSELIST._serialized_start=944
-  _PUBLICAPITOKENRESPONSELIST._serialized_end=1023
-  _PUBLICAPITOKENS._serialized_start=1025
-  _PUBLICAPITOKENS._serialized_end=1085
-  _REVOKETOKENREQUEST._serialized_start=1087
-  _REVOKETOKENREQUEST._serialized_end=1136
-  _REVOKETOKENRESPONSE._serialized_start=1138
-  _REVOKETOKENRESPONSE._serialized_end=1176
-  _APIINTEGRATIONTYPE._serialized_start=1178
-  _APIINTEGRATIONTYPE._serialized_end=1246
-  _APIINTEGRATIONTYPES._serialized_start=1248
-  _APIINTEGRATIONTYPES._serialized_end=1329
-  _TOKEN._serialized_start=1331
-  _TOKEN._serialized_end=1374
-  _LISTPUBLICAPITOKENREQUEST._serialized_start=1377
-  _LISTPUBLICAPITOKENREQUEST._serialized_end=1553
+  _GENERATETOKENREQUEST._serialized_start=97
+  _GENERATETOKENREQUEST._serialized_end=214
+  _INTEGRATIONS._serialized_start=216
+  _INTEGRATIONS._serialized_end=321
+  _PUBLICAPITOKEN._serialized_start=324
+  _PUBLICAPITOKEN._serialized_end=551
+  _PUBLICAPITOKENRESPONSE._serialized_start=554
+  _PUBLICAPITOKENRESPONSE._serialized_end=753
+  _PUBLICAPITOKENRESPONSELIST._serialized_start=755
+  _PUBLICAPITOKENRESPONSELIST._serialized_end=834
+  _PUBLICAPITOKENS._serialized_start=836
+  _PUBLICAPITOKENS._serialized_end=896
+  _REVOKETOKENREQUEST._serialized_start=898
+  _REVOKETOKENREQUEST._serialized_end=933
+  _REVOKETOKENRESPONSE._serialized_start=935
+  _REVOKETOKENRESPONSE._serialized_end=973
+  _APIINTEGRATIONTYPE._serialized_start=975
+  _APIINTEGRATIONTYPE._serialized_end=1043
+  _APIINTEGRATIONTYPES._serialized_start=1045
+  _APIINTEGRATIONTYPES._serialized_end=1126
+  _TOKEN._serialized_start=1128
+  _TOKEN._serialized_end=1171
+  _LISTPUBLICAPITOKENREQUEST._serialized_start=1174
+  _LISTPUBLICAPITOKENREQUEST._serialized_end=1350
 # @@protoc_insertion_point(module_scope)

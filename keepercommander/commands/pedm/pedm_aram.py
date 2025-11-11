@@ -3,7 +3,7 @@ import datetime
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, List, Dict, Optional, Callable, Union, Set
+from typing import Any, List, Dict, Optional, Callable, Union
 
 from prompt_toolkit import print_formatted_text, HTML
 
@@ -15,7 +15,7 @@ from .. import base
 from . import pedm_admin
 from ..helpers import report_utils
 from ...params import KeeperParams
-from ...pedm import admin_plugin, admin_storage
+from ...pedm import admin_plugin
 
 
 class PedmReportCommand(base.GroupCommandNew):
@@ -174,57 +174,6 @@ class AuditMixin:
         return None
 
 
-    @staticmethod
-    def get_hash_fields() -> Optional[List[str]]:
-        if not AuditMixin.field_info:
-            return None
-        return [key for key, value in AuditMixin.field_info.items() if value.protection == 'hash']
-
-    """
-    @staticmethod
-    def replace_hash_fields() -> Optional[List[str]]:
-        if not isinstance(events, list):
-            return
-        hash_fields = {key for key, value in AuditMixin.field_info.items() if value.protection == 'hash'}
-        values: Set[bytes] = set()
-        for event in events:
-            if isinstance(event, dict):
-                for field in hash_fields:
-                    v = event.get(field)
-                    if isinstance(v, str):
-                        if v not in AuditMixin.hash_lookup:
-                            try:
-                                uid = utils.base64_url_decode(v)
-                                if uid and len(uid) == 16:
-                                    values.add(uid)
-                            except:
-                                pass
-        if values:
-            all_values = list(values)
-            while len(all_values) > 0:
-                chunk = all_values[:1000]
-                all_values = all_values[1000:]
-                rq = pedm_pb2.AuditCollectionRequest()
-                rq.valueUid.extend(chunk)
-                rs: Optional[pedm_pb2.AuditCollectionResponse] = (
-                    api.execute_router(params, 'pedm/get_audit_collections', rq, rs_type=pedm_pb2.AuditCollectionResponse))
-                if rs:
-                    for cv in rs.values:
-                        try:
-                            v = utils.base64_url_encode(cv.valueUid)
-                            decrypted_data = crypto.decrypt_ec(cv.encryptedData, ec_key)
-                            AuditMixin.hash_lookup[v] = cv
-                        except:
-                            pass
-
-        for event in events:
-            if isinstance(event, dict):
-                for field in hash_fields:
-                    v = event.get(field)
-                    if isinstance(v, str):
-                        cv = AuditMixin.hash_lookup.get(v)
-    """
-
 audit_column_description = '''
 <b>Audit Column Report Command</b>
 Returns unique values for audit report fields.
@@ -338,7 +287,7 @@ Filter syntax: <b>[FIELD_NAME]=[CRITERIA]</b>
 where criteria is
 1. single value: Example: "agent_uid=NJvK0I5RpuF0UFMwRKY_Dw"
 2. list of values: Example: "agent_uid=IN(NJvK0I5RpuF0UFMwRKY_Dw, VYLhwqhRvhIpma9e1HoDFw)"
-3. range value: Example: "event_time=BETWEEN 2024-01-01 AND 2024-02-01"
+3. range value: Example: "created=BETWEEN 2024-01-01 AND 2024-02-01"
 Predefined date range values: today, yesterday, last_7_days, last_30_days, month_to_date, last_month, year_to_date, last_year
 <ansigreen>event_time=last_month</ansigreen>
 '''
@@ -361,17 +310,7 @@ class PedmEventReportCommand(base.ArgparseCommand):
             print_formatted_text(HTML(audit_report_description))
             return
 
-        plugin = admin_plugin.get_pedm_plugin(context)
-
-        tree_key = context.enterprise['unencrypted_tree_key']
-        keys = context.enterprise['keys']
-        ecc_private_key_data = utils.base64_url_decode(keys['ecc_encrypted_private_key'])
-        ecc_private_key_data = crypto.decrypt_aes_v2(ecc_private_key_data, tree_key)
-        ec_private_key = crypto.load_ec_private_key(ecc_private_key_data)
-
         AuditMixin.load_audit_metadata(context)
-        hash_fields = AuditMixin.get_hash_fields()
-
         assert AuditMixin.field_info is not None
         assert AuditMixin.syslog_templates is not None
 
@@ -409,45 +348,6 @@ class PedmEventReportCommand(base.ArgparseCommand):
         assert rs is not None
         events = rs.get('audit_event_overview_report_rows')
         assert isinstance(events, list)
-
-        if hash_fields:
-            field_values: Set[str] = set()
-            for event in events:
-                for field in hash_fields:
-                    v = event.get(field)
-                    if isinstance(v, str):
-                        try:
-                            uid = utils.base64_url_decode(v)
-                            if uid and len(uid) == 16:
-                                field_values.add(v)
-                        except:
-                            pass
-            if len(field_values) > 0:
-                all_values = [x.value_uid for x in plugin.storage.audit_event_values.get_all_entities()]
-                field_values.difference_update(all_values)
-            if len(field_values) > 0:
-                uids = [utils.base64_url_decode(x) for x in field_values]
-                while len(uids) > 0:
-                    chunk = uids[:1000]
-                    uids = uids[1000:]
-                    v_rq = pedm_pb2.AuditCollectionRequest()
-                    v_rq.valueUid.extend(chunk)
-                    rs: Optional[pedm_pb2.AuditCollectionResponse] = (
-                        api.execute_router(context, 'pedm/get_audit_collections', v_rq, rs_type=pedm_pb2.AuditCollectionResponse))
-                    if rs:
-                        to_add: List[admin_storage.PedmAuditEventValue] = []
-                        for cv in rs.values:
-                            try:
-                                arv = admin_storage.PedmAuditEventValue(
-                                    value_uid=utils.base64_url_encode(cv.valueUid), field_name=cv.collectionName,
-                                    encrypted_data=cv.encryptedData, created=cv.created)
-                                to_add.append(arv)
-                            except:
-                                pass
-                        if to_add:
-                            plugin.storage.audit_event_values.put_entities(to_add)
-
-        value_lookup: Dict[str, str] = {}
         for event in events:
             if 'admin_uid' in event:
                 user_id = AuditMixin.get_enterprise_user_id(event['admin_uid'])
@@ -479,23 +379,6 @@ class PedmEventReportCommand(base.ArgparseCommand):
                         status_info = '"Denied - Failed Justification"'
                 if status_info:
                     event['evaluation_status'] = status_info
-            if hash_fields:
-                for hash_field in hash_fields:
-                    if hash_field in event:
-                        uid = event.get(hash_field)
-                        if uid:
-                            if uid not in value_lookup:
-                                hash_value = ''
-                                cv = plugin.storage.audit_event_values.get_entity(uid)
-                                if cv:
-                                    try:
-                                        hash_value = crypto.decrypt_ec(cv.encrypted_data, ec_private_key).decode('utf-8')
-                                    except:
-                                        pass
-                                value_lookup[uid] = hash_value
-                            hash_value = value_lookup.get(uid)
-                            if hash_value:
-                                event[hash_field] = f'{uid} ({hash_value})'
 
             event_type = event.get('audit_event_type')
             if event_type == 'approval_request_status_changed':
@@ -563,15 +446,15 @@ Any field that has type "group" or "filter" can be used as filter
 
 --aggregate:            Defines the aggregate value:
      occurrences        number of events. COUNT(*)
-   first_created        starting date. MIN(event_time)
-    last_created        ending date. MAX(event_time)
+   first_created        starting date. MIN(created)
+    last_created        ending date. MAX(created)
 
 Filter syntax
 <FIELD_NAME>=<CRITERIA>
 where criteria is
 1. single value: Example: "agent_uid=NJvK0I5RpuF0UFMwRKY_Dw"
 2. list of values: Example: "agent_uid=IN(NJvK0I5RpuF0UFMwRKY_Dw, VYLhwqhRvhIpma9e1HoDFw)"
-3. range value: Example: "event_time=BETWEEN 2024-01-01 AND 2024-02-01"
+3. range value: Example: "created=BETWEEN 2024-01-01 AND 2024-02-01"
 Predefined date range values: today, yesterday, last_7_days, last_30_days, month_to_date, last_month, year_to_date, last_year
 "event_time=last_month"
 '''

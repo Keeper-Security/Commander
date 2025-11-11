@@ -76,11 +76,6 @@ COMMAND_CATEGORIES = {
         'service-config-add'
     },
     
-    # Email Configuration Commands
-    'Email Configuration Commands': {
-        'email-config'
-    },
-
     # Miscellaneous Commands
     'Miscellaneous Commands': {
         'this-device', 'login', 'login-status', 'biometric', 'whoami', 'logout',
@@ -88,7 +83,7 @@ COMMAND_CATEGORIES = {
         'reset-password', 'sync-security-data', 'keeper-fill', '2fa', 'create-account',
         'run-as', 'sleep', 'server', 'proxy', 'keep-alive'
     },
-
+    
     # KeeperPAM Commands
     'KeeperPAM Commands': {
         'pam'
@@ -123,7 +118,6 @@ def get_category_order():
         'BreachWatch Commands',
         'Device Management Commands',
         'Service Mode REST API',
-        'Email Configuration Commands',
         'Miscellaneous Commands',
         'KeeperPAM Commands',
         'Legacy Commands',
