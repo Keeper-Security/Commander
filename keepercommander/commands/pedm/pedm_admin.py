@@ -1728,7 +1728,7 @@ class PedmApprovalListCommand(base.ArgparseCommand):
     def __init__(self):
         parser = argparse.ArgumentParser(prog='list', description='List PEDM approval requests',
                                          parents=[base.report_output_parser])
-        parser.add_argument('--type', dest='type', action='store', choices=['approved', 'denied', 'pending', 'expired'],
+        parser.add_argument('--type', dest='type', action='store', choices=['approved', 'denied', 'pending'],
                             help='approval type filter')
 
         super().__init__(parser)
@@ -1743,7 +1743,6 @@ class PedmApprovalListCommand(base.ArgparseCommand):
             approval_type = None
         table: List[List[Any]] = []
         headers = ['approval_uid', 'approval_type', 'status', 'agent_uid', 'account_info', 'application_info', 'justification', 'expire_in', 'created']
-        expired_ts = datetime.datetime.now() - datetime.timedelta(hours=5)
         for approval in plugin.approvals.get_all_entities():
             approval_uid = approval.approval_uid
             a_status = plugin.storage.approval_status.get_entity(approval_uid)
@@ -1754,8 +1753,6 @@ class PedmApprovalListCommand(base.ArgparseCommand):
                     status = 'Denied'
                 elif a_status.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED:
                     status = 'Pending'
-                    if expired_ts > approval.created:
-                        status = 'Expired'
                 else:
                     status = 'Unsupported'
             else:
@@ -1784,7 +1781,7 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
         parser.add_argument('--deny', dest='deny', action='append',
                             help='Request UIDs for denial')
         parser.add_argument('--remove', dest='remove', action='append',
-                            help='Request UIDs for removal. UID, @approved, @denied, @expired, @pending')
+                            help='Request UIDs for removal. UID, @approved, @denied, @pending')
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
@@ -1809,7 +1806,6 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
         to_approve = verify_uid(kwargs.get('approve'))
         to_deny = verify_uid(kwargs.get('deny'))
         to_remove = kwargs.get('remove')
-        expire_ts = int(datetime.datetime.now().timestamp() * 1000)
         if to_remove:
             if isinstance(to_remove, str):
                 to_remove = [to_remove]
@@ -1824,10 +1820,7 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
                         (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_DENIED))
                 elif uid == '@pending':
                     to_remove_set.update(
-                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED and x.modified >= expire_ts))
-                elif uid == '@expired':
-                    to_remove_set.update(
-                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED and x.modified < expire_ts))
+                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED))
                 else:
                     to_resolve.append(uid)
             if len(to_resolve) > 0:
@@ -1836,20 +1829,19 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
                     to_remove_set.update(to_remove)
             to_remove = list(to_remove_set)
 
-        if to_approve or to_deny or to_remove:
-            status_rs = plugin.modify_approvals(to_approve=to_approve, to_deny=to_deny, to_remove=to_remove)
-            if status_rs.add:
-                for status in status_rs.add:
-                    if not status.success:
-                        if isinstance(status, admin_types.EntityStatus):
-                            logger.warning(f'Failed to approved "{status.entity_uid}": {status.message}')
-            if status_rs.update:
-                for status in status_rs.update:
-                    if not status.success:
-                        if isinstance(status, admin_types.EntityStatus):
-                            logger.warning(f'Failed to deny "{status.entity_uid}": {status.message}')
-            if status_rs.remove:
-                for status in status_rs.remove:
-                    if not status.success:
-                        if isinstance(status, admin_types.EntityStatus):
-                            logger.warning(f'Failed to remove "{status.entity_uid}": {status.message}')
+        status_rs = plugin.modify_approvals(to_approve=to_approve, to_deny=to_deny, to_remove=to_remove)
+        if status_rs.add:
+            for status in status_rs.add:
+                if not status.success:
+                    if isinstance(status, admin_types.EntityStatus):
+                        logger.warning(f'Failed to approved "{status.entity_uid}": {status.message}')
+        if status_rs.update:
+            for status in status_rs.update:
+                if not status.success:
+                    if isinstance(status, admin_types.EntityStatus):
+                        logger.warning(f'Failed to deny "{status.entity_uid}": {status.message}')
+        if status_rs.remove:
+            for status in status_rs.remove:
+                if not status.success:
+                    if isinstance(status, admin_types.EntityStatus):
+                        logger.warning(f'Failed to remove "{status.entity_uid}": {status.message}')
