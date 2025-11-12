@@ -10,7 +10,6 @@ from ..proto import rmd_pb2
 class RiskManagementReportCommand(base.GroupCommand):
     def __init__(self):
         super().__init__()
-        self.register_command('alert', RiskManagementAlertReportCommand(), 'Show Risk Management Alert report', 'a')
         self.register_command('enterprise-stat', RiskManagementEnterpriseStatCommand(), 'Show Risk Management recent login count', 'es')
         self.register_command('enterprise-stat-details', RiskManagementEnterpriseStatDetailsCommand(), 'Gets the recent login count (users who logged in the last 30 days) '
                               'and the number of users who have at least one record in their Vault', 'esd')
@@ -79,7 +78,7 @@ class RiskManagementEnterpriseStatDetailsCommand(enterprise_common.EnterpriseCom
         return base.dump_report_data(rows, headers=header, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
 
-class RiskManagementAlertReportCommand(enterprise_common.EnterpriseCommand):
+class RiskManagementSecurityAlertsSummaryCommand(enterprise_common.EnterpriseCommand):
     def get_parser(self):
         return rmd_alert_parser
 
@@ -141,37 +140,6 @@ class RiskManagementEnterpriseStatCommand(enterprise_common.EnterpriseCommand):
         print('{0:>20s}:'.format('Users Enterprise Stat'))
         print('{0:>20s}: {1:<20d}'.format('Logged in', rs.usersLoggedRecent))
         print('{0:>20s}: {1:<20d}'.format('Has records', rs.usersHasRecords))
-
-
-class RiskManagementSecurityAlertsSummaryCommand(enterprise_common.EnterpriseCommand):
-    def get_parser(self):
-        return rmd_security_alerts_summary_parser
-
-    def execute(self, params, **kwargs):
-        audit_alerts.AuditSettingMixin.load_settings(params, False)
-        event_lookup = {x[0]: x[1] for x in audit_alerts.AuditSettingMixin.EVENT_TYPES}
-        header = [
-                'audit_event_type_id',
-                'current_count',
-                'current_user_count',
-                'previous_count',
-                'previous_user_count',
-                ]
-        out_format = kwargs.get('format')
-        if out_format != 'json':
-            header = [base.field_to_title(x) for x in header]
-        rows = []
-        response = api.communicate_rest(params, None, 'rmd/get_security_alerts_summary', rs_type=rmd_pb2.SecurityAlertsSummaryResponse)
-        for node in response.securityAlertsSummary:
-            event_id = event_lookup.get(node.auditEventTypeId, str(node.auditEventTypeId))
-            rows.append([
-                event_id,
-                node.currentCount,
-                node.currentUserCount,
-                node.previousCount,
-                node.previousUserCount,
-                ])
-        return base.dump_report_data(rows, headers=header, fmt=out_format, filename=kwargs.get('output'))
 
 
 class RiskManagementSecurityAlertDetailCommand(enterprise_common.EnterpriseCommand):
