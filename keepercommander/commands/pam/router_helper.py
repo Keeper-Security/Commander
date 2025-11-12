@@ -187,46 +187,9 @@ def _post_request_to_router(params, path, rq_proto=None, rs_type=None, method='p
         raise KeeperApiError(rs.status_code, rs.text)
 
 
-def get_controller_cookie(params, destination_controller_uid_str):
-
-    # TODO: Cache the cookies for controller UIDs to improve the performance
-    max_count = 100
-    curr_count = 0
-
-    while True:
-        if curr_count > max_count:
-            logging.error(f"Too many calls without getting good response from the server. max_count={max_count}")
-
-            return None
-
-        resp = _post_request_to_router(params,
-                                       f'bind_to_controller/{destination_controller_uid_str}',
-                                       method='get',
-                                       raw_without_status_check_response=True)
-
-        # print('Cookies:')
-        # for c in resp.cookies:
-        #     print(c.name, c.value)
-
-        if resp.status_code == 200:
-            logging.debug("Found right host")
-            return resp.cookies
-        if resp.status_code == 303:
-            logging.debug("Controller connected to the router, but on another host. Try another call...")
-        else:
-            logging.warning("Looks like there is no such controller connected to the router.")
-            return None
-
-def request_cookie_jar_to_str(cookie_jar):
-    cookie_dict = dict(cookie_jar)
-    found = ['%s=%s' % (name, value) for (name, value) in cookie_dict.items()]
-    return ';'.join(found)
-
-
 def router_send_action_to_gateway(params, gateway_action: GatewayAction, message_type, is_streaming,
                                   destination_gateway_uid_str=None, gateway_timeout=15000, transmission_key=None,
-                                  encrypted_transmission_key=None, encrypted_session_token=None,
-                                  destination_gateway_cookies=None):
+                                  encrypted_transmission_key=None, encrypted_session_token=None):
     # Default time out how long the response from the Gateway should be
     krouter_host = get_router_url(params)
 
@@ -288,8 +251,6 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
         params=params,
         transmission_key=transmission_key,
         rq_proto=rq,
-        destination_gateway_uid_str=destination_gateway_uid_str,
-        destination_gateway_cookies=destination_gateway_cookies,
         encrypted_transmission_key=encrypted_transmission_key,
         encrypted_session_token=encrypted_session_token)
 
@@ -339,9 +300,8 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
         }
 
 
-def router_send_message_to_gateway(params, transmission_key, rq_proto, destination_gateway_uid_str,
-                                   destination_gateway_cookies=None, encrypted_transmission_key=None,
-                                   encrypted_session_token=None):
+def router_send_message_to_gateway(params, transmission_key, rq_proto,
+                                   encrypted_transmission_key=None, encrypted_session_token=None):
 
     krouter_host = get_router_url(params)
 
@@ -360,13 +320,6 @@ def router_send_message_to_gateway(params, transmission_key, rq_proto, destinati
     if not encrypted_session_token:
         encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
 
-    if not destination_gateway_cookies:
-        destination_gateway_cookies = get_controller_cookie(params, destination_gateway_uid_str)
-
-    if not destination_gateway_cookies:
-        raise Exception('Even though it seems that the Gateway is online, Commander was unable to get the '
-                        'cookies to connect to the Gateway')
-
     rs = requests.post(
         krouter_host+"/api/user/send_controller_message",
         verify=VERIFY_SSL,
@@ -375,7 +328,6 @@ def router_send_message_to_gateway(params, transmission_key, rq_proto, destinati
             'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
             'Authorization': f'KeeperUser {bytes_to_base64(encrypted_session_token)}',
         },
-        cookies=destination_gateway_cookies,
         data=encrypted_payload if rq_proto else None
     )
 
