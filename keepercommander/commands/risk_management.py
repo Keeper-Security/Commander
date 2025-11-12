@@ -21,6 +21,8 @@ class RiskManagementReportCommand(base.GroupCommand):
         self.register_command('security-benchmarks-set', RiskManagementSecurityBenchmarksSetCommand(), 'Set a list of security benchmark. Corresponding audit events will be logged.', 'sbs')
 
 
+rmd_enterprise_stat_parser = argparse.ArgumentParser(prog='risk-management enterprise-stat', description='Risk management enterprise stat', parents=[base.report_output_parser])
+
 rmd_enterprise_stat_detail_parser = argparse.ArgumentParser(prog='risk-management enterprise-stat-details', description='Risk management enterprise stat details', parents=[base.report_output_parser])
 
 rmd_security_alerts_summary_parser = argparse.ArgumentParser(prog='risk-management security-alerts-summary', description='Risk management security alerts summary', parents=[base.report_output_parser])
@@ -133,11 +135,22 @@ class RiskManagementSecurityAlertsSummaryCommand(enterprise_common.EnterpriseCom
 
 
 class RiskManagementEnterpriseStatCommand(enterprise_common.EnterpriseCommand):
+    def get_parser(self):
+        return rmd_enterprise_stat_parser
+
     def execute(self, params, **kwargs):
         rs = api.communicate_rest(params, None, 'rmd/get_enterprise_stat', rs_type=rmd_pb2.EnterpriseStat)
-        print('{0:>20s}:'.format('Users Enterprise Stat'))
-        print('{0:>20s}: {1:<20d}'.format('Logged in', rs.usersLoggedRecent))
-        print('{0:>20s}: {1:<20d}'.format('Has records', rs.usersHasRecords))
+        fmt = kwargs.get('format')
+        #filename=kwargs.get('output')
+        if fmt == 'json':
+            json.dumps({
+                "users_logged_recent": rs.usersLoggedRecent,
+                "users_has_records":  rs.usersHasRecords,
+                })
+        else:
+            print('{0:>20s}:'.format('Users Enterprise Stat'))
+            print('{0:>20s}: {1:<20d}'.format('Logged in', rs.usersLoggedRecent))
+            print('{0:>20s}: {1:<20d}'.format('Has records', rs.usersHasRecords))
 
 
 class RiskManagementSecurityAlertDetailCommand(enterprise_common.EnterpriseCommand):
