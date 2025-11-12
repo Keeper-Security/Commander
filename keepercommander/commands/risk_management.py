@@ -143,10 +143,10 @@ class RiskManagementEnterpriseStatCommand(enterprise_common.EnterpriseCommand):
         fmt = kwargs.get('format')
         #filename=kwargs.get('output')
         if fmt == 'json':
-            json.dumps({
+            print(json.dumps({
                 "users_logged_recent": rs.usersLoggedRecent,
                 "users_has_records":  rs.usersHasRecords,
-                })
+                }))
         else:
             print('{0:>20s}:'.format('Users Enterprise Stat'))
             print('{0:>20s}: {1:<20d}'.format('Logged in', rs.usersLoggedRecent))
