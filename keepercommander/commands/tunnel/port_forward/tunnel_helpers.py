@@ -22,7 +22,7 @@ from ....proto import pam_pb2
 from ....commands.base import FolderMixin
 from ....commands.pam.pam_dto import GatewayAction, GatewayActionWebRTCSession
 from ....commands.pam.router_helper import router_get_relay_access_creds, get_dag_leafs, \
-    get_router_ws_url, router_send_action_to_gateway, get_controller_cookie
+    get_router_ws_url, router_send_action_to_gateway
 from ....display import bcolors
 from ....error import CommandError
 from ....subfolder import try_resolve_path
@@ -190,13 +190,12 @@ class CloseConnectionReason:
 class TunnelSession:
     """Container for tunnel session state organized by tube_id"""
     def __init__(self, tube_id, conversation_id, gateway_uid, symmetric_key,
-                 gateway_cookies=None, offer_sent=False, host=None, port=None,
+                 offer_sent=False, host=None, port=None,
                  record_title=None, record_uid=None, target_host=None, target_port=None):
         self.tube_id = tube_id
         self.conversation_id = conversation_id
         self.gateway_uid = gateway_uid
         self.symmetric_key = symmetric_key
-        self.gateway_cookies = gateway_cookies
         self.offer_sent = offer_sent
         self.host = host
         self.port = port
@@ -722,35 +721,27 @@ async def connect_websocket_with_fallback(ws_endpoint, headers, ssl_context, tub
         raise Exception("No compatible websockets version available")
 
 
-async def handle_websocket_responses(params, tube_registry, timeout=60, gateway_uid=None, gateway_cookies=None):
+async def handle_websocket_responses(params, tube_registry, timeout=60, gateway_uid=None):
     """
     Direct WebSocket handler that connects, listens for responses, and routes them to Rust.
     Uses global conversation key store to support multiple concurrent tunnels.
     """
     if not WEBSOCKETS_AVAILABLE:
         raise Exception("WebSocket library not available - install with: pip install websockets")
-    
+
     # Get WebSocket URL for client listening
     connect_ws_endpoint = get_router_ws_url(params)
     ws_endpoint = connect_ws_endpoint + "/api/user/client"
-    
+
     logging.debug(f"Connecting to WebSocket: {ws_endpoint}")
-    
+
     # Prepare headers using the same pattern as HTTP
     encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
     headers = {
         'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
         'Authorization': f'KeeperUser {bytes_to_base64(encrypted_session_token)}',
     }
-    
-    # Add cookies to headers if provided for session affinity
-    if gateway_cookies:
-        from ....commands.pam.router_helper import request_cookie_jar_to_str
-        cookie_string = request_cookie_jar_to_str(gateway_cookies)
-        if cookie_string:
-            headers['Cookie'] = cookie_string
-            logging.debug("Added cookies to WebSocket headers for session affinity")
-    
+
     # Set up SSL context
     ssl_context = None
     if ws_endpoint.startswith('wss://'):
@@ -995,8 +986,7 @@ def route_message_to_rust(response_item, tube_registry):
                                                 ),
                                                 message_type=pam_pb2.CMT_CONNECT,
                                                 is_streaming=True,
-                                                gateway_timeout=GATEWAY_TIMEOUT,
-                                                destination_gateway_cookies=session.gateway_cookies
+                                                gateway_timeout=GATEWAY_TIMEOUT
                                             )
 
                                             logging.info(f"ICE restart answer sent for tube {tube_id}")
@@ -1057,7 +1047,7 @@ def route_message_to_rust(response_item, tube_registry):
         logging.error(f"Full traceback: {traceback.format_exc()}")
 
 
-def start_websocket_listener(params, tube_registry, timeout=60, gateway_uid=None, gateway_cookies=None):
+def start_websocket_listener(params, tube_registry, timeout=60, gateway_uid=None):
     """Start WebSocket listener in a background thread using global connection approach"""
     global _ACTIVE_WEBSOCKET_THREAD
     
@@ -1068,7 +1058,7 @@ def start_websocket_listener(params, tube_registry, timeout=60, gateway_uid=None
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                loop.run_until_complete(handle_websocket_responses(params, tube_registry, timeout, gateway_uid, gateway_cookies))
+                loop.run_until_complete(handle_websocket_responses(params, tube_registry, timeout, gateway_uid))
             except Exception as e:
                 logging.error(f"WebSocket listener error: {e}")
             finally:
@@ -1134,7 +1124,6 @@ class TunnelSignalHandler:
         self.host = None  # Will be set later when the socket is ready
         self.port = None
         self.websocket_router = websocket_router  # For key cleanup
-        self.gateway_cookies = None  # Store session cookies for router affinity
         self.offer_sent = False  # Track if offer has been sent to gateway
         self.buffered_ice_candidates = []  # Buffer ICE candidates until offer is sent
         
@@ -1353,7 +1342,6 @@ class TunnelSignalHandler:
             logging.debug(f"Sending ICE candidate to gateway immediately")
 
             # Send an ICE candidate via HTTP POST with streamResponse=True
-            # Pass session cookies for router affinity
             router_response = router_send_action_to_gateway(
                 params=self.params,
                 destination_gateway_uid_str=self.gateway_uid,
@@ -1370,8 +1358,7 @@ class TunnelSignalHandler:
                 ),
                 message_type=pam_pb2.CMT_CONNECT,
                 is_streaming=True,  # Response will come via WebSocket
-                gateway_timeout=GATEWAY_TIMEOUT,
-                destination_gateway_cookies=self._get_gateway_cookies_for_tube(tube_id)  # Pass cookies for session affinity
+                gateway_timeout=GATEWAY_TIMEOUT
             )
             
             logging.debug("ICE candidate sent via HTTP POST - response expected via WebSocket")
@@ -1399,7 +1386,6 @@ class TunnelSignalHandler:
             logging.debug(f"Sending ICE restart offer to gateway for tube {tube_id}")
 
             # Send ICE restart offer via HTTP POST with streamResponse=True
-            # Pass session cookies for router affinity
             router_response = router_send_action_to_gateway(
                 params=self.params,
                 destination_gateway_uid_str=self.gateway_uid,
@@ -1416,9 +1402,7 @@ class TunnelSignalHandler:
                 ),
                 message_type=pam_pb2.CMT_CONNECT,
                 is_streaming=True,  # Response will come via WebSocket
-                gateway_timeout=GATEWAY_TIMEOUT,
-                destination_gateway_cookies=self._get_gateway_cookies_for_tube(tube_id)
-                # Pass cookies for session affinity
+                gateway_timeout=GATEWAY_TIMEOUT
             )
 
             logging.info(f"ICE restart offer sent via HTTP POST for tube {tube_id} - response expected via WebSocket")
@@ -1427,14 +1411,6 @@ class TunnelSignalHandler:
         except Exception as e:
             logging.error(f"Failed to send ICE restart offer for tube {tube_id}: {e}")
             print(f"{bcolors.FAIL}Failed to send ICE restart offer: {e}{bcolors.ENDC}")
-
-    def _get_gateway_cookies_for_tube(self, tube_id):
-        """Get gateway cookies for a specific tube_id, fall back to instance cookies"""
-        if tube_id:
-            session = get_tunnel_session(tube_id)
-            if session and session.gateway_cookies:
-                return session.gateway_cookies
-        return self.gateway_cookies
 
     def cleanup(self):
         """Cleanup resources"""
@@ -1541,14 +1517,6 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
         # Register the encryption key in the global conversation store
         register_conversation_key(conversation_id, symmetric_key)
 
-        # Get session cookies for router affinity BEFORE creating tube
-        logging.debug(f"Getting session cookies for gateway {gateway_uid}")
-        gateway_cookies = get_controller_cookie(params, gateway_uid)
-        if gateway_cookies:
-            logging.debug(f"Got session cookies for router affinity")
-        else:
-            logging.warning("Failed to get session cookies - may experience routing issues")
-        
         # Create a temporary tunnel session BEFORE creating the tube so ICE candidates can be buffered immediately
         import uuid
         temp_tube_id = str(uuid.uuid4())
@@ -1559,7 +1527,6 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             conversation_id=conversation_id,
             gateway_uid=gateway_uid,
             symmetric_key=symmetric_key,
-            gateway_cookies=gateway_cookies,
             offer_sent=False,
             host=host,
             port=port,
@@ -1587,8 +1554,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             tube_id=temp_tube_id,  # Use temp ID initially
             trickle_ice=trickle_ice,
         )
-        signal_handler.gateway_cookies = gateway_cookies
-        
+
         # Store signal handler reference so we can send buffered candidates later
         tunnel_session.signal_handler = signal_handler
         
@@ -1643,8 +1609,8 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
         logging.debug(f"Registered encryption key for conversation: {conversation_id}")
         logging.debug(f"Expecting WebSocket responses for conversation ID: {conversation_id}")
         
-        # Start or reuse WebSocket listener with cookies for session affinity
-        websocket_thread = start_websocket_listener(params, tube_registry, timeout=300, gateway_uid=gateway_uid, gateway_cookies=gateway_cookies)
+        # Start or reuse WebSocket listener
+        websocket_thread = start_websocket_listener(params, tube_registry, timeout=300, gateway_uid=gateway_uid)
         
         # Wait a moment for WebSocket to establish connection
         time.sleep(1.5)
@@ -1686,8 +1652,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                 ),
                 message_type=pam_pb2.CMT_CONNECT,
                 is_streaming=True,  # Response will come via WebSocket
-                gateway_timeout=GATEWAY_TIMEOUT,
-                destination_gateway_cookies=gateway_cookies  # Pass cookies for router affinity
+                gateway_timeout=GATEWAY_TIMEOUT
             )
             
             # With streamResponse=true, HTTP response should be empty
