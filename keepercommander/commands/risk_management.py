@@ -21,8 +21,6 @@ class RiskManagementReportCommand(base.GroupCommand):
         self.register_command('security-benchmarks-set', RiskManagementSecurityBenchmarksSetCommand(), 'Set a list of security benchmark. Corresponding audit events will be logged.', 'sbs')
 
 
-rmd_alert_parser = argparse.ArgumentParser(prog='risk-management alert', description='Risk management alert report', parents=[base.report_output_parser])
-
 rmd_enterprise_stat_detail_parser = argparse.ArgumentParser(prog='risk-management enterprise-stat-details', description='Risk management enterprise stat details', parents=[base.report_output_parser])
 
 rmd_security_alerts_summary_parser = argparse.ArgumentParser(prog='risk-management security-alerts-summary', description='Risk management security alerts summary', parents=[base.report_output_parser])
@@ -80,7 +78,7 @@ class RiskManagementEnterpriseStatDetailsCommand(enterprise_common.EnterpriseCom
 
 class RiskManagementSecurityAlertsSummaryCommand(enterprise_common.EnterpriseCommand):
     def get_parser(self):
-        return rmd_alert_parser
+        return rmd_security_alerts_summary_parser
 
     def execute(self, params, **kwargs):
         audit_alerts.AuditSettingMixin.load_settings(params, False)
