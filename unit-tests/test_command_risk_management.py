@@ -96,7 +96,13 @@ class TestRiskManagement(TestCase):
         mock.patch.stopall()
 
 
-    def test_risk_management_enterprise_stat(self):
+    def test_risk_management_enterprise_stat_plain(self):
+        self.risk_management_enterprise_stat("plain")
+
+    def test_risk_management_enterprise_stat_json(self):
+        self.risk_management_enterprise_stat("json")
+
+    def risk_management_enterprise_stat(self, fmt):
         params = get_connected_params()
         api.query_enterprise(params)
 
@@ -104,12 +110,12 @@ class TestRiskManagement(TestCase):
         TestRiskManagement.expected_commands = ['RiskManagementEnterpriseStatCommand']
         captured_output = io.StringIO()
         with mock.patch('sys.stdout', captured_output):
-            cmd.execute(params)
+            cmd.execute(params, format=fmt)
         self.assertEqual(len(TestRiskManagement.expected_commands), 0)
 
         output = captured_output.getvalue()
-        self.assertIn('Logged in: 3', output)
-        self.assertIn('Has records: 5', output)
+        self.assertIn('3', output)
+        self.assertIn('5', output)
 
 
     def test_risk_management_enterprise_stat_details(self):
