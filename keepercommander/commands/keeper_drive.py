@@ -42,7 +42,8 @@ def suppress_exit(self, status=0, message=None):
 # Parser for 'keeper-drive-mkdir' command
 keeper_drive_mkdir_parser = argparse.ArgumentParser(
     prog='keeper-drive-mkdir',
-    description='Create a new KeeperDrive folder using v3 API'
+    description='Create a new KeeperDrive folder using v3 API',
+    allow_abbrev=False  # Disable prefix matching for flags
 )
 keeper_drive_mkdir_parser.add_argument(
     'folder',
@@ -58,7 +59,7 @@ keeper_drive_mkdir_parser.add_argument(
 keeper_drive_mkdir_parser.add_argument(
     '--color',
     type=str,
-    choices=['none', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'gray'],
+    choices=['none', 'red', 'orange', 'yellow', 'green', 'blue', 'gray'],
     help='Folder color'
 )
 keeper_drive_mkdir_parser.add_argument(
@@ -74,7 +75,8 @@ keeper_drive_mkdir_parser.exit = suppress_exit
 # Parser for 'keeper-drive-mkdir-batch' command
 keeper_drive_mkdir_batch_parser = argparse.ArgumentParser(
     prog='keeper-drive-mkdir-batch',
-    description='Create multiple KeeperDrive folders in one API call'
+    description='Create multiple KeeperDrive folders in one API call',
+    allow_abbrev=False  # Disable prefix matching for flags
 )
 keeper_drive_mkdir_batch_parser.add_argument(
     '--spec',
@@ -91,7 +93,8 @@ keeper_drive_mkdir_batch_parser.exit = suppress_exit
 # Parser for 'keeper-drive-add-record' command
 keeper_drive_add_record_parser = argparse.ArgumentParser(
     prog='keeper-drive-add-record',
-    description='Create a new KeeperDrive record using v3 API'
+    description='Create a new KeeperDrive record using v3 API',
+    allow_abbrev=False  # Disable prefix matching for flags
 )
 keeper_drive_add_record_parser.add_argument(
     '--syntax-help',
@@ -144,7 +147,8 @@ keeper_drive_add_record_parser.exit = suppress_exit
 # Parser for 'keeper-drive-add-records-batch' command
 keeper_drive_add_records_batch_parser = argparse.ArgumentParser(
     prog='keeper-drive-add-records-batch',
-    description='Create multiple KeeperDrive records in one API call'
+    description='Create multiple KeeperDrive records in one API call',
+    allow_abbrev=False
 )
 keeper_drive_add_records_batch_parser.add_argument(
     '--spec',
@@ -161,7 +165,8 @@ keeper_drive_add_records_batch_parser.exit = suppress_exit
 # Parser for 'keeper-drive-update-folder' command
 keeper_drive_update_folder_parser = argparse.ArgumentParser(
     prog='keeper-drive-update-folder',
-    description='Update a KeeperDrive folder using v3 API'
+    description='Update a KeeperDrive folder using v3 API',
+    allow_abbrev=False
 )
 keeper_drive_update_folder_parser.add_argument(
     'folder_uid',
@@ -199,7 +204,8 @@ keeper_drive_update_folder_parser.exit = suppress_exit
 # Parser for 'keeper-drive-update-folders-batch' command
 keeper_drive_update_folders_batch_parser = argparse.ArgumentParser(
     prog='keeper-drive-update-folders-batch',
-    description='Update multiple KeeperDrive folders in one API call'
+    description='Update multiple KeeperDrive folders in one API call',
+    allow_abbrev=False
 )
 keeper_drive_update_folders_batch_parser.add_argument(
     '--update',
@@ -216,7 +222,8 @@ keeper_drive_update_folders_batch_parser.exit = suppress_exit
 # Parser for 'keeper-drive-list' command  
 keeper_drive_list_parser = argparse.ArgumentParser(
     prog='keeper-drive-list',
-    description='List Keeper Drive folders and records'
+    description='List Keeper Drive folders and records',
+    allow_abbrev=False
 )
 keeper_drive_list_parser.add_argument(
     '--folders',
@@ -247,7 +254,8 @@ keeper_drive_list_parser.exit = suppress_exit
 # Parser for 'keeper-drive-grant-access' command
 keeper_drive_grant_access_parser = argparse.ArgumentParser(
     prog='keeper-drive-grant-access',
-    description='Grant user access to a Keeper Drive folder'
+    description='Grant user access to a Keeper Drive folder',
+    allow_abbrev=False
 )
 keeper_drive_grant_access_parser.add_argument(
     '--folder',
@@ -280,7 +288,8 @@ keeper_drive_grant_access_parser.exit = suppress_exit
 # Parser for 'keeper-drive-update-access' command
 keeper_drive_update_access_parser = argparse.ArgumentParser(
     prog='keeper-drive-update-access',
-    description='Update user access to a Keeper Drive folder'
+    description='Update user access to a Keeper Drive folder',
+    allow_abbrev=False
 )
 keeper_drive_update_access_parser.add_argument(
     '--folder',
@@ -312,7 +321,8 @@ keeper_drive_update_access_parser.exit = suppress_exit
 # Parser for 'keeper-drive-revoke-access' command
 keeper_drive_revoke_access_parser = argparse.ArgumentParser(
     prog='keeper-drive-revoke-access',
-    description='Revoke user access from a Keeper Drive folder'
+    description='Revoke user access from a Keeper Drive folder',
+    allow_abbrev=False
 )
 keeper_drive_revoke_access_parser.add_argument(
     '--folder',
@@ -333,7 +343,8 @@ keeper_drive_revoke_access_parser.exit = suppress_exit
 # Parser for 'keeper-drive-manage-access-batch' command
 keeper_drive_manage_access_batch_parser = argparse.ArgumentParser(
     prog='keeper-drive-manage-access-batch',
-    description='Batch manage folder access (grant, update, revoke)'
+    description='Batch manage folder access (grant, update, revoke)',
+    allow_abbrev=False
 )
 keeper_drive_manage_access_batch_parser.add_argument(
     '--grants',
@@ -357,7 +368,8 @@ keeper_drive_manage_access_batch_parser.exit = suppress_exit
 # Parser for 'keeper-drive-add-record-to-folder' command
 keeper_drive_add_record_to_folder_parser = argparse.ArgumentParser(
     prog='keeper-drive-add-record-to-folder',
-    description='Add an existing record to a Keeper Drive folder'
+    description='Add an existing record to a Keeper Drive folder',
+    allow_abbrev=False
 )
 keeper_drive_add_record_to_folder_parser.add_argument(
     '--folder',
@@ -378,7 +390,8 @@ keeper_drive_add_record_to_folder_parser.exit = suppress_exit
 # Parser for 'keeper-drive-remove-record-from-folder' command
 keeper_drive_remove_record_from_folder_parser = argparse.ArgumentParser(
     prog='keeper-drive-remove-record-from-folder',
-    description='Remove a record from a Keeper Drive folder'
+    description='Remove a record from a Keeper Drive folder',
+    allow_abbrev=False
 )
 keeper_drive_remove_record_from_folder_parser.add_argument(
     '--folder',
@@ -399,7 +412,8 @@ keeper_drive_remove_record_from_folder_parser.exit = suppress_exit
 # Parser for 'keeper-drive-move-record' command
 keeper_drive_move_record_parser = argparse.ArgumentParser(
     prog='keeper-drive-move-record',
-    description='Move a record between folders or to/from root'
+    description='Move a record between folders or to/from root',
+    allow_abbrev=False
 )
 keeper_drive_move_record_parser.add_argument(
     'record',
@@ -425,7 +439,8 @@ keeper_drive_move_record_parser.exit = suppress_exit
 # Parser for 'keeper-drive-manage-folder-records-batch' command
 keeper_drive_manage_folder_records_batch_parser = argparse.ArgumentParser(
     prog='keeper-drive-manage-folder-records-batch',
-    description='Batch add or remove records from a folder'
+    description='Batch add or remove records from a folder',
+    allow_abbrev=False
 )
 keeper_drive_manage_folder_records_batch_parser.add_argument(
     '--folder',
@@ -727,7 +742,8 @@ For detailed record type information, use: record-type-info (rti)
 # Parser for 'keeper-drive-update-record' command
 keeper_drive_update_record_parser = argparse.ArgumentParser(
     prog='keeper-drive-update-record',
-    description='Update an existing KeeperDrive record using v3 API'
+    description='Update an existing KeeperDrive record using v3 API',
+    allow_abbrev=False
 )
 keeper_drive_update_record_parser.add_argument(
     'record_uid',
@@ -744,7 +760,7 @@ keeper_drive_update_record_parser.add_argument(
     '--type',
     dest='record_type',
     type=str,
-    help='New record type (e.g., login, password)'
+    help='New record type (e.g., login, passport)'
 )
 keeper_drive_update_record_parser.add_argument(
     '--login',
@@ -802,6 +818,7 @@ class KeeperDriveUpdateRecordCommand(Command):
         if kwargs.get('url'):
             fields['url'] = kwargs.get('url')
         
+        # Notes is a top-level property, not a field
         notes = kwargs.get('notes')
         
         try:
@@ -811,6 +828,7 @@ class KeeperDriveUpdateRecordCommand(Command):
                 title=title,
                 record_type=record_type,
                 fields=fields if fields else None,
+                notes=notes,
             )
             
             if result['success']:
@@ -1656,7 +1674,8 @@ class KeeperDriveManageAccessBatchCommand(Command):
 # Parsers for record details commands
 keeper_drive_get_record_details_parser = argparse.ArgumentParser(
     prog='keeper-drive-get-record-details',
-    description='Get record metadata (title, color, etc.) using v3 API'
+    description='Get record metadata (title, color, etc.) using v3 API',
+    allow_abbrev=False
 )
 keeper_drive_get_record_details_parser.add_argument(
     'record_uids',
@@ -1677,7 +1696,8 @@ keeper_drive_get_record_details_parser.exit = suppress_exit
 
 keeper_drive_get_record_access_parser = argparse.ArgumentParser(
     prog='keeper-drive-get-record-access',
-    description='Get record access information (who has access and permissions) using v3 API'
+    description='Get record access information (who has access and permissions) using v3 API',
+    allow_abbrev=False
 )
 keeper_drive_get_record_access_parser.add_argument(
     'record_uids',
@@ -1747,7 +1767,8 @@ class KeeperDriveGetRecordDetailsCommand(Command):
 # Parser for 'keeper-drive-share-record' command
 keeper_drive_share_record_parser = argparse.ArgumentParser(
     prog='keeper-drive-share-record',
-    description='Share a KeeperDrive record with a user using role-based permissions'
+    description='Share a KeeperDrive record with a user using role-based permissions',
+    allow_abbrev=False
 )
 keeper_drive_share_record_parser.add_argument(
     'record_uid',
@@ -1882,7 +1903,8 @@ class KeeperDriveShareRecordCommand(Command):
 # Parser for 'keeper-drive-update-record-share' command
 keeper_drive_update_record_share_parser = argparse.ArgumentParser(
     prog='keeper-drive-update-record-share',
-    description='Update record sharing permissions'
+    description='Update record sharing permissions',
+    allow_abbrev=False
 )
 keeper_drive_update_record_share_parser.add_argument(
     'record_uid',
@@ -1976,7 +1998,8 @@ class KeeperDriveUpdateRecordShareCommand(Command):
 # Parser for 'keeper-drive-unshare-record' command
 keeper_drive_unshare_record_parser = argparse.ArgumentParser(
     prog='keeper-drive-unshare-record',
-    description='Unshare a KeeperDrive record from a user'
+    description='Unshare a KeeperDrive record from a user',
+    allow_abbrev=False
 )
 keeper_drive_unshare_record_parser.add_argument(
     'record_uid',
@@ -2042,7 +2065,8 @@ class KeeperDriveUnshareRecordCommand(Command):
 # Parser for 'keeper-drive-transfer-record' command
 keeper_drive_transfer_record_parser = argparse.ArgumentParser(
     prog='keeper-drive-transfer-record',
-    description='Transfer record ownership to another user'
+    description='Transfer record ownership to another user',
+    allow_abbrev=False
 )
 keeper_drive_transfer_record_parser.add_argument(
     'record_uid',
@@ -2109,7 +2133,8 @@ class KeeperDriveTransferRecordCommand(Command):
 # Parser for 'keeper-drive-transfer-records-batch' command
 keeper_drive_transfer_records_batch_parser = argparse.ArgumentParser(
     prog='keeper-drive-transfer-records-batch',
-    description='Transfer ownership of multiple records in batch'
+    description='Transfer ownership of multiple records in batch',
+    allow_abbrev=False
 )
 keeper_drive_transfer_records_batch_parser.add_argument(
     '--transfer',
