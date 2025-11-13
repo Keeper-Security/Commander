@@ -227,13 +227,25 @@ def create_folder_v3(
     folder_key = os.urandom(32)  # AES-256 key
     
     # Determine encryption key (user data key or parent folder key)
+    encryption_key = params.data_key  # Default to user data key
     if parent_uid:
-        # TODO: Get parent folder key from params.subfolder_cache or folder_cache
-        # For now, use user data key
-        encryption_key = params.data_key
-    else:
-        # Root folder, use user data key
-        encryption_key = params.data_key
+        # Get parent folder key from params.keeper_drive_folders or params.subfolder_cache
+        parent_folder_key = None
+        if parent_uid in params.keeper_drive_folders:
+            parent_folder = params.keeper_drive_folders[parent_uid]
+            if 'folder_key_unencrypted' in parent_folder:
+                parent_folder_key = parent_folder['folder_key_unencrypted']
+        
+        if not parent_folder_key and parent_uid in params.subfolder_cache:
+            parent_folder = params.subfolder_cache[parent_uid]
+            if 'folder_key_unencrypted' in parent_folder:
+                parent_folder_key = parent_folder['folder_key_unencrypted']
+        
+        if parent_folder_key:
+            encryption_key = parent_folder_key
+            logging.debug(f"Using parent folder key for encrypting folder key (parent: {parent_uid})")
+        else:
+            logging.warning(f"Parent folder key not found for {parent_uid}, using user data key")
     
     # Encrypt folder key with parent key
     encrypted_folder_key = encrypt_folder_key(folder_key, encryption_key, use_gcm=True)
@@ -313,11 +325,26 @@ def create_folders_batch_v3(
         # Generate folder key
         folder_key = os.urandom(32)
         
-        # Determine encryption key
+        # Determine encryption key (user data key or parent folder key)
+        encryption_key = params.data_key  # Default to user data key
         if parent_uid:
-            encryption_key = params.data_key  # TODO: Get parent folder key
-        else:
-            encryption_key = params.data_key
+            # Get parent folder key from params.keeper_drive_folders or params.subfolder_cache
+            parent_folder_key = None
+            if parent_uid in params.keeper_drive_folders:
+                parent_folder = params.keeper_drive_folders[parent_uid]
+                if 'folder_key_unencrypted' in parent_folder:
+                    parent_folder_key = parent_folder['folder_key_unencrypted']
+            
+            if not parent_folder_key and parent_uid in params.subfolder_cache:
+                parent_folder = params.subfolder_cache[parent_uid]
+                if 'folder_key_unencrypted' in parent_folder:
+                    parent_folder_key = parent_folder['folder_key_unencrypted']
+            
+            if parent_folder_key:
+                encryption_key = parent_folder_key
+                logging.debug(f"Using parent folder key for encrypting folder key (parent: {parent_uid})")
+            else:
+                logging.warning(f"Parent folder key not found for {parent_uid}, using user data key")
         
         # Encrypt folder key
         encrypted_folder_key = encrypt_folder_key(folder_key, encryption_key, use_gcm=True)
@@ -694,10 +721,47 @@ def update_folder_access_v3(
         raise ValueError(f"Folder '{folder_uid}' not found")
     folder_uid = resolved_folder_uid
     
+    # Determine if user_uid is an email or UID
+    is_email = '@' in user_uid
+    user_email = user_uid if is_email else None
+    actual_user_uid_bytes = None
+    
+    if is_email:
+        # Look up actual account UID from email
+        if hasattr(params, 'user_cache'):
+            for account_uid_str, username in params.user_cache.items():
+                if username.lower() == user_email.lower():
+                    actual_user_uid_bytes = utils.base64_url_decode(account_uid_str)
+                    logging.debug(f"Found UID for {user_email} in user_cache: {account_uid_str}")
+                    break
+        
+        # Fallback: try enterprise users
+        if not actual_user_uid_bytes and hasattr(params, 'enterprise') and params.enterprise:
+            for user in params.enterprise.get('users', []):
+                if user.get('username', '').lower() == user_email.lower():
+                    if 'user_account_uid' in user:
+                        actual_user_uid_bytes = utils.base64_url_decode(user['user_account_uid'])
+                        logging.debug(f"Found userAccountUid for {user_email} in enterprise")
+                    elif 'enterprise_user_id' in user:
+                        enterprise_user_id = user['enterprise_user_id']
+                        if isinstance(enterprise_user_id, int):
+                            actual_user_uid_bytes = enterprise_user_id.to_bytes(8, byteorder='big', signed=False)
+                            logging.debug(f"Converted enterprise_user_id {enterprise_user_id} to bytes")
+                    break
+        
+        if not actual_user_uid_bytes:
+            raise ValueError(f"User with email '{user_email}' not found. Try running 'sync-down' or load enterprise data first.")
+    else:
+        # user_uid is already a UID (decode as base64)
+        try:
+            actual_user_uid_bytes = utils.base64_url_decode(user_uid)
+        except:
+            raise ValueError(f"Invalid user UID format: {user_uid}")
+    
     # Create FolderAccessData
     access_data = folder_pb2.FolderAccessData()
     access_data.folderUid = utils.base64_url_decode(folder_uid)
-    access_data.accessTypeUid = utils.base64_url_decode(user_uid)
+    access_data.accessTypeUid = actual_user_uid_bytes
     access_data.accessType = folder_pb2.AT_USER
     
     # Update role if specified
@@ -766,10 +830,46 @@ def revoke_folder_access_v3(
         raise ValueError(f"Folder '{folder_uid}' not found")
     folder_uid = resolved_folder_uid
     
+    # Determine if user_uid is an email or UID
+    is_email = '@' in user_uid
+    actual_user_uid_bytes = None
+    
+    if is_email:
+        # Look up actual account UID from email
+        if hasattr(params, 'user_cache'):
+            for account_uid_str, username in params.user_cache.items():
+                if username.lower() == user_uid.lower():
+                    actual_user_uid_bytes = utils.base64_url_decode(account_uid_str)
+                    logging.debug(f"Found UID for {user_uid} in user_cache: {account_uid_str}")
+                    break
+        
+        # Fallback: try enterprise users
+        if not actual_user_uid_bytes and hasattr(params, 'enterprise') and params.enterprise:
+            for user in params.enterprise.get('users', []):
+                if user.get('username', '').lower() == user_uid.lower():
+                    if 'user_account_uid' in user:
+                        actual_user_uid_bytes = utils.base64_url_decode(user['user_account_uid'])
+                        logging.debug(f"Found userAccountUid for {user_uid} in enterprise")
+                    elif 'enterprise_user_id' in user:
+                        enterprise_user_id = user['enterprise_user_id']
+                        if isinstance(enterprise_user_id, int):
+                            actual_user_uid_bytes = enterprise_user_id.to_bytes(8, byteorder='big', signed=False)
+                            logging.debug(f"Converted enterprise_user_id to bytes")
+                    break
+        
+        if not actual_user_uid_bytes:
+            raise ValueError(f"User with email '{user_uid}' not found. Try running 'sync-down' or load enterprise data first.")
+    else:
+        # user_uid is already a UID (decode as base64)
+        try:
+            actual_user_uid_bytes = utils.base64_url_decode(user_uid)
+        except:
+            raise ValueError(f"Invalid user UID format: {user_uid}")
+    
     # Create FolderAccessData (only UIDs needed for removal)
     access_data = folder_pb2.FolderAccessData()
     access_data.folderUid = utils.base64_url_decode(folder_uid)
-    access_data.accessTypeUid = utils.base64_url_decode(user_uid)
+    access_data.accessTypeUid = actual_user_uid_bytes
     access_data.accessType = folder_pb2.AT_USER
     
     # Make API call
@@ -1315,15 +1415,33 @@ def update_folder_v3(
     
     # Update data if name or color changed
     if folder_name is not None or color is not None:
-        # Build folder data dictionary
+        # Get current folder data from cache to preserve existing values
         data_dict = {}
-        if folder_name is not None:
-            data_dict['name'] = folder_name
-        if color is not None:
-            if color == 'none' or color == '':
-                # Remove color
-                pass
+        folder_obj = params.keeper_drive_folders.get(folder_uid) or params.subfolder_cache.get(folder_uid)
+        
+        if folder_obj:
+            # Preserve existing name if not updating it
+            if folder_name is None:
+                existing_name = folder_obj.get('name')
+                if existing_name:
+                    data_dict['name'] = existing_name
             else:
+                data_dict['name'] = folder_name
+            
+            # Preserve existing color if not updating it
+            if color is None:
+                existing_color = folder_obj.get('color')
+                if existing_color and existing_color != 'none':
+                    data_dict['color'] = existing_color
+            else:
+                if color != 'none' and color != '':
+                    data_dict['color'] = color
+                # If color is 'none' or empty, don't include it (removes color)
+        else:
+            # Fallback if folder not in cache - just use provided values
+            if folder_name is not None:
+                data_dict['name'] = folder_name
+            if color is not None and color != 'none' and color != '':
                 data_dict['color'] = color
         
         # Encrypt folder data with GCM
@@ -1422,11 +1540,34 @@ def update_folders_batch_v3(
         
         # Update data if name or color changed
         if folder_name is not None or color is not None:
+            # Get current folder data from cache to preserve existing values
             data_dict = {}
-            if folder_name is not None:
-                data_dict['name'] = folder_name
-            if color is not None and color not in ('none', ''):
-                data_dict['color'] = color
+            folder_obj = params.keeper_drive_folders.get(folder_uid) or params.subfolder_cache.get(folder_uid)
+            
+            if folder_obj:
+                # Preserve existing name if not updating it
+                if folder_name is None:
+                    existing_name = folder_obj.get('name')
+                    if existing_name:
+                        data_dict['name'] = existing_name
+                else:
+                    data_dict['name'] = folder_name
+                
+                # Preserve existing color if not updating it
+                if color is None:
+                    existing_color = folder_obj.get('color')
+                    if existing_color and existing_color != 'none':
+                        data_dict['color'] = existing_color
+                else:
+                    if color != 'none' and color != '':
+                        data_dict['color'] = color
+                    # If color is 'none' or empty, don't include it (removes color)
+            else:
+                # Fallback if folder not in cache - just use provided values
+                if folder_name is not None:
+                    data_dict['name'] = folder_name
+                if color is not None and color not in ('none', ''):
+                    data_dict['color'] = color
             
             data_json = json.dumps(data_dict).encode('utf-8')
             folder_data.data = crypto.encrypt_aes_v2(data_json, folder_key)
