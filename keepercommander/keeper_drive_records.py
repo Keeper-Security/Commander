@@ -305,9 +305,19 @@ def create_record_v3(
     # Get folder key if creating in a folder
     folder_key = None
     if folder_uid:
-        # TODO: Get folder key from params cache
-        # For now, encrypt with user data key
-        folder_key = params.data_key
+        # Retrieve folder key from keeper_drive_folders or subfolder_cache
+        if folder_uid in params.keeper_drive_folders:
+            folder_obj = params.keeper_drive_folders[folder_uid]
+            if 'folder_key_unencrypted' in folder_obj:
+                folder_key = folder_obj['folder_key_unencrypted']
+        
+        if not folder_key and folder_uid in params.subfolder_cache:
+            folder_obj = params.subfolder_cache[folder_uid]
+            if 'folder_key_unencrypted' in folder_obj:
+                folder_key = folder_obj['folder_key_unencrypted']
+        
+        if not folder_key:
+            raise ValueError(f"Folder key not found for folder {folder_uid}. Try running 'sync-down' first.")
     
     # Get current timestamp in milliseconds
     current_time = utils.current_milli_time()
@@ -350,6 +360,7 @@ def update_record_v3(
     title: Optional[str] = None,
     record_type: Optional[str] = None,
     fields: Optional[Dict[str, Any]] = None,
+    notes: Optional[str] = None,
     non_shared_data: Optional[dict] = None,
     revision: Optional[int] = None
 ) -> Dict[str, Any]:
@@ -361,10 +372,11 @@ def update_record_v3(
     Args:
         params: KeeperParams instance
         record_uid: Record UID to update (base64-url encoded)
-        data: Complete data dictionary (if provided, title/type/fields are ignored)
+        data: Complete data dictionary (if provided, title/type/fields/notes are ignored)
         title: New title (if updating specific fields)
         record_type: New type (if updating specific fields)
         fields: New fields dictionary (if updating specific fields)
+        notes: New notes (if updating specific fields)
         non_shared_data: Optional non-shared data
         revision: Optional revision number for optimistic locking
     
@@ -453,6 +465,10 @@ def update_record_v3(
                         'type': field_type,
                         'value': field_value
                     })
+        
+        # Update notes if provided (notes is a top-level property, not a field)
+        if notes is not None:
+            data['notes'] = notes
     
     # Get current timestamp
     current_time = utils.current_milli_time()
@@ -576,7 +592,19 @@ def create_records_batch_v3(
         folder_uid = spec.get('folder_uid')
         folder_key = None
         if folder_uid:
-            folder_key = params.data_key  # TODO: Get actual folder key
+            # Retrieve folder key from keeper_drive_folders or subfolder_cache
+            if folder_uid in params.keeper_drive_folders:
+                folder_obj = params.keeper_drive_folders[folder_uid]
+                if 'folder_key_unencrypted' in folder_obj:
+                    folder_key = folder_obj['folder_key_unencrypted']
+            
+            if not folder_key and folder_uid in params.subfolder_cache:
+                folder_obj = params.subfolder_cache[folder_uid]
+                if 'folder_key_unencrypted' in folder_obj:
+                    folder_key = folder_obj['folder_key_unencrypted']
+            
+            if not folder_key:
+                raise ValueError(f"Folder key not found for folder {folder_uid}. Try running 'sync-down' first.")
         
         # Get current timestamp
         current_time = utils.current_milli_time()
@@ -1027,7 +1055,11 @@ def share_record_v3(
         
         # Set expiration if provided
         if expiration_timestamp:
-            permissions.tlaProperties.expiration = expiration_timestamp
+            # Access tlaProperties properly (it may need to be initialized)
+            if hasattr(permissions, 'tlaProperties'):
+                permissions.tlaProperties.expiration = expiration_timestamp
+            else:
+                logger.warning("tlaProperties not available in protobuf message")
         
         # Build request
         request = record_sharing_pb2.Request()
@@ -1131,7 +1163,11 @@ def update_record_share_v3(
         
         # Set expiration if provided
         if expiration_timestamp:
-            permissions.tlaProperties.expiration = expiration_timestamp
+            # Access tlaProperties properly (it may need to be initialized)
+            if hasattr(permissions, 'tlaProperties'):
+                permissions.tlaProperties.expiration = expiration_timestamp
+            else:
+                logger.warning("tlaProperties not available in protobuf message")
         
         # Build request
         request = record_sharing_pb2.Request()
@@ -1200,25 +1236,20 @@ def unshare_record_v3(
         if not record:
             raise ValueError(f"Record {record_uid} not found in cache")
         
-        # Find the recipient user by email
-        recipient_user = None
-        if hasattr(params, 'enterprise') and params.enterprise:
-            for user in params.enterprise.get('users', []):
-                if user.get('username', '').lower() == recipient_email.lower():
-                    recipient_user = user
-                    break
+        # Get recipient's UID using the helper function (we don't need public key for unsharing, just UID)
+        _, _, recipient_uid_bytes = _get_user_public_key(params, recipient_email)
         
-        if not recipient_user:
-            raise ValueError(f"User {recipient_email} not found in enterprise")
-        
-        recipient_uid = recipient_user.get('enterprise_user_id')
-        if not recipient_uid:
-            raise ValueError(f"User {recipient_email} has no UID")
+        if not recipient_uid_bytes:
+            raise ValueError(f"User {recipient_email} not found")
         
         # Build permissions (minimal fields needed for revoke)
         permissions = record_sharing_pb2.Permissions()
-        permissions.recipientUid = utils.base64_url_decode(recipient_uid) if isinstance(recipient_uid, str) else recipient_uid
+        permissions.recipientUid = recipient_uid_bytes
         permissions.recordUid = record_uid_bytes
+        
+        # Set access rules (API requires accessType even for revoke)
+        permissions.rules.accessType = folder_pb2.AT_USER  # Required: Must be AT_USER
+        permissions.rules.recordUid = record_uid_bytes     # Required: UID of the record
         
         # Build request
         request = record_sharing_pb2.Request()
@@ -1336,7 +1367,7 @@ def transfer_record_ownership_v3(
                 'username': status.username,
                 'status': status.status,
                 'message': status.message,
-                'success': status.status.lower() == 'success'
+                'success': 'success' in status.status.lower()  # Check if status contains 'success'
             })
         
         # Mark for sync since record ownership changed
@@ -1452,7 +1483,7 @@ def transfer_records_ownership_batch_v3(
                 'username': status.username,
                 'status': status.status,
                 'message': status.message,
-                'success': status.status.lower() == 'success'
+                'success': 'success' in status.status.lower()  # Check if status contains 'success'
             })
         
         # Mark for sync since record ownership changed
