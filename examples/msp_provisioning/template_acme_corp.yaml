@@ -1,0 +1,161 @@
+# Acme Corporation MC Provisioning Template
+# Complete example with nested folders, sharing, and permissions
+
+# ============================================================================
+# ⚠️  BEFORE RUNNING: RESERVE THE ADMIN EMAIL DOMAIN
+# ============================================================================
+# The admin_user email domain MUST be reserved for this MC before running.
+# Contact Keeper support to reserve the domain, or use an already-reserved domain.
+# Learn more: https://docs.keeper.io/enterprise-guide/user-and-team-provisioning/email-auto-provisioning
+#
+# CHANGE "acme-admin@yourmsp.com" to use YOUR reserved domain!
+# ============================================================================
+
+mc:
+  name: "Acme Corporation"
+  plan: "enterprisePlus"
+  seats: -1  # Unlimited seats
+  file_plan: "10tb"
+
+  # Optional: Organize this MC under a dedicated node (MSP-side)
+  node: "Enterprise Clients"    # Node name on MSP side
+  create_node: true              # Auto-create node if it doesn't exist
+
+  # Optional: Create internal organizational nodes within the MC
+  internal_nodes:
+    - "Engineering"              # For engineering team users/folders
+    - "Sales"                    # For sales team users/folders
+    - "Operations"               # For operations team users/folders
+
+  # Root folder - Creates a single MC root folder containing all subfolders
+  # Default: MC name (e.g., "Acme Corporation" folder)
+  # Set to "" or false to create folders directly in vault root (no root folder)
+  root_folder: "Acme Corporation"
+
+  # Folder prefix - Prefixes subfolder names so MSP techs know which client when folders are shared
+  # Default: first word of MC name (e.g., "Acme" → "Acme-Network", "Acme-Accounting")
+  # Set to "" or false to disable prefix
+  # Result: "Acme Corporation/Acme-Network", "Acme Corporation/Acme-Accounting", etc.
+  folder_prefix: "Acme"
+
+  # Optional: Color for the root folder
+  root_folder_color: "blue"
+
+  # Note: Root folder is a regular folder (not shared) to allow shared subfolders inside
+  # Individual subfolders can be shared with MSP users using the 'share_with' parameter
+
+  # Add-ons for this MC
+  addons:
+    - "compliance_report"
+    - "secrets_manager"
+    - "enterprise_breach_watch"
+
+# Create dedicated admin user for this MC
+admin_user:
+  email: "acme-admin@yourmsp.com"
+  name: "Acme Admin"
+
+# Folder structure with sharing
+folders:
+  # Network & Infrastructure folder
+  - name: "Network"              # Created as: "Acme Corporation/Acme-Network"
+    type: "shared"
+    color: "orange"
+    share_with:
+      - email: "network-team@yourmsp.com"
+        manage_records: true     # Can add/edit/delete records
+        manage_users: false      # Cannot share with others
+      - email: "senior-tech@yourmsp.com"
+        manage_records: true
+        manage_users: true       # Can share with other techs
+
+    # Nested folders under Network
+    subfolders:
+      - name: "Firewalls"        # Full path: Acme Corporation/Acme-Network/Firewalls
+        color: "red"
+      - name: "Switches"         # Full path: Acme Corporation/Acme-Network/Switches
+        color: "blue"
+      - name: "WiFi"             # Full path: Acme Corporation/Acme-Network/WiFi
+        color: "green"
+
+  # Accounting & Finance
+  - name: "Accounting"           # Created as: "Acme Corporation/Acme-Accounting"
+    type: "shared"
+    color: "blue"
+    share_with:
+      - email: "finance-team@yourmsp.com"
+        manage_records: true
+        manage_users: false
+
+    subfolders:
+      - name: "QuickBooks"       # Full path: Acme Corporation/Acme-Accounting/QuickBooks
+        color: "green"
+      - name: "Banking"          # Full path: Acme Corporation/Acme-Accounting/Banking
+        color: "blue"
+      - name: "Payroll"          # Full path: Acme Corporation/Acme-Accounting/Payroll
+        color: "yellow"
+
+  # Human Resources
+  - name: "HR"                   # Created as: "Acme Corporation/Acme-HR"
+    type: "shared"
+    color: "green"
+    share_with:
+      - email: "hr-team@yourmsp.com"
+        manage_records: true
+        manage_users: true
+
+    subfolders:
+      - name: "Employee Records"  # Full path: Acme Corporation/Acme-HR/Employee Records
+      - name: "Benefits"          # Full path: Acme Corporation/Acme-HR/Benefits
+      - name: "Onboarding"        # Full path: Acme Corporation/Acme-HR/Onboarding
+
+  # Applications & Software
+  - name: "Applications"         # Created as: "Acme Corporation/Acme-Applications"
+    type: "shared"
+    color: "yellow"
+    share_with:
+      - email: "app-team@yourmsp.com"
+        manage_records: true
+        manage_users: false
+      - email: "senior-tech@yourmsp.com"
+        manage_records: true
+        manage_users: true
+
+    subfolders:
+      - name: "Microsoft 365"    # Full path: Acme Corporation/Acme-Applications/Microsoft 365
+        color: "blue"
+      - name: "Google Workspace" # Full path: Acme Corporation/Acme-Applications/Google Workspace
+        color: "red"
+      - name: "SaaS Tools"       # Full path: Acme Corporation/Acme-Applications/SaaS Tools
+        color: "orange"
+
+  # Security & Compliance
+  - name: "Security"             # Created as: "Acme Corporation/Acme-Security"
+    type: "shared"
+    color: "red"
+    share_with:
+      - email: "security-team@yourmsp.com"
+        manage_records: true
+        manage_users: true      # Security team can manage sharing
+
+    subfolders:
+      - name: "SSL Certificates" # Full path: Acme Corporation/Acme-Security/SSL Certificates
+      - name: "API Keys"         # Full path: Acme Corporation/Acme-Security/API Keys
+        color: "orange"
+      - name: "Compliance Docs"  # Full path: Acme Corporation/Acme-Security/Compliance Docs
+        color: "blue"
+
+  # Client-Only folder (not shared with MSP)
+  - name: "Internal"             # Created as: "Acme Corporation/Acme-Internal"
+    type: "shared"
+    color: "gray"
+    # No share_with = only visible to Acme admin and users
+
+  # Executive folder (limited access)
+  - name: "Executive"            # Created as: "Acme Corporation/Acme-Executive"
+    type: "shared"
+    color: "yellow"
+    share_with:
+      - email: "senior-tech@yourmsp.com"  # Only senior tech has access
+        manage_records: false    # Read-only for MSP
+        manage_users: false
