@@ -1101,25 +1101,24 @@ def update_record_share_v3(
     params: 'KeeperParams',
     record_uid: str,
     recipient_email: str,
-    can_share: Optional[bool] = None,
-    can_edit: Optional[bool] = None,
+    access_role_type: Optional[int] = None,
     expiration_timestamp: Optional[int] = None
 ) -> Dict[str, Any]:
     """
-    Update sharing permissions for a record using v3 API.
+    Update sharing permissions for a record using v3 API with role-based permissions.
     
     Args:
         params: KeeperParams instance with session information
         record_uid: UID of the record
         recipient_email: Email address of the user
-        can_share: Whether recipient can share the record (None = no change)
-        can_edit: Whether recipient can edit the record (None = no change)
+        access_role_type: The role-based permission type (e.g., folder_pb2.VIEWER, folder_pb2.CONTRIBUTOR)
         expiration_timestamp: Optional expiration timestamp in milliseconds
     
     Returns:
         Dictionary with operation results
     """
     from . import sync_down
+    from .proto import folder_pb2
     
     logger = logging.getLogger(__name__)
     
@@ -1160,6 +1159,16 @@ def update_record_share_v3(
         permissions.recordUid = record_uid_bytes
         permissions.recordKey = encrypted_record_key
         permissions.useEccKey = use_ecc
+        
+        # Set access rules (matching the structure used in share_record_v3)
+        permissions.rules.accessTypeUid = recipient_uid_bytes  # Required: UID of the recipient
+        permissions.rules.accessType = folder_pb2.AT_USER     # Required: Must be AT_USER
+        permissions.rules.recordUid = record_uid_bytes         # Required: UID of the record
+        permissions.rules.owner = False                        # Not the owner
+        
+        # Set role-based access permission if provided
+        if access_role_type is not None:
+            permissions.rules.accessRoleType = access_role_type
         
         # Set expiration if provided
         if expiration_timestamp:
