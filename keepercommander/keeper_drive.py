@@ -1413,40 +1413,39 @@ def update_folder_v3(
     folder_data = folder_pb2.FolderData()
     folder_data.folderUid = utils.base64_url_decode(folder_uid)
     
-    # Update data if name or color changed
-    if folder_name is not None or color is not None:
-        # Get current folder data from cache to preserve existing values
-        data_dict = {}
-        folder_obj = params.keeper_drive_folders.get(folder_uid) or params.subfolder_cache.get(folder_uid)
-        
-        if folder_obj:
-            # Preserve existing name if not updating it
-            if folder_name is None:
-                existing_name = folder_obj.get('name')
-                if existing_name:
-                    data_dict['name'] = existing_name
-            else:
-                data_dict['name'] = folder_name
-            
-            # Preserve existing color if not updating it
-            if color is None:
-                existing_color = folder_obj.get('color')
-                if existing_color and existing_color != 'none':
-                    data_dict['color'] = existing_color
-            else:
-                if color != 'none' and color != '':
-                    data_dict['color'] = color
-                # If color is 'none' or empty, don't include it (removes color)
+    # Always include encrypted data to preserve existing folder properties
+    # Get current folder data from cache to preserve existing values
+    data_dict = {}
+    folder_obj = params.keeper_drive_folders.get(folder_uid) or params.subfolder_cache.get(folder_uid)
+    
+    if folder_obj:
+        # Preserve existing name if not updating it
+        if folder_name is None:
+            existing_name = folder_obj.get('name')
+            if existing_name:
+                data_dict['name'] = existing_name
         else:
-            # Fallback if folder not in cache - just use provided values
-            if folder_name is not None:
-                data_dict['name'] = folder_name
-            if color is not None and color != 'none' and color != '':
-                data_dict['color'] = color
+            data_dict['name'] = folder_name
         
-        # Encrypt folder data with GCM
-        data_json = json.dumps(data_dict).encode('utf-8')
-        folder_data.data = crypto.encrypt_aes_v2(data_json, folder_key)
+        # Preserve existing color if not updating it
+        if color is None:
+            existing_color = folder_obj.get('color')
+            if existing_color and existing_color != 'none':
+                data_dict['color'] = existing_color
+        else:
+            if color != 'none' and color != '':
+                data_dict['color'] = color
+            # If color is 'none' or empty, don't include it (removes color)
+    else:
+        # Fallback if folder not in cache - just use provided values
+        if folder_name is not None:
+            data_dict['name'] = folder_name
+        if color is not None and color != 'none' and color != '':
+            data_dict['color'] = color
+    
+    # Always encrypt and send folder data to preserve all properties
+    data_json = json.dumps(data_dict).encode('utf-8')
+    folder_data.data = crypto.encrypt_aes_v2(data_json, folder_key)
     
     # Update inherit permissions if specified
     if inherit_permissions is not None:
@@ -1538,39 +1537,39 @@ def update_folders_batch_v3(
         folder_data = folder_pb2.FolderData()
         folder_data.folderUid = utils.base64_url_decode(folder_uid)
         
-        # Update data if name or color changed
-        if folder_name is not None or color is not None:
-            # Get current folder data from cache to preserve existing values
-            data_dict = {}
-            folder_obj = params.keeper_drive_folders.get(folder_uid) or params.subfolder_cache.get(folder_uid)
-            
-            if folder_obj:
-                # Preserve existing name if not updating it
-                if folder_name is None:
-                    existing_name = folder_obj.get('name')
-                    if existing_name:
-                        data_dict['name'] = existing_name
-                else:
-                    data_dict['name'] = folder_name
-                
-                # Preserve existing color if not updating it
-                if color is None:
-                    existing_color = folder_obj.get('color')
-                    if existing_color and existing_color != 'none':
-                        data_dict['color'] = existing_color
-                else:
-                    if color != 'none' and color != '':
-                        data_dict['color'] = color
-                    # If color is 'none' or empty, don't include it (removes color)
+        # Always include encrypted data to preserve existing folder properties
+        # Get current folder data from cache to preserve existing values
+        data_dict = {}
+        folder_obj = params.keeper_drive_folders.get(folder_uid) or params.subfolder_cache.get(folder_uid)
+        
+        if folder_obj:
+            # Preserve existing name if not updating it
+            if folder_name is None:
+                existing_name = folder_obj.get('name')
+                if existing_name:
+                    data_dict['name'] = existing_name
             else:
-                # Fallback if folder not in cache - just use provided values
-                if folder_name is not None:
-                    data_dict['name'] = folder_name
-                if color is not None and color not in ('none', ''):
-                    data_dict['color'] = color
+                data_dict['name'] = folder_name
             
-            data_json = json.dumps(data_dict).encode('utf-8')
-            folder_data.data = crypto.encrypt_aes_v2(data_json, folder_key)
+            # Preserve existing color if not updating it
+            if color is None:
+                existing_color = folder_obj.get('color')
+                if existing_color and existing_color != 'none':
+                    data_dict['color'] = existing_color
+            else:
+                if color != 'none' and color != '':
+                    data_dict['color'] = color
+                # If color is 'none' or empty, don't include it (removes color)
+        else:
+            # Fallback if folder not in cache - just use provided values
+            if folder_name is not None:
+                data_dict['name'] = folder_name
+            if color is not None and color not in ('none', ''):
+                data_dict['color'] = color
+        
+        # Always encrypt and send folder data to preserve all properties
+        data_json = json.dumps(data_dict).encode('utf-8')
+        folder_data.data = crypto.encrypt_aes_v2(data_json, folder_key)
         
         # Update inherit permissions
         if inherit_permissions is not None:
