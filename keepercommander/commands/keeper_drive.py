@@ -1903,7 +1903,7 @@ class KeeperDriveShareRecordCommand(Command):
 # Parser for 'keeper-drive-update-record-share' command
 keeper_drive_update_record_share_parser = argparse.ArgumentParser(
     prog='keeper-drive-update-record-share',
-    description='Update record sharing permissions',
+    description='Update sharing permissions for a KeeperDrive record using role-based permissions',
     allow_abbrev=False
 )
 keeper_drive_update_record_share_parser.add_argument(
@@ -1916,18 +1916,45 @@ keeper_drive_update_record_share_parser.add_argument(
     type=str,
     help='Email address of recipient user'
 )
-keeper_drive_update_record_share_parser.add_argument(
-    '--can-edit',
-    dest='can_edit',
-    type=lambda x: x.lower() == 'true',
-    help='Update edit permission (true/false)'
+
+# Role-based permission flags (mutually exclusive)
+role_group = keeper_drive_update_record_share_parser.add_mutually_exclusive_group(required=True)
+role_group.add_argument(
+    '--viewer',
+    dest='role',
+    action='store_const',
+    const='viewer',
+    help='Update to VIEWER role (can view record)'
 )
-keeper_drive_update_record_share_parser.add_argument(
-    '--can-share',
-    dest='can_share',
-    type=lambda x: x.lower() == 'true',
-    help='Update share permission (true/false)'
+role_group.add_argument(
+    '--contributor',
+    dest='role',
+    action='store_const',
+    const='contributor',
+    help='Update to CONTRIBUTOR role (can view and edit record)'
 )
+role_group.add_argument(
+    '--shared-manager',
+    dest='role',
+    action='store_const',
+    const='shared_manager',
+    help='Update to SHARED_MANAGER role (can manage sharing)'
+)
+role_group.add_argument(
+    '--content-manager',
+    dest='role',
+    action='store_const',
+    const='content_manager',
+    help='Update to CONTENT_MANAGER role (can manage record content)'
+)
+role_group.add_argument(
+    '--manager',
+    dest='role',
+    action='store_const',
+    const='manager',
+    help='Update to MANAGER role (full management permissions)'
+)
+
 keeper_drive_update_record_share_parser.add_argument(
     '--expiration',
     dest='expiration',
@@ -1948,36 +1975,47 @@ class KeeperDriveUpdateRecordShareCommand(Command):
         """
         Execute the keeper-drive-update-record-share command.
         
-        Updates sharing permissions for a record.
+        Updates sharing permissions for a record using role-based permissions.
         """
+        from keepercommander.proto import folder_pb2
+        
         record_uid = kwargs.get('record_uid')
         recipient_email = kwargs.get('recipient_email')
+        role = kwargs.get('role')
         
-        if not record_uid or not recipient_email:
-            raise CommandError('keeper-drive-update-record-share', 'Record UID and recipient email are required')
+        if not record_uid or not recipient_email or not role:
+            raise CommandError('keeper-drive-update-record-share', 'Record UID, recipient email, and role are required')
         
-        can_edit = kwargs.get('can_edit')
-        can_share = kwargs.get('can_share')
+        # Map role string to access_role_type constant
+        role_mapping = {
+            'viewer': folder_pb2.VIEWER,
+            'contributor': folder_pb2.CONTRIBUTOR,
+            'shared_manager': folder_pb2.SHARED_MANAGER,
+            'content_manager': folder_pb2.CONTENT_MANAGER,
+            'manager': folder_pb2.MANAGER
+        }
+        
+        access_role_type = role_mapping.get(role)
+        if not access_role_type:
+            raise CommandError('keeper-drive-update-record-share', f'Invalid role: {role}')
+        
         expiration = kwargs.get('expiration')
-        
-        if can_edit is None and can_share is None and expiration is None:
-            raise CommandError('keeper-drive-update-record-share', 'At least one permission must be specified')
         
         try:
             result = keeper_drive_records.update_record_share_v3(
                 params=params,
                 record_uid=record_uid,
                 recipient_email=recipient_email,
-                can_edit=can_edit,
-                can_share=can_share,
+                access_role_type=access_role_type,
                 expiration_timestamp=expiration
             )
             
             if result['success']:
                 for res in result['results']:
                     if res['success']:
-                        logging.info(f"✓ Record '{res['record_uid']}' permissions updated for {recipient_email}")
+                        logging.info(f"✓ Record '{res['record_uid']}' sharing permissions updated for {recipient_email}")
                         logging.info(f"  Status: {res['status']}")
+                        logging.info(f"  New Role: {role.upper()}")
                     else:
                         logging.error(f"✗ Failed to update: {res['message']}")
                 
