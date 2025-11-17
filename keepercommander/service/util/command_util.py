@@ -148,9 +148,13 @@ class CommandExecutor:
             # Always let the parser handle the response (including empty responses and logs)
             response = parse_keeper_response(command, response, log_output)
             
+            status_code = 200
+            if isinstance(response, dict) and response.get("status") == "error":
+                status_code = 400
+            
             response = CommandExecutor.encrypt_response(response)
-            logger.debug("Command executed successfully")
-            return response, 200
+            logger.debug(f"Command executed with status code: {status_code}")
+            return response, status_code
         except CommandExecutionError as e:
             # Return the actual command error instead of generic "server busy"
             logger.error(f"Command execution error: {e}")
