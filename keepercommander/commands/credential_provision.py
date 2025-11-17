@@ -270,6 +270,27 @@ class CredentialProvisionCommand(Command):
                 if output_format == 'text':
                     logging.info('✓ Login record created\n')
 
+                # Generate share URL (KC-1007-5)
+                if output_format == 'text':
+                    logging.info('Step 9: Generating share URL...')
+
+                share_url = self._generate_share_url(login_record_uid, config, params)
+
+                if output_format == 'text':
+                    logging.info('✓ Share URL generated\n')
+
+                # Send email (KC-1007-5)
+                if output_format == 'text':
+                    logging.info('Step 10: Sending welcome email...')
+
+                email_success = self._send_email(config, share_url, params)
+
+                if output_format == 'text':
+                    if email_success:
+                        logging.info('✓ Email sent successfully\n')
+                    else:
+                        logging.info('⚠️  Email sending failed (non-critical)\n')
+
                 # Success!
                 if output_format == 'text':
                     logging.info('\n' + '='*60)
@@ -277,21 +298,23 @@ class CredentialProvisionCommand(Command):
                     logging.info('='*60)
                     logging.info(f'PAM User UID: {pam_user_uid}')
                     logging.info(f'Login Record UID: {login_record_uid}')
+                    logging.info(f'Share URL: {share_url}')
                     logging.info(f'Username: {config["account"]["username"]}')
                     logging.info(f'Employee: {config["user"]["first_name"]} {config["user"]["last_name"]}')
                     logging.info(f'Rotation: {"Synced" if rotation_success else "Scheduled"}')
-                    logging.info('\n⚠️  NOTE: Email sharing will be implemented in KC-1007-5')
+                    logging.info(f'Email: {"Sent" if email_success else "Failed (manual delivery required)"}')
                     logging.info('='*60 + '\n')
                 else:
                     result = {
                         'success': True,
                         'pam_user_uid': pam_user_uid,
                         'login_record_uid': login_record_uid,
+                        'share_url': share_url,
                         'username': config['account']['username'],
                         'employee_name': f"{config['user']['first_name']} {config['user']['last_name']}",
                         'rotation_status': 'synced' if rotation_success else 'scheduled',
-                        'message': 'PAM User created with rotation and Login record',
-                        'note': 'Email sharing pending (KC-1007-5)'
+                        'email_status': 'sent' if email_success else 'failed',
+                        'message': 'Credential provisioning complete'
                     }
                     print(json.dumps(result, indent=2))
 
@@ -1282,3 +1305,259 @@ class CredentialProvisionCommand(Command):
         except Exception as e:
             logging.error(f'Failed to create Login record: {e}')
             raise CommandError('credential-provision', f'Login record creation failed: {e}')
+
+    def _generate_share_url(
+        self,
+        login_record_uid: str,
+        config: Dict[str, Any],
+        params: KeeperParams
+    ) -> str:
+        """
+        Generate one-time share URL for Login record.
+
+        Args:
+            login_record_uid: UID of Login record to share
+            config: Configuration dict (contains expiry settings)
+            params: KeeperParams session
+
+        Returns:
+            Share URL string
+
+        Raises:
+            CommandError: If share URL generation fails
+        """
+        # Parse expiry (e.g., "7d" = 7 days)
+        expiry_str = config.get('email', {}).get('share_url_expiry', '7d')
+        expiry_seconds = self._parse_expiry(expiry_str)
+
+        try:
+            # Generate share URL using internal helper
+            # NOTE: Extracts logic from OneTimeShareCreateCommand (commands/register.py)
+            share_url = self._generate_share_url_internal(
+                login_record_uid=login_record_uid,
+                expiry_seconds=expiry_seconds,
+                params=params
+            )
+
+            logging.info('✅ Generated one-time share URL')
+            logging.info(f'   Expires: {expiry_str}')
+            logging.info(f'   Max uses: 1 (single-use)')
+
+            return share_url
+
+        except Exception as e:
+            logging.error(f'Failed to generate share URL: {e}')
+            raise CommandError('credential-provision', f'Share URL generation failed: {e}')
+
+    def _generate_share_url_internal(
+        self,
+        login_record_uid: str,
+        expiry_seconds: int,
+        params: KeeperParams
+    ) -> str:
+        """
+        Generate one-time share URL for Login record.
+
+        This extracts the core logic from OneTimeShareCreateCommand
+        (keepercommander/commands/register.py lines 2365-2430).
+
+        Resolution: BLOCKER_KC-1007-5_Share-URL-API-Missing_2025-11-17
+        Decided to extract logic rather than create shared api.create_share_url()
+        to stay within scope of KC-1007. Can be refactored later if needed.
+
+        Args:
+            login_record_uid: UID of Login record to share
+            expiry_seconds: Seconds until share expires
+            params: KeeperParams session
+
+        Returns:
+            Share URL string
+
+        Raises:
+            ValueError: If record not found
+            Exception: If share creation fails
+        """
+        from keepercommander import api, utils, crypto
+        from keepercommander.proto import APIRequest_pb2
+        from urllib.parse import urlunparse, urlparse
+
+        # Get record key
+        if login_record_uid not in params.record_cache:
+            raise ValueError(f'Login record not found: {login_record_uid}')
+
+        record_key = params.record_cache[login_record_uid]['record_key_unencrypted']
+
+        # Generate client keys (from OneTimeShareCreateCommand)
+        client_key = utils.generate_aes_key()
+        client_id = crypto.hmac_sha512(client_key, 'KEEPER_SECRETS_MANAGER_CLIENT_ID'.encode())
+
+        # Create share request
+        rq = APIRequest_pb2.AddExternalShareRequest()
+        rq.recordUid = utils.base64_url_decode(login_record_uid)
+        rq.encryptedRecordKey = crypto.encrypt_aes_v2(record_key, client_key)
+        rq.clientId = client_id
+        rq.accessExpireOn = utils.current_milli_time() + int(expiry_seconds * 1000)
+
+        # Send request
+        api.communicate_rest(params, rq, 'vault/external_share_add', rs_type=APIRequest_pb2.Device)
+
+        # Build URL
+        parsed = urlparse(params.server)
+        server_netloc = parsed.netloc if parsed.netloc else parsed.path
+        url = urlunparse(('https', server_netloc, '/vault/share/', None, None, utils.base64_url_encode(client_key)))
+
+        logging.debug(f'Generated share URL: {url[:50]}... (expires in {expiry_seconds}s)')
+
+        return str(url)
+
+    def _parse_expiry(self, expiry_str: str) -> int:
+        """
+        Parse expiry string to seconds.
+
+        Supported formats:
+        - "7d" = 7 days
+        - "24h" = 24 hours
+        - "60m" = 60 minutes
+
+        Args:
+            expiry_str: Expiry string (e.g., "7d")
+
+        Returns:
+            Seconds
+
+        Raises:
+            ValueError: If format invalid
+        """
+        import re
+
+        match = re.match(r'^(\d+)([dhm])$', expiry_str)
+        if not match:
+            # Default to 7 days
+            logging.warning(f'Invalid expiry format: {expiry_str}, using 7d')
+            return 7 * 24 * 60 * 60
+
+        value = int(match.group(1))
+        unit = match.group(2)
+
+        if unit == 'd':
+            return value * 24 * 60 * 60
+        elif unit == 'h':
+            return value * 60 * 60
+        elif unit == 'm':
+            return value * 60
+
+        return 7 * 24 * 60 * 60  # Default 7 days
+
+    def _load_email_config(
+        self,
+        config_name: str,
+        params: KeeperParams
+    ):
+        """
+        Load email configuration from vault.
+
+        Args:
+            config_name: Email config name
+            params: KeeperParams session
+
+        Returns:
+            EmailConfig object
+
+        Raises:
+            CommandError: If email config not found
+        """
+        from keepercommander.commands import email_commands
+
+        # Find email config by name
+        record_uid = email_commands.find_email_config_by_name(params, config_name)
+
+        if not record_uid:
+            raise CommandError('credential-provision', f'Email config not found: {config_name}')
+
+        # Load email config from record
+        try:
+            email_config = email_commands.load_email_config_from_record(params, record_uid)
+            logging.debug(f'Loaded email config: {config_name}')
+            return email_config
+        except Exception as e:
+            raise CommandError('credential-provision', f'Failed to load email config: {e}')
+
+    def _send_email(
+        self,
+        config: Dict[str, Any],
+        share_url: str,
+        params: KeeperParams
+    ) -> bool:
+        """
+        Send welcome email with credentials using existing onboarding template.
+
+        Args:
+            config: Configuration dict
+            share_url: One-time share URL
+            params: KeeperParams session
+
+        Returns:
+            True if email sent successfully, False if failed (non-critical)
+        """
+        from keepercommander.email_service import EmailSender, build_onboarding_email
+
+        email_config_name = config['email']['config_name']
+        send_to = config['email'].get('send_to', 'personal')
+        subject = config['email'].get('subject', 'Welcome - Your Account Credentials')
+
+        # Load email configuration
+        try:
+            email_config = self._load_email_config(email_config_name, params)
+        except Exception as e:
+            logging.warning(f'⚠️  Failed to load email config: {e}')
+            return False
+
+        # Determine recipient(s)
+        recipients = []
+        if send_to == 'personal':
+            recipients.append(config['user']['personal_email'])
+        elif send_to == 'corporate':
+            corporate_email = config['user'].get('corporate_email')
+            if not corporate_email:
+                logging.error('corporate_email not specified in config')
+                return False
+            recipients.append(corporate_email)
+        elif send_to == 'both':
+            recipients.append(config['user']['personal_email'])
+            corporate_email = config['user'].get('corporate_email')
+            if corporate_email:
+                recipients.append(corporate_email)
+        else:
+            logging.error(f'Invalid send_to value: {send_to}')
+            return False
+
+        # Build email body using existing template
+        user = config['user']
+        custom_message = config['email'].get(
+            'custom_message',
+            f"Welcome to the team, {user['first_name']}! Your corporate account credentials are ready."
+        )
+        record_title = f"Corporate Account - {user['first_name']} {user['last_name']}"
+        expiration = config['email'].get('share_url_expiry', '7 days')
+
+        body = build_onboarding_email(
+            share_url=share_url,
+            custom_message=custom_message,
+            record_title=record_title,
+            expiration=expiration
+        )
+
+        # Send email to each recipient
+        try:
+            sender = EmailSender(email_config)
+
+            for recipient in recipients:
+                sender.send(recipient, subject, body, html=True)
+                logging.info(f'✅ Email sent to: {recipient}')
+
+            return True
+
+        except Exception as e:
+            logging.warning(f'⚠️  Email sending failed: {e}')
+            logging.info(f'Manual delivery required - share URL: {share_url}')
+            return False
