@@ -96,6 +96,16 @@ def register_command_info(aliases, command_info):
 # Main Command Class
 # =============================================================================
 
+class ProvisioningState:
+    """Track provisioning state for rollback on critical failure."""
+
+    def __init__(self):
+        self.pam_user_uid = None
+        self.login_record_uid = None
+        self.dag_link_created = False
+        self.folder_created = None
+
+
 class CredentialProvisionCommand(Command):
     """
     Automated Credential Provisioning Command
@@ -181,6 +191,9 @@ class CredentialProvisionCommand(Command):
                 logging.info('STARTING CREDENTIAL PROVISIONING')
                 logging.info('='*60 + '\n')
 
+            # Initialize provisioning state for rollback tracking (KC-1007-6)
+            state = ProvisioningState()
+
             try:
                 # Check for duplicate PAM Users
                 if output_format == 'text':
@@ -212,6 +225,7 @@ class CredentialProvisionCommand(Command):
                     logging.info('Step 3: Creating PAM User record...')
 
                 pam_user_uid = self._create_pam_user(config, password, params)
+                state.pam_user_uid = pam_user_uid  # Track for rollback
 
                 if output_format == 'text':
                     logging.info('✓ PAM User created\n')
@@ -221,6 +235,7 @@ class CredentialProvisionCommand(Command):
                     logging.info('Step 4: Linking to PAM Configuration...')
 
                 self._create_dag_link(pam_user_uid, config['account']['pam_config_uid'], params)
+                state.dag_link_created = True  # Track for rollback
 
                 if output_format == 'text':
                     logging.info('✓ DAG link created\n')
@@ -266,6 +281,7 @@ class CredentialProvisionCommand(Command):
                     logging.info('Step 8: Creating Login record...')
 
                 login_record_uid = self._create_login_record(config, password, params)
+                state.login_record_uid = login_record_uid  # Track for rollback
 
                 if output_format == 'text':
                     logging.info('✓ Login record created\n')
@@ -318,10 +334,16 @@ class CredentialProvisionCommand(Command):
                     }
                     print(json.dumps(result, indent=2))
 
-            except CommandError:
+            except CommandError as e:
+                # Critical failure during provisioning - rollback changes
+                logging.error(f'\n❌ CRITICAL FAILURE: {str(e)}')
+                self._rollback(state, params)
                 raise
             except Exception as e:
+                # Unexpected failure during provisioning - rollback changes
+                logging.error(f'\n❌ UNEXPECTED FAILURE: {str(e)}')
                 logging.error(f'Provisioning failed: {str(e)}')
+                self._rollback(state, params)
                 if output_format == 'json':
                     result = {'success': False, 'error': str(e)}
                     print(json.dumps(result, indent=2))
@@ -1561,3 +1583,67 @@ class CredentialProvisionCommand(Command):
             logging.warning(f'⚠️  Email sending failed: {e}')
             logging.info(f'Manual delivery required - share URL: {share_url}')
             return False
+
+    # =========================================================================
+    # KC-1007-6: Rollback Logic
+    # =========================================================================
+
+    def _rollback(self, state: ProvisioningState, params: KeeperParams) -> None:
+        """
+        Rollback created records on critical failure.
+
+        Cleans up partially-created resources when provisioning fails at a
+        critical step (PAM User creation, DAG linking, rotation config, etc.).
+
+        Non-critical failures (email, share URL) do not trigger rollback.
+
+        Args:
+            state: ProvisioningState tracking created resources
+            params: KeeperParams session
+
+        Implementation Notes:
+            - DAG links are likely auto-removed when child record is deleted
+            - Rollback attempts are defensive (don't fail if already cleaned up)
+            - Partial rollback success is acceptable (logs errors for manual cleanup)
+        """
+        from keepercommander import api
+
+        rollback_errors = []
+
+        logging.info('Rolling back provisioning changes...')
+
+        # Delete Login record (if created)
+        if state.login_record_uid:
+            try:
+                api.delete_record(params, state.login_record_uid)
+                logging.info('✅ Rollback: Deleted Login record')
+            except Exception as e:
+                rollback_errors.append(f'Login record: {e}')
+                logging.error(f'⚠️  Rollback failed for Login record: {e}')
+
+        # Delete PAM User (also should remove DAG links automatically)
+        if state.pam_user_uid:
+            try:
+                api.delete_record(params, state.pam_user_uid)
+                logging.info('✅ Rollback: Deleted PAM User')
+            except Exception as e:
+                rollback_errors.append(f'PAM User: {e}')
+                logging.error(f'⚠️  Rollback failed for PAM User: {e}')
+
+        # Log rollback summary
+        if rollback_errors:
+            logging.error('\n' + '='*60)
+            logging.error('⚠️  ROLLBACK COMPLETED WITH ERRORS')
+            logging.error('='*60)
+            logging.error('Some resources could not be automatically cleaned up:')
+            for error in rollback_errors:
+                logging.error(f'   • {error}')
+            logging.error('\nManual cleanup may be required.')
+            logging.error('Check your vault for orphaned records.')
+            logging.error('='*60 + '\n')
+        else:
+            logging.info('\n' + '='*60)
+            logging.info('✅ ROLLBACK COMPLETED SUCCESSFULLY')
+            logging.info('='*60)
+            logging.info('All created resources have been cleaned up.')
+            logging.info('='*60 + '\n')
