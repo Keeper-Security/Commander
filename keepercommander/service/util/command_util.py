@@ -153,7 +153,7 @@ class CommandExecutor:
                 status_code = 400
             
             response = CommandExecutor.encrypt_response(response)
-            logger.debug(f"Command executed with status code: {status_code}")
+            logger.debug(f"Command executed successfully")
             return response, status_code
         except CommandExecutionError as e:
             # Return the actual command error instead of generic "server busy"

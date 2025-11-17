@@ -47,6 +47,7 @@ class QueuedRequest:
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     result: Optional[Any] = None
+    status_code: Optional[int] = None  # HTTP status code from command execution
     error_message: Optional[str] = None
     temp_files: list = None  # List of temporary file paths to clean up
     
@@ -186,7 +187,8 @@ class RequestQueueManager:
             if request_id in self.completed_requests:
                 request = self.completed_requests[request_id]
                 if request.status == RequestStatus.COMPLETED:
-                    return request.result, 200
+                    status_code = request.status_code if request.status_code is not None else 200
+                    return request.result, status_code
                 elif request.status == RequestStatus.FAILED:
                     return {"error": request.error_message}, 500
             return None
@@ -250,6 +252,7 @@ class RequestQueueManager:
             request.status = RequestStatus.COMPLETED
             request.completed_at = datetime.now()
             request.result = result
+            request.status_code = status_code
             
             logger.info(f"Request {request.request_id} completed successfully")
             
