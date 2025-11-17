@@ -489,5 +489,133 @@ class TestComprehensiveValidation(unittest.TestCase):
         self.assertGreater(len(errors), 5, 'Should collect multiple errors')
 
 
+class TestPasswordGeneration(unittest.TestCase):
+    """Test password generation (KC-1007-3)."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.cmd = CredentialProvisionCommand()
+
+    def test_generate_password_valid_complexity(self):
+        """Test password generation with valid complexity."""
+        complexity = '32,5,5,5,5'
+        password = self.cmd._generate_password(complexity)
+
+        self.assertIsInstance(password, str)
+        self.assertEqual(len(password), 32, 'Password should be 32 characters')
+
+    def test_password_meets_complexity_requirements(self):
+        """Test that generated password meets all complexity requirements."""
+        complexity = '20,3,3,3,3'
+        password = self.cmd._generate_password(complexity)
+
+        # Count character types
+        upper_count = sum(1 for c in password if c.isupper())
+        lower_count = sum(1 for c in password if c.islower())
+        digit_count = sum(1 for c in password if c.isdigit())
+        special_count = sum(1 for c in password if not c.isalnum())
+
+        self.assertGreaterEqual(upper_count, 3, 'Should have at least 3 uppercase')
+        self.assertGreaterEqual(lower_count, 3, 'Should have at least 3 lowercase')
+        self.assertGreaterEqual(digit_count, 3, 'Should have at least 3 digits')
+        self.assertGreaterEqual(special_count, 3, 'Should have at least 3 special')
+
+    def test_password_randomness(self):
+        """Test that passwords are random (different each time)."""
+        complexity = '16,2,2,2,2'
+        passwords = [self.cmd._generate_password(complexity) for _ in range(5)]
+
+        # All passwords should be unique
+        self.assertEqual(len(set(passwords)), 5, 'All passwords should be different')
+
+    def test_invalid_complexity_format(self):
+        """Test error handling for invalid complexity format."""
+        invalid_complexities = [
+            'invalid',
+            '32',  # Too few parts
+            '32,5,5',  # Too few parts
+            '32,5,5,5,5,5',  # Too many parts
+            'a,b,c,d,e',  # Non-numeric
+        ]
+
+        for complexity in invalid_complexities:
+            with self.assertRaises(ValueError):
+                self.cmd._generate_password(complexity)
+
+    def test_complexity_exceeds_length(self):
+        """Test error when complexity requirements exceed password length."""
+        # Total requirements: 10+10+10+10 = 40, but length is only 20
+        complexity = '20,10,10,10,10'
+
+        with self.assertRaises(ValueError) as context:
+            self.cmd._generate_password(complexity)
+
+        self.assertIn('exceed length', str(context.exception).lower())
+
+    def test_generate_random_password_direct(self):
+        """Test _generate_random_password directly."""
+        password = self.cmd._generate_random_password(
+            length=30,
+            min_upper=5,
+            min_lower=5,
+            min_digits=5,
+            min_special=5
+        )
+
+        self.assertEqual(len(password), 30)
+
+        # Verify minimums
+        upper_count = sum(1 for c in password if c.isupper())
+        lower_count = sum(1 for c in password if c.islower())
+        digit_count = sum(1 for c in password if c.isdigit())
+        special_count = sum(1 for c in password if not c.isalnum())
+
+        self.assertGreaterEqual(upper_count, 5)
+        self.assertGreaterEqual(lower_count, 5)
+        self.assertGreaterEqual(digit_count, 5)
+        self.assertGreaterEqual(special_count, 5)
+
+    def test_minimum_length_password(self):
+        """Test password generation with minimum requirements."""
+        # Minimum: 12 characters with 0,0,0,0 requirements
+        complexity = '12,0,0,0,0'
+        password = self.cmd._generate_password(complexity)
+
+        self.assertEqual(len(password), 12)
+
+    def test_high_complexity_password(self):
+        """Test password generation with high complexity."""
+        complexity = '64,10,10,10,10'
+        password = self.cmd._generate_password(complexity)
+
+        self.assertEqual(len(password), 64)
+
+        upper_count = sum(1 for c in password if c.isupper())
+        lower_count = sum(1 for c in password if c.islower())
+        digit_count = sum(1 for c in password if c.isdigit())
+        special_count = sum(1 for c in password if not c.isalnum())
+
+        self.assertGreaterEqual(upper_count, 10)
+        self.assertGreaterEqual(lower_count, 10)
+        self.assertGreaterEqual(digit_count, 10)
+        self.assertGreaterEqual(special_count, 10)
+
+    def test_password_contains_only_allowed_characters(self):
+        """Test that password only contains allowed character sets."""
+        import string
+        complexity = '20,5,5,5,5'
+        password = self.cmd._generate_password(complexity)
+
+        allowed_chars = (
+            string.ascii_uppercase +
+            string.ascii_lowercase +
+            string.digits +
+            '''!@#$%^?();',.=+[]<>{}-_/\\*&:"`~|'''
+        )
+
+        for char in password:
+            self.assertIn(char, allowed_chars, f'Character {char} not in allowed set')
+
+
 if __name__ == '__main__':
     unittest.main()

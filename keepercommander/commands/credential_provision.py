@@ -175,28 +175,95 @@ class CredentialProvisionCommand(Command):
                 self._dry_run_report(params, config, output_format)
                 return
 
-            # Phase 3: Execute provisioning (NOT IMPLEMENTED YET)
+            # Phase 3: Execute provisioning (KC-1007-3)
             if output_format == 'text':
                 logging.info('\n' + '='*60)
-                logging.info('PROVISIONING NOT YET IMPLEMENTED')
-                logging.info('='*60)
-                logging.info('Story KC-1007-2 (Foundation) focuses on:')
-                logging.info('  ✓ Command structure')
-                logging.info('  ✓ YAML parsing')
-                logging.info('  ✓ Validation framework')
-                logging.info('  ✓ Dry-run mode')
-                logging.info('\nProvisioning logic will be implemented in:')
-                logging.info('  • KC-1007-3: PAM User Creation')
-                logging.info('  • KC-1007-4: Rotation & Login Records')
-                logging.info('  • KC-1007-5: Sharing & Email')
+                logging.info('STARTING CREDENTIAL PROVISIONING')
                 logging.info('='*60 + '\n')
-            else:
-                result = {
-                    'success': False,
-                    'error': 'Provisioning not yet implemented',
-                    'message': 'KC-1007-2 focuses on foundation and validation only'
-                }
-                print(json.dumps(result, indent=2))
+
+            try:
+                # Check for duplicate PAM Users
+                if output_format == 'text':
+                    logging.info('Step 1: Checking for duplicate PAM Users...')
+
+                if self._check_duplicate(config, params):
+                    error_msg = f'Duplicate PAM User already exists for username: {config["account"]["username"]}'
+                    if output_format == 'json':
+                        result = {'success': False, 'error': error_msg}
+                        print(json.dumps(result, indent=2))
+                    else:
+                        logging.error(error_msg)
+                    raise CommandError('credential-provision', error_msg)
+
+                if output_format == 'text':
+                    logging.info('✓ No duplicates found\n')
+
+                # Generate secure password
+                if output_format == 'text':
+                    logging.info('Step 2: Generating secure password...')
+
+                password = self._generate_password(config['pam']['rotation']['password_complexity'])
+
+                if output_format == 'text':
+                    logging.info('✓ Password generated\n')
+
+                # Create PAM User
+                if output_format == 'text':
+                    logging.info('Step 3: Creating PAM User record...')
+
+                pam_user_uid = self._create_pam_user(config, password, params)
+
+                if output_format == 'text':
+                    logging.info('✓ PAM User created\n')
+
+                # Link to PAM Configuration
+                if output_format == 'text':
+                    logging.info('Step 4: Linking to PAM Configuration...')
+
+                self._create_dag_link(pam_user_uid, config['account']['pam_config_uid'], params)
+
+                if output_format == 'text':
+                    logging.info('✓ DAG link created\n')
+
+                # Configure rotation
+                if output_format == 'text':
+                    logging.info('Step 5: Configuring password rotation...')
+
+                self._configure_rotation(pam_user_uid, config, params)
+
+                if output_format == 'text':
+                    logging.info('✓ Rotation configured\n')
+
+                # Success!
+                if output_format == 'text':
+                    logging.info('\n' + '='*60)
+                    logging.info('✅ PROVISIONING COMPLETE')
+                    logging.info('='*60)
+                    logging.info(f'PAM User UID: {pam_user_uid}')
+                    logging.info(f'Username: {config["account"]["username"]}')
+                    logging.info(f'Employee: {config["user"]["first_name"]} {config["user"]["last_name"]}')
+                    logging.info('\n⚠️  NOTE: Immediate rotation, Login record, and email')
+                    logging.info('    will be implemented in KC-1007-4 and KC-1007-5')
+                    logging.info('='*60 + '\n')
+                else:
+                    result = {
+                        'success': True,
+                        'pam_user_uid': pam_user_uid,
+                        'username': config['account']['username'],
+                        'employee_name': f"{config['user']['first_name']} {config['user']['last_name']}",
+                        'message': 'PAM User created with rotation configured',
+                        'note': 'Immediate rotation, Login record, and email pending (KC-1007-4, KC-1007-5)'
+                    }
+                    print(json.dumps(result, indent=2))
+
+            except CommandError:
+                raise
+            except Exception as e:
+                logging.error(f'Provisioning failed: {str(e)}')
+                if output_format == 'json':
+                    result = {'success': False, 'error': str(e)}
+                    print(json.dumps(result, indent=2))
+                raise CommandError('credential-provision', f'Provisioning failed: {str(e)}')
 
         except CommandError:
             raise
@@ -618,3 +685,406 @@ class CredentialProvisionCommand(Command):
             print('✓ Validation passed - ready for actual provisioning')
             print('  Run without --dry-run to execute')
             print('='*60 + '\n')
+
+    # =========================================================================
+    # KC-1007-3: PAM User Creation & Rotation
+    # =========================================================================
+
+    def _check_duplicate(self, config: Dict[str, Any], params: KeeperParams) -> bool:
+        """
+        Check for duplicate PAM Users.
+
+        A duplicate is defined as a PAM User with the same username
+        in the same folder.
+
+        Args:
+            config: Validated configuration
+            params: KeeperParams session
+
+        Returns:
+            True if duplicate found, False otherwise
+        """
+        username = config['account']['username']
+        folder_path = config.get('vault', {}).get('folder', f"/Employees/{config['user'].get('department', 'Unknown')}")
+
+        # Get folder UID
+        folder_uid = self._get_folder_uid(folder_path, params)
+
+        if not folder_uid:
+            # Folder doesn't exist yet, so no duplicates possible
+            return False
+
+        # Search for PAM Users in folder with matching username
+        for record_uid in params.record_cache:
+            record = vault.KeeperRecord.load(params, record_uid)
+
+            # Check if it's a PAM User
+            if not isinstance(record, vault.TypedRecord):
+                continue
+            if record.record_type != 'pamUser':
+                continue
+
+            # Check if in same folder
+            record_folder_uid = record.folder_uid if hasattr(record, 'folder_uid') else None
+            if record_folder_uid != folder_uid:
+                continue
+
+            # Check username match
+            # Use record facade to get login field
+            try:
+                from keepercommander.commands.pam.user_facade import PamUserRecordFacade
+                facade = PamUserRecordFacade()
+                facade.assign_record(record)
+
+                if facade.login == username:
+                    logging.error(f'❌ Duplicate PAM User found:')
+                    logging.error(f'   Username: {username}')
+                    logging.error(f'   Folder: {folder_path}')
+                    logging.error(f'   Existing UID: {record_uid}')
+                    logging.error(f'   Title: {record.title}')
+                    return True
+            except Exception as e:
+                logging.debug(f'Error checking record {record_uid}: {e}')
+                continue
+
+        return False
+
+    def _get_folder_uid(self, folder_path: str, params: KeeperParams) -> Optional[str]:
+        """
+        Get folder UID by path.
+
+        Args:
+            folder_path: Folder path (e.g., "/Employees/Engineering")
+            params: KeeperParams session
+
+        Returns:
+            Folder UID if found, None otherwise
+        """
+        from ..subfolder import try_resolve_path
+
+        try:
+            folder_node = try_resolve_path(params, folder_path)
+            if folder_node:
+                return folder_node.uid
+        except:
+            pass
+
+        return None
+
+    def _generate_password(self, password_complexity: str) -> str:
+        """
+        Generate secure random password.
+
+        This is a critical security feature. Commander generates passwords
+        using cryptographic RNG instead of receiving them from external systems.
+
+        NOTE: Password will be set on target account via immediate rotation
+        after PAM User creation (using existing rotation infrastructure).
+
+        Args:
+            password_complexity: Complexity string (e.g., "32,5,5,5,5")
+                Format: "length,upper,lower,digits,special"
+
+        Returns:
+            Generated password (will be stored encrypted in vault)
+
+        Raises:
+            ValueError: If complexity string is invalid
+        """
+        # Parse complexity: "length,upper,lower,digits,special"
+        try:
+            parts = password_complexity.split(',')
+            if len(parts) != 5:
+                raise ValueError(f'Invalid complexity format: {password_complexity}')
+
+            length = int(parts[0])
+            min_upper = int(parts[1])
+            min_lower = int(parts[2])
+            min_digits = int(parts[3])
+            min_special = int(parts[4])
+
+            # Validate that minimums don't exceed length
+            total_min = min_upper + min_lower + min_digits + min_special
+            if total_min > length:
+                raise ValueError(
+                    f'Password complexity requirements ({total_min}) exceed length ({length})'
+                )
+
+        except (ValueError, IndexError) as e:
+            raise ValueError(f'Invalid password complexity: {password_complexity}. {str(e)}')
+
+        # Generate secure random password
+        password = self._generate_random_password(length, min_upper, min_lower, min_digits, min_special)
+
+        logging.info(f'✓ Generated secure password (length: {length})')
+        logging.debug(f'  Complexity: {min_upper} upper, {min_lower} lower, {min_digits} digits, {min_special} special')
+
+        return password
+
+    def _generate_random_password(
+        self,
+        length: int,
+        min_upper: int,
+        min_lower: int,
+        min_digits: int,
+        min_special: int
+    ) -> str:
+        """
+        Generate cryptographically secure random password.
+
+        Uses secrets module (cryptographic RNG) to generate password
+        meeting complexity requirements.
+
+        Args:
+            length: Total password length
+            min_upper: Minimum uppercase letters
+            min_lower: Minimum lowercase letters
+            min_digits: Minimum digits
+            min_special: Minimum special characters
+
+        Returns:
+            Random password meeting all requirements
+        """
+        # Character sets
+        uppercase = string.ascii_uppercase
+        lowercase = string.ascii_lowercase
+        digits = string.digits
+        special = '''!@#$%^?();',.=+[]<>{}-_/\\*&:"`~|'''
+
+        # Ensure minimum requirements
+        password_chars = []
+        password_chars.extend(secrets.choice(uppercase) for _ in range(min_upper))
+        password_chars.extend(secrets.choice(lowercase) for _ in range(min_lower))
+        password_chars.extend(secrets.choice(digits) for _ in range(min_digits))
+        password_chars.extend(secrets.choice(special) for _ in range(min_special))
+
+        # Fill remaining length with random mix
+        remaining = length - len(password_chars)
+        if remaining > 0:
+            all_chars = uppercase + lowercase + digits + special
+            password_chars.extend(secrets.choice(all_chars) for _ in range(remaining))
+
+        # Shuffle to avoid predictable pattern (first chars always uppercase, etc.)
+        secrets.SystemRandom().shuffle(password_chars)
+
+        return ''.join(password_chars)
+
+    def _create_pam_user(
+        self,
+        config: Dict[str, Any],
+        password: str,
+        params: KeeperParams
+    ) -> str:
+        """
+        Create PAM User record.
+
+        Args:
+            config: Validated configuration
+            password: Generated password
+            params: KeeperParams session
+
+        Returns:
+            Created PAM User record UID
+
+        Raises:
+            CommandError: If PAM User creation fails
+        """
+        from keepercommander.commands.pam.user_facade import PamUserRecordFacade
+
+        username = config['account']['username']
+        folder_path = config.get('vault', {}).get('folder', f"/Employees/{config['user'].get('department', 'Unknown')}")
+
+        # Ensure folder exists
+        folder_uid = self._ensure_folder_exists(folder_path, params)
+
+        # Create PAM User typed record
+        pam_user = vault.TypedRecord()
+        pam_user.record_type = 'pamUser'
+
+        # Use facade to set fields
+        facade = PamUserRecordFacade()
+        facade.assign_record(pam_user)
+        facade.login = username
+        facade.password = password
+        facade.managed = True
+
+        # Set title (custom or auto-generated)
+        pam_title = config.get('pam', {}).get('pam_user_title')
+        if pam_title:
+            pam_user.title = pam_title
+        else:
+            # Auto-generate: "PAM: FirstName LastName - Username"
+            first = config['user']['first_name']
+            last = config['user']['last_name']
+            pam_user.title = f"PAM: {first} {last} - {username}"
+
+        # Add custom fields for metadata
+        custom_fields = []
+
+        # Employee ID
+        if config['user'].get('employee_id'):
+            custom_fields.append(vault.TypedField.new_field(
+                'text',
+                config['user']['employee_id'],
+                'Employee ID'
+            ))
+
+        # Department
+        if config['user'].get('department'):
+            custom_fields.append(vault.TypedField.new_field(
+                'text',
+                config['user']['department'],
+                'Department'
+            ))
+
+        if custom_fields:
+            pam_user.custom = custom_fields
+
+        # Add to vault
+        try:
+            record_uid = vault.KeeperRecord.create(params, pam_user)
+
+            # Set folder
+            if folder_uid:
+                api.sync_down(params)  # Refresh cache
+                vault_extensions.move_record(params, record_uid, folder_uid)
+
+            logging.info(f'✅ Created PAM User: {pam_user.title}')
+            logging.info(f'   UID: {record_uid}')
+            logging.info(f'   Folder: {folder_path}')
+
+            return record_uid
+
+        except Exception as e:
+            logging.error(f'Failed to create PAM User: {e}')
+            raise CommandError('credential-provision', f'PAM User creation failed: {e}')
+
+    def _ensure_folder_exists(self, folder_path: str, params: KeeperParams) -> Optional[str]:
+        """
+        Ensure folder exists, create if needed.
+
+        Args:
+            folder_path: Folder path (e.g., "/Employees/Engineering")
+            params: KeeperParams session
+
+        Returns:
+            Folder UID
+
+        Raises:
+            CommandError: If folder creation fails
+        """
+        from ..commands.folder import FolderMakeCommand
+
+        # Check if exists
+        folder_uid = self._get_folder_uid(folder_path, params)
+        if folder_uid:
+            return folder_uid
+
+        # Create folder
+        logging.info(f'Creating folder: {folder_path}')
+
+        try:
+            # Use existing folder command to create
+            folder_cmd = FolderMakeCommand()
+            folder_cmd.execute(params, folder=folder_path, shared_folder=True)
+
+            # Refresh cache
+            api.sync_down(params)
+
+            # Get UID after creation
+            folder_uid = self._get_folder_uid(folder_path, params)
+            if not folder_uid:
+                raise Exception(f'Folder creation succeeded but UID not found: {folder_path}')
+
+            logging.info(f'✓ Created shared folder: {folder_path}')
+            return folder_uid
+
+        except Exception as e:
+            logging.error(f'Failed to create folder {folder_path}: {e}')
+            raise CommandError('credential-provision', f'Folder creation failed: {e}')
+
+    def _create_dag_link(
+        self,
+        pam_user_uid: str,
+        pam_config_uid: str,
+        params: KeeperParams
+    ) -> None:
+        """
+        Create DAG relationship linking PAM User to PAM Config.
+
+        This establishes the 'belongs_to' relationship that tells the
+        rotation system which PAM Config to use for this user.
+
+        Args:
+            pam_user_uid: PAM User record UID
+            pam_config_uid: PAM Configuration record UID
+            params: KeeperParams session
+
+        Raises:
+            CommandError: If DAG linking fails
+        """
+        from ..discovery_common import record_link
+
+        try:
+            # Create belongs_to relationship
+            # PAM User belongs_to PAM Configuration
+            record_link.link_records(
+                params=params,
+                child_uid=pam_user_uid,
+                parent_uid=pam_config_uid
+            )
+
+            logging.info(f'✅ Linked PAM User to PAM Configuration')
+            logging.debug(f'   PAM User: {pam_user_uid}')
+            logging.debug(f'   PAM Config: {pam_config_uid}')
+
+        except Exception as e:
+            logging.error(f'Failed to create DAG link: {e}')
+            raise CommandError('credential-provision', f'DAG linking failed: {e}')
+
+    def _configure_rotation(
+        self,
+        pam_user_uid: str,
+        config: Dict[str, Any],
+        params: KeeperParams
+    ) -> None:
+        """
+        Configure automatic password rotation.
+
+        Creates rotation schedule with complexity requirements
+        and enables rotation for the PAM User.
+
+        Args:
+            pam_user_uid: PAM User record UID
+            config: Configuration dict
+            params: KeeperParams session
+
+        Raises:
+            CommandError: If rotation configuration fails
+        """
+        from ..commands.pam import router_helper
+        from ..proto import router_pb2
+
+        rotation_config = config['pam']['rotation']
+
+        try:
+            # Build rotation request
+            schedule = rotation_config['schedule']
+            complexity = rotation_config['password_complexity']
+
+            # Use router helper to set rotation information
+            router_helper.router_set_record_rotation_information(
+                params=params,
+                record_uid=pam_user_uid,
+                resource_ref=None,  # Will use default from PAM Config
+                pwd_complexity=complexity,
+                schedule_data=[{"type": "CRON", "cron": schedule, "tz": "Etc/UTC"}]
+            )
+
+            logging.info(f'✅ Configured rotation for PAM User')
+            logging.debug(f'   Schedule: {schedule}')
+            logging.debug(f'   Complexity: {complexity}')
+
+        except Exception as e:
+            logging.error(f'Failed to configure rotation: {e}')
+            raise CommandError('credential-provision', f'Rotation configuration failed: {e}')
