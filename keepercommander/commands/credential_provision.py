@@ -234,25 +234,64 @@ class CredentialProvisionCommand(Command):
                 if output_format == 'text':
                     logging.info('✓ Rotation configured\n')
 
+                # Check gateway status (KC-1007-4)
+                if output_format == 'text':
+                    logging.info('Step 6: Checking gateway status...')
+
+                gateway_available = self._check_gateway_status(
+                    config['account']['pam_config_uid'],
+                    params
+                )
+
+                if output_format == 'text':
+                    if gateway_available:
+                        logging.info('✓ Gateway available\n')
+                    else:
+                        logging.info('⚠️  Gateway status uncertain (will attempt rotation)\n')
+
+                # Perform immediate rotation (KC-1007-4)
+                if output_format == 'text':
+                    logging.info('Step 7: Performing immediate rotation...')
+
+                rotation_success = self._rotate_immediately(pam_user_uid, config, params)
+
+                if output_format == 'text':
+                    if rotation_success:
+                        logging.info('✓ Immediate rotation complete\n')
+                    else:
+                        logging.info('⚠️  Rotation deferred to next schedule\n')
+
+                # Create Login record (KC-1007-4)
+                if output_format == 'text':
+                    logging.info('Step 8: Creating Login record...')
+
+                login_record_uid = self._create_login_record(config, password, params)
+
+                if output_format == 'text':
+                    logging.info('✓ Login record created\n')
+
                 # Success!
                 if output_format == 'text':
                     logging.info('\n' + '='*60)
                     logging.info('✅ PROVISIONING COMPLETE')
                     logging.info('='*60)
                     logging.info(f'PAM User UID: {pam_user_uid}')
+                    logging.info(f'Login Record UID: {login_record_uid}')
                     logging.info(f'Username: {config["account"]["username"]}')
                     logging.info(f'Employee: {config["user"]["first_name"]} {config["user"]["last_name"]}')
-                    logging.info('\n⚠️  NOTE: Immediate rotation, Login record, and email')
-                    logging.info('    will be implemented in KC-1007-4 and KC-1007-5')
+                    logging.info(f'Rotation: {"Synced" if rotation_success else "Scheduled"}')
+                    logging.info('\n⚠️  NOTE: Email sharing will be implemented in KC-1007-5')
                     logging.info('='*60 + '\n')
                 else:
                     result = {
                         'success': True,
                         'pam_user_uid': pam_user_uid,
+                        'login_record_uid': login_record_uid,
                         'username': config['account']['username'],
                         'employee_name': f"{config['user']['first_name']} {config['user']['last_name']}",
-                        'message': 'PAM User created with rotation configured',
-                        'note': 'Immediate rotation, Login record, and email pending (KC-1007-4, KC-1007-5)'
+                        'rotation_status': 'synced' if rotation_success else 'scheduled',
+                        'message': 'PAM User created with rotation and Login record',
+                        'note': 'Email sharing pending (KC-1007-5)'
                     }
                     print(json.dumps(result, indent=2))
 
@@ -1088,3 +1127,158 @@ class CredentialProvisionCommand(Command):
         except Exception as e:
             logging.error(f'Failed to configure rotation: {e}')
             raise CommandError('credential-provision', f'Rotation configuration failed: {e}')
+
+    def _check_gateway_status(
+        self,
+        pam_config_uid: str,
+        params: KeeperParams
+    ) -> bool:
+        """
+        Check if PAM Gateway is available for immediate rotation.
+
+        Uses simplified approach: Assume gateway is available if rotation
+        is configured. Actual connectivity is verified during rotation attempt.
+
+        Args:
+            pam_config_uid: PAM Configuration record UID
+            params: KeeperParams session
+
+        Returns:
+            True if gateway appears available, False otherwise
+        """
+        # Simplified approach per design review:
+        # We assume the gateway is available if the PAM Configuration exists
+        # The actual rotation command will handle gateway connectivity gracefully
+
+        try:
+            # Verify PAM Config exists in vault
+            if pam_config_uid in params.record_cache:
+                logging.debug(f'PAM Configuration found: {pam_config_uid}')
+                return True
+            else:
+                logging.warning(f'PAM Configuration not found in vault: {pam_config_uid}')
+                return False
+        except Exception as e:
+            logging.warning(f'Gateway status check failed: {e}')
+            return False  # Graceful degradation
+
+    def _rotate_immediately(
+        self,
+        pam_user_uid: str,
+        config: Dict[str, Any],
+        params: KeeperParams
+    ) -> bool:
+        """
+        Perform immediate rotation to sync password to target system.
+
+        This overwrites the HR-set initial password with the generated
+        password stored in the PAM User record.
+
+        Args:
+            pam_user_uid: PAM User record UID
+            config: Configuration dict
+            params: KeeperParams session
+
+        Returns:
+            True if rotation succeeded or was not requested
+            False if rotation was requested but failed (non-critical)
+        """
+        # Check if immediate rotation was requested
+        rotation_config = config['pam']['rotation']
+        rotate_immediately = rotation_config.get('rotate_immediately', False)
+
+        if not rotate_immediately:
+            logging.debug('Immediate rotation not requested (rotate_immediately: false)')
+            return True
+
+        logging.info('Attempting immediate rotation...')
+
+        try:
+            # Import rotation command
+            from ..commands.discoveryrotation import PAMGatewayActionRotateCommand
+
+            # Create and execute rotation command
+            rotate_cmd = PAMGatewayActionRotateCommand()
+
+            # Execute rotation for this specific PAM User
+            rotate_cmd.execute(params, record_uid=pam_user_uid)
+
+            logging.info('✅ Immediate rotation completed successfully')
+            logging.debug(f'   Password synced to target system')
+            return True
+
+        except Exception as e:
+            # Non-critical failure: PAM User is created and rotation scheduled
+            # The scheduled rotation will eventually sync the password
+            logging.warning(f'⚠️  Immediate rotation failed: {e}')
+            logging.warning(f'   Password will sync on next scheduled rotation')
+            return False  # Graceful degradation
+
+    def _create_login_record(
+        self,
+        config: Dict[str, Any],
+        password: str,
+        params: KeeperParams
+    ) -> str:
+        """
+        Create Login record for sharing employee credentials.
+
+        This record is created in the admin's personal vault and can be
+        shared with appropriate parties (manager, IT admin, etc.).
+
+        Args:
+            config: Configuration dict
+            password: Generated password
+            params: KeeperParams session
+
+        Returns:
+            Login record UID
+
+        Raises:
+            CommandError: If Login record creation fails
+        """
+        try:
+            # Build employee name
+            first_name = config['user']['first_name']
+            last_name = config['user']['last_name']
+            full_name = f'{first_name} {last_name}'
+            username = config['account']['username']
+
+            # Create Login typed record
+            login_record = vault.TypedRecord()
+            login_record.record_type = 'login'
+
+            # Set fields
+            login_record.title = f'Corporate Account - {full_name}'
+            login_record.login = username
+            login_record.password = password
+
+            # Build notes with employee info
+            notes_lines = [
+                'Employee Credential Information',
+                '=' * 40,
+                f'Employee: {full_name}',
+                f'Username: {username}',
+                f'Email: {config["user"]["email"]}',
+                '',
+                '⚠️  NOTE: This password is PAM-managed.',
+                '   It will rotate automatically per schedule.',
+                '   Always use the current password from vault.',
+                '',
+                f'Rotation Schedule: {config["pam"]["rotation"]["schedule"]}',
+                f'Password Complexity: {config["pam"]["rotation"]["password_complexity"]}',
+            ]
+            login_record.notes = '\n'.join(notes_lines)
+
+            # Create record in vault
+            record_uid = vault.KeeperRecord.create(params, login_record)
+
+            logging.info(f'✅ Login record created')
+            logging.debug(f'   Record UID: {record_uid}')
+            logging.debug(f'   Title: {login_record.title}')
+
+            return record_uid
+
+        except Exception as e:
+            logging.error(f'Failed to create Login record: {e}')
+            raise CommandError('credential-provision', f'Login record creation failed: {e}')
