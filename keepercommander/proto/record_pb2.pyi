@@ -7,7 +7,7 @@ from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Map
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class RecordTypeScope(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     RT_STANDARD: _ClassVar[RecordTypeScope]
     RT_USER: _ClassVar[RecordTypeScope]
     RT_ENTERPRISE: _ClassVar[RecordTypeScope]
@@ -15,7 +15,7 @@ class RecordTypeScope(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     RT_PAM_CONFIGURATION: _ClassVar[RecordTypeScope]
 
 class RecordKeyType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     NO_KEY: _ClassVar[RecordKeyType]
     ENCRYPTED_BY_DATA_KEY: _ClassVar[RecordKeyType]
     ENCRYPTED_BY_PUBLIC_KEY: _ClassVar[RecordKeyType]
@@ -25,13 +25,13 @@ class RecordKeyType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     ENCRYPTED_BY_ROOT_KEY_GCM: _ClassVar[RecordKeyType]
 
 class RecordFolderType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     user_folder: _ClassVar[RecordFolderType]
     shared_folder: _ClassVar[RecordFolderType]
     shared_folder_folder: _ClassVar[RecordFolderType]
 
 class RecordModifyResult(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     RS_SUCCESS: _ClassVar[RecordModifyResult]
     RS_OUT_OF_SYNC: _ClassVar[RecordModifyResult]
     RS_ACCESS_DENIED: _ClassVar[RecordModifyResult]
@@ -47,50 +47,54 @@ class RecordModifyResult(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     RS_ONLY_OWNER_CAN_MODIFY_SCRIPTS: _ClassVar[RecordModifyResult]
 
 class FileAddResult(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     FA_SUCCESS: _ClassVar[FileAddResult]
     FA_ERROR: _ClassVar[FileAddResult]
 
 class FileGetResult(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     FG_SUCCESS: _ClassVar[FileGetResult]
     FG_ERROR: _ClassVar[FileGetResult]
     FG_ACCESS_DENIED: _ClassVar[FileGetResult]
 
 class RecordDetailsInclude(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     DATA_PLUS_SHARE: _ClassVar[RecordDetailsInclude]
     DATA_ONLY: _ClassVar[RecordDetailsInclude]
     SHARE_ONLY: _ClassVar[RecordDetailsInclude]
 
 class CheckShareAdminObjectType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     CHECK_SA_INVALID_TYPE: _ClassVar[CheckShareAdminObjectType]
     CHECK_SA_ON_SF: _ClassVar[CheckShareAdminObjectType]
     CHECK_SA_ON_RECORD: _ClassVar[CheckShareAdminObjectType]
 
 class ShareStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     ACTIVE: _ClassVar[ShareStatus]
     BLOCK: _ClassVar[ShareStatus]
     INVITED: _ClassVar[ShareStatus]
 
 class RecordTransactionType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     RTT_GENERAL: _ClassVar[RecordTransactionType]
     RTT_ROTATION: _ClassVar[RecordTransactionType]
 
 class TimeLimitedAccessType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     INVALID_TIME_LIMITED_ACCESS_TYPE: _ClassVar[TimeLimitedAccessType]
     USER_ACCESS_TO_RECORD: _ClassVar[TimeLimitedAccessType]
     USER_OR_TEAM_ACCESS_TO_SHAREDFOLDER: _ClassVar[TimeLimitedAccessType]
     RECORD_ACCESS_TO_SHAREDFOLDER: _ClassVar[TimeLimitedAccessType]
     USER_ACCESS_TO_SHAREDFOLDER: _ClassVar[TimeLimitedAccessType]
     TEAM_ACCESS_TO_SHAREDFOLDER: _ClassVar[TimeLimitedAccessType]
+    RECORD_ACCESS_TO_FOLDER: _ClassVar[TimeLimitedAccessType]
+    USER_ACCESS_TO_FOLDER: _ClassVar[TimeLimitedAccessType]
+    TEAM_ACCESS_TO_FOLDER: _ClassVar[TimeLimitedAccessType]
+    USER_OR_TEAM_ACCESS_TO_FOLDER: _ClassVar[TimeLimitedAccessType]
 
 class TimerNotificationType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     NOTIFICATION_OFF: _ClassVar[TimerNotificationType]
     NOTIFY_OWNER: _ClassVar[TimerNotificationType]
     NOTIFY_PRIVILEGED_USERS: _ClassVar[TimerNotificationType]
@@ -144,12 +148,16 @@ USER_OR_TEAM_ACCESS_TO_SHAREDFOLDER: TimeLimitedAccessType
 RECORD_ACCESS_TO_SHAREDFOLDER: TimeLimitedAccessType
 USER_ACCESS_TO_SHAREDFOLDER: TimeLimitedAccessType
 TEAM_ACCESS_TO_SHAREDFOLDER: TimeLimitedAccessType
+RECORD_ACCESS_TO_FOLDER: TimeLimitedAccessType
+USER_ACCESS_TO_FOLDER: TimeLimitedAccessType
+TEAM_ACCESS_TO_FOLDER: TimeLimitedAccessType
+USER_OR_TEAM_ACCESS_TO_FOLDER: TimeLimitedAccessType
 NOTIFICATION_OFF: TimerNotificationType
 NOTIFY_OWNER: TimerNotificationType
 NOTIFY_PRIVILEGED_USERS: TimerNotificationType
 
 class RecordType(_message.Message):
-    __slots__ = ["recordTypeId", "content", "scope"]
+    __slots__ = ("recordTypeId", "content", "scope")
     RECORDTYPEID_FIELD_NUMBER: _ClassVar[int]
     CONTENT_FIELD_NUMBER: _ClassVar[int]
     SCOPE_FIELD_NUMBER: _ClassVar[int]
@@ -159,7 +167,7 @@ class RecordType(_message.Message):
     def __init__(self, recordTypeId: _Optional[int] = ..., content: _Optional[str] = ..., scope: _Optional[_Union[RecordTypeScope, str]] = ...) -> None: ...
 
 class RecordTypesRequest(_message.Message):
-    __slots__ = ["standard", "user", "enterprise", "pam"]
+    __slots__ = ("standard", "user", "enterprise", "pam")
     STANDARD_FIELD_NUMBER: _ClassVar[int]
     USER_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISE_FIELD_NUMBER: _ClassVar[int]
@@ -171,7 +179,7 @@ class RecordTypesRequest(_message.Message):
     def __init__(self, standard: bool = ..., user: bool = ..., enterprise: bool = ..., pam: bool = ...) -> None: ...
 
 class RecordTypesResponse(_message.Message):
-    __slots__ = ["recordTypes", "standardCounter", "userCounter", "enterpriseCounter", "pamCounter"]
+    __slots__ = ("recordTypes", "standardCounter", "userCounter", "enterpriseCounter", "pamCounter")
     RECORDTYPES_FIELD_NUMBER: _ClassVar[int]
     STANDARDCOUNTER_FIELD_NUMBER: _ClassVar[int]
     USERCOUNTER_FIELD_NUMBER: _ClassVar[int]
@@ -185,7 +193,7 @@ class RecordTypesResponse(_message.Message):
     def __init__(self, recordTypes: _Optional[_Iterable[_Union[RecordType, _Mapping]]] = ..., standardCounter: _Optional[int] = ..., userCounter: _Optional[int] = ..., enterpriseCounter: _Optional[int] = ..., pamCounter: _Optional[int] = ...) -> None: ...
 
 class RecordTypeModifyResponse(_message.Message):
-    __slots__ = ["recordTypeId", "counter"]
+    __slots__ = ("recordTypeId", "counter")
     RECORDTYPEID_FIELD_NUMBER: _ClassVar[int]
     COUNTER_FIELD_NUMBER: _ClassVar[int]
     recordTypeId: int
@@ -193,7 +201,7 @@ class RecordTypeModifyResponse(_message.Message):
     def __init__(self, recordTypeId: _Optional[int] = ..., counter: _Optional[int] = ...) -> None: ...
 
 class RecordsGetRequest(_message.Message):
-    __slots__ = ["record_uids", "client_time"]
+    __slots__ = ("record_uids", "client_time")
     RECORD_UIDS_FIELD_NUMBER: _ClassVar[int]
     CLIENT_TIME_FIELD_NUMBER: _ClassVar[int]
     record_uids: _containers.RepeatedScalarFieldContainer[bytes]
@@ -201,7 +209,7 @@ class RecordsGetRequest(_message.Message):
     def __init__(self, record_uids: _Optional[_Iterable[bytes]] = ..., client_time: _Optional[int] = ...) -> None: ...
 
 class Record(_message.Message):
-    __slots__ = ["record_uid", "record_key", "record_key_type", "data", "extra", "version", "client_modified_time", "revision", "file_ids"]
+    __slots__ = ("record_uid", "record_key", "record_key_type", "data", "extra", "version", "client_modified_time", "revision", "file_ids")
     RECORD_UID_FIELD_NUMBER: _ClassVar[int]
     RECORD_KEY_FIELD_NUMBER: _ClassVar[int]
     RECORD_KEY_TYPE_FIELD_NUMBER: _ClassVar[int]
@@ -223,7 +231,7 @@ class Record(_message.Message):
     def __init__(self, record_uid: _Optional[bytes] = ..., record_key: _Optional[bytes] = ..., record_key_type: _Optional[_Union[RecordKeyType, str]] = ..., data: _Optional[bytes] = ..., extra: _Optional[bytes] = ..., version: _Optional[int] = ..., client_modified_time: _Optional[int] = ..., revision: _Optional[int] = ..., file_ids: _Optional[_Iterable[bytes]] = ...) -> None: ...
 
 class FolderRecordKey(_message.Message):
-    __slots__ = ["folder_uid", "record_uid", "record_key"]
+    __slots__ = ("folder_uid", "record_uid", "record_key")
     FOLDER_UID_FIELD_NUMBER: _ClassVar[int]
     RECORD_UID_FIELD_NUMBER: _ClassVar[int]
     RECORD_KEY_FIELD_NUMBER: _ClassVar[int]
@@ -233,7 +241,7 @@ class FolderRecordKey(_message.Message):
     def __init__(self, folder_uid: _Optional[bytes] = ..., record_uid: _Optional[bytes] = ..., record_key: _Optional[bytes] = ...) -> None: ...
 
 class Folder(_message.Message):
-    __slots__ = ["folder_uid", "folder_key", "folder_key_type"]
+    __slots__ = ("folder_uid", "folder_key", "folder_key_type")
     FOLDER_UID_FIELD_NUMBER: _ClassVar[int]
     FOLDER_KEY_FIELD_NUMBER: _ClassVar[int]
     FOLDER_KEY_TYPE_FIELD_NUMBER: _ClassVar[int]
@@ -243,7 +251,7 @@ class Folder(_message.Message):
     def __init__(self, folder_uid: _Optional[bytes] = ..., folder_key: _Optional[bytes] = ..., folder_key_type: _Optional[_Union[RecordKeyType, str]] = ...) -> None: ...
 
 class Team(_message.Message):
-    __slots__ = ["team_uid", "team_key", "team_private_key", "team_key_type", "folders"]
+    __slots__ = ("team_uid", "team_key", "team_private_key", "team_key_type", "folders")
     TEAM_UID_FIELD_NUMBER: _ClassVar[int]
     TEAM_KEY_FIELD_NUMBER: _ClassVar[int]
     TEAM_PRIVATE_KEY_FIELD_NUMBER: _ClassVar[int]
@@ -257,7 +265,7 @@ class Team(_message.Message):
     def __init__(self, team_uid: _Optional[bytes] = ..., team_key: _Optional[bytes] = ..., team_private_key: _Optional[bytes] = ..., team_key_type: _Optional[_Union[RecordKeyType, str]] = ..., folders: _Optional[_Iterable[_Union[Folder, _Mapping]]] = ...) -> None: ...
 
 class RecordsGetResponse(_message.Message):
-    __slots__ = ["records", "folder_record_keys", "folders", "teams"]
+    __slots__ = ("records", "folder_record_keys", "folders", "teams")
     RECORDS_FIELD_NUMBER: _ClassVar[int]
     FOLDER_RECORD_KEYS_FIELD_NUMBER: _ClassVar[int]
     FOLDERS_FIELD_NUMBER: _ClassVar[int]
@@ -269,7 +277,7 @@ class RecordsGetResponse(_message.Message):
     def __init__(self, records: _Optional[_Iterable[_Union[Record, _Mapping]]] = ..., folder_record_keys: _Optional[_Iterable[_Union[FolderRecordKey, _Mapping]]] = ..., folders: _Optional[_Iterable[_Union[Folder, _Mapping]]] = ..., teams: _Optional[_Iterable[_Union[Team, _Mapping]]] = ...) -> None: ...
 
 class RecordLink(_message.Message):
-    __slots__ = ["record_uid", "record_key"]
+    __slots__ = ("record_uid", "record_key")
     RECORD_UID_FIELD_NUMBER: _ClassVar[int]
     RECORD_KEY_FIELD_NUMBER: _ClassVar[int]
     record_uid: bytes
@@ -277,7 +285,7 @@ class RecordLink(_message.Message):
     def __init__(self, record_uid: _Optional[bytes] = ..., record_key: _Optional[bytes] = ...) -> None: ...
 
 class RecordAudit(_message.Message):
-    __slots__ = ["version", "data"]
+    __slots__ = ("version", "data")
     VERSION_FIELD_NUMBER: _ClassVar[int]
     DATA_FIELD_NUMBER: _ClassVar[int]
     version: int
@@ -285,19 +293,19 @@ class RecordAudit(_message.Message):
     def __init__(self, version: _Optional[int] = ..., data: _Optional[bytes] = ...) -> None: ...
 
 class SecurityData(_message.Message):
-    __slots__ = ["data"]
+    __slots__ = ("data",)
     DATA_FIELD_NUMBER: _ClassVar[int]
     data: bytes
     def __init__(self, data: _Optional[bytes] = ...) -> None: ...
 
 class SecurityScoreData(_message.Message):
-    __slots__ = ["data"]
+    __slots__ = ("data",)
     DATA_FIELD_NUMBER: _ClassVar[int]
     data: bytes
     def __init__(self, data: _Optional[bytes] = ...) -> None: ...
 
 class RecordAdd(_message.Message):
-    __slots__ = ["record_uid", "record_key", "client_modified_time", "data", "non_shared_data", "folder_type", "folder_uid", "folder_key", "record_links", "audit", "securityData", "securityScoreData"]
+    __slots__ = ("record_uid", "record_key", "client_modified_time", "data", "non_shared_data", "folder_type", "folder_uid", "folder_key", "record_links", "audit", "securityData", "securityScoreData")
     RECORD_UID_FIELD_NUMBER: _ClassVar[int]
     RECORD_KEY_FIELD_NUMBER: _ClassVar[int]
     CLIENT_MODIFIED_TIME_FIELD_NUMBER: _ClassVar[int]
@@ -325,7 +333,7 @@ class RecordAdd(_message.Message):
     def __init__(self, record_uid: _Optional[bytes] = ..., record_key: _Optional[bytes] = ..., client_modified_time: _Optional[int] = ..., data: _Optional[bytes] = ..., non_shared_data: _Optional[bytes] = ..., folder_type: _Optional[_Union[RecordFolderType, str]] = ..., folder_uid: _Optional[bytes] = ..., folder_key: _Optional[bytes] = ..., record_links: _Optional[_Iterable[_Union[RecordLink, _Mapping]]] = ..., audit: _Optional[_Union[RecordAudit, _Mapping]] = ..., securityData: _Optional[_Union[SecurityData, _Mapping]] = ..., securityScoreData: _Optional[_Union[SecurityScoreData, _Mapping]] = ...) -> None: ...
 
 class RecordsAddRequest(_message.Message):
-    __slots__ = ["records", "client_time", "security_data_key_type"]
+    __slots__ = ("records", "client_time", "security_data_key_type")
     RECORDS_FIELD_NUMBER: _ClassVar[int]
     CLIENT_TIME_FIELD_NUMBER: _ClassVar[int]
     SECURITY_DATA_KEY_TYPE_FIELD_NUMBER: _ClassVar[int]
@@ -335,7 +343,7 @@ class RecordsAddRequest(_message.Message):
     def __init__(self, records: _Optional[_Iterable[_Union[RecordAdd, _Mapping]]] = ..., client_time: _Optional[int] = ..., security_data_key_type: _Optional[_Union[RecordKeyType, str]] = ...) -> None: ...
 
 class RecordUpdate(_message.Message):
-    __slots__ = ["record_uid", "client_modified_time", "revision", "data", "non_shared_data", "record_links_add", "record_links_remove", "audit", "securityData", "securityScoreData"]
+    __slots__ = ("record_uid", "client_modified_time", "revision", "data", "non_shared_data", "record_links_add", "record_links_remove", "audit", "securityData", "securityScoreData")
     RECORD_UID_FIELD_NUMBER: _ClassVar[int]
     CLIENT_MODIFIED_TIME_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
@@ -359,7 +367,7 @@ class RecordUpdate(_message.Message):
     def __init__(self, record_uid: _Optional[bytes] = ..., client_modified_time: _Optional[int] = ..., revision: _Optional[int] = ..., data: _Optional[bytes] = ..., non_shared_data: _Optional[bytes] = ..., record_links_add: _Optional[_Iterable[_Union[RecordLink, _Mapping]]] = ..., record_links_remove: _Optional[_Iterable[bytes]] = ..., audit: _Optional[_Union[RecordAudit, _Mapping]] = ..., securityData: _Optional[_Union[SecurityData, _Mapping]] = ..., securityScoreData: _Optional[_Union[SecurityScoreData, _Mapping]] = ...) -> None: ...
 
 class RecordsUpdateRequest(_message.Message):
-    __slots__ = ["records", "client_time", "security_data_key_type"]
+    __slots__ = ("records", "client_time", "security_data_key_type")
     RECORDS_FIELD_NUMBER: _ClassVar[int]
     CLIENT_TIME_FIELD_NUMBER: _ClassVar[int]
     SECURITY_DATA_KEY_TYPE_FIELD_NUMBER: _ClassVar[int]
@@ -369,7 +377,7 @@ class RecordsUpdateRequest(_message.Message):
     def __init__(self, records: _Optional[_Iterable[_Union[RecordUpdate, _Mapping]]] = ..., client_time: _Optional[int] = ..., security_data_key_type: _Optional[_Union[RecordKeyType, str]] = ...) -> None: ...
 
 class RecordFileForConversion(_message.Message):
-    __slots__ = ["record_uid", "file_file_id", "thumb_file_id", "data", "record_key", "link_key"]
+    __slots__ = ("record_uid", "file_file_id", "thumb_file_id", "data", "record_key", "link_key")
     RECORD_UID_FIELD_NUMBER: _ClassVar[int]
     FILE_FILE_ID_FIELD_NUMBER: _ClassVar[int]
     THUMB_FILE_ID_FIELD_NUMBER: _ClassVar[int]
@@ -385,7 +393,7 @@ class RecordFileForConversion(_message.Message):
     def __init__(self, record_uid: _Optional[bytes] = ..., file_file_id: _Optional[str] = ..., thumb_file_id: _Optional[str] = ..., data: _Optional[bytes] = ..., record_key: _Optional[bytes] = ..., link_key: _Optional[bytes] = ...) -> None: ...
 
 class RecordFolderForConversion(_message.Message):
-    __slots__ = ["folder_uid", "record_folder_key"]
+    __slots__ = ("folder_uid", "record_folder_key")
     FOLDER_UID_FIELD_NUMBER: _ClassVar[int]
     RECORD_FOLDER_KEY_FIELD_NUMBER: _ClassVar[int]
     folder_uid: bytes
@@ -393,7 +401,7 @@ class RecordFolderForConversion(_message.Message):
     def __init__(self, folder_uid: _Optional[bytes] = ..., record_folder_key: _Optional[bytes] = ...) -> None: ...
 
 class RecordConvertToV3(_message.Message):
-    __slots__ = ["record_uid", "client_modified_time", "revision", "data", "non_shared_data", "audit", "record_file", "folder_key"]
+    __slots__ = ("record_uid", "client_modified_time", "revision", "data", "non_shared_data", "audit", "record_file", "folder_key")
     RECORD_UID_FIELD_NUMBER: _ClassVar[int]
     CLIENT_MODIFIED_TIME_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
@@ -413,7 +421,7 @@ class RecordConvertToV3(_message.Message):
     def __init__(self, record_uid: _Optional[bytes] = ..., client_modified_time: _Optional[int] = ..., revision: _Optional[int] = ..., data: _Optional[bytes] = ..., non_shared_data: _Optional[bytes] = ..., audit: _Optional[_Union[RecordAudit, _Mapping]] = ..., record_file: _Optional[_Iterable[_Union[RecordFileForConversion, _Mapping]]] = ..., folder_key: _Optional[_Iterable[_Union[RecordFolderForConversion, _Mapping]]] = ...) -> None: ...
 
 class RecordsConvertToV3Request(_message.Message):
-    __slots__ = ["records", "client_time"]
+    __slots__ = ("records", "client_time")
     RECORDS_FIELD_NUMBER: _ClassVar[int]
     CLIENT_TIME_FIELD_NUMBER: _ClassVar[int]
     records: _containers.RepeatedCompositeFieldContainer[RecordConvertToV3]
@@ -421,13 +429,13 @@ class RecordsConvertToV3Request(_message.Message):
     def __init__(self, records: _Optional[_Iterable[_Union[RecordConvertToV3, _Mapping]]] = ..., client_time: _Optional[int] = ...) -> None: ...
 
 class RecordsRemoveRequest(_message.Message):
-    __slots__ = ["records"]
+    __slots__ = ("records",)
     RECORDS_FIELD_NUMBER: _ClassVar[int]
     records: _containers.RepeatedScalarFieldContainer[bytes]
     def __init__(self, records: _Optional[_Iterable[bytes]] = ...) -> None: ...
 
 class RecordRevert(_message.Message):
-    __slots__ = ["record_uid", "revert_to_revision"]
+    __slots__ = ("record_uid", "revert_to_revision")
     RECORD_UID_FIELD_NUMBER: _ClassVar[int]
     REVERT_TO_REVISION_FIELD_NUMBER: _ClassVar[int]
     record_uid: bytes
@@ -435,13 +443,13 @@ class RecordRevert(_message.Message):
     def __init__(self, record_uid: _Optional[bytes] = ..., revert_to_revision: _Optional[int] = ...) -> None: ...
 
 class RecordsRevertRequest(_message.Message):
-    __slots__ = ["records"]
+    __slots__ = ("records",)
     RECORDS_FIELD_NUMBER: _ClassVar[int]
     records: _containers.RepeatedCompositeFieldContainer[RecordRevert]
     def __init__(self, records: _Optional[_Iterable[_Union[RecordRevert, _Mapping]]] = ...) -> None: ...
 
 class RecordLinkError(_message.Message):
-    __slots__ = ["record_uid", "status", "message"]
+    __slots__ = ("record_uid", "status", "message")
     RECORD_UID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
@@ -451,7 +459,7 @@ class RecordLinkError(_message.Message):
     def __init__(self, record_uid: _Optional[bytes] = ..., status: _Optional[_Union[RecordModifyResult, str]] = ..., message: _Optional[str] = ...) -> None: ...
 
 class RecordModifyStatus(_message.Message):
-    __slots__ = ["record_uid", "status", "message", "link_errors"]
+    __slots__ = ("record_uid", "status", "message", "link_errors")
     RECORD_UID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
@@ -463,7 +471,7 @@ class RecordModifyStatus(_message.Message):
     def __init__(self, record_uid: _Optional[bytes] = ..., status: _Optional[_Union[RecordModifyResult, str]] = ..., message: _Optional[str] = ..., link_errors: _Optional[_Iterable[_Union[RecordLinkError, _Mapping]]] = ...) -> None: ...
 
 class RecordsModifyResponse(_message.Message):
-    __slots__ = ["records", "revision"]
+    __slots__ = ("records", "revision")
     RECORDS_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
     records: _containers.RepeatedCompositeFieldContainer[RecordModifyStatus]
@@ -471,7 +479,7 @@ class RecordsModifyResponse(_message.Message):
     def __init__(self, records: _Optional[_Iterable[_Union[RecordModifyStatus, _Mapping]]] = ..., revision: _Optional[int] = ...) -> None: ...
 
 class RecordAddAuditData(_message.Message):
-    __slots__ = ["record_uid", "revision", "data", "version"]
+    __slots__ = ("record_uid", "revision", "data", "version")
     RECORD_UID_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
     DATA_FIELD_NUMBER: _ClassVar[int]
@@ -483,13 +491,13 @@ class RecordAddAuditData(_message.Message):
     def __init__(self, record_uid: _Optional[bytes] = ..., revision: _Optional[int] = ..., data: _Optional[bytes] = ..., version: _Optional[int] = ...) -> None: ...
 
 class AddAuditDataRequest(_message.Message):
-    __slots__ = ["records"]
+    __slots__ = ("records",)
     RECORDS_FIELD_NUMBER: _ClassVar[int]
     records: _containers.RepeatedCompositeFieldContainer[RecordAddAuditData]
     def __init__(self, records: _Optional[_Iterable[_Union[RecordAddAuditData, _Mapping]]] = ...) -> None: ...
 
 class File(_message.Message):
-    __slots__ = ["record_uid", "record_key", "data", "fileSize", "thumbSize", "is_script"]
+    __slots__ = ("record_uid", "record_key", "data", "fileSize", "thumbSize", "is_script")
     RECORD_UID_FIELD_NUMBER: _ClassVar[int]
     RECORD_KEY_FIELD_NUMBER: _ClassVar[int]
     DATA_FIELD_NUMBER: _ClassVar[int]
@@ -505,7 +513,7 @@ class File(_message.Message):
     def __init__(self, record_uid: _Optional[bytes] = ..., record_key: _Optional[bytes] = ..., data: _Optional[bytes] = ..., fileSize: _Optional[int] = ..., thumbSize: _Optional[int] = ..., is_script: bool = ...) -> None: ...
 
 class FilesAddRequest(_message.Message):
-    __slots__ = ["files", "client_time"]
+    __slots__ = ("files", "client_time")
     FILES_FIELD_NUMBER: _ClassVar[int]
     CLIENT_TIME_FIELD_NUMBER: _ClassVar[int]
     files: _containers.RepeatedCompositeFieldContainer[File]
@@ -513,7 +521,7 @@ class FilesAddRequest(_message.Message):
     def __init__(self, files: _Optional[_Iterable[_Union[File, _Mapping]]] = ..., client_time: _Optional[int] = ...) -> None: ...
 
 class FileAddStatus(_message.Message):
-    __slots__ = ["record_uid", "status", "url", "parameters", "thumbnail_parameters", "success_status_code"]
+    __slots__ = ("record_uid", "status", "url", "parameters", "thumbnail_parameters", "success_status_code")
     RECORD_UID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     URL_FIELD_NUMBER: _ClassVar[int]
@@ -529,7 +537,7 @@ class FileAddStatus(_message.Message):
     def __init__(self, record_uid: _Optional[bytes] = ..., status: _Optional[_Union[FileAddResult, str]] = ..., url: _Optional[str] = ..., parameters: _Optional[str] = ..., thumbnail_parameters: _Optional[str] = ..., success_status_code: _Optional[int] = ...) -> None: ...
 
 class FilesAddResponse(_message.Message):
-    __slots__ = ["files", "revision"]
+    __slots__ = ("files", "revision")
     FILES_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
     files: _containers.RepeatedCompositeFieldContainer[FileAddStatus]
@@ -537,7 +545,7 @@ class FilesAddResponse(_message.Message):
     def __init__(self, files: _Optional[_Iterable[_Union[FileAddStatus, _Mapping]]] = ..., revision: _Optional[int] = ...) -> None: ...
 
 class FilesGetRequest(_message.Message):
-    __slots__ = ["record_uids", "for_thumbnails", "emergency_access_account_owner"]
+    __slots__ = ("record_uids", "for_thumbnails", "emergency_access_account_owner")
     RECORD_UIDS_FIELD_NUMBER: _ClassVar[int]
     FOR_THUMBNAILS_FIELD_NUMBER: _ClassVar[int]
     EMERGENCY_ACCESS_ACCOUNT_OWNER_FIELD_NUMBER: _ClassVar[int]
@@ -547,7 +555,7 @@ class FilesGetRequest(_message.Message):
     def __init__(self, record_uids: _Optional[_Iterable[bytes]] = ..., for_thumbnails: bool = ..., emergency_access_account_owner: _Optional[str] = ...) -> None: ...
 
 class FileGetStatus(_message.Message):
-    __slots__ = ["record_uid", "status", "url", "success_status_code", "fileKeyType"]
+    __slots__ = ("record_uid", "status", "url", "success_status_code", "fileKeyType")
     RECORD_UID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     URL_FIELD_NUMBER: _ClassVar[int]
@@ -561,13 +569,13 @@ class FileGetStatus(_message.Message):
     def __init__(self, record_uid: _Optional[bytes] = ..., status: _Optional[_Union[FileGetResult, str]] = ..., url: _Optional[str] = ..., success_status_code: _Optional[int] = ..., fileKeyType: _Optional[_Union[RecordKeyType, str]] = ...) -> None: ...
 
 class FilesGetResponse(_message.Message):
-    __slots__ = ["files"]
+    __slots__ = ("files",)
     FILES_FIELD_NUMBER: _ClassVar[int]
     files: _containers.RepeatedCompositeFieldContainer[FileGetStatus]
     def __init__(self, files: _Optional[_Iterable[_Union[FileGetStatus, _Mapping]]] = ...) -> None: ...
 
 class ApplicationAddRequest(_message.Message):
-    __slots__ = ["app_uid", "record_key", "client_modified_time", "data", "audit"]
+    __slots__ = ("app_uid", "record_key", "client_modified_time", "data", "audit")
     APP_UID_FIELD_NUMBER: _ClassVar[int]
     RECORD_KEY_FIELD_NUMBER: _ClassVar[int]
     CLIENT_MODIFIED_TIME_FIELD_NUMBER: _ClassVar[int]
@@ -581,7 +589,7 @@ class ApplicationAddRequest(_message.Message):
     def __init__(self, app_uid: _Optional[bytes] = ..., record_key: _Optional[bytes] = ..., client_modified_time: _Optional[int] = ..., data: _Optional[bytes] = ..., audit: _Optional[_Union[RecordAudit, _Mapping]] = ...) -> None: ...
 
 class GetRecordDataWithAccessInfoRequest(_message.Message):
-    __slots__ = ["clientTime", "recordUid", "recordDetailsInclude"]
+    __slots__ = ("clientTime", "recordUid", "recordDetailsInclude")
     CLIENTTIME_FIELD_NUMBER: _ClassVar[int]
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     RECORDDETAILSINCLUDE_FIELD_NUMBER: _ClassVar[int]
@@ -591,7 +599,7 @@ class GetRecordDataWithAccessInfoRequest(_message.Message):
     def __init__(self, clientTime: _Optional[int] = ..., recordUid: _Optional[_Iterable[bytes]] = ..., recordDetailsInclude: _Optional[_Union[RecordDetailsInclude, str]] = ...) -> None: ...
 
 class UserPermission(_message.Message):
-    __slots__ = ["username", "owner", "shareAdmin", "sharable", "editable", "awaitingApproval", "expiration", "accountUid", "timerNotificationType", "rotateOnExpiration"]
+    __slots__ = ("username", "owner", "shareAdmin", "sharable", "editable", "awaitingApproval", "expiration", "accountUid", "timerNotificationType", "rotateOnExpiration")
     USERNAME_FIELD_NUMBER: _ClassVar[int]
     OWNER_FIELD_NUMBER: _ClassVar[int]
     SHAREADMIN_FIELD_NUMBER: _ClassVar[int]
@@ -615,7 +623,7 @@ class UserPermission(_message.Message):
     def __init__(self, username: _Optional[str] = ..., owner: bool = ..., shareAdmin: bool = ..., sharable: bool = ..., editable: bool = ..., awaitingApproval: bool = ..., expiration: _Optional[int] = ..., accountUid: _Optional[bytes] = ..., timerNotificationType: _Optional[_Union[TimerNotificationType, str]] = ..., rotateOnExpiration: bool = ...) -> None: ...
 
 class SharedFolderPermission(_message.Message):
-    __slots__ = ["sharedFolderUid", "resharable", "editable", "revision", "expiration", "timerNotificationType", "rotateOnExpiration"]
+    __slots__ = ("sharedFolderUid", "resharable", "editable", "revision", "expiration", "timerNotificationType", "rotateOnExpiration")
     SHAREDFOLDERUID_FIELD_NUMBER: _ClassVar[int]
     RESHARABLE_FIELD_NUMBER: _ClassVar[int]
     EDITABLE_FIELD_NUMBER: _ClassVar[int]
@@ -633,7 +641,7 @@ class SharedFolderPermission(_message.Message):
     def __init__(self, sharedFolderUid: _Optional[bytes] = ..., resharable: bool = ..., editable: bool = ..., revision: _Optional[int] = ..., expiration: _Optional[int] = ..., timerNotificationType: _Optional[_Union[TimerNotificationType, str]] = ..., rotateOnExpiration: bool = ...) -> None: ...
 
 class RecordData(_message.Message):
-    __slots__ = ["revision", "version", "shared", "encryptedRecordData", "encryptedExtraData", "clientModifiedTime", "nonSharedData", "linkedRecordData", "fileId", "fileSize", "thumbnailSize", "recordKeyType", "recordKey", "recordUid"]
+    __slots__ = ("revision", "version", "shared", "encryptedRecordData", "encryptedExtraData", "clientModifiedTime", "nonSharedData", "linkedRecordData", "fileId", "fileSize", "thumbnailSize", "recordKeyType", "recordKey", "recordUid")
     REVISION_FIELD_NUMBER: _ClassVar[int]
     VERSION_FIELD_NUMBER: _ClassVar[int]
     SHARED_FIELD_NUMBER: _ClassVar[int]
@@ -665,7 +673,7 @@ class RecordData(_message.Message):
     def __init__(self, revision: _Optional[int] = ..., version: _Optional[int] = ..., shared: bool = ..., encryptedRecordData: _Optional[str] = ..., encryptedExtraData: _Optional[str] = ..., clientModifiedTime: _Optional[int] = ..., nonSharedData: _Optional[str] = ..., linkedRecordData: _Optional[_Iterable[_Union[RecordData, _Mapping]]] = ..., fileId: _Optional[_Iterable[bytes]] = ..., fileSize: _Optional[int] = ..., thumbnailSize: _Optional[int] = ..., recordKeyType: _Optional[_Union[RecordKeyType, str]] = ..., recordKey: _Optional[bytes] = ..., recordUid: _Optional[bytes] = ...) -> None: ...
 
 class RecordDataWithAccessInfo(_message.Message):
-    __slots__ = ["recordUid", "recordData", "userPermission", "sharedFolderPermission"]
+    __slots__ = ("recordUid", "recordData", "userPermission", "sharedFolderPermission")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     RECORDDATA_FIELD_NUMBER: _ClassVar[int]
     USERPERMISSION_FIELD_NUMBER: _ClassVar[int]
@@ -677,7 +685,7 @@ class RecordDataWithAccessInfo(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., recordData: _Optional[_Union[RecordData, _Mapping]] = ..., userPermission: _Optional[_Iterable[_Union[UserPermission, _Mapping]]] = ..., sharedFolderPermission: _Optional[_Iterable[_Union[SharedFolderPermission, _Mapping]]] = ...) -> None: ...
 
 class GetRecordDataWithAccessInfoResponse(_message.Message):
-    __slots__ = ["recordDataWithAccessInfo", "noPermissionRecordUid"]
+    __slots__ = ("recordDataWithAccessInfo", "noPermissionRecordUid")
     RECORDDATAWITHACCESSINFO_FIELD_NUMBER: _ClassVar[int]
     NOPERMISSIONRECORDUID_FIELD_NUMBER: _ClassVar[int]
     recordDataWithAccessInfo: _containers.RepeatedCompositeFieldContainer[RecordDataWithAccessInfo]
@@ -685,7 +693,7 @@ class GetRecordDataWithAccessInfoResponse(_message.Message):
     def __init__(self, recordDataWithAccessInfo: _Optional[_Iterable[_Union[RecordDataWithAccessInfo, _Mapping]]] = ..., noPermissionRecordUid: _Optional[_Iterable[bytes]] = ...) -> None: ...
 
 class IsObjectShareAdmin(_message.Message):
-    __slots__ = ["uid", "isAdmin", "objectType"]
+    __slots__ = ("uid", "isAdmin", "objectType")
     UID_FIELD_NUMBER: _ClassVar[int]
     ISADMIN_FIELD_NUMBER: _ClassVar[int]
     OBJECTTYPE_FIELD_NUMBER: _ClassVar[int]
@@ -695,13 +703,13 @@ class IsObjectShareAdmin(_message.Message):
     def __init__(self, uid: _Optional[bytes] = ..., isAdmin: bool = ..., objectType: _Optional[_Union[CheckShareAdminObjectType, str]] = ...) -> None: ...
 
 class AmIShareAdmin(_message.Message):
-    __slots__ = ["isObjectShareAdmin"]
+    __slots__ = ("isObjectShareAdmin",)
     ISOBJECTSHAREADMIN_FIELD_NUMBER: _ClassVar[int]
     isObjectShareAdmin: _containers.RepeatedCompositeFieldContainer[IsObjectShareAdmin]
     def __init__(self, isObjectShareAdmin: _Optional[_Iterable[_Union[IsObjectShareAdmin, _Mapping]]] = ...) -> None: ...
 
 class RecordShareUpdateRequest(_message.Message):
-    __slots__ = ["addSharedRecord", "updateSharedRecord", "removeSharedRecord", "pt"]
+    __slots__ = ("addSharedRecord", "updateSharedRecord", "removeSharedRecord", "pt")
     ADDSHAREDRECORD_FIELD_NUMBER: _ClassVar[int]
     UPDATESHAREDRECORD_FIELD_NUMBER: _ClassVar[int]
     REMOVESHAREDRECORD_FIELD_NUMBER: _ClassVar[int]
@@ -713,7 +721,7 @@ class RecordShareUpdateRequest(_message.Message):
     def __init__(self, addSharedRecord: _Optional[_Iterable[_Union[SharedRecord, _Mapping]]] = ..., updateSharedRecord: _Optional[_Iterable[_Union[SharedRecord, _Mapping]]] = ..., removeSharedRecord: _Optional[_Iterable[_Union[SharedRecord, _Mapping]]] = ..., pt: _Optional[str] = ...) -> None: ...
 
 class SharedRecord(_message.Message):
-    __slots__ = ["toUsername", "recordUid", "recordKey", "sharedFolderUid", "teamUid", "editable", "shareable", "transfer", "useEccKey", "removeVaultData", "expiration", "timerNotificationType", "rotateOnExpiration"]
+    __slots__ = ("toUsername", "recordUid", "recordKey", "sharedFolderUid", "teamUid", "editable", "shareable", "transfer", "useEccKey", "removeVaultData", "expiration", "timerNotificationType", "rotateOnExpiration")
     TOUSERNAME_FIELD_NUMBER: _ClassVar[int]
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     RECORDKEY_FIELD_NUMBER: _ClassVar[int]
@@ -743,7 +751,7 @@ class SharedRecord(_message.Message):
     def __init__(self, toUsername: _Optional[str] = ..., recordUid: _Optional[bytes] = ..., recordKey: _Optional[bytes] = ..., sharedFolderUid: _Optional[bytes] = ..., teamUid: _Optional[bytes] = ..., editable: bool = ..., shareable: bool = ..., transfer: bool = ..., useEccKey: bool = ..., removeVaultData: bool = ..., expiration: _Optional[int] = ..., timerNotificationType: _Optional[_Union[TimerNotificationType, str]] = ..., rotateOnExpiration: bool = ...) -> None: ...
 
 class RecordShareUpdateResponse(_message.Message):
-    __slots__ = ["addSharedRecordStatus", "updateSharedRecordStatus", "removeSharedRecordStatus"]
+    __slots__ = ("addSharedRecordStatus", "updateSharedRecordStatus", "removeSharedRecordStatus")
     ADDSHAREDRECORDSTATUS_FIELD_NUMBER: _ClassVar[int]
     UPDATESHAREDRECORDSTATUS_FIELD_NUMBER: _ClassVar[int]
     REMOVESHAREDRECORDSTATUS_FIELD_NUMBER: _ClassVar[int]
@@ -753,7 +761,7 @@ class RecordShareUpdateResponse(_message.Message):
     def __init__(self, addSharedRecordStatus: _Optional[_Iterable[_Union[SharedRecordStatus, _Mapping]]] = ..., updateSharedRecordStatus: _Optional[_Iterable[_Union[SharedRecordStatus, _Mapping]]] = ..., removeSharedRecordStatus: _Optional[_Iterable[_Union[SharedRecordStatus, _Mapping]]] = ...) -> None: ...
 
 class SharedRecordStatus(_message.Message):
-    __slots__ = ["recordUid", "status", "message", "username"]
+    __slots__ = ("recordUid", "status", "message", "username")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
@@ -765,7 +773,7 @@ class SharedRecordStatus(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., status: _Optional[str] = ..., message: _Optional[str] = ..., username: _Optional[str] = ...) -> None: ...
 
 class GetRecordPermissionsRequest(_message.Message):
-    __slots__ = ["recordUids", "isShareAdmin"]
+    __slots__ = ("recordUids", "isShareAdmin")
     RECORDUIDS_FIELD_NUMBER: _ClassVar[int]
     ISSHAREADMIN_FIELD_NUMBER: _ClassVar[int]
     recordUids: _containers.RepeatedScalarFieldContainer[bytes]
@@ -773,13 +781,13 @@ class GetRecordPermissionsRequest(_message.Message):
     def __init__(self, recordUids: _Optional[_Iterable[bytes]] = ..., isShareAdmin: bool = ...) -> None: ...
 
 class GetRecordPermissionsResponse(_message.Message):
-    __slots__ = ["recordPermissions"]
+    __slots__ = ("recordPermissions",)
     RECORDPERMISSIONS_FIELD_NUMBER: _ClassVar[int]
     recordPermissions: _containers.RepeatedCompositeFieldContainer[RecordPermission]
     def __init__(self, recordPermissions: _Optional[_Iterable[_Union[RecordPermission, _Mapping]]] = ...) -> None: ...
 
 class RecordPermission(_message.Message):
-    __slots__ = ["recordUid", "owner", "canEdit", "canShare", "canTransfer"]
+    __slots__ = ("recordUid", "owner", "canEdit", "canShare", "canTransfer")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     OWNER_FIELD_NUMBER: _ClassVar[int]
     CANEDIT_FIELD_NUMBER: _ClassVar[int]
@@ -793,7 +801,7 @@ class RecordPermission(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., owner: bool = ..., canEdit: bool = ..., canShare: bool = ..., canTransfer: bool = ...) -> None: ...
 
 class GetShareObjectsRequest(_message.Message):
-    __slots__ = ["startWith", "contains", "filtered", "sharedFolderUid"]
+    __slots__ = ("startWith", "contains", "filtered", "sharedFolderUid")
     STARTWITH_FIELD_NUMBER: _ClassVar[int]
     CONTAINS_FIELD_NUMBER: _ClassVar[int]
     FILTERED_FIELD_NUMBER: _ClassVar[int]
@@ -805,7 +813,7 @@ class GetShareObjectsRequest(_message.Message):
     def __init__(self, startWith: _Optional[str] = ..., contains: _Optional[str] = ..., filtered: bool = ..., sharedFolderUid: _Optional[bytes] = ...) -> None: ...
 
 class GetShareObjectsResponse(_message.Message):
-    __slots__ = ["shareRelationships", "shareFamilyUsers", "shareEnterpriseUsers", "shareTeams", "shareMCTeams", "shareMCEnterpriseUsers", "shareEnterpriseNames"]
+    __slots__ = ("shareRelationships", "shareFamilyUsers", "shareEnterpriseUsers", "shareTeams", "shareMCTeams", "shareMCEnterpriseUsers", "shareEnterpriseNames")
     SHARERELATIONSHIPS_FIELD_NUMBER: _ClassVar[int]
     SHAREFAMILYUSERS_FIELD_NUMBER: _ClassVar[int]
     SHAREENTERPRISEUSERS_FIELD_NUMBER: _ClassVar[int]
@@ -823,23 +831,25 @@ class GetShareObjectsResponse(_message.Message):
     def __init__(self, shareRelationships: _Optional[_Iterable[_Union[ShareUser, _Mapping]]] = ..., shareFamilyUsers: _Optional[_Iterable[_Union[ShareUser, _Mapping]]] = ..., shareEnterpriseUsers: _Optional[_Iterable[_Union[ShareUser, _Mapping]]] = ..., shareTeams: _Optional[_Iterable[_Union[ShareTeam, _Mapping]]] = ..., shareMCTeams: _Optional[_Iterable[_Union[ShareTeam, _Mapping]]] = ..., shareMCEnterpriseUsers: _Optional[_Iterable[_Union[ShareUser, _Mapping]]] = ..., shareEnterpriseNames: _Optional[_Iterable[_Union[ShareEnterprise, _Mapping]]] = ...) -> None: ...
 
 class ShareUser(_message.Message):
-    __slots__ = ["username", "fullname", "enterpriseId", "status", "isShareAdmin", "isAdminOfSharedFolderOwner"]
+    __slots__ = ("username", "fullname", "enterpriseId", "status", "isShareAdmin", "isAdminOfSharedFolderOwner", "userAccountUid")
     USERNAME_FIELD_NUMBER: _ClassVar[int]
     FULLNAME_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     ISSHAREADMIN_FIELD_NUMBER: _ClassVar[int]
     ISADMINOFSHAREDFOLDEROWNER_FIELD_NUMBER: _ClassVar[int]
+    USERACCOUNTUID_FIELD_NUMBER: _ClassVar[int]
     username: str
     fullname: str
     enterpriseId: int
     status: ShareStatus
     isShareAdmin: bool
     isAdminOfSharedFolderOwner: bool
-    def __init__(self, username: _Optional[str] = ..., fullname: _Optional[str] = ..., enterpriseId: _Optional[int] = ..., status: _Optional[_Union[ShareStatus, str]] = ..., isShareAdmin: bool = ..., isAdminOfSharedFolderOwner: bool = ...) -> None: ...
+    userAccountUid: bytes
+    def __init__(self, username: _Optional[str] = ..., fullname: _Optional[str] = ..., enterpriseId: _Optional[int] = ..., status: _Optional[_Union[ShareStatus, str]] = ..., isShareAdmin: bool = ..., isAdminOfSharedFolderOwner: bool = ..., userAccountUid: _Optional[bytes] = ...) -> None: ...
 
 class ShareTeam(_message.Message):
-    __slots__ = ["teamname", "enterpriseId", "teamUid"]
+    __slots__ = ("teamname", "enterpriseId", "teamUid")
     TEAMNAME_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEID_FIELD_NUMBER: _ClassVar[int]
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
@@ -849,7 +859,7 @@ class ShareTeam(_message.Message):
     def __init__(self, teamname: _Optional[str] = ..., enterpriseId: _Optional[int] = ..., teamUid: _Optional[bytes] = ...) -> None: ...
 
 class ShareEnterprise(_message.Message):
-    __slots__ = ["enterprisename", "enterpriseId"]
+    __slots__ = ("enterprisename", "enterpriseId")
     ENTERPRISENAME_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEID_FIELD_NUMBER: _ClassVar[int]
     enterprisename: str
@@ -857,13 +867,13 @@ class ShareEnterprise(_message.Message):
     def __init__(self, enterprisename: _Optional[str] = ..., enterpriseId: _Optional[int] = ...) -> None: ...
 
 class RecordsOnwershipTransferRequest(_message.Message):
-    __slots__ = ["transferRecords"]
+    __slots__ = ("transferRecords",)
     TRANSFERRECORDS_FIELD_NUMBER: _ClassVar[int]
     transferRecords: _containers.RepeatedCompositeFieldContainer[TransferRecord]
     def __init__(self, transferRecords: _Optional[_Iterable[_Union[TransferRecord, _Mapping]]] = ...) -> None: ...
 
 class TransferRecord(_message.Message):
-    __slots__ = ["username", "recordUid", "recordKey", "useEccKey"]
+    __slots__ = ("username", "recordUid", "recordKey", "useEccKey")
     USERNAME_FIELD_NUMBER: _ClassVar[int]
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     RECORDKEY_FIELD_NUMBER: _ClassVar[int]
@@ -875,13 +885,13 @@ class TransferRecord(_message.Message):
     def __init__(self, username: _Optional[str] = ..., recordUid: _Optional[bytes] = ..., recordKey: _Optional[bytes] = ..., useEccKey: bool = ...) -> None: ...
 
 class RecordsOnwershipTransferResponse(_message.Message):
-    __slots__ = ["transferRecordStatus"]
+    __slots__ = ("transferRecordStatus",)
     TRANSFERRECORDSTATUS_FIELD_NUMBER: _ClassVar[int]
     transferRecordStatus: _containers.RepeatedCompositeFieldContainer[TransferRecordStatus]
     def __init__(self, transferRecordStatus: _Optional[_Iterable[_Union[TransferRecordStatus, _Mapping]]] = ...) -> None: ...
 
 class TransferRecordStatus(_message.Message):
-    __slots__ = ["username", "recordUid", "status", "message"]
+    __slots__ = ("username", "recordUid", "status", "message")
     USERNAME_FIELD_NUMBER: _ClassVar[int]
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -893,7 +903,7 @@ class TransferRecordStatus(_message.Message):
     def __init__(self, username: _Optional[str] = ..., recordUid: _Optional[bytes] = ..., status: _Optional[str] = ..., message: _Optional[str] = ...) -> None: ...
 
 class RecordsUnshareRequest(_message.Message):
-    __slots__ = ["sharedFolders", "users"]
+    __slots__ = ("sharedFolders", "users")
     SHAREDFOLDERS_FIELD_NUMBER: _ClassVar[int]
     USERS_FIELD_NUMBER: _ClassVar[int]
     sharedFolders: _containers.RepeatedCompositeFieldContainer[RecordsUnshareFolder]
@@ -901,7 +911,7 @@ class RecordsUnshareRequest(_message.Message):
     def __init__(self, sharedFolders: _Optional[_Iterable[_Union[RecordsUnshareFolder, _Mapping]]] = ..., users: _Optional[_Iterable[_Union[RecordsUnshareUser, _Mapping]]] = ...) -> None: ...
 
 class RecordsUnshareResponse(_message.Message):
-    __slots__ = ["sharedFolders", "users"]
+    __slots__ = ("sharedFolders", "users")
     SHAREDFOLDERS_FIELD_NUMBER: _ClassVar[int]
     USERS_FIELD_NUMBER: _ClassVar[int]
     sharedFolders: _containers.RepeatedCompositeFieldContainer[RecordsUnshareFolderStatus]
@@ -909,7 +919,7 @@ class RecordsUnshareResponse(_message.Message):
     def __init__(self, sharedFolders: _Optional[_Iterable[_Union[RecordsUnshareFolderStatus, _Mapping]]] = ..., users: _Optional[_Iterable[_Union[RecordsUnshareUserStatus, _Mapping]]] = ...) -> None: ...
 
 class RecordsUnshareFolder(_message.Message):
-    __slots__ = ["recordUid", "sharedFolderUid"]
+    __slots__ = ("recordUid", "sharedFolderUid")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     SHAREDFOLDERUID_FIELD_NUMBER: _ClassVar[int]
     recordUid: bytes
@@ -917,7 +927,7 @@ class RecordsUnshareFolder(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., sharedFolderUid: _Optional[bytes] = ...) -> None: ...
 
 class RecordsUnshareUser(_message.Message):
-    __slots__ = ["recordUid", "accountUid"]
+    __slots__ = ("recordUid", "accountUid")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     ACCOUNTUID_FIELD_NUMBER: _ClassVar[int]
     recordUid: bytes
@@ -925,7 +935,7 @@ class RecordsUnshareUser(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., accountUid: _Optional[bytes] = ...) -> None: ...
 
 class RecordsUnshareFolderStatus(_message.Message):
-    __slots__ = ["recordUid", "sharedFolderUid"]
+    __slots__ = ("recordUid", "sharedFolderUid")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     SHAREDFOLDERUID_FIELD_NUMBER: _ClassVar[int]
     recordUid: bytes
@@ -933,7 +943,7 @@ class RecordsUnshareFolderStatus(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., sharedFolderUid: _Optional[bytes] = ...) -> None: ...
 
 class RecordsUnshareUserStatus(_message.Message):
-    __slots__ = ["recordUid", "accountUid"]
+    __slots__ = ("recordUid", "accountUid")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     ACCOUNTUID_FIELD_NUMBER: _ClassVar[int]
     recordUid: bytes
@@ -941,13 +951,13 @@ class RecordsUnshareUserStatus(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., accountUid: _Optional[bytes] = ...) -> None: ...
 
 class TimedAccessCallbackPayload(_message.Message):
-    __slots__ = ["timeLimitedAccessType"]
+    __slots__ = ("timeLimitedAccessType",)
     TIMELIMITEDACCESSTYPE_FIELD_NUMBER: _ClassVar[int]
     timeLimitedAccessType: TimeLimitedAccessType
     def __init__(self, timeLimitedAccessType: _Optional[_Union[TimeLimitedAccessType, str]] = ...) -> None: ...
 
 class TimeLimitedAccessRequest(_message.Message):
-    __slots__ = ["accountUid", "teamUid", "recordUid", "sharedObjectUid", "timeLimitedAccessType", "expiration", "timerNotificationType"]
+    __slots__ = ("accountUid", "teamUid", "recordUid", "sharedObjectUid", "timeLimitedAccessType", "expiration", "timerNotificationType")
     ACCOUNTUID_FIELD_NUMBER: _ClassVar[int]
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
@@ -965,7 +975,7 @@ class TimeLimitedAccessRequest(_message.Message):
     def __init__(self, accountUid: _Optional[_Iterable[bytes]] = ..., teamUid: _Optional[_Iterable[bytes]] = ..., recordUid: _Optional[_Iterable[bytes]] = ..., sharedObjectUid: _Optional[bytes] = ..., timeLimitedAccessType: _Optional[_Union[TimeLimitedAccessType, str]] = ..., expiration: _Optional[int] = ..., timerNotificationType: _Optional[_Union[TimerNotificationType, str]] = ...) -> None: ...
 
 class TimeLimitedAccessStatus(_message.Message):
-    __slots__ = ["uid", "message"]
+    __slots__ = ("uid", "message")
     UID_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
     uid: bytes
@@ -973,7 +983,7 @@ class TimeLimitedAccessStatus(_message.Message):
     def __init__(self, uid: _Optional[bytes] = ..., message: _Optional[str] = ...) -> None: ...
 
 class TimeLimitedAccessResponse(_message.Message):
-    __slots__ = ["revision", "userAccessStatus", "teamAccessStatus", "recordAccessStatus"]
+    __slots__ = ("revision", "userAccessStatus", "teamAccessStatus", "recordAccessStatus")
     REVISION_FIELD_NUMBER: _ClassVar[int]
     USERACCESSSTATUS_FIELD_NUMBER: _ClassVar[int]
     TEAMACCESSSTATUS_FIELD_NUMBER: _ClassVar[int]
