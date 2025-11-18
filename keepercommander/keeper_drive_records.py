@@ -876,9 +876,14 @@ def get_record_accesses_v3(
     return result
 
 
-def _get_user_public_key(params, recipient_email):
+def _get_user_public_key(params, recipient_email, require_uid=True):
     """
     Get user's public key from various sources.
+    
+    Args:
+        params: KeeperParams instance
+        recipient_email: Email address of the user
+        require_uid: If True, tries harder to find the UID (makes extra API call if needed)
     
     Returns: (public_key_object, use_ecc, user_uid_bytes)
     """
@@ -973,9 +978,54 @@ def _get_user_public_key(params, recipient_email):
                         logger.debug(f"Converted enterprise_user_id {enterprise_user_id} to bytes for {recipient_email}")
                 break
     
-    if not recipient_uid_bytes:
-        raise Exception(f"Could not find account UID for {recipient_email}")
+    # Final fallback: try get_share_objects API (returns all enterprise users with userAccountUid)
+    # Only do this if UID is required (e.g., for record sharing, but not for transfer)
+    if not recipient_uid_bytes and require_uid:
+        try:
+            from keepercommander import api
+            from keepercommander.proto.record_pb2 import GetShareObjectsRequest, GetShareObjectsResponse
+            
+            logger.debug(f"Attempting to get UID from get_share_objects for {recipient_email}")
+            
+            # Create protobuf request
+            rq = GetShareObjectsRequest()
+            
+            # Call communicate_rest WITH rs_type to parse protobuf response
+            rs = api.communicate_rest(params, rq, 'vault/get_share_objects', rs_type=GetShareObjectsResponse)
+            
+            # Even though userAccountUid is not in .pyi, protobuf allows dynamic field access
+            # Check all user types for the userAccountUid field
+            all_user_lists = [
+                rs.shareRelationships,
+                rs.shareFamilyUsers, 
+                rs.shareEnterpriseUsers,
+                rs.shareMCEnterpriseUsers
+            ]
+            
+            for user_list in all_user_lists:
+                for share_user in user_list:
+                    if share_user.username.lower() == recipient_email.lower():
+                        # Try to access userAccountUid field directly (even if not in .pyi)
+                        if hasattr(share_user, 'userAccountUid'):
+                            user_account_uid = getattr(share_user, 'userAccountUid', None)
+                            if user_account_uid:
+                                # userAccountUid can be either bytes or base64-url string
+                                if isinstance(user_account_uid, bytes):
+                                    recipient_uid_bytes = user_account_uid
+                                elif isinstance(user_account_uid, str):
+                                    recipient_uid_bytes = utils.base64_url_decode(user_account_uid)
+                                else:
+                                    continue
+                                logger.debug(f"Found userAccountUid for {recipient_email} from get_share_objects")
+                                break
+                if recipient_uid_bytes:
+                    break
+            
+        except Exception as e:
+            logger.debug(f"Failed to get UID from get_share_objects for {recipient_email}: {e}")
     
+    # Note: recipient_uid_bytes may be None if not found - that's OK for some operations like transfer
+    # Callers that need the UID (like record sharing) should check for None
     return recipient_public_key, use_ecc, recipient_uid_bytes
 
 
@@ -1332,14 +1382,13 @@ def transfer_record_ownership_v3(
         if not record_key:
             raise ValueError(f"Record {record_uid} has no decrypted key")
         
-        # Get new owner's public key using the helper function (same as record sharing)
-        new_owner_public_key, use_ecc, new_owner_uid = _get_user_public_key(params, new_owner_email)
+        # Get new owner's public key to encrypt the record key
+        # Note: We only need the public key, not the UID - the transfer API identifies users by email
+        # Pass require_uid=False to avoid unnecessary get_share_objects API call
+        new_owner_public_key, use_ecc, _ = _get_user_public_key(params, new_owner_email, require_uid=False)
         
         if not new_owner_public_key:
             raise ValueError(f"User {new_owner_email} has no public key")
-        
-        if not new_owner_uid:
-            raise ValueError(f"User {new_owner_email} not found in enterprise")
         
         # Encrypt record key with new owner's public key
         if use_ecc:
