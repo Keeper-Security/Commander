@@ -478,6 +478,11 @@ class KeeperDriveMkdirCommand(Command):
         if not folder_name:
             raise CommandError('keeper-drive-mkdir', 'Folder name is required')
         
+        # Strip whitespace and validate
+        folder_name = folder_name.strip()
+        if not folder_name:
+            raise CommandError('keeper-drive-mkdir', 'Folder name cannot be empty')
+        
         parent_uid = kwargs.get('parent_uid')
         color = kwargs.get('color')
         inherit_permissions = not kwargs.get('no_inherit_permissions', False)
@@ -573,8 +578,13 @@ class KeeperDriveMkdirBatchCommand(Command):
         if not parts:
             raise CommandError('keeper-drive-mkdir-batch', 'Empty folder specification')
         
+        # Validate folder name
+        folder_name = parts[0].strip()
+        if not folder_name:
+            raise CommandError('keeper-drive-mkdir-batch', 'Folder name cannot be empty')
+        
         spec = {
-            'name': parts[0],
+            'name': folder_name,
             'inherit_permissions': True
         }
         
@@ -925,6 +935,12 @@ class KeeperDriveUpdateFolderCommand(Command):
         
         folder_name = kwargs.get('folder_name')
         color = kwargs.get('color')
+        
+        # Validate folder name if provided
+        if folder_name is not None:
+            folder_name = folder_name.strip()
+            if not folder_name:
+                raise CommandError('keeper-drive-update-folder', 'Folder name cannot be empty')
         
         # Handle inherit permissions flags
         inherit_permissions = None
