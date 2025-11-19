@@ -62,7 +62,7 @@ audit_report_parser.add_argument('--aggregate', dest='aggregate', action='append
 audit_report_parser.add_argument('--timezone', dest='timezone', action='store',
                                  help='return results for specific timezone')
 audit_report_parser.add_argument('--limit', dest='limit', type=int, action='store',
-                                 help='maximum number of returned rows (set to -1 to get all rows for raw report-type)')
+                                 help='maximum number of returned rows (set to -1 to get all rows)')
 audit_report_parser.add_argument('--order', dest='order', action='store', choices=['desc', 'asc'],
                                  help='sort order')
 audit_report_parser.add_argument('--created', dest='created', action='store',
@@ -1391,6 +1391,10 @@ class AuditReportCommand(Command):
                 rq['aggregate'] = aggregates
 
         user_limit = kwargs.get('limit')
+        
+        if report_type == 'span' and not aggregates:
+            rq['aggregate'] = ['last_created']
+            aggregates = []
         api_row_limit = API_EVENT_SUMMARY_ROW_LIMIT if report_type != 'raw' else API_EVENT_RAW_ROW_LIMIT
         if not user_limit and not has_aram:
             user_limit = api_row_limit
@@ -1638,19 +1642,77 @@ class AuditReportCommand(Command):
                 fields.append('created')
             if columns:
                 fields.extend(columns)
-            for rs in rss:
-                for event in rs.get('audit_event_overview_report_rows', []):
-                    row = []
-                    for f in fields:
-                        if f in event:
-                            row.append(
-                                self.convert_value(f, event[f], report_type=report_type, details=details, params=params)
-                            )
-                        elif f in audit_report.fields_to_uid_name:
-                            row.append(self.resolve_lookup(params, f, event))
+            
+            while reqs:
+                next_reqs = []
+                for idx, rs in enumerate(rss):
+                    events = rs.get('audit_event_overview_report_rows', [])
+                    for event in events:
+                        row = []
+                        for f in fields:
+                            if f in event:
+                                row.append(
+                                    self.convert_value(f, event[f], report_type=report_type, details=details, params=params)
+                                )
+                            elif f in audit_report.fields_to_uid_name:
+                                row.append(self.resolve_lookup(params, f, event))
+                            else:
+                                row.append('')
+                        table.append(row)
+                    
+                    if len(events) >= API_EVENT_SUMMARY_ROW_LIMIT:
+                        current_req = reqs[idx] if idx < len(reqs) else reqs[0]
+                        
+                        timestamp_field = None
+                        if report_type == 'span':
+                            if events and 'last_created' in events[-1]:
+                                timestamp_field = 'last_created'
+                            elif events and 'first_created' in events[-1]:
+                                timestamp_field = 'first_created'
+                            elif events and 'created' in events[-1]:
+                                timestamp_field = 'created'
                         else:
-                            row.append('')
-                    table.append(row)
+                            timestamp_field = 'created'
+                        
+                        if timestamp_field and events and timestamp_field in events[-1]:
+                            asc = current_req.get('order') == 'ascending'
+                            first_key, last_key = ('min', 'max') if asc else ('max', 'min')
+                            req_filter = current_req.get('filter', {})
+                            req_period = req_filter.get('created', {})
+                            
+                            period = {first_key: int(events[-1][timestamp_field])}
+                            
+                            if not isinstance(req_period, dict) or req_period.get(last_key) is None:
+                                last_rq = {**current_req}
+                                reverse = 'descending' if asc else 'ascending'
+                                last_rq['order'] = reverse
+                                last_rq['limit'] = 1
+                                rs_last = api.communicate(params, last_rq)
+                                last_row_events = rs_last.get('audit_event_overview_report_rows')
+                                if last_row_events:
+                                    last_row = last_row_events[0]
+                                    period[last_key] = int(last_row.get(timestamp_field, last_row.get('created', 0)))
+                            else:
+                                period[last_key] = req_period.get(last_key)
+                            
+                            req_filter['created'] = period
+                            next_req = {**current_req}
+                            next_req['filter'] = req_filter
+
+                            if user_limit and user_limit > 0:
+                                missing = user_limit - len(table)
+                                if missing < API_EVENT_SUMMARY_ROW_LIMIT:
+                                    if missing > 0:
+                                        next_req['limit'] = missing
+                                    else:
+                                        break
+                            
+                            next_reqs.append(next_req)
+                
+                reqs = next_reqs
+                if reqs:
+                    rss = api.execute_batch(params, reqs)
+            
             table = reporting.filter_rows(table, patterns, use_regex, match_all)
             return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
