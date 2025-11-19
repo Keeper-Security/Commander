@@ -13,8 +13,13 @@ import base64
 import json
 import logging
 import math
+import os
+import platform
 import re
+import stat
+import subprocess
 import time
+from typing import Dict, Union
 from urllib.parse import urlparse, parse_qs, unquote
 from pathlib import Path
 import sys
@@ -28,8 +33,45 @@ VALID_URL_SCHEME_CHARS = '+-.:'
 def get_logger():
     return logging.getLogger('keeper')
 
-def get_default_path():
-    default_path = Path.home().joinpath('.keeper')
+def get_default_path(override_path=None):
+    """
+    Get the default path for Commander's data directory.
+    
+    Precedence order (highest to lowest):
+    1. override_path parameter (e.g., from CLI --data-dir) - auto-appends .keeper if needed
+    2. KEEPER_DATA_HOME environment variable - auto-appends .keeper if needed
+    3. XDG_DATA_HOME/.keeper (XDG Base Directory Specification)
+    4. HOME/.keeper (legacy default)
+    
+    Args:
+        override_path (str, optional): Override path, typically from CLI argument
+        
+    Returns:
+        Path: The path to use for Commander's data directory
+    """
+    import os
+    
+    def ensure_keeper_suffix(path_str):
+        """Helper to ensure path ends with .keeper suffix"""
+        expanded_path = Path(os.path.expanduser(path_str))
+        if expanded_path.name == '.keeper':
+            return expanded_path
+        else:
+            return expanded_path.joinpath('.keeper')
+    
+    if override_path:
+        default_path = ensure_keeper_suffix(override_path)
+    else:
+        keeper_data_home = os.getenv('KEEPER_DATA_HOME')
+        if keeper_data_home:
+            default_path = ensure_keeper_suffix(keeper_data_home)
+        else:
+            xdg_data_home = os.getenv('XDG_DATA_HOME')
+            if xdg_data_home:
+                default_path = Path(xdg_data_home).joinpath('.keeper')
+            else:
+                default_path = Path.home().joinpath('.keeper')
+    
     default_path.mkdir(parents=True, exist_ok=True)
     return default_path
 
@@ -43,6 +85,70 @@ def generate_uid():             # type: () -> str
 
 def generate_aes_key():         # type: () -> bytes
     return crypto.get_random_bytes(32)
+
+
+def set_file_permissions(file_path):     # type: (str) -> None
+    """
+    Set secure file permissions (600) for configuration files containing sensitive data.
+    This ensures only the owner can read and write the file.
+    """
+    file_path = os.path.abspath(file_path)
+    
+    try:
+        if os.path.islink(file_path):
+            logging.warning(f'Skipping permission setting on symbolic link: {file_path}')
+            return
+        
+        if platform.system() != 'Windows':
+            file_stat = os.stat(file_path)
+            if file_stat.st_uid != os.getuid():
+                logging.warning(f'Skipping permission setting on file not owned by current user: {file_path}')
+                return
+            
+            os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
+            logging.debug(f'Set secure permissions (600) for file: {file_path}')
+        else:
+            username = os.getlogin()
+            subprocess.run(["icacls", file_path, "/inheritance:r"], check=True, capture_output=True)
+            subprocess.run(["icacls", file_path, "/remove", "NT AUTHORITY\\SYSTEM", "BUILTIN\\Administrators"], check=False, capture_output=True)
+            subprocess.run(["icacls", file_path, "/grant", f"{username}:RW"], check=True, capture_output=True)
+            logging.debug(f'Set secure permissions (owner RW only) for Windows file: {file_path}')
+    except Exception:
+        logging.warning(f'Failed to set file permissions for {file_path}')
+
+
+def ensure_config_permissions(file_path):     # type: (str) -> None
+    """
+    Check and fix file permissions for existing configuration files.
+    If the file has overly permissive permissions, log a warning and fix them.
+    """
+    file_path = os.path.abspath(file_path)
+    
+    if not os.path.exists(file_path):
+        return
+    
+    try:
+        if os.path.islink(file_path):
+            logging.warning(f'Skipping permission check on symbolic link: {file_path}')
+            return
+        
+        if platform.system() != 'Windows':
+            file_stat = os.stat(file_path)
+            if file_stat.st_uid != os.getuid():
+                logging.warning(f'Skipping permission check on file not owned by current user: {file_path} (owner: {file_stat.st_uid}, current: {os.getuid()})')
+                return
+            
+            current_permissions = file_stat.st_mode & 0o777
+            if current_permissions != 0o600:
+                logging.warning(f'Configuration file {file_path} has insecure permissions '
+                              f'{oct(current_permissions)}. Setting to secure permissions (600).')
+                set_file_permissions(file_path)
+        else:
+            logging.debug(f'Checking Windows file permissions for: {file_path}')
+            set_file_permissions(file_path)
+            
+    except OSError:
+        logging.warning(f'Failed to check file permissions for {file_path}')
 
 
 def current_milli_time():       # type: () -> int

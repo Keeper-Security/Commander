@@ -164,12 +164,14 @@ class ServiceConfig:
         """ Read plain text config file and update configuration """
         with open(config_path, "r") as f:
                      config_data = json.load(f) if file_format == "json" else yaml.safe_load(f) or {}
+        config_data.update(updates)
         # Save updated configuration
         with open(config_path, "w") as f:
             if file_format == "json":
                     json.dump(config_data, f, indent=4)
             else:
                 yaml.safe_dump(config_data, f, default_flow_style=False)
+        utils.set_file_permissions(config_path)
  
         logging.info(f"Updated keys in {config_path.name}: {', '.join(updates.keys())}")
 
@@ -191,6 +193,7 @@ class ServiceConfig:
                 dest_path = keeper_dir / src_path.name
                 if src_path.exists():
                     shutil.copy(src_path, dest_path)
+                    utils.set_file_permissions(str(dest_path))
                     saved_files.append(dest_path)
                     updated_names[key] = src_path.name  # Store only the filename, not the full path
                 else:
