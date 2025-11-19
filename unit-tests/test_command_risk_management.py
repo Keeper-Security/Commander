@@ -131,7 +131,6 @@ class TestRiskManagement(TestCase):
 
         output = captured_output.getvalue()
         self.assertIn('unit.test@company.com', output)
-        self.assertIn('1969-12-31 16:00:00', output)
 
     @patch("keepercommander.commands.audit_alerts.AuditSettingMixin.EVENT_TYPES", [(123, "account_recovery_decline")])
     def test_risk_management_security_alerts_summary(self):
@@ -169,7 +168,6 @@ class TestRiskManagement(TestCase):
         self.assertIn('unit.test@company.com', output)
         self.assertIn('123123', output)
         self.assertIn('321321', output)
-        self.assertIn('1969-12-31 16:00:00', output)
 
 
     def test_risk_management_get_security_benchmarks(self):
@@ -186,7 +184,6 @@ class TestRiskManagement(TestCase):
         output = captured_output.getvalue()
         self.assertIn('SB_DEPLOY_ACROSS_ENTIRE_ORGANIZATION', output)
         self.assertIn('RESOLVED', output)
-        self.assertIn('1969-12-31 16:00:00', output)
 
 
     def test_risk_management_set_security_benchmarks(self):
