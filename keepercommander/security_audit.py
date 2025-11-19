@@ -164,8 +164,7 @@ def attach_security_data(params, record, rq_param):
             rq_param.securityScoreData.data = prep_score_data(record)
     except:
         pass
-    finally:
-        return rq_param
+    return rq_param
 
 def get_security_data_key_type(params):
     return record_pb2.ENCRYPTED_BY_PUBLIC_KEY_ECC if params.forbid_rsa \
