@@ -798,3 +798,11 @@ class PedmPlugin(IPedmAdmin):
         self._need_sync = True
         assert status_rs is not None
         return admin_types.ModifyStatus.from_proto(status_rs)
+
+
+def get_pedm_plugin(context: KeeperParams) -> PedmPlugin:
+    if context._pedm_plugin is None:
+        context._pedm_plugin = PedmPlugin(context)
+    if context._pedm_plugin.need_sync:
+        context._pedm_plugin.sync_down()
+    return context._pedm_plugin

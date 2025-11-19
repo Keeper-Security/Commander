@@ -17,6 +17,7 @@ import re
 import time
 from datetime import datetime
 from typing import Dict, Optional, Any, Set, List
+from urllib.parse import urlparse, urlunparse
 
 
 import requests
@@ -44,13 +45,16 @@ from .pam.router_helper import router_send_action_to_gateway, print_router_respo
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, \
     get_router_url
 from .record_edit import RecordEditMixin
+from .helpers.timeout import parse_timeout
+from .email_commands import find_email_config_record, load_email_config_from_record, update_oauth_tokens_in_record
+from ..email_service import EmailSender, build_onboarding_email
 from .tunnel.port_forward.TunnelGraph import TunnelDAG
 from .tunnel.port_forward.tunnel_helpers import get_config_uid, get_keeper_tokens
 from .. import api, utils, vault_extensions, crypto, vault, record_management, attachment, record_facades
 from ..display import bcolors
 from ..error import CommandError, KeeperApiError
 from ..params import KeeperParams, LAST_RECORD_UID
-from ..proto import pam_pb2, router_pb2, record_pb2
+from ..proto import pam_pb2, router_pb2, record_pb2, APIRequest_pb2
 from ..subfolder import find_parent_top_folder, try_resolve_path, BaseFolderNode
 from ..vault import TypedField
 from ..discovery_common.record_link import RecordLink
@@ -1600,7 +1604,7 @@ class PAMConfigurationListCommand(Command):
                 headers.append('Fields')
 
         for c in configurations:  # type: vault.TypedRecord
-            if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration'):
+            if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamGcpConfiguration', 'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration'):
                 facade.record = c
                 shared_folder_parents = find_parent_top_folder(params, c.record_uid)
                 if shared_folder_parents:
@@ -1662,7 +1666,7 @@ class PAMConfigurationListCommand(Command):
 
 common_parser = argparse.ArgumentParser(add_help=False)
 common_parser.add_argument('--environment', '-env', dest='config_type', action='store',
-                           choices=['local', 'aws', 'azure', 'domain', 'oci'], help='PAM Configuration Type', )
+                           choices=['local', 'aws', 'azure', 'gcp', 'domain', 'oci'], help='PAM Configuration Type')
 common_parser.add_argument('--title', '-t', dest='title', action='store', help='Title of the PAM Configuration')
 common_parser.add_argument('--gateway', '-g', dest='gateway_uid', action='store', help='Gateway UID or Name')
 common_parser.add_argument('--shared-folder', '-sf', dest='shared_folder_uid', action='store',
@@ -1702,6 +1706,13 @@ oci_group.add_argument('--oci-admin-private-key', dest='oci_admin_private_key', 
 oci_group.add_argument('--oci-tenancy', dest='oci_tenancy', action='store', help='OCI tenancy')
 oci_group.add_argument('--oci-region', dest='oci_region', action='store', help='OCI region')
 
+gcp_group = common_parser.add_argument_group('gcp', 'GCP configuration')
+gcp_group.add_argument('--gcp-id', dest='gcp_id', action='store', help='GCP Id')
+gcp_group.add_argument('--service-account-key', dest='service_account_key', action='store',
+                         help='Service Account Key (JSON format)')
+gcp_group.add_argument('--google-admin-email', dest='google_admin_email', action='store',
+                         help='Google Workspace Administrator Email Address')
+gcp_group.add_argument('--gcp-region', dest='region_names', action='append', help='GCP Region Names')
 
 class PamConfigurationEditMixin(RecordEditMixin):
     pam_record_types = None
@@ -1850,6 +1861,20 @@ class PamConfigurationEditMixin(RecordEditMixin):
             if region_names:
                 regions = '\n'.join(region_names)
                 extra_properties.append(f'multiline.regionNames={regions}')
+        elif record.record_type == 'pamGcpConfiguration':
+            gcp_id = kwargs.get('gcp_id')
+            if gcp_id:
+                extra_properties.append(f'text.pamGcpId={gcp_id}')
+            service_account_key = kwargs.get('service_account_key')
+            if service_account_key:
+                extra_properties.append(f'json.pamServiceAccountKey={service_account_key}')
+            google_admin_email = kwargs.get('google_admin_email')
+            if google_admin_email:
+                extra_properties.append(f'email.pamGoogleAdminEmail={google_admin_email}')
+            gcp_region = kwargs.get('region_names')
+            if gcp_region:
+                regions = '\n'.join(gcp_region)
+                extra_properties.append(f'multiline.pamGcpRegionName={regions}')
         elif record.record_type == 'pamAzureConfiguration':
             azure_id = kwargs.get('azure_id')
             if azure_id:
@@ -1980,13 +2005,15 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
             record_type = 'pamAzureConfiguration'
         elif config_type == 'local':
             record_type = 'pamNetworkConfiguration'
+        elif config_type == 'gcp':
+            record_type = 'pamGcpConfiguration'
         elif config_type == 'domain':
             record_type = 'pamDomainConfiguration'
         elif config_type == 'oci':
             record_type = 'pamOciConfiguration'
         else:
             raise CommandError('pam-config-new', f'--environment {config_type} is not supported'
-                               ' - supported options: local, aws, azure, domain, oci')
+                               ' - supported options: local, aws, azure, gcp, domain, oci')
 
         title = kwargs.get('title')
         if not title:
@@ -2126,6 +2153,8 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
                 record_type = 'pamAzureConfiguration'
             elif config_type == 'local':
                 record_type = 'pamNetworkConfiguration'
+            elif config_type == 'gcp':
+                record_type = 'pamGcpConfiguration'
             elif config_type == 'domain':
                 record_type = 'pamDomainConfiguration'
             elif config_type == 'oci':
@@ -2646,6 +2675,17 @@ class PAMGatewayActionRotateCommand(Command):
     parser.add_argument('--dry-run', '-n', dest='dry_run', default=False, action='store_true', help='Enable dry-run mode')
     # parser.add_argument('--config', '-c', dest='configuration_uid', action='store', help='Rotation configuration UID')
 
+    # Email and share link arguments
+    parser.add_argument('--self-destruct', dest='self_destruct', action='store',
+                       metavar='<NUMBER>[(m)inutes|(h)ours|(d)ays]',
+                       help='Create one-time share link that expires after duration')
+    parser.add_argument('--email-config', dest='email_config', action='store',
+                       help='Email configuration name to use for sending (required with --send-email)')
+    parser.add_argument('--send-email', dest='send_email', action='store',
+                       help='Email address to send credentials after rotation')
+    parser.add_argument('--email-message', dest='email_message', action='store',
+                       help='Custom message to include in email')
+
     def get_parser(self):
         return PAMGatewayActionRotateCommand.parser
 
@@ -2655,6 +2695,35 @@ class PAMGatewayActionRotateCommand(Command):
         recursive = kwargs.get('recursive', False)
         pattern = kwargs.get('pattern', '')  # additional record title match pattern
         dry_run = kwargs.get('dry_run', False)
+
+        # Store email/share arguments as instance variables
+        self.self_destruct = kwargs.get('self_destruct')
+        self.email_config = kwargs.get('email_config')
+        self.send_email = kwargs.get('send_email')
+        self.email_message = kwargs.get('email_message')
+
+        # Validate email setup early (before rotation) to avoid rotating password without being able to send email
+        if self.send_email:
+            if not self.email_config:
+                raise CommandError('pam action rotate', '--send-email requires --email-config to specify email configuration')
+
+            # Find and load email config to validate provider and dependencies
+            try:
+                config_uid = find_email_config_record(params, self.email_config)
+                email_config_obj = load_email_config_from_record(params, config_uid)
+
+                # Check if required dependencies are installed for this provider
+                from ..email_service import validate_email_provider_dependencies
+                is_valid, error_message = validate_email_provider_dependencies(email_config_obj.provider)
+
+                if not is_valid:
+                    raise CommandError('pam action rotate', f'\n{error_message}')
+
+            except Exception as e:
+                # Re-raise CommandError as-is, wrap other exceptions
+                if isinstance(e, CommandError):
+                    raise
+                raise CommandError('pam action rotate', f'Failed to validate email configuration: {e}')
 
         # record, folder or pattern - at least one required
         if not record_uid and not folder:
@@ -2894,8 +2963,138 @@ class PAMGatewayActionRotateCommand(Command):
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token)
 
+        # Handle post-rotation email/share if requested
+        if (self.self_destruct or self.send_email) and router_response:
+            try:
+                # Sync params to get updated record with rotated password
+                api.sync_down(params)
+                # Reload record to get latest credentials
+                record = vault.KeeperRecord.load(params, record_uid)
+                if isinstance(record, vault.TypedRecord):
+                    self._handle_post_rotation_email(params, record)
+            except Exception as e:
+                logging.warning(f'{bcolors.WARNING}Post-rotation email handling failed: {e}{bcolors.ENDC}')
+                # Don't fail the rotation if email fails
+
         if not slient:
             print_router_response(router_response, 'job_info', conversation_id, gateway_uid=gateway_uid)
+
+    def _handle_post_rotation_email(self, params, record):
+        """Handle email sending and share link creation after successful rotation."""
+        try:
+            # 1. Validate email arguments
+            if self.send_email and not self.email_config:
+                logging.warning(f'{bcolors.WARNING}--send-email requires --email-config. Skipping email.{bcolors.ENDC}')
+                return
+
+            # Track whether user explicitly requested self-destruct
+            user_requested_self_destruct = bool(self.self_destruct)
+
+            # Auto-set expiration to 24 hours if send-email is used without explicit self-destruct
+            if self.send_email and not self.self_destruct:
+                self.self_destruct = '24h'
+                logging.info('--send-email used without --self-destruct, creating 24 hour time-based share link')
+
+            # 2. Parse timeout and create share link
+            share_url = None
+            expiration_text = None
+            if self.self_destruct:
+                try:
+                    # parse_timeout returns a timedelta object
+                    expiration_period = parse_timeout(self.self_destruct)
+                    expire_seconds = int(expiration_period.total_seconds())
+
+                    if expire_seconds <= 0:
+                        logging.warning(f'{bcolors.WARNING}Invalid --self-destruct value. Skipping share link.{bcolors.ENDC}')
+                        return
+
+                    # Calculate human-readable expiration text
+                    if expire_seconds >= 86400:  # days
+                        days = expire_seconds // 86400
+                        expiration_text = f"{days} day{'s' if days > 1 else ''}"
+                    elif expire_seconds >= 3600:  # hours
+                        hours = expire_seconds // 3600
+                        expiration_text = f"{hours} hour{'s' if hours > 1 else ''}"
+                    else:  # minutes
+                        minutes = expire_seconds // 60
+                        expiration_text = f"{minutes} minute{'s' if minutes > 1 else ''}"
+
+                    # 3. Create one-time share link manually (same as record_edit.py)
+                    logging.info(f'Creating one-time share link expiring in {self.self_destruct}...')
+                    record_uid = record.record_uid
+                    record_key = record.record_key
+                    client_key = utils.generate_aes_key()
+                    client_id = crypto.hmac_sha512(client_key, 'KEEPER_SECRETS_MANAGER_CLIENT_ID'.encode())
+                    rq = APIRequest_pb2.AddExternalShareRequest()
+                    rq.recordUid = utils.base64_url_decode(record_uid)
+                    rq.encryptedRecordKey = crypto.encrypt_aes_v2(record_key, client_key)
+                    rq.clientId = client_id
+                    rq.accessExpireOn = utils.current_milli_time() + int(expiration_period.total_seconds() * 1000)
+                    rq.isSelfDestruct = user_requested_self_destruct
+                    api.communicate_rest(params, rq, 'vault/external_share_add', rs_type=APIRequest_pb2.Device)
+                    # Extract hostname from params.server
+                    parsed = urlparse(params.server)
+                    server_netloc = parsed.netloc if parsed.netloc else parsed.path
+                    share_url = urlunparse(('https', server_netloc, '/vault/share', None, None, utils.base64_url_encode(client_key)))
+                    logging.info(f'{bcolors.OKGREEN}Share link created successfully{bcolors.ENDC}')
+                except Exception as e:
+                    logging.warning(f'{bcolors.WARNING}Failed to create share link: {e}{bcolors.ENDC}')
+                    return
+
+            # 4. Send email if requested
+            if self.send_email and self.email_config and share_url:
+                try:
+                    # Find email configuration record by name
+                    logging.info(f'Loading email configuration: {self.email_config}')
+                    config_uid = find_email_config_record(params, self.email_config)
+                    if not config_uid:
+                        logging.warning(f'{bcolors.WARNING}Email configuration "{self.email_config}" not found. Skipping email.{bcolors.ENDC}')
+                        return
+
+                    # Load the email configuration
+                    email_config = load_email_config_from_record(params, config_uid)
+
+                    # 5. Build email HTML content with share link
+                    custom_message = self.email_message or 'Your password has been rotated. Click the link below to view your new credentials.'
+
+                    html_content = build_onboarding_email(
+                        share_url=share_url,
+                        custom_message=custom_message,
+                        record_title=record.title,
+                        expiration=expiration_text
+                    )
+
+                    # 6. Send email
+                    logging.info(f'Sending email to {self.send_email}...')
+                    email_sender = EmailSender(email_config)
+                    email_sender.send(
+                        to=self.send_email,
+                        subject=f"Password Rotated: {record.title}",
+                        body=html_content,
+                        html=True
+                    )
+
+                    # 7. Persist OAuth tokens if refreshed
+                    if email_config.is_oauth_provider() and email_config._oauth_tokens_updated:
+                        logging.info('Updating OAuth tokens in email configuration record...')
+                        update_oauth_tokens_in_record(
+                            params,
+                            config_uid,
+                            email_config.oauth_access_token,
+                            email_config.oauth_refresh_token,
+                            email_config.oauth_token_expiry
+                        )
+
+                    logging.info(f'{bcolors.OKGREEN}Email sent successfully to {self.send_email}{bcolors.ENDC}')
+
+                except Exception as e:
+                    logging.warning(f'{bcolors.WARNING}Failed to send email: {e}{bcolors.ENDC}')
+                    # Don't fail the rotation if email fails
+                    return
+
+        except Exception as e:
+            logging.warning(f'{bcolors.WARNING}Error in post-rotation email handler: {e}{bcolors.ENDC}')
+            # Don't fail the rotation if email fails
 
     def str_to_regex(self, text):
         text = str(text)

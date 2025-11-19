@@ -943,9 +943,12 @@ class ShareRecordCommand(Command):
                     emails = [*good_emails, *replacements]
 
         if action == 'cancel':
-            answer = base.user_choice(
-                bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC + 'This action cannot be undone.\n\n' +
-                'Do you want to cancel all shares with user(s): ' + ', '.join(emails) + ' ?', 'yn', 'n')
+            if not force:
+                answer = base.user_choice(
+                    bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC + 'This action cannot be undone.\n\n' +
+                    'Do you want to cancel all shares with user(s): ' + ', '.join(emails) + ' ?', 'yn', 'n')
+            else:
+                answer = 'y'
             if answer.lower() in {'y', 'yes'}:
                 for email in emails:
                     rq = {

@@ -23,7 +23,7 @@ from datetime import datetime
 from functools import reduce
 from urllib.parse import urlunparse, urlparse
 
-from typing import Optional, Tuple, Iterable, List, Dict, Any, Union
+from typing import Optional, Tuple, Iterable, List, Dict, Any, Union, Type
 
 import google
 from Cryptodome.PublicKey import RSA
@@ -691,12 +691,7 @@ def prepare_record_v3(params, record):   # type: (KeeperParams, Record) -> Optio
     return record_object, audit_data
 
 
-def execute_router(params, endpoint, request, *, rs_type=None):
-    logger = logging.getLogger('keeper.router')
-    if logger.level <= logging.DEBUG:
-        js = google.protobuf.json_format.MessageToJson(request) if request else ''
-        logger.debug('>>> [ROUTER RQ] \"%s\": %s', endpoint, js)
-
+def execute_router_rest(params: KeeperParams, endpoint: str, payload: Optional[bytes]) -> Optional[bytes]:
     transmission_key = utils.generate_aes_key()
     encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
     encrypted_transmission_key = rest_api.encrypt_with_keeper_key(params.rest_context, transmission_key)
@@ -714,10 +709,8 @@ def execute_router(params, endpoint, request, *, rs_type=None):
         url_comp = ('https', f'connect.{up.hostname}', f'api/user/{endpoint}', None, None, None)
     url = urlunparse(url_comp)
 
-    payload = request.SerializeToString() if request else None
     if payload is not None:
         payload = crypto.encrypt_aes_v2(payload, transmission_key)
-
     rs = requests.post(url, data=payload, headers=headers, proxies=params.rest_context.proxies,
                        verify=params.rest_context.certificate_check)
     if rs.status_code == 200:
@@ -727,14 +720,7 @@ def execute_router(params, endpoint, request, *, rs_type=None):
             router_response.ParseFromString(rs_body)
             if router_response.responseCode == router_pb2.RouterResponseCode.RRC_OK:
                 if router_response.encryptedPayload:
-                    decrypted_response = crypto.decrypt_aes_v2(router_response.encryptedPayload, transmission_key)
-                    if rs_type:
-                        response = rs_type()
-                        response.ParseFromString(decrypted_response)
-                        if logger.level <= logging.DEBUG:
-                            js = google.protobuf.json_format.MessageToJson(response)
-                            logger.debug('>>> [ROUTER RS] \"%s\": %s', endpoint, js)
-                        return response
+                    return crypto.decrypt_aes_v2(router_response.encryptedPayload, transmission_key)
             else:
                 if router_response.responseCode == router_pb2.RouterResponseCode.RRC_BAD_REQUEST:
                     code = 'bad_request'
@@ -746,6 +732,42 @@ def execute_router(params, endpoint, request, *, rs_type=None):
     else:
         message = rs.reason
         raise KeeperApiError('router_error', f'{message}: {rs.status_code}')
+
+
+def execute_router(params, endpoint, request, *, rs_type=None):
+    logger = logging.getLogger('keeper.router')
+    if logger.level <= logging.DEBUG:
+        js = google.protobuf.json_format.MessageToJson(request) if request else ''
+        logger.debug('>>> [ROUTER RQ] \"%s\": %s', endpoint, js)
+
+    payload = request.SerializeToString() if request else None
+    rs_bytes = execute_router_rest(params, endpoint, payload)
+    if rs_type and rs_bytes:
+        response = rs_type()
+        response.ParseFromString(rs_bytes)
+        if logger.level <= logging.DEBUG:
+            js = google.protobuf.json_format.MessageToJson(response)
+            logger.debug('>>> [ROUTER RS] \"%s\": %s', endpoint, js)
+        return response
+    return None
+
+
+def execute_router_json(params, endpoint,  request):
+    logger = utils.get_logger()
+    payload: Optional[bytes] = None
+    if isinstance(request, dict):
+        js = json.dumps(request)
+        payload = js.encode('utf-8')
+        if logger.level <= logging.DEBUG:
+            logger.debug('>>> [RQ] \"%s\": %s', endpoint, js)
+
+    rs_bytes = execute_router_rest(params, endpoint, payload)
+    if rs_bytes:
+        response = json.loads(rs_bytes)
+        if logger.level <= logging.DEBUG:
+            logger.debug('>>> [RS] \"%s\": %s', endpoint, rs_bytes.decode('utf-8'))
+        return response
+    return None
 
 
 def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version=None):

@@ -82,7 +82,7 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
     # Define colors for different categories - more variety and visual appeal
     category_colors = {
         'Record Commands': bcolors.OKGREEN,           # Green - primary functionality
-        'Sharing Commands': bcolors.OKBLUE,           # Blue - collaboration  
+        'Sharing Commands': bcolors.OKBLUE,           # Blue - collaboration
         'Record Type Commands': bcolors.HEADER,       # Purple/Magenta - special types
         'Import and Exporting Data': bcolors.WARNING, # Yellow - data operations
         'Reporting Commands': '\033[96m',             # Cyan - analytics
@@ -92,6 +92,7 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
         'BreachWatch Commands': bcolors.FAIL,         # Red - security alerts
         'Device Management Commands': '\033[93m',     # Bright Yellow - devices
         'Service Mode REST API': '\033[36m',          # Dark Cyan - services
+        'Email Configuration Commands': '\033[38;5;214m',  # Orange - email services
         'Miscellaneous Commands': '\033[37m',         # Light Gray - utilities
         'KeeperPAM Commands': '\033[92m',            # Bright Green - PAM
         'Legacy Commands': '\033[90m',               # Dark Gray - deprecated
@@ -329,6 +330,10 @@ def do_command(params, command_line):
         try:
             import keeper_pam_webrtc_rs
             new_debug_state = debug_manager.is_console_debug_on(params.batch_mode)
+
+            level = logging.DEBUG if new_debug_state else logging.INFO
+            logging.getLogger('keeper_pam_webrtc_rs').setLevel(level)
+
             keeper_pam_webrtc_rs.set_verbose_logging(new_debug_state)
             logging.debug('Rust verbose logging %s', 'ON' if new_debug_state else 'OFF')
         except ImportError:

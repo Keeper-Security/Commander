@@ -50,6 +50,9 @@ class PAMProjectCommand(GroupCommand):
 
 PAM_RECORD_TYPES = ("pamDatabase", "pamDirectory", "pamMachine", "pamUser", "pamRemoteBrowser")
 PAM_RESOURCES_RECORD_TYPES = ("pamDatabase", "pamDirectory", "pamMachine", "pamRemoteBrowser")
+PAM_ROTATION_TYPES = ("pamDatabase", "pamDirectory", "pamMachine", "pamUser")
+PAM_CONFIG_TYPES = ("pamNetworkConfiguration", "pamAwsConfiguration", "pamAzureConfiguration", "pamDomainConfiguration", "pamGcpConfiguration", "pamOciConfiguration")
+PAM_ENVIRONMENT_TYPES = ("local", "aws", "azure", "domain", "gcp", "oci")
 
 PROJECT_IMPORT_MIN_JSON_TEMPLATE = """{ "project": "Project 1" }"""
 PROJECT_IMPORT_JSON_TEMPLATE = """
@@ -72,9 +75,9 @@ PROJECT_IMPORT_JSON_TEMPLATE = """
         "environment": "local",
         "title": "Project 1 PAM Configuration",
         "connections": "on",
-		"rotation": "on",
-		"tunneling": "on",
-		"remote_browser_isolation": "on"
+        "rotation": "on",
+        "tunneling": "on",
+        "remote_browser_isolation": "on"
     },
     "pam_data": {
         "resources": [
@@ -499,6 +502,30 @@ class PAMProjectImportCommand(Command):
                 if pce.az_subscription_id: args["subscription_id"] = pce.az_subscription_id
                 if pce.az_tenant_id: args["tenant_id"] = pce.az_tenant_id
                 if pce.az_resource_groups: args["resource_groups"] = pce.az_resource_groups
+            elif pce.environment == "domain":
+                if pce.dom_domain_id: args["domain_id"] = pce.dom_domain_id
+                if pce.dom_hostname: args["domain_hostname"] = pce.dom_hostname
+                if pce.dom_port: args["domain_port"] = pce.dom_port
+                if pce.dom_use_ssl is not None: args["domain_use_ssl"] = pce.dom_use_ssl
+                if pce.dom_scan_dc_cidr is not None: args["domain_scan_dc_cidr"] = pce.dom_scan_dc_cidr
+                if pce.dom_network_cidr: args["domain_network_cidr"] = pce.dom_network_cidr
+                if pce.admin_credential_ref:
+                    args["domain_administrative_credential"] = pce.admin_credential_ref
+                    args["force_domain_admin"] = True  # add now - ACL link later
+                if pce.dom_administrative_credential:  # to be resolved later
+                    res["pam_config_object"] = pce
+            elif pce.environment == "gcp":
+                if pce.gcp_id: args["gcp_id"] = pce.gcp_id
+                if pce.gcp_service_account_key: args["service_account_key"] = pce.gcp_service_account_key
+                if pce.gcp_google_admin_email: args["google_admin_email"] = pce.gcp_google_admin_email
+                if pce.gcp_region_names: args["region_names"] = pce.gcp_region_names
+            elif pce.environment == "oci":
+                if pce.oci_id: args["oci_id"] = pce.oci_id
+                if pce.oci_admin_id: args["oci_admin_id"] = pce.oci_admin_id
+                if pce.oci_admin_public_key: args["oci_admin_public_key"] = pce.oci_admin_public_key
+                if pce.oci_admin_private_key: args["oci_admin_private_key"] = pce.oci_admin_private_key
+                if pce.oci_tenancy: args["oci_tenancy"] = pce.oci_tenancy
+                if pce.oci_region: args["oci_region"] = pce.oci_region
 
             if pce.default_rotation_schedule: args["default_schedule"] = pce.default_rotation_schedule
 
@@ -1554,9 +1581,16 @@ class PAMProjectImportCommand(Command):
             resolve_script_creds(usr, users, resources)
 
         # resolve PAM Config PRS additional_credentials[] -> recordRef[]
-        pce = project["pam_config"].get("pam_config_object", None)
+        pce = project["pam_config"].get("pam_config_object")
         if pce and pce.scripts and pce.scripts.scripts:
             resolve_script_creds(pce, users, resources)
+
+        # resolve domain admin if Domain PAM Config
+        # Domain users are the equivalent to cloud users, IAM/Azure users. The parent of the pamUser is the configuration record.
+        # The user does not belong to a machine, database or directory resource.
+        # so check global users[] only
+        if pce and pce.environment == "domain" and pce.dom_administrative_credential:
+            resolve_domain_admin(pce, users)
         # only resolve here - create after machine and user creation
 
         # dry run
@@ -1656,77 +1690,110 @@ class PAMProjectImportCommand(Command):
                 api.sync_down(params)
                 add_pam_scripts(params, pam_cfg_uid, refs)
 
+        # PAM Domain Config - update domain admin creds
+        if pce and pce.environment == "domain":
+            if pce.admin_credential_ref:
+                pcuid = project["pam_config"].get("pam_config_uid")
+                pcrec = vault.KeeperRecord.load(params, pcuid) if pcuid else None
+                if pcrec and isinstance(pcrec, vault.TypedRecord) and pcrec.version == 6:
+                    if pcrec.record_type == "pamDomainConfiguration":
+                        prf = pcrec.get_typed_field('pamResources')
+                        if not prf:
+                            prf = vault.TypedField.new_field('pamResources', {})
+                            pcrec.fields.append(prf)
+                        prf.value = prf.value or [{}]
+                        prf.value[0]["adminCredentialRef"] = pce.admin_credential_ref
+                        record_management.update_record(params, pcrec)
+                        tdag.link_user_to_config_with_options(pce.admin_credential_ref, is_admin='on')
+            else:
+                logging.debug(f"Unable to resolve domain admin '{pce.dom_administrative_credential}' for PAM Domain configuration.")
+
         logging.debug("Done processing project data.")
 
 
 class PamConfigEnvironment():
     def _initialize(self):
         self.uid: str = ""  # known after creation
-        self.environment: str = ""
+        self.environment: str = ""  # local|aws|azure|domain|gcp|oci
         self.title: str = ""
         # self.gateway_name: str = "" # used externally, use controllerUid here
         # self.ksm_app_name: str = "" # used externally, use controllerUid here
         # self.application_folder_uid: str = "" # auto (Users folder) in pam_resources
 
         # default settings
-        self.rotation: str = "on"
         self.connections: str = "on"
+        self.rotation: str = "on"
         self.tunneling: str = "on"
         self.remote_browser_isolation: str = "on"
         self.graphical_session_recording: str = "on"
         self.text_session_recording: str = "on"
-        self.default_rotation_schedule: dict = {}  # CRON format
+
         self.port_mapping: List[str] = []  # ex. ["2222=ssh", "33306=mysql"] for discovery, rotation etc.
+        self.default_rotation_schedule: dict = {}  # "type": "On-Demand|CRON"
         self.scripts = None # PamScriptsObject - PAM Config scripts run on gateway after every rotation
         self.attachments = None # PamAttachmentsObject
 
-        # common settings (local, aws, az)
+        # common settings (shared across all config types)
         self.pam_resources = {} # {"folderUid": "", "controllerUid": ""} - "resourceRef": unused/legacy
 
-        # Local environment
+        # Local environment: pamNetworkConfiguration
         self.network_id: str = ""   # required, text:networkId prefix for naming resources during discovery
         self.network_cidr: str = "" # required, text:networkCIDR network CIDR used for discovery
-        # AWS environment
+
+        # AWS environment: pamAwsConfiguration
         self.aws_id: str = ""                   # required, text:awsId
         self.aws_access_key_id: str = ""        # required, secret:accessKeyId
         self.aws_secret_access_key: str = ""    # required, secret:accessSecretKey
         self.aws_region_names: List[str] = []   # optional, multiline:regionNames
-        # Azure environment
+
+        # Azure environment: pamAzureConfiguration
         self.az_entra_id: str = ""              # required, text:azureId
         self.az_client_id: str = ""             # required, secret:clientId
         self.az_client_secret: str = ""         # required, secret:clientSecret
         self.az_subscription_id: str = ""       # required, secret:subscriptionId
         self.az_tenant_id: str = ""             # required, secret:tenantId
         self.az_resource_groups: List[str] = [] # optional, multiline:resourceGroups
+
         # Domain environment: pamDomainConfiguration
-        self.dom_domain_id: str = ''            # required, text:pamDomainId
-        self.dom_hostname: str = ''             # required, pamHostname:
-        self.dom_port: str = ''                 # required, pamHostname:
+        self.dom_domain_id: str = ""            # required, text:pamDomainId
+        self.dom_hostname: str = ""             # required, pamHostname:
+        self.dom_port: str = ""                 # required, pamHostname:
         self.dom_use_ssl: bool = False          # required, checkbox:useSSL
         self.dom_scan_dc_cidr: bool = False     # optional, checkbox:scanDCCIDR
-        self.dom_network_cidr: str = ''         # optional, multiline:networkCIDR
+        self.dom_network_cidr: str = ""         # optional, text:networkCIDR
+        self.dom_administrative_credential: str = ""  # required, existing pamUser: pamResources.value[0][adminCredentialRef]
+        self.admin_credential_ref: str = ""     # UID resolved from dom_administrative_credential by record title
+        # Domain Administrator User: pamUser record should have an ACL edge to the pamDomainConfiguration record with is_admin = True
+        # Domain users are the equivalent to cloud users, IAM/Azure users. The parent of the pamUser is the configuration record.
+        # The user does not belong to a machine, database or directory resource.
+
+        # Google Cloud Platform (GCP) environment: pamGcpConfiguration
+        self.gcp_id: str = ""                   # required, text:pamGcpId
+        self.gcp_service_account_key: str = ""  # required, json:pamServiceAccountKey
+        self.gcp_google_admin_email: str = ""   # required, email:pamGoogleAdminEmail
+        self.gcp_region_names: List[str] = []   # required, multiline:pamGcpRegionName
+
         # Oracle Cloud Infrastructure (OCI) environment: pamOciConfiguration
         # NB! OCI settings subject to change:
-        self.oci_oci_id: str = ''               # required, text:pamOciId
-        self.oci_admin_oci_id: str = ''         # required, secret:adminOcid
-        self.oci_admin_public_key: str = ''     # required, secret:adminPublicKey
-        self.oci_admin_private_key: str = ''    # required, secret:adminPrivateKey
-        self.oci_tenancy_oci: str = ''          # required, text:tenancyOci
-        self.oci_region_oci: str = ''           # required, text:regionOci
+        self.oci_id: str = ""                   # required, text:pamOciId
+        self.oci_admin_id: str = ""             # required, secret:adminOcid
+        self.oci_admin_public_key: str = ""     # required, secret:adminPublicKey
+        self.oci_admin_private_key: str = ""    # required, secret:adminPrivateKey
+        self.oci_tenancy: str = ""              # required, text:tenancyOci
+        self.oci_region: str = ""               # required, text:regionOci
 
     def __init__(self, environment_type:str, settings:dict, controller_uid:str, folder_uid:str) -> None:
         self._initialize()
         settings = settings if isinstance(settings, dict) else {}
         environment_type = str(environment_type).strip()
-        if environment_type not in ("local", "aws", "azure"):
+        if environment_type not in PAM_ENVIRONMENT_TYPES:
             environment_type = str(settings.get("environment", "")).strip()
-        if environment_type not in ("local", "aws", "azure"):
+        if environment_type not in PAM_ENVIRONMENT_TYPES:
             logging.warning("Unrecognized environment type "\
                             f"""{bcolors.WARNING}"{environment_type}"{bcolors.ENDC} """\
-                            """must be one of [local, aws, azure] - switching to "local" """)
+                            f"""must be one of {PAM_ENVIRONMENT_TYPES} - switching to "local" """)
             environment_type = "local"
         self.environment = environment_type
-
 
         # common properties shared across all PAM config types:
         self.pam_resources = {
@@ -1820,6 +1887,50 @@ class PamConfigEnvironment():
                 self.az_resource_groups = val
             elif val is not None:
                 logging.warning("Unrecognized az_resource_groups values (skipped) - expecting list of strings")
+        elif environment_type == "domain":
+            val = settings.get("dom_domain_id", None) # required
+            if isinstance(val, str): self.dom_domain_id = val
+            val = settings.get("dom_hostname", None) # required
+            if isinstance(val, str): self.dom_hostname = val
+            val = settings.get("dom_port", None) # required
+            if isinstance(val, int) and 0 <= val <= 65535: val = str(val)
+            if isinstance(val, str): self.dom_port = val
+            val = utils.value_to_boolean(settings.get("dom_use_ssl")) # required, bool
+            if isinstance(val, bool): self.dom_use_ssl = val
+            val = utils.value_to_boolean(settings.get("dom_scan_dc_cidr")) # optional, bool
+            if isinstance(val, bool): self.dom_scan_dc_cidr = val
+            val = settings.get("dom_network_cidr", None) # optional
+            if isinstance(val, str): self.dom_network_cidr = val
+            val = settings.get("dom_administrative_credential", None) # required, existing pamUser
+            if isinstance(val, str): self.dom_administrative_credential = val
+            # self.admin_credential_ref - will be resolved from dom_administrative_credential (later)
+        elif environment_type == "gcp":
+            val = settings.get("gcp_id", None) # required
+            if isinstance(val, str): self.gcp_id = val
+            # --service-account-key accepts only JSON.stringify(value) anyways
+            val = settings.get("gcp_service_account_key", None) # required
+            if isinstance(val, str): self.gcp_service_account_key = val
+            val = settings.get("gcp_google_admin_email", None) # required
+            if isinstance(val, str): self.gcp_google_admin_email = val
+            val = settings.get("gcp_region_names", None) # required, multiline
+            if isinstance(val, str): val = [val]
+            if (isinstance(val, list) and all(isinstance(x, str) and x != "" for x in val)):
+                self.gcp_region_names = val
+            elif val is not None:
+                logging.warning("Unrecognized gcp_region_names values (skipped) - expecting list of strings")
+        elif environment_type == "oci":
+            val = settings.get("oci_id", None) # required
+            if isinstance(val, str): self.oci_id = val
+            val = settings.get("oci_admin_id", None) # required
+            if isinstance(val, str): self.oci_admin_id = val
+            val = settings.get("oci_admin_public_key", None) # required
+            if isinstance(val, str): self.oci_admin_public_key = val
+            val = settings.get("oci_admin_private_key", None) # required
+            if isinstance(val, str): self.oci_admin_private_key = val
+            val = settings.get("oci_tenancy", None) # required
+            if isinstance(val, str): self.oci_tenancy = val
+            val = settings.get("oci_region", None) # required
+            if isinstance(val, str): self.oci_region = val
 
 
 class PamScriptsObject():
@@ -4370,6 +4481,34 @@ def parse_command_options(obj, enable:bool) -> dict:
 
     return args
 
+def resolve_domain_admin(pce, users):
+    if not(users and isinstance(users, list)):
+        return
+    if (pce and hasattr(pce, "dom_administrative_credential") and pce.dom_administrative_credential and
+        hasattr(pce, "admin_credential_ref")):
+        dac = pce.dom_administrative_credential
+        res = {"titles": set(), "logins": set()}
+        for obj in users:
+            uid = getattr(obj, "uid", "") or ""
+            title = getattr(obj, "title", "") or ""
+            login = getattr(obj, "login", "") or ""
+            if not uid:  # cannot resolve script credential to an empty UID
+                logging.debug(f"""Unable to resolve domain admin creds from rec without UID - "{title}:{login}" (skipped)""")
+                continue
+            if title and title == dac:
+                res["titles"].add(uid)
+            elif login and login == dac:
+                res["logins"].add(uid)
+        num_unique_uids = len(res["titles"] | res["logins"])
+        if num_unique_uids != 1:
+            logging.debug(f"{num_unique_uids} matches while resolving domain admin creds for '{dac}' ")
+        if res["titles"]:
+            pce.admin_credential_ref = next(iter(res["titles"]))
+        elif res["logins"]:
+            pce.admin_credential_ref = next(iter(res["logins"]))
+        if pce.admin_credential_ref:
+            logging.debug(f"Domain admin credential '{dac}' resolved to '{pce.admin_credential_ref}' ")
+
 def resolve_script_creds(rec, users, resources):
     creds = set()
     if (rec and hasattr(rec, "scripts") and rec.scripts and
@@ -4432,13 +4571,11 @@ def add_pam_scripts(params, record, scripts):
             and isinstance(scripts, list) and len(scripts) > 0):
         return  # nothing to do - no record or no script(s)
 
-    pam_rotation_types = ("pamDatabase", "pamDirectory", "pamMachine", "pamUser")
-    pam_config_types = ("pamAwsConfiguration", "pamAzureConfiguration", "pamNetworkConfiguration")
     ruid = record if record in params.record_cache else ""
     if not ruid:
         records = list(vault_extensions.find_records(
             params, search_str=record, record_version=(3, 6),
-            record_type=pam_rotation_types + pam_config_types))
+            record_type=PAM_ROTATION_TYPES + PAM_CONFIG_TYPES))
         if len(records) == 0:
             logging.warning(f"""{bcolors.WARNING}Warning: {bcolors.ENDC} Add rotation script - Record "{record}" not found!""")
         elif len(records) > 1:

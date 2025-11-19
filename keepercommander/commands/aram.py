@@ -161,6 +161,8 @@ action_report_parser.add_argument('--dry-run', '-n', dest='dry_run', default=Fal
                                   help='flag to enable dry-run mode')
 force_action_help = 'skip confirmation prompt when applying irreversible admin actions (e.g., delete, transfer)'
 action_report_parser.add_argument('--force', '-f', action='store_true', help=force_action_help)
+node_filter_help = 'filter users by node (node name or ID)'
+action_report_parser.add_argument('--node', dest='node', action='store', help=node_filter_help)
 
 syslog_templates = None  # type: Optional[List[str]]
 
@@ -2112,6 +2114,63 @@ class ActionReportCommand(EnterpriseCommand):
         emails_invited = {c.get('email') for c in candidates if c.get('status', '').lower() == 'invited'}
         invited = [u for u in users if u.get('username') in emails_invited]
 
+        node_name = kwargs.get('node')
+        if node_name is not None:
+            # Validate input type
+            if not isinstance(node_name, str):
+                logging.warning(f'Invalid node parameter type: expected string, got {type(node_name).__name__}')
+                return
+            
+            if not node_name.strip():
+                logging.warning('Please provide node name or node ID. The --node parameter cannot be empty.')
+                return
+            
+            nodes = list(self.resolve_nodes(params, node_name))
+            if len(nodes) == 0:
+                logging.warning(f'Node "{node_name}" not found')
+                return
+            if len(nodes) > 1:
+                logging.warning(f'More than one node "{node_name}" found. Use Node ID.')
+                return
+            
+            target_node_id = nodes[0]['node_id']
+            
+            # Validate target_node_id
+            if not isinstance(target_node_id, int) or target_node_id <= 0:
+                logging.warning(f'Invalid node ID: {target_node_id}')
+                return
+            
+            # Build parent-child lookup dictionary once to avoid deep recursion
+            all_nodes = params.enterprise.get('nodes', [])
+            children_by_parent = {}
+            for node in all_nodes:
+                parent_id = node.get('parent_id')
+                if parent_id is not None:
+                    if parent_id not in children_by_parent:
+                        children_by_parent[parent_id] = []
+                    children_by_parent[parent_id].append(node['node_id'])
+            
+            # Get all descendant nodes using iterative approach (BFS) instead of recursion
+            def get_descendant_nodes(node_id):
+                descendants = {node_id}
+                queue = [node_id]
+                while queue:
+                    current_id = queue.pop(0)
+                    child_ids = children_by_parent.get(current_id, [])
+                    for child_id in child_ids:
+                        if child_id not in descendants:
+                            descendants.add(child_id)
+                            queue.append(child_id)
+                return descendants
+            
+            target_nodes = get_descendant_nodes(target_node_id)
+            filtered_user_ids = {user['enterprise_user_id'] for user in params.enterprise.get('users', [])
+                            if user.get('node_id') in target_nodes}
+            
+            active = [u for u in active if u.get('enterprise_user_id') in filtered_user_ids]
+            locked = [u for u in locked if u.get('enterprise_user_id') in filtered_user_ids]
+            invited = [u for u in invited if u.get('enterprise_user_id') in filtered_user_ids]
+
         target_status = kwargs.get('target_user_status', 'no-logon')
         days = kwargs.get('days_since')
         if days is None:
@@ -2148,6 +2207,9 @@ class ActionReportCommand(EnterpriseCommand):
 
         title = f'Admin Action Taken:\n{action_msg}\n'
         title += '\nNote: the following reflects data prior to any administrative action being applied'
-        title += f'\n{len(usernames)} User(s) With "{target_status.capitalize()}" Status Older Than {days} Day(s): '
+        title += f'\n{len(usernames)} User(s) With "{target_status.capitalize()}" Status Older Than {days} Day(s)'
+        if node_name:
+            title += f' in Node "{node_name}"'
+        title += ': '
         filepath = kwargs.get('output')
         return dump_report_data(report_data, headers=report_headers, title=title, fmt=fmt, filename=filepath)

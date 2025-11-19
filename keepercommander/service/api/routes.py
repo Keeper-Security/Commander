@@ -12,15 +12,21 @@
 from flask import Flask
 from typing import Optional
 from .command import create_command_blueprint, create_legacy_command_blueprint
+from .onboarding import create_onboarding_blueprint
 from ..decorators.logging import logger, debug_decorator
 
 def _setup_queue_mode(app: Flask) -> None:
     """Setup queue mode with v2 API endpoints."""
     from ..core.request_queue import queue_manager
     queue_manager.start()
-    
+
     command_bp = create_command_blueprint()
     app.register_blueprint(command_bp, url_prefix='/api/v2')
+
+    # Register onboarding endpoints
+    onboarding_bp = create_onboarding_blueprint()
+    app.register_blueprint(onboarding_bp, url_prefix='/api/v2')
+
     logger.debug("Started queue manager and registered command blueprint with URL prefix '/api/v2'")
 
 def _setup_legacy_mode(app: Flask) -> None:

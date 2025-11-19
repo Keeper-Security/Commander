@@ -15,6 +15,7 @@ import json
 import logging
 import ssl
 import time
+import sys
 
 from typing import Union, Dict, Optional
 
@@ -106,8 +107,13 @@ SERVER_PUBLIC_KEYS = {
         'BDXyZZnrl0tc2jdC5I61JjwkjK2kr7uet9tZjt8StTiJTAQQmnVOYBgbtP08PWDbecxnHghx3kJ8QXq1XE68y8c')),
 
     17: crypto.load_ec_public_key(utils.base64_url_decode(
-        'BFX68cb97m9_sweGdOVavFM3j5ot6gveg6xT4BtGahfGhKib-zdZyO9pwvv1cBda9ahkSzo1BQ4NVXp9qRyqVGU')),
-}   # type: Dict[int, Union[rsa.RSAPublicKey, ec.EllipticCurvePublicKey]]
+        'BFX68cb97m9_sweGdOVavFM3j5ot6gveg6xT4BtGahfGhKib-zdZyO9pwvv1cBda9ahkSzo1BQ4NVXp9qRyqVGU')),   
+    
+    100: utils.base64_url_decode('ptAEoVGStDoCA3eimGdCoYMkqBQ_HjNttdG2nQgcm6Q28ZgdG7So9umXNqAS0FkUQMGyeoLMnJgJPDBGg5Q2LswhEcA2UWR9uTFfsqSohUYBN1hSxKeSvowlIUa4rQMAG-a7BOZB7AA9JSFcMeoxMglMGZGuRpZtHAWZNCK0repSq1u2rOZapUgGPkSARejDfTBQiwOUv4lyD3O2jSdPzNOlz6GsdKcwGSGdDpgGtWQ9tulbsmcHJRZxY6xiusMEmpkIsySoT_ME3eBPzgxUCyqEYXycKBBviFKE-tUiOlBCEXOkemQYL2xbb0wta1lSYBO6LHE-CmIgtXU63GwjL1OaXAzFSZWglNZjBrsXObQCN1R_8eigCQCqnig0GhG5FDxN0TRyMqskOGY3MAm1dOJQ96RIWzl8KUYaa9MZLNlzqkSKjYZ0lWplLORblKkMQXGmHASWwbmZ3JY2LLVxhQZ8gSCE3miWDNgM6YNi4BED5ucLD7FzdAg3KeM5QyK41CC5wmU-Rck0LAkt3wNPD8p1GhgSS9Njk8E_Z5uk4gyhgiWMcgMJgEMnSKyh5SGqhAuDfSDIdusPGrKMFJJtaUtllcpmPAYHBLqILbljsxqwR1IB1-oqpUlmt7rA0lYO2iNXyLEZpZJhdEho-SQ62FlfiJmAEnewBNqKSXNjawUdFEjN0dFDdLAbBelIHwiKz7A1E6y-kBnHVmqxizk-gwG5UzaGU5VFktRKgJVU5irHtNUA3RVvubqgNkK4FWOzq_kOMXxyAHvMrpGhZtcjxOoZPQZZiwQI79d4qIGPaXm42rFE6RKAIdWvZzptIzMqNucQ8Xgf_fiiLzxCxOGyfQbIqMmOUeSCOfeD8XybCCRR1QLEzfbNR2t-_wgwX1xAIoW1cHI_sQcJb3prH1MUKoygXVpGTDYndjJj1VMhuLw0LDoOrRedT5dBfyhJNFINRWmDRHYDqrnGTsIkIsQBo2emcBYD5GJ1c3hF6lwpKeYi8aOUVpYXq4quHlyHmcKMW7IGpkMEuPZtLEQoBsJfb2wVHvCtmXZUKGO1KZc7VZhpJEOixSkBNZqqkBG1c0dfrpBV8caPFBwyPPUIwFkIifq9E8mPiRqb-AsA7hq8oQR3IMeVD0FEoAyMrMKj6uK68kp0i0WVLtqooSJ6olSLZQq0fzekjUhQIIzIcOh0wfSSzrtORSW_i5lHL6t3IkGJyKKSrgItk0gCJ7aS02woQBAbhLVCTjF7ccwaUehRaGeKSIUJWsy3x3N1zZOjPLtnRwNF39jKThV3IFO2e_gvi-YCLRsRvQAt94ok4XIZcZZg6HE93LKhNGoimkgUlvsYppF06Ey_qbW0bAu34cStM-wzROKReEqOlmaDmIl0j1p0DoutrySZY5MaX4ZOIzcS-xwakSoEOdQu_4g2W8KAcjtG37O3y4mz_6q9YrCQOKt0yfFXjkSvP0yPHymX1jxOp3iNHHM3oyygGLZqviSVwyTJPwBSiWErgCSEMpatXQdeupHPU9dXObkJEvN17oqmPk5iLeu8orx8Xv9GEjIvTvD0Trcy5saV2lCDkia48BM'),
+    # 101: None,  # QA ML-KEM key
+    # 102: None,  # Staging ML-KEM key
+    # 103: None,  # Prod ML-KEM key
+}   # type: Dict[int, Union[rsa.RSAPublicKey, ec.EllipticCurvePublicKey, Dict[str, Union[ec.EllipticCurvePublicKey, bytes]]]]
 
 
 def encrypt_with_keeper_key(context, data: bytes) -> bytes:
@@ -133,14 +139,43 @@ def execute_rest(context, endpoint, payload):
         run_request = False
 
         api_request = proto.ApiRequest()
-        server_public_key = SERVER_PUBLIC_KEYS[context.server_key_id]
-        if isinstance(server_public_key, rsa.RSAPublicKey):
-            api_request.encryptedTransmissionKey = crypto.encrypt_rsa(context.transmission_key, server_public_key)
-        elif isinstance(server_public_key, ec.EllipticCurvePublicKey):
-            api_request.encryptedTransmissionKey = crypto.encrypt_ec(context.transmission_key, server_public_key)
-        else:
-            raise ValueError('Invalid server public key')
-        api_request.publicKeyId = context.server_key_id
+        qrc_success = False
+        
+        # Try QRC encryption if qrc_key_id is available
+        if context.qrc_key_id and context.qrc_key_id >= 100:
+            qrc_mlkem_key = SERVER_PUBLIC_KEYS.get(context.qrc_key_id)
+            if qrc_mlkem_key and isinstance(qrc_mlkem_key, bytes):
+                try:
+                    logging.debug(f"Using QRC hybrid encryption (ML-KEM key ID: {context.qrc_key_id}, EC key ID: {context.server_key_id})")
+
+                    if not hasattr(context, 'client_ec_private_key') or not context.client_ec_private_key:
+                        context.client_ec_private_key = crypto.generate_ec_key()[0]
+                    
+                    from .qrc.qrc_crypto import encrypt_qrc
+                    ec_public_key = SERVER_PUBLIC_KEYS[context.server_key_id]
+                    qrc_message = encrypt_qrc(context.transmission_key, context.client_ec_private_key, ec_public_key, qrc_mlkem_key)
+
+                    api_request.qrcMessageKey.clientEcPublicKey = qrc_message['client_ec_public_key']
+                    api_request.qrcMessageKey.mlKemEncapsulatedKey = qrc_message['ml_kem_encapsulated_key']
+                    api_request.qrcMessageKey.data = qrc_message['data']
+                    api_request.qrcMessageKey.msgVersion = qrc_message['msg_version']
+                    api_request.qrcMessageKey.ecKeyId = context.server_key_id
+                    
+                    qrc_success = True
+                except Exception as e:
+                    logging.warning(f"QRC encryption failed ({e}), falling back to EC encryption")
+        
+        # Fallback to EC encryption if QRC not available or failed
+        if not qrc_success:
+            server_public_key = SERVER_PUBLIC_KEYS[context.server_key_id]
+            if isinstance(server_public_key, rsa.RSAPublicKey):
+                api_request.encryptedTransmissionKey = crypto.encrypt_rsa(context.transmission_key, server_public_key)
+            elif isinstance(server_public_key, ec.EllipticCurvePublicKey):
+                api_request.encryptedTransmissionKey = crypto.encrypt_ec(context.transmission_key, server_public_key)
+            else:
+                raise ValueError('Invalid server public key')
+        
+        api_request.publicKeyId = context.qrc_key_id if qrc_success else context.server_key_id
         api_request.locale = context.locale or 'en_US'
 
         api_request.encryptedPayload = crypto.encrypt_aes_v2(payload.SerializeToString(), context.transmission_key)
@@ -184,14 +219,28 @@ def execute_rest(context, endpoint, payload):
                 if rs.status_code == 401:
                     if failure.get('error') == 'key':
                         server_key_id = failure['key_id']
-                        if server_key_id != context.server_key_id:
-                            context.server_key_id = server_key_id
-                            run_request = True
-                            continue
+                        if 'qrc_ec_key_id' in failure:
+                            qrc_ec_key_id = failure['qrc_ec_key_id']
+                            logging.debug(f"QRC key mismatch: ML-KEM key {server_key_id}, EC key {qrc_ec_key_id}")
+                            if server_key_id != context.server_key_id:
+                                context.server_key_id = server_key_id
+                                run_request = True
+                                continue
+                        else:
+                            if server_key_id != context.server_key_id:
+                                context.server_key_id = server_key_id
+                                run_request = True
+                                continue
                 elif rs.status_code == 403:
                     if failure.get('error') == 'throttled' and not context.fail_on_throttle:
                         logging.info('Throttled. sleeping for 10 seconds')
                         time.sleep(10)
+                        run_request = True
+                        continue
+                elif rs.status_code == 400:
+                    if context.server_key_id >= 100:
+                        logging.warning(f"QRC request failed with 400 error, falling back to EC encryption: {failure.get('message', 'Unknown error')}")
+                        context.server_key_id = 7
                         run_request = True
                         continue
                 return failure

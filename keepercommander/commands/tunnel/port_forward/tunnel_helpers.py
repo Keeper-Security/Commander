@@ -22,7 +22,7 @@ from ....proto import pam_pb2
 from ....commands.base import FolderMixin
 from ....commands.pam.pam_dto import GatewayAction, GatewayActionWebRTCSession
 from ....commands.pam.router_helper import router_get_relay_access_creds, get_dag_leafs, \
-    get_router_ws_url, router_send_action_to_gateway, get_controller_cookie
+    get_router_ws_url, router_send_action_to_gateway
 from ....display import bcolors
 from ....error import CommandError
 from ....subfolder import try_resolve_path
@@ -189,16 +189,20 @@ class CloseConnectionReason:
 
 class TunnelSession:
     """Container for tunnel session state organized by tube_id"""
-    def __init__(self, tube_id, conversation_id, gateway_uid, symmetric_key, 
-                 gateway_cookies=None, offer_sent=False, host=None, port=None):
+    def __init__(self, tube_id, conversation_id, gateway_uid, symmetric_key,
+                 offer_sent=False, host=None, port=None,
+                 record_title=None, record_uid=None, target_host=None, target_port=None):
         self.tube_id = tube_id
         self.conversation_id = conversation_id
         self.gateway_uid = gateway_uid
         self.symmetric_key = symmetric_key
-        self.gateway_cookies = gateway_cookies
         self.offer_sent = offer_sent
         self.host = host
         self.port = port
+        self.record_title = record_title
+        self.record_uid = record_uid
+        self.target_host = target_host
+        self.target_port = target_port
         self.buffered_ice_candidates = []
         self.creation_time = time.time()
         self.last_activity = time.time()
@@ -717,35 +721,27 @@ async def connect_websocket_with_fallback(ws_endpoint, headers, ssl_context, tub
         raise Exception("No compatible websockets version available")
 
 
-async def handle_websocket_responses(params, tube_registry, timeout=60, gateway_uid=None, gateway_cookies=None):
+async def handle_websocket_responses(params, tube_registry, timeout=60, gateway_uid=None):
     """
     Direct WebSocket handler that connects, listens for responses, and routes them to Rust.
     Uses global conversation key store to support multiple concurrent tunnels.
     """
     if not WEBSOCKETS_AVAILABLE:
         raise Exception("WebSocket library not available - install with: pip install websockets")
-    
+
     # Get WebSocket URL for client listening
     connect_ws_endpoint = get_router_ws_url(params)
     ws_endpoint = connect_ws_endpoint + "/api/user/client"
-    
+
     logging.debug(f"Connecting to WebSocket: {ws_endpoint}")
-    
+
     # Prepare headers using the same pattern as HTTP
     encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
     headers = {
         'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
         'Authorization': f'KeeperUser {bytes_to_base64(encrypted_session_token)}',
     }
-    
-    # Add cookies to headers if provided for session affinity
-    if gateway_cookies:
-        from ....commands.pam.router_helper import request_cookie_jar_to_str
-        cookie_string = request_cookie_jar_to_str(gateway_cookies)
-        if cookie_string:
-            headers['Cookie'] = cookie_string
-            logging.debug("Added cookies to WebSocket headers for session affinity")
-    
+
     # Set up SSL context
     ssl_context = None
     if ws_endpoint.startswith('wss://'):
@@ -894,8 +890,7 @@ def route_message_to_rust(response_item, tube_registry):
                                     return
 
                                 tube_registry.set_remote_description(tube_id, answer_sdp, is_answer=True)
-                                print(
-                                    f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}SDP answer received, connecting...")
+                                logging.debug("Connection state: SDP answer received, connecting...")
 
                                 # Send any buffered local ICE candidates now that we have the answer
                                 session = get_tunnel_session(tube_id)
@@ -937,7 +932,7 @@ def route_message_to_rust(response_item, tube_registry):
                                     logging.warning(f"Cannot verify trickle ICE status for tube {tube_id} - no signal handler")
                                     return
 
-                                print(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}ICE restart offer received from Gateway...")
+                                logging.debug("Connection state: ICE restart offer received from Gateway...")
 
                                 try:
                                     # Apply the offer from Gateway
@@ -973,8 +968,7 @@ def route_message_to_rust(response_item, tube_registry):
                                             signal_handler = session.signal_handler
 
                                             # Send answer back to Gateway via HTTP POST
-                                            logging.info(f"Sending ICE restart answer to Gateway for tube {tube_id}")
-                                            print(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}sending ICE restart answer...")
+                                            logging.debug(f"Sending ICE restart answer to Gateway for tube {tube_id}")
 
                                             router_response = router_send_action_to_gateway(
                                                 params=signal_handler.params,
@@ -992,8 +986,7 @@ def route_message_to_rust(response_item, tube_registry):
                                                 ),
                                                 message_type=pam_pb2.CMT_CONNECT,
                                                 is_streaming=True,
-                                                gateway_timeout=GATEWAY_TIMEOUT,
-                                                destination_gateway_cookies=session.gateway_cookies
+                                                gateway_timeout=GATEWAY_TIMEOUT
                                             )
 
                                             logging.info(f"ICE restart answer sent for tube {tube_id}")
@@ -1023,9 +1016,8 @@ def route_message_to_rust(response_item, tube_registry):
                             for candidate in candidates_list:
                                 logging.debug(f"Forwarding candidate to Rust: {candidate[:100]}...")  # Log first 100 chars
                                 tube_registry.add_ice_candidate(tube_id, candidate)
-                            
-                            print(
-                                f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}received {candidate_count} ICE candidate(s)...")
+
+                            logging.debug(f"Connection state: received {candidate_count} ICE candidate(s)...")
                         else:
                             logging.warning(f"No known field found in decrypted data {decrypted_data}")
                     else:
@@ -1055,7 +1047,7 @@ def route_message_to_rust(response_item, tube_registry):
         logging.error(f"Full traceback: {traceback.format_exc()}")
 
 
-def start_websocket_listener(params, tube_registry, timeout=60, gateway_uid=None, gateway_cookies=None):
+def start_websocket_listener(params, tube_registry, timeout=60, gateway_uid=None):
     """Start WebSocket listener in a background thread using global connection approach"""
     global _ACTIVE_WEBSOCKET_THREAD
     
@@ -1066,7 +1058,7 @@ def start_websocket_listener(params, tube_registry, timeout=60, gateway_uid=None
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                loop.run_until_complete(handle_websocket_responses(params, tube_registry, timeout, gateway_uid, gateway_cookies))
+                loop.run_until_complete(handle_websocket_responses(params, tube_registry, timeout, gateway_uid))
             except Exception as e:
                 logging.error(f"WebSocket listener error: {e}")
             finally:
@@ -1132,7 +1124,6 @@ class TunnelSignalHandler:
         self.host = None  # Will be set later when the socket is ready
         self.port = None
         self.websocket_router = websocket_router  # For key cleanup
-        self.gateway_cookies = None  # Store session cookies for router affinity
         self.offer_sent = False  # Track if offer has been sent to gateway
         self.buffered_ice_candidates = []  # Buffer ICE candidates until offer is sent
         
@@ -1157,43 +1148,42 @@ class TunnelSignalHandler:
         # Handle local connection state changes
         if signal_kind == 'connection_state_changed':
             new_state = data.lower()
-            logging.info(f"Connection state changed for tube {tube_id}: {new_state}")
+            logging.debug(f"Connection state changed for tube {tube_id}: {new_state}")
 
             # Detailed logging for specific states
             if new_state == 'disconnected':
                 logging.warning(f"Connection disconnected for tube {tube_id} - ICE restart may be attempted by Rust")
-                print(f"{bcolors.FAIL}Connection state: {bcolors.ENDC}disconnected ✗")
 
             elif new_state == 'failed':
                 logging.error(f"Connection failed for tube {tube_id} - ICE restart may be attempted by Rust")
-                print(f"{bcolors.FAIL}Connection state: {bcolors.ENDC}failed ✗")
 
             elif new_state == 'connected':
-                logging.info(f"Connection established/restored for tube {tube_id}")
-                print(f"{bcolors.OKGREEN}Connection state: {bcolors.ENDC}connected")
+                logging.debug(f"Connection established/restored for tube {tube_id}")
 
                 if not self.connection_success_shown:
                     self.connection_success_shown = True
 
-                    # Now show the endpoint table - both socket and WebRTC are ready
-                    if self.host and self.port and self.tube_id:
-                        endpoint_info = f"Endpoint: {bcolors.OKGREEN}{self.tube_id}{bcolors.ENDC} Listening on: {bcolors.OKGREEN}{self.host}:{self.port}{bcolors.ENDC}"
-                        mode_info = "Mode: trickle ICE"
+                    # Get tunnel session for record details
+                    if session:
+                        print(f"\n{bcolors.OKGREEN}Connection established successfully.{bcolors.ENDC}")
 
-                        # Create formatted table
-                        max_width = max(len(endpoint_info), len(mode_info)) + 4
-                        border = "+" + "-" * (max_width - 2) + "+"
+                        # Display record title if available
+                        if session.record_title:
+                            print(f"{bcolors.OKBLUE}Record:{bcolors.ENDC} {session.record_title}")
 
-                        print(border)
-                        print(f"| {endpoint_info.ljust(max_width - 4)} |")
-                        print(f"| {mode_info.ljust(max_width - 4)} |")
-                        print(border)
+                        # Display remote target
+                        if session.target_host and session.target_port:
+                            print(f"{bcolors.OKBLUE}Remote:{bcolors.ENDC} {session.target_host}:{session.target_port}")
 
-                        # Show tunnel management commands
-                        print(f"View all open tunnels   : {bcolors.OKGREEN}pam tunnel list{bcolors.ENDC}")
-                        print(f"Stop a tunnel           : {bcolors.OKGREEN}pam tunnel stop {self.tube_id}{bcolors.ENDC}")
+                        # Display local listening address
+                        if session.host and session.port:
+                            print(f"{bcolors.OKBLUE}Local:{bcolors.ENDC} {session.host}:{session.port}")
 
-                    print(f"{bcolors.OKGREEN}Tunnel is ready for traffic{bcolors.ENDC}")
+                        # Display conversation ID
+                        if session.conversation_id:
+                            print(f"{bcolors.OKBLUE}Conversation ID:{bcolors.ENDC} {session.conversation_id}")
+
+                        print()  # Empty line for readability
 
                     # Flush any buffered ICE candidates now that we're connected
                     if session and session.buffered_ice_candidates:
@@ -1204,15 +1194,12 @@ class TunnelSignalHandler:
 
             elif new_state == "connecting":
                 logging.debug(f"Connection in progress for tube {tube_id}")
-                print(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}connecting...")
 
             elif new_state == "closed":
                 logging.info(f"Connection closed for tube {tube_id}")
-                print(f"{bcolors.FAIL}Connection state: {bcolors.ENDC}closed ✗")
 
             else:
                 logging.debug(f"Connection state for tube {tube_id}: {new_state}")
-                print(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}{new_state}")
 
             return  # Local event, no gateway response needed
 
@@ -1353,10 +1340,8 @@ class TunnelSignalHandler:
             encrypted_data = tunnel_encrypt(self.symmetric_key, bytes_data)
 
             logging.debug(f"Sending ICE candidate to gateway immediately")
-            print(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}sending ICE candidate...")
 
             # Send an ICE candidate via HTTP POST with streamResponse=True
-            # Pass session cookies for router affinity
             router_response = router_send_action_to_gateway(
                 params=self.params,
                 destination_gateway_uid_str=self.gateway_uid,
@@ -1373,8 +1358,7 @@ class TunnelSignalHandler:
                 ),
                 message_type=pam_pb2.CMT_CONNECT,
                 is_streaming=True,  # Response will come via WebSocket
-                gateway_timeout=GATEWAY_TIMEOUT,
-                destination_gateway_cookies=self._get_gateway_cookies_for_tube(tube_id)  # Pass cookies for session affinity
+                gateway_timeout=GATEWAY_TIMEOUT
             )
             
             logging.debug("ICE candidate sent via HTTP POST - response expected via WebSocket")
@@ -1399,11 +1383,9 @@ class TunnelSignalHandler:
             bytes_data = string_to_bytes(string_data)
             encrypted_data = tunnel_encrypt(self.symmetric_key, bytes_data)
 
-            logging.info(f"Sending ICE restart offer to gateway for tube {tube_id}")
-            print(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}sending ICE restart offer...")
+            logging.debug(f"Sending ICE restart offer to gateway for tube {tube_id}")
 
             # Send ICE restart offer via HTTP POST with streamResponse=True
-            # Pass session cookies for router affinity
             router_response = router_send_action_to_gateway(
                 params=self.params,
                 destination_gateway_uid_str=self.gateway_uid,
@@ -1420,9 +1402,7 @@ class TunnelSignalHandler:
                 ),
                 message_type=pam_pb2.CMT_CONNECT,
                 is_streaming=True,  # Response will come via WebSocket
-                gateway_timeout=GATEWAY_TIMEOUT,
-                destination_gateway_cookies=self._get_gateway_cookies_for_tube(tube_id)
-                # Pass cookies for session affinity
+                gateway_timeout=GATEWAY_TIMEOUT
             )
 
             logging.info(f"ICE restart offer sent via HTTP POST for tube {tube_id} - response expected via WebSocket")
@@ -1432,14 +1412,6 @@ class TunnelSignalHandler:
             logging.error(f"Failed to send ICE restart offer for tube {tube_id}: {e}")
             print(f"{bcolors.FAIL}Failed to send ICE restart offer: {e}{bcolors.ENDC}")
 
-    def _get_gateway_cookies_for_tube(self, tube_id):
-        """Get gateway cookies for a specific tube_id, fall back to instance cookies"""
-        if tube_id:
-            session = get_tunnel_session(tube_id)
-            if session and session.gateway_cookies:
-                return session.gateway_cookies
-        return self.gateway_cookies
-
     def cleanup(self):
         """Cleanup resources"""
         # Unregister conversation key from global store
@@ -1448,7 +1420,7 @@ class TunnelSignalHandler:
         logging.debug("TunnelSignalHandler cleaned up")
 
 def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
-                      seed, target_host, target_port, socks, trickle_ice=True):
+                      seed, target_host, target_port, socks, trickle_ice=True, record_title=None):
     """
     Start a tunnel using Rust WebRTC with trickle ICE via HTTP POST and WebSocket responses.
     
@@ -1506,8 +1478,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             "status": "connecting"
         }
     """
-    logging.info(f"{bcolors.HIGHINTENSITYWHITE}Establishing tunnel with trickle ICE between Commander and Gateway. Please wait..."
-          f"{bcolors.ENDC}")
+    logging.debug("Establishing tunnel with trickle ICE between Commander and Gateway. Please wait...")
 
     try:
         # Symmetric key generation for tunnel encryption
@@ -1546,14 +1517,6 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
         # Register the encryption key in the global conversation store
         register_conversation_key(conversation_id, symmetric_key)
 
-        # Get session cookies for router affinity BEFORE creating tube
-        logging.debug(f"Getting session cookies for gateway {gateway_uid}")
-        gateway_cookies = get_controller_cookie(params, gateway_uid)
-        if gateway_cookies:
-            logging.debug(f"Got session cookies for router affinity")
-        else:
-            logging.warning("Failed to get session cookies - may experience routing issues")
-        
         # Create a temporary tunnel session BEFORE creating the tube so ICE candidates can be buffered immediately
         import uuid
         temp_tube_id = str(uuid.uuid4())
@@ -1564,10 +1527,13 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             conversation_id=conversation_id,
             gateway_uid=gateway_uid,
             symmetric_key=symmetric_key,
-            gateway_cookies=gateway_cookies,
             offer_sent=False,
             host=host,
-            port=port
+            port=port,
+            record_title=record_title,
+            record_uid=record_uid,
+            target_host=target_host,
+            target_port=target_port
         )
         
         # Register the temporary session so ICE candidates can be buffered immediately
@@ -1588,8 +1554,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             tube_id=temp_tube_id,  # Use temp ID initially
             trickle_ice=trickle_ice,
         )
-        signal_handler.gateway_cookies = gateway_cookies
-        
+
         # Store signal handler reference so we can send buffered candidates later
         tunnel_session.signal_handler = signal_handler
         
@@ -1644,8 +1609,8 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
         logging.debug(f"Registered encryption key for conversation: {conversation_id}")
         logging.debug(f"Expecting WebSocket responses for conversation ID: {conversation_id}")
         
-        # Start or reuse WebSocket listener with cookies for session affinity
-        websocket_thread = start_websocket_listener(params, tube_registry, timeout=300, gateway_uid=gateway_uid, gateway_cookies=gateway_cookies)
+        # Start or reuse WebSocket listener
+        websocket_thread = start_websocket_listener(params, tube_registry, timeout=300, gateway_uid=gateway_uid)
         
         # Wait a moment for WebSocket to establish connection
         time.sleep(1.5)
@@ -1687,8 +1652,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                 ),
                 message_type=pam_pb2.CMT_CONNECT,
                 is_streaming=True,  # Response will come via WebSocket
-                gateway_timeout=GATEWAY_TIMEOUT,
-                destination_gateway_cookies=gateway_cookies  # Pass cookies for router affinity
+                gateway_timeout=GATEWAY_TIMEOUT
             )
             
             # With streamResponse=true, HTTP response should be empty
