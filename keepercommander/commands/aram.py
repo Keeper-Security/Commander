@@ -90,8 +90,11 @@ audit_report_parser.add_argument('--max-record-details', dest='max_record_detail
 # Ignored / superfluous flag (kept for backward-compatibility)
 audit_report_parser.add_argument('--minimal', action='store_true', help=argparse.SUPPRESS)
 audit_report_parser.add_argument('--regex', action='store_true', help='use regular expressions as row filter')
-search_help = ('limit results to rows that contain the specified string(s)/pattern(s). A union of keywords'
-               ' (using OR to combine the criteria) is used to filter rows when multiple keywords are specified')
+audit_report_parser.add_argument('--match-all', action='store_true', 
+                                 help='require all patterns to match (AND logic) instead of any pattern (OR logic)')
+search_help = ('limit results to rows that contain the specified string(s)/pattern(s). '
+               'Supports pattern prefixes: "regex:" for individual regex, "exact:" for exact match, '
+               '"not:" for negation. Default uses OR logic; use --match-all for AND logic')
 audit_report_parser.add_argument('pattern', nargs='*', type=str, help=search_help)
 
 audit_report_parser.error = raise_parse_exception
@@ -981,6 +984,25 @@ Event properties
   role_id               Role ID (enterprise events only)
   role_title            Role title (enterprise events only)
 
+Pattern Matching (Output Filtering):
+  Pattern prefixes for advanced matching:
+    regex:<pattern>     Individual regex pattern (case-insensitive)
+    exact:<text>        Exact string match (case-insensitive)
+    not:<pattern>       Negation - exclude rows matching pattern
+    not:regex:<pattern> Negated regex pattern
+    not:exact:<text>    Negated exact match
+    
+  Examples:
+    user@example.com                    # Substring match
+    regex:user\\d+@example\\.com       # Regex for user followed by digits
+    exact:login_success                # Exact match for "login_success"
+    not:failed                         # Exclude rows containing "failed"
+    not:regex:^test.*                  # Exclude rows starting with "test"
+    
+  Logic:
+    Default: OR logic (any pattern matches)
+    --match-all: AND logic (all patterns must match)
+
 --report-type:
             raw         Returns individual events. All event properties are returned.
                         Valid parameters: filters. Ignored parameters: columns, aggregates
@@ -1299,6 +1321,7 @@ class AuditReportCommand(Command):
 
         patterns = kwargs.get('pattern', '')
         use_regex = kwargs.get('regex', False)
+        match_all = kwargs.get('match_all', False)
         report_type = kwargs.get('report_type', 'raw')
         if report_type == 'dim':
             columns = kwargs['columns']
@@ -1325,7 +1348,7 @@ class AuditReportCommand(Command):
                             table.append([row.get(x) for x in fields])
                         else:
                             table.append([row])
-                    table = reporting.filter_rows(table, patterns, use_regex)
+                    table = reporting.filter_rows(table, patterns, use_regex, match_all)
                     return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
             return
@@ -1604,7 +1627,7 @@ class AuditReportCommand(Command):
                         reqs.append(rq)
                 if reqs:
                     rss = api.execute_batch(params, reqs)
-            table = reporting.filter_rows(table, patterns, use_regex)
+            table = reporting.filter_rows(table, patterns, use_regex, match_all)
             return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
         else:
             if aggregates:
@@ -1628,7 +1651,7 @@ class AuditReportCommand(Command):
                         else:
                             row.append('')
                     table.append(row)
-            table = reporting.filter_rows(table, patterns, use_regex)
+            table = reporting.filter_rows(table, patterns, use_regex, match_all)
             return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
     @staticmethod
