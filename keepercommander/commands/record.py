@@ -74,6 +74,7 @@ def register_commands(commands):
     commands['shared-records-report'] = SharedRecordsReport()
     commands['record-add'] = record_edit.RecordAddCommand()
     commands['record-update'] = record_edit.RecordUpdateCommand()
+    commands['record-clone'] = record_edit.RecordCloneCommand()
     commands['append-notes'] = record_edit.RecordAppendNotesCommand()
     commands['delete-attachment'] = record_edit.RecordDeleteAttachmentCommand()
     commands['download-attachment'] = record_edit.RecordDownloadAttachmentCommand()
@@ -93,6 +94,7 @@ def register_command_info(aliases, command_info):
     aliases['srr'] = 'shared-records-report'
     aliases['ra'] = 'record-add'
     aliases['ru'] = 'record-update'
+    aliases['rc'] = 'record-clone'
     aliases['cc'] = 'clipboard-copy'
     aliases['find-password'] = ('clipboard-copy', '--output=stdout')
     aliases['sh'] = ('clipboard-copy', '--output=stdouthidden')
@@ -102,7 +104,7 @@ def register_command_info(aliases, command_info):
 
     for p in [get_info_parser, search_parser, list_parser, list_sf_parser, list_team_parser,
               record_history_parser, shared_records_report_parser, record_edit.record_add_parser,
-              record_edit.record_update_parser, record_edit.append_parser, record_edit.download_parser,
+              record_edit.record_update_parser, record_edit.clone_parser, record_edit.append_parser, record_edit.download_parser,
               record_edit.upload_parser, record_edit.delete_attachment_parser, clipboard_copy_parser, record_totp.totp_parser,
               rm_parser, record_file_report.file_report_parser]:
         command_info[p.prog] = p.description

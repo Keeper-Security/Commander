@@ -91,6 +91,12 @@ upload_parser.add_argument('--file', dest='file', action='append', required=True
 upload_parser.add_argument('record', action='store', help='record path or UID')
 
 
+clone_parser = argparse.ArgumentParser(prog='record-clone', description='Clone an existing record.')
+clone_parser.add_argument('uid', type=str, action='store', help='UID of the record to clone')
+clone_parser.add_argument('-t', '--title', dest='title', action='store', help='Title for the cloned record (optional, defaults to "<original title> (Copy)")')
+clone_parser.add_argument('--folder', dest='folder', action='store', help='Folder name or UID to store cloned record (optional, defaults to original folder)')
+
+
 record_fields_description = '''
 Commander supports two types of records:
 1. Typed
@@ -1174,3 +1180,78 @@ class RecordUploadAttachmentCommand(Command):
             attachment.upload_attachments(params, record, upload_tasks)
             record_management.update_record(params, record)
             params.sync_data = True
+
+
+class RecordCloneCommand(Command):
+    def get_parser(self):
+        return clone_parser
+
+    def execute(self, params, **kwargs):
+        uid = kwargs.get('uid')
+        if not uid:
+            raise CommandError('record-clone', 'UID parameter is required')
+        
+        # Load the existing record
+        if uid not in params.record_cache:
+            raise CommandError('record-clone', f'Record with UID "{uid}" not found')
+        
+        source_record = vault.KeeperRecord.load(params, uid)
+        if not source_record:
+            raise CommandError('record-clone', f'Failed to load record with UID "{uid}"')
+        
+        # Create a new record based on the type
+        if isinstance(source_record, vault.PasswordRecord):
+            new_record = vault.PasswordRecord()
+            # Copy fields
+            new_record.login = source_record.login
+            new_record.password = source_record.password
+            new_record.link = source_record.link
+            new_record.totp = source_record.totp
+            # Deep copy custom fields
+            new_record.custom = [vault.CustomField(cf.type, cf.name, cf.value) for cf in source_record.custom]
+        elif isinstance(source_record, vault.TypedRecord):
+            new_record = vault.TypedRecord()
+            new_record.type_name = source_record.type_name
+            # Deep copy fields
+            new_record.fields = [self._clone_typed_field(f) for f in source_record.fields]
+            new_record.custom = [self._clone_typed_field(f) for f in source_record.custom]
+        else:
+            raise CommandError('record-clone', f'Unsupported record type for cloning')
+        
+        # Copy title and notes
+        new_title = kwargs.get('title')
+        if new_title:
+            new_record.title = new_title
+        else:
+            new_record.title = f"{source_record.title} (Copy)"
+        
+        new_record.notes = source_record.notes
+        
+        # Determine folder - use specified folder or default to original record's folder
+        folder_uid = kwargs.get('folder')
+        if folder_uid:
+            folder_uid = FolderMixin.resolve_folder(params, folder_uid)
+        else:
+            # Find the first folder containing the original record
+            folder_uid = next((x for x in find_folders(params, uid)), None)
+        
+        # Add the record
+        record_management.add_record_to_folder(params, new_record, folder_uid)
+        params.sync_data = True
+        params.environment_variables[LAST_RECORD_UID] = new_record.record_uid
+        
+        BreachWatch.scan_and_update_security_data(params, new_record.record_uid, params.breach_watch)
+        
+        logging.info(f'Record cloned successfully. New UID: {new_record.record_uid}')
+        return new_record.record_uid
+    
+    @staticmethod
+    def _clone_typed_field(field):
+        """Helper method to deep copy a TypedField"""
+        import copy
+        new_field = vault.TypedField()
+        new_field.type = field.type
+        new_field.label = field.label
+        new_field.required = field.required
+        new_field.value = copy.deepcopy(field.value)
+        return new_field
