@@ -19,6 +19,9 @@ class RiskManagementReportCommand(base.GroupCommand):
                               'comparison to the previous 30 days. The response is paginated with a page size of 10000 users.', 'sad')
         self.register_command('security-benchmarks-get', RiskManagementSecurityBenchmarksGetCommand(), 'Get the list of security benchmark set for the calling enterprise.', 'sbg')
         self.register_command('security-benchmarks-set', RiskManagementSecurityBenchmarksSetCommand(), 'Set a list of security benchmark. Corresponding audit events will be logged.', 'sbs')
+        #Backward compatibility
+        self.register_command('user', RiskManagementEnterpriseStatDetailsCommand(), 'Show Risk Management User report', 'u')
+        self.register_command('alert', RiskManagementSecurityAlertsSummaryCommand(), 'Show Risk Management Alert report', 'a')
 
 
 rmd_enterprise_stat_parser = argparse.ArgumentParser(prog='risk-management enterprise-stat', description='Risk management enterprise stat', parents=[base.report_output_parser])
