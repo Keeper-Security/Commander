@@ -1643,10 +1643,18 @@ class AuditReportCommand(Command):
             if columns:
                 fields.extend(columns)
             
-            while reqs:
+            max_iterations = 1000  # Safety limit to prevent infinite loops
+            iteration_count = 0
+            
+            while reqs and iteration_count < max_iterations:
+                iteration_count += 1
                 next_reqs = []
+                should_stop = False
+                
                 for idx, rs in enumerate(rss):
                     events = rs.get('audit_event_overview_report_rows', [])
+                    if not events or not isinstance(events, list):
+                        continue
                     for event in events:
                         row = []
                         for f in fields:
@@ -1661,7 +1669,11 @@ class AuditReportCommand(Command):
                         table.append(row)
                     
                     if len(events) >= API_EVENT_SUMMARY_ROW_LIMIT:
-                        current_req = reqs[idx] if idx < len(reqs) else reqs[0]
+                        if idx >= len(reqs):
+                            logging.warning(f"Index mismatch in pagination: idx={idx}, len(reqs)={len(reqs)}")
+                            continue
+                        
+                        current_req = reqs[idx]
                         
                         timestamp_field = None
                         if report_type == 'span':
@@ -1675,43 +1687,58 @@ class AuditReportCommand(Command):
                             timestamp_field = 'created'
                         
                         if timestamp_field and events and timestamp_field in events[-1]:
-                            asc = current_req.get('order') == 'ascending'
-                            first_key, last_key = ('min', 'max') if asc else ('max', 'min')
-                            req_filter = current_req.get('filter', {})
-                            req_period = req_filter.get('created', {})
-                            
-                            period = {first_key: int(events[-1][timestamp_field])}
-                            
-                            if not isinstance(req_period, dict) or req_period.get(last_key) is None:
-                                last_rq = {**current_req}
-                                reverse = 'descending' if asc else 'ascending'
-                                last_rq['order'] = reverse
-                                last_rq['limit'] = 1
-                                rs_last = api.communicate(params, last_rq)
-                                last_row_events = rs_last.get('audit_event_overview_report_rows')
-                                if last_row_events:
-                                    last_row = last_row_events[0]
-                                    period[last_key] = int(last_row.get(timestamp_field, last_row.get('created', 0)))
-                            else:
-                                period[last_key] = req_period.get(last_key)
-                            
-                            req_filter['created'] = period
-                            next_req = {**current_req}
-                            next_req['filter'] = req_filter
+                            try:
+                                asc = current_req.get('order') == 'ascending'
+                                first_key, last_key = ('min', 'max') if asc else ('max', 'min')
+                                req_filter = current_req.get('filter', {})
+                                req_period = req_filter.get('created', {})
+                                
+                                timestamp_value = events[-1][timestamp_field]
+                                period = {first_key: int(timestamp_value) if isinstance(timestamp_value, (int, float, str)) else timestamp_value}
+                                
+                                if not isinstance(req_period, dict) or req_period.get(last_key) is None:
+                                    last_rq = {**current_req}
+                                    reverse = 'descending' if asc else 'ascending'
+                                    last_rq['order'] = reverse
+                                    last_rq['limit'] = 1
+                                    rs_last = api.communicate(params, last_rq)
+                                    last_row_events = rs_last.get('audit_event_overview_report_rows')
+                                    if last_row_events:
+                                        last_row = last_row_events[0]
+                                        last_timestamp = last_row.get(timestamp_field, last_row.get('created', 0))
+                                        period[last_key] = int(last_timestamp) if isinstance(last_timestamp, (int, float, str)) else last_timestamp
+                                else:
+                                    period[last_key] = req_period.get(last_key)
+                                
+                                req_filter['created'] = period
+                                next_req = {**current_req}
+                                next_req['filter'] = req_filter
 
-                            if user_limit and user_limit > 0:
-                                missing = user_limit - len(table)
-                                if missing < API_EVENT_SUMMARY_ROW_LIMIT:
-                                    if missing > 0:
-                                        next_req['limit'] = missing
-                                    else:
+                                if user_limit and user_limit > 0:
+                                    missing = user_limit - len(table)
+                                    if missing <= 0:
+                                        should_stop = True
                                         break
-                            
-                            next_reqs.append(next_req)
+                                    elif missing < API_EVENT_SUMMARY_ROW_LIMIT:
+                                        next_req['limit'] = missing
+                                
+                                next_reqs.append(next_req)
+                            except (ValueError, TypeError, KeyError) as e:
+                                logging.warning(f"Error processing pagination timestamp: {e}")
+                                continue
+                    
+                    if should_stop:
+                        break
+                
+                if should_stop:
+                    break
                 
                 reqs = next_reqs
                 if reqs:
                     rss = api.execute_batch(params, reqs)
+            
+            if iteration_count >= max_iterations:
+                logging.warning(f"Pagination stopped after reaching maximum iterations ({max_iterations})")
             
             table = reporting.filter_rows(table, patterns, use_regex, match_all)
             return dump_report_data(table, fields, fmt=kwargs.get('format'), filename=kwargs.get('output'))
