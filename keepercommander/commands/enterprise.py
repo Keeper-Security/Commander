@@ -59,6 +59,8 @@ def register_commands(commands):
     commands['team-approve'] = TeamApproveCommand()
     commands['device-approve'] = DeviceApproveCommand()
     commands['transfer-user'] = EnterpriseTransferUserCommand()
+    commands['list-domain'] = ListDomainsCommand()
+    commands['reserve-domain'] = ReserveDomainCommand()
 
     commands['audit-log'] = aram.AuditLogCommand()
     commands['audit-report'] = aram.AuditReportCommand()
@@ -83,12 +85,14 @@ def register_command_info(aliases, command_info):
     aliases['et'] = 'enterprise-team'
     aliases['esr'] = 'external-shares-report'
     aliases['tu'] = 'transfer-user'
+    aliases['ld'] = 'list-domain'
+    aliases['rd'] = 'reserve-domain'
 
     for p in [enterprise_data_parser, enterprise_info_parser, enterprise_node_parser, enterprise_user_parser,
               enterprise_role_parser, enterprise_team_parser, transfer_user_parser,
               enterprise_push_parser, team_approve_parser, device_approve_parser,
               aram.audit_log_parser, aram.audit_report_parser, aram.aging_report_parser, aram.action_report_parser,
-              user_report_parser]:
+              user_report_parser, list_domains_parser, reserve_domain_parser]:
         command_info[p.prog] = p.description
 
     command_info['audit-alert'] = 'Manage audit alerts and notifications'
@@ -280,6 +284,23 @@ user_report_parser.add_argument('-l', '--last-login', dest='last_login', action=
                                 help='simplify report to include only last-login-related info')
 user_report_parser.error = raise_parse_exception
 user_report_parser.exit = suppress_exit
+
+list_domains_parser = argparse.ArgumentParser(prog='list-domain', parents=[report_output_parser],
+                                              description='List all reserved domains for the enterprise.')
+list_domains_parser.error = raise_parse_exception
+list_domains_parser.exit = suppress_exit
+
+reserve_domain_parser = argparse.ArgumentParser(prog='reserve-domain',
+                                                description='Reserve a domain for the enterprise.')
+reserve_domain_parser.add_argument('--action', dest='action', required=True,
+                                   choices=['token', 'add', 'delete'],
+                                   help='Action to perform: token (get verification token), add (add domain after verification), delete (remove domain)')
+reserve_domain_parser.add_argument('--domain', dest='domain', required=True,
+                                   help='Domain name to reserve')
+reserve_domain_parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'],
+                                   default='text', help='Output format.')
+reserve_domain_parser.error = raise_parse_exception
+reserve_domain_parser.exit = suppress_exit
 
 
 _DEFAULT_PASSWORD_COMPLEXITY = """[
@@ -3906,3 +3927,290 @@ class DeviceApproveCommand(EnterpriseCommand):
                 ])
             rows.sort(key=lambda x: x[0])
             return dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+
+
+class DomainManagementHelper:
+    """Helper class for domain management commands."""
+    
+    NOTICE_MSG = 'Notice: This feature is not in production yet. It will be available soon.'
+    DOMAIN_PATTERN = r'^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?)*$'
+    
+    @staticmethod
+    def is_feature_unavailable(error_code):
+        """Check if error indicates feature not yet in production."""
+        return error_code == 404 or error_code == '404' or error_code == 'invalid_path_or_method'
+    
+    @staticmethod
+    def handle_unavailable_feature(output_format='text'):
+        """
+        Handle feature unavailable error with consistent message.
+        Returns appropriate response based on output format.
+        """
+        if output_format == 'json':
+            notice_output = {
+                'notice': DomainManagementHelper.NOTICE_MSG,
+            }
+            return json.dumps(notice_output, indent=2)
+        else:
+            logging.warning(f"{bcolors.WARNING}{DomainManagementHelper.NOTICE_MSG}{bcolors.ENDC}")
+            return None
+    
+    @staticmethod
+    def output_error(error_msg, output_format='text', **additional_fields):
+        """
+        Output error message in appropriate format.
+        Supports both text and JSON output.
+        """
+        if output_format == 'json':
+            error_output = {'error': error_msg}
+            error_output.update(additional_fields)
+            print(json.dumps(error_output, indent=2))
+        else:
+            logging.error(error_msg)
+    
+    @staticmethod
+    def validate_domain(domain):
+        """
+        Validate domain format and return sanitized domain.
+        """
+        if not domain:
+            return False, None, 'Domain name is required'
+        
+        domain = domain.strip().lower()
+        
+        if not domain or len(domain) > 253:
+            return False, domain, 'Invalid domain name: must be between 1 and 253 characters'
+        
+        import re
+        if not re.match(DomainManagementHelper.DOMAIN_PATTERN, domain):
+            return False, domain, 'Invalid domain format: domain must contain only letters, numbers, hyphens, and dots'
+        
+        if '.' not in domain:
+            return False, domain, 'Invalid domain: must contain at least one dot (e.g., example.com)'
+        
+        return True, domain, None
+
+
+class ListDomainsCommand(EnterpriseCommand):
+    def get_parser(self):
+        return list_domains_parser
+
+    def execute(self, params, **kwargs):
+        """
+        List all reserved domains for the enterprise.
+        Requires Root Admin permission.
+        """
+        try:
+            rs = api.communicate_rest(
+                params, 
+                None,  
+                'enterprise/list_domains',
+                rs_type=enterprise_pb2.ListDomainsResponse
+            )
+            
+            fmt = kwargs.get('format') or ''
+            
+            if not rs.domain:
+                logging.info('No reserved domains found for this enterprise.')
+                return
+            
+            if fmt == 'json':
+                domains_list = list(rs.domain)
+                print(json.dumps(domains_list, indent=2))
+            else:
+                headers = ['Domain Name']
+                table = [[domain] for domain in rs.domain]
+                return dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'))
+                
+        except KeeperApiError as e:
+            error_code = e.result_code if hasattr(e, 'result_code') else 'Unknown'
+            
+            if DomainManagementHelper.is_feature_unavailable(error_code):
+                result = DomainManagementHelper.handle_unavailable_feature(kwargs.get('format') or 'text')
+                if result:
+                    print(result)
+                return
+            
+            logging.error(f'Error listing domains: {e}')
+            raise
+
+
+class ReserveDomainCommand(EnterpriseCommand):
+    def get_parser(self):
+        return reserve_domain_parser
+
+    def execute(self, params, **kwargs):
+        """
+        Reserve a domain for the enterprise.
+        Requires Root Admin permission.
+        
+        This is a two-step process:
+        1. Get token: Get a verification token to add to DNS TXT record
+        2. Add domain: Verify and add the domain after DNS is updated
+        
+        Also supports deleting reserved domains.
+        """
+        action = kwargs.get('action')
+        domain = kwargs.get('domain')
+        output_format = kwargs.get('format', 'text')
+        
+        if not action:
+            DomainManagementHelper.output_error('Action is required', output_format, status='failed')
+            return
+        
+        is_valid, domain, error_msg = DomainManagementHelper.validate_domain(domain)
+        if not is_valid:
+            DomainManagementHelper.output_error(error_msg, output_format, domain=domain or '', status='failed')
+            return
+        
+        action_map = {
+            'token': enterprise_pb2.DOMAIN_TOKEN,
+            'add': enterprise_pb2.DOMAIN_ADD,
+            'delete': enterprise_pb2.DOMAIN_DELETE
+        }
+        
+        if action not in action_map:
+            DomainManagementHelper.output_error(
+                f'Invalid action: {action}. Must be one of: token, add, delete',
+                output_format,
+                status='failed'
+            )
+            return
+        
+        try:
+            rq = enterprise_pb2.ReserveDomainRequest()
+            rq.reserveDomainAction = action_map[action]
+            rq.domain = domain
+            
+            if logging.getLogger().level <= logging.DEBUG:
+                logging.debug(f'ReserveDomainRequest: action={action} (enum value={action_map[action]}), domain={domain}')
+            
+            if action == 'token':
+                rs = api.communicate_rest(
+                    params, 
+                    rq,
+                    'enterprise/reserve_domain',
+                    rs_type=enterprise_pb2.ReserveDomainResponse
+                )
+                
+                if not rs or not hasattr(rs, 'token') or not rs.token:
+                    DomainManagementHelper.output_error(
+                        'Failed to generate token: empty response from server',
+                        output_format,
+                        domain=domain,
+                    )
+                    return
+                
+                if output_format == 'json':
+                    output = {
+                        'token': rs.token,
+                        'domain': domain,
+                    }
+                    return json.dumps(output, indent=2)
+                else:
+                    print(f'\n{bcolors.OKGREEN}Token generated successfully!{bcolors.ENDC}\n')
+                    print(f'Domain: {bcolors.BOLD}{domain}{bcolors.ENDC}')
+                    print(f'Token:  {bcolors.BOLD}{rs.token}{bcolors.ENDC}\n')
+                    print('Next steps:')
+                    print(f'1. Log into your domain registrar or DNS provider')
+                    print(f'2. Add a TXT record for domain "{domain}" with value:')
+                    print(f'   {bcolors.WARNING}{rs.token}{bcolors.ENDC}')
+                    print(f'3. Wait for DNS propagation (may take a few minutes)')
+                    print(f'4. Run: reserve-domain --action add --domain {domain}')
+                
+            elif action == 'add':
+                api.communicate_rest(
+                    params, 
+                    rq,
+                    'enterprise/reserve_domain'
+                )
+                
+                if output_format == 'json':
+                    output = {
+                        'message': f'Domain successfully added to enterprise',
+                        'domain': domain,
+                        'action': 'add',
+                    }
+                    return json.dumps(output, indent=2)
+                else:
+                    logging.info(f'Domain "{domain}" has been reserved for the enterprise')
+                
+                try:
+                    api.query_enterprise(params)
+                except Exception as refresh_error:
+                    logging.warning(f'Successfully added domain but failed to refresh enterprise data: {refresh_error}')
+                
+            elif action == 'delete':
+                api.communicate_rest(
+                    params, 
+                    rq,
+                    'enterprise/reserve_domain'
+                )
+                
+                if output_format == 'json':
+                    output = {
+                        'message': f'Domain removed from enterprise',
+                        'domain': domain,
+                        'action': 'delete',
+                    }
+                    return json.dumps(output, indent=2)
+                else:
+                    logging.info(f'Domain "{domain}" has been removed from the enterprise')
+                
+                try:
+                    api.query_enterprise(params)
+                except Exception as refresh_error:
+                    logging.warning(f'Successfully removed domain but failed to refresh enterprise data: {refresh_error}')
+                
+        except KeeperApiError as e:
+            error_code = e.result_code if hasattr(e, 'result_code') else 'Unknown'
+            
+            if DomainManagementHelper.is_feature_unavailable(error_code):
+                result = DomainManagementHelper.handle_unavailable_feature(output_format)
+                if result:
+                    return result
+                return
+            
+            # Map error codes to user-friendly messages
+            if error_code == 'bad_request':
+                error_msg = 'Domain not specified or invalid'
+            elif error_code == 'access_denied' or error_code == 'forbidden':
+                error_msg = 'Access denied: You must be a Root Admin to manage domains'
+            elif error_code == 'invalid_token':
+                if action == 'add':
+                    error_msg = f'Failed to verify domain "{domain}". Please ensure you have added the TXT record with the correct token to your DNS settings and try again.'
+                else:
+                    error_msg = 'Invalid or expired verification token'
+            elif error_code == 'exists' or error_code == 'domain_exists':
+                if action == 'token':
+                    error_msg = f'Domain "{domain}" already exists in the enterprise. Use action "delete" to remove it first.'
+                else:
+                    error_msg = f'Domain "{domain}" already exists in the enterprise'
+            elif (error_code == 'not_exists' or error_code == 'domain_not_found' or error_code == 'doesnt_exist') and action == 'delete':
+                error_msg = f'Domain "{domain}" does not exist. Use action "token" to start the domain reservation process.'
+            elif error_code == 'domain_already_taken':
+                error_msg = f'Domain "{domain}" is already reserved by a different enterprise'
+            elif error_code == 'verification_failed':
+                error_msg = f'DNS verification failed for domain "{domain}". Please ensure the TXT record is correctly added and DNS has propagated (may take up to 48 hours).'
+            elif error_code == 'invalid_domain':
+                error_msg = f'Invalid domain format: "{domain}"'
+            elif error_code == 'rate_limit' or error_code == 'too_many_requests':
+                error_msg = 'Too many requests. Please wait a moment and try again.'
+            else:
+                error_msg = f'Unable to {action} domain "{domain}". Please try again or contact support if the issue persists.'
+            
+            if output_format == 'json':
+                error_output = {
+                    'error': error_msg,
+                    'error_code': error_code,
+                    'domain': domain,
+                    'action': action,
+                }
+                return json.dumps(error_output, indent=2)
+            else:
+                logging.error(error_msg)
+                
+        except Exception as e:
+            error_msg = f'Unexpected error: {str(e)}'
+            DomainManagementHelper.output_error(error_msg, output_format, domain=domain, action=action)
+            logging.debug(f'Exception details: {e}', exc_info=True)
