@@ -79,10 +79,16 @@ COMMAND_CATEGORIES = {
     'Domain Management Commands': {
         'reserve-domain', 'list-domain'
     },
+    
     # Service Mode REST API
     'Service Mode REST API': {
         'service-create', 'service-add-config', 'service-start', 'service-stop', 'service-status',
         'service-config-add'
+    },
+
+    # Email Configuration Commands
+    'Email Configuration Commands': {
+        'email-config'
     },
     
     # Miscellaneous Commands
@@ -128,6 +134,7 @@ def get_category_order():
         'BreachWatch Commands',
         'Device Management Commands',
         'Domain Management Commands',
+        'Email Configuration Commands',
         'Service Mode REST API',
         'Miscellaneous Commands',
         'KeeperPAM Commands',

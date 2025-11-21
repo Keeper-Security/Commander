@@ -94,6 +94,7 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
         'Device Management Commands': '\033[93m',     # Bright Yellow - devices
         'Domain Management Commands': '\033[92m',     # Bright Green - domains
         'Service Mode REST API': '\033[36m',          # Dark Cyan - services
+        'Email Configuration Commands': '\033[38;5;214m',  # Orange - email services
         'Miscellaneous Commands': '\033[37m',         # Light Gray - utilities
         'KeeperPAM Commands': '\033[92m',            # Bright Green - PAM
         'Legacy Commands': '\033[90m',               # Dark Gray - deprecated
