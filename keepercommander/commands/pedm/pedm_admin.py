@@ -22,6 +22,8 @@ from ...proto import NotificationCenter_pb2, pedm_pb2
 from .. import base
 from ..helpers import report_utils, prompt_utils, whoami
 from . import pedm_aram
+from ...scim.data_sources import AdCrmDataSource, AzureAdCrmDataSource
+from ...scim.models import ScimUser, ScimGroup
 
 
 class PedmUtils:
@@ -166,8 +168,235 @@ class PedmCommand(base.GroupCommandNew):
         self.register_command_new(PedmPolicyCommand(), 'policy', 'p')
         self.register_command_new(PedmCollectionCommand(), 'collection', 'c')
         self.register_command_new(PedmApprovalCommand(), 'approval')
+        self.register_command_new(PedmScimCommand(), 'scim')
         self.register_command_new(pedm_aram.PedmReportCommand(), 'report')
         #self.register_command_new(PedmBICommand(), 'bi')
+
+class PedmScimCommand(base.ArgparseCommand):
+    def __init__(self):
+        parser = argparse.ArgumentParser(prog='scim', description='Sync PEDM user/group collections from AD or AzureAD')
+        parser.add_argument('--source', dest='source', choices=['ad', 'azure'], required=True, help='SCIM source')
+        parser.add_argument('--record', dest='record', help='Keeper record UID with SCIM configuration')
+        parser.add_argument('--ad-url', dest='ad_url', help='AD LDAP URL (e.g., ldap(s)://<host>)')
+        parser.add_argument('--ad-user', dest='ad_user', help='AD bind user (DOMAIN\\username or DN)')
+        parser.add_argument('--ad-password', dest='ad_password', help='AD password')
+        parser.add_argument('--group', dest='groups', action='append', help='AD group name or DN (repeatable)')
+        parser.add_argument('--tenant', dest='tenant', help='Azure tenant ID')
+        parser.add_argument('--client-id', dest='client_id', help='Azure client ID')
+        parser.add_argument('--client-secret', dest='client_secret', help='Azure client secret')
+        parser.add_argument('--azure-cloud', dest='azure_cloud', help='Azure cloud (AzureCloud, AzureChinaCloud, etc.)')
+        super().__init__(parser)
+
+    def execute(self, context: KeeperParams, **kwargs):
+        source = (kwargs.get('source') or '').lower()
+        plugin = admin_plugin.get_pedm_plugin(context)
+        record_uid = kwargs.get('record')
+        scim_groups: List[str] = []
+        if record_uid:
+            if record_uid not in context.record_cache:
+                raise base.CommandError(f'Record UID "{record_uid}" not found')
+            record = vault.KeeperRecord.load(context, record_uid)
+            if not isinstance(record, vault.TypedRecord):
+                raise base.CommandError(f'Record UID "{record_uid}" is not a typed record')
+            for cf in record.custom:
+                if not cf.label:
+                    continue
+                label = cf.label.lower().strip()
+                if label.startswith('scim group'):
+                    group_value = cf.get_default_value(str)
+                    if group_value:
+                        for by_nl in group_value.split('\n'):
+                            if by_nl:
+                                scim_groups.append(by_nl.strip())
+        if source == 'ad':
+            ad_url = kwargs.get('ad_url')
+            ad_user = kwargs.get('ad_user')
+            ad_password = kwargs.get('ad_password')
+            groups = kwargs.get('groups') or scim_groups
+            if record_uid and not ad_url:
+                field = next((x for x in record.custom if (x.label or '').lower().strip() == 'ad url'), None)
+                if field:
+                    ad_url = field.get_default_value(str)
+            if record_uid and not ad_user:
+                field = next((x for x in record.custom if (x.label or '').lower().strip() == 'ad user'), None)
+                if field:
+                    ad_user = field.get_default_value(str)
+            if record_uid and not ad_password:
+                field = next((x for x in record.custom if (x.label or '').lower().strip() == 'ad password'), None)
+                if field:
+                    ad_password = field.get_default_value(str)
+            if not ad_url or not ad_user or not ad_password:
+                raise base.CommandError('AD source requires AD URL, AD User, and AD Password')
+            data_source = AdCrmDataSource(ad_url, ad_user, ad_password, groups)
+            account_type = 'AD'
+        elif source == 'azure':
+            tenant = kwargs.get('tenant')
+            client_id = kwargs.get('client_id')
+            client_secret = kwargs.get('client_secret')
+            azure_cloud = kwargs.get('azure_cloud')
+            if record_uid:
+                if not tenant:
+                    field = next((x for x in record.custom if (x.label or '').lower().strip() == 'tenant id'), None)
+                    if field:
+                        tenant = field.get_default_value(str)
+                if not client_id:
+                    field = next((x for x in record.custom if (x.label or '').lower().strip() == 'client id'), None)
+                    if field:
+                        client_id = field.get_default_value(str)
+                if not client_secret:
+                    field = next((x for x in record.custom if (x.label or '').lower().strip() == 'client secret'), None)
+                    if field:
+                        client_secret = field.get_default_value(str)
+                if not azure_cloud:
+                    field = next((x for x in record.custom if (x.label or '').lower().strip() == 'azure cloud'), None)
+                    if field:
+                        azure_cloud = field.get_default_value(str)
+            if not tenant or not client_id or not client_secret:
+                raise base.CommandError('Azure source requires tenant, client-id, and client-secret')
+            data_source = AzureAdCrmDataSource(tenant, client_id, client_secret, azure_cloud)
+            account_type = 'Azure'
+        else:
+            raise base.CommandError(f'Unsupported source: {source}')
+
+        account_type_key = account_type.lower()
+        existing_users: Dict[tuple, admin_types.PedmCollection] = {}
+        existing_groups: Dict[str, admin_types.PedmCollection] = {}
+        for coll in plugin.collections.get_all_entities():
+            if coll.collection_type == pedm_shared.CollectionType.UserAccount:
+                domain = str(coll.collection_data.get('Domainname') or '').lower()
+                username = str(coll.collection_data.get('Username') or '').lower()
+                acct_type = str(coll.collection_data.get('AccountType') or '').lower()
+                if acct_type != account_type_key:
+                    continue
+                if account_type_key == 'azure':
+                    if domain != 'azuread':
+                        continue
+                    domain_key = 'azuread'
+                else:
+                    if not domain:
+                        continue
+                    domain_key = domain
+                if not username:
+                    continue
+                existing_users[(acct_type, domain_key, username)] = coll
+            elif coll.collection_type == pedm_shared.CollectionType.GroupAccount:
+                group_name = str(coll.collection_data.get('GroupName') or '').lower()
+                if group_name:
+                    existing_groups[group_name] = coll
+            else:
+                continue
+
+        add_map: Dict[str, admin_types.CollectionData] = {}
+        update_map: Dict[str, admin_types.CollectionData] = {}
+
+        def build_user(user: ScimUser) -> Optional[Tuple[admin_types.CollectionData, bool]]:
+            username = user.login or user.email or user.full_name or user.external_id
+            if not username:
+                return None
+            username = username.strip()
+            domain = (user.domain or '').strip()
+            if '\\' in username:
+                domain, username = username.split('\\', 1)
+            if '@' in username:
+                parts = username.split('@', 1)
+                username = parts[0]
+                domain = domain or parts[1]
+            username_norm = username.lower()
+            account_type_key = account_type.lower()
+            if account_type_key == 'azure':
+                domain = 'AzureAD'
+                domain_key = 'azuread'
+            else:
+                if not domain and user.email and '@' in user.email:
+                    domain = user.email.split('@', 1)[1]
+                if not domain and user.domain:
+                    domain = user.domain
+                domain = domain.upper()
+                domain_key = domain.lower()
+            if not domain or not username_norm:
+                return None
+            key = (account_type_key, domain_key, username_norm)
+            data = {
+                'Domainname': domain,
+                'Username': username,
+                'AccountType': account_type,
+            }
+            if user.external_id:
+                data['ExternalId'] = user.external_id
+            if user.full_name:
+                data['FullName'] = user.full_name
+            if user.email:
+                data['Email'] = user.email
+
+            key_value = ''.join(key)
+            collection_uid = pedm_shared.get_collection_uid(plugin.agent_key, int(pedm_shared.CollectionType.UserAccount), key_value)
+            collection_json = json.dumps(data)
+            existing = existing_users.get(key)
+            if existing:
+                if existing.collection_data != data:
+                    cd = admin_types.CollectionData(collection_uid=collection_uid,
+                                                    collection_type=int(pedm_shared.CollectionType.UserAccount),
+                                                    collection_data=collection_json)
+                    return cd, True
+                return None
+            cd = admin_types.CollectionData(collection_uid=collection_uid,
+                                            collection_type=int(pedm_shared.CollectionType.UserAccount),
+                                            collection_data=collection_json)
+            return cd, False
+            return None
+
+        def build_group(group: ScimGroup) -> Optional[Tuple[admin_types.CollectionData, bool]]:
+            if not group.name:
+                return None
+            group_name_norm = group.name.lower()
+            data = {
+                'GroupName': group.name
+            }
+            if group.external_id:
+                data['ExternalId'] = group.external_id
+            collection_uid = pedm_shared.get_collection_uid(plugin.agent_key, int(pedm_shared.CollectionType.GroupAccount), group.name)
+            collection_json = json.dumps(data)
+            existing = existing_groups.get(group_name_norm)
+            if existing:
+                if existing.collection_data != data:
+                    cd = admin_types.CollectionData(collection_uid=collection_uid,
+                                                    collection_type=int(pedm_shared.CollectionType.GroupAccount),
+                                                    collection_data=collection_json)
+                    return cd, True
+                return None
+            cd = admin_types.CollectionData(collection_uid=collection_uid,
+                                            collection_type=int(pedm_shared.CollectionType.GroupAccount),
+                                            collection_data=collection_json)
+            return cd, False
+            return None
+
+        for element in data_source.populate():
+            if isinstance(element, ScimUser):
+                result = build_user(element)
+                if isinstance(result, tuple):
+                    cd, is_update = result
+                    if is_update:
+                        update_map[cd.collection_uid] = cd
+                    else:
+                        add_map[cd.collection_uid] = cd
+            elif isinstance(element, ScimGroup):
+                result = build_group(element)
+                if isinstance(result, tuple):
+                    cd, is_update = result
+                    if is_update:
+                        update_map[cd.collection_uid] = cd
+                    else:
+                        add_map[cd.collection_uid] = cd
+
+        add_collections = list(add_map.values())
+        update_collections = list(update_map.values())
+
+        if len(add_collections) == 0 and len(update_collections) == 0:
+            logging.info('No PEDM collections to add or update.')
+            return
+
+        status = plugin.modify_collections(add_collections=add_collections, update_collections=update_collections)
+        logging.info('PEDM SCIM sync completed. Added: %d, Updated: %d', len(status.add), len(status.update))
 
 
 class PedmSyncDownCommand(base.ArgparseCommand):
@@ -1298,34 +1527,38 @@ class PedmCollectionAddCommand(base.ArgparseCommand):
         parser = argparse.ArgumentParser(prog='add', description='Creates PEDM collections')
         parser.add_argument('--type', dest='type', action='store', type=int,
                             help='collection type')
-        parser.add_argument('collection', type=str, nargs='+',  help='Collection name')
+        parser.add_argument('data', nargs='+', help='Field assignment key=value (repeatable)')
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
         plugin = admin_plugin.get_pedm_plugin(context)
 
-        collection: Any = kwargs.get('collection')
         collection_type = kwargs.get('type')
         if not collection_type:
             raise base.CommandError('Collection type is required')
-        # if collection_type < 100:
-        #     raise base.CommandError('Only collections with type greater than 100 are supported')
 
-        if isinstance(collection, str):
-            collection = [collection]
+        extra_data: Dict[str, str] = {}
+        for item in kwargs.get('data') or []:
+            if '=' not in item:
+                raise base.CommandError(f'Invalid data "{item}". Use key=value format.')
+            k, v = item.split('=', 1)
+            extra_data[k.strip()] = v.strip()
 
-        collections: Dict[str, admin_types.CollectionData] = {}
-        for c in collection:
-            collection_uid = utils.generate_uid()
-            collection_data = {
-                'Name': c,
-                'IsCustom': True
-            }
-            collections[collection_uid] = admin_types.CollectionData(
-                collection_uid=collection_uid, collection_type=collection_type,
-                collection_data=json.dumps(collection_data))
+        required = pedm_shared.get_collection_required_fields(collection_type)
+        if required is None:
+            raise base.CommandError(f'Unknown collection type: {collection_type}')
+        for field in required.all_fields:
+            if field not in extra_data or not isinstance(extra_data[field], str) or not extra_data[field]:
+                raise base.CommandError(f'Missing required field "{field}" for collection type {collection_type}')
 
-        status = plugin.modify_collections(add_collections=collections.values())
+        collection_data = json.dumps(extra_data)
+        collection = admin_types.CollectionData(
+            collection_uid='',
+            collection_type=collection_type,
+            collection_data=collection_data
+        )
+
+        status = plugin.modify_collections(add_collections=[collection])
         if len(status.add) > 0:
             for st in status.add:
                 if isinstance(st, admin_types.EntityStatus) and not st.success:
