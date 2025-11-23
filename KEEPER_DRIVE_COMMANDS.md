@@ -653,49 +653,55 @@ keeper-drive-share-record rec123abc456 temp@example.com --viewer \
 
 ### keeper-drive-update-record-share
 
-Update sharing permissions for a record.
+Update sharing permissions for a record using role-based permissions.
 
 **Syntax:**
 ```bash
-keeper-drive-update-record-share <record_uid> <recipient_email> [options]
+keeper-drive-update-record-share <record_uid> <recipient_email> <role_flag> [options]
 ```
 
 **Parameters:**
 - `<record_uid>` (required): Record UID
 - `<recipient_email>` (required): Email address of recipient user
 
-**Options:**
-- `--can-edit <true|false>`: Update edit permission
-- `--can-share <true|false>`: Update share permission
-- `--expiration <timestamp>`: Update expiration timestamp in milliseconds
+**Role Flags (required, mutually exclusive):**
+- `--viewer`: Update to VIEWER role (can view record)
+- `--contributor`: Update to CONTRIBUTOR role (can view and edit record)
+- `--shared-manager`: Update to SHARED_MANAGER role (can manage sharing)
+- `--content-manager`: Update to CONTENT_MANAGER role (can manage record content)
+- `--manager`: Update to MANAGER role (full management permissions)
 
-**Note:** At least one option must be specified.
+**Options:**
+- `--expiration <timestamp>`: Update expiration timestamp in milliseconds
 
 **Examples:**
 
-1. Enable editing permission:
+1. Update user role to contributor:
 ```bash
-keeper-drive-update-record-share rec123abc456 colleague@example.com \
-  --can-edit true
+keeper-drive-update-record-share rec123abc456 colleague@example.com --contributor
 ```
 
-2. Disable sharing permission:
+2. Update user role to manager:
 ```bash
-keeper-drive-update-record-share rec123abc456 colleague@example.com \
-  --can-share false
+keeper-drive-update-record-share rec123abc456 colleague@example.com --manager
 ```
 
-3. Update multiple permissions:
+3. Update role with new expiration:
 ```bash
-keeper-drive-update-record-share rec123abc456 colleague@example.com \
-  --can-edit true \
-  --can-share true
+keeper-drive-update-record-share rec123abc456 colleague@example.com --viewer \
+  --expiration 1700000000000
+```
+
+4. Downgrade access from manager to viewer:
+```bash
+keeper-drive-update-record-share rec123abc456 colleague@example.com --viewer
 ```
 
 **Output:**
 ```
 ✓ Record 'rec123abc456' permissions updated for colleague@example.com
   Status: SUCCESS
+  New Role: VIEWER
 ```
 
 ---
