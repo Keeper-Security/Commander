@@ -462,6 +462,30 @@ keeper_drive_manage_folder_records_batch_parser.error = raise_parse_exception
 keeper_drive_manage_folder_records_batch_parser.exit = suppress_exit
 
 
+# Parser for 'keeper-drive-get-folder-access' command
+keeper_drive_get_folder_access_parser = argparse.ArgumentParser(
+    prog='keeper-drive-get-folder-access',
+    description='Retrieve accessors (users and teams) of Keeper Drive folders',
+    allow_abbrev=False
+)
+keeper_drive_get_folder_access_parser.add_argument(
+    '--folder',
+    dest='folders',
+    action='append',
+    type=str,
+    required=True,
+    help='Folder UID, name, or path (can be specified multiple times, max 100)'
+)
+keeper_drive_get_folder_access_parser.add_argument(
+    '--verbose',
+    '-v',
+    action='store_true',
+    help='Show detailed information including permissions'
+)
+keeper_drive_get_folder_access_parser.error = raise_parse_exception
+keeper_drive_get_folder_access_parser.exit = suppress_exit
+
+
 class KeeperDriveMkdirCommand(Command):
     """Command to create a KeeperDrive folder using v3 API"""
     
@@ -791,7 +815,7 @@ keeper_drive_update_record_parser.add_argument(
     help='New URL'
 )
 keeper_drive_update_record_parser.add_argument(
-    '--notes',
+    '-n', '--notes',
     dest='notes',
     type=str,
     help='New notes'
@@ -1151,18 +1175,8 @@ class KeeperDriveListCommand(Command):
                         
                         accesses = params.keeper_drive_folder_accesses[folder_uid]
                         
-                        # Separate owner access from shared accesses
-                        owner_access = None
-                        shared_accesses = []
-                        
-                        for access in accesses:
-                            access_type = access.get('access_type', 0)
-                            if access_type == 1:  # AT_OWNER
-                                owner_access = access
-                            else:
-                                shared_accesses.append(access)
-                        
-                        # Show shared access info (owner already shown above)
+                        # Show shared access info (exclude owner)
+                        shared_accesses = [a for a in accesses if a.get('access_type', 0) != folder_pb2.AT_OWNER]
                         if shared_accesses:
                             # Count shared users/teams
                             share_count = len(shared_accesses)
@@ -1181,8 +1195,8 @@ class KeeperDriveListCommand(Command):
                                 
                                 # Get user/team email/name from access_type_uid
                                 access_uid = access.get('access_type_uid', '')
-                                entity_name = None
-                                if access_uid and hasattr(params, 'user_cache'):
+                                entity_name = access.get('username')
+                                if not entity_name and access_uid and hasattr(params, 'user_cache'):
                                     entity_name = params.user_cache.get(access_uid)
                                 
                                 # If not in user_cache, try enterprise users
@@ -1334,17 +1348,8 @@ class KeeperDriveListCommand(Command):
                         
                         accesses = params.keeper_drive_record_accesses[record_uid]
                         
-                        # Separate owner access from shared accesses
-                        owner_access = None
-                        shared_accesses = []
-                        
-                        for access in accesses:
-                            if access.get('owner', False):
-                                owner_access = access
-                            else:
-                                shared_accesses.append(access)
-                        
-                        # Only show sharing info if record is actually shared with others
+                        # Only show sharing info if record is actually shared with others (exclude owner)
+                        shared_accesses = [a for a in accesses if not a.get('owner', False)]
                         if shared_accesses:
                             # Count shared users
                             share_count = len(shared_accesses)
@@ -1362,8 +1367,8 @@ class KeeperDriveListCommand(Command):
                                 
                                 # Get user email/name from access_uid
                                 access_uid = access.get('access_uid', '')
-                                user_name = None
-                                if access_uid and hasattr(params, 'user_cache'):
+                                user_name = access.get('username')
+                                if not user_name and access_uid and hasattr(params, 'user_cache'):
                                     user_name = params.user_cache.get(access_uid)
                                 
                                 # If not in user_cache, try enterprise users
@@ -2521,6 +2526,97 @@ class KeeperDriveManageFolderRecordsBatchCommand(Command):
             logging.error(f"Error in batch operation: {str(e)}")
 
 
+class KeeperDriveGetFolderAccessCommand(Command):
+    """Retrieve accessors (users and teams) of Keeper Drive folders"""
+    
+    def get_parser(self):
+        return keeper_drive_get_folder_access_parser
+    
+    def execute(self, params, **kwargs):
+        folders = kwargs.get('folders', [])
+        verbose = kwargs.get('verbose', False)
+        
+        if not folders:
+            logging.error("At least one folder must be specified")
+            return
+        
+        if len(folders) > 100:
+            logging.error("Maximum 100 folders can be queried at once")
+            return
+        
+        try:
+            result = keeper_drive.get_folder_access_v3(
+                params,
+                folder_uids=folders
+            )
+            
+            # Display in table format
+            for folder_result in result['results']:
+                folder_uid = folder_result['folder_uid']
+                
+                if not folder_result['success']:
+                    error = folder_result['error']
+                    logging.error(f"\n✗ Folder: {folder_uid}")
+                    logging.error(f"  Error: {error['status']} - {error['message']}")
+                    continue
+                
+                accessors = folder_result['accessors']
+                
+                # Print folder header
+                print(f"\n{'='*80}")
+                print(f"Folder: {folder_uid}")
+                print(f"{'='*80}")
+                
+                if not accessors:
+                    print("  No accessors found")
+                    continue
+                
+                # Display accessors
+                for accessor in accessors:
+                    accessor_uid = accessor['accessor_uid']
+                    access_type = accessor['access_type']
+                    role = accessor['role']
+                    inherited = accessor['inherited']
+                    hidden = accessor['hidden']
+                    
+                    print(f"\n  Accessor: {accessor_uid}")
+                    print(f"    Type: {access_type}")
+                    print(f"    Role: {role}")
+                    print(f"    Inherited: {inherited}")
+                    print(f"    Hidden: {hidden}")
+                    
+                    if accessor.get('date_created'):
+                        import datetime
+                        date_created = datetime.datetime.fromtimestamp(accessor['date_created'] / 1000)
+                        print(f"    Date Created: {date_created.strftime('%Y-%m-%d %H:%M:%S')}")
+                    
+                    if accessor.get('last_modified'):
+                        import datetime
+                        last_modified = datetime.datetime.fromtimestamp(accessor['last_modified'] / 1000)
+                        print(f"    Last Modified: {last_modified.strftime('%Y-%m-%d %H:%M:%S')}")
+                    
+                    if verbose and 'permissions' in accessor:
+                        perms = accessor['permissions']
+                        print(f"    Permissions:")
+                        print(f"      Can Add Users: {perms.get('can_add_users', False)}")
+                        print(f"      Can Remove Users: {perms.get('can_remove_users', False)}")
+                        print(f"      Can Add Records: {perms.get('can_add_records', False)}")
+                        print(f"      Can Remove Records: {perms.get('can_remove_records', False)}")
+                        print(f"      Can Delete Records: {perms.get('can_delete_records', False)}")
+                        print(f"      Can Create Folders: {perms.get('can_create_folders', False)}")
+                        print(f"      Can Delete Folders: {perms.get('can_delete_folders', False)}")
+                        print(f"      Can Change User Permissions: {perms.get('can_change_user_permissions', False)}")
+                        print(f"      Can Edit Records: {perms.get('can_edit_records', False)}")
+                        print(f"      Can View Records: {perms.get('can_view_records', False)}")
+            
+            print(f"\n{'='*80}\n")
+        
+        except ValueError as e:
+            logging.error(f"Validation error: {str(e)}")
+        except Exception as e:
+            logging.error(f"Error retrieving folder access: {str(e)}")
+
+
 def register_commands(commands):
     """Register KeeperDrive commands"""
     commands['keeper-drive-mkdir'] = KeeperDriveMkdirCommand()
@@ -2546,6 +2642,7 @@ def register_commands(commands):
     commands['keeper-drive-remove-record-from-folder'] = KeeperDriveRemoveRecordFromFolderCommand()
     commands['keeper-drive-move-record'] = KeeperDriveMoveRecordCommand()
     commands['keeper-drive-manage-folder-records-batch'] = KeeperDriveManageFolderRecordsBatchCommand()
+    commands['keeper-drive-get-folder-access'] = KeeperDriveGetFolderAccessCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -2573,4 +2670,4 @@ def register_command_info(aliases, command_info):
     command_info['keeper-drive-remove-record-from-folder'] = 'Remove a record from a folder (v3 API)'
     command_info['keeper-drive-move-record'] = 'Move a record between folders or to/from root (v3 API)'
     command_info['keeper-drive-manage-folder-records-batch'] = 'Batch manage records in a folder (v3 API)'
-
+    command_info['keeper-drive-get-folder-access'] = 'Retrieve accessors (users and teams) of folders (v3 API)'

@@ -7,7 +7,7 @@ from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Map
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class RefType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     RFT_GENERAL: _ClassVar[RefType]
     RFT_USER: _ClassVar[RefType]
     RFT_DEVICE: _ClassVar[RefType]
@@ -29,7 +29,7 @@ class RefType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     RFT_ROLE: _ClassVar[RefType]
 
 class GraphSyncDataType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     GSE_DATA: _ClassVar[GraphSyncDataType]
     GSE_KEY: _ClassVar[GraphSyncDataType]
     GSE_LINK: _ClassVar[GraphSyncDataType]
@@ -37,7 +37,7 @@ class GraphSyncDataType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     GSE_DELETION: _ClassVar[GraphSyncDataType]
 
 class GraphSyncActorType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     GSA_USER: _ClassVar[GraphSyncActorType]
     GSA_SERVICE: _ClassVar[GraphSyncActorType]
     GSA_PAM_GATEWAY: _ClassVar[GraphSyncActorType]
@@ -70,7 +70,7 @@ GSA_SERVICE: GraphSyncActorType
 GSA_PAM_GATEWAY: GraphSyncActorType
 
 class GraphSyncRef(_message.Message):
-    __slots__ = ["type", "value", "name"]
+    __slots__ = ("type", "value", "name")
     TYPE_FIELD_NUMBER: _ClassVar[int]
     VALUE_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
@@ -80,7 +80,7 @@ class GraphSyncRef(_message.Message):
     def __init__(self, type: _Optional[_Union[RefType, str]] = ..., value: _Optional[bytes] = ..., name: _Optional[str] = ...) -> None: ...
 
 class GraphSyncActor(_message.Message):
-    __slots__ = ["type", "id", "name", "effectiveUserId"]
+    __slots__ = ("type", "id", "name", "effectiveUserId")
     TYPE_FIELD_NUMBER: _ClassVar[int]
     ID_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
@@ -92,7 +92,7 @@ class GraphSyncActor(_message.Message):
     def __init__(self, type: _Optional[_Union[GraphSyncActorType, str]] = ..., id: _Optional[bytes] = ..., name: _Optional[str] = ..., effectiveUserId: _Optional[bytes] = ...) -> None: ...
 
 class GraphSyncData(_message.Message):
-    __slots__ = ["type", "ref", "parentRef", "content", "path"]
+    __slots__ = ("type", "ref", "parentRef", "content", "path")
     TYPE_FIELD_NUMBER: _ClassVar[int]
     REF_FIELD_NUMBER: _ClassVar[int]
     PARENTREF_FIELD_NUMBER: _ClassVar[int]
@@ -106,7 +106,7 @@ class GraphSyncData(_message.Message):
     def __init__(self, type: _Optional[_Union[GraphSyncDataType, str]] = ..., ref: _Optional[_Union[GraphSyncRef, _Mapping]] = ..., parentRef: _Optional[_Union[GraphSyncRef, _Mapping]] = ..., content: _Optional[bytes] = ..., path: _Optional[str] = ...) -> None: ...
 
 class GraphSyncDataPlus(_message.Message):
-    __slots__ = ["data", "timestamp", "actor"]
+    __slots__ = ("data", "timestamp", "actor")
     DATA_FIELD_NUMBER: _ClassVar[int]
     TIMESTAMP_FIELD_NUMBER: _ClassVar[int]
     ACTOR_FIELD_NUMBER: _ClassVar[int]
@@ -116,7 +116,7 @@ class GraphSyncDataPlus(_message.Message):
     def __init__(self, data: _Optional[_Union[GraphSyncData, _Mapping]] = ..., timestamp: _Optional[int] = ..., actor: _Optional[_Union[GraphSyncActor, _Mapping]] = ...) -> None: ...
 
 class GraphSyncQuery(_message.Message):
-    __slots__ = ["streamId", "origin", "syncPoint", "maxCount"]
+    __slots__ = ("streamId", "origin", "syncPoint", "maxCount")
     STREAMID_FIELD_NUMBER: _ClassVar[int]
     ORIGIN_FIELD_NUMBER: _ClassVar[int]
     SYNCPOINT_FIELD_NUMBER: _ClassVar[int]
@@ -128,7 +128,7 @@ class GraphSyncQuery(_message.Message):
     def __init__(self, streamId: _Optional[bytes] = ..., origin: _Optional[bytes] = ..., syncPoint: _Optional[int] = ..., maxCount: _Optional[int] = ...) -> None: ...
 
 class GraphSyncResult(_message.Message):
-    __slots__ = ["streamId", "syncPoint", "data", "hasMore"]
+    __slots__ = ("streamId", "syncPoint", "data", "hasMore")
     STREAMID_FIELD_NUMBER: _ClassVar[int]
     SYNCPOINT_FIELD_NUMBER: _ClassVar[int]
     DATA_FIELD_NUMBER: _ClassVar[int]
@@ -140,19 +140,19 @@ class GraphSyncResult(_message.Message):
     def __init__(self, streamId: _Optional[bytes] = ..., syncPoint: _Optional[int] = ..., data: _Optional[_Iterable[_Union[GraphSyncDataPlus, _Mapping]]] = ..., hasMore: bool = ...) -> None: ...
 
 class GraphSyncMultiQuery(_message.Message):
-    __slots__ = ["queries"]
+    __slots__ = ("queries",)
     QUERIES_FIELD_NUMBER: _ClassVar[int]
     queries: _containers.RepeatedCompositeFieldContainer[GraphSyncQuery]
     def __init__(self, queries: _Optional[_Iterable[_Union[GraphSyncQuery, _Mapping]]] = ...) -> None: ...
 
 class GraphSyncMultiResult(_message.Message):
-    __slots__ = ["results"]
+    __slots__ = ("results",)
     RESULTS_FIELD_NUMBER: _ClassVar[int]
     results: _containers.RepeatedCompositeFieldContainer[GraphSyncResult]
     def __init__(self, results: _Optional[_Iterable[_Union[GraphSyncResult, _Mapping]]] = ...) -> None: ...
 
 class GraphSyncAddDataRequest(_message.Message):
-    __slots__ = ["origin", "data"]
+    __slots__ = ("origin", "data")
     ORIGIN_FIELD_NUMBER: _ClassVar[int]
     DATA_FIELD_NUMBER: _ClassVar[int]
     origin: GraphSyncRef
@@ -160,13 +160,13 @@ class GraphSyncAddDataRequest(_message.Message):
     def __init__(self, origin: _Optional[_Union[GraphSyncRef, _Mapping]] = ..., data: _Optional[_Iterable[_Union[GraphSyncData, _Mapping]]] = ...) -> None: ...
 
 class GraphSyncLeafsQuery(_message.Message):
-    __slots__ = ["vertices"]
+    __slots__ = ("vertices",)
     VERTICES_FIELD_NUMBER: _ClassVar[int]
     vertices: _containers.RepeatedScalarFieldContainer[bytes]
     def __init__(self, vertices: _Optional[_Iterable[bytes]] = ...) -> None: ...
 
 class GraphSyncRefsResult(_message.Message):
-    __slots__ = ["refs"]
+    __slots__ = ("refs",)
     REFS_FIELD_NUMBER: _ClassVar[int]
     refs: _containers.RepeatedCompositeFieldContainer[GraphSyncRef]
     def __init__(self, refs: _Optional[_Iterable[_Union[GraphSyncRef, _Mapping]]] = ...) -> None: ...
