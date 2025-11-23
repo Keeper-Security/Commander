@@ -291,12 +291,9 @@ def create_record_v3(
             'value': field_value
         })
     
-    # Add notes if provided
-    if notes:
-        data['fields'].append({
-            'type': 'note',
-            'value': [notes] if not isinstance(notes, list) else notes
-        })
+    # Add notes as top-level property (matches update_record_v3 behavior)
+    if notes is not None:
+        data['notes'] = notes
     
     # Add custom fields if provided
     if custom_fields:
@@ -575,13 +572,10 @@ def create_records_batch_v3(
                 'value': field_value
             })
         
-        # Add notes if provided
+        # Add notes as top-level property
         notes = spec.get('notes')
-        if notes:
-            data['fields'].append({
-                'type': 'note',
-                'value': [notes] if not isinstance(notes, list) else notes
-            })
+        if notes is not None:
+            data['notes'] = notes
         
         # Add custom fields if provided
         custom_fields = spec.get('custom_fields')
@@ -1102,14 +1096,11 @@ def share_record_v3(
         
         logger.debug(f"Setting access role type: {access_role_type}")
         
-        
         # Set expiration if provided
         if expiration_timestamp:
-            # Access tlaProperties properly (it may need to be initialized)
-            if hasattr(permissions, 'tlaProperties'):
-                permissions.tlaProperties.expiration = expiration_timestamp
-            else:
-                logger.warning("tlaProperties not available in protobuf message")
+            # Set tlaProperties on the rules field (not on permissions directly)
+            permissions.rules.tlaProperties.expiration = expiration_timestamp
+            logger.debug(f"Setting record access expiration to {expiration_timestamp}ms")
         
         # Build request
         request = record_sharing_pb2.Request()
@@ -1222,11 +1213,9 @@ def update_record_share_v3(
         
         # Set expiration if provided
         if expiration_timestamp:
-            # Access tlaProperties properly (it may need to be initialized)
-            if hasattr(permissions, 'tlaProperties'):
-                permissions.tlaProperties.expiration = expiration_timestamp
-            else:
-                logger.warning("tlaProperties not available in protobuf message")
+            # Set tlaProperties on the rules field (not on permissions directly)
+            permissions.rules.tlaProperties.expiration = expiration_timestamp
+            logger.debug(f"Setting record access expiration to {expiration_timestamp}ms")
         
         # Build request
         request = record_sharing_pb2.Request()

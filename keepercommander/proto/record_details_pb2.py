@@ -14,9 +14,10 @@ _sym_db = _symbol_database.Default()
 from google.api import annotations_pb2 as google_dot_api_dot_annotations__pb2
 from . import folder_pb2 as folder__pb2
 from . import record_pb2 as record__pb2
+from . import pagination_pb2 as pagination__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x14record_details.proto\x12\x11record.v3.details\x1a\x1cgoogle/api/annotations.proto\x1a\x0c\x66older.proto\x1a\x0crecord.proto\";\n\x11RecordDataRequest\x12\x12\n\nclientTime\x18\x01 \x01(\x03\x12\x12\n\nrecordUids\x18\x03 \x03(\x0c\"Q\n\x12RecordDataResponse\x12!\n\x04\x64\x61ta\x18\x01 \x03(\x0b\x32\x13.Records.RecordData\x12\x18\n\x10\x66orbiddenRecords\x18\x02 \x03(\x0c\")\n\x13RecordAccessRequest\x12\x12\n\nrecordUids\x18\x03 \x03(\x0c\"i\n\x14RecordAccessResponse\x12\x37\n\x0erecordAccesses\x18\x01 \x03(\x0b\x32\x1f.record.v3.details.RecordAccess\x12\x18\n\x10\x66orbiddenRecords\x18\x02 \x03(\x0c\"m\n\x0cRecordAccess\x12&\n\x04\x64\x61ta\x18\x01 \x01(\x0b\x32\x18.Folder.RecordAccessData\x12\x35\n\x0c\x61\x63\x63\x65ssorInfo\x18\x02 \x01(\x0b\x32\x1f.record.v3.details.AccessorInfo\"\x1c\n\x0c\x41\x63\x63\x65ssorInfo\x12\x0c\n\x04name\x18\x01 \x01(\t2\xc7\x02\n\x14RecordDetailsService\x12\x90\x01\n\rGetRecordData\x12$.record.v3.details.RecordDataRequest\x1a%.record.v3.details.RecordDataResponse\"2\x82\xd3\xe4\x93\x02,\"\'/api/rest/vault/records/v3/details/data:\x01*\x12\x9b\x01\n\x12GetRecordAccessors\x12&.record.v3.details.RecordAccessRequest\x1a\'.record.v3.details.RecordAccessResponse\"4\x82\xd3\xe4\x93\x02.\")/api/rest/vault/records/v3/details/access:\x01*B2\n.com.keepersecurity.proto.api.record.v3.detailsP\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x14record_details.proto\x12\x11record.v3.details\x1a\x1cgoogle/api/annotations.proto\x1a\x0c\x66older.proto\x1a\x0crecord.proto\x1a\x10pagination.proto\";\n\x11RecordDataRequest\x12\x12\n\nclientTime\x18\x01 \x01(\x03\x12\x12\n\nrecordUids\x18\x03 \x03(\x0c\"Q\n\x12RecordDataResponse\x12!\n\x04\x64\x61ta\x18\x01 \x03(\x0b\x32\x13.Records.RecordData\x12\x18\n\x10\x66orbiddenRecords\x18\x02 \x03(\x0c\"P\n\x13RecordAccessRequest\x12\x12\n\nrecordUids\x18\x03 \x03(\x0c\x12%\n\x04page\x18\x02 \x01(\x0b\x32\x17.keeper.api.common.Page\"\x98\x01\n\x14RecordAccessResponse\x12\x37\n\x0erecordAccesses\x18\x01 \x03(\x0b\x32\x1f.record.v3.details.RecordAccess\x12\x18\n\x10\x66orbiddenRecords\x18\x02 \x03(\x0c\x12-\n\x08pageInfo\x18\x03 \x01(\x0b\x32\x1b.keeper.api.common.PageInfo\"m\n\x1cRecordAccessorDetailsRequest\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x13\n\x0b\x61\x63\x63\x65ssorUid\x18\x02 \x01(\x0c\x12%\n\x04page\x18\x03 \x01(\x0b\x32\x17.keeper.api.common.Page\"\xb6\x01\n\x1dRecordAccessorDetailsResponse\x12\x32\n\x10recordAccessData\x18\x01 \x01(\x0b\x32\x18.Folder.RecordAccessData\x12\x32\n\x10\x66olderAccessData\x18\x02 \x03(\x0b\x32\x18.Folder.FolderAccessData\x12-\n\x08pageInfo\x18\x03 \x01(\x0b\x32\x1b.keeper.api.common.PageInfo\"m\n\x0cRecordAccess\x12&\n\x04\x64\x61ta\x18\x01 \x01(\x0b\x32\x18.Folder.RecordAccessData\x12\x35\n\x0c\x61\x63\x63\x65ssorInfo\x18\x02 \x01(\x0b\x32\x1f.record.v3.details.AccessorInfo\"\x1c\n\x0c\x41\x63\x63\x65ssorInfo\x12\x0c\n\x04name\x18\x01 \x01(\t2\x87\x04\n\x14RecordDetailsService\x12\x90\x01\n\rGetRecordData\x12$.record.v3.details.RecordDataRequest\x1a%.record.v3.details.RecordDataResponse\"2\x82\xd3\xe4\x93\x02,\"\'/api/rest/vault/records/v3/details/data:\x01*\x12\x9b\x01\n\x12GetRecordAccessors\x12&.record.v3.details.RecordAccessRequest\x1a\'.record.v3.details.RecordAccessResponse\"4\x82\xd3\xe4\x93\x02.\")/api/rest/vault/records/v3/details/access:\x01*\x12\xbd\x01\n\x18GetRecordAccessorDetails\x12/.record.v3.details.RecordAccessorDetailsRequest\x1a\x30.record.v3.details.RecordAccessorDetailsResponse\">\x82\xd3\xe4\x93\x02\x38\"3/api/rest/vault/records/v3/details/access/accessors:\x01*B2\n.com.keepersecurity.proto.api.record.v3.detailsP\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -28,18 +29,24 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_RECORDDETAILSSERVICE'].methods_by_name['GetRecordData']._serialized_options = b'\202\323\344\223\002,\"\'/api/rest/vault/records/v3/details/data:\001*'
   _globals['_RECORDDETAILSSERVICE'].methods_by_name['GetRecordAccessors']._loaded_options = None
   _globals['_RECORDDETAILSSERVICE'].methods_by_name['GetRecordAccessors']._serialized_options = b'\202\323\344\223\002.\")/api/rest/vault/records/v3/details/access:\001*'
-  _globals['_RECORDDATAREQUEST']._serialized_start=101
-  _globals['_RECORDDATAREQUEST']._serialized_end=160
-  _globals['_RECORDDATARESPONSE']._serialized_start=162
-  _globals['_RECORDDATARESPONSE']._serialized_end=243
-  _globals['_RECORDACCESSREQUEST']._serialized_start=245
-  _globals['_RECORDACCESSREQUEST']._serialized_end=286
-  _globals['_RECORDACCESSRESPONSE']._serialized_start=288
-  _globals['_RECORDACCESSRESPONSE']._serialized_end=393
-  _globals['_RECORDACCESS']._serialized_start=395
-  _globals['_RECORDACCESS']._serialized_end=504
-  _globals['_ACCESSORINFO']._serialized_start=506
-  _globals['_ACCESSORINFO']._serialized_end=534
-  _globals['_RECORDDETAILSSERVICE']._serialized_start=537
-  _globals['_RECORDDETAILSSERVICE']._serialized_end=864
+  _globals['_RECORDDETAILSSERVICE'].methods_by_name['GetRecordAccessorDetails']._loaded_options = None
+  _globals['_RECORDDETAILSSERVICE'].methods_by_name['GetRecordAccessorDetails']._serialized_options = b'\202\323\344\223\0028\"3/api/rest/vault/records/v3/details/access/accessors:\001*'
+  _globals['_RECORDDATAREQUEST']._serialized_start=119
+  _globals['_RECORDDATAREQUEST']._serialized_end=178
+  _globals['_RECORDDATARESPONSE']._serialized_start=180
+  _globals['_RECORDDATARESPONSE']._serialized_end=261
+  _globals['_RECORDACCESSREQUEST']._serialized_start=263
+  _globals['_RECORDACCESSREQUEST']._serialized_end=343
+  _globals['_RECORDACCESSRESPONSE']._serialized_start=346
+  _globals['_RECORDACCESSRESPONSE']._serialized_end=498
+  _globals['_RECORDACCESSORDETAILSREQUEST']._serialized_start=500
+  _globals['_RECORDACCESSORDETAILSREQUEST']._serialized_end=609
+  _globals['_RECORDACCESSORDETAILSRESPONSE']._serialized_start=612
+  _globals['_RECORDACCESSORDETAILSRESPONSE']._serialized_end=794
+  _globals['_RECORDACCESS']._serialized_start=796
+  _globals['_RECORDACCESS']._serialized_end=905
+  _globals['_ACCESSORINFO']._serialized_start=907
+  _globals['_ACCESSORINFO']._serialized_end=935
+  _globals['_RECORDDETAILSSERVICE']._serialized_start=938
+  _globals['_RECORDDETAILSSERVICE']._serialized_end=1457
 # @@protoc_insertion_point(module_scope)

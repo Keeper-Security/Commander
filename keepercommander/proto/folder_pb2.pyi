@@ -38,6 +38,7 @@ class FolderUsageType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     UT_UNKNOWN: _ClassVar[FolderUsageType]
     UT_NORMAL: _ClassVar[FolderUsageType]
     UT_WORKFLOW: _ClassVar[FolderUsageType]
+    UT_TRASHCAN: _ClassVar[FolderUsageType]
 
 class FolderKeyEncryptionType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -80,6 +81,8 @@ class AccessRoleType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     CONTRIBUTOR: _ClassVar[AccessRoleType]
     CONTENT_MANAGER: _ClassVar[AccessRoleType]
     MANAGER: _ClassVar[AccessRoleType]
+    CUSTOM: _ClassVar[AccessRoleType]
+    UNRESOLVED: _ClassVar[AccessRoleType]
 
 class AccessType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -112,6 +115,7 @@ BOOLEAN_FALSE: SetBooleanValue
 UT_UNKNOWN: FolderUsageType
 UT_NORMAL: FolderUsageType
 UT_WORKFLOW: FolderUsageType
+UT_TRASHCAN: FolderUsageType
 ENCRYPTED_BY_USER_KEY: FolderKeyEncryptionType
 ENCRYPTED_BY_PARENT_KEY: FolderKeyEncryptionType
 SUCCESS: FolderModifyStatus
@@ -142,6 +146,8 @@ SHARED_MANAGER: AccessRoleType
 CONTRIBUTOR: AccessRoleType
 CONTENT_MANAGER: AccessRoleType
 MANAGER: AccessRoleType
+CUSTOM: AccessRoleType
+UNRESOLVED: AccessRoleType
 AT_UNKNOWN: AccessType
 AT_OWNER: AccessType
 AT_USER: AccessType
