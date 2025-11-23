@@ -79,3 +79,23 @@ class SyncData(_message.Message):
     syncPoint: int
     hasMore: bool
     def __init__(self, data: _Optional[_Iterable[_Union[Data, _Mapping]]] = ..., syncPoint: _Optional[int] = ..., hasMore: bool = ...) -> None: ...
+
+class DebugData(_message.Message):
+    __slots__ = ("dataType", "path", "ref", "parentRef")
+    DATATYPE_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    REF_FIELD_NUMBER: _ClassVar[int]
+    PARENTREF_FIELD_NUMBER: _ClassVar[int]
+    dataType: str
+    path: str
+    ref: DebugRefInfo
+    parentRef: DebugRefInfo
+    def __init__(self, dataType: _Optional[str] = ..., path: _Optional[str] = ..., ref: _Optional[_Union[DebugRefInfo, _Mapping]] = ..., parentRef: _Optional[_Union[DebugRefInfo, _Mapping]] = ...) -> None: ...
+
+class DebugRefInfo(_message.Message):
+    __slots__ = ("refType", "value")
+    REFTYPE_FIELD_NUMBER: _ClassVar[int]
+    VALUE_FIELD_NUMBER: _ClassVar[int]
+    refType: str
+    value: bytes
+    def __init__(self, refType: _Optional[str] = ..., value: _Optional[bytes] = ...) -> None: ...

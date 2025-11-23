@@ -491,55 +491,30 @@ def grant_folder_access_v3(
         raise ValueError(f"Folder '{folder_uid}' not found")
     folder_uid = resolved_folder_uid
     
-    # Determine if user_uid is an email or UID
-    # If it contains '@', treat it as email, otherwise as UID
+    # Resolve user to UID and public key (reuse record-sharing helper)
     is_email = '@' in user_uid
     user_email = user_uid if is_email else None
     actual_user_uid_bytes = None
+    user_public_key = None
+    use_ecc = False
     
     if is_email:
-        # Use the same logic as record sharing to get the correct account UID
-        # Try to get UID from user_cache first (accountUid -> username mapping)
-        if hasattr(params, 'user_cache'):
-            for account_uid_str, username in params.user_cache.items():
-                if username.lower() == user_email.lower():
-                    # Found it! account_uid_str is already base64url encoded string
-                    actual_user_uid_bytes = utils.base64_url_decode(account_uid_str)
-                    logging.debug(f"Found UID for {user_email} in user_cache: {account_uid_str}")
-                    break
-        
-        # Fallback: try enterprise users for the userAccountUid
-        if not actual_user_uid_bytes and hasattr(params, 'enterprise') and params.enterprise:
-            for user in params.enterprise.get('users', []):
-                if user.get('username', '').lower() == user_email.lower():
-                    # Try to get userAccountUid first (base64 encoded bytes)
-                    if 'user_account_uid' in user:
-                        actual_user_uid_bytes = utils.base64_url_decode(user['user_account_uid'])
-                        logging.debug(f"Found userAccountUid for {user_email} in enterprise: {user['user_account_uid']}")
-                    # Fallback to enterprise_user_id (integer) - convert to 8 bytes like record sharing
-                    elif 'enterprise_user_id' in user:
-                        enterprise_user_id = user['enterprise_user_id']
-                        if isinstance(enterprise_user_id, int):
-                            actual_user_uid_bytes = enterprise_user_id.to_bytes(8, byteorder='big', signed=False)
-                            logging.debug(f"Converted enterprise_user_id {enterprise_user_id} to 8 bytes for {user_email}")
-                    break
-        
-        if not actual_user_uid_bytes:
-            raise ValueError(f"User with email '{user_email}' not found in enterprise. Try running 'sync-down' or load enterprise data first.")
+        try:
+            from keepercommander import keeper_drive_records
+            user_public_key, use_ecc, actual_user_uid_bytes = keeper_drive_records._get_user_public_key(params, user_email)
+        except Exception as e:
+            raise ValueError(f"User with email '{user_email}' not found or has no public key. {e}")
     else:
-        # user_uid is already a UID (try to decode as base64)
         try:
             actual_user_uid_bytes = utils.base64_url_decode(user_uid)
-            user_email = user_uid  # Use UID as fallback for email
-            
-            # Try to find the actual email from the UID
+            user_email = user_uid  # fallback
             if hasattr(params, 'user_cache'):
                 for account_uid_str, username in params.user_cache.items():
                     if utils.base64_url_decode(account_uid_str) == actual_user_uid_bytes:
                         user_email = username
                         logging.debug(f"Found email {user_email} for UID {user_uid}")
                         break
-        except:
+        except Exception:
             raise ValueError(f"Invalid user UID format: {user_uid}")
     
     # Map role names to AccessRoleType enum
@@ -588,34 +563,30 @@ def grant_folder_access_v3(
         if not folder_key:
             raise ValueError(f"Folder key not found for folder {folder_uid}. Try running 'sync-down' first.")
         
-        # Get user's public key from key_cache using email
-        user_keys = None
-        if user_email in params.key_cache:
-            user_keys = params.key_cache[user_email]
-        
-        if not user_keys:
-            # Try to load user's public key from server
-            from keepercommander import api
-            logging.debug(f"Loading public key for user {user_email}")
-            api.load_user_public_keys(params, [user_email])
+        # Get user's public key from cache/server if we don't have it yet
+        if not user_public_key:
+            user_keys = None
             if user_email in params.key_cache:
                 user_keys = params.key_cache[user_email]
-        
-        if not user_keys:
-            raise ValueError(f"Public key not found for user {user_email}. User may not exist or key not available.")
-        
-        # Extract the actual public key from PublicKeys object
-        # For folder access, prefer RSA over ECC (API requires RSA for new user grants)
-        user_public_key = None
-        use_ecc = False
-        if user_keys.rsa:
-            user_public_key = crypto.load_rsa_public_key(user_keys.rsa)
-            use_ecc = False
-        elif user_keys.ec:
-            user_public_key = crypto.load_ec_public_key(user_keys.ec)
-            use_ecc = True
-        else:
-            raise ValueError(f"No valid public key (RSA or ECC) found for user {user_email}")
+            
+            if not user_keys:
+                logging.debug(f"Loading public key for user {user_email}")
+                api.load_user_public_keys(params, [user_email])
+                if user_email in params.key_cache:
+                    user_keys = params.key_cache[user_email]
+            
+            if not user_keys:
+                raise ValueError(f"Public key not found for user {user_email}. User may not exist or key not available.")
+            
+            # Extract the actual public key from PublicKeys object
+            if user_keys.rsa:
+                user_public_key = crypto.load_rsa_public_key(user_keys.rsa)
+                use_ecc = False
+            elif user_keys.ec:
+                user_public_key = crypto.load_ec_public_key(user_keys.ec)
+                use_ecc = True
+            else:
+                raise ValueError(f"No valid public key (RSA or ECC) found for user {user_email}")
         
         # Encrypt folder key with user's public key
         if use_ecc:
@@ -721,41 +692,21 @@ def update_folder_access_v3(
         raise ValueError(f"Folder '{folder_uid}' not found")
     folder_uid = resolved_folder_uid
     
-    # Determine if user_uid is an email or UID
+    # Resolve user to UID (prefer record-sharing helper)
     is_email = '@' in user_uid
     user_email = user_uid if is_email else None
     actual_user_uid_bytes = None
     
     if is_email:
-        # Look up actual account UID from email
-        if hasattr(params, 'user_cache'):
-            for account_uid_str, username in params.user_cache.items():
-                if username.lower() == user_email.lower():
-                    actual_user_uid_bytes = utils.base64_url_decode(account_uid_str)
-                    logging.debug(f"Found UID for {user_email} in user_cache: {account_uid_str}")
-                    break
-        
-        # Fallback: try enterprise users
-        if not actual_user_uid_bytes and hasattr(params, 'enterprise') and params.enterprise:
-            for user in params.enterprise.get('users', []):
-                if user.get('username', '').lower() == user_email.lower():
-                    if 'user_account_uid' in user:
-                        actual_user_uid_bytes = utils.base64_url_decode(user['user_account_uid'])
-                        logging.debug(f"Found userAccountUid for {user_email} in enterprise")
-                    elif 'enterprise_user_id' in user:
-                        enterprise_user_id = user['enterprise_user_id']
-                        if isinstance(enterprise_user_id, int):
-                            actual_user_uid_bytes = enterprise_user_id.to_bytes(8, byteorder='big', signed=False)
-                            logging.debug(f"Converted enterprise_user_id {enterprise_user_id} to bytes")
-                    break
-        
-        if not actual_user_uid_bytes:
-            raise ValueError(f"User with email '{user_email}' not found. Try running 'sync-down' or load enterprise data first.")
+        try:
+            from keepercommander import keeper_drive_records
+            _pub_key, _use_ecc, actual_user_uid_bytes = keeper_drive_records._get_user_public_key(params, user_email)
+        except Exception as e:
+            raise ValueError(f"User with email '{user_email}' not found. {e}")
     else:
-        # user_uid is already a UID (decode as base64)
         try:
             actual_user_uid_bytes = utils.base64_url_decode(user_uid)
-        except:
+        except Exception:
             raise ValueError(f"Invalid user UID format: {user_uid}")
     
     # Create FolderAccessData
@@ -787,12 +738,15 @@ def update_folder_access_v3(
     # Parse response
     if response.folderAccessResults:
         result = response.folderAccessResults[0]
+        status_value = result.status
+        is_failure = (status_value != 0) or (result.message and len(result.message) > 0)
+        status_name = folder_pb2.FolderModifyStatus.Name(status_value) if status_value != 0 else 'SUCCESS'
         return {
             'folder_uid': folder_uid,
             'user_uid': user_uid,
-            'status': folder_pb2.FolderModifyStatus.Name(result.status),
-            'message': result.message,
-            'success': False
+            'status': status_name,
+            'message': result.message if result.message else 'Access updated successfully',
+            'success': not is_failure
         }
     else:
         return {
@@ -830,40 +784,20 @@ def revoke_folder_access_v3(
         raise ValueError(f"Folder '{folder_uid}' not found")
     folder_uid = resolved_folder_uid
     
-    # Determine if user_uid is an email or UID
+    # Resolve user to UID (prefer record-sharing helper)
     is_email = '@' in user_uid
     actual_user_uid_bytes = None
     
     if is_email:
-        # Look up actual account UID from email
-        if hasattr(params, 'user_cache'):
-            for account_uid_str, username in params.user_cache.items():
-                if username.lower() == user_uid.lower():
-                    actual_user_uid_bytes = utils.base64_url_decode(account_uid_str)
-                    logging.debug(f"Found UID for {user_uid} in user_cache: {account_uid_str}")
-                    break
-        
-        # Fallback: try enterprise users
-        if not actual_user_uid_bytes and hasattr(params, 'enterprise') and params.enterprise:
-            for user in params.enterprise.get('users', []):
-                if user.get('username', '').lower() == user_uid.lower():
-                    if 'user_account_uid' in user:
-                        actual_user_uid_bytes = utils.base64_url_decode(user['user_account_uid'])
-                        logging.debug(f"Found userAccountUid for {user_uid} in enterprise")
-                    elif 'enterprise_user_id' in user:
-                        enterprise_user_id = user['enterprise_user_id']
-                        if isinstance(enterprise_user_id, int):
-                            actual_user_uid_bytes = enterprise_user_id.to_bytes(8, byteorder='big', signed=False)
-                            logging.debug(f"Converted enterprise_user_id to bytes")
-                    break
-        
-        if not actual_user_uid_bytes:
-            raise ValueError(f"User with email '{user_uid}' not found. Try running 'sync-down' or load enterprise data first.")
+        try:
+            from keepercommander import keeper_drive_records
+            _pub_key, _use_ecc, actual_user_uid_bytes = keeper_drive_records._get_user_public_key(params, user_uid)
+        except Exception as e:
+            raise ValueError(f"User with email '{user_uid}' not found. {e}")
     else:
-        # user_uid is already a UID (decode as base64)
         try:
             actual_user_uid_bytes = utils.base64_url_decode(user_uid)
-        except:
+        except Exception:
             raise ValueError(f"Invalid user UID format: {user_uid}")
     
     # Create FolderAccessData (only UIDs needed for removal)
@@ -878,12 +812,15 @@ def revoke_folder_access_v3(
     # Parse response
     if response.folderAccessResults:
         result = response.folderAccessResults[0]
+        status_value = result.status
+        is_failure = (status_value != 0) or (result.message and len(result.message) > 0)
+        status_name = folder_pb2.FolderModifyStatus.Name(status_value) if status_value != 0 else 'SUCCESS'
         return {
             'folder_uid': folder_uid,
             'user_uid': user_uid,
-            'status': folder_pb2.FolderModifyStatus.Name(result.status),
-            'message': result.message,
-            'success': False
+            'status': status_name,
+            'message': result.message if result.message else 'Access revoked successfully',
+            'success': not is_failure
         }
     else:
         return {
@@ -1596,3 +1533,175 @@ def update_folders_batch_v3(
     
     return results
 
+
+def get_folder_access_v3(
+    params: KeeperParams,
+    folder_uids: List[str],
+    continuation_token: Optional[int] = None,
+    page_size: Optional[int] = None
+) -> Dict[str, Any]:
+    """
+    Retrieve accessors of Keeper Drive folders with pagination support.
+    
+    This function retrieves users and teams that have access to the specified folders
+    using the v3 API endpoint with cursor-based pagination.
+    
+    Args:
+        params: KeeperParams instance with session information
+        folder_uids: List of folder UIDs to query (max: 100)
+        continuation_token: Last modified timestamp for pagination (optional)
+        page_size: Maximum number of accessors to return per page (default: 100, max: 1000)
+    
+    Returns:
+        Dictionary containing:
+            - results: List of folder access results (each containing folder_uid, accessors, or error)
+            - continuation_token: Token for next page (if hasMore is true)
+            - has_more: Boolean indicating if more results exist
+    
+    Raises:
+        ValueError: If more than 100 folder UIDs are provided
+        KeeperApiError: If the API request fails
+    
+    Example:
+        result = get_folder_access_v3(
+            params,
+            folder_uids=['xxx', 'yyy'],
+            page_size=50
+        )
+        
+        # Access first folder's accessors
+        for accessor in result['results'][0]['accessors']:
+            print(f"User: {accessor['user_uid']}, Role: {accessor['role']}")
+        
+        # Pagination
+        if result['has_more']:
+            next_page = get_folder_access_v3(
+                params,
+                folder_uids=['xxx', 'yyy'],
+                continuation_token=result['continuation_token'],
+                page_size=50
+            )
+    """
+    if len(folder_uids) > 100:
+        raise ValueError("Maximum 100 folder UIDs can be queried at a time")
+    
+    if not folder_uids:
+        raise ValueError("At least one folder UID must be provided")
+    
+    # Import the protobuf module for folder access
+    from .proto import folder_access_pb2
+    
+    # Create the request
+    request = folder_access_pb2.GetFolderAccessRequest()
+    
+    # Add folder UIDs
+    for folder_identifier in folder_uids:
+        # Resolve folder identifier to UID
+        folder_uid = resolve_folder_identifier(params, folder_identifier)
+        if not folder_uid:
+            raise ValueError(f"Folder '{folder_identifier}' not found")
+        request.folderUid.append(utils.base64_url_decode(folder_uid))
+    
+    # Add continuation token if provided
+    if continuation_token is not None:
+        token = folder_access_pb2.ContinuationToken()
+        token.lastModified = continuation_token
+        request.continuationToken.CopyFrom(token)
+    
+    # Add page size if provided
+    if page_size is not None:
+        if page_size > 1000:
+            raise ValueError("Maximum page size is 1000")
+        request.pageSize = page_size
+    
+    # Log request
+    if logger.level <= logging.DEBUG:
+        logger.debug(f"Retrieving folder access for {len(folder_uids)} folder(s)")
+        for uid in folder_uids:
+            logger.debug(f"  Folder UID: {uid}")
+    
+    # Make API call
+    endpoint = 'vault/folders/v3/access'
+    response = api.communicate_rest(
+        params,
+        request,
+        endpoint,
+        rs_type=folder_access_pb2.GetFolderAccessResponse
+    )
+    
+    # Parse response
+    results = []
+    
+    for folder_result in response.folderAccessResults:
+        folder_uid = utils.base64_url_encode(folder_result.folderUid)
+        
+        if folder_result.HasField('error'):
+            # Error case
+            error = folder_result.error
+            status_name = folder_pb2.FolderModifyStatus.Name(error.status)
+            results.append({
+                'folder_uid': folder_uid,
+                'error': {
+                    'status': status_name,
+                    'message': error.message
+                },
+                'success': False
+            })
+        else:
+            # Success case - parse accessors
+            accessors = []
+            for accessor in folder_result.accessors:
+                accessor_uid = utils.base64_url_encode(accessor.accessTypeUid)
+                access_type = folder_pb2.AccessType.Name(accessor.accessType)
+                role_type = folder_pb2.AccessRoleType.Name(accessor.accessRoleType)
+                
+                accessor_info = {
+                    'accessor_uid': accessor_uid,
+                    'access_type': access_type,
+                    'role': role_type,
+                    'inherited': accessor.inherited if accessor.HasField('inherited') else False,
+                    'hidden': accessor.hidden if accessor.HasField('hidden') else False,
+                    'date_created': accessor.dateCreated if accessor.HasField('dateCreated') else None,
+                    'last_modified': accessor.lastModified if accessor.HasField('lastModified') else None
+                }
+                
+                # Add permissions if available
+                if accessor.HasField('permissions'):
+                    perms = accessor.permissions
+                    accessor_info['permissions'] = {
+                        'can_add_users': perms.canAddUsers if perms.HasField('canAddUsers') else False,
+                        'can_remove_users': perms.canRemoveUsers if perms.HasField('canRemoveUsers') else False,
+                        'can_add_records': perms.canAddRecords if perms.HasField('canAddRecords') else False,
+                        'can_remove_records': perms.canRemoveRecords if perms.HasField('canRemoveRecords') else False,
+                        'can_delete_records': perms.canDeleteRecords if perms.HasField('canDeleteRecords') else False,
+                        'can_create_folders': perms.canCreateFolders if perms.HasField('canCreateFolders') else False,
+                        'can_delete_folders': perms.canDeleteFolders if perms.HasField('canDeleteFolders') else False,
+                        'can_change_user_permissions': perms.canChangeUserPermissions if perms.HasField('canChangeUserPermissions') else False,
+                        'can_edit_records': perms.canEditRecords if perms.HasField('canEditRecords') else False,
+                        'can_view_records': perms.canViewRecords if perms.HasField('canViewRecords') else False,
+                    }
+                
+                accessors.append(accessor_info)
+            
+            results.append({
+                'folder_uid': folder_uid,
+                'accessors': accessors,
+                'success': True
+            })
+    
+    # Build response dictionary
+    response_dict = {
+        'results': results,
+        'has_more': response.hasMore if response.HasField('hasMore') else False
+    }
+    
+    # Add continuation token if available
+    if response.HasField('continuationToken'):
+        response_dict['continuation_token'] = response.continuationToken.lastModified
+    
+    # Log response
+    if logger.level <= logging.DEBUG:
+        logger.debug(f"Retrieved access info for {len(results)} folder(s)")
+        logger.debug(f"  Has more: {response_dict['has_more']}")
+    
+    return response_dict
