@@ -16,6 +16,7 @@ from typing import Any, List, Dict, Optional
 import google
 
 from . import api, utils, crypto, convert_keys
+from . import keeper_drive_sync
 from .display import bcolors, Spinner
 from .params import KeeperParams, RecordOwner
 from .proto import SyncDown_pb2, record_pb2, client_pb2, breachwatch_pb2, folder_pb2
@@ -74,20 +75,8 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
     resp_bw_recs = []            # type: List[SyncDown_pb2.BreachWatchRecord]
     resp_sec_data_recs = []      # type: List[SyncDown_pb2.BreachWatchSecurityData]
     resp_sec_scores = []         # type: List[SyncDown_pb2.SecurityScoreData]
-    
-    # Keeper Drive atomic sync objects
-    kd_folders = []              # type: List
-    kd_folder_keys = []          # type: List
-    kd_folder_accesses = []      # type: List
-    kd_revoked_folder_accesses = []  # type: List
-    kd_record_data = []          # type: List
-    kd_record_keys = []          # type: List
-    kd_record_accesses = []      # type: List
-    kd_revoked_record_accesses = []  # type: List
-    kd_records = []              # type: List
-    kd_folder_records = []       # type: List
-    kd_removed_folder_records = []  # type: List
-    kd_users = []                # type: List
+    record_rotation_items = []   # type: List[record_pb2.RecordRotation]
+    kd_acc = keeper_drive_sync.create_accumulator()
     
     request = SyncDown_pb2.SyncDownRequest()
     revision = params.revision
@@ -114,15 +103,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             params.breach_watch_security_data.clear()
             params.breach_watch_records.clear()
             params.security_score_data.clear()
-            # Clear Keeper Drive caches
-            params.keeper_drive_folders.clear()
-            params.keeper_drive_folder_keys.clear()
-            params.keeper_drive_folder_accesses.clear()
-            params.keeper_drive_records.clear()
-            params.keeper_drive_record_data.clear()
-            params.keeper_drive_record_keys.clear()
-            params.keeper_drive_record_accesses.clear()
-            params.keeper_drive_folder_records.clear()
+            keeper_drive_sync.clear_caches(params)
 
         if len(response.removedRecords) > 0:
             logging.debug('Processing removed records')
@@ -587,32 +568,9 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             resp_sec_scores.extend(response.securityScoreData)
 
         # Collect Keeper Drive atomic sync objects
-        if response.HasField('keeperDriveData'):
-            kd_data = response.keeperDriveData
-            if len(kd_data.folders) > 0:
-                kd_folders.extend(kd_data.folders)
-            if len(kd_data.folderKeys) > 0:
-                kd_folder_keys.extend(kd_data.folderKeys)
-            if len(kd_data.folderAccesses) > 0:
-                kd_folder_accesses.extend(kd_data.folderAccesses)
-            if len(kd_data.revokedFolderAccesses) > 0:
-                kd_revoked_folder_accesses.extend(kd_data.revokedFolderAccesses)
-            if len(kd_data.recordData) > 0:
-                kd_record_data.extend(kd_data.recordData)
-            if len(kd_data.recordKeys) > 0:
-                kd_record_keys.extend(kd_data.recordKeys)
-            if len(kd_data.recordAccesses) > 0:
-                kd_record_accesses.extend(kd_data.recordAccesses)
-            if len(kd_data.revokedRecordAccesses) > 0:
-                kd_revoked_record_accesses.extend(kd_data.revokedRecordAccesses)
-            if len(kd_data.records) > 0:
-                kd_records.extend(kd_data.records)
-            if len(kd_data.folderRecords) > 0:
-                kd_folder_records.extend(kd_data.folderRecords)
-            if len(kd_data.removedFolderRecords) > 0:
-                kd_removed_folder_records.extend(kd_data.removedFolderRecords)
-            if len(kd_data.users) > 0:
-                kd_users.extend(kd_data.users)
+        keeper_drive_sync.collect_from_response(
+            kd_acc, response, resp_bw_recs, resp_sec_data_recs, resp_sec_scores, record_rotation_items
+        )
 
         if len(response.removedUsers) > 0:
             for a_uid in response.removedUsers:
@@ -629,34 +587,13 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             params.user_cache[account_uid] = params.user
 
         if len(response.recordRotations) > 0:
-            for rr in response.recordRotations:
-                record_uid = utils.base64_url_encode(rr.recordUid)
-                rr_obj = {
-                    'record_uid': record_uid,
-                    'revision': rr.revision,
-                    'configuration_uid': utils.base64_url_encode(rr.configurationUid),
-                    'schedule': rr.schedule,
-                    'pwd_complexity': utils.base64_url_encode(rr.pwdComplexity),
-                    'disabled': rr.disabled,
-                    'resource_uid': utils.base64_url_encode(rr.resourceUid),
-                    'last_rotation': rr.lastRotation,
-                    'last_rotation_status': rr.lastRotationStatus,
-                }
-                params.record_rotation_cache[record_uid] = rr_obj
+            record_rotation_items.extend(response.recordRotations)
 
         params.sync_down_token = response.continuationToken
 
     params.revision = revision
 
-    # Process Keeper Drive atomic sync objects
-    if any([kd_folders, kd_folder_keys, kd_folder_accesses, kd_records, kd_record_data, 
-            kd_record_keys, kd_folder_records]):
-        logging.debug('Processing Keeper Drive sync data')
-        _process_keeper_drive_sync(
-            params, kd_folders, kd_folder_keys, kd_folder_accesses, kd_revoked_folder_accesses,
-            kd_records, kd_record_data, kd_record_keys, kd_record_accesses, kd_revoked_record_accesses,
-            kd_folder_records, kd_removed_folder_records, kd_users
-        )
+    keeper_drive_sync.process(params, kd_acc)
 
     for sf in params.shared_folder_cache.values():
         owner = sf.get('owner_username')
@@ -1008,18 +945,20 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                     if shared_folder_uid in params.shared_folder_cache:
                         shared_folder = params.shared_folder_cache[shared_folder_uid]
                         encrypted_key = utils.base64_url_decode(sf['shared_folder_folder_key'])
-                        sf['folder_key_unencrypted'] = crypto.decrypt_aes_v1(encrypted_key, shared_folder['shared_folder_key_unencrypted'])
+                        sf['folder_key_unencrypted'] = crypto.decrypt_aes_v1(encrypted_key, shared_folder.get('shared_folder_key_unencrypted'))
                 except Exception as e:
                     logging.debug('Shared folder folder %s data decryption error: %s', sf['folder_uid'], e)
         else:
             continue
         if 'folder_key_unencrypted' in sf:
             if 'data_unencrypted' not in sf:
-                try:
-                    data_encrypted = utils.base64_url_decode(sf['data'])
-                    sf['data_unencrypted'] = crypto.decrypt_aes_v1(data_encrypted, sf['folder_key_unencrypted'])
-                except Exception as e:
-                    logging.debug('Error decrypting shared folder folder %s data: %s', sf['folder_uid'], e)
+                data_b64 = sf.get('data')
+                if data_b64:
+                    try:
+                        data_encrypted = utils.base64_url_decode(data_b64)
+                        sf['data_unencrypted'] = crypto.decrypt_aes_v1(data_encrypted, sf['folder_key_unencrypted'])
+                    except Exception as e:
+                        logging.debug('Error decrypting shared folder folder %s data: %s', sf['folder_uid'], e)
 
     prepare_folder_tree(params)
 
@@ -1104,6 +1043,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             if r.get('version', 0) in valid_versions:
                 record_count += 1
         params._sync_record_count = record_count
+
 
 
 def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, revoked_folder_accesses,
