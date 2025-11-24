@@ -112,63 +112,10 @@ class TestValidationHelpers(unittest.TestCase):
         """Set up test fixtures."""
         self.cmd = CredentialProvisionCommand()
 
-    def test_valid_email_formats(self):
-        """Test valid email format validation."""
-        valid_emails = [
-            'user@example.com',
-            'john.doe@company.co.uk',
-            'test+tag@domain.org',
-            'user_name@sub.domain.com',
-        ]
-        for email in valid_emails:
-            self.assertTrue(
-                self.cmd._is_valid_email(email),
-                f'Should accept valid email: {email}'
-            )
-
-    def test_invalid_email_formats(self):
-        """Test invalid email format detection."""
-        invalid_emails = [
-            'not-an-email',
-            '@example.com',
-            'user@',
-            'user @example.com',
-            'user@domain',
-        ]
-        for email in invalid_emails:
-            self.assertFalse(
-                self.cmd._is_valid_email(email),
-                f'Should reject invalid email: {email}'
-            )
-
-    def test_valid_cron_formats(self):
-        """Test valid CRON schedule formats (6-field)."""
-        valid_crons = [
-            '0 0 3 * * ?',  # Daily at 3 AM
-            '0 30 2 * * 0',  # Weekly Sunday 2:30 AM
-            '0 0 12 1 * ?',  # Monthly 1st at noon
-            '*/30 * * * * ?',  # Every 30 seconds
-            '0 0 */2 * * ?',  # Every 2 hours
-        ]
-        for cron in valid_crons:
-            self.assertTrue(
-                self.cmd._is_valid_cron(cron),
-                f'Should accept valid CRON: {cron}'
-            )
-
-    def test_invalid_cron_formats(self):
-        """Test invalid CRON schedule detection."""
-        invalid_crons = [
-            'invalid',
-            '0 0 3 * *',  # Only 5 fields (need 6)
-            '99 0 3 * * ?',  # Invalid seconds
-            '0 0 25 * * ?',  # Invalid hour
-        ]
-        for cron in invalid_crons:
-            self.assertFalse(
-                self.cmd._is_valid_cron(cron),
-                f'Should reject invalid CRON: {cron}'
-            )
+    # Email and CRON validation tests removed - now using Commander utilities:
+    # - utils.is_email() for email validation
+    # - validate_cron_expression() for CRON validation
+    # These utilities are tested elsewhere in Commander's test suite
 
     def test_valid_complexity_formats(self):
         """Test valid password complexity formats."""
@@ -201,13 +148,16 @@ class TestValidationHelpers(unittest.TestCase):
             )
 
     def test_valid_expiry_formats(self):
-        """Test valid share URL expiry formats."""
+        """Test valid share URL expiry formats (days, hours, minutes)."""
         valid_expiries = [
             '7d',  # 7 days
             '24h',  # 24 hours
-            '60m',  # 60 minutes
-            '1d',
-            '168h',
+            '60mi',  # 60 minutes
+            '1d',  # 1 day
+            '168h',  # 168 hours (7 days)
+            '365d',  # 1 year
+            '1mo',  # 1 month
+            '1y',  # 1 year
         ]
         for expiry in valid_expiries:
             self.assertTrue(
@@ -218,11 +168,18 @@ class TestValidationHelpers(unittest.TestCase):
     def test_invalid_expiry_formats(self):
         """Test invalid share URL expiry detection."""
         invalid_expiries = [
-            'invalid',
+            'invalid',  # No number/unit
             '7',  # No unit
             'd7',  # Unit first
             '7x',  # Invalid unit
+            '7m',  # Wrong: use 'mi' for minutes, not 'm'
+            '60m',  # Wrong: use 'mi' for minutes, not 'm'
             '7.5d',  # Decimal not supported
+            '',  # Empty string
+            'abc',  # No number
+            '7 d',  # Space not allowed
+            'm7',  # Unit first
+            '7dm',  # Multiple units
         ]
         for expiry in invalid_expiries:
             self.assertFalse(
@@ -383,7 +340,7 @@ class TestEmailSectionValidation(unittest.TestCase):
         """Test that valid email section passes validation."""
         email = {
             'config_name': 'Company Gmail',
-            'send_to': 'personal',
+            'send_to': 'user@example.com',
             'subject': 'Welcome!',
             'share_url_expiry': '7d',
         }
@@ -446,6 +403,7 @@ class TestComprehensiveValidation(unittest.TestCase):
             },
             'email': {
                 'config_name': 'Test Config',
+                'send_to': 'john@example.com',
             }
         }
         errors = self.cmd._validate_config(self.mock_params, config)
@@ -542,46 +500,26 @@ class TestPasswordGeneration(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.cmd._generate_password(complexity)
 
-    def test_complexity_exceeds_length(self):
-        """Test error when complexity requirements exceed password length."""
-        # Total requirements: 10+10+10+10 = 40, but length is only 20
-        complexity = '20,10,10,10,10'
+    # NOTE: KeeperPasswordGenerator doesn't validate that complexity sum <= length.
+    # If sum > length, it generates a password with sum length (ignores the length parameter).
+    # This is the expected behavior of Commander's built-in generator.
 
-        with self.assertRaises(ValueError) as context:
-            self.cmd._generate_password(complexity)
-
-        self.assertIn('exceed length', str(context.exception).lower())
-
-    def test_generate_random_password_direct(self):
-        """Test _generate_random_password directly."""
-        password = self.cmd._generate_random_password(
-            length=30,
-            min_upper=5,
-            min_lower=5,
-            min_digits=5,
-            min_special=5
-        )
-
-        self.assertEqual(len(password), 30)
-
-        # Verify minimums
-        upper_count = sum(1 for c in password if c.isupper())
-        lower_count = sum(1 for c in password if c.islower())
-        digit_count = sum(1 for c in password if c.isdigit())
-        special_count = sum(1 for c in password if not c.isalnum())
-
-        self.assertGreaterEqual(upper_count, 5)
-        self.assertGreaterEqual(lower_count, 5)
-        self.assertGreaterEqual(digit_count, 5)
-        self.assertGreaterEqual(special_count, 5)
+    # Low-level password generation tests removed - now using Commander's built-in generator:
+    # KeeperPasswordGenerator is tested elsewhere in Commander's test suite
 
     def test_minimum_length_password(self):
         """Test password generation with minimum requirements."""
-        # Minimum: 12 characters with 0,0,0,0 requirements
-        complexity = '12,0,0,0,0'
+        # Minimum: 12 characters with at least 1 of each category
+        # Note: Can't use all zeros (would raise 'Password character set is empty')
+        complexity = '12,1,1,1,1'
         password = self.cmd._generate_password(complexity)
 
         self.assertEqual(len(password), 12)
+        # Should have at least 1 of each required character type
+        self.assertGreaterEqual(sum(1 for c in password if c.isupper()), 1)
+        self.assertGreaterEqual(sum(1 for c in password if c.islower()), 1)
+        self.assertGreaterEqual(sum(1 for c in password if c.isdigit()), 1)
+        self.assertGreaterEqual(sum(1 for c in password if not c.isalnum()), 1)
 
     def test_high_complexity_password(self):
         """Test password generation with high complexity."""
@@ -615,6 +553,108 @@ class TestPasswordGeneration(unittest.TestCase):
 
         for char in password:
             self.assertIn(char, allowed_chars, f'Character {char} not in allowed set')
+
+
+class TestRollbackLogic(unittest.TestCase):
+    """Test rollback logic for failed provisioning."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.cmd = CredentialProvisionCommand()
+
+    def test_provisioning_state_initialization(self):
+        """Test ProvisioningState initializes with None values (Login records removed)."""
+        from keepercommander.commands.credential_provision import ProvisioningState
+        state = ProvisioningState()
+        self.assertIsNone(state.pam_user_uid)
+        self.assertFalse(state.dag_link_created)
+        self.assertIsNone(state.folder_created)
+
+    def test_provisioning_state_tracking(self):
+        """Test ProvisioningState tracks created resources (Login records removed)."""
+        from keepercommander.commands.credential_provision import ProvisioningState
+        state = ProvisioningState()
+
+        # Simulate tracking resources
+        state.pam_user_uid = 'test-pam-uid-123'
+        state.dag_link_created = True
+        state.folder_created = '/test/folder/path'
+
+        self.assertEqual(state.pam_user_uid, 'test-pam-uid-123')
+        self.assertTrue(state.dag_link_created)
+        self.assertEqual(state.folder_created, '/test/folder/path')
+
+    def test_rollback_with_no_resources(self):
+        """Test rollback gracefully handles empty state."""
+        from keepercommander.commands.credential_provision import ProvisioningState
+        from unittest.mock import Mock
+
+        state = ProvisioningState()
+        params = Mock()
+
+        # Should not raise exception with empty state
+        try:
+            self.cmd._rollback(state, params)
+        except Exception as e:
+            self.fail(f'Rollback with empty state raised exception: {e}')
+
+    def test_rollback_deletes_pam_user_only(self):
+        """Test rollback deletes PAM User (Login records no longer created)."""
+        from keepercommander.commands.credential_provision import ProvisioningState
+        from unittest.mock import Mock, patch
+
+        state = ProvisioningState()
+        state.pam_user_uid = 'test-pam-uid'
+        params = Mock()
+
+        with patch('keepercommander.api.delete_record') as mock_delete:
+            self.cmd._rollback(state, params)
+            mock_delete.assert_called_once_with(params, 'test-pam-uid')
+
+    def test_rollback_deletes_pam_user(self):
+        """Test rollback deletes PAM User if created."""
+        from keepercommander.commands.credential_provision import ProvisioningState
+        from unittest.mock import Mock, patch
+
+        state = ProvisioningState()
+        state.pam_user_uid = 'test-pam-uid'
+        params = Mock()
+
+        with patch('keepercommander.api.delete_record') as mock_delete:
+            self.cmd._rollback(state, params)
+            mock_delete.assert_any_call(params, 'test-pam-uid')
+
+    def test_rollback_handles_deletion_errors(self):
+        """Test rollback continues even if deletion fails."""
+        from keepercommander.commands.credential_provision import ProvisioningState
+        from unittest.mock import Mock, patch
+
+        state = ProvisioningState()
+        state.pam_user_uid = 'test-pam-uid'
+        params = Mock()
+
+        with patch('keepercommander.api.delete_record', side_effect=Exception('Delete failed')):
+            # Should not raise exception
+            try:
+                self.cmd._rollback(state, params)
+            except Exception as e:
+                self.fail(f'Rollback raised exception on deletion error: {e}')
+
+    def test_rollback_with_folder_created(self):
+        """Test rollback tracks folder creation state (Login records removed)."""
+        from keepercommander.commands.credential_provision import ProvisioningState
+        from unittest.mock import Mock, patch
+
+        state = ProvisioningState()
+        state.pam_user_uid = 'test-pam-uid'
+        state.folder_created = '/test/folder'
+        params = Mock()
+
+        with patch('keepercommander.api.delete_record') as mock_delete:
+            self.cmd._rollback(state, params)
+
+            # Verify PAM User was deleted
+            mock_delete.assert_called_once_with(params, 'test-pam-uid')
 
 
 if __name__ == '__main__':

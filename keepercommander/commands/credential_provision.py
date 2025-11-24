@@ -28,10 +28,12 @@ import json
 import logging
 import os
 import re
-import secrets
-import string
+import sys
+from contextlib import redirect_stdout, redirect_stderr
+from io import StringIO
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
+from urllib.parse import urlunparse, urlparse
 
 try:
     import yaml
@@ -39,10 +41,25 @@ except ImportError:
     yaml = None
 
 from .base import Command, suppress_exit, raise_parse_exception
-from .. import api, vault, vault_extensions, crypto, utils
+from .. import api, vault, vault_extensions, crypto, utils, generator
 from ..error import CommandError
 from ..params import KeeperParams
-
+from ..subfolder import try_resolve_path, get_folder_path
+from ..record_management import add_record_to_folder
+from ..record_facades import LoginRecordFacade
+from ..discovery_common.record_link import RecordLink
+from ..proto import APIRequest_pb2
+from ..commands.folder import FolderMakeCommand
+from ..commands.discoveryrotation import (
+    PAMCreateRecordRotationCommand,
+    PAMGatewayActionRotateCommand,
+    validate_cron_expression
+)
+from ..commands.helpers.timeout import parse_timeout, format_timeout
+from ..commands import email_commands
+from ..email_service import EmailSender, build_onboarding_email
+from keepercommander.commands.pam.user_facade import PamUserRecordFacade
+from keepercommander.commands.pam.config_facades import PamConfigurationRecordFacade
 
 # =============================================================================
 # Argument Parser
@@ -79,7 +96,6 @@ credential_provision_parser.add_argument(
 credential_provision_parser.error = raise_parse_exception
 credential_provision_parser.exit = suppress_exit
 
-
 # =============================================================================
 # Registration Functions
 # =============================================================================
@@ -87,10 +103,8 @@ credential_provision_parser.exit = suppress_exit
 def register_commands(commands):
     commands['credential-provision'] = CredentialProvisionCommand()
 
-
 def register_command_info(aliases, command_info):
     command_info['credential-provision'] = 'Automate employee credential provisioning'
-
 
 # =============================================================================
 # Main Command Class
@@ -101,10 +115,8 @@ class ProvisioningState:
 
     def __init__(self):
         self.pam_user_uid = None
-        self.login_record_uid = None
         self.dag_link_created = False
         self.folder_created = None
-
 
 class CredentialProvisionCommand(Command):
     """
@@ -115,10 +127,9 @@ class CredentialProvisionCommand(Command):
     2. Check for duplicate PAM Users
     3. Generate secure password
     4. Create PAM User record with rotation configured
-    5. Trigger immediate password rotation (if gateway available)
-    6. Create Login record for sharing
-    7. Generate one-time share URL
-    8. Send welcome email with credentials
+    5. Submit immediate password rotation
+    6. Generate one-time share URL for PAM User
+    7. Send welcome email with credentials
     """
 
     def get_parser(self):
@@ -151,15 +162,11 @@ class CredentialProvisionCommand(Command):
         output_format = kwargs.get('output', 'text')
 
         try:
-            # Phase 1: Load and validate YAML configuration
+            # Load and validate YAML configuration
             if output_format == 'text':
                 logging.info(f'Loading configuration from: {config_path}')
 
             config = self._load_yaml(config_path)
-
-            if output_format == 'text':
-                logging.info('Validating configuration...')
-
             validation_errors = self._validate_config(params, config)
 
             if validation_errors:
@@ -177,28 +184,64 @@ class CredentialProvisionCommand(Command):
                     logging.error(error_msg)
                 raise CommandError('credential-provision', error_msg)
 
-            if output_format == 'text':
-                logging.info('✓ Configuration validated successfully')
+            # System-specific field validation
+            pam_config_uid = config['account']['pam_config_uid']
 
-            # Phase 2: Dry-run mode (validation only)
+            # Load PAM Config record properly (not from raw cache)
+            try:
+                pam_config_record = vault.KeeperRecord.load(params, pam_config_uid)
+            except Exception as e:
+                error_msg = f'Failed to load PAM Configuration: {pam_config_uid}'
+                if output_format == 'json':
+                    result = {'success': False, 'error': error_msg, 'details': str(e)}
+                    print(json.dumps(result, indent=2))
+                else:
+                    logging.error(error_msg)
+                    logging.error(f'Error: {e}')
+                    logging.error('Make sure you have access to this PAM Configuration')
+                raise CommandError('credential-provision', error_msg)
+
+            if not pam_config_record:
+                error_msg = f'PAM Configuration not found in vault: {pam_config_uid}'
+                if output_format == 'json':
+                    result = {'success': False, 'error': error_msg}
+                    print(json.dumps(result, indent=2))
+                else:
+                    logging.error(error_msg)
+                    logging.error('Make sure you have access to this PAM Configuration')
+                raise CommandError('credential-provision', error_msg)
+
+            # Validate system-specific fields based on PAM type
+            system_errors = self._validate_system_specific_fields(config, pam_config_record, params)
+
+            if system_errors:
+                error_msg = 'System-specific validation failed:\n\n' + '\n'.join(
+                    f'  • {err}' for err in system_errors
+                )
+                if output_format == 'json':
+                    result = {
+                        'success': False,
+                        'error': 'System-specific validation failed',
+                        'validation_errors': system_errors
+                    }
+                    print(json.dumps(result, indent=2))
+                else:
+                    logging.error(error_msg)
+                raise CommandError('credential-provision', error_msg)
+
+            if output_format == 'text':
+                logging.info('✅ Configuration validated')
+
+            # Dry-run mode (validation only)
             if dry_run:
                 self._dry_run_report(params, config, output_format)
                 return
 
-            # Phase 3: Execute provisioning (KC-1007-3)
-            if output_format == 'text':
-                logging.info('\n' + '='*60)
-                logging.info('STARTING CREDENTIAL PROVISIONING')
-                logging.info('='*60 + '\n')
-
-            # Initialize provisioning state for rollback tracking (KC-1007-6)
+            # Execute provisioning
             state = ProvisioningState()
 
             try:
-                # Check for duplicate PAM Users
-                if output_format == 'text':
-                    logging.info('Step 1: Checking for duplicate PAM Users...')
-
+                # Check for duplicates
                 if self._check_duplicate(config, params):
                     error_msg = f'Duplicate PAM User already exists for username: {config["account"]["username"]}'
                     if output_format == 'json':
@@ -208,123 +251,40 @@ class CredentialProvisionCommand(Command):
                         logging.error(error_msg)
                     raise CommandError('credential-provision', error_msg)
 
-                if output_format == 'text':
-                    logging.info('✓ No duplicates found\n')
-
-                # Generate secure password
-                if output_format == 'text':
-                    logging.info('Step 2: Generating secure password...')
-
+                # Generate password and create PAM User
                 password = self._generate_password(config['pam']['rotation']['password_complexity'])
-
-                if output_format == 'text':
-                    logging.info('✓ Password generated\n')
-
-                # Create PAM User
-                if output_format == 'text':
-                    logging.info('Step 3: Creating PAM User record...')
-
                 pam_user_uid = self._create_pam_user(config, password, params)
-                state.pam_user_uid = pam_user_uid  # Track for rollback
+                state.pam_user_uid = pam_user_uid
 
-                if output_format == 'text':
-                    logging.info('✓ PAM User created\n')
-
-                # Link to PAM Configuration
-                if output_format == 'text':
-                    logging.info('Step 4: Linking to PAM Configuration...')
-
+                # Link to PAM Configuration and configure rotation
                 self._create_dag_link(pam_user_uid, config['account']['pam_config_uid'], params)
-                state.dag_link_created = True  # Track for rollback
-
-                if output_format == 'text':
-                    logging.info('✓ DAG link created\n')
-
-                # Configure rotation
-                if output_format == 'text':
-                    logging.info('Step 5: Configuring password rotation...')
-
+                state.dag_link_created = True
                 self._configure_rotation(pam_user_uid, config, params)
 
                 if output_format == 'text':
-                    logging.info('✓ Rotation configured\n')
+                    logging.info('✅ PAM User created and linked')
 
-                # Check gateway status (KC-1007-4)
-                if output_format == 'text':
-                    logging.info('Step 6: Checking gateway status...')
-
-                gateway_available = self._check_gateway_status(
-                    config['account']['pam_config_uid'],
-                    params
-                )
-
-                if output_format == 'text':
-                    if gateway_available:
-                        logging.info('✓ Gateway available\n')
-                    else:
-                        logging.info('⚠️  Gateway status uncertain (will attempt rotation)\n')
-
-                # Perform immediate rotation (KC-1007-4)
-                if output_format == 'text':
-                    logging.info('Step 7: Performing immediate rotation...')
-
+                # Perform immediate rotation if configured
                 rotation_success = self._rotate_immediately(pam_user_uid, config, params)
 
                 if output_format == 'text':
-                    if rotation_success:
-                        logging.info('✓ Immediate rotation complete\n')
-                    else:
-                        logging.info('⚠️  Rotation deferred to next schedule\n')
+                    logging.info('✅ Password rotation submitted')
 
-                # Create Login record (KC-1007-4)
-                if output_format == 'text':
-                    logging.info('Step 8: Creating Login record...')
-
-                login_record_uid = self._create_login_record(config, password, params)
-                state.login_record_uid = login_record_uid  # Track for rollback
+                # Generate share URL for PAM User (shares source of truth, not a copy)
+                share_url = self._generate_share_url(pam_user_uid, config, params)
 
                 if output_format == 'text':
-                    logging.info('✓ Login record created\n')
+                    logging.info('✅ Share URL generated for PAM User')
 
-                # Generate share URL (KC-1007-5)
-                if output_format == 'text':
-                    logging.info('Step 9: Generating share URL...')
-
-                share_url = self._generate_share_url(login_record_uid, config, params)
-
-                if output_format == 'text':
-                    logging.info('✓ Share URL generated\n')
-
-                # Send email (KC-1007-5)
-                if output_format == 'text':
-                    logging.info('Step 10: Sending welcome email...')
-
+                # Send welcome email
                 email_success = self._send_email(config, share_url, params)
 
                 if output_format == 'text':
-                    if email_success:
-                        logging.info('✓ Email sent successfully\n')
-                    else:
-                        logging.info('⚠️  Email sending failed (non-critical)\n')
-
-                # Success!
-                if output_format == 'text':
-                    logging.info('\n' + '='*60)
-                    logging.info('✅ PROVISIONING COMPLETE')
-                    logging.info('='*60)
-                    logging.info(f'PAM User UID: {pam_user_uid}')
-                    logging.info(f'Login Record UID: {login_record_uid}')
-                    logging.info(f'Share URL: {share_url}')
-                    logging.info(f'Username: {config["account"]["username"]}')
-                    logging.info(f'Employee: {config["user"]["first_name"]} {config["user"]["last_name"]}')
-                    logging.info(f'Rotation: {"Synced" if rotation_success else "Scheduled"}')
-                    logging.info(f'Email: {"Sent" if email_success else "Failed (manual delivery required)"}')
-                    logging.info('='*60 + '\n')
+                    logging.info('✅ Email with one-time share sent')
                 else:
                     result = {
                         'success': True,
                         'pam_user_uid': pam_user_uid,
-                        'login_record_uid': login_record_uid,
                         'share_url': share_url,
                         'username': config['account']['username'],
                         'employee_name': f"{config['user']['first_name']} {config['user']['last_name']}",
@@ -335,12 +295,9 @@ class CredentialProvisionCommand(Command):
                     print(json.dumps(result, indent=2))
 
             except CommandError as e:
-                # Critical failure during provisioning - rollback changes
-                logging.error(f'\n❌ CRITICAL FAILURE: {str(e)}')
                 self._rollback(state, params)
                 raise
             except Exception as e:
-                # Unexpected failure during provisioning - rollback changes
                 logging.error(f'\n❌ UNEXPECTED FAILURE: {str(e)}')
                 logging.error(f'Provisioning failed: {str(e)}')
                 self._rollback(state, params)
@@ -465,17 +422,17 @@ class CredentialProvisionCommand(Command):
 
         # Validate email format
         personal_email = user.get('personal_email', '')
-        if personal_email and not self._is_valid_email(personal_email):
+        if personal_email and not utils.is_email(personal_email):
             errors.append(f'user.personal_email is invalid: {personal_email}')
 
         # Validate corporate email if provided
         corporate_email = user.get('corporate_email', '')
-        if corporate_email and not self._is_valid_email(corporate_email):
+        if corporate_email and not utils.is_email(corporate_email):
             errors.append(f'user.corporate_email is invalid: {corporate_email}')
 
         # Validate manager_email if provided
         manager_email = user.get('manager_email', '')
-        if manager_email and not self._is_valid_email(manager_email):
+        if manager_email and not utils.is_email(manager_email):
             errors.append(f'user.manager_email is invalid: {manager_email}')
 
         return errors
@@ -510,15 +467,14 @@ class CredentialProvisionCommand(Command):
         rotation = pam.get('rotation', {})
         if not rotation:
             errors.append('pam.rotation section is required')
-            return errors  # Can't validate further
+            return errors
 
         # Required rotation fields
         if not rotation.get('schedule'):
             errors.append('pam.rotation.schedule is required (CRON format)')
         else:
-            # Validate CRON format (6-field for rotation)
             schedule = rotation['schedule']
-            if not self._is_valid_cron(schedule):
+            if not validate_cron_expression(schedule, for_rotation=True)[0]:
                 errors.append(
                     f'pam.rotation.schedule has invalid CRON format: {schedule}\n'
                     f'    Expected 6 fields: seconds minute hour day month day-of-week\n'
@@ -528,7 +484,6 @@ class CredentialProvisionCommand(Command):
         if not rotation.get('password_complexity'):
             errors.append('pam.rotation.password_complexity is required')
         else:
-            # Validate complexity format
             complexity = rotation['password_complexity']
             if not self._is_valid_complexity(complexity):
                 errors.append(
@@ -549,24 +504,21 @@ class CredentialProvisionCommand(Command):
             errors.append('email.config_name is required')
             return errors
 
-        # Check if email config exists in vault
-        # TODO: Implement in next phase when we have email config lookup
-        # For now, just validate the field is present
-
-        # Validate send_to if provided
-        send_to = email.get('send_to', 'personal')
-        if send_to not in ['personal', 'corporate', 'both']:
-            errors.append(
-                f'email.send_to must be "personal", "corporate", or "both": {send_to}'
-            )
+        # Validate send_to - must be a valid email address
+        send_to = email.get('send_to')
+        if not send_to:
+            errors.append('email.send_to is required and must be a valid email address')
+        elif not utils.is_email(send_to):
+            errors.append(f'email.send_to must be a valid email address: {send_to}')
 
         # Validate share_url_expiry if provided
         expiry = email.get('share_url_expiry', '7d')
         if expiry and not self._is_valid_expiry(expiry):
             errors.append(
                 f'email.share_url_expiry has invalid format: {expiry}\n'
-                f'    Expected: <number>d (days), <number>h (hours), or <number>m (minutes)\n'
-                f'    Examples: "7d", "24h", "60m"'
+                f'    Expected: <number>d (days), <number>h (hours), or <number>mi (minutes)\n'
+                f'    Examples: "7d", "24h", "60mi"\n'
+                f'    Note: Use "mi" for minutes, not "m"'
             )
 
         return errors
@@ -578,7 +530,7 @@ class CredentialProvisionCommand(Command):
         folder = vault_config.get('folder')
         if folder:
             # TODO: Check if folder exists (implement in next phase)
-            # For now, just validate it's a non-empty string
+
             if not isinstance(folder, str) or not folder.strip():
                 errors.append('vault.folder must be a non-empty string')
 
@@ -599,83 +551,6 @@ class CredentialProvisionCommand(Command):
     # Validation Helper Functions
     # =========================================================================
 
-    def _is_valid_email(self, email: str) -> bool:
-        """Basic email format validation."""
-        # Simple regex for email validation
-        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-        return bool(re.match(pattern, email))
-
-    def _is_valid_cron(self, cron: str) -> bool:
-        """
-        Validate CRON format (6-field for rotation schedules).
-
-        Note: This is basic validation. Detailed validation happens in
-        discoveryrotation.validate_cron_expression() when rotation is configured.
-        """
-        parts = cron.strip().split()
-
-        # Rotation schedules require 6 fields (including seconds)
-        if len(parts) != 6:
-            return False
-
-        # Validate each field with appropriate ranges
-        # Format: seconds minute hour day month day-of-week
-        field_ranges = [
-            (0, 59),  # seconds
-            (0, 59),  # minutes
-            (0, 23),  # hours
-            (1, 31),  # day of month
-            (1, 12),  # month
-            (0, 7),   # day of week (0 and 7 both = Sunday)
-        ]
-
-        for i, part in enumerate(parts):
-            # Allow special characters
-            if part in ['*', '?']:
-                continue
-
-            # Check for steps (*/n)
-            if '/' in part:
-                base, step = part.split('/', 1)
-                if base == '*' and step.isdigit():
-                    continue
-                # Complex step patterns - let discoveryrotation validate
-                if '-' in base:
-                    continue
-
-            # Check for ranges (n-m)
-            if '-' in part:
-                try:
-                    start, end = part.split('-', 1)
-                    if start.isdigit() and end.isdigit():
-                        min_val, max_val = field_ranges[i]
-                        if min_val <= int(start) <= max_val and min_val <= int(end) <= max_val:
-                            continue
-                except:
-                    return False
-                return False
-
-            # Check for lists (n,m,o)
-            if ',' in part:
-                try:
-                    values = [int(v) for v in part.split(',')]
-                    min_val, max_val = field_ranges[i]
-                    if all(min_val <= v <= max_val for v in values):
-                        continue
-                except:
-                    return False
-                return False
-
-            # Check single number
-            if part.isdigit():
-                min_val, max_val = field_ranges[i]
-                if not (min_val <= int(part) <= max_val):
-                    return False
-            else:
-                return False
-
-        return True
-
     def _is_valid_complexity(self, complexity: str) -> bool:
         """Validate password complexity format: length,upper,lower,digit,special"""
         parts = complexity.split(',')
@@ -691,8 +566,16 @@ class CredentialProvisionCommand(Command):
             return False
 
     def _is_valid_expiry(self, expiry: str) -> bool:
-        """Validate share URL expiry format: 7d, 24h, 60m"""
-        pattern = r'^\d+[dhm]$'
+        """
+        Validate share URL expiry format.
+
+        Valid formats: <number>d (days), <number>h (hours), <number>mi (minutes)
+        Examples: 7d, 24h, 60mi
+
+        Note: parse_timeout() uses 'mi' for minutes, not 'm'.
+        Valid units: years/y, months/mo, days/d, hours/h, minutes/mi
+        """
+        pattern = r'^\d+(y|mo|d|h|mi)$'
         return bool(re.match(pattern, expiry))
 
     # =========================================================================
@@ -728,15 +611,14 @@ class CredentialProvisionCommand(Command):
                     f'Create PAM User: {username}',
                     f'Link PAM User to PAM Config: {account.get("pam_config_uid")}',
                     f'Configure rotation: {pam.get("rotation", {}).get("schedule")}',
-                    'Trigger immediate rotation (if gateway available)',
-                    'Create Login record',
-                    f'Generate share URL (expiry: {email_config.get("share_url_expiry", "7d")})',
+                    'Submit immediate rotation',
+                    f'Generate share URL for PAM User (expiry: {email_config.get("share_url_expiry", "7d")})',
                     f'Send email to: {user.get("personal_email")}'
                 ],
                 'configuration': {
                     'employee': employee_name,
                     'username': username,
-                    'folder': vault_config.get('folder', f'/Employees/{user.get("department", "Unknown")}'),
+                    'folder': vault_config.get('folder', f'Shared Folders/PAM/{user.get("department", "Unknown")}'),
                     'rotation_schedule': pam.get('rotation', {}).get('schedule'),
                     'email_recipient': user.get('personal_email')
                 }
@@ -758,11 +640,10 @@ class CredentialProvisionCommand(Command):
             print(f'  4. Link to PAM Config: {account.get("pam_config_uid")[:20]}...')
             print(f'  5. Configure rotation')
             print(f'     Schedule: {pam.get("rotation", {}).get("schedule")}')
-            print(f'  6. Trigger immediate rotation (if gateway available)')
-            print(f'  7. Create Login record in admin vault')
-            print(f'  8. Generate one-time share URL')
+            print(f'  6. Submit immediate rotation')
+            print(f'  7. Generate one-time share URL for PAM User')
             print(f'     Expiry: {email_config.get("share_url_expiry", "7d")}')
-            print(f'  9. Send welcome email')
+            print(f'  8. Send welcome email')
             print(f'     To: {user.get("personal_email")}')
             print(f'     Config: {email_config.get("config_name")}')
             print('\n' + '='*60)
@@ -771,15 +652,16 @@ class CredentialProvisionCommand(Command):
             print('='*60 + '\n')
 
     # =========================================================================
-    # KC-1007-3: PAM User Creation & Rotation
+    # PAM User Creation & Rotation
     # =========================================================================
 
     def _check_duplicate(self, config: Dict[str, Any], params: KeeperParams) -> bool:
         """
-        Check for duplicate PAM Users.
+        Check for duplicate PAM Users using dual-check approach.
 
-        A duplicate is defined as a PAM User with the same username
-        in the same folder.
+        Checks:
+        1. If DN provided: Check entire vault for same DN (prevents rotation conflicts)
+        2. Always: Check target folder for same username (prevents folder duplicates)
 
         Args:
             config: Validated configuration
@@ -788,47 +670,133 @@ class CredentialProvisionCommand(Command):
         Returns:
             True if duplicate found, False otherwise
         """
+        distinguished_name = config['account'].get('distinguished_name')
+
+        # Check 1: Global DN check (if DN provided)
+        if distinguished_name:
+            if self._check_duplicate_by_dn(distinguished_name, params):
+                return True
+
+        # Check 2: Folder-scoped username check (always)
+        if self._check_duplicate_by_username_in_folder(config, params):
+            return True
+
+        return False
+
+    def _check_duplicate_by_dn(self, distinguished_name: str, params: KeeperParams) -> bool:
+        """
+        Check for duplicate PAM Users by Distinguished Name (global vault search).
+
+        Active Directory DNs are unique across the entire AD forest. If a PAM User
+        already exists with this DN, it's managing the same AD account, which would
+        cause rotation conflicts.
+
+        Args:
+            distinguished_name: The Distinguished Name to check
+            params: KeeperParams session
+
+        Returns:
+            True if duplicate DN found, False otherwise
+        """
+        # Search all PAM User records in vault
+        for record_uid in params.record_cache:
+            try:
+                record = vault.KeeperRecord.load(params, record_uid)
+
+                # Check if it's a PAM User
+                if not isinstance(record, vault.TypedRecord):
+                    continue
+                if record.record_type != 'pamUser':
+                    continue
+
+                # Check DN match
+                facade = PamUserRecordFacade()
+                facade.record = record
+
+                if facade.distinguishedName == distinguished_name:
+                    logging.error(f'❌ Duplicate PAM User found (by Distinguished Name):')
+                    logging.error(f'   Distinguished Name: {distinguished_name}')
+                    logging.error(f'   Existing UID: {record_uid}')
+                    logging.error(f'   Title: {record.title}')
+                    logging.error(f'   Username: {facade.login}')
+                    logging.error(f'')
+                    logging.error(f'   This DN is already being managed by another PAM User.')
+                    logging.error(f'   Creating a duplicate would cause rotation conflicts.')
+                    return True
+
+            except Exception as e:
+                continue
+
+        return False
+
+    def _check_duplicate_by_username_in_folder(self, config: Dict[str, Any], params: KeeperParams) -> bool:
+        """
+        Check for duplicate PAM Users by username in the target folder.
+
+        Prevents creating the same username multiple times in the same folder location.
+        This is important for all PAM types (Azure AD, AWS IAM, Active Directory).
+
+        Args:
+            config: Validated configuration
+            params: KeeperParams session
+
+        Returns:
+            True if duplicate username found in folder, False otherwise
+        """
         username = config['account']['username']
-        folder_path = config.get('vault', {}).get('folder', f"/Employees/{config['user'].get('department', 'Unknown')}")
+        pam_config_uid = config['account']['pam_config_uid']
+
+        # Get the same folder path that will be used for PAM User creation
+        try:
+            gateway_folder_uid, gateway_folder_path = self._get_gateway_application_folder(pam_config_uid, params)
+        except Exception as e:
+            return False
+
+        # Determine target folder (same logic as _create_pam_user)
+        user_specified_folder = config.get('vault', {}).get('folder')
+
+        if user_specified_folder:
+            target_folder_path = f"{gateway_folder_path}/{user_specified_folder.strip('/')}"
+        else:
+            department = config['user'].get('department', 'Default')
+            target_folder_path = f"{gateway_folder_path}/PAM Users/{department}"
 
         # Get folder UID
-        folder_uid = self._get_folder_uid(folder_path, params)
+        folder_uid = self._get_folder_uid(target_folder_path, params)
 
         if not folder_uid:
-            # Folder doesn't exist yet, so no duplicates possible
+            return False
+
+        # Get all records in this folder
+        records_in_folder = params.subfolder_record_cache.get(folder_uid, set())
+
+        if not records_in_folder:
             return False
 
         # Search for PAM Users in folder with matching username
-        for record_uid in params.record_cache:
-            record = vault.KeeperRecord.load(params, record_uid)
-
-            # Check if it's a PAM User
-            if not isinstance(record, vault.TypedRecord):
-                continue
-            if record.record_type != 'pamUser':
-                continue
-
-            # Check if in same folder
-            record_folder_uid = record.folder_uid if hasattr(record, 'folder_uid') else None
-            if record_folder_uid != folder_uid:
-                continue
-
-            # Check username match
-            # Use record facade to get login field
+        for record_uid in records_in_folder:
             try:
-                from keepercommander.commands.pam.user_facade import PamUserRecordFacade
+                record = vault.KeeperRecord.load(params, record_uid)
+
+                # Check if it's a PAM User
+                if not isinstance(record, vault.TypedRecord):
+                    continue
+                if record.record_type != 'pamUser':
+                    continue
+
+                # Check username match
                 facade = PamUserRecordFacade()
-                facade.assign_record(record)
+                facade.record = record
 
                 if facade.login == username:
-                    logging.error(f'❌ Duplicate PAM User found:')
+                    logging.error(f'❌ Duplicate PAM User found (by username in folder):')
                     logging.error(f'   Username: {username}')
-                    logging.error(f'   Folder: {folder_path}')
+                    logging.error(f'   Folder: {target_folder_path}')
                     logging.error(f'   Existing UID: {record_uid}')
                     logging.error(f'   Title: {record.title}')
                     return True
+
             except Exception as e:
-                logging.debug(f'Error checking record {record_uid}: {e}')
                 continue
 
         return False
@@ -838,26 +806,27 @@ class CredentialProvisionCommand(Command):
         Get folder UID by path.
 
         Args:
-            folder_path: Folder path (e.g., "/Employees/Engineering")
+            folder_path: Folder path (e.g., "Shared Folders/PAM/Engineering")
             params: KeeperParams session
 
         Returns:
             Folder UID if found, None otherwise
         """
-        from ..subfolder import try_resolve_path
 
         try:
-            folder_node = try_resolve_path(params, folder_path)
-            if folder_node:
-                return folder_node.uid
-        except:
+            result = try_resolve_path(params, folder_path)
+            if result:
+                folder_node, remaining_path = result
+                if folder_node and not remaining_path:
+                    return folder_node.uid
+        except Exception:
             pass
 
         return None
 
     def _generate_password(self, password_complexity: str) -> str:
         """
-        Generate secure random password.
+        Generate secure random password using Commander's built-in generator.
 
         This is a critical security feature. Commander generates passwords
         using cryptographic RNG instead of receiving them from external systems.
@@ -875,83 +844,12 @@ class CredentialProvisionCommand(Command):
         Raises:
             ValueError: If complexity string is invalid
         """
-        # Parse complexity: "length,upper,lower,digits,special"
-        try:
-            parts = password_complexity.split(',')
-            if len(parts) != 5:
-                raise ValueError(f'Invalid complexity format: {password_complexity}')
+        # Use Commander's built-in password generator
+        kpg = generator.KeeperPasswordGenerator.create_from_rules(password_complexity)
+        if not kpg:
+            raise ValueError(f'Invalid password complexity format: {password_complexity}')
 
-            length = int(parts[0])
-            min_upper = int(parts[1])
-            min_lower = int(parts[2])
-            min_digits = int(parts[3])
-            min_special = int(parts[4])
-
-            # Validate that minimums don't exceed length
-            total_min = min_upper + min_lower + min_digits + min_special
-            if total_min > length:
-                raise ValueError(
-                    f'Password complexity requirements ({total_min}) exceed length ({length})'
-                )
-
-        except (ValueError, IndexError) as e:
-            raise ValueError(f'Invalid password complexity: {password_complexity}. {str(e)}')
-
-        # Generate secure random password
-        password = self._generate_random_password(length, min_upper, min_lower, min_digits, min_special)
-
-        logging.info(f'✓ Generated secure password (length: {length})')
-        logging.debug(f'  Complexity: {min_upper} upper, {min_lower} lower, {min_digits} digits, {min_special} special')
-
-        return password
-
-    def _generate_random_password(
-        self,
-        length: int,
-        min_upper: int,
-        min_lower: int,
-        min_digits: int,
-        min_special: int
-    ) -> str:
-        """
-        Generate cryptographically secure random password.
-
-        Uses secrets module (cryptographic RNG) to generate password
-        meeting complexity requirements.
-
-        Args:
-            length: Total password length
-            min_upper: Minimum uppercase letters
-            min_lower: Minimum lowercase letters
-            min_digits: Minimum digits
-            min_special: Minimum special characters
-
-        Returns:
-            Random password meeting all requirements
-        """
-        # Character sets
-        uppercase = string.ascii_uppercase
-        lowercase = string.ascii_lowercase
-        digits = string.digits
-        special = '''!@#$%^?();',.=+[]<>{}-_/\\*&:"`~|'''
-
-        # Ensure minimum requirements
-        password_chars = []
-        password_chars.extend(secrets.choice(uppercase) for _ in range(min_upper))
-        password_chars.extend(secrets.choice(lowercase) for _ in range(min_lower))
-        password_chars.extend(secrets.choice(digits) for _ in range(min_digits))
-        password_chars.extend(secrets.choice(special) for _ in range(min_special))
-
-        # Fill remaining length with random mix
-        remaining = length - len(password_chars)
-        if remaining > 0:
-            all_chars = uppercase + lowercase + digits + special
-            password_chars.extend(secrets.choice(all_chars) for _ in range(remaining))
-
-        # Shuffle to avoid predictable pattern (first chars always uppercase, etc.)
-        secrets.SystemRandom().shuffle(password_chars)
-
-        return ''.join(password_chars)
+        return kpg.generate()
 
     def _create_pam_user(
         self,
@@ -973,21 +871,38 @@ class CredentialProvisionCommand(Command):
         Raises:
             CommandError: If PAM User creation fails
         """
-        from keepercommander.commands.pam.user_facade import PamUserRecordFacade
 
         username = config['account']['username']
-        folder_path = config.get('vault', {}).get('folder', f"/Employees/{config['user'].get('department', 'Unknown')}")
+        pam_config_uid = config['account']['pam_config_uid']
 
-        # Ensure folder exists
-        folder_uid = self._ensure_folder_exists(folder_path, params)
+        # Get gateway application folder from PAM Config
+        gateway_folder_uid, gateway_folder_path = self._get_gateway_application_folder(pam_config_uid, params)
+
+        # Determine target folder
+        user_specified_folder = config.get('vault', {}).get('folder')
+
+        # Validate user-specified folder path
+        if user_specified_folder:
+
+            self._validate_folder_path(user_specified_folder)
+
+            # User specified a subfolder (relative to gateway folder)
+            # Example: "PAM Users/Engineering"
+            target_folder_path = f"{gateway_folder_path}/{user_specified_folder.strip('/')}"
+        else:
+            # Auto-generate subfolder based on department
+            department = config['user'].get('department', 'Default')
+            target_folder_path = f"{gateway_folder_path}/PAM Users/{department}"
+
+        # Ensure target folder exists
+        folder_uid = self._ensure_folder_exists(target_folder_path, params)
 
         # Create PAM User typed record
         pam_user = vault.TypedRecord()
-        pam_user.record_type = 'pamUser'
 
         # Use facade to set fields
         facade = PamUserRecordFacade()
-        facade.assign_record(pam_user)
+        facade.record = pam_user
         facade.login = username
         facade.password = password
         facade.managed = True
@@ -997,7 +912,6 @@ class CredentialProvisionCommand(Command):
         if pam_title:
             pam_user.title = pam_title
         else:
-            # Auto-generate: "PAM: FirstName LastName - Username"
             first = config['user']['first_name']
             last = config['user']['last_name']
             pam_user.title = f"PAM: {first} {last} - {username}"
@@ -1021,34 +935,118 @@ class CredentialProvisionCommand(Command):
                 'Department'
             ))
 
+        # Distinguished Name (Active Directory)
+        if config['account'].get('distinguished_name'):
+            dn = config['account']['distinguished_name']
+            custom_fields.append(vault.TypedField.new_field(
+                'text',
+                dn,
+                'Distinguished Name'
+            ))
+
         if custom_fields:
             pam_user.custom = custom_fields
 
         # Add to vault
         try:
-            record_uid = vault.KeeperRecord.create(params, pam_user)
 
-            # Set folder
-            if folder_uid:
-                api.sync_down(params)  # Refresh cache
-                vault_extensions.move_record(params, record_uid, folder_uid)
+            # Create record in vault and add to folder
+            add_record_to_folder(params, pam_user, folder_uid)
 
-            logging.info(f'✅ Created PAM User: {pam_user.title}')
-            logging.info(f'   UID: {record_uid}')
-            logging.info(f'   Folder: {folder_path}')
+            # Sync to get the record UID
+            api.sync_down(params)
 
-            return record_uid
+            return pam_user.record_uid
 
         except Exception as e:
             logging.error(f'Failed to create PAM User: {e}')
             raise CommandError('credential-provision', f'PAM User creation failed: {e}')
 
-    def _ensure_folder_exists(self, folder_path: str, params: KeeperParams) -> Optional[str]:
+    def _validate_folder_path(self, folder_path: str) -> None:
         """
-        Ensure folder exists, create if needed.
+        Validate folder path to prevent path traversal attacks.
 
         Args:
-            folder_path: Folder path (e.g., "/Employees/Engineering")
+            folder_path: User-specified folder path
+
+        Raises:
+            ValueError: If path contains path traversal patterns
+        """
+        if not folder_path:
+            return
+
+        # Check for path traversal patterns
+        if '..' in folder_path:
+            raise ValueError(
+                f"Invalid folder path: '{folder_path}' contains path traversal pattern '..'.\n"
+                f"Folder paths must be relative to the gateway application folder.\n"
+                f"Example: 'PAM Users/Engineering' (not '../../../evil/path')"
+            )
+
+        # Normalize path separators and check for suspicious patterns
+        normalized = folder_path.replace('\\', '/')
+
+        # Check for absolute paths (should be relative)
+        if normalized.startswith('/'):
+            raise ValueError(
+                f"Invalid folder path: '{folder_path}' appears to be an absolute path.\n"
+                f"Folder paths must be relative to the gateway application folder.\n"
+                f"Example: 'PAM Users/Engineering' (not '/Shared Folders/...')"
+            )
+
+    def _get_gateway_application_folder(self, pam_config_uid: str, params: KeeperParams) -> tuple[str, str]:
+        """
+        Get gateway application folder from PAM Configuration.
+
+        Uses PamConfigurationRecordFacade to access the folder_uid property
+        that is stored in the PAM Config's pamResources field.
+
+        Args:
+            pam_config_uid: PAM Configuration record UID
+            params: KeeperParams
+
+        Returns:
+            Tuple of (folder_uid, folder_path)
+
+        Raises:
+            ValueError: If PAM Config not found or folder not accessible
+        """
+
+        # Load PAM Config record
+        pam_config_record = vault.KeeperRecord.load(params, pam_config_uid)
+        if not pam_config_record:
+            raise ValueError(f"PAM Configuration not found: {pam_config_uid}")
+
+        # Use facade to access folder_uid
+        facade = PamConfigurationRecordFacade()
+        facade.record = pam_config_record
+        facade.load_typed_fields()
+
+        folder_uid = facade.folder_uid
+
+        if not folder_uid:
+            raise ValueError(
+                f"PAM Configuration '{pam_config_record.title}' has no application folder configured.\n"
+                f"Please configure the application folder in the PAM Configuration record."
+            )
+
+        # Get folder path from folder_uid using existing utility
+        if folder_uid not in params.folder_cache:
+            raise ValueError(
+                f"Application folder (UID: {folder_uid}) not found in vault.\n"
+                f"Ensure the folder is shared with you."
+            )
+
+        folder_path = get_folder_path(params, folder_uid)
+
+        return folder_uid, folder_path
+
+    def _ensure_folder_exists(self, folder_path: str, params: KeeperParams) -> Optional[str]:
+        """
+        Ensure folder exists, create if needed (creating nested folders level by level).
+
+        Args:
+            folder_path: Folder path (e.g., "Shared Folders/PAM/Engineering")
             params: KeeperParams session
 
         Returns:
@@ -1057,34 +1055,63 @@ class CredentialProvisionCommand(Command):
         Raises:
             CommandError: If folder creation fails
         """
-        from ..commands.folder import FolderMakeCommand
 
-        # Check if exists
+        # Check if full path already exists
         folder_uid = self._get_folder_uid(folder_path, params)
         if folder_uid:
             return folder_uid
 
-        # Create folder
-        logging.info(f'Creating folder: {folder_path}')
-
         try:
-            # Use existing folder command to create
-            folder_cmd = FolderMakeCommand()
-            folder_cmd.execute(params, folder=folder_path, shared_folder=True)
+            # Split path into components
+            # Handle both "/" and "\" as path separators
+            components = folder_path.replace('\\', '/').split('/')
 
-            # Refresh cache
-            api.sync_down(params)
+            # Build path incrementally, creating each level as needed
+            current_path = ""
+            for i, component in enumerate(components):
+                if not component:
+                    continue
 
-            # Get UID after creation
+                # Build path up to this level
+                if current_path:
+                    current_path = f"{current_path}/{component}"
+                else:
+                    current_path = component
+
+                # Check if this level exists
+                level_uid = self._get_folder_uid(current_path, params)
+                if level_uid:
+                    continue
+
+                # Determine if this should be a shared folder or subfolder
+                # First level should be shared_folder=True, subsequent levels don't need the flag
+                is_first_level = (i == 0)
+
+                folder_cmd = FolderMakeCommand()
+                folder_cmd.execute(
+                    params,
+                    folder=current_path,
+                    shared_folder=is_first_level,
+                    user_folder=not is_first_level
+                )
+
+                # Refresh cache after each folder creation
+                api.sync_down(params)
+
+                # Verify creation
+                level_uid = self._get_folder_uid(current_path, params)
+                if not level_uid:
+                    raise Exception(f'Folder creation succeeded but UID not found: {current_path}')
+
+            # Get final folder UID
             folder_uid = self._get_folder_uid(folder_path, params)
             if not folder_uid:
-                raise Exception(f'Folder creation succeeded but UID not found: {folder_path}')
+                raise Exception(f'Folder path creation succeeded but final UID not found: {folder_path}')
 
-            logging.info(f'✓ Created shared folder: {folder_path}')
             return folder_uid
 
         except Exception as e:
-            logging.error(f'Failed to create folder {folder_path}: {e}')
+            logging.error(f'Failed to create folder path {folder_path}: {e}')
             raise CommandError('credential-provision', f'Folder creation failed: {e}')
 
     def _create_dag_link(
@@ -1107,20 +1134,22 @@ class CredentialProvisionCommand(Command):
         Raises:
             CommandError: If DAG linking fails
         """
-        from ..discovery_common import record_link
 
         try:
-            # Create belongs_to relationship
-            # PAM User belongs_to PAM Configuration
-            record_link.link_records(
-                params=params,
-                child_uid=pam_user_uid,
-                parent_uid=pam_config_uid
+            # Load the PAM Config record to use for record linking
+            pam_config_record = vault.KeeperRecord.load(params, pam_config_uid)
+
+            # Create RecordLink instance
+            record_link = RecordLink(record=pam_config_record, params=params, fail_on_corrupt=False)
+
+            # Create belongs_to relationship: PAM User belongs_to PAM Configuration
+            record_link.belongs_to(
+                record_uid=pam_user_uid,
+                parent_record_uid=pam_config_uid
             )
 
-            logging.info(f'✅ Linked PAM User to PAM Configuration')
-            logging.debug(f'   PAM User: {pam_user_uid}')
-            logging.debug(f'   PAM Config: {pam_config_uid}')
+            # Save the DAG changes
+            record_link.save()
 
         except Exception as e:
             logging.error(f'Failed to create DAG link: {e}')
@@ -1133,10 +1162,10 @@ class CredentialProvisionCommand(Command):
         params: KeeperParams
     ) -> None:
         """
-        Configure automatic password rotation.
+        Configure automatic password rotation using PAM rotation command.
 
-        Creates rotation schedule with complexity requirements
-        and enables rotation for the PAM User.
+        Uses the existing PAMCreateRecordRotationCommand to set up rotation,
+        ensuring we use the same logic as the CLI command.
 
         Args:
             pam_user_uid: PAM User record UID
@@ -1146,66 +1175,41 @@ class CredentialProvisionCommand(Command):
         Raises:
             CommandError: If rotation configuration fails
         """
-        from ..commands.pam import router_helper
-        from ..proto import router_pb2
 
         rotation_config = config['pam']['rotation']
+        pam_config_uid = config['account']['pam_config_uid']
 
         try:
-            # Build rotation request
             schedule = rotation_config['schedule']
             complexity = rotation_config['password_complexity']
 
-            # Use router helper to set rotation information
-            router_helper.router_set_record_rotation_information(
-                params=params,
-                record_uid=pam_user_uid,
-                resource_ref=None,  # Will use default from PAM Config
-                pwd_complexity=complexity,
-                schedule_data=[{"type": "CRON", "cron": schedule, "tz": "Etc/UTC"}]
-            )
+            rotation_cmd = PAMCreateRecordRotationCommand()
+            kwargs = {
+                'record_name': pam_user_uid,
+                'iam_aad_config_uid': pam_config_uid,
+                'schedule_cron_data': [schedule],
+                'pwd_complexity': complexity,
+                'enable': True,
+                'force': True,
+            }
 
-            logging.info(f'✅ Configured rotation for PAM User')
-            logging.debug(f'   Schedule: {schedule}')
-            logging.debug(f'   Complexity: {complexity}')
+            try:
+                # Suppress verbose output from rotation command
+                with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                    rotation_cmd.execute(params, **kwargs)
+            except Exception as rotation_error:
+                error_msg = str(rotation_error)
+                if '500' in error_msg or 'gateway' in error_msg.lower():
+                    logging.warning('Gateway unavailable - rotation configuration deferred')
+                    logging.warning('Configure rotation manually when gateway is available')
+                else:
+                    raise
 
+        except CommandError:
+            raise
         except Exception as e:
             logging.error(f'Failed to configure rotation: {e}')
             raise CommandError('credential-provision', f'Rotation configuration failed: {e}')
-
-    def _check_gateway_status(
-        self,
-        pam_config_uid: str,
-        params: KeeperParams
-    ) -> bool:
-        """
-        Check if PAM Gateway is available for immediate rotation.
-
-        Uses simplified approach: Assume gateway is available if rotation
-        is configured. Actual connectivity is verified during rotation attempt.
-
-        Args:
-            pam_config_uid: PAM Configuration record UID
-            params: KeeperParams session
-
-        Returns:
-            True if gateway appears available, False otherwise
-        """
-        # Simplified approach per design review:
-        # We assume the gateway is available if the PAM Configuration exists
-        # The actual rotation command will handle gateway connectivity gracefully
-
-        try:
-            # Verify PAM Config exists in vault
-            if pam_config_uid in params.record_cache:
-                logging.debug(f'PAM Configuration found: {pam_config_uid}')
-                return True
-            else:
-                logging.warning(f'PAM Configuration not found in vault: {pam_config_uid}')
-                return False
-        except Exception as e:
-            logging.warning(f'Gateway status check failed: {e}')
-            return False  # Graceful degradation
 
     def _rotate_immediately(
         self,
@@ -1214,42 +1218,31 @@ class CredentialProvisionCommand(Command):
         params: KeeperParams
     ) -> bool:
         """
-        Perform immediate rotation to sync password to target system.
+        Submit immediate rotation request to sync password to target system.
 
-        This overwrites the HR-set initial password with the generated
-        password stored in the PAM User record.
+        This submits a rotation job to sync the generated password stored in
+        the PAM User record to the actual account (AD, Azure AD, AWS IAM, etc.).
+        The rotation is asynchronous and may complete after this method returns.
+
+        NOTE: Immediate rotation is REQUIRED for provisioning. Without it, the
+        PAM User would have a password that doesn't match the target account.
 
         Args:
             pam_user_uid: PAM User record UID
-            config: Configuration dict
+            config: Configuration dict (unused, kept for consistency)
             params: KeeperParams session
 
         Returns:
-            True if rotation succeeded or was not requested
-            False if rotation was requested but failed (non-critical)
+            True if rotation was submitted successfully
+            False if rotation submission failed (non-critical)
         """
-        # Check if immediate rotation was requested
-        rotation_config = config['pam']['rotation']
-        rotate_immediately = rotation_config.get('rotate_immediately', False)
-
-        if not rotate_immediately:
-            logging.debug('Immediate rotation not requested (rotate_immediately: false)')
-            return True
-
-        logging.info('Attempting immediate rotation...')
-
         try:
-            # Import rotation command
-            from ..commands.discoveryrotation import PAMGatewayActionRotateCommand
-
-            # Create and execute rotation command
             rotate_cmd = PAMGatewayActionRotateCommand()
 
             # Execute rotation for this specific PAM User
-            rotate_cmd.execute(params, record_uid=pam_user_uid)
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                rotate_cmd.execute(params, record_uid=pam_user_uid)
 
-            logging.info('✅ Immediate rotation completed successfully')
-            logging.debug(f'   Password synced to target system')
             return True
 
         except Exception as e:
@@ -1259,86 +1252,20 @@ class CredentialProvisionCommand(Command):
             logging.warning(f'   Password will sync on next scheduled rotation')
             return False  # Graceful degradation
 
-    def _create_login_record(
-        self,
-        config: Dict[str, Any],
-        password: str,
-        params: KeeperParams
-    ) -> str:
-        """
-        Create Login record for sharing employee credentials.
-
-        This record is created in the admin's personal vault and can be
-        shared with appropriate parties (manager, IT admin, etc.).
-
-        Args:
-            config: Configuration dict
-            password: Generated password
-            params: KeeperParams session
-
-        Returns:
-            Login record UID
-
-        Raises:
-            CommandError: If Login record creation fails
-        """
-        try:
-            # Build employee name
-            first_name = config['user']['first_name']
-            last_name = config['user']['last_name']
-            full_name = f'{first_name} {last_name}'
-            username = config['account']['username']
-
-            # Create Login typed record
-            login_record = vault.TypedRecord()
-            login_record.record_type = 'login'
-
-            # Set fields
-            login_record.title = f'Corporate Account - {full_name}'
-            login_record.login = username
-            login_record.password = password
-
-            # Build notes with employee info
-            notes_lines = [
-                'Employee Credential Information',
-                '=' * 40,
-                f'Employee: {full_name}',
-                f'Username: {username}',
-                f'Email: {config["user"]["email"]}',
-                '',
-                '⚠️  NOTE: This password is PAM-managed.',
-                '   It will rotate automatically per schedule.',
-                '   Always use the current password from vault.',
-                '',
-                f'Rotation Schedule: {config["pam"]["rotation"]["schedule"]}',
-                f'Password Complexity: {config["pam"]["rotation"]["password_complexity"]}',
-            ]
-            login_record.notes = '\n'.join(notes_lines)
-
-            # Create record in vault
-            record_uid = vault.KeeperRecord.create(params, login_record)
-
-            logging.info(f'✅ Login record created')
-            logging.debug(f'   Record UID: {record_uid}')
-            logging.debug(f'   Title: {login_record.title}')
-
-            return record_uid
-
-        except Exception as e:
-            logging.error(f'Failed to create Login record: {e}')
-            raise CommandError('credential-provision', f'Login record creation failed: {e}')
-
     def _generate_share_url(
         self,
-        login_record_uid: str,
+        pam_user_uid: str,
         config: Dict[str, Any],
         params: KeeperParams
     ) -> str:
         """
-        Generate one-time share URL for Login record.
+        Generate one-time share URL for PAM User.
+
+        Shares the PAM User directly (not a copy) so the user always sees
+        the current password, even after future rotations.
 
         Args:
-            login_record_uid: UID of Login record to share
+            pam_user_uid: UID of PAM User to share
             config: Configuration dict (contains expiry settings)
             params: KeeperParams session
 
@@ -1350,20 +1277,17 @@ class CredentialProvisionCommand(Command):
         """
         # Parse expiry (e.g., "7d" = 7 days)
         expiry_str = config.get('email', {}).get('share_url_expiry', '7d')
-        expiry_seconds = self._parse_expiry(expiry_str)
+        expiration_delta = parse_timeout(expiry_str)
+        expiry_seconds = int(expiration_delta.total_seconds())
 
         try:
             # Generate share URL using internal helper
             # NOTE: Extracts logic from OneTimeShareCreateCommand (commands/register.py)
             share_url = self._generate_share_url_internal(
-                login_record_uid=login_record_uid,
+                record_uid=pam_user_uid,
                 expiry_seconds=expiry_seconds,
                 params=params
             )
-
-            logging.info('✅ Generated one-time share URL')
-            logging.info(f'   Expires: {expiry_str}')
-            logging.info(f'   Max uses: 1 (single-use)')
 
             return share_url
 
@@ -1373,12 +1297,12 @@ class CredentialProvisionCommand(Command):
 
     def _generate_share_url_internal(
         self,
-        login_record_uid: str,
+        record_uid: str,
         expiry_seconds: int,
         params: KeeperParams
     ) -> str:
         """
-        Generate one-time share URL for Login record.
+        Generate one-time share URL for a record (PAM User).
 
         This extracts the core logic from OneTimeShareCreateCommand
         (keepercommander/commands/register.py lines 2365-2430).
@@ -1388,7 +1312,7 @@ class CredentialProvisionCommand(Command):
         to stay within scope of KC-1007. Can be refactored later if needed.
 
         Args:
-            login_record_uid: UID of Login record to share
+            record_uid: UID of record to share (PAM User)
             expiry_seconds: Seconds until share expires
             params: KeeperParams session
 
@@ -1399,15 +1323,11 @@ class CredentialProvisionCommand(Command):
             ValueError: If record not found
             Exception: If share creation fails
         """
-        from keepercommander import api, utils, crypto
-        from keepercommander.proto import APIRequest_pb2
-        from urllib.parse import urlunparse, urlparse
-
         # Get record key
-        if login_record_uid not in params.record_cache:
-            raise ValueError(f'Login record not found: {login_record_uid}')
+        if record_uid not in params.record_cache:
+            raise ValueError(f'Record not found: {record_uid}')
 
-        record_key = params.record_cache[login_record_uid]['record_key_unencrypted']
+        record_key = params.record_cache[record_uid]['record_key_unencrypted']
 
         # Generate client keys (from OneTimeShareCreateCommand)
         client_key = utils.generate_aes_key()
@@ -1415,7 +1335,7 @@ class CredentialProvisionCommand(Command):
 
         # Create share request
         rq = APIRequest_pb2.AddExternalShareRequest()
-        rq.recordUid = utils.base64_url_decode(login_record_uid)
+        rq.recordUid = utils.base64_url_decode(record_uid)
         rq.encryptedRecordKey = crypto.encrypt_aes_v2(record_key, client_key)
         rq.clientId = client_id
         rq.accessExpireOn = utils.current_milli_time() + int(expiry_seconds * 1000)
@@ -1428,47 +1348,7 @@ class CredentialProvisionCommand(Command):
         server_netloc = parsed.netloc if parsed.netloc else parsed.path
         url = urlunparse(('https', server_netloc, '/vault/share/', None, None, utils.base64_url_encode(client_key)))
 
-        logging.debug(f'Generated share URL: {url[:50]}... (expires in {expiry_seconds}s)')
-
         return str(url)
-
-    def _parse_expiry(self, expiry_str: str) -> int:
-        """
-        Parse expiry string to seconds.
-
-        Supported formats:
-        - "7d" = 7 days
-        - "24h" = 24 hours
-        - "60m" = 60 minutes
-
-        Args:
-            expiry_str: Expiry string (e.g., "7d")
-
-        Returns:
-            Seconds
-
-        Raises:
-            ValueError: If format invalid
-        """
-        import re
-
-        match = re.match(r'^(\d+)([dhm])$', expiry_str)
-        if not match:
-            # Default to 7 days
-            logging.warning(f'Invalid expiry format: {expiry_str}, using 7d')
-            return 7 * 24 * 60 * 60
-
-        value = int(match.group(1))
-        unit = match.group(2)
-
-        if unit == 'd':
-            return value * 24 * 60 * 60
-        elif unit == 'h':
-            return value * 60 * 60
-        elif unit == 'm':
-            return value * 60
-
-        return 7 * 24 * 60 * 60  # Default 7 days
 
     def _load_email_config(
         self,
@@ -1488,10 +1368,8 @@ class CredentialProvisionCommand(Command):
         Raises:
             CommandError: If email config not found
         """
-        from keepercommander.commands import email_commands
-
         # Find email config by name
-        record_uid = email_commands.find_email_config_by_name(params, config_name)
+        record_uid = email_commands.find_email_config_record(params, config_name)
 
         if not record_uid:
             raise CommandError('credential-provision', f'Email config not found: {config_name}')
@@ -1499,7 +1377,6 @@ class CredentialProvisionCommand(Command):
         # Load email config from record
         try:
             email_config = email_commands.load_email_config_from_record(params, record_uid)
-            logging.debug(f'Loaded email config: {config_name}')
             return email_config
         except Exception as e:
             raise CommandError('credential-provision', f'Failed to load email config: {e}')
@@ -1521,10 +1398,8 @@ class CredentialProvisionCommand(Command):
         Returns:
             True if email sent successfully, False if failed (non-critical)
         """
-        from keepercommander.email_service import EmailSender, build_onboarding_email
-
         email_config_name = config['email']['config_name']
-        send_to = config['email'].get('send_to', 'personal')
+        send_to = config['email']['send_to']
         subject = config['email'].get('subject', 'Welcome - Your Account Credentials')
 
         # Load email configuration
@@ -1534,25 +1409,6 @@ class CredentialProvisionCommand(Command):
             logging.warning(f'⚠️  Failed to load email config: {e}')
             return False
 
-        # Determine recipient(s)
-        recipients = []
-        if send_to == 'personal':
-            recipients.append(config['user']['personal_email'])
-        elif send_to == 'corporate':
-            corporate_email = config['user'].get('corporate_email')
-            if not corporate_email:
-                logging.error('corporate_email not specified in config')
-                return False
-            recipients.append(corporate_email)
-        elif send_to == 'both':
-            recipients.append(config['user']['personal_email'])
-            corporate_email = config['user'].get('corporate_email')
-            if corporate_email:
-                recipients.append(corporate_email)
-        else:
-            logging.error(f'Invalid send_to value: {send_to}')
-            return False
-
         # Build email body using existing template
         user = config['user']
         custom_message = config['email'].get(
@@ -1560,7 +1416,11 @@ class CredentialProvisionCommand(Command):
             f"Welcome to the team, {user['first_name']}! Your corporate account credentials are ready."
         )
         record_title = f"Corporate Account - {user['first_name']} {user['last_name']}"
-        expiration = config['email'].get('share_url_expiry', '7 days')
+
+        # Convert expiry format from short notation (7d, 24h, 60mi) to human-readable (7 days, 24 hours, 60 minutes)
+        expiry_str = config['email'].get('share_url_expiry', '7d')
+        expiration_delta = parse_timeout(expiry_str)
+        expiration = format_timeout(expiration_delta)
 
         body = build_onboarding_email(
             share_url=share_url,
@@ -1569,14 +1429,11 @@ class CredentialProvisionCommand(Command):
             expiration=expiration
         )
 
-        # Send email to each recipient
+        # Send email (suppress verbose email service output)
         try:
-            sender = EmailSender(email_config)
-
-            for recipient in recipients:
-                sender.send(recipient, subject, body, html=True)
-                logging.info(f'✅ Email sent to: {recipient}')
-
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                sender = EmailSender(email_config)
+                sender.send(send_to, subject, body, html=True)
             return True
 
         except Exception as e:
@@ -1585,7 +1442,7 @@ class CredentialProvisionCommand(Command):
             return False
 
     # =========================================================================
-    # KC-1007-6: Rollback Logic
+    # Rollback Logic
     # =========================================================================
 
     def _rollback(self, state: ProvisioningState, params: KeeperParams) -> None:
@@ -1606,44 +1463,193 @@ class CredentialProvisionCommand(Command):
             - Rollback attempts are defensive (don't fail if already cleaned up)
             - Partial rollback success is acceptable (logs errors for manual cleanup)
         """
-        from keepercommander import api
 
         rollback_errors = []
 
-        logging.info('Rolling back provisioning changes...')
+        logging.warning('Rolling back provisioning changes')
 
-        # Delete Login record (if created)
-        if state.login_record_uid:
-            try:
-                api.delete_record(params, state.login_record_uid)
-                logging.info('✅ Rollback: Deleted Login record')
-            except Exception as e:
-                rollback_errors.append(f'Login record: {e}')
-                logging.error(f'⚠️  Rollback failed for Login record: {e}')
-
-        # Delete PAM User (also should remove DAG links automatically)
         if state.pam_user_uid:
             try:
                 api.delete_record(params, state.pam_user_uid)
-                logging.info('✅ Rollback: Deleted PAM User')
             except Exception as e:
                 rollback_errors.append(f'PAM User: {e}')
-                logging.error(f'⚠️  Rollback failed for PAM User: {e}')
+                logging.error(f'Rollback failed for PAM User: {e}')
 
-        # Log rollback summary
         if rollback_errors:
-            logging.error('\n' + '='*60)
-            logging.error('⚠️  ROLLBACK COMPLETED WITH ERRORS')
-            logging.error('='*60)
-            logging.error('Some resources could not be automatically cleaned up:')
+            logging.error('Rollback completed with errors - manual cleanup may be required')
             for error in rollback_errors:
-                logging.error(f'   • {error}')
-            logging.error('\nManual cleanup may be required.')
-            logging.error('Check your vault for orphaned records.')
-            logging.error('='*60 + '\n')
+                logging.error(f'  {error}')
+
+    # =========================================================================
+    # System-Specific Field Validation
+    # =========================================================================
+
+    def _search_pam_users_by_login(self, params: KeeperParams, username: str) -> List[Dict[str, str]]:
+        """
+        Search for existing PAM User records by login username.
+
+        This is critical for Azure AD which only allows ONE PAM User per Azure AD user.
+        Creating duplicate PAM Users causes rotation conflicts.
+
+        Args:
+            params: KeeperParams session
+            username: Login username to search for
+
+        Returns:
+            List of matching PAM User records with 'uid' and 'title' keys
+
+        Example:
+            existing = self._search_pam_users_by_login(params, 'john.doe@company.com')
+            if existing:
+                raise ValueError(f"User already exists: {existing[0]['uid']}")
+        """
+        matching_users = []
+
+        for record_uid, record in params.record_cache.items():
+            if record.get('record_type') == 'pamUser':
+                record_data = record.get('data_unencrypted')
+                if record_data:
+                    # Check login field in PAM User record
+                    for field in record_data.get('fields', []):
+                        if field.get('type') == 'login':
+                            field_values = field.get('value', [])
+                            if field_values and isinstance(field_values, list):
+                                login_value = field_values[0].get('text', '') if field_values[0] else ''
+                                if login_value == username:
+                                    matching_users.append({
+                                        'uid': record_uid,
+                                        'title': record.get('title', 'Untitled')
+                                    })
+
+        return matching_users
+
+    def _validate_system_specific_fields(
+        self,
+        config: Dict[str, Any],
+        pam_config_record: Dict[str, Any],
+        params: KeeperParams
+    ) -> List[str]:
+        """
+        Validate YAML fields based on PAM system type (Active Directory, Azure AD, AWS IAM).
+
+        This validation runs AFTER basic YAML validation and AFTER loading the PAM Config
+        from the vault, so we can determine the target system type and apply system-specific rules.
+
+        Args:
+            config: Parsed YAML configuration
+            pam_config_record: PAM Configuration record from vault
+            params: KeeperParams session
+
+        Returns:
+            List of validation error messages (empty if valid)
+
+        System-Specific Rules:
+            - Active Directory: Optional distinguished_name for precise targeting
+            - Azure AD: Required domain\\username or username@domain format, duplicate check
+            - AWS IAM: No additional validation needed
+
+        """
+        errors = []
+        warnings = []
+
+        # Extract PAM system type from KeeperRecord object
+        # The record is now a TypedRecord, so we access record_type directly
+        pam_type = ''
+
+        if hasattr(pam_config_record, 'record_type'):
+            # TypedRecord - get the record type
+            record_type = pam_config_record.record_type
+
+            # Map record types to PAM system types
+            if ('ad' in record_type.lower() or
+                'active' in record_type.lower() or
+                'domain' in record_type.lower()):
+                pam_type = 'activedirectory'
+            elif 'azure' in record_type.lower():
+                pam_type = 'azuread'
+            elif 'aws' in record_type.lower() or 'iam' in record_type.lower():
+                pam_type = 'awsiam'
+            else:
+                pam_type = record_type.lower()
+
+        # Normalize type string (handle various formats)
+        pam_type = str(pam_type).lower().replace('_', '').replace('-', '')
+
+        username = config['account']['username']
+
+        # ===================================================================
+        # Active Directory Validation
+        # ===================================================================
+        if pam_type in ['ad', 'activedirectory', 'active directory']:
+            distinguished_name = config['account'].get('distinguished_name')
+
+            if not distinguished_name:
+                logging.warning('')
+                logging.warning('⚠️  No "distinguished_name" provided for Active Directory')
+                logging.warning('    The system will search by username in the PAM Config search base')
+                logging.warning('    This may fail or target the wrong user in multi-OU environments')
+                logging.warning('')
+                logging.warning('    Recommendation: Add distinguished_name to your YAML:')
+                logging.warning('    account:')
+                logging.warning('      username: john.doe-admin')
+                logging.warning('      distinguished_name: "CN=john.doe-admin,OU=IT Admins,DC=company,DC=com"')
+                logging.warning('')
+            else:
+                if not distinguished_name.startswith('CN=') or 'DC=' not in distinguished_name:
+                    errors.append(
+                        f'account.distinguished_name has invalid format: {distinguished_name}'
+                    )
+                    errors.append(
+                        '    Expected format: CN=username,OU=organizational_unit,DC=domain,DC=com'
+                    )
+                    errors.append(
+                        '    Example: CN=john.doe-admin,OU=IT Admins,DC=company,DC=com'
+                    )
+
+        # ===================================================================
+        # Azure AD Validation
+        # ===================================================================
+        elif pam_type in ['azuread', 'azure ad', 'azure', 'aad']:
+            # Validate username format (must contain \ or @)
+            if '\\' not in username and '@' not in username:
+                errors.append(
+                    'Azure AD requires username in format: "domain\\username" or "username@domain"'
+                )
+                errors.append(f'    Current username: {username}')
+                errors.append(f'    Examples: "COMPANY\\john.doe" or "john.doe@company.com"')
+
+            # Check for existing PAM User (Azure AD constraint: only one PAM User per Azure AD user)
+            existing_pam_users = self._search_pam_users_by_login(params, username)
+            if existing_pam_users:
+                errors.append('')
+                errors.append(f'❌ Azure AD user "{username}" already exists in vault')
+                errors.append(f'   Existing PAM User UID: {existing_pam_users[0]["uid"]}')
+                errors.append(f'   Existing PAM User Title: {existing_pam_users[0]["title"]}')
+                errors.append('')
+                errors.append('   Azure AD Constraint: Only ONE PAM User record per Azure AD user')
+                errors.append('   Having multiple PAM User records causes rotation conflicts')
+                errors.append('')
+                errors.append('   Solutions:')
+                errors.append('   1. Use the existing PAM User record instead')
+                errors.append('   2. Delete the existing PAM User if it\'s incorrect')
+                errors.append('   3. Use a different Azure AD username')
+                errors.append('')
+
+        # ===================================================================
+        # AWS IAM Validation
+        # ===================================================================
+        elif pam_type in ['awsiam', 'aws iam', 'iam', 'aws']:
+            # AWS IAM works with just username - no additional validation needed
+            pass
+
+        # ===================================================================
+        # Unknown PAM Type
+        # ===================================================================
         else:
-            logging.info('\n' + '='*60)
-            logging.info('✅ ROLLBACK COMPLETED SUCCESSFULLY')
-            logging.info('='*60)
-            logging.info('All created resources have been cleaned up.')
-            logging.info('='*60 + '\n')
+            logging.warning('')
+            logging.warning(f'⚠️  Unknown or unsupported PAM system type: "{pam_type}"')
+            logging.warning('    Using generic validation only')
+            logging.warning('    Supported types: Active Directory, Azure AD, AWS IAM')
+            logging.warning('')
+
+        return errors
