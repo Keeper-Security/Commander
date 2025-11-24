@@ -28,11 +28,9 @@ import json
 import logging
 import os
 import re
-import sys
 from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO
 from typing import Dict, List, Optional, Any, Tuple
-from datetime import datetime, timedelta
 from urllib.parse import urlunparse, urlparse
 
 try:
