@@ -75,7 +75,7 @@ class PAMTunnelListCommand(Command):
                 return
 
             table = []
-            headers = ['Record', 'Remote Target', 'Local Address', 'Conversation ID', 'Status']
+            headers = ['Record', 'Remote Target', 'Local Address', 'Tunnel ID', 'Conversation ID', 'Status']
 
             # Get all tube IDs
             tube_ids = tube_registry.all_tube_ids()
@@ -102,7 +102,10 @@ class PAMTunnelListCommand(Command):
                 else:
                     local_addr = f"{bcolors.WARNING}unknown{bcolors.ENDC}"
 
-                # Conversation ID
+                # Tunnel ID (tube_id) - this is what's needed for stopping
+                tunnel_id = tube_id
+
+                # Conversation ID - WebRTC signaling identifier
                 conv_id = conversation_ids[0] if conversation_ids else (tunnel_session.conversation_id if tunnel_session else 'none')
 
                 # Connection state
@@ -117,6 +120,7 @@ class PAMTunnelListCommand(Command):
                     record_title,
                     remote_target,
                     local_addr,
+                    tunnel_id,
                     conv_id,
                     status,
                 ]
@@ -132,27 +136,72 @@ class PAMTunnelListCommand(Command):
 
 class PAMTunnelStopCommand(Command):
     pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel stop')
-    pam_cmd_parser.add_argument('uid', type=str, action='store', help='The Tunnel UID or Record UID')
+    pam_cmd_parser.add_argument('uid', type=str, action='store', nargs='?', help='The Tunnel ID, Conversation ID, or Record UID (omit with --all to stop all tunnels)')
+    pam_cmd_parser.add_argument('--all', dest='stop_all', action='store_true', 
+                                help='Stop all tunnels (if no UID) or all tunnels matching the UID (if UID provided)')
 
     def get_parser(self):
         return PAMTunnelStopCommand.pam_cmd_parser
 
     def execute(self, params, **kwargs):
         uid = kwargs.get('uid')
+        stop_all = kwargs.get('stop_all', False)
+        
+        # Special case: --all with no UID means stop ALL tunnels
+        if stop_all and not uid:
+            return self._stop_all_tunnels(params)
+        
         if not uid:
-            raise CommandError('tunnel stop', '"uid" argument is required')
+            raise CommandError('tunnel stop', '"uid" argument is required (or use --all to stop all tunnels)')
 
         tube_registry = get_or_create_tube_registry(params)
         if not tube_registry:
             raise CommandError('tunnel stop', 'This command requires the Rust WebRTC library')
 
-        # Find matching tubes
+        # Find matching tubes by tunnel ID (tube_id)
         matching_tubes = tube_registry.find_tubes(uid)
         if not matching_tubes and tube_registry.tube_found(uid):
             matching_tubes = [uid]
 
+        # If not found by tunnel ID, try looking up by conversation ID
+        if not matching_tubes:
+            # Try as-is first
+            tube_id = tube_registry.tube_id_from_connection_id(uid)
+            
+            # If not found, try URL-safe base64 conversion
+            if not tube_id:
+                # Convert standard base64 to URL-safe (+ to -, / to _, remove =)
+                url_safe_uid = uid.replace('+', '-').replace('/', '_').rstrip('=')
+                tube_id = tube_registry.tube_id_from_connection_id(url_safe_uid)
+                
+            # If still not found, try the reverse (URL-safe to standard)
+            if not tube_id:
+                # Convert URL-safe to standard base64 (- to +, _ to /)
+                standard_uid = uid.replace('-', '+').replace('_', '/')
+                # Add padding if needed
+                padding_needed = (4 - len(standard_uid) % 4) % 4
+                if padding_needed:
+                    standard_uid += '=' * padding_needed
+                tube_id = tube_registry.tube_id_from_connection_id(standard_uid)
+            
+            if tube_id:
+                matching_tubes = [tube_id]
+
         if not matching_tubes:
             raise CommandError('tunnel stop', f"No active tunnels found matching '{uid}'")
+
+        # Check if multiple tunnels match and --all flag is required
+        if len(matching_tubes) > 1:
+            if not stop_all:
+                print(f"{bcolors.WARNING}Found {len(matching_tubes)} tunnels matching '{uid}':{bcolors.ENDC}")
+                for tube_id in matching_tubes:
+                    print(f"  - {tube_id}")
+                print(f"\n{bcolors.FAIL}Multiple tunnels found. Use --all to stop all of them, or specify a Tunnel ID or Conversation ID to stop a specific tunnel.{bcolors.ENDC}")
+                raise CommandError('tunnel stop', 'Multiple tunnels found - use --all flag or specify exact Tunnel/Conversation ID')
+            else:
+                print(f"{bcolors.WARNING}Stopping {len(matching_tubes)} tunnels matching '{uid}':{bcolors.ENDC}")
+                for tube_id in matching_tubes:
+                    print(f"  - {tube_id}")
 
         # Close all matching tubes
         stopped_count = 0
@@ -166,6 +215,45 @@ class PAMTunnelStopCommand(Command):
 
         if stopped_count == 0:
             raise CommandError('tunnel stop', f"Failed to stop any tunnels matching '{uid}'")
+
+    def _stop_all_tunnels(self, params):
+        """Stop all active tunnels"""
+        tube_registry = get_or_create_tube_registry(params)
+        if not tube_registry:
+            raise CommandError('tunnel stop', 'This command requires the Rust WebRTC library')
+
+        # Get all active tunnel IDs
+        all_tube_ids = tube_registry.all_tube_ids()
+        
+        if not all_tube_ids:
+            print(f"{bcolors.WARNING}No active tunnels to stop.{bcolors.ENDC}")
+            return
+
+        # Confirm with user
+        print(f"{bcolors.WARNING}About to stop {len(all_tube_ids)} active tunnel(s):{bcolors.ENDC}")
+        for tube_id in all_tube_ids:
+            print(f"  - {tube_id}")
+        
+        # Stop all tunnels
+        stopped_count = 0
+        failed_count = 0
+        for tube_id in all_tube_ids:
+            try:
+                tube_registry.close_tube(tube_id, reason=CloseConnectionReasons.Normal)
+                print(f"{bcolors.OKGREEN}Stopped tunnel: {tube_id}{bcolors.ENDC}")
+                stopped_count += 1
+            except Exception as e:
+                print(f"{bcolors.FAIL}Failed to stop tunnel {tube_id}: {e}{bcolors.ENDC}")
+                failed_count += 1
+
+        # Summary
+        if stopped_count > 0:
+            print(f"\n{bcolors.OKGREEN}Successfully stopped {stopped_count} tunnel(s).{bcolors.ENDC}")
+        if failed_count > 0:
+            print(f"{bcolors.FAIL}Failed to stop {failed_count} tunnel(s).{bcolors.ENDC}")
+        
+        if stopped_count == 0:
+            raise CommandError('tunnel stop', 'Failed to stop any tunnels')
 
 
 class PAMTunnelEditCommand(Command):
