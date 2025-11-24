@@ -3931,8 +3931,19 @@ class DeviceApproveCommand(EnterpriseCommand):
 
 class DomainManagementHelper:
     
-    NOTICE_MSG = 'Notice: This feature is not in production yet. It will be available soon.'
+    NOTICE_MSG = 'Notice: This feature is not in production yet. It will be available soon.'    
     DOMAIN_PATTERN = r'^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?)*$'
+    
+    ERROR_MESSAGES = {
+        'bad_request': 'Domain not specified or invalid',
+        'access_denied': 'Access denied: You must be a Root Admin to manage domains',
+        'forbidden': 'Access denied: You must be a Root Admin to manage domains',
+        'domain_already_taken': 'Domain "{domain}" is already reserved by a different enterprise',
+        'verification_failed': 'DNS verification failed for domain "{domain}". Please ensure the TXT record is correctly added and DNS has propagated (may take up to 48 hours).',
+        'invalid_domain': 'Invalid domain format: "{domain}"',
+        'rate_limit': 'Too many requests. Please wait a moment and try again.',
+        'too_many_requests': 'Too many requests. Please wait a moment and try again.',
+    }
     
     @staticmethod
     def is_feature_unavailable(error_code):
@@ -3979,36 +3990,28 @@ class DomainManagementHelper:
     
     @staticmethod
     def get_error_message(error_code, domain, action):
-        error_messages = {
-            'bad_request': 'Domain not specified or invalid',
-            'access_denied': 'Access denied: You must be a Root Admin to manage domains',
-            'forbidden': 'Access denied: You must be a Root Admin to manage domains',
-            'domain_already_taken': f'Domain "{domain}" is already reserved by a different enterprise',
-            'verification_failed': f'DNS verification failed for domain "{domain}". Please ensure the TXT record is correctly added and DNS has propagated (may take up to 48 hours).',
-            'invalid_domain': f'Invalid domain format: "{domain}"',
-            'rate_limit': 'Too many requests. Please wait a moment and try again.',
-            'too_many_requests': 'Too many requests. Please wait a moment and try again.',
-        }
+        """Get user-friendly error message using class constant dictionary."""
         
-        if error_code == 'invalid_token':
-            if action == 'add':
-                return f'Failed to verify domain "{domain}". Please ensure you have added the TXT record with the correct token to your DNS settings and try again.'
-            return 'Invalid or expired verification token'
+        if error_code == 'invalid_token' and action == 'add':
+            return f'Failed to verify domain "{domain}". Please ensure you have added the TXT record with the correct token to your DNS settings and try again.'
         
         if error_code in ('exists', 'domain_exists'):
             if action == 'token':
                 return f'Domain "{domain}" already exists in the enterprise. Use action "delete" to remove it first.'
-            return f'Domain "{domain}" already exists in the enterprise'
+            elif action == 'add':
+                return f'Domain "{domain}" already exists in the enterprise. It may have already been added successfully.'
         
-        if error_code in ('not_exists', 'domain_not_found', 'doesnt_exist'):
-            if action == 'delete':
-                return f'Domain "{domain}" does not exist. Use action "token" to start the domain reservation process.'
+        if error_code in ('not_exists', 'domain_not_found', 'doesnt_exist') and action == 'delete':
             return f'Domain "{domain}" does not exist. Use action "token" to start the domain reservation process.'
         
-        return error_messages.get(
-            error_code,
-            f'Unable to {action} domain "{domain}". Please try again or contact support if the issue persists.'
-        )
+        message_template = DomainManagementHelper.ERROR_MESSAGES.get(error_code)
+        
+        if message_template:
+            if '{domain}' in message_template:
+                return message_template.format(domain=domain)
+            return message_template
+        
+        return f'Unable to {action} domain "{domain}". Please try again or contact support if the issue persists.'
 
 
 class ListDomainsCommand(EnterpriseCommand):
@@ -4024,7 +4027,7 @@ class ListDomainsCommand(EnterpriseCommand):
                 rs_type=enterprise_pb2.ListDomainsResponse
             )
             
-            fmt = kwargs.get('format') or ''
+            fmt = kwargs.get('format', '')    
             
             if not rs.domain:
                 logging.info('No reserved domains found for this enterprise.')
