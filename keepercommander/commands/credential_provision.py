@@ -65,8 +65,8 @@ from keepercommander.commands.pam.config_facades import PamConfigurationRecordFa
 
 credential_provision_parser = argparse.ArgumentParser(
     prog='credential-provision',
-    description='Automate employee credential provisioning with PAM User creation, '
-                'password rotation, and email delivery'
+    description='Automate PAM User credential provisioning with password rotation '
+                'and email delivery'
 )
 
 credential_provision_parser.add_argument(
@@ -102,7 +102,8 @@ def register_commands(commands):
     commands['credential-provision'] = CredentialProvisionCommand()
 
 def register_command_info(aliases, command_info):
-    command_info['credential-provision'] = 'Automate employee credential provisioning'
+    aliases['cp'] = 'credential-provision'
+    command_info['credential-provision'] = 'Automate PAM User credential provisioning'
 
 # =============================================================================
 # Main Command Class
