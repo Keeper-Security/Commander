@@ -291,7 +291,12 @@ list_domains_parser.error = raise_parse_exception
 list_domains_parser.exit = suppress_exit
 
 reserve_domain_parser = argparse.ArgumentParser(prog='reserve-domain',
-                                                description='Reserve a domain for the enterprise.')
+                                                description='Reserve and manage domains for the enterprise.\n\n'
+                                                'Process:\n'
+                                                ' 1. Use --action token to get DNS verification token\n'
+                                                ' 2. Add TXT record to your DNS\n'
+                                                ' 3. Use --action add to complete reservation\n'
+                                                ' 4. Use --action delete to remove domain')
 reserve_domain_parser.add_argument('--action', dest='action', required=True,
                                    choices=['token', 'add', 'delete'],
                                    help='Action to perform: token (get verification token), add (add domain after verification), delete (remove domain)')
@@ -299,6 +304,8 @@ reserve_domain_parser.add_argument('--domain', dest='domain', required=True,
                                    help='Domain name to reserve')
 reserve_domain_parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'],
                                    default='text', help='Output format.')
+reserve_domain_parser.add_argument('--force', dest='force', action='store_true',
+                                   help='Skip confirmation prompt for delete action')
 reserve_domain_parser.error = raise_parse_exception
 reserve_domain_parser.exit = suppress_exit
 
@@ -3931,8 +3938,13 @@ class DeviceApproveCommand(EnterpriseCommand):
 
 class DomainManagementHelper:
     
+    # Domain validation constants
+    MAX_DOMAIN_LENGTH = 253
+    MAX_LABEL_LENGTH = 63
+    MIN_TLD_LENGTH = 2
+    
     NOTICE_MSG = 'Notice: This feature is not in production yet. It will be available soon.'    
-    DOMAIN_PATTERN = r'^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?)*$'
+    DOMAIN_PATTERN = r'^(?!-)([a-z0-9-]{1,63})(?<!-)(\.(?!-)([a-z0-9-]{1,63})(?<!-))*$'
     
     ERROR_MESSAGES = {
         'bad_request': 'Domain not specified or invalid',
@@ -3971,13 +3983,22 @@ class DomainManagementHelper:
     
     @staticmethod
     def validate_domain(domain):
+        """
+        Validate domain name format and requirements.
+        
+        Args:
+            domain: Domain name to validate
+            
+        Returns:
+            tuple: (is_valid: bool, normalized_domain: str, error_message: str or None)
+        """
         if not domain:
             return False, None, 'Domain name is required'
         
         domain = domain.strip().lower()
         
-        if not domain or len(domain) > 253:
-            return False, domain, 'Invalid domain name: must be between 1 and 253 characters'
+        if not domain or len(domain) > DomainManagementHelper.MAX_DOMAIN_LENGTH:
+            return False, domain, f'Invalid domain name: must be between 1 and {DomainManagementHelper.MAX_DOMAIN_LENGTH} characters'
         
         import re
         if not re.match(DomainManagementHelper.DOMAIN_PATTERN, domain):
@@ -3985,6 +4006,16 @@ class DomainManagementHelper:
         
         if '.' not in domain:
             return False, domain, 'Invalid domain: must contain at least one dot (e.g., example.com)'
+        
+        # Check each label
+        labels = domain.split('.')
+        for label in labels:
+            if len(label) > DomainManagementHelper.MAX_LABEL_LENGTH:
+                return False, domain, f'Invalid domain: label "{label}" exceeds {DomainManagementHelper.MAX_LABEL_LENGTH} characters'
+        
+        # Check TLD length
+        if len(labels[-1]) < DomainManagementHelper.MIN_TLD_LENGTH:
+            return False, domain, f'Invalid domain: TLD must be at least {DomainManagementHelper.MIN_TLD_LENGTH} characters'
         
         return True, domain, None
     
@@ -4069,6 +4100,7 @@ class ReserveDomainCommand(EnterpriseCommand):
         action = kwargs.get('action')
         domain = kwargs.get('domain')
         output_format = kwargs.get('format', 'text')
+        force = kwargs.get('force', False)
         
         if not self._validate_inputs(action, domain, output_format):
             return
@@ -4079,7 +4111,7 @@ class ReserveDomainCommand(EnterpriseCommand):
             return
         
         try:
-            result = self._execute_action(params, action, domain, output_format)
+            result = self._execute_action(params, action, domain, output_format, force=force)
             if result:
                 return result
                 
@@ -4105,9 +4137,18 @@ class ReserveDomainCommand(EnterpriseCommand):
             )
             return False
         
+        if not domain:
+            DomainManagementHelper.output_error('Domain is required', output_format, status='failed')
+            return False
+        
         return True
     
-    def _execute_action(self, params, action, domain, output_format):
+    def _execute_action(self, params, action, domain, output_format, force=False):
+        """Execute the specified domain action after validation."""
+        if not action or not domain:
+            DomainManagementHelper.output_error('Action and domain are required', output_format, status='failed')
+            return
+        
         rq = self._create_request(action, domain)
         
         if action == 'token':
@@ -4115,15 +4156,12 @@ class ReserveDomainCommand(EnterpriseCommand):
         elif action == 'add':
             return self._handle_add_action(params, rq, domain, output_format)
         elif action == 'delete':
-            return self._handle_delete_action(params, rq, domain, output_format)
+            return self._handle_delete_action(params, rq, domain, output_format, force=force)
     
     def _create_request(self, action, domain):
         rq = enterprise_pb2.ReserveDomainRequest()
         rq.reserveDomainAction = self.ACTION_MAP[action]
-        rq.domain = domain
-        
-        if logging.getLogger().level <= logging.DEBUG:
-            logging.debug(f'ReserveDomainRequest: action={action} (enum value={self.ACTION_MAP[action]}), domain={domain}')
+        rq.domain = domain       
         
         return rq
     
@@ -4161,7 +4199,18 @@ class ReserveDomainCommand(EnterpriseCommand):
         logging.info(f'Domain "{domain}" has been reserved for the enterprise')
         self._refresh_enterprise_data(params, 'added')
     
-    def _handle_delete_action(self, params, rq, domain, output_format):
+    def _handle_delete_action(self, params, rq, domain, output_format, force=False):
+        """Handle domain deletion with optional confirmation."""
+        if not force and output_format != 'json':
+            domain_exists = self._check_domain_exists(params, domain)
+            if not domain_exists:
+                pass
+            else:
+                confirm = input(f'\n{bcolors.WARNING}Are you sure you want to delete domain "{domain}"? (y/n): {bcolors.ENDC}')
+                if confirm.lower() not in ['yes', 'y']:
+                    logging.info('Domain deletion cancelled')
+                    return
+        
         api.communicate_rest(params, rq, 'enterprise/reserve_domain')
         
         if output_format == 'json':
@@ -4173,6 +4222,16 @@ class ReserveDomainCommand(EnterpriseCommand):
         
         logging.info(f'Domain "{domain}" has been removed from the enterprise')
         self._refresh_enterprise_data(params, 'removed')
+    
+    def _check_domain_exists(self, params, domain):
+        """Check if a domain exists in the enterprise."""
+        rs = api.communicate_rest(
+            params,
+            None,
+            'enterprise/list_domains',
+            rs_type=enterprise_pb2.ListDomainsResponse
+        )
+        return domain in rs.domain if rs.domain else False
     
     def _display_token_instructions(self, domain, token):
         print(f'\n{bcolors.OKGREEN}Token generated successfully!{bcolors.ENDC}\n')
