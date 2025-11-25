@@ -23,6 +23,7 @@ class SecurityBenchmark(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     SB_CREATE_ALERTS: _ClassVar[SecurityBenchmark]
     SB_DISABLE_BROWSER_PASSWORD_MANAGERS: _ClassVar[SecurityBenchmark]
     SB_DISABLE_ACCOUNT_RECOVERY: _ClassVar[SecurityBenchmark]
+    SB_ENFORCE_LEAST_PRIVILEGE_POLICY: _ClassVar[SecurityBenchmark]
 
 class SecurityBenchmarkStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = []
@@ -45,6 +46,7 @@ SB_CONFIGURE_IP_ALLOWLISTING: SecurityBenchmark
 SB_CREATE_ALERTS: SecurityBenchmark
 SB_DISABLE_BROWSER_PASSWORD_MANAGERS: SecurityBenchmark
 SB_DISABLE_ACCOUNT_RECOVERY: SecurityBenchmark
+SB_ENFORCE_LEAST_PRIVILEGE_POLICY: SecurityBenchmark
 INVALID: SecurityBenchmarkStatus
 RESOLVED: SecurityBenchmarkStatus
 IGNORED: SecurityBenchmarkStatus

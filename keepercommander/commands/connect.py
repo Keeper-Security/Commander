@@ -21,9 +21,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from typing import Optional, Callable, List, Iterable, Tuple
+from typing import Optional, Callable, List, Iterable, Tuple, Union
 
-from .base import Command, RecordMixin, dump_report_data, field_to_title, report_output_parser
+from .base import Command, RecordMixin, dump_report_data, field_to_title, report_output_parser, user_choice
 from .record import find_record, RecordListCommand
 from .ssh_agent import add_ssh_key, try_extract_private_key, SshAgentCommand
 from ..attachment import prepare_attachment_download
@@ -37,7 +37,7 @@ ssh_parser = argparse.ArgumentParser(prog='ssh', description='Establishes connec
 ssh_parser.add_argument('-d', '--destination', action='store', metavar='LOGIN@HOST[:PORT]',
                         help='SSH endpoint')
 ssh_parser.add_argument('record', nargs='?', type=str, action='store',
-                        help='record path or UID. Record types: "SSH Key", "Server"')
+                        help='record path, UID or hostname. Record types: "SSH Key", "Server"')
 ssh_parser.add_argument('command', nargs='*', type=str, action='store',
                         help='Remote command')
 
@@ -216,6 +216,41 @@ class ConnectSshCommand(BaseConnectCommand):
     def get_parser(self):
         return ssh_parser
 
+    @staticmethod
+    def extract_hostname_from_host_field(host_field):
+        # type: (Union[dict, str]) -> str
+        hostname = ''
+        if isinstance(host_field, dict):
+            hostname = host_field.get('hostName', '')
+        elif isinstance(host_field, str):
+            hostname, _, _ = host_field.partition(':')
+        
+        return hostname.strip() if hostname else ''
+
+    @staticmethod
+    def find_records_by_hostname_from_json(json_records, hostname):
+        # type: (list, str) -> List[dict]
+        if not json_records or not hostname:
+            return []
+        
+        hostname_lower = hostname.strip().lower()
+        if not hostname_lower:
+            return []
+            
+        matching_records = []
+        
+        for rec in json_records:
+            if not isinstance(rec, dict):
+                continue
+                
+            host_field = rec.get('host')
+            if host_field:
+                extracted_hostname = ConnectSshCommand.extract_hostname_from_host_field(host_field)
+                if extracted_hostname.lower() == hostname_lower:
+                    matching_records.append(rec)
+        
+        return matching_records
+
     def execute(self, params, **kwargs):
         ssh_record_types = ['serverCredentials', 'sshKeys', 'pamMachine', 'pamUser']
         record_name = kwargs['record'] if 'record' in kwargs else None
@@ -265,12 +300,33 @@ class ConnectSshCommand(BaseConnectCommand):
                                         if hostname == record_name.lower():
                                             records.append(rec)
                                             continue
+                        
+                        # If not found by title/description, try hostname matching
+                        if not records:
+                            records = self.find_records_by_hostname_from_json(recs, record_name)
+                        
                     if len(records) == 1:
+                        logging.info('Found record UID %s with hostname %s', records[0].get('record_uid'), record_name)
                         record = KeeperRecord.load(params, records[0].get('record_uid'))
                     elif len(records) > 1:
-                        raise CommandError('ssh', f'More than one record found for \"{record_name}\". Please use record UID or full record path.')
-                except:
-                    pass
+                        # Multiple matches - let user select
+                        logging.info('Found %d records with hostname %s:\n', len(records), record_name)
+                        for idx, rec in enumerate(records, 1):
+                            logging.info('%d. %s: %s', idx, rec.get('record_uid'), rec.get('title'))
+                        
+                        answer = user_choice('\nSelect the record', list(map(str, range(1, len(records) + 1))), '1')
+                        try:
+                            selection = int(answer) - 1
+                            if 0 <= selection < len(records):
+                                selected = records[selection]
+                                record = KeeperRecord.load(params, selected.get('record_uid'))
+                                logging.info('Using record: %s', selected.get('title'))
+                            else:
+                                raise CommandError('ssh', 'Invalid selection')
+                        except ValueError:
+                            raise CommandError('ssh', 'Invalid selection')
+                except Exception as e:
+                    logging.debug('Error processing SSH records: %s', e)
 
         if record is None:
             raise CommandError('ssh', 'Enter name of existing record')

@@ -55,6 +55,7 @@ class GlobalLogger:
             # Write the default config
             with open(config_path, "w") as f:
                 yaml.dump(default_config, f, sort_keys=False)
+            utils.set_file_permissions(str(config_path))
         return default_config["logging"]
     
     def _load_config(self):
@@ -62,6 +63,7 @@ class GlobalLogger:
         
         # config_path = os.getenv("LOGGING_CONFIG_PATH", "logging_config.yaml")
         if os.path.exists(config_path):
+            utils.ensure_config_permissions(str(config_path))
             with open(config_path, "r") as f:
                 return yaml.safe_load(f).get("logging", {})
         return {"enabled": True, "level": "INFO"}
