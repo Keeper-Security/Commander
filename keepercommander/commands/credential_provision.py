@@ -1002,7 +1002,7 @@ class CredentialProvisionCommand(Command):
                 f"Example: 'PAM Users/Engineering' (not '/Shared Folders/...')"
             )
 
-    def _get_gateway_application_folder(self, pam_config_uid: str, params: KeeperParams) -> tuple[str, str]:
+    def _get_gateway_application_folder(self, pam_config_uid: str, params: KeeperParams) -> Tuple[str, str]:
         """
         Get gateway application folder from PAM Configuration.
 
