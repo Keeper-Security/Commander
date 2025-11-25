@@ -48,16 +48,19 @@ from ..record_facades import LoginRecordFacade
 from ..proto import APIRequest_pb2
 from ..commands.folder import FolderMakeCommand
 
-# RecordLink requires pydantic (Python 3.8+)
+# RecordLink and discoveryrotation require pydantic (Python 3.8+)
 try:
     from ..discovery_common.record_link import RecordLink
+    from ..commands.discoveryrotation import (
+        PAMCreateRecordRotationCommand,
+        PAMGatewayActionRotateCommand,
+        validate_cron_expression
+    )
 except ImportError:
     RecordLink = None  # Will be None on Python 3.7
-from ..commands.discoveryrotation import (
-    PAMCreateRecordRotationCommand,
-    PAMGatewayActionRotateCommand,
-    validate_cron_expression
-)
+    PAMCreateRecordRotationCommand = None
+    PAMGatewayActionRotateCommand = None
+    validate_cron_expression = None
 from ..commands.helpers.timeout import parse_timeout, format_timeout
 from ..commands import email_commands
 from ..email_service import EmailSender, build_onboarding_email
@@ -478,7 +481,7 @@ class CredentialProvisionCommand(Command):
             errors.append('pam.rotation.schedule is required (CRON format)')
         else:
             schedule = rotation['schedule']
-            if not validate_cron_expression(schedule, for_rotation=True)[0]:
+            if validate_cron_expression and not validate_cron_expression(schedule, for_rotation=True)[0]:
                 errors.append(
                     f'pam.rotation.schedule has invalid CRON format: {schedule}\n'
                     f'    Expected 6 fields: seconds minute hour day month day-of-week\n'
@@ -1192,6 +1195,11 @@ class CredentialProvisionCommand(Command):
         rotation_config = config['pam']['rotation']
         pam_config_uid = config['account']['pam_config_uid']
 
+        # Check if rotation commands are available (Python 3.8+)
+        if PAMCreateRecordRotationCommand is None:
+            logging.error('PAM rotation unavailable (requires Python 3.8+)')
+            raise CommandError('credential-provision', 'Rotation requires Python 3.8+ (pydantic dependency)')
+
         try:
             schedule = rotation_config['schedule']
             complexity = rotation_config['password_complexity']
@@ -1249,6 +1257,11 @@ class CredentialProvisionCommand(Command):
             True if rotation was submitted successfully
             False if rotation submission failed (non-critical)
         """
+        # Check if rotation commands are available (Python 3.8+)
+        if PAMGatewayActionRotateCommand is None:
+            logging.warning('PAM rotation unavailable (requires Python 3.8+) - skipping immediate rotation')
+            return False
+
         try:
             rotate_cmd = PAMGatewayActionRotateCommand()
 
