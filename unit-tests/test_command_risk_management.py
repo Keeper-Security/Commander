@@ -184,6 +184,7 @@ class TestRiskManagement(TestCase):
         output = captured_output.getvalue()
         self.assertIn('SB_DEPLOY_ACROSS_ENTIRE_ORGANIZATION', output)
         self.assertIn('RESOLVED', output)
+        self.assertIn('Deploy across your entire organization', output)
 
 
     def test_risk_management_set_security_benchmarks(self):
