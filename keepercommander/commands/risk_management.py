@@ -100,7 +100,7 @@ class RiskManagementSecurityAlertsSummaryCommand(enterprise_common.EnterpriseCom
             event_id = sas.auditEventTypeId
             if event_id in event_lookup:
                 event_id = event_lookup[event_id]
-            event_title = constants.RMD_EVENT_STATE_MAPPING.get(event_id, "")
+            event_title = constants.AUDIT_EVENT_STATE_MAPPING.get(event_id, "")
             event_count = sas.currentCount
             prev_event_count = sas.previousCount
             user_count = sas.currentUserCount

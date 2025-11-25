@@ -417,7 +417,7 @@ RMD_BENCHMARK_MAPPING = {
   }
 }
 
-RMD_EVENT_STATE_MAPPING = {
+AUDIT_EVENT_STATE_MAPPING = {
         "account_recovery": "Account Recovery Requested",
         "alias_added": "Added alternative email",
         "change_email": "Changed Email",
