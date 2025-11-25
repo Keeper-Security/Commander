@@ -21,11 +21,19 @@ import os
 from unittest.mock import Mock, MagicMock
 import pytest
 
-from keepercommander.commands.credential_provision import CredentialProvisionCommand
-from keepercommander.error import CommandError
+# Try to import - will fail on Python 3.7 due to pydantic dependency
+try:
+    from keepercommander.commands.credential_provision import CredentialProvisionCommand
+    from keepercommander.error import CommandError
+    CREDENTIAL_PROVISION_AVAILABLE = True
+except ImportError:
+    # Skip all tests if import fails (Python 3.7)
+    CREDENTIAL_PROVISION_AVAILABLE = False
+    CredentialProvisionCommand = None
+    CommandError = None
 
-# Skip all tests on Python 3.7 (requires pydantic which needs Python 3.8+)
-pytestmark = pytest.mark.skipif(sys.version_info < (3, 8), reason="Requires Python 3.8+ (pydantic dependency)")
+# Skip all tests if credential_provision is not available
+pytestmark = pytest.mark.skipif(not CREDENTIAL_PROVISION_AVAILABLE, reason="Requires Python 3.8+ (pydantic dependency)")
 
 
 class TestYAMLParsing(unittest.TestCase):
