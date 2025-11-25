@@ -77,7 +77,7 @@ class SqliteLinkStorage(sqlite_dao.SqliteStorage, ILinkStorage):
                 raise ValueError('Unsupported link type')
 
     def delete_links(self, links):
-        self.delete_by_filter(self.schema.primary_key, SqliteLinkStorage.expand_link_to_tuple(links),
+        self.delete_by_filter(self.schema.primary_key, list(SqliteLinkStorage.expand_link_to_tuple(links)),
                               multiple_criteria=True)
 
     def delete_links_for_subjects(self, subject_uids):
