@@ -189,6 +189,7 @@ class PAMGatewayCommand(GroupCommand):
         self.register_command('list', PAMGatewayListCommand(), 'List Gateways', 'l')
         self.register_command('new', PAMCreateGatewayCommand(), 'Create new Gateway', 'n')
         self.register_command('remove', PAMGatewayRemoveCommand(), 'Remove Gateway', 'rm')
+        self.register_command('set-max-instances', PAMSetMaxInstancesCommand(), 'Set maximum gateway instances', 'smi')
         # self.register_command('connect', PAMConnect(), 'Connect')
         # self.register_command('disconnect', PAMDisconnect(), 'Disconnect')
         self.default_verb = 'list'
@@ -3224,6 +3225,38 @@ class PAMGatewayRemoveCommand(Command):
             logging.info('Gateway %s has been removed.', gateway.controllerName)
         else:
             logging.warning('Gateway %s not found', gateway_name)
+
+
+class PAMSetMaxInstancesCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam gateway set-max-instances')
+    parser.add_argument('--gateway', '-g', required=True, dest='gateway',
+                        help='Gateway UID or Name', action='store')
+    parser.add_argument('--max-instances', '-m', required=True, dest='max_instances', type=int,
+                        help='Maximum number of gateway instances (must be >= 1)', action='store')
+
+    def get_parser(self):
+        return PAMSetMaxInstancesCommand.parser
+
+    def execute(self, params, **kwargs):
+        gateway_name = kwargs.get('gateway')
+        max_instances = kwargs.get('max_instances')
+
+        if max_instances < 1:
+            raise CommandError('pam gateway set-max-instances', '--max-instances must be at least 1')
+
+        gateways = gateway_helper.get_all_gateways(params)
+        gateway = next((x for x in gateways
+                        if utils.base64_url_encode(x.controllerUid) == gateway_name
+                        or x.controllerName.lower() == gateway_name.lower()), None)
+
+        if not gateway:
+            raise CommandError('', f'{bcolors.FAIL}Gateway "{gateway_name}" not found{bcolors.ENDC}')
+
+        try:
+            gateway_helper.set_gateway_max_instances(params, gateway.controllerUid, max_instances)
+            logging.info('%s: max instance count set to %d', gateway.controllerName, max_instances)
+        except Exception as e:
+            raise CommandError('', f'{bcolors.FAIL}Error setting max instances: {e}{bcolors.ENDC}')
 
 
 class PAMCreateGatewayCommand(Command):
