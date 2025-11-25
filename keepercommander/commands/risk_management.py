@@ -3,7 +3,7 @@ import datetime
 import json
 
 from . import base, enterprise_common, audit_alerts
-from .. import api
+from .. import api, constants
 from ..proto import rmd_pb2
 
 
@@ -34,6 +34,7 @@ rmd_security_alerts_detail_parser = argparse.ArgumentParser(prog='risk-managemen
 rmd_security_alerts_detail_parser.add_argument('aet', nargs='?', type=str, action='store', help='show the details for audit event type.')
 
 rmd_security_benchmarks_get_parser = argparse.ArgumentParser(prog='risk-management security-benchmarks-get', description='Risk management get security benchmarks', parents=[base.report_output_parser])
+rmd_security_benchmarks_get_parser.add_argument('--description', dest='description', action='store_true', help='Add description.')
 
 rmd_security_benchmarks_set_parser = argparse.ArgumentParser(prog='risk-management security-benchmarks-set', description='Risk management set security benchmarks', parents=[base.report_output_parser])
 rmd_security_benchmarks_set_parser.add_argument('fields', nargs='*', type=str, action='store', help='fields to set for benchmark results.')
@@ -205,12 +206,16 @@ class RiskManagementSecurityBenchmarksGetCommand(enterprise_common.EnterpriseCom
         return rmd_security_benchmarks_get_parser
 
     def execute(self, params, **kwargs):
+        is_description = kwargs.get('description')
         header = [
-                'security_benchmark',
+                'id',
                 'status',
                 'last_updated',
                 'auto_resolve',
+                'title',
                 ]
+        if is_description:
+            header.append("description")
         out_format = kwargs.get('format')
         if out_format != 'json':
             header = [base.field_to_title(x) for x in header]
@@ -220,12 +225,17 @@ class RiskManagementSecurityBenchmarksGetCommand(enterprise_common.EnterpriseCom
             last_updated = None
             if node.lastUpdated and node.lastUpdated > 0:
                 last_updated = datetime.datetime.fromtimestamp(node.lastUpdated // 1000)
-            rows.append([
-                rmd_pb2.SecurityBenchmark.Name(node.securityBenchmark),
+            name = rmd_pb2.SecurityBenchmark.Name(node.securityBenchmark)
+            row = [
+                name,
                 rmd_pb2.SecurityBenchmarkStatus.Name(node.securityBenchmarkStatus),
                 last_updated,
                 node.autoResolve,
-                ])
+                constants.RMD_BENCHMARK_MAPPING.get(name, {}).get("title", ""),
+                ]
+            if is_description:
+                row.append(constants.RMD_BENCHMARK_MAPPING.get(name, {}).get("description", ""))
+            rows.append(row)
         return base.dump_report_data(rows, headers=header, fmt=out_format, filename=kwargs.get('output'))
 
 
