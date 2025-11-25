@@ -14,13 +14,18 @@ Unit Tests for Automated Credential Provisioning (KC-1007)
 Tests the foundation, YAML parsing, and validation framework implemented in Story KC-1007-2.
 """
 
+import sys
 import unittest
 import tempfile
 import os
 from unittest.mock import Mock, MagicMock
+import pytest
 
 from keepercommander.commands.credential_provision import CredentialProvisionCommand
 from keepercommander.error import CommandError
+
+# Skip all tests on Python 3.7 (requires pydantic which needs Python 3.8+)
+pytestmark = pytest.mark.skipif(sys.version_info < (3, 8), reason="Requires Python 3.8+ (pydantic dependency)")
 
 
 class TestYAMLParsing(unittest.TestCase):

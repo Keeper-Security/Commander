@@ -47,6 +47,12 @@ from ..record_management import add_record_to_folder
 from ..record_facades import LoginRecordFacade
 from ..proto import APIRequest_pb2
 from ..commands.folder import FolderMakeCommand
+
+# RecordLink requires pydantic (Python 3.8+)
+try:
+    from ..discovery_common.record_link import RecordLink
+except ImportError:
+    RecordLink = None  # Will be None on Python 3.7
 from ..commands.discoveryrotation import (
     PAMCreateRecordRotationCommand,
     PAMGatewayActionRotateCommand,
@@ -1134,10 +1140,15 @@ class CredentialProvisionCommand(Command):
             CommandError: If DAG linking fails
         """
 
-        try:
-            # Lazy import to avoid pydantic dependency at module load time
-            from ..discovery_common.record_link import RecordLink
+        # Check if RecordLink is available (requires Python 3.8+)
+        if RecordLink is None:
+            logging.error('RecordLink unavailable (requires Python 3.8+ for pydantic)')
+            raise CommandError(
+                'credential-provision',
+                'DAG linking requires Python 3.8+ (pydantic dependency)'
+            )
 
+        try:
             # Load the PAM Config record to use for record linking
             pam_config_record = vault.KeeperRecord.load(params, pam_config_uid)
 
