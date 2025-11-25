@@ -91,15 +91,16 @@ class RiskManagementSecurityAlertsSummaryCommand(enterprise_common.EnterpriseCom
         event_lookup = {x[0]: x[1] for x in audit_alerts.AuditSettingMixin.EVENT_TYPES}
         fmt = kwargs.get('format')
         if fmt == 'json':
-            header = ['event', 'event_occurrences', 'last_events', 'unique_users', 'last_users']
+            header = ['event', 'event_occurrences', 'last_events', 'unique_users', 'last_users', 'event_title']
         else:
-            header = ['event', 'event_occurrences', 'last_events', 'unique_users', 'last_users', 'event_trend', 'user_trend']
+            header = ['event', 'event_occurrences', 'last_events', 'unique_users', 'last_users', 'event_title', 'event_trend', 'user_trend']
         rows = []
         rs = api.communicate_rest(params, None, 'rmd/get_security_alerts_summary', rs_type=rmd_pb2.SecurityAlertsSummaryResponse)
         for sas in rs.securityAlertsSummary:
             event_id = sas.auditEventTypeId
             if event_id in event_lookup:
                 event_id = event_lookup[event_id]
+            event_title = constants.AUDIT_EVENT_STATE_MAPPING.get(event_id, "")
             event_count = sas.currentCount
             prev_event_count = sas.previousCount
             user_count = sas.currentUserCount
@@ -128,9 +129,9 @@ class RiskManagementSecurityAlertsSummaryCommand(enterprise_common.EnterpriseCom
                 user_trend = '[  -  ]'
 
             if fmt == 'json':
-                rows.append([event_id, event_count, prev_event_count, user_count, prev_user_count])
+                rows.append([event_id, event_count, prev_event_count, user_count, prev_user_count, event_title])
             else:
-                rows.append([event_id, event_count, prev_event_count, user_count, prev_user_count, event_trend, user_trend])
+                rows.append([event_id, event_count, prev_event_count, user_count, prev_user_count, event_title, event_trend, user_trend])
 
         if kwargs.get('format') != 'json':
             header = [base.field_to_title(x) for x in header]
