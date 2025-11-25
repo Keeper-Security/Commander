@@ -4234,15 +4234,15 @@ class ReserveDomainCommand(EnterpriseCommand):
         return domain in rs.domain if rs.domain else False
     
     def _display_token_instructions(self, domain, token):
-        print(f'\n{bcolors.OKGREEN}Token generated successfully!{bcolors.ENDC}\n')
-        print(f'Domain: {bcolors.BOLD}{domain}{bcolors.ENDC}')
-        print(f'Token:  {bcolors.BOLD}{token}{bcolors.ENDC}\n')
-        print('Next steps:')
-        print('1. Log into your domain registrar or DNS provider')
-        print(f'2. Add a TXT record for domain "{domain}" with value:')
-        print(f'   {bcolors.WARNING}{token}{bcolors.ENDC}')
-        print('3. Wait for DNS propagation (may take a few minutes)')
-        print(f'4. Run: reserve-domain --action add --domain {domain}')
+        logging.info(f'\n{bcolors.OKGREEN}Token generated successfully!{bcolors.ENDC}\n')
+        logging.info(f'Domain: {bcolors.BOLD}{domain}{bcolors.ENDC}')
+        logging.info(f'Token:  {bcolors.BOLD}{token}{bcolors.ENDC}\n')
+        logging.info('Next steps:')
+        logging.info('1. Log into your domain registrar or DNS provider')
+        logging.info(f'2. Add a TXT record for domain "{domain}" with value:')
+        logging.info(f'   {bcolors.WARNING}{token}{bcolors.ENDC}')
+        logging.info('3. Wait for DNS propagation (may take a few minutes)')
+        logging.info(f'4. Run: reserve-domain --action add --domain {domain}')
     
     def _refresh_enterprise_data(self, params, action_past_tense):
         try:
