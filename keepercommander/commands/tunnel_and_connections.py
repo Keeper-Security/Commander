@@ -442,6 +442,11 @@ class PAMTunnelStartCommand(Command):
                                 type=int, default=0,
                                 help='The port number on which the server will be listening for incoming connections. '
                                      'If not set, random open port on the machine will be used.')
+    pam_cmd_parser.add_argument('--target-host', '-th', required=False, dest='target_host', action='store',
+                                help='Target hostname/IP to tunnel to (required when allowSupplyHost is enabled on the resource)')
+    pam_cmd_parser.add_argument('--target-port', '-tp', required=False, dest='target_port', action='store',
+                                type=int,
+                                help='Target port to tunnel to (required when allowSupplyHost is enabled on the resource)')
     pam_cmd_parser.add_argument('--no-trickle-ice', '-nti', required=False, dest='no_trickle_ice', action='store_true',
                                 help='Disable trickle ICE for WebRTC connections. By default, trickle ICE is enabled '
                                      'for real-time candidate exchange.')
@@ -503,19 +508,69 @@ class PAMTunnelStartCommand(Command):
                   f"{bcolors.OKBLUE} 'pam config list'{bcolors.ENDC}.")
             return
 
+        # Check if allow_supply_host is enabled
+        pam_settings_value = pam_settings.get_default_value() if pam_settings else {}
+        allow_supply_host = pam_settings_value.get('allowSupplyHost', False) if isinstance(pam_settings_value, dict) else False
+
         # Get target host and port
-        target = record.get_typed_field('pamHostname')
-        if not target:
-            print(f"{bcolors.FAIL}Hostname not found for record {record_uid}.{bcolors.ENDC}")
-            return
-        target_host = target.get_default_value().get('hostName', None)
-        target_port = target.get_default_value().get('port', None)
-        if not target_host:
-            print(f"{bcolors.FAIL}Host not found for record {record_uid}.{bcolors.ENDC}")
-            return
-        if not target_port:
-            print(f"{bcolors.FAIL}Port not found for record {record_uid}.{bcolors.ENDC}")
-            return
+        if allow_supply_host:
+            # User must supply target host and port via command arguments or interactive prompt
+            target_host = kwargs.get('target_host')
+            target_port = kwargs.get('target_port')
+
+            # If not provided via command line, prompt interactively
+            if not target_host:
+                print(f"{bcolors.WARNING}This resource requires you to supply the target host and port.{bcolors.ENDC}")
+                try:
+                    target_host = input(f"{bcolors.OKBLUE}Enter target hostname or IP address: {bcolors.ENDC}").strip()
+                    if not target_host:
+                        print(f"{bcolors.FAIL}Target host is required.{bcolors.ENDC}")
+                        return
+                except (KeyboardInterrupt, EOFError):
+                    print(f"\n{bcolors.FAIL}Cancelled.{bcolors.ENDC}")
+                    return
+
+            if not target_port:
+                try:
+                    target_port_str = input(f"{bcolors.OKBLUE}Enter target port number: {bcolors.ENDC}").strip()
+                    if not target_port_str:
+                        print(f"{bcolors.FAIL}Target port is required.{bcolors.ENDC}")
+                        return
+                    target_port = int(target_port_str)
+                except (KeyboardInterrupt, EOFError):
+                    print(f"\n{bcolors.FAIL}Cancelled.{bcolors.ENDC}")
+                    return
+                except ValueError:
+                    print(f"{bcolors.FAIL}Invalid target port '{target_port_str}'. Port must be a number.{bcolors.ENDC}")
+                    return
+
+            # Validate target_port is an integer (if provided via kwargs)
+            try:
+                target_port = int(target_port)
+            except (ValueError, TypeError):
+                print(f"{bcolors.FAIL}Invalid target port '{target_port}'. Port must be a number.{bcolors.ENDC}")
+                return
+
+            # Validate port range
+            if not (1 <= target_port <= 65535):
+                print(f"{bcolors.FAIL}Invalid port number {target_port}. Port must be between 1 and 65535.{bcolors.ENDC}")
+                return
+
+            print(f"{bcolors.OKBLUE}Tunneling to user-supplied target: {target_host}:{target_port}{bcolors.ENDC}")
+        else:
+            # Get target from record
+            target = record.get_typed_field('pamHostname')
+            if not target:
+                print(f"{bcolors.FAIL}Hostname not found for record {record_uid}.{bcolors.ENDC}")
+                return
+            target_host = target.get_default_value().get('hostName', None)
+            target_port = target.get_default_value().get('port', None)
+            if not target_host:
+                print(f"{bcolors.FAIL}Host not found for record {record_uid}.{bcolors.ENDC}")
+                return
+            if not target_port:
+                print(f"{bcolors.FAIL}Port not found for record {record_uid}.{bcolors.ENDC}")
+                return
 
         # Check for SOCKS configuration
         allowed_hosts = record.get_typed_field('multiline', 'Allowed Hosts')
@@ -538,7 +593,7 @@ class PAMTunnelStartCommand(Command):
 
         # Use Rust WebRTC implementation with configurable trickle ICE
         trickle_ice = not no_trickle_ice
-        result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title)
+        result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title, allow_supply_host=allow_supply_host)
         
         if result and result.get("success"):
             # The helper will show endpoint table when local socket is actually listening
