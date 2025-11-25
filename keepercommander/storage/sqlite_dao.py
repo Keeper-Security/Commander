@@ -1,4 +1,5 @@
 import collections
+import inspect
 import logging
 import sqlite3
 from typing import Dict, Union, Sequence, Any, List, Optional, Type, Callable, Iterable, Iterator
@@ -238,7 +239,9 @@ class SqliteStorage:
     @staticmethod
     def _adjust_values_for_columns(columns, values):
         # type: (Sequence[str], Union[Any, Sequence[Any]]) -> Sequence[Any]
-        if not isinstance(values, (list, tuple)):
+        if inspect.isgenerator(values):
+            values = list(values)
+        elif not isinstance(values, (list, tuple)):
             values = [values]
         if len(columns) != len(values):
             raise ValueError(
@@ -354,7 +357,9 @@ class SqliteStorage:
         row_count = 0
         try:
             if multiple_criteria:
-                if not isinstance(values, (tuple, list)):
+                if inspect.isgenerator(values):
+                    values = list(values)
+                elif not isinstance(values, (tuple, list)):
                     values = [values]
                 rs = conn.executemany(query, (self.prepare_params(adjusted_columns, x) for x in values))
             else:

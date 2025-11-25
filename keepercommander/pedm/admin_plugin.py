@@ -11,8 +11,6 @@ from . import admin_storage, admin_types
 from .. import crypto, utils, api
 from ..proto import pedm_pb2, folder_pb2
 from ..storage import types as storage_types, in_memory
-#from ...enterprise import enterprise_loader, sqlite_enterprise_storage
-#from ...authentication import notifications, endpoint
 
 
 class RebuildTask:
@@ -490,12 +488,12 @@ class PedmPlugin(IPedmAdmin):
             self.storage.collection_links.delete_links_for_objects(delete_collections)
             self.storage.collections.delete_uids(delete_collections)
         if len(delete_collection_links) > 0:
+            task.add_collections((x[0] for x in delete_collection_links))
             self.storage.collection_links.delete_links(delete_collection_links)
         if len(delete_approvals) > 0:
             task.add_approvals(delete_approvals)
             self.storage.approvals.delete_uids(delete_approvals)
             self.storage.approval_status.delete_uids(delete_approvals)
-
         if len(deployments) > 0:
             self.storage.deployments.put_entities(deployments)
         if len(policies) > 0:
@@ -800,9 +798,10 @@ class PedmPlugin(IPedmAdmin):
         return admin_types.ModifyStatus.from_proto(status_rs)
 
 
-def get_pedm_plugin(context: KeeperParams) -> PedmPlugin:
+def get_pedm_plugin(context: KeeperParams, *, skip_sync:bool=False) -> PedmPlugin:
     if context._pedm_plugin is None:
         context._pedm_plugin = PedmPlugin(context)
-    if context._pedm_plugin.need_sync:
+
+    if not skip_sync and context._pedm_plugin.need_sync:
         context._pedm_plugin.sync_down()
     return context._pedm_plugin
