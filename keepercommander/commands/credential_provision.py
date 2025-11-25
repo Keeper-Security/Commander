@@ -617,7 +617,7 @@ class CredentialProvisionCommand(Command):
                 'configuration': {
                     'employee': employee_name,
                     'username': username,
-                    'folder': vault_config.get('folder', f'Shared Folders/PAM/{user.get("department", "Unknown")}'),
+                    'folder': vault_config.get('folder', 'Shared Folders/PAM/{}'.format(user.get('department', 'Unknown'))),
                     'rotation_schedule': pam.get('rotation', {}).get('schedule'),
                     'email_recipient': user.get('personal_email')
                 }
@@ -635,7 +635,8 @@ class CredentialProvisionCommand(Command):
             print(f'  2. Generate secure password')
             print(f'     Complexity: {pam.get("rotation", {}).get("password_complexity")}')
             print(f'  3. Create PAM User record')
-            print(f'     Folder: {vault_config.get("folder", f"/Employees/{user.get("department", "Unknown")}")}')
+            default_folder = '/Employees/{}'.format(user.get('department', 'Unknown'))
+            print(f'     Folder: {vault_config.get("folder", default_folder)}')
             print(f'  4. Link to PAM Config: {account.get("pam_config_uid")[:20]}...')
             print(f'  5. Configure rotation')
             print(f'     Schedule: {pam.get("rotation", {}).get("schedule")}')
