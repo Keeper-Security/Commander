@@ -291,6 +291,7 @@ list_domains_parser.error = raise_parse_exception
 list_domains_parser.exit = suppress_exit
 
 reserve_domain_parser = argparse.ArgumentParser(prog='reserve-domain',
+                                                formatter_class=argparse.RawTextHelpFormatter,
                                                 description='Reserve and manage domains for the enterprise.\n\n'
                                                 'Process:\n'
                                                 ' 1. Use --action token to get DNS verification token\n'
