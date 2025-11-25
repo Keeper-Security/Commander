@@ -23,17 +23,23 @@ import pytest
 
 # Try to import - will fail on Python 3.7 due to pydantic dependency
 try:
-    from keepercommander.commands.credential_provision import CredentialProvisionCommand
+    from keepercommander.commands.credential_provision import CredentialProvisionCommand, yaml, validate_cron_expression
     from keepercommander.error import CommandError
-    CREDENTIAL_PROVISION_AVAILABLE = True
+    # Check if dependencies are available
+    CREDENTIAL_PROVISION_AVAILABLE = (yaml is not None and validate_cron_expression is not None)
 except ImportError:
     # Skip all tests if import fails (Python 3.7)
     CREDENTIAL_PROVISION_AVAILABLE = False
     CredentialProvisionCommand = None
     CommandError = None
+    yaml = None
+    validate_cron_expression = None
 
-# Skip all tests if credential_provision is not available
-pytestmark = pytest.mark.skipif(not CREDENTIAL_PROVISION_AVAILABLE, reason="Requires Python 3.8+ (pydantic dependency)")
+# Skip all tests if credential_provision dependencies are not available
+pytestmark = pytest.mark.skipif(
+    not CREDENTIAL_PROVISION_AVAILABLE,
+    reason="Requires Python 3.8+ and PyYAML (pydantic and yaml dependencies)"
+)
 
 
 class TestYAMLParsing(unittest.TestCase):
