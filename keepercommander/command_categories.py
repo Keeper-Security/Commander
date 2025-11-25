@@ -54,7 +54,12 @@ COMMAND_CATEGORIES = {
         'create-user', 'transfer-user', 'automator', 'scim', 'enterprise-down',
         'public-api-key'
     },
-    
+
+    # Automation Commands
+    'Automation Commands': {
+        'credential-provision'
+    },
+
     # Secrets Manager Commands
     'Secrets Manager Commands': {
         'secrets-manager'
@@ -119,6 +124,7 @@ def get_category_order():
         'Reporting Commands',
         'MSP Management Commands',
         'Enterprise Management Commands',
+        'Automation Commands',
         'Secrets Manager Commands',
         'BreachWatch Commands',
         'Device Management Commands',
