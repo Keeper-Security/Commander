@@ -45,7 +45,6 @@ from ..params import KeeperParams
 from ..subfolder import try_resolve_path, get_folder_path
 from ..record_management import add_record_to_folder
 from ..record_facades import LoginRecordFacade
-from ..discovery_common.record_link import RecordLink
 from ..proto import APIRequest_pb2
 from ..commands.folder import FolderMakeCommand
 from ..commands.discoveryrotation import (
@@ -1136,6 +1135,9 @@ class CredentialProvisionCommand(Command):
         """
 
         try:
+            # Lazy import to avoid pydantic dependency at module load time
+            from ..discovery_common.record_link import RecordLink
+
             # Load the PAM Config record to use for record linking
             pam_config_record = vault.KeeperRecord.load(params, pam_config_uid)
 
