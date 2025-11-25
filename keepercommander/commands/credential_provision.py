@@ -589,9 +589,27 @@ class CredentialProvisionCommand(Command):
     # Dry-Run Mode
     # =========================================================================
 
+    @staticmethod
+    def _mask_pii(value: str) -> str:
+        """
+        Fully redact PII for security in dry-run output.
+
+        All PII (names, emails, etc.) are replaced with [REDACTED] to prevent
+        exposure in logs, screenshots, or shared output.
+
+        Args:
+            value: PII value to redact
+
+        Returns:
+            "[REDACTED]" for any non-empty value
+        """
+        return "[REDACTED]" if value else value
+
     def _dry_run_report(self, params: KeeperParams, config: Dict[str, Any], output_format: str):
         """
         Generate dry-run report showing what would be created.
+
+        PII (names, emails) are partially masked for security.
 
         Args:
             params: KeeperParams session
@@ -607,27 +625,32 @@ class CredentialProvisionCommand(Command):
         employee_name = f"{user.get('first_name')} {user.get('last_name')}"
         username = account.get('username')
 
+        # Fully redact PII for dry-run output (security best practice)
+        redacted_name = self._mask_pii(employee_name)
+        redacted_email = self._mask_pii(user.get('personal_email', ''))
+        redacted_username = self._mask_pii(username)
+
         if output_format == 'json':
             result = {
                 'success': True,
                 'dry_run': True,
-                'employee_name': employee_name,
+                'employee_name': redacted_name,
                 'actions': [
                     'Check for duplicate PAM User',
-                    f'Generate secure password (complexity: {pam.get("rotation", {}).get("password_complexity")})',
-                    f'Create PAM User: {username}',
+                    'Generate secure password (complexity requirements applied)',
+                    f'Create PAM User: {redacted_username}',
                     f'Link PAM User to PAM Config: {account.get("pam_config_uid")}',
                     f'Configure rotation: {pam.get("rotation", {}).get("schedule")}',
                     'Submit immediate rotation',
                     f'Generate share URL for PAM User (expiry: {email_config.get("share_url_expiry", "7d")})',
-                    f'Send email to: {user.get("personal_email")}'
+                    f'Send email to: {redacted_email}'
                 ],
                 'configuration': {
-                    'employee': employee_name,
-                    'username': username,
+                    'employee': redacted_name,
+                    'username': redacted_username,
                     'folder': vault_config.get('folder', 'Shared Folders/PAM/{}'.format(user.get('department', 'Unknown'))),
                     'rotation_schedule': pam.get('rotation', {}).get('schedule'),
-                    'email_recipient': user.get('personal_email')
+                    'email_recipient': redacted_email
                 }
             }
             print(json.dumps(result, indent=2))
@@ -635,13 +658,13 @@ class CredentialProvisionCommand(Command):
             print('\n' + '='*60)
             print('DRY RUN MODE - NO CHANGES WILL BE MADE')
             print('='*60)
-            print(f'\nEmployee: {employee_name}')
-            print(f'Username: {username}')
-            print(f'Email: {user.get("personal_email")}')
+            print(f'\nEmployee: {redacted_name}')
+            print(f'Username: {redacted_username}')
+            print(f'Email: {redacted_email}')
             print('\nPlanned Actions:')
             print('  1. Check for duplicate PAM User in folder')
             print(f'  2. Generate secure password')
-            print(f'     Complexity: {pam.get("rotation", {}).get("password_complexity")}')
+            print(f'     Complexity: requirements applied')
             print(f'  3. Create PAM User record')
             default_folder = '/Employees/{}'.format(user.get('department', 'Unknown'))
             print(f'     Folder: {vault_config.get("folder", default_folder)}')
@@ -652,7 +675,7 @@ class CredentialProvisionCommand(Command):
             print(f'  7. Generate one-time share URL for PAM User')
             print(f'     Expiry: {email_config.get("share_url_expiry", "7d")}')
             print(f'  8. Send welcome email')
-            print(f'     To: {user.get("personal_email")}')
+            print(f'     To: {redacted_email}')
             print(f'     Config: {email_config.get("config_name")}')
             print('\n' + '='*60)
             print('✓ Validation passed - ready for actual provisioning')
