@@ -3,11 +3,12 @@ from __future__ import annotations
 from typing import Dict, Any
 from dataclasses import dataclass
 import enum
+import datetime
 import hashlib
 import hmac
 
 from .. import utils
-from ..proto import pedm_pb2
+from ..proto import pedm_pb2, NotificationCenter_pb2
 
 @dataclass
 class DeploymentAgentInformation:
@@ -103,3 +104,16 @@ def approval_type_to_name(event_type: int) -> str:
     if event_type == EventRequestType.Custom:
         return 'Custom'
     return 'Other'
+
+def approval_status_to_name(approval_status: int, created: datetime.datetime) -> str:
+    expired_ts = datetime.datetime.now() - datetime.timedelta(hours=5)
+    if approval_status == NotificationCenter_pb2.NAS_APPROVED:
+        return 'Approved'
+    elif approval_status == NotificationCenter_pb2.NAS_DENIED:
+        return 'Denied'
+    elif approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED:
+        if expired_ts > created:
+            return 'Expired'
+        return 'Pending'
+    else:
+        return 'Unsupported'

@@ -1455,9 +1455,7 @@ class LoginCommand(Command):
             msp.current_mc_id = None
             msp.mc_params_dict.clear()
 
-        new_login = kwargs.get('new_login') is True
-        if new_login:
-            params.clear_session()
+        params.clear_session()
 
         user = kwargs.get('email') or ''
         password = kwargs.get('password') or ''
@@ -1480,7 +1478,7 @@ class LoginCommand(Command):
         params.password = password
 
         try:
-            api.login(params, new_login=new_login)
+            api.login(params, new_login=True)
         except Exception as exc:
             logging.warning(str(exc))
 

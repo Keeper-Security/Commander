@@ -78,6 +78,16 @@ class PedmUtils:
         raise base.CommandError(f'Policy UID \"{policy_uid}\" does not exist')
 
     @staticmethod
+    def resolve_single_approval(pedm: admin_plugin.PedmPlugin, approval_uid: Any) -> admin_types.PedmApproval:
+        if not isinstance(approval_uid, str):
+            raise base.CommandError(f'Invalid approval UID: {approval_uid}')
+        approval = pedm.approvals.get_entity(approval_uid)
+
+        if isinstance(approval, admin_types.PedmApproval):
+            return approval
+        raise base.CommandError(f'Approval UID \"{approval_uid}\" does not exist')
+
+    @staticmethod
     def get_collection_name_lookup(
             pedm: admin_plugin.PedmPlugin
     ) -> Dict[str, Union[admin_types.PedmCollection, List[admin_types.PedmCollection]]]:
@@ -177,7 +187,7 @@ class PedmSyncDownCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs):
-        plugin = admin_plugin.get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context, skip_sync=True)
         plugin.sync_down(reload=kwargs.get('reload') is True)
 
 
@@ -1720,9 +1730,40 @@ class PedmApprovalCommand(base.GroupCommandNew):
     def __init__(self):
         super().__init__('Manage PEDM approval requests and approvals')
         self.register_command_new(PedmApprovalListCommand(), 'list', 'l')
+        self.register_command_new(PedmApprovalViewCommand(), 'view')
         self.register_command_new(PedmApprovalStatusCommand(), 'action', 'a')
         self.default_verb = 'list'
 
+
+class PedmApprovalViewCommand(base.ArgparseCommand):
+    def __init__(self):
+        parser = argparse.ArgumentParser(prog='view', parents=[base.json_output_parser], description='View PEDM approval')
+        parser.add_argument('approval', help='Approval UID')
+        super().__init__(parser)
+
+    def execute(self, context: KeeperParams, **kwargs) -> Any:
+        plugin = admin_plugin.get_pedm_plugin(context)
+
+        approval = PedmUtils.resolve_single_approval(plugin, kwargs.get('approval'))
+        a_status = plugin.storage.approval_status.get_entity(approval.approval_uid)
+        headers = ['approval_uid', 'approval_type', 'status', 'agent_uid', 'account_info', 'application_info', 'justification', 'expire_in', 'created']
+        approval_type = pedm_shared.approval_type_to_name(approval.approval_type)
+        approval_status = pedm_shared.approval_status_to_name(
+            a_status.approval_status if a_status else NotificationCenter_pb2.NAS_UNSPECIFIED,
+            approval.created
+        )
+
+        row = [approval.approval_uid, approval_type, approval_status, approval.agent_uid, approval.account_info,
+               approval.application_info, approval.justification, approval.expire_in, approval.created]
+
+        fmt = kwargs.get('format')
+        if fmt == 'json':
+            table = [row]
+        else:
+            headers = [report_utils.field_to_title(x) for x in headers]
+            table = [[x[0], x[1]] for x in zip(headers, row)]
+            headers = [report_utils.field_to_title(x) for x in ['property', 'value']]
+        return report_utils.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'))
 
 class PedmApprovalListCommand(base.ArgparseCommand):
     def __init__(self):
@@ -1743,23 +1784,13 @@ class PedmApprovalListCommand(base.ArgparseCommand):
             approval_type = None
         table: List[List[Any]] = []
         headers = ['approval_uid', 'approval_type', 'status', 'agent_uid', 'account_info', 'application_info', 'justification', 'expire_in', 'created']
-        expired_ts = datetime.datetime.now() - datetime.timedelta(hours=5)
         for approval in plugin.approvals.get_all_entities():
             approval_uid = approval.approval_uid
             a_status = plugin.storage.approval_status.get_entity(approval_uid)
-            if a_status:
-                if a_status.approval_status == NotificationCenter_pb2.NAS_APPROVED:
-                    status = 'Approved'
-                elif a_status.approval_status == NotificationCenter_pb2.NAS_DENIED:
-                    status = 'Denied'
-                elif a_status.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED:
-                    status = 'Pending'
-                    if expired_ts > approval.created:
-                        status = 'Expired'
-                else:
-                    status = 'Unsupported'
-            else:
-                status = 'Pending'
+            status = pedm_shared.approval_status_to_name(
+                a_status.approval_status if a_status else NotificationCenter_pb2.NAS_UNSPECIFIED,
+                approval.created
+            )
             if approval_type and approval_type != status.lower():
                 continue
 
