@@ -5,7 +5,7 @@ from typing import Any, Optional
 class DAGException(Exception):
 
     def __init__(self, msg: Any, uid: Optional[str] = None):
-        if isinstance(msg, str) is False:
+        if not isinstance(msg, str):
             msg = str(msg)
 
         self.msg = msg

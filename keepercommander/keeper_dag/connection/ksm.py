@@ -20,8 +20,7 @@ import json
 import os
 import requests
 import time
-
-from typing import Union, Optional, TYPE_CHECKING
+from typing import Union, Optional, Tuple, Dict, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
     from keeper_secrets_manager_core.storage import KeyValueStorage
@@ -36,14 +35,29 @@ class Connection(ConnectionBase):
 
     KEEPER_CLIENT = 'ms16.5.0'
 
-    def __init__(self, config: Union[str, dict, KeyValueStorage], verify_ssl: bool = None,
+    def __init__(self,
+                 config: Union[str, dict, KeyValueStorage],
+                 verify_ssl: bool = None,
                  logger: Optional[Logger] = None,
-                 log_transactions: Optional[bool] = None, log_transactions_dir: Optional[str] = None):
+                 log_transactions: Optional[bool] = None,
+                 log_transactions_dir: Optional[str] = None,
+                 use_read_protobuf: bool = False,
+                 use_write_protobuf: bool = False):
 
-        super().__init__(is_device=False,
+        # KSM uses /api/device; hence is_device=True
+        super().__init__(is_device=True,
                          logger=logger,
                          log_transactions=log_transactions,
-                         log_transactions_dir=log_transactions_dir)
+                         log_transactions_dir=log_transactions_dir,
+                         use_read_protobuf=use_read_protobuf,
+                         use_write_protobuf=use_write_protobuf)
+
+        if self.use_read_protobuf:
+            self.logger.info("KSM cannot use protobuf for reading the graph, using JSON.")
+            self.use_read_protobuf = False
+        if self.use_write_protobuf:
+            self.logger.info("KSM cannot use protobuf for writing to the graph, using JSON.")
+            self.use_read_protobuf = False
 
         if InMemoryKeyValueStorage.is_base64(config):
             config = utils.base64_to_string(config)
@@ -63,6 +77,12 @@ class Connection(ConnectionBase):
         self.verify_ssl = verify_ssl
         self._signature = None
         self._challenge_str = None
+
+    def close(self):
+        super().close()
+        if hasattr(self, "config"):
+            self.config = None
+            del self.config
 
     @staticmethod
     def get_record_uid(record: Record) -> str:
@@ -133,11 +153,14 @@ class Connection(ConnectionBase):
                      retry: int = 5,
                      retry_wait: float = 10.0,
                      throttle_inc_factor: float = 1.5,
-                     timeout: Optional[int] = None) -> (str, str):
+                     timeout: Optional[int] = None) -> Tuple[str, str]:
 
         if self._signature is None or refresh is True:
 
             self.logger.debug(f"signature is blank or needs to be refresh {refresh}")
+
+            if timeout is None or timeout == 0:
+                timeout = Connection.TIMEOUT
 
             router_http_host = self.http_router_url_from_ksm_config_or_env()
             url = f'{router_http_host}/api/device/get_challenge'
@@ -205,19 +228,35 @@ class Connection(ConnectionBase):
 
         return self._signature, self._challenge_str
 
+    def payload_and_headers(self, payload: Any) -> Tuple[Union[str, bytes], Dict]:
+
+        # Make sure the transmission_key is None.
+        # This acts as a flag to indicate if we need to decrypt the response.
+        self.transmission_key = None
+
+        payload, headers = super().payload_and_headers(payload)
+
+        return payload, headers
+
     def rest_call_to_router(self,
                             http_method: str,
                             endpoint: str,
                             agent: str,
-                            payload_json: Optional[Union[bytes, str]] = None,
+                            payload: Optional[Union[str, bytes]] = None,
                             retry: int = 5,
                             retry_wait: float = 10.0,
                             throttle_inc_factor: float = 1.5,
-                            timeout: Optional[int] = None) -> str:
+                            timeout: Optional[int] = None,
+                            headers: Optional[Dict] = None) -> Optional[bytes]:
 
-        # If the timeout is set to 0, set to the default which is None.
-        if timeout == 0:
-            timeout = None
+        if timeout is None or timeout == 0:
+            timeout = Connection.TIMEOUT
+
+        if headers is None:
+            headers = {}
+
+        if isinstance(payload, str):
+            payload = payload.encode()
 
         router_host = self.http_router_url_from_ksm_config_or_env()
         url = router_host + endpoint
@@ -233,6 +272,7 @@ class Connection(ConnectionBase):
             # For example, 3 retry of the auth, 3 retry of the request, will be 9 retries.
             signature, challenge_str = self.authenticate(refresh=refresh, agent=agent)
             headers = {
+                **headers,
                 "Signature": signature,
                 "ClientVersion": Connection.KEEPER_CLIENT,
                 "Authorization": f'KeeperDevice {self.client_id}',
@@ -246,7 +286,7 @@ class Connection(ConnectionBase):
                 response = requests.request(
                     method=http_method,
                     url=url,
-                    data=payload_json if payload_json else None,
+                    data=payload,
                     verify=self.verify_ssl,
                     timeout=timeout,
                     headers=headers,
@@ -266,7 +306,7 @@ class Connection(ConnectionBase):
                     continue
 
                 response.raise_for_status()
-                return response.text
+                return response.content
 
             # Handle errors outside of requests
             except requests.exceptions.HTTPError as http_err:
@@ -286,9 +326,9 @@ class Connection(ConnectionBase):
 
             self.logger.info(f"call to graph web service had a problem: {err_msg}, {content}")
             if attempt >= retry:
-                self.logger.info(f"payload: {payload_json}")
+                self.logger.info(f"payload: {payload}")
                 raise DAGConnectionException(f"Call to graph web service {url}, after {retry} "
-                                             f"attempts, failed!: {err_msg}: {content} : {payload_json}")
+                                             f"attempts, failed!: {err_msg}: {content} : {payload}")
 
             self.logger.info(f"will retry call after {retry_wait} seconds.")
             time.sleep(retry_wait)

@@ -2,9 +2,9 @@ from __future__ import annotations
 from .types import (RuleTypeEnum, RuleItem, ActionRuleSet, ActionRuleItem, ScheduleRuleSet, ComplexityRuleSet,
                     Statement, RuleActionEnum)
 from .utils import value_to_boolean, get_connection, make_agent
-from keepercommander.keeper_dag import DAG, EdgeType
-from keepercommander.keeper_dag.exceptions import DAGException
-from keepercommander.keeper_dag.types import PamGraphId, PamEndpoints
+from ..keeper_dag import DAG, EdgeType
+from ..keeper_dag.exceptions import DAGException
+from ..keeper_dag.types import PamGraphId, PamEndpoints
 from time import time
 import base64
 import os
@@ -101,7 +101,7 @@ class Rules:
             # No need to call it six times in a row to initialize it.
             self._dag = DAG(conn=self.conn,
                             record=self.record,
-                            endpoint=PamEndpoints.DISCOVERY_RULES,
+                            # endpoint=PamEndpoints.DISCOVERY_RULES,
                             graph_id=PamGraphId.DISCOVERY_RULES,
                             auto_save=False,
                             logger=self.logger,
@@ -127,6 +127,26 @@ class Rules:
             # The graph exists now, turn on the auto_save.
             self._dag.auto_save = True
         return self._dag
+
+    def close(self):
+        """
+        Clean up resources held by this Rules instance.
+        Releases the DAG instance and connection to prevent memory leaks.
+        """
+        if self._dag is not None:
+            if self.logger:
+                self.logger.debug("closing Rules DAG instance")
+            self._dag = None
+        self.conn = None
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensures cleanup."""
+        self.close()
+        return False
 
     @staticmethod
     def data_path(rule_type: RuleTypeEnum):

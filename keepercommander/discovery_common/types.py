@@ -9,7 +9,7 @@ from keeper_secrets_manager_core.crypto import CryptoUtils
 from typing import Any, Union, Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from keepercommander.keeper_dag.vertex import DAGVertex
+    from ..keeper_dag.vertex import DAGVertex
 
 # IMPORTANT!!!!!!!!!!!
 #
