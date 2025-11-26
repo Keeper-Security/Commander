@@ -248,6 +248,48 @@ curl -X POST 'http://localhost:<port>/api/v1/executecommand' \
 - Automatic temporary file creation and cleanup
 - Sensitive data automatically masked in logs
 
+### Base64-Encoded Configuration (credential-provision)
+
+The `credential-provision` command supports base64-encoded YAML configuration via the `--config-base64` argument. This is useful when calling from external systems (ServiceNow, Aquera, Workday, etc.) where file paths aren't accessible on the Commander server.
+
+**Encoding your YAML configuration:**
+```bash
+# Linux/macOS
+base64 < employee.yaml
+# Output: dXNlcjoKICBmaXJzdF9uYW1lOiAiSm9obiIK...
+
+# Windows PowerShell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("employee.yaml"))
+
+# Python
+python3 -c "import base64; print(base64.b64encode(open('employee.yaml', 'rb').read()).decode())"
+```
+
+**API Request Example:**
+```bash
+curl -X POST 'http://localhost:<port>/api/v2/executecommand-async' \
+--header 'Content-Type: application/json' \
+--header 'api-key: <your-api-key>' \
+--data '{
+  "command": "credential-provision --config-base64 dXNlcjoKICBmaXJzdF9uYW1lOiAiSm9obiIK..."
+}'
+```
+
+**With dry-run validation:**
+```bash
+curl -X POST 'http://localhost:<port>/api/v2/executecommand-async' \
+--header 'Content-Type: application/json' \
+--header 'api-key: <your-api-key>' \
+--data '{
+  "command": "credential-provision --config-base64 dXNlcjoKICBmaXJzdF9uYW1lOiAiSm9obiIK... --dry-run --output json"
+}'
+```
+
+**Notes:**
+- Uses standard RFC 4648 base64 encoding
+- The `--config-base64` argument is mutually exclusive with `--config` (file path)
+- Maximum size depends on HTTP request limits (typically works for configs up to ~100KB)
+
 ## Configuration
 
 The service configuration is stored as an attachment to a vault record in JSON/YAML format and includes:
