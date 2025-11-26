@@ -9,11 +9,13 @@
 #
 
 """
-Unit Tests for Automated Credential Provisioning (KC-1007)
+Unit Tests for Automated Credential Provisioning (KC-1007, KC-1026)
 
 Tests the foundation, YAML parsing, and validation framework implemented in Story KC-1007-2.
+Tests base64 configuration input for Service Mode API integration (KC-1026).
 """
 
+import base64
 import sys
 import unittest
 import tempfile
@@ -122,6 +124,169 @@ user:
             self.assertIn('must be a dictionary', str(context.exception))
         finally:
             os.unlink(temp_path)
+
+
+class TestBase64YAMLParsing(unittest.TestCase):
+    """Test base64-encoded YAML loading and parsing (KC-1026)."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.cmd = CredentialProvisionCommand()
+
+    def _encode_yaml(self, yaml_content: str) -> str:
+        """Helper to encode YAML string to base64."""
+        return base64.b64encode(yaml_content.encode('utf-8')).decode('ascii')
+
+    def test_valid_base64_yaml_loads(self):
+        """Test that valid base64-encoded YAML loads correctly."""
+        yaml_content = """
+user:
+  first_name: "John"
+  last_name: "Doe"
+  personal_email: "john@example.com"
+account:
+  username: "john.doe"
+  pam_config_uid: "test-uid"
+pam:
+  rotation:
+    schedule: "0 0 3 * * ?"
+    password_complexity: "32,5,5,5,5"
+email:
+  config_name: "Test Config"
+"""
+        base64_content = self._encode_yaml(yaml_content)
+
+        config = self.cmd._load_yaml_base64(base64_content)
+        self.assertIsInstance(config, dict)
+        self.assertEqual(config['user']['first_name'], 'John')
+        self.assertEqual(config['account']['username'], 'john.doe')
+
+    def test_valid_base64_simple_yaml(self):
+        """Test simple YAML configuration via base64."""
+        yaml_content = "user:\n  name: test"
+        base64_content = self._encode_yaml(yaml_content)
+
+        config = self.cmd._load_yaml_base64(base64_content)
+        self.assertEqual(config['user']['name'], 'test')
+
+    def test_invalid_base64_raises_error(self):
+        """Test that invalid base64 raises appropriate error."""
+        invalid_base64 = "not-valid-base64!!!"
+
+        with self.assertRaises(CommandError) as context:
+            self.cmd._load_yaml_base64(invalid_base64)
+
+        self.assertIn('Invalid base64 encoding', str(context.exception))
+
+    def test_invalid_base64_characters_raises_error(self):
+        """Test that base64 with invalid characters raises error."""
+        # Contains invalid characters for base64
+        invalid_base64 = "abc$%^&*()xyz"
+
+        with self.assertRaises(CommandError) as context:
+            self.cmd._load_yaml_base64(invalid_base64)
+
+        self.assertIn('Invalid base64 encoding', str(context.exception))
+
+    def test_valid_base64_invalid_yaml_raises_error(self):
+        """Test that valid base64 with invalid YAML raises error."""
+        # Invalid YAML syntax
+        invalid_yaml = "user:\n  first_name: \"John\n  unterminated_string"
+        base64_content = self._encode_yaml(invalid_yaml)
+
+        with self.assertRaises(CommandError) as context:
+            self.cmd._load_yaml_base64(base64_content)
+
+        self.assertIn('YAML syntax error', str(context.exception))
+
+    def test_valid_base64_non_dict_yaml_raises_error(self):
+        """Test that YAML that isn't a dict raises appropriate error."""
+        list_yaml = "- item1\n- item2\n- item3"
+        base64_content = self._encode_yaml(list_yaml)
+
+        with self.assertRaises(CommandError) as context:
+            self.cmd._load_yaml_base64(base64_content)
+
+        self.assertIn('must be a dictionary', str(context.exception))
+
+    def test_valid_base64_scalar_yaml_raises_error(self):
+        """Test that scalar YAML (not dict) raises appropriate error."""
+        scalar_yaml = "just a plain string"
+        base64_content = self._encode_yaml(scalar_yaml)
+
+        with self.assertRaises(CommandError) as context:
+            self.cmd._load_yaml_base64(base64_content)
+
+        self.assertIn('must be a dictionary', str(context.exception))
+
+    def test_valid_base64_non_utf8_raises_error(self):
+        """Test that non-UTF8 content raises appropriate error."""
+        # Binary content that's not valid UTF-8
+        binary_content = b'\x80\x81\x82\x83'
+        base64_content = base64.b64encode(binary_content).decode('ascii')
+
+        with self.assertRaises(CommandError) as context:
+            self.cmd._load_yaml_base64(base64_content)
+
+        self.assertIn('Invalid UTF-8 encoding', str(context.exception))
+
+    def test_empty_base64_raises_error(self):
+        """Test that empty base64 string is handled appropriately."""
+        # Empty string decodes to empty, which is not a valid dict
+        empty_yaml = ""
+        base64_content = self._encode_yaml(empty_yaml)
+
+        with self.assertRaises(CommandError) as context:
+            self.cmd._load_yaml_base64(base64_content)
+
+        # yaml.safe_load returns None for empty string, which is not a dict
+        self.assertIn('must be a dictionary', str(context.exception))
+
+    def test_base64_with_padding(self):
+        """Test that base64 with proper padding works."""
+        yaml_content = "key: value"
+        base64_content = self._encode_yaml(yaml_content)
+
+        # Ensure padding is present (base64 length should be multiple of 4)
+        self.assertEqual(len(base64_content) % 4, 0)
+
+        config = self.cmd._load_yaml_base64(base64_content)
+        self.assertEqual(config['key'], 'value')
+
+    def test_base64_unicode_content(self):
+        """Test that base64-encoded Unicode YAML works correctly."""
+        yaml_content = """
+user:
+  first_name: "日本語"
+  last_name: "テスト"
+"""
+        base64_content = self._encode_yaml(yaml_content)
+
+        config = self.cmd._load_yaml_base64(base64_content)
+        self.assertEqual(config['user']['first_name'], '日本語')
+        self.assertEqual(config['user']['last_name'], 'テスト')
+
+    def test_base64_preserves_yaml_types(self):
+        """Test that YAML types are preserved through base64 encoding."""
+        yaml_content = """
+string_field: "hello"
+integer_field: 42
+float_field: 3.14
+boolean_field: true
+null_field: null
+list_field:
+  - item1
+  - item2
+"""
+        base64_content = self._encode_yaml(yaml_content)
+
+        config = self.cmd._load_yaml_base64(base64_content)
+        self.assertEqual(config['string_field'], 'hello')
+        self.assertEqual(config['integer_field'], 42)
+        self.assertAlmostEqual(config['float_field'], 3.14)
+        self.assertTrue(config['boolean_field'])
+        self.assertIsNone(config['null_field'])
+        self.assertEqual(config['list_field'], ['item1', 'item2'])
 
 
 class TestValidationHelpers(unittest.TestCase):
