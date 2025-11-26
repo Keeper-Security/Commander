@@ -21,6 +21,13 @@ PAM_MACHINE = "pamMachine"
 PAM_USER = "pamUser"
 LOCAL_USER = "local"
 
+# These are configuration that could domain users.
+# Azure included because of AADDS.
+DOMAIN_USER_CONFIGS = [
+    "pamDomainConfiguration",
+    "pamAzureConfiguration"
+]
+
 # The record types to process.
 # The order defined the order the user will be presented the new discovery objects.
 # The sort defined how the discovery objects for a record type are sorted and presented.

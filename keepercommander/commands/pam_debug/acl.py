@@ -44,7 +44,9 @@ class PAMDebugACLCommand(PAMGatewayActionDiscoverCommandBase):
             print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.")
             return
 
-        record_link = RecordLink(record=gateway_context.configuration, params=params, logger=logging,
+        record_link = RecordLink(record=gateway_context.configuration,
+                                 params=params,
+                                 logger=logging,
                                  debug_level=debug_level)
 
         user_record = vault.KeeperRecord.load(params, user_uid)  # type: Optional[TypedRecord]

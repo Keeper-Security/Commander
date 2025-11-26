@@ -1,7 +1,7 @@
 from ....commands.tunnel.port_forward.tunnel_helpers import generate_random_bytes, get_config_uid
 from ....keeper_dag import DAG, EdgeType
 from ....keeper_dag.connection.commander import Connection
-from ....keeper_dag.types import RefType
+from ....keeper_dag.types import RefType, PamEndpoints
 from ....keeper_dag.vertex import DAGVertex
 from ....display import bcolors
 from ....vault import PasswordRecord
@@ -33,9 +33,10 @@ class TunnelDAG:
         self.encrypted_session_token = encrypted_session_token
         self.encrypted_transmission_key = encrypted_transmission_key
         self.conn = Connection(params=params, encrypted_transmission_key=self.encrypted_transmission_key,
-                               encrypted_session_token=self.encrypted_session_token
+                               encrypted_session_token=self.encrypted_session_token,
+                               use_write_protobuf=True
                                )
-        self.linking_dag = DAG(conn=self.conn, record=self.record, graph_id=0)
+        self.linking_dag = DAG(conn=self.conn, record=self.record, graph_id=0, write_endpoint=PamEndpoints.PAM)
         try:
             self.linking_dag.load()
         except Exception as e:

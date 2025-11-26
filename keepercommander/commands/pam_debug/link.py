@@ -39,7 +39,9 @@ class PAMDebugLinkCommand(PAMGatewayActionDiscoverCommandBase):
             print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.")
             return
 
-        record_link = RecordLink(record=gateway_context.configuration, params=params, logger=logging,
+        record_link = RecordLink(record=gateway_context.configuration,
+                                 params=params,
+                                 logger=logging,
                                  debug_level=debug_level)
 
         resource_record = vault.KeeperRecord.load(params, resource_uid)  # type: Optional[TypedRecord]
@@ -53,9 +55,10 @@ class PAMDebugLinkCommand(PAMGatewayActionDiscoverCommandBase):
             return
 
         try:
-            record_link.belongs_to(resource_uid, gateway_context.configuration_uid)
+            record_link.belongs_to(resource_uid, gateway_context.configuration_uid, )
             record_link.save()
             print(f"{bcolors.OKGREEN}Added link between '{resource_uid}' and "
                   f"{gateway_context.configuration_uid}{bcolors.ENDC}")
         except Exception as err:
             print(f"{bcolors.FAIL}Could not add LINK: {err}{bcolors.ENDC}")
+            raise err

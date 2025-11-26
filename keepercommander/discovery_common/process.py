@@ -12,15 +12,14 @@ from .types import (DiscoveryObject, DiscoveryUser, RecordField, RuleActionEnum,
                     DirectoryInfo, NormalizedRecord)
 from .utils import value_to_boolean, split_user_and_domain
 from .dag_sort import sort_infra_vertices
-from keepercommander.keeper_dag import EdgeType
-from keepercommander.keeper_dag.crypto import bytes_to_urlsafe_str
+from ..keeper_dag import EdgeType
+from ..keeper_dag.crypto import bytes_to_urlsafe_str
 import hashlib
-import time
 from typing import Any, Callable, List, Optional, Union, TYPE_CHECKING
 
 
 if TYPE_CHECKING:
-    from keepercommander.keeper_dag.vertex import DAGVertex
+    from ..keeper_dag.vertex import DAGVertex
     DirectoryResult = Union[DirectoryInfo, List]
     DirectoryUserResult = Union[NormalizedRecord, DAGVertex]
 
@@ -56,6 +55,10 @@ class NoDiscoveryDataException(Exception):
 
 
 class Process:
+    # Warn when bulk record lists exceed this size (potential memory issue)
+    BULK_LIST_WARNING_THRESHOLD = 10000
+    # Hard limit for bulk record lists (safety mechanism)
+    BULK_LIST_MAX_SIZE = 50000
 
     def __init__(self, record: Any, job_id: str, logger: Optional[Any] = None, debug_level: int = 0, **kwargs):
         self.job_id = job_id
@@ -88,6 +91,37 @@ class Process:
         self.debug_level = debug_level
 
         self.logger.debug(f"discovery process is using configuration uid {self.configuration_uid}")
+
+    def close(self):
+        """
+        Clean up resources held by this Process instance.
+        Releases all DAG instances and connections to prevent memory leaks.
+        """
+
+        if self.jobs:
+            self.jobs.close()
+            self.jobs = None
+        if self.infra:
+            self.infra.close()
+            self.infra = None
+        if self.record_link:
+            self.record_link.close()
+            self.record_link = None
+        if self.user_service:
+            self.user_service.close()
+            self.user_service = None
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensures cleanup."""
+        self.close()
+        return False
+
+    def __del__(self):
+        self.close()
 
     @staticmethod
     def get_key_field(record_type: str) -> str:
@@ -1220,29 +1254,6 @@ class Process:
                                     context=context
                                 )
 
-                        # When a user is added to a directory, check to see if there are other directories with the
-                        #  same domain.
-                        # This used needs to be added to those directories too.
-                        if current_content.record_type == PAM_DIRECTORY and content.record_type == PAM_USER:
-
-                            self._record_link_user_to_directories(
-                                directory_vertex=current_vertex,
-                                directory_content=current_content,
-                                user_content=content,
-                                directory_info_func=directory_info_func,
-                                context=context
-                            )
-
-                        # If the new record is a directory, we may need to attach more users to this record.
-                        elif content.record_type == PAM_DIRECTORY:
-
-                            self._record_link_directory_users(
-                                directory_vertex=vertex,
-                                directory_content=content,
-                                directory_info_func=directory_info_func,
-                                context=context
-                            )
-
                     items_left -= 1
 
                 # If the record type is a PAM User, we don't need to go deeper.
@@ -1309,7 +1320,6 @@ class Process:
 
             admin_content = DiscoveryObject(
                 uid="PLACEHOLDER",
-                added_ts=int(time.time()),
                 object_type_value="users",
                 parent_record_uid=resource_content.record_uid,
                 record_type=PAM_USER,

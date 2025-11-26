@@ -1,3 +1,4 @@
+from __future__ import annotations
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import base64
 import os
@@ -14,6 +15,16 @@ def encrypt_aes(data: bytes, key: bytes, iv: bytes = None) -> bytes:
 def decrypt_aes(data: bytes, key: bytes) -> bytes:
     aesgcm = AESGCM(key)
     return aesgcm.decrypt(data[:12], data[12:], None)
+
+
+def decrypt_aes_fancy(encrypted_data, key: bytes):
+    aesgcm = AESGCM(key)
+
+    nonce = encrypted_data[:12]
+    ciphertext = encrypted_data[12:]
+    plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+
+    return plaintext
 
 
 def bytes_to_base64(b: Union[str, bytes]) -> str:

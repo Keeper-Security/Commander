@@ -44,6 +44,18 @@ class RefType(BaseEnum):
     PAM_NETWORK = "pam_network"
     # 12
     PAM_BROWSER = "pam_browser"
+    # 13
+    CONNECTION = "connetion"
+    # 14
+    WORKFLOW = "workflow"
+    # 15
+    NOTIFICATION = "notification"
+    # 16
+    USER_INFO = "user_info"
+    # 17
+    TEAM_INFO = "team_info"
+    # 18
+    ROLE = "role"
 
     def __str__(self):
         return self.value
@@ -94,6 +106,15 @@ class PamEndpoints(BaseEnum):
     SERVICE_LINKS = "/graph-sync/service_links"
 
 
+ENDPOINT_TO_GRAPH_ID_MAP = {
+    PamEndpoints.PAM.value: PamGraphId.PAM.value,
+    PamEndpoints.DISCOVERY_RULES.value: PamGraphId.DISCOVERY_RULES.value,
+    PamEndpoints.DISCOVERY_JOBS.value: PamGraphId.DISCOVERY_JOBS.value,
+    PamEndpoints.INFRASTRUCTURE.value: PamGraphId.INFRASTRUCTURE.value,
+    PamEndpoints.SERVICE_LINKS.value: PamGraphId.SERVICE_LINKS.value,
+}
+
+
 class SyncQuery(BaseModel):
     streamId: Optional[str] = None    # base64 of a user's ID who is syncing.
     deviceId: Optional[str] = None
@@ -102,9 +123,10 @@ class SyncQuery(BaseModel):
 
 
 class SyncDataItem(BaseModel):
-    ref: dict
-    parentRef: Optional[dict] = None
+    ref: Ref
+    parentRef: Optional[Ref] = None
     content: Optional[str] = None
+    content_is_base64: bool = True
     type: Optional[str] = None
     path: Optional[str] = None
     deletion: Optional[bool] = False

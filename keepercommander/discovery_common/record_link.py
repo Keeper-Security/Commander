@@ -2,22 +2,33 @@ from __future__ import annotations
 import logging
 from .utils import get_connection, make_agent
 from .types import UserAcl, DiscoveryObject
-from keepercommander.keeper_dag import DAG, EdgeType
-from keepercommander.keeper_dag.types import PamGraphId, PamEndpoints
+from ..keeper_dag import DAG, EdgeType
+from ..keeper_dag.types import PamGraphId, PamEndpoints
 import importlib
 from typing import Any, Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from keepercommander.keeper_dag.vertex import DAGVertex
+    from ..keeper_dag.vertex import DAGVertex
 
 
 class RecordLink:
 
-    def __init__(self, record: Any, logger: Optional[Any] = None, debug_level: int = 0, fail_on_corrupt: bool = True,
-                 log_prefix: str = "GS Record Linking", save_batch_count: int = 200, agent: Optional[str] = None,
+    def __init__(self,
+                 record: Any,
+                 logger: Optional[Any] = None,
+                 debug_level: int = 0,
+                 fail_on_corrupt: bool = True,
+                 log_prefix: str = "GS Record Linking",
+                 save_batch_count: int = 200,
+                 agent: Optional[str] = None,
+                 use_read_protobuf: bool = False,
+                 use_write_protobuf: bool = True,
                  **kwargs):
 
-        self.conn = get_connection(**kwargs)
+        self.conn = get_connection(logger=logger,
+                                   use_read_protobuf=use_read_protobuf,
+                                   use_write_protobuf=use_write_protobuf,
+                                   **kwargs)
 
         # This will either be a KSM Record, or Commander KeeperRecord
         self.record = record
@@ -28,6 +39,17 @@ class RecordLink:
         self.log_prefix = log_prefix
         self.debug_level = debug_level
         self.save_batch_count = save_batch_count
+
+        # Based on the connection type, use_write_protobuf might be set to False is True was passed.
+        # Use self.conn.use_write_protobuf; don't use passed in use_write_protobuf.
+        # If using protobuf to write, then use the endpoint.
+        self.write_endpoint = None
+        if self.conn.use_write_protobuf:
+            self.write_endpoint = PamEndpoints.PAM
+
+        self.read_endpoint = None
+        if self.conn.use_read_protobuf:
+            self.read_endpoint = PamEndpoints.PAM
 
         self.agent = make_agent("record_linking")
         if agent is not None:
@@ -45,7 +67,8 @@ class RecordLink:
             # Since we don't have transactions, we want to save the record link if everything worked.
             self._dag = DAG(conn=self.conn,
                             record=self.record,
-                            endpoint=PamEndpoints.PAM,
+                            write_endpoint=self.write_endpoint,
+                            read_endpoint=self.read_endpoint,
                             graph_id=PamGraphId.PAM,
                             auto_save=False,
                             logger=self.logger,
@@ -61,6 +84,27 @@ class RecordLink:
                 self.dag.add_vertex(name=self.record.title, uid=self._dag.uid)
 
         return self._dag
+
+    def close(self):
+        """
+        Clean up resources held by this RecordLink instance.
+        Releases the DAG instance and connection to prevent memory leaks.
+        """
+        if self._dag is not None:
+            self._dag = None
+        self.conn = None
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensures cleanup."""
+        self.close()
+        return False
+
+    def __del__(self):
+        self.close()
 
     @property
     def has_graph(self) -> bool:

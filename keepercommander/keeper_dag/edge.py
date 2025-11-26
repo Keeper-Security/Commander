@@ -14,9 +14,17 @@ if TYPE_CHECKING:  # pragma: no cover
 
 
 class DAGEdge:
-    def __init__(self, vertex: DAGVertex, edge_type: EdgeType, head_uid: str, version: int = 0,
-                 content: Optional[Any] = None, path: Optional[str] = None,
-                 modified: bool = True, block_content_auto_save: bool = False, from_load: bool = False,
+    def __init__(self,
+                 vertex: DAGVertex,
+                 edge_type: EdgeType,
+                 head_uid: str,
+                 version: int = 0,
+                 content: Optional[Any] = None,
+                 path: Optional[str] = None,
+                 modified: bool = True,
+                 block_content_auto_save: bool = False,
+                 is_serialized: bool = False,
+                 is_encrypted: bool = False,
                  needs_encryption: bool = False):
         """
         Create an instance of DAGEdge.
@@ -32,6 +40,7 @@ class DAGEdge:
         :param modified:
         :param block_content_auto_save:
         :param from_load: Is this being called from the load() method?
+        :param is_serialized: From the load, is the content serialized from to a base64 string?
         :param needs_encryption: Flag to indicate if the content needs to be encrypted.
         :return: An instance of DAGEdge
         """
@@ -46,6 +55,11 @@ class DAGEdge:
         self._modified = None
         self.modified = modified
 
+        # Should this edge be skipped when saving.
+        # This could happen if we create a duplicate new or modified edge.
+        # We want to only save the newest duplicated edge, so skip prior ones.
+        self.skip_on_save: bool = False
+
         # Block auto save in the content setter.
         # When creating an edge, don't save until the edge is added to the edge list.
         self.block_content_auto_save = block_content_auto_save
@@ -58,10 +72,16 @@ class DAGEdge:
         # We want to keep a str, unless KEYs are decrypted.
 
         # If the edge data need encryption, is _content, currently encrypted.
-        self.encrypted = from_load is True and edge_type in [EdgeType.KEY, EdgeType.DATA]
+        self.is_encrypted = is_encrypted
 
         # If the content could not be decrypted, set
         self.corrupt = False
+
+        # Is the content base64 encoded?
+        # For JSON non-DATA edges, it will be deserialized.
+        # For JSON DATA edges, it will be serialized and the decryption will deserialize it.
+        # For Protobuf all edges are deserialized; Protobuf does not serialize bytes.
+        self.is_serialized = is_serialized
 
         self._content = None  # type: Optional[Any]
         self.content = content
@@ -101,6 +121,7 @@ class DAGEdge:
 
         If the content is a str, then the content is encrypted.
         """
+
         return self._content
 
     @property
@@ -109,7 +130,11 @@ class DAGEdge:
         Get the content from the DATA edge as a dictionary.
         :return: Content as a dictionary.
         """
-        content = self._content
+
+        if self.is_encrypted:
+            raise DAGContentException("The content is still encrypted.")
+
+        content = self.content
         if content is not None:
             try:
                 content = json.loads(content)
@@ -123,21 +148,29 @@ class DAGEdge:
         Get the content from the DATA edge as string
         :return:
         """
-        content = self._content
+
+        if self.is_encrypted:
+            raise DAGContentException("The content is still encrypted.")
+
+        content = self.content
         try:
             content = content.decode()
-        except Exception as err:
+        except (Exception,):
             pass
         return content
 
-    def content_as_object(self, meta_class: pydantic._internal._model_construction.ModelMetaclass) -> (
-            Optional)[BaseModel]:
+    def content_as_object(self,
+                          meta_class: pydantic._internal._model_construction.ModelMetaclass) -> Optional[BaseModel]:
         """
         Get the content as a pydantic based object.
 
         :param meta_class: The class to return
         :return:
         """
+
+        if self.is_encrypted:
+            raise DAGContentException("The content is still encrypted.")
+
         content = self.content_as_str
         if content is not None:
             content = meta_class.model_validate_json(self.content_as_str)
@@ -160,7 +193,7 @@ class DAGEdge:
         # If the data is encrypted, set it.
         # Don't try to make it bytes.
         # Also don't set the modified flag to True.
-        if self.encrypted is True:
+        if self.is_encrypted:
             self.debug("  content is encrypted.", level=3)
             self._content = value
             return
@@ -168,14 +201,14 @@ class DAGEdge:
         if self._content is not None:
             raise DAGContentException("Cannot update existing content. Use add_data() to change the content.")
 
-        if isinstance(value, dict) is True:
+        if isinstance(value, dict):
             value = json.dumps(value)
 
         # Is this a Pydantic based class?
-        if hasattr(value, "model_dump_json") is True:
+        if hasattr(value, "model_dump_json"):
             value = value.model_dump_json()
 
-        if isinstance(value, str) is True:
+        if isinstance(value, str):
             value = value.encode()
 
         self._content = value
@@ -189,7 +222,7 @@ class DAGEdge:
         """
 
         # If already inactive, return
-        if self.active is False:
+        if not self.active:
             return
 
         version, _ = self.vertex.get_highest_edge_version(head_uid=self.head_uid)
@@ -197,22 +230,35 @@ class DAGEdge:
         # Flag all other edges as inactive.
         for edge in self.vertex.edges:
             edge.active = False
+            if self.vertex.dag.dedup_edge and edge.modified:
+                edge.skip_on_save = True
 
-        self.vertex.edges.append(
-            DAGEdge(
-                vertex=self.vertex,
-                edge_type=EdgeType.DELETION,
-                head_uid=self.head_uid,
-                version=version + 1
+        # Check if the all the edges for this vertex are all newly added/modified for the session.
+        # If they are all new, then we don't need to delete anything; we just don't add the edges.
+        all_modified_edges = True
+        for edge in self.vertex.edges:
+            if not edge.modified:
+                all_modified_edges = False
+                break
+
+        # If not all the edges are modified, then we actually want to add a deletion edge.
+        # There is actually something to delete.
+        if not all_modified_edges:
+            self.vertex.edges.append(
+                DAGEdge(
+                    vertex=self.vertex,
+                    edge_type=EdgeType.DELETION,
+                    head_uid=self.head_uid,
+                    version=version + 1
+                )
             )
-        )
 
         # Perform the DELETION edges save in one batch.
         # Get the current allowed auto save state, and disable auto save.
         current_allow_auto_save = self.vertex.dag.allow_auto_save
         self.vertex.dag.allow_auto_save = False
 
-        if self.vertex.belongs_to_a_vertex is False:
+        if not self.vertex.belongs_to_a_vertex:
             self.vertex.delete(ignore_vertex=self.vertex)
 
         self.vertex.dag.allow_auto_save = current_allow_auto_save

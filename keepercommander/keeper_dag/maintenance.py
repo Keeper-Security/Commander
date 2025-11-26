@@ -48,7 +48,7 @@ class Maintenance:
                     found_key_edge = True
                     break
                 except Exception as err:
-                    self.logger.debug(f"could not decrypt key for {v.uid}, {keychain[-1]['key']}: {err}", level=1)  # DAG_DEBUG_LEVEL env var
+                    self.logger.error(f"could not decrypt key for {v.uid}, {keychain[-1]['key']}: {err}", level=1)
                     keychain += [
                         {
                             "uid": v.uid,
@@ -59,7 +59,7 @@ class Maintenance:
                     ]
                     return keychain
 
-        if found_key_edge is True:
+        if found_key_edge:
             return keychain
         else:
             return [
@@ -117,14 +117,11 @@ class Maintenance:
         content = vertex.content
         if content is None:
             raise DAGVertexException(f"Vertex {uid} does not have a DATA edge.", uid=uid)
-        if isinstance(content, str) is False:
-            raise DAGDataException(f"Vertex {uid} DATA edge content was a not str.", uid=uid)
 
         try:
-            self.debug(f"decrypt {uid} data {content} with {key}")
-            return decrypt_aes(str_to_bytes(content), key)
-        except Exception as err:
-            raise DAGDataException(f"Could not decrypt vertex {uid}'s data edge: {err}", uid=uid)
+            return decrypt_aes(content, key)
+        except (Exception,):
+            raise DAGDataException(f"Vertex {uid} DATA edge can not be decrypted.")
 
     def delete_data(self):
         pass
