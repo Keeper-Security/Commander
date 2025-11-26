@@ -21,9 +21,14 @@ Usage:
     keeper credential-provision --config employee.yaml
     keeper credential-provision --config employee.yaml --dry-run
     keeper credential-provision --config employee.yaml --output json
+
+    # For API/Service Mode usage (base64-encoded YAML):
+    keeper credential-provision --config-base64 <base64-encoded-yaml>
+    keeper credential-provision --config-base64 <base64-encoded-yaml> --dry-run
 """
 
 import argparse
+import base64
 import json
 import logging
 import os
@@ -77,11 +82,19 @@ credential_provision_parser = argparse.ArgumentParser(
                 'and email delivery'
 )
 
-credential_provision_parser.add_argument(
+# Config input: file path OR base64-encoded content (mutually exclusive)
+config_group = credential_provision_parser.add_mutually_exclusive_group(required=True)
+
+config_group.add_argument(
     '--config',
     dest='config',
-    required=True,
     help='Path to YAML configuration file'
+)
+
+config_group.add_argument(
+    '--config-base64',
+    dest='config_base64',
+    help='Base64-encoded YAML configuration content (for API/Service Mode usage)'
 )
 
 credential_provision_parser.add_argument(
@@ -165,15 +178,26 @@ class CredentialProvisionCommand(Command):
             )
 
         config_path = kwargs.get('config')
+        config_base64 = kwargs.get('config_base64')
         dry_run = kwargs.get('dry_run', False)
         output_format = kwargs.get('output', 'text')
 
         try:
-            # Load and validate YAML configuration
-            if output_format == 'text':
-                logging.info(f'Loading configuration from: {config_path}')
-
-            config = self._load_yaml(config_path)
+            # Load and validate YAML configuration from file path or base64 content
+            if config_path:
+                if output_format == 'text':
+                    logging.info(f'Loading configuration from: {config_path}')
+                config = self._load_yaml(config_path)
+            elif config_base64:
+                if output_format == 'text':
+                    logging.info('Loading configuration from base64-encoded content')
+                config = self._load_yaml_base64(config_base64)
+            else:
+                # This shouldn't happen due to argparse required=True, but be defensive
+                raise CommandError(
+                    'credential-provision',
+                    'Either --config or --config-base64 is required'
+                )
             validation_errors = self._validate_config(params, config)
 
             if validation_errors:
@@ -369,6 +393,68 @@ class CredentialProvisionCommand(Command):
             raise CommandError(
                 'credential-provision',
                 f'Error reading {file_path}: {str(e)}'
+            )
+
+    def _load_yaml_base64(self, base64_content: str) -> Dict[str, Any]:
+        """
+        Load and parse YAML configuration from base64-encoded string.
+
+        Supports standard RFC 4648 base64 encoding. The input should be the base64
+        representation of a UTF-8 encoded YAML string.
+
+        This method enables Service Mode API integration where file paths are not
+        accessible between the API caller and the Commander server.
+
+        Args:
+            base64_content: Base64-encoded YAML configuration string
+
+        Returns:
+            Parsed configuration dictionary
+
+        Raises:
+            CommandError: If base64 invalid, UTF-8 decoding fails, or YAML syntax error
+
+        Example:
+            # Encode YAML file to base64:
+            # base64 < employee.yaml
+
+            # Use in command:
+            # credential-provision --config-base64 dXNlcjoKICBmaXJzdF9uYW1lOi...
+        """
+        # Step 1: Decode base64
+        try:
+            yaml_bytes = base64.b64decode(base64_content, validate=True)
+        except Exception as e:
+            raise CommandError(
+                'credential-provision',
+                f'Invalid base64 encoding: {str(e)}'
+            )
+
+        # Step 2: Decode UTF-8
+        try:
+            yaml_string = yaml_bytes.decode('utf-8')
+        except UnicodeDecodeError as e:
+            raise CommandError(
+                'credential-provision',
+                f'Invalid UTF-8 encoding in decoded content: {str(e)}'
+            )
+
+        # Step 3: Parse YAML
+        try:
+            config = yaml.safe_load(yaml_string)
+
+            if not isinstance(config, dict):
+                raise CommandError(
+                    'credential-provision',
+                    'Invalid YAML: Root element must be a dictionary/object'
+                )
+
+            return config
+
+        except yaml.YAMLError as e:
+            raise CommandError(
+                'credential-provision',
+                f'YAML syntax error in decoded content:\n{str(e)}'
             )
 
     # =========================================================================
