@@ -7,12 +7,12 @@ from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Map
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class KeyType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     RSA: _ClassVar[KeyType]
     ECC: _ClassVar[KeyType]
 
 class RoleUserModifyStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     ROLE_EXISTS: _ClassVar[RoleUserModifyStatus]
     MISSING_TREE_KEY: _ClassVar[RoleUserModifyStatus]
     MISSING_ROLE_KEY: _ClassVar[RoleUserModifyStatus]
@@ -21,14 +21,16 @@ class RoleUserModifyStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     INVALID_NODE_ID: _ClassVar[RoleUserModifyStatus]
     MAY_NOT_REMOVE_SELF_FROM_ROLE: _ClassVar[RoleUserModifyStatus]
     MUST_HAVE_ONE_USER_ADMIN: _ClassVar[RoleUserModifyStatus]
+    INVALID_ROLE_ID: _ClassVar[RoleUserModifyStatus]
+    PAM_LICENSE_SEAT_EXCEEDED: _ClassVar[RoleUserModifyStatus]
 
 class EnterpriseType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     ENTERPRISE_STANDARD: _ClassVar[EnterpriseType]
     ENTERPRISE_MSP: _ClassVar[EnterpriseType]
 
 class TransferAcceptanceStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     UNDEFINED: _ClassVar[TransferAcceptanceStatus]
     NOT_REQUIRED: _ClassVar[TransferAcceptanceStatus]
     NOT_ACCEPTED: _ClassVar[TransferAcceptanceStatus]
@@ -36,7 +38,7 @@ class TransferAcceptanceStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper
     ACCEPTED: _ClassVar[TransferAcceptanceStatus]
 
 class EnterpriseDataEntity(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     UNKNOWN: _ClassVar[EnterpriseDataEntity]
     NODES: _ClassVar[EnterpriseDataEntity]
     ROLES: _ClassVar[EnterpriseDataEntity]
@@ -61,15 +63,14 @@ class EnterpriseDataEntity(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     USER_ALIASES: _ClassVar[EnterpriseDataEntity]
     COMPLIANCE_REPORT_CRITERIA_AND_FILTER: _ClassVar[EnterpriseDataEntity]
     COMPLIANCE_REPORTS: _ClassVar[EnterpriseDataEntity]
-    QUEUED_TEAM_USERS_INCLUDING_PENDING: _ClassVar[EnterpriseDataEntity]
 
 class CacheStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     KEEP: _ClassVar[CacheStatus]
     CLEAR: _ClassVar[CacheStatus]
 
 class BackupKeyType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     NO_KEY: _ClassVar[BackupKeyType]
     ENCRYPTED_BY_DATA_KEY: _ClassVar[BackupKeyType]
     ENCRYPTED_BY_PUBLIC_KEY: _ClassVar[BackupKeyType]
@@ -77,12 +78,12 @@ class BackupKeyType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     ENCRYPTED_BY_PUBLIC_KEY_ECC: _ClassVar[BackupKeyType]
 
 class BackupUserDataKeyType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     OWN: _ClassVar[BackupUserDataKeyType]
     SHARED_TO_ENTERPRISE: _ClassVar[BackupUserDataKeyType]
 
 class EncryptedKeyType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     KT_NO_KEY: _ClassVar[EncryptedKeyType]
     KT_ENCRYPTED_BY_DATA_KEY: _ClassVar[EncryptedKeyType]
     KT_ENCRYPTED_BY_PUBLIC_KEY: _ClassVar[EncryptedKeyType]
@@ -90,7 +91,7 @@ class EncryptedKeyType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     KT_ENCRYPTED_BY_PUBLIC_KEY_ECC: _ClassVar[EncryptedKeyType]
 
 class EnterpriseFlagType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     INVALID: _ClassVar[EnterpriseFlagType]
     ALLOW_PERSONAL_LICENSE: _ClassVar[EnterpriseFlagType]
     SPECIAL_PROVISIONING: _ClassVar[EnterpriseFlagType]
@@ -104,24 +105,24 @@ class EnterpriseFlagType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     SHOW_USER_ONBOARD: _ClassVar[EnterpriseFlagType]
 
 class UserUpdateStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     USER_UPDATE_OK: _ClassVar[UserUpdateStatus]
     USER_UPDATE_ACCESS_DENIED: _ClassVar[UserUpdateStatus]
 
 class AuditUserStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     OK: _ClassVar[AuditUserStatus]
     ACCESS_DENIED: _ClassVar[AuditUserStatus]
     NO_LONGER_IN_ENTERPRISE: _ClassVar[AuditUserStatus]
 
 class TeamUserType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     USER: _ClassVar[TeamUserType]
     ADMIN: _ClassVar[TeamUserType]
     ADMIN_ONLY: _ClassVar[TeamUserType]
 
 class AppClientType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     NOT_USED: _ClassVar[AppClientType]
     GENERAL: _ClassVar[AppClientType]
     DISCOVERY_AND_ROTATION_CONTROLLER: _ClassVar[AppClientType]
@@ -129,7 +130,7 @@ class AppClientType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     SELF_DESTRUCT: _ClassVar[AppClientType]
 
 class DeleteEnterpriseUsersResult(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     SUCCESS: _ClassVar[DeleteEnterpriseUsersResult]
     NOT_AN_ENTERPRISE_USER: _ClassVar[DeleteEnterpriseUsersResult]
     CANNOT_DELETE_SELF: _ClassVar[DeleteEnterpriseUsersResult]
@@ -137,10 +138,16 @@ class DeleteEnterpriseUsersResult(int, metaclass=_enum_type_wrapper.EnumTypeWrap
     ERROR: _ClassVar[DeleteEnterpriseUsersResult]
 
 class ClearSecurityDataType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = []
+    __slots__ = ()
     RECALCULATE_SUMMARY_REPORT: _ClassVar[ClearSecurityDataType]
     FORCE_CLIENT_CHECK_FOR_MISSING_DATA: _ClassVar[ClearSecurityDataType]
     FORCE_CLIENT_RESEND_SECURITY_DATA: _ClassVar[ClearSecurityDataType]
+
+class ReserveDomainAction(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    DOMAIN_TOKEN: _ClassVar[ReserveDomainAction]
+    DOMAIN_ADD: _ClassVar[ReserveDomainAction]
+    DOMAIN_DELETE: _ClassVar[ReserveDomainAction]
 RSA: KeyType
 ECC: KeyType
 ROLE_EXISTS: RoleUserModifyStatus
@@ -151,6 +158,8 @@ PENDING_ENTERPRISE_USER: RoleUserModifyStatus
 INVALID_NODE_ID: RoleUserModifyStatus
 MAY_NOT_REMOVE_SELF_FROM_ROLE: RoleUserModifyStatus
 MUST_HAVE_ONE_USER_ADMIN: RoleUserModifyStatus
+INVALID_ROLE_ID: RoleUserModifyStatus
+PAM_LICENSE_SEAT_EXCEEDED: RoleUserModifyStatus
 ENTERPRISE_STANDARD: EnterpriseType
 ENTERPRISE_MSP: EnterpriseType
 UNDEFINED: TransferAcceptanceStatus
@@ -182,7 +191,6 @@ DEVICES_REQUEST_FOR_ADMIN_APPROVAL: EnterpriseDataEntity
 USER_ALIASES: EnterpriseDataEntity
 COMPLIANCE_REPORT_CRITERIA_AND_FILTER: EnterpriseDataEntity
 COMPLIANCE_REPORTS: EnterpriseDataEntity
-QUEUED_TEAM_USERS_INCLUDING_PENDING: EnterpriseDataEntity
 KEEP: CacheStatus
 CLEAR: CacheStatus
 NO_KEY: BackupKeyType
@@ -229,9 +237,12 @@ ERROR: DeleteEnterpriseUsersResult
 RECALCULATE_SUMMARY_REPORT: ClearSecurityDataType
 FORCE_CLIENT_CHECK_FOR_MISSING_DATA: ClearSecurityDataType
 FORCE_CLIENT_RESEND_SECURITY_DATA: ClearSecurityDataType
+DOMAIN_TOKEN: ReserveDomainAction
+DOMAIN_ADD: ReserveDomainAction
+DOMAIN_DELETE: ReserveDomainAction
 
 class EnterpriseKeyPairRequest(_message.Message):
-    __slots__ = ["enterprisePublicKey", "encryptedEnterprisePrivateKey", "keyType"]
+    __slots__ = ("enterprisePublicKey", "encryptedEnterprisePrivateKey", "keyType")
     ENTERPRISEPUBLICKEY_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDENTERPRISEPRIVATEKEY_FIELD_NUMBER: _ClassVar[int]
     KEYTYPE_FIELD_NUMBER: _ClassVar[int]
@@ -241,13 +252,13 @@ class EnterpriseKeyPairRequest(_message.Message):
     def __init__(self, enterprisePublicKey: _Optional[bytes] = ..., encryptedEnterprisePrivateKey: _Optional[bytes] = ..., keyType: _Optional[_Union[KeyType, str]] = ...) -> None: ...
 
 class GetTeamMemberRequest(_message.Message):
-    __slots__ = ["teamUid"]
+    __slots__ = ("teamUid",)
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
     teamUid: bytes
     def __init__(self, teamUid: _Optional[bytes] = ...) -> None: ...
 
 class EnterpriseUser(_message.Message):
-    __slots__ = ["enterpriseUserId", "email", "enterpriseUsername", "isShareAdmin", "username"]
+    __slots__ = ("enterpriseUserId", "email", "enterpriseUsername", "isShareAdmin", "username")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     EMAIL_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEUSERNAME_FIELD_NUMBER: _ClassVar[int]
@@ -261,19 +272,19 @@ class EnterpriseUser(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., email: _Optional[str] = ..., enterpriseUsername: _Optional[str] = ..., isShareAdmin: bool = ..., username: _Optional[str] = ...) -> None: ...
 
 class GetTeamMemberResponse(_message.Message):
-    __slots__ = ["enterpriseUser"]
+    __slots__ = ("enterpriseUser",)
     ENTERPRISEUSER_FIELD_NUMBER: _ClassVar[int]
     enterpriseUser: _containers.RepeatedCompositeFieldContainer[EnterpriseUser]
     def __init__(self, enterpriseUser: _Optional[_Iterable[_Union[EnterpriseUser, _Mapping]]] = ...) -> None: ...
 
 class EnterpriseUserIds(_message.Message):
-    __slots__ = ["enterpriseUserId"]
+    __slots__ = ("enterpriseUserId",)
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     enterpriseUserId: _containers.RepeatedScalarFieldContainer[int]
     def __init__(self, enterpriseUserId: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class EnterprisePersonalAccount(_message.Message):
-    __slots__ = ["email", "OBSOLETE_FIELD"]
+    __slots__ = ("email", "OBSOLETE_FIELD")
     EMAIL_FIELD_NUMBER: _ClassVar[int]
     OBSOLETE_FIELD_FIELD_NUMBER: _ClassVar[int]
     email: str
@@ -281,7 +292,7 @@ class EnterprisePersonalAccount(_message.Message):
     def __init__(self, email: _Optional[str] = ..., OBSOLETE_FIELD: _Optional[bytes] = ...) -> None: ...
 
 class EncryptedTeamKeyRequest(_message.Message):
-    __slots__ = ["teamUid", "encryptedTeamKey", "force"]
+    __slots__ = ("teamUid", "encryptedTeamKey", "force")
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDTEAMKEY_FIELD_NUMBER: _ClassVar[int]
     FORCE_FIELD_NUMBER: _ClassVar[int]
@@ -291,7 +302,7 @@ class EncryptedTeamKeyRequest(_message.Message):
     def __init__(self, teamUid: _Optional[bytes] = ..., encryptedTeamKey: _Optional[bytes] = ..., force: bool = ...) -> None: ...
 
 class ReEncryptedData(_message.Message):
-    __slots__ = ["id", "data"]
+    __slots__ = ("id", "data")
     ID_FIELD_NUMBER: _ClassVar[int]
     DATA_FIELD_NUMBER: _ClassVar[int]
     id: int
@@ -299,7 +310,7 @@ class ReEncryptedData(_message.Message):
     def __init__(self, id: _Optional[int] = ..., data: _Optional[str] = ...) -> None: ...
 
 class ReEncryptedRoleKey(_message.Message):
-    __slots__ = ["role_id", "encryptedRoleKey"]
+    __slots__ = ("role_id", "encryptedRoleKey")
     ROLE_ID_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDROLEKEY_FIELD_NUMBER: _ClassVar[int]
     role_id: int
@@ -307,7 +318,7 @@ class ReEncryptedRoleKey(_message.Message):
     def __init__(self, role_id: _Optional[int] = ..., encryptedRoleKey: _Optional[bytes] = ...) -> None: ...
 
 class ReEncryptedUserDataKey(_message.Message):
-    __slots__ = ["enterpriseUserId", "userEncryptedDataKey"]
+    __slots__ = ("enterpriseUserId", "userEncryptedDataKey")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     USERENCRYPTEDDATAKEY_FIELD_NUMBER: _ClassVar[int]
     enterpriseUserId: int
@@ -315,7 +326,7 @@ class ReEncryptedUserDataKey(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., userEncryptedDataKey: _Optional[bytes] = ...) -> None: ...
 
 class NodeToManagedCompanyRequest(_message.Message):
-    __slots__ = ["companyId", "nodes", "roles", "users", "roleKeys", "teamKeys", "usersDataKeys"]
+    __slots__ = ("companyId", "nodes", "roles", "users", "roleKeys", "teamKeys", "usersDataKeys")
     COMPANYID_FIELD_NUMBER: _ClassVar[int]
     NODES_FIELD_NUMBER: _ClassVar[int]
     ROLES_FIELD_NUMBER: _ClassVar[int]
@@ -333,7 +344,7 @@ class NodeToManagedCompanyRequest(_message.Message):
     def __init__(self, companyId: _Optional[int] = ..., nodes: _Optional[_Iterable[_Union[ReEncryptedData, _Mapping]]] = ..., roles: _Optional[_Iterable[_Union[ReEncryptedData, _Mapping]]] = ..., users: _Optional[_Iterable[_Union[ReEncryptedData, _Mapping]]] = ..., roleKeys: _Optional[_Iterable[_Union[ReEncryptedRoleKey, _Mapping]]] = ..., teamKeys: _Optional[_Iterable[_Union[EncryptedTeamKeyRequest, _Mapping]]] = ..., usersDataKeys: _Optional[_Iterable[_Union[ReEncryptedUserDataKey, _Mapping]]] = ...) -> None: ...
 
 class RoleTeam(_message.Message):
-    __slots__ = ["role_id", "teamUid"]
+    __slots__ = ("role_id", "teamUid")
     ROLE_ID_FIELD_NUMBER: _ClassVar[int]
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
     role_id: int
@@ -341,13 +352,29 @@ class RoleTeam(_message.Message):
     def __init__(self, role_id: _Optional[int] = ..., teamUid: _Optional[bytes] = ...) -> None: ...
 
 class RoleTeams(_message.Message):
-    __slots__ = ["role_team"]
+    __slots__ = ("role_team",)
     ROLE_TEAM_FIELD_NUMBER: _ClassVar[int]
     role_team: _containers.RepeatedCompositeFieldContainer[RoleTeam]
     def __init__(self, role_team: _Optional[_Iterable[_Union[RoleTeam, _Mapping]]] = ...) -> None: ...
 
+class TeamsByRole(_message.Message):
+    __slots__ = ("role_id", "teamUid")
+    ROLE_ID_FIELD_NUMBER: _ClassVar[int]
+    TEAMUID_FIELD_NUMBER: _ClassVar[int]
+    role_id: int
+    teamUid: _containers.RepeatedScalarFieldContainer[bytes]
+    def __init__(self, role_id: _Optional[int] = ..., teamUid: _Optional[_Iterable[bytes]] = ...) -> None: ...
+
+class ManagedNodesByRole(_message.Message):
+    __slots__ = ("role_id", "managedNodeId")
+    ROLE_ID_FIELD_NUMBER: _ClassVar[int]
+    MANAGEDNODEID_FIELD_NUMBER: _ClassVar[int]
+    role_id: int
+    managedNodeId: _containers.RepeatedScalarFieldContainer[int]
+    def __init__(self, role_id: _Optional[int] = ..., managedNodeId: _Optional[_Iterable[int]] = ...) -> None: ...
+
 class RoleUserAddKeys(_message.Message):
-    __slots__ = ["enterpriseUserId", "treeKey", "roleAdminKey"]
+    __slots__ = ("enterpriseUserId", "treeKey", "roleAdminKey")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     TREEKEY_FIELD_NUMBER: _ClassVar[int]
     ROLEADMINKEY_FIELD_NUMBER: _ClassVar[int]
@@ -357,7 +384,7 @@ class RoleUserAddKeys(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., treeKey: _Optional[str] = ..., roleAdminKey: _Optional[str] = ...) -> None: ...
 
 class RoleUserAdd(_message.Message):
-    __slots__ = ["role_id", "roleUserAddKeys"]
+    __slots__ = ("role_id", "roleUserAddKeys")
     ROLE_ID_FIELD_NUMBER: _ClassVar[int]
     ROLEUSERADDKEYS_FIELD_NUMBER: _ClassVar[int]
     role_id: int
@@ -365,13 +392,13 @@ class RoleUserAdd(_message.Message):
     def __init__(self, role_id: _Optional[int] = ..., roleUserAddKeys: _Optional[_Iterable[_Union[RoleUserAddKeys, _Mapping]]] = ...) -> None: ...
 
 class RoleUsersAddRequest(_message.Message):
-    __slots__ = ["roleUserAdds"]
+    __slots__ = ("roleUserAdds",)
     ROLEUSERADDS_FIELD_NUMBER: _ClassVar[int]
     roleUserAdds: _containers.RepeatedCompositeFieldContainer[RoleUserAdd]
     def __init__(self, roleUserAdds: _Optional[_Iterable[_Union[RoleUserAdd, _Mapping]]] = ...) -> None: ...
 
 class RoleUserAddResult(_message.Message):
-    __slots__ = ["roleId", "enterpriseUserId", "status", "message"]
+    __slots__ = ("roleId", "enterpriseUserId", "status", "message")
     ROLEID_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -383,13 +410,13 @@ class RoleUserAddResult(_message.Message):
     def __init__(self, roleId: _Optional[int] = ..., enterpriseUserId: _Optional[int] = ..., status: _Optional[_Union[RoleUserModifyStatus, str]] = ..., message: _Optional[str] = ...) -> None: ...
 
 class RoleUsersAddResponse(_message.Message):
-    __slots__ = ["results"]
+    __slots__ = ("results",)
     RESULTS_FIELD_NUMBER: _ClassVar[int]
     results: _containers.RepeatedCompositeFieldContainer[RoleUserAddResult]
     def __init__(self, results: _Optional[_Iterable[_Union[RoleUserAddResult, _Mapping]]] = ...) -> None: ...
 
 class RoleUserRemove(_message.Message):
-    __slots__ = ["role_id", "enterpriseUserIds"]
+    __slots__ = ("role_id", "enterpriseUserIds")
     ROLE_ID_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEUSERIDS_FIELD_NUMBER: _ClassVar[int]
     role_id: int
@@ -397,13 +424,13 @@ class RoleUserRemove(_message.Message):
     def __init__(self, role_id: _Optional[int] = ..., enterpriseUserIds: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class RoleUsersRemoveRequest(_message.Message):
-    __slots__ = ["roleUserRemoves"]
+    __slots__ = ("roleUserRemoves",)
     ROLEUSERREMOVES_FIELD_NUMBER: _ClassVar[int]
     roleUserRemoves: _containers.RepeatedCompositeFieldContainer[RoleUserRemove]
     def __init__(self, roleUserRemoves: _Optional[_Iterable[_Union[RoleUserRemove, _Mapping]]] = ...) -> None: ...
 
 class RoleUserRemoveResult(_message.Message):
-    __slots__ = ["roleId", "enterpriseUserId", "status", "message"]
+    __slots__ = ("roleId", "enterpriseUserId", "status", "message")
     ROLEID_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -415,13 +442,13 @@ class RoleUserRemoveResult(_message.Message):
     def __init__(self, roleId: _Optional[int] = ..., enterpriseUserId: _Optional[int] = ..., status: _Optional[_Union[RoleUserModifyStatus, str]] = ..., message: _Optional[str] = ...) -> None: ...
 
 class RoleUsersRemoveResponse(_message.Message):
-    __slots__ = ["results"]
+    __slots__ = ("results",)
     RESULTS_FIELD_NUMBER: _ClassVar[int]
     results: _containers.RepeatedCompositeFieldContainer[RoleUserRemoveResult]
     def __init__(self, results: _Optional[_Iterable[_Union[RoleUserRemoveResult, _Mapping]]] = ...) -> None: ...
 
 class EnterpriseRegistration(_message.Message):
-    __slots__ = ["encryptedTreeKey", "enterpriseName", "rootNodeData", "adminUserData", "adminName", "roleData", "rsaKeyPair", "numberSeats", "enterpriseType", "rolePublicKey", "rolePrivateKeyEncryptedWithRoleKey", "roleKeyEncryptedWithTreeKey", "eccKeyPair", "allUsersRoleData", "roleKeyEncryptedWithUserPublicKey", "approverRoleData"]
+    __slots__ = ("encryptedTreeKey", "enterpriseName", "rootNodeData", "adminUserData", "adminName", "roleData", "rsaKeyPair", "numberSeats", "enterpriseType", "rolePublicKey", "rolePrivateKeyEncryptedWithRoleKey", "roleKeyEncryptedWithTreeKey", "eccKeyPair", "allUsersRoleData", "roleKeyEncryptedWithUserPublicKey", "approverRoleData")
     ENCRYPTEDTREEKEY_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISENAME_FIELD_NUMBER: _ClassVar[int]
     ROOTNODEDATA_FIELD_NUMBER: _ClassVar[int]
@@ -457,7 +484,7 @@ class EnterpriseRegistration(_message.Message):
     def __init__(self, encryptedTreeKey: _Optional[bytes] = ..., enterpriseName: _Optional[str] = ..., rootNodeData: _Optional[bytes] = ..., adminUserData: _Optional[bytes] = ..., adminName: _Optional[str] = ..., roleData: _Optional[bytes] = ..., rsaKeyPair: _Optional[_Union[EnterpriseKeyPairRequest, _Mapping]] = ..., numberSeats: _Optional[int] = ..., enterpriseType: _Optional[_Union[EnterpriseType, str]] = ..., rolePublicKey: _Optional[bytes] = ..., rolePrivateKeyEncryptedWithRoleKey: _Optional[bytes] = ..., roleKeyEncryptedWithTreeKey: _Optional[bytes] = ..., eccKeyPair: _Optional[_Union[EnterpriseKeyPairRequest, _Mapping]] = ..., allUsersRoleData: _Optional[bytes] = ..., roleKeyEncryptedWithUserPublicKey: _Optional[bytes] = ..., approverRoleData: _Optional[bytes] = ...) -> None: ...
 
 class DomainPasswordRulesRequest(_message.Message):
-    __slots__ = ["username", "verificationCode"]
+    __slots__ = ("username", "verificationCode")
     USERNAME_FIELD_NUMBER: _ClassVar[int]
     VERIFICATIONCODE_FIELD_NUMBER: _ClassVar[int]
     username: str
@@ -465,7 +492,7 @@ class DomainPasswordRulesRequest(_message.Message):
     def __init__(self, username: _Optional[str] = ..., verificationCode: _Optional[str] = ...) -> None: ...
 
 class DomainPasswordRulesFields(_message.Message):
-    __slots__ = ["type", "minimum", "maximum", "allowed"]
+    __slots__ = ("type", "minimum", "maximum", "allowed")
     TYPE_FIELD_NUMBER: _ClassVar[int]
     MINIMUM_FIELD_NUMBER: _ClassVar[int]
     MAXIMUM_FIELD_NUMBER: _ClassVar[int]
@@ -477,7 +504,7 @@ class DomainPasswordRulesFields(_message.Message):
     def __init__(self, type: _Optional[str] = ..., minimum: _Optional[int] = ..., maximum: _Optional[int] = ..., allowed: bool = ...) -> None: ...
 
 class LoginToMcRequest(_message.Message):
-    __slots__ = ["mcEnterpriseId", "messageSessionUid"]
+    __slots__ = ("mcEnterpriseId", "messageSessionUid")
     MCENTERPRISEID_FIELD_NUMBER: _ClassVar[int]
     MESSAGESESSIONUID_FIELD_NUMBER: _ClassVar[int]
     mcEnterpriseId: int
@@ -485,7 +512,7 @@ class LoginToMcRequest(_message.Message):
     def __init__(self, mcEnterpriseId: _Optional[int] = ..., messageSessionUid: _Optional[bytes] = ...) -> None: ...
 
 class LoginToMcResponse(_message.Message):
-    __slots__ = ["encryptedSessionToken", "encryptedTreeKey"]
+    __slots__ = ("encryptedSessionToken", "encryptedTreeKey")
     ENCRYPTEDSESSIONTOKEN_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDTREEKEY_FIELD_NUMBER: _ClassVar[int]
     encryptedSessionToken: bytes
@@ -493,13 +520,13 @@ class LoginToMcResponse(_message.Message):
     def __init__(self, encryptedSessionToken: _Optional[bytes] = ..., encryptedTreeKey: _Optional[str] = ...) -> None: ...
 
 class DomainPasswordRulesResponse(_message.Message):
-    __slots__ = ["domainPasswordRulesFields"]
+    __slots__ = ("domainPasswordRulesFields",)
     DOMAINPASSWORDRULESFIELDS_FIELD_NUMBER: _ClassVar[int]
     domainPasswordRulesFields: _containers.RepeatedCompositeFieldContainer[DomainPasswordRulesFields]
     def __init__(self, domainPasswordRulesFields: _Optional[_Iterable[_Union[DomainPasswordRulesFields, _Mapping]]] = ...) -> None: ...
 
 class ApproveUserDeviceRequest(_message.Message):
-    __slots__ = ["enterpriseUserId", "encryptedDeviceToken", "encryptedDeviceDataKey", "denyApproval"]
+    __slots__ = ("enterpriseUserId", "encryptedDeviceToken", "encryptedDeviceDataKey", "denyApproval")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDDEVICETOKEN_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDDEVICEDATAKEY_FIELD_NUMBER: _ClassVar[int]
@@ -511,7 +538,7 @@ class ApproveUserDeviceRequest(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., encryptedDeviceToken: _Optional[bytes] = ..., encryptedDeviceDataKey: _Optional[bytes] = ..., denyApproval: bool = ...) -> None: ...
 
 class ApproveUserDeviceResponse(_message.Message):
-    __slots__ = ["enterpriseUserId", "encryptedDeviceToken", "failed", "message"]
+    __slots__ = ("enterpriseUserId", "encryptedDeviceToken", "failed", "message")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDDEVICETOKEN_FIELD_NUMBER: _ClassVar[int]
     FAILED_FIELD_NUMBER: _ClassVar[int]
@@ -523,19 +550,19 @@ class ApproveUserDeviceResponse(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., encryptedDeviceToken: _Optional[bytes] = ..., failed: bool = ..., message: _Optional[str] = ...) -> None: ...
 
 class ApproveUserDevicesRequest(_message.Message):
-    __slots__ = ["deviceRequests"]
+    __slots__ = ("deviceRequests",)
     DEVICEREQUESTS_FIELD_NUMBER: _ClassVar[int]
     deviceRequests: _containers.RepeatedCompositeFieldContainer[ApproveUserDeviceRequest]
     def __init__(self, deviceRequests: _Optional[_Iterable[_Union[ApproveUserDeviceRequest, _Mapping]]] = ...) -> None: ...
 
 class ApproveUserDevicesResponse(_message.Message):
-    __slots__ = ["deviceResponses"]
+    __slots__ = ("deviceResponses",)
     DEVICERESPONSES_FIELD_NUMBER: _ClassVar[int]
     deviceResponses: _containers.RepeatedCompositeFieldContainer[ApproveUserDeviceResponse]
     def __init__(self, deviceResponses: _Optional[_Iterable[_Union[ApproveUserDeviceResponse, _Mapping]]] = ...) -> None: ...
 
 class EnterpriseUserDataKey(_message.Message):
-    __slots__ = ["enterpriseUserId", "userEncryptedDataKey", "keyTypeId", "roleKey", "privateKey"]
+    __slots__ = ("enterpriseUserId", "userEncryptedDataKey", "keyTypeId", "roleKey", "privateKey")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     USERENCRYPTEDDATAKEY_FIELD_NUMBER: _ClassVar[int]
     KEYTYPEID_FIELD_NUMBER: _ClassVar[int]
@@ -549,13 +576,13 @@ class EnterpriseUserDataKey(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., userEncryptedDataKey: _Optional[bytes] = ..., keyTypeId: _Optional[int] = ..., roleKey: _Optional[bytes] = ..., privateKey: _Optional[bytes] = ...) -> None: ...
 
 class EnterpriseUserDataKeys(_message.Message):
-    __slots__ = ["keys"]
+    __slots__ = ("keys",)
     KEYS_FIELD_NUMBER: _ClassVar[int]
     keys: _containers.RepeatedCompositeFieldContainer[EnterpriseUserDataKey]
     def __init__(self, keys: _Optional[_Iterable[_Union[EnterpriseUserDataKey, _Mapping]]] = ...) -> None: ...
 
 class EnterpriseUserDataKeyLight(_message.Message):
-    __slots__ = ["enterpriseUserId", "userEncryptedDataKey", "keyTypeId"]
+    __slots__ = ("enterpriseUserId", "userEncryptedDataKey", "keyTypeId")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     USERENCRYPTEDDATAKEY_FIELD_NUMBER: _ClassVar[int]
     KEYTYPEID_FIELD_NUMBER: _ClassVar[int]
@@ -565,7 +592,7 @@ class EnterpriseUserDataKeyLight(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., userEncryptedDataKey: _Optional[bytes] = ..., keyTypeId: _Optional[int] = ...) -> None: ...
 
 class EnterpriseUserDataKeysByNode(_message.Message):
-    __slots__ = ["nodeId", "keys"]
+    __slots__ = ("nodeId", "keys")
     NODEID_FIELD_NUMBER: _ClassVar[int]
     KEYS_FIELD_NUMBER: _ClassVar[int]
     nodeId: int
@@ -573,19 +600,19 @@ class EnterpriseUserDataKeysByNode(_message.Message):
     def __init__(self, nodeId: _Optional[int] = ..., keys: _Optional[_Iterable[_Union[EnterpriseUserDataKeyLight, _Mapping]]] = ...) -> None: ...
 
 class EnterpriseUserDataKeysByNodeResponse(_message.Message):
-    __slots__ = ["keys"]
+    __slots__ = ("keys",)
     KEYS_FIELD_NUMBER: _ClassVar[int]
     keys: _containers.RepeatedCompositeFieldContainer[EnterpriseUserDataKeysByNode]
     def __init__(self, keys: _Optional[_Iterable[_Union[EnterpriseUserDataKeysByNode, _Mapping]]] = ...) -> None: ...
 
 class EnterpriseDataRequest(_message.Message):
-    __slots__ = ["continuationToken"]
+    __slots__ = ("continuationToken",)
     CONTINUATIONTOKEN_FIELD_NUMBER: _ClassVar[int]
     continuationToken: bytes
     def __init__(self, continuationToken: _Optional[bytes] = ...) -> None: ...
 
 class SpecialProvisioning(_message.Message):
-    __slots__ = ["url", "name"]
+    __slots__ = ("url", "name")
     URL_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     url: str
@@ -593,7 +620,7 @@ class SpecialProvisioning(_message.Message):
     def __init__(self, url: _Optional[str] = ..., name: _Optional[str] = ...) -> None: ...
 
 class GeneralDataEntity(_message.Message):
-    __slots__ = ["enterpriseName", "restrictVisibility", "specialProvisioning", "userPrivilege", "distributor", "forbidAccountTransfer", "showUserOnboard"]
+    __slots__ = ("enterpriseName", "restrictVisibility", "specialProvisioning", "userPrivilege", "distributor", "forbidAccountTransfer", "showUserOnboard")
     ENTERPRISENAME_FIELD_NUMBER: _ClassVar[int]
     RESTRICTVISIBILITY_FIELD_NUMBER: _ClassVar[int]
     SPECIALPROVISIONING_FIELD_NUMBER: _ClassVar[int]
@@ -611,7 +638,7 @@ class GeneralDataEntity(_message.Message):
     def __init__(self, enterpriseName: _Optional[str] = ..., restrictVisibility: bool = ..., specialProvisioning: _Optional[_Union[SpecialProvisioning, _Mapping]] = ..., userPrivilege: _Optional[_Union[UserPrivilege, _Mapping]] = ..., distributor: bool = ..., forbidAccountTransfer: bool = ..., showUserOnboard: bool = ...) -> None: ...
 
 class Node(_message.Message):
-    __slots__ = ["nodeId", "parentId", "bridgeId", "scimId", "licenseId", "encryptedData", "duoEnabled", "rsaEnabled", "ssoServiceProviderId", "restrictVisibility", "ssoServiceProviderIds"]
+    __slots__ = ("nodeId", "parentId", "bridgeId", "scimId", "licenseId", "encryptedData", "duoEnabled", "rsaEnabled", "ssoServiceProviderId", "restrictVisibility", "ssoServiceProviderIds")
     NODEID_FIELD_NUMBER: _ClassVar[int]
     PARENTID_FIELD_NUMBER: _ClassVar[int]
     BRIDGEID_FIELD_NUMBER: _ClassVar[int]
@@ -637,7 +664,7 @@ class Node(_message.Message):
     def __init__(self, nodeId: _Optional[int] = ..., parentId: _Optional[int] = ..., bridgeId: _Optional[int] = ..., scimId: _Optional[int] = ..., licenseId: _Optional[int] = ..., encryptedData: _Optional[str] = ..., duoEnabled: bool = ..., rsaEnabled: bool = ..., ssoServiceProviderId: _Optional[int] = ..., restrictVisibility: bool = ..., ssoServiceProviderIds: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class Role(_message.Message):
-    __slots__ = ["roleId", "nodeId", "encryptedData", "keyType", "visibleBelow", "newUserInherit", "roleType"]
+    __slots__ = ("roleId", "nodeId", "encryptedData", "keyType", "visibleBelow", "newUserInherit", "roleType")
     ROLEID_FIELD_NUMBER: _ClassVar[int]
     NODEID_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDDATA_FIELD_NUMBER: _ClassVar[int]
@@ -655,7 +682,7 @@ class Role(_message.Message):
     def __init__(self, roleId: _Optional[int] = ..., nodeId: _Optional[int] = ..., encryptedData: _Optional[str] = ..., keyType: _Optional[str] = ..., visibleBelow: bool = ..., newUserInherit: bool = ..., roleType: _Optional[str] = ...) -> None: ...
 
 class User(_message.Message):
-    __slots__ = ["enterpriseUserId", "nodeId", "encryptedData", "keyType", "username", "status", "lock", "userId", "accountShareExpiration", "fullName", "jobTitle", "tfaEnabled", "transferAcceptanceStatus"]
+    __slots__ = ("enterpriseUserId", "nodeId", "encryptedData", "keyType", "username", "status", "lock", "userId", "accountShareExpiration", "fullName", "jobTitle", "tfaEnabled", "transferAcceptanceStatus")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     NODEID_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDDATA_FIELD_NUMBER: _ClassVar[int]
@@ -685,7 +712,7 @@ class User(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., nodeId: _Optional[int] = ..., encryptedData: _Optional[str] = ..., keyType: _Optional[str] = ..., username: _Optional[str] = ..., status: _Optional[str] = ..., lock: _Optional[int] = ..., userId: _Optional[int] = ..., accountShareExpiration: _Optional[int] = ..., fullName: _Optional[str] = ..., jobTitle: _Optional[str] = ..., tfaEnabled: bool = ..., transferAcceptanceStatus: _Optional[_Union[TransferAcceptanceStatus, str]] = ...) -> None: ...
 
 class UserAlias(_message.Message):
-    __slots__ = ["enterpriseUserId", "username"]
+    __slots__ = ("enterpriseUserId", "username")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     USERNAME_FIELD_NUMBER: _ClassVar[int]
     enterpriseUserId: int
@@ -693,7 +720,7 @@ class UserAlias(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., username: _Optional[str] = ...) -> None: ...
 
 class ComplianceReportMetaData(_message.Message):
-    __slots__ = ["reportUid", "nodeId", "reportName", "dateGenerated", "runByName", "numberOfOwners", "numberOfRecords"]
+    __slots__ = ("reportUid", "nodeId", "reportName", "dateGenerated", "runByName", "numberOfOwners", "numberOfRecords")
     REPORTUID_FIELD_NUMBER: _ClassVar[int]
     NODEID_FIELD_NUMBER: _ClassVar[int]
     REPORTNAME_FIELD_NUMBER: _ClassVar[int]
@@ -711,7 +738,7 @@ class ComplianceReportMetaData(_message.Message):
     def __init__(self, reportUid: _Optional[bytes] = ..., nodeId: _Optional[int] = ..., reportName: _Optional[str] = ..., dateGenerated: _Optional[int] = ..., runByName: _Optional[str] = ..., numberOfOwners: _Optional[int] = ..., numberOfRecords: _Optional[int] = ...) -> None: ...
 
 class ManagedNode(_message.Message):
-    __slots__ = ["roleId", "managedNodeId", "cascadeNodeManagement"]
+    __slots__ = ("roleId", "managedNodeId", "cascadeNodeManagement")
     ROLEID_FIELD_NUMBER: _ClassVar[int]
     MANAGEDNODEID_FIELD_NUMBER: _ClassVar[int]
     CASCADENODEMANAGEMENT_FIELD_NUMBER: _ClassVar[int]
@@ -721,7 +748,7 @@ class ManagedNode(_message.Message):
     def __init__(self, roleId: _Optional[int] = ..., managedNodeId: _Optional[int] = ..., cascadeNodeManagement: bool = ...) -> None: ...
 
 class UserManagedNode(_message.Message):
-    __slots__ = ["nodeId", "cascadeNodeManagement", "privileges"]
+    __slots__ = ("nodeId", "cascadeNodeManagement", "privileges")
     NODEID_FIELD_NUMBER: _ClassVar[int]
     CASCADENODEMANAGEMENT_FIELD_NUMBER: _ClassVar[int]
     PRIVILEGES_FIELD_NUMBER: _ClassVar[int]
@@ -731,7 +758,7 @@ class UserManagedNode(_message.Message):
     def __init__(self, nodeId: _Optional[int] = ..., cascadeNodeManagement: bool = ..., privileges: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class UserPrivilege(_message.Message):
-    __slots__ = ["userManagedNodes", "enterpriseUserId", "encryptedData"]
+    __slots__ = ("userManagedNodes", "enterpriseUserId", "encryptedData")
     USERMANAGEDNODES_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDDATA_FIELD_NUMBER: _ClassVar[int]
@@ -741,7 +768,7 @@ class UserPrivilege(_message.Message):
     def __init__(self, userManagedNodes: _Optional[_Iterable[_Union[UserManagedNode, _Mapping]]] = ..., enterpriseUserId: _Optional[int] = ..., encryptedData: _Optional[str] = ...) -> None: ...
 
 class RoleUser(_message.Message):
-    __slots__ = ["roleId", "enterpriseUserId"]
+    __slots__ = ("roleId", "enterpriseUserId")
     ROLEID_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     roleId: int
@@ -749,7 +776,7 @@ class RoleUser(_message.Message):
     def __init__(self, roleId: _Optional[int] = ..., enterpriseUserId: _Optional[int] = ...) -> None: ...
 
 class RolePrivilege(_message.Message):
-    __slots__ = ["managedNodeId", "roleId", "privilegeType"]
+    __slots__ = ("managedNodeId", "roleId", "privilegeType")
     MANAGEDNODEID_FIELD_NUMBER: _ClassVar[int]
     ROLEID_FIELD_NUMBER: _ClassVar[int]
     PRIVILEGETYPE_FIELD_NUMBER: _ClassVar[int]
@@ -759,7 +786,7 @@ class RolePrivilege(_message.Message):
     def __init__(self, managedNodeId: _Optional[int] = ..., roleId: _Optional[int] = ..., privilegeType: _Optional[str] = ...) -> None: ...
 
 class RoleEnforcement(_message.Message):
-    __slots__ = ["roleId", "enforcementType", "value"]
+    __slots__ = ("roleId", "enforcementType", "value")
     ROLEID_FIELD_NUMBER: _ClassVar[int]
     ENFORCEMENTTYPE_FIELD_NUMBER: _ClassVar[int]
     VALUE_FIELD_NUMBER: _ClassVar[int]
@@ -769,7 +796,7 @@ class RoleEnforcement(_message.Message):
     def __init__(self, roleId: _Optional[int] = ..., enforcementType: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
 
 class Team(_message.Message):
-    __slots__ = ["teamUid", "name", "nodeId", "restrictEdit", "restrictShare", "restrictView", "encryptedData", "encryptedTeamKey"]
+    __slots__ = ("teamUid", "name", "nodeId", "restrictEdit", "restrictShare", "restrictView", "encryptedData", "encryptedTeamKey")
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     NODEID_FIELD_NUMBER: _ClassVar[int]
@@ -789,7 +816,7 @@ class Team(_message.Message):
     def __init__(self, teamUid: _Optional[bytes] = ..., name: _Optional[str] = ..., nodeId: _Optional[int] = ..., restrictEdit: bool = ..., restrictShare: bool = ..., restrictView: bool = ..., encryptedData: _Optional[str] = ..., encryptedTeamKey: _Optional[str] = ...) -> None: ...
 
 class TeamUser(_message.Message):
-    __slots__ = ["teamUid", "enterpriseUserId", "userType"]
+    __slots__ = ("teamUid", "enterpriseUserId", "userType")
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     USERTYPE_FIELD_NUMBER: _ClassVar[int]
@@ -799,13 +826,13 @@ class TeamUser(_message.Message):
     def __init__(self, teamUid: _Optional[bytes] = ..., enterpriseUserId: _Optional[int] = ..., userType: _Optional[str] = ...) -> None: ...
 
 class GetDistributorInfoResponse(_message.Message):
-    __slots__ = ["distributors"]
+    __slots__ = ("distributors",)
     DISTRIBUTORS_FIELD_NUMBER: _ClassVar[int]
     distributors: _containers.RepeatedCompositeFieldContainer[Distributor]
     def __init__(self, distributors: _Optional[_Iterable[_Union[Distributor, _Mapping]]] = ...) -> None: ...
 
 class Distributor(_message.Message):
-    __slots__ = ["name", "mspInfos"]
+    __slots__ = ("name", "mspInfos")
     NAME_FIELD_NUMBER: _ClassVar[int]
     MSPINFOS_FIELD_NUMBER: _ClassVar[int]
     name: str
@@ -813,7 +840,7 @@ class Distributor(_message.Message):
     def __init__(self, name: _Optional[str] = ..., mspInfos: _Optional[_Iterable[_Union[MspInfo, _Mapping]]] = ...) -> None: ...
 
 class MspInfo(_message.Message):
-    __slots__ = ["enterpriseId", "enterpriseName", "allocatedLicenses", "allowedMcProducts", "allowedAddOns", "maxFilePlanType", "managedCompanies", "allowUnlimitedLicenses", "addOns"]
+    __slots__ = ("enterpriseId", "enterpriseName", "allocatedLicenses", "allowedMcProducts", "allowedAddOns", "maxFilePlanType", "managedCompanies", "allowUnlimitedLicenses", "addOns")
     ENTERPRISEID_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISENAME_FIELD_NUMBER: _ClassVar[int]
     ALLOCATEDLICENSES_FIELD_NUMBER: _ClassVar[int]
@@ -835,7 +862,7 @@ class MspInfo(_message.Message):
     def __init__(self, enterpriseId: _Optional[int] = ..., enterpriseName: _Optional[str] = ..., allocatedLicenses: _Optional[int] = ..., allowedMcProducts: _Optional[_Iterable[str]] = ..., allowedAddOns: _Optional[_Iterable[str]] = ..., maxFilePlanType: _Optional[str] = ..., managedCompanies: _Optional[_Iterable[_Union[ManagedCompany, _Mapping]]] = ..., allowUnlimitedLicenses: bool = ..., addOns: _Optional[_Iterable[_Union[LicenseAddOn, _Mapping]]] = ...) -> None: ...
 
 class ManagedCompany(_message.Message):
-    __slots__ = ["mcEnterpriseId", "mcEnterpriseName", "mspNodeId", "numberOfSeats", "numberOfUsers", "productId", "isExpired", "treeKey", "tree_key_role", "filePlanType", "addOns"]
+    __slots__ = ("mcEnterpriseId", "mcEnterpriseName", "mspNodeId", "numberOfSeats", "numberOfUsers", "productId", "isExpired", "treeKey", "tree_key_role", "filePlanType", "addOns")
     MCENTERPRISEID_FIELD_NUMBER: _ClassVar[int]
     MCENTERPRISENAME_FIELD_NUMBER: _ClassVar[int]
     MSPNODEID_FIELD_NUMBER: _ClassVar[int]
@@ -861,7 +888,7 @@ class ManagedCompany(_message.Message):
     def __init__(self, mcEnterpriseId: _Optional[int] = ..., mcEnterpriseName: _Optional[str] = ..., mspNodeId: _Optional[int] = ..., numberOfSeats: _Optional[int] = ..., numberOfUsers: _Optional[int] = ..., productId: _Optional[str] = ..., isExpired: bool = ..., treeKey: _Optional[str] = ..., tree_key_role: _Optional[int] = ..., filePlanType: _Optional[str] = ..., addOns: _Optional[_Iterable[_Union[LicenseAddOn, _Mapping]]] = ...) -> None: ...
 
 class MSPPool(_message.Message):
-    __slots__ = ["productId", "seats", "availableSeats", "stash"]
+    __slots__ = ("productId", "seats", "availableSeats", "stash")
     PRODUCTID_FIELD_NUMBER: _ClassVar[int]
     SEATS_FIELD_NUMBER: _ClassVar[int]
     AVAILABLESEATS_FIELD_NUMBER: _ClassVar[int]
@@ -873,7 +900,7 @@ class MSPPool(_message.Message):
     def __init__(self, productId: _Optional[str] = ..., seats: _Optional[int] = ..., availableSeats: _Optional[int] = ..., stash: _Optional[int] = ...) -> None: ...
 
 class MSPContact(_message.Message):
-    __slots__ = ["enterpriseId", "enterpriseName"]
+    __slots__ = ("enterpriseId", "enterpriseName")
     ENTERPRISEID_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISENAME_FIELD_NUMBER: _ClassVar[int]
     enterpriseId: int
@@ -881,7 +908,7 @@ class MSPContact(_message.Message):
     def __init__(self, enterpriseId: _Optional[int] = ..., enterpriseName: _Optional[str] = ...) -> None: ...
 
 class LicenseAddOn(_message.Message):
-    __slots__ = ["name", "enabled", "isTrial", "expiration", "created", "seats", "activationTime", "includedInProduct", "apiCallCount", "tierDescription", "seatsAllocated"]
+    __slots__ = ("name", "enabled", "isTrial", "expiration", "created", "seats", "activationTime", "includedInProduct", "apiCallCount", "tierDescription", "seatsAllocated")
     NAME_FIELD_NUMBER: _ClassVar[int]
     ENABLED_FIELD_NUMBER: _ClassVar[int]
     ISTRIAL_FIELD_NUMBER: _ClassVar[int]
@@ -907,7 +934,7 @@ class LicenseAddOn(_message.Message):
     def __init__(self, name: _Optional[str] = ..., enabled: bool = ..., isTrial: bool = ..., expiration: _Optional[int] = ..., created: _Optional[int] = ..., seats: _Optional[int] = ..., activationTime: _Optional[int] = ..., includedInProduct: bool = ..., apiCallCount: _Optional[int] = ..., tierDescription: _Optional[str] = ..., seatsAllocated: _Optional[int] = ...) -> None: ...
 
 class MCDefault(_message.Message):
-    __slots__ = ["mcProduct", "addOns", "filePlanType", "maxLicenses", "fixedMaxLicenses"]
+    __slots__ = ("mcProduct", "addOns", "filePlanType", "maxLicenses", "fixedMaxLicenses")
     MCPRODUCT_FIELD_NUMBER: _ClassVar[int]
     ADDONS_FIELD_NUMBER: _ClassVar[int]
     FILEPLANTYPE_FIELD_NUMBER: _ClassVar[int]
@@ -921,7 +948,7 @@ class MCDefault(_message.Message):
     def __init__(self, mcProduct: _Optional[str] = ..., addOns: _Optional[_Iterable[str]] = ..., filePlanType: _Optional[str] = ..., maxLicenses: _Optional[int] = ..., fixedMaxLicenses: bool = ...) -> None: ...
 
 class MSPPermits(_message.Message):
-    __slots__ = ["restricted", "maxAllowedLicenses", "allowedMcProducts", "allowedAddOns", "maxFilePlanType", "allowUnlimitedLicenses", "mcDefaults"]
+    __slots__ = ("restricted", "maxAllowedLicenses", "allowedMcProducts", "allowedAddOns", "maxFilePlanType", "allowUnlimitedLicenses", "mcDefaults")
     RESTRICTED_FIELD_NUMBER: _ClassVar[int]
     MAXALLOWEDLICENSES_FIELD_NUMBER: _ClassVar[int]
     ALLOWEDMCPRODUCTS_FIELD_NUMBER: _ClassVar[int]
@@ -939,7 +966,7 @@ class MSPPermits(_message.Message):
     def __init__(self, restricted: bool = ..., maxAllowedLicenses: _Optional[int] = ..., allowedMcProducts: _Optional[_Iterable[str]] = ..., allowedAddOns: _Optional[_Iterable[str]] = ..., maxFilePlanType: _Optional[str] = ..., allowUnlimitedLicenses: bool = ..., mcDefaults: _Optional[_Iterable[_Union[MCDefault, _Mapping]]] = ...) -> None: ...
 
 class License(_message.Message):
-    __slots__ = ["paid", "numberOfSeats", "expiration", "licenseKeyId", "productTypeId", "name", "enterpriseLicenseId", "seatsAllocated", "seatsPending", "tier", "filePlanTypeId", "maxBytes", "storageExpiration", "licenseStatus", "mspPool", "managedBy", "addOns", "nextBillingDate", "hasMSPLegacyLog", "mspPermits", "distributor"]
+    __slots__ = ("paid", "numberOfSeats", "expiration", "licenseKeyId", "productTypeId", "name", "enterpriseLicenseId", "seatsAllocated", "seatsPending", "tier", "filePlanTypeId", "maxBytes", "storageExpiration", "licenseStatus", "mspPool", "managedBy", "addOns", "nextBillingDate", "hasMSPLegacyLog", "mspPermits", "distributor")
     PAID_FIELD_NUMBER: _ClassVar[int]
     NUMBEROFSEATS_FIELD_NUMBER: _ClassVar[int]
     EXPIRATION_FIELD_NUMBER: _ClassVar[int]
@@ -985,7 +1012,7 @@ class License(_message.Message):
     def __init__(self, paid: bool = ..., numberOfSeats: _Optional[int] = ..., expiration: _Optional[int] = ..., licenseKeyId: _Optional[int] = ..., productTypeId: _Optional[int] = ..., name: _Optional[str] = ..., enterpriseLicenseId: _Optional[int] = ..., seatsAllocated: _Optional[int] = ..., seatsPending: _Optional[int] = ..., tier: _Optional[int] = ..., filePlanTypeId: _Optional[int] = ..., maxBytes: _Optional[int] = ..., storageExpiration: _Optional[int] = ..., licenseStatus: _Optional[str] = ..., mspPool: _Optional[_Iterable[_Union[MSPPool, _Mapping]]] = ..., managedBy: _Optional[_Union[MSPContact, _Mapping]] = ..., addOns: _Optional[_Iterable[_Union[LicenseAddOn, _Mapping]]] = ..., nextBillingDate: _Optional[int] = ..., hasMSPLegacyLog: bool = ..., mspPermits: _Optional[_Union[MSPPermits, _Mapping]] = ..., distributor: bool = ...) -> None: ...
 
 class Bridge(_message.Message):
-    __slots__ = ["bridgeId", "nodeId", "wanIpEnforcement", "lanIpEnforcement", "status"]
+    __slots__ = ("bridgeId", "nodeId", "wanIpEnforcement", "lanIpEnforcement", "status")
     BRIDGEID_FIELD_NUMBER: _ClassVar[int]
     NODEID_FIELD_NUMBER: _ClassVar[int]
     WANIPENFORCEMENT_FIELD_NUMBER: _ClassVar[int]
@@ -999,7 +1026,7 @@ class Bridge(_message.Message):
     def __init__(self, bridgeId: _Optional[int] = ..., nodeId: _Optional[int] = ..., wanIpEnforcement: _Optional[str] = ..., lanIpEnforcement: _Optional[str] = ..., status: _Optional[str] = ...) -> None: ...
 
 class Scim(_message.Message):
-    __slots__ = ["scimId", "nodeId", "status", "lastSynced", "rolePrefix", "uniqueGroups"]
+    __slots__ = ("scimId", "nodeId", "status", "lastSynced", "rolePrefix", "uniqueGroups")
     SCIMID_FIELD_NUMBER: _ClassVar[int]
     NODEID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -1015,7 +1042,7 @@ class Scim(_message.Message):
     def __init__(self, scimId: _Optional[int] = ..., nodeId: _Optional[int] = ..., status: _Optional[str] = ..., lastSynced: _Optional[int] = ..., rolePrefix: _Optional[str] = ..., uniqueGroups: bool = ...) -> None: ...
 
 class EmailProvision(_message.Message):
-    __slots__ = ["id", "nodeId", "domain", "method"]
+    __slots__ = ("id", "nodeId", "domain", "method")
     ID_FIELD_NUMBER: _ClassVar[int]
     NODEID_FIELD_NUMBER: _ClassVar[int]
     DOMAIN_FIELD_NUMBER: _ClassVar[int]
@@ -1027,7 +1054,7 @@ class EmailProvision(_message.Message):
     def __init__(self, id: _Optional[int] = ..., nodeId: _Optional[int] = ..., domain: _Optional[str] = ..., method: _Optional[str] = ...) -> None: ...
 
 class QueuedTeam(_message.Message):
-    __slots__ = ["teamUid", "name", "nodeId", "encryptedData"]
+    __slots__ = ("teamUid", "name", "nodeId", "encryptedData")
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     NODEID_FIELD_NUMBER: _ClassVar[int]
@@ -1039,7 +1066,7 @@ class QueuedTeam(_message.Message):
     def __init__(self, teamUid: _Optional[bytes] = ..., name: _Optional[str] = ..., nodeId: _Optional[int] = ..., encryptedData: _Optional[str] = ...) -> None: ...
 
 class QueuedTeamUser(_message.Message):
-    __slots__ = ["teamUid", "users"]
+    __slots__ = ("teamUid", "users")
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
     USERS_FIELD_NUMBER: _ClassVar[int]
     teamUid: bytes
@@ -1047,7 +1074,7 @@ class QueuedTeamUser(_message.Message):
     def __init__(self, teamUid: _Optional[bytes] = ..., users: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class TeamsAddResult(_message.Message):
-    __slots__ = ["successfulTeamAdd", "unsuccessfulTeamAdd", "result", "errorMessage"]
+    __slots__ = ("successfulTeamAdd", "unsuccessfulTeamAdd", "result", "errorMessage")
     SUCCESSFULTEAMADD_FIELD_NUMBER: _ClassVar[int]
     UNSUCCESSFULTEAMADD_FIELD_NUMBER: _ClassVar[int]
     RESULT_FIELD_NUMBER: _ClassVar[int]
@@ -1059,7 +1086,7 @@ class TeamsAddResult(_message.Message):
     def __init__(self, successfulTeamAdd: _Optional[_Iterable[_Union[TeamAddResult, _Mapping]]] = ..., unsuccessfulTeamAdd: _Optional[_Iterable[_Union[TeamAddResult, _Mapping]]] = ..., result: _Optional[str] = ..., errorMessage: _Optional[str] = ...) -> None: ...
 
 class TeamAddResult(_message.Message):
-    __slots__ = ["team", "result", "errorMessage"]
+    __slots__ = ("team", "result", "errorMessage")
     TEAM_FIELD_NUMBER: _ClassVar[int]
     RESULT_FIELD_NUMBER: _ClassVar[int]
     ERRORMESSAGE_FIELD_NUMBER: _ClassVar[int]
@@ -1069,7 +1096,7 @@ class TeamAddResult(_message.Message):
     def __init__(self, team: _Optional[_Union[Team, _Mapping]] = ..., result: _Optional[str] = ..., errorMessage: _Optional[str] = ...) -> None: ...
 
 class SsoService(_message.Message):
-    __slots__ = ["ssoServiceProviderId", "nodeId", "name", "sp_url", "inviteNewUsers", "active", "isCloud"]
+    __slots__ = ("ssoServiceProviderId", "nodeId", "name", "sp_url", "inviteNewUsers", "active", "isCloud")
     SSOSERVICEPROVIDERID_FIELD_NUMBER: _ClassVar[int]
     NODEID_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
@@ -1087,7 +1114,7 @@ class SsoService(_message.Message):
     def __init__(self, ssoServiceProviderId: _Optional[int] = ..., nodeId: _Optional[int] = ..., name: _Optional[str] = ..., sp_url: _Optional[str] = ..., inviteNewUsers: bool = ..., active: bool = ..., isCloud: bool = ...) -> None: ...
 
 class ReportFilterUser(_message.Message):
-    __slots__ = ["userId", "email"]
+    __slots__ = ("userId", "email")
     USERID_FIELD_NUMBER: _ClassVar[int]
     EMAIL_FIELD_NUMBER: _ClassVar[int]
     userId: int
@@ -1095,7 +1122,7 @@ class ReportFilterUser(_message.Message):
     def __init__(self, userId: _Optional[int] = ..., email: _Optional[str] = ...) -> None: ...
 
 class DeviceRequestForAdminApproval(_message.Message):
-    __slots__ = ["deviceId", "enterpriseUserId", "encryptedDeviceToken", "devicePublicKey", "deviceName", "clientVersion", "deviceType", "date", "ipAddress", "location", "email", "accountUid"]
+    __slots__ = ("deviceId", "enterpriseUserId", "encryptedDeviceToken", "devicePublicKey", "deviceName", "clientVersion", "deviceType", "date", "ipAddress", "location", "email", "accountUid")
     DEVICEID_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDDEVICETOKEN_FIELD_NUMBER: _ClassVar[int]
@@ -1123,7 +1150,7 @@ class DeviceRequestForAdminApproval(_message.Message):
     def __init__(self, deviceId: _Optional[int] = ..., enterpriseUserId: _Optional[int] = ..., encryptedDeviceToken: _Optional[bytes] = ..., devicePublicKey: _Optional[bytes] = ..., deviceName: _Optional[str] = ..., clientVersion: _Optional[str] = ..., deviceType: _Optional[str] = ..., date: _Optional[int] = ..., ipAddress: _Optional[str] = ..., location: _Optional[str] = ..., email: _Optional[str] = ..., accountUid: _Optional[bytes] = ...) -> None: ...
 
 class EnterpriseData(_message.Message):
-    __slots__ = ["entity", "delete", "data"]
+    __slots__ = ("entity", "delete", "data")
     ENTITY_FIELD_NUMBER: _ClassVar[int]
     DELETE_FIELD_NUMBER: _ClassVar[int]
     DATA_FIELD_NUMBER: _ClassVar[int]
@@ -1133,7 +1160,7 @@ class EnterpriseData(_message.Message):
     def __init__(self, entity: _Optional[_Union[EnterpriseDataEntity, str]] = ..., delete: bool = ..., data: _Optional[_Iterable[bytes]] = ...) -> None: ...
 
 class EnterpriseDataResponse(_message.Message):
-    __slots__ = ["continuationToken", "hasMore", "cacheStatus", "data", "generalData"]
+    __slots__ = ("continuationToken", "hasMore", "cacheStatus", "data", "generalData")
     CONTINUATIONTOKEN_FIELD_NUMBER: _ClassVar[int]
     HASMORE_FIELD_NUMBER: _ClassVar[int]
     CACHESTATUS_FIELD_NUMBER: _ClassVar[int]
@@ -1147,13 +1174,13 @@ class EnterpriseDataResponse(_message.Message):
     def __init__(self, continuationToken: _Optional[bytes] = ..., hasMore: bool = ..., cacheStatus: _Optional[_Union[CacheStatus, str]] = ..., data: _Optional[_Iterable[_Union[EnterpriseData, _Mapping]]] = ..., generalData: _Optional[_Union[GeneralDataEntity, _Mapping]] = ...) -> None: ...
 
 class BackupRequest(_message.Message):
-    __slots__ = ["continuationToken"]
+    __slots__ = ("continuationToken",)
     CONTINUATIONTOKEN_FIELD_NUMBER: _ClassVar[int]
     continuationToken: bytes
     def __init__(self, continuationToken: _Optional[bytes] = ...) -> None: ...
 
 class BackupRecord(_message.Message):
-    __slots__ = ["userId", "recordUid", "key", "keyType", "version", "data", "extra"]
+    __slots__ = ("userId", "recordUid", "key", "keyType", "version", "data", "extra")
     USERID_FIELD_NUMBER: _ClassVar[int]
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     KEY_FIELD_NUMBER: _ClassVar[int]
@@ -1171,7 +1198,7 @@ class BackupRecord(_message.Message):
     def __init__(self, userId: _Optional[int] = ..., recordUid: _Optional[bytes] = ..., key: _Optional[bytes] = ..., keyType: _Optional[_Union[BackupKeyType, str]] = ..., version: _Optional[int] = ..., data: _Optional[bytes] = ..., extra: _Optional[bytes] = ...) -> None: ...
 
 class BackupKey(_message.Message):
-    __slots__ = ["userId", "backupKey"]
+    __slots__ = ("userId", "backupKey")
     USERID_FIELD_NUMBER: _ClassVar[int]
     BACKUPKEY_FIELD_NUMBER: _ClassVar[int]
     userId: int
@@ -1179,7 +1206,7 @@ class BackupKey(_message.Message):
     def __init__(self, userId: _Optional[int] = ..., backupKey: _Optional[bytes] = ...) -> None: ...
 
 class BackupUser(_message.Message):
-    __slots__ = ["userId", "userName", "dataKey", "dataKeyType", "privateKey", "treeKey", "treeKeyType", "backupKeys", "privateECKey"]
+    __slots__ = ("userId", "userName", "dataKey", "dataKeyType", "privateKey", "treeKey", "treeKeyType", "backupKeys", "privateECKey")
     USERID_FIELD_NUMBER: _ClassVar[int]
     USERNAME_FIELD_NUMBER: _ClassVar[int]
     DATAKEY_FIELD_NUMBER: _ClassVar[int]
@@ -1201,7 +1228,7 @@ class BackupUser(_message.Message):
     def __init__(self, userId: _Optional[int] = ..., userName: _Optional[str] = ..., dataKey: _Optional[bytes] = ..., dataKeyType: _Optional[_Union[BackupUserDataKeyType, str]] = ..., privateKey: _Optional[bytes] = ..., treeKey: _Optional[bytes] = ..., treeKeyType: _Optional[_Union[BackupKeyType, str]] = ..., backupKeys: _Optional[_Iterable[_Union[BackupKey, _Mapping]]] = ..., privateECKey: _Optional[bytes] = ...) -> None: ...
 
 class BackupResponse(_message.Message):
-    __slots__ = ["enterpriseEccPrivateKey", "users", "records", "continuationToken"]
+    __slots__ = ("enterpriseEccPrivateKey", "users", "records", "continuationToken")
     ENTERPRISEECCPRIVATEKEY_FIELD_NUMBER: _ClassVar[int]
     USERS_FIELD_NUMBER: _ClassVar[int]
     RECORDS_FIELD_NUMBER: _ClassVar[int]
@@ -1213,7 +1240,7 @@ class BackupResponse(_message.Message):
     def __init__(self, enterpriseEccPrivateKey: _Optional[bytes] = ..., users: _Optional[_Iterable[_Union[BackupUser, _Mapping]]] = ..., records: _Optional[_Iterable[_Union[BackupRecord, _Mapping]]] = ..., continuationToken: _Optional[bytes] = ...) -> None: ...
 
 class BackupFile(_message.Message):
-    __slots__ = ["user", "backupUid", "fileName", "created", "downloadUrl"]
+    __slots__ = ("user", "backupUid", "fileName", "created", "downloadUrl")
     USER_FIELD_NUMBER: _ClassVar[int]
     BACKUPUID_FIELD_NUMBER: _ClassVar[int]
     FILENAME_FIELD_NUMBER: _ClassVar[int]
@@ -1227,19 +1254,19 @@ class BackupFile(_message.Message):
     def __init__(self, user: _Optional[str] = ..., backupUid: _Optional[bytes] = ..., fileName: _Optional[str] = ..., created: _Optional[int] = ..., downloadUrl: _Optional[str] = ...) -> None: ...
 
 class BackupsResponse(_message.Message):
-    __slots__ = ["files"]
+    __slots__ = ("files",)
     FILES_FIELD_NUMBER: _ClassVar[int]
     files: _containers.RepeatedCompositeFieldContainer[BackupFile]
     def __init__(self, files: _Optional[_Iterable[_Union[BackupFile, _Mapping]]] = ...) -> None: ...
 
 class GetEnterpriseDataKeysRequest(_message.Message):
-    __slots__ = ["roleId"]
+    __slots__ = ("roleId",)
     ROLEID_FIELD_NUMBER: _ClassVar[int]
     roleId: _containers.RepeatedScalarFieldContainer[int]
     def __init__(self, roleId: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class GetEnterpriseDataKeysResponse(_message.Message):
-    __slots__ = ["reEncryptedRoleKey", "roleKey", "mspKey", "enterpriseKeys", "treeKey"]
+    __slots__ = ("reEncryptedRoleKey", "roleKey", "mspKey", "enterpriseKeys", "treeKey")
     REENCRYPTEDROLEKEY_FIELD_NUMBER: _ClassVar[int]
     ROLEKEY_FIELD_NUMBER: _ClassVar[int]
     MSPKEY_FIELD_NUMBER: _ClassVar[int]
@@ -1253,7 +1280,7 @@ class GetEnterpriseDataKeysResponse(_message.Message):
     def __init__(self, reEncryptedRoleKey: _Optional[_Iterable[_Union[ReEncryptedRoleKey, _Mapping]]] = ..., roleKey: _Optional[_Iterable[_Union[RoleKey, _Mapping]]] = ..., mspKey: _Optional[_Union[MspKey, _Mapping]] = ..., enterpriseKeys: _Optional[_Union[EnterpriseKeys, _Mapping]] = ..., treeKey: _Optional[_Union[TreeKey, _Mapping]] = ...) -> None: ...
 
 class RoleKey(_message.Message):
-    __slots__ = ["roleId", "encryptedKey", "keyType"]
+    __slots__ = ("roleId", "encryptedKey", "keyType")
     ROLEID_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDKEY_FIELD_NUMBER: _ClassVar[int]
     KEYTYPE_FIELD_NUMBER: _ClassVar[int]
@@ -1263,7 +1290,7 @@ class RoleKey(_message.Message):
     def __init__(self, roleId: _Optional[int] = ..., encryptedKey: _Optional[str] = ..., keyType: _Optional[_Union[EncryptedKeyType, str]] = ...) -> None: ...
 
 class MspKey(_message.Message):
-    __slots__ = ["encryptedMspTreeKey", "encryptedMspTreeKeyType"]
+    __slots__ = ("encryptedMspTreeKey", "encryptedMspTreeKeyType")
     ENCRYPTEDMSPTREEKEY_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDMSPTREEKEYTYPE_FIELD_NUMBER: _ClassVar[int]
     encryptedMspTreeKey: str
@@ -1271,7 +1298,7 @@ class MspKey(_message.Message):
     def __init__(self, encryptedMspTreeKey: _Optional[str] = ..., encryptedMspTreeKeyType: _Optional[_Union[EncryptedKeyType, str]] = ...) -> None: ...
 
 class EnterpriseKeys(_message.Message):
-    __slots__ = ["rsaPublicKey", "rsaEncryptedPrivateKey", "eccPublicKey", "eccEncryptedPrivateKey"]
+    __slots__ = ("rsaPublicKey", "rsaEncryptedPrivateKey", "eccPublicKey", "eccEncryptedPrivateKey")
     RSAPUBLICKEY_FIELD_NUMBER: _ClassVar[int]
     RSAENCRYPTEDPRIVATEKEY_FIELD_NUMBER: _ClassVar[int]
     ECCPUBLICKEY_FIELD_NUMBER: _ClassVar[int]
@@ -1283,7 +1310,7 @@ class EnterpriseKeys(_message.Message):
     def __init__(self, rsaPublicKey: _Optional[bytes] = ..., rsaEncryptedPrivateKey: _Optional[bytes] = ..., eccPublicKey: _Optional[bytes] = ..., eccEncryptedPrivateKey: _Optional[bytes] = ...) -> None: ...
 
 class TreeKey(_message.Message):
-    __slots__ = ["treeKey", "keyTypeId"]
+    __slots__ = ("treeKey", "keyTypeId")
     TREEKEY_FIELD_NUMBER: _ClassVar[int]
     KEYTYPEID_FIELD_NUMBER: _ClassVar[int]
     treeKey: str
@@ -1291,13 +1318,13 @@ class TreeKey(_message.Message):
     def __init__(self, treeKey: _Optional[str] = ..., keyTypeId: _Optional[_Union[BackupKeyType, str]] = ...) -> None: ...
 
 class SharedRecordResponse(_message.Message):
-    __slots__ = ["events"]
+    __slots__ = ("events",)
     EVENTS_FIELD_NUMBER: _ClassVar[int]
     events: _containers.RepeatedCompositeFieldContainer[SharedRecordEvent]
     def __init__(self, events: _Optional[_Iterable[_Union[SharedRecordEvent, _Mapping]]] = ...) -> None: ...
 
 class SharedRecordEvent(_message.Message):
-    __slots__ = ["recordUid", "userName", "canEdit", "canReshare", "shareFrom"]
+    __slots__ = ("recordUid", "userName", "canEdit", "canReshare", "shareFrom")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     USERNAME_FIELD_NUMBER: _ClassVar[int]
     CANEDIT_FIELD_NUMBER: _ClassVar[int]
@@ -1311,13 +1338,13 @@ class SharedRecordEvent(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., userName: _Optional[str] = ..., canEdit: bool = ..., canReshare: bool = ..., shareFrom: _Optional[int] = ...) -> None: ...
 
 class SetRestrictVisibilityRequest(_message.Message):
-    __slots__ = ["nodeId"]
+    __slots__ = ("nodeId",)
     NODEID_FIELD_NUMBER: _ClassVar[int]
     nodeId: int
     def __init__(self, nodeId: _Optional[int] = ...) -> None: ...
 
 class UserAddRequest(_message.Message):
-    __slots__ = ["enterpriseUserId", "nodeId", "encryptedData", "keyType", "fullName", "jobTitle", "email", "suppressEmailInvite"]
+    __slots__ = ("enterpriseUserId", "nodeId", "encryptedData", "keyType", "fullName", "jobTitle", "email", "suppressEmailInvite")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     NODEID_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDDATA_FIELD_NUMBER: _ClassVar[int]
@@ -1337,13 +1364,13 @@ class UserAddRequest(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., nodeId: _Optional[int] = ..., encryptedData: _Optional[bytes] = ..., keyType: _Optional[_Union[EncryptedKeyType, str]] = ..., fullName: _Optional[str] = ..., jobTitle: _Optional[str] = ..., email: _Optional[str] = ..., suppressEmailInvite: bool = ...) -> None: ...
 
 class UserUpdateRequest(_message.Message):
-    __slots__ = ["users"]
+    __slots__ = ("users",)
     USERS_FIELD_NUMBER: _ClassVar[int]
     users: _containers.RepeatedCompositeFieldContainer[UserUpdate]
     def __init__(self, users: _Optional[_Iterable[_Union[UserUpdate, _Mapping]]] = ...) -> None: ...
 
 class UserUpdate(_message.Message):
-    __slots__ = ["enterpriseUserId", "nodeId", "encryptedData", "keyType", "fullName", "jobTitle", "email"]
+    __slots__ = ("enterpriseUserId", "nodeId", "encryptedData", "keyType", "fullName", "jobTitle", "email")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     NODEID_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDDATA_FIELD_NUMBER: _ClassVar[int]
@@ -1361,13 +1388,13 @@ class UserUpdate(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., nodeId: _Optional[int] = ..., encryptedData: _Optional[bytes] = ..., keyType: _Optional[_Union[EncryptedKeyType, str]] = ..., fullName: _Optional[str] = ..., jobTitle: _Optional[str] = ..., email: _Optional[str] = ...) -> None: ...
 
 class UserUpdateResponse(_message.Message):
-    __slots__ = ["users"]
+    __slots__ = ("users",)
     USERS_FIELD_NUMBER: _ClassVar[int]
     users: _containers.RepeatedCompositeFieldContainer[UserUpdateResult]
     def __init__(self, users: _Optional[_Iterable[_Union[UserUpdateResult, _Mapping]]] = ...) -> None: ...
 
 class UserUpdateResult(_message.Message):
-    __slots__ = ["enterpriseUserId", "status"]
+    __slots__ = ("enterpriseUserId", "status")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     enterpriseUserId: int
@@ -1375,7 +1402,7 @@ class UserUpdateResult(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., status: _Optional[_Union[UserUpdateStatus, str]] = ...) -> None: ...
 
 class ComplianceRecordOwnersRequest(_message.Message):
-    __slots__ = ["nodeIds", "includeNonShared"]
+    __slots__ = ("nodeIds", "includeNonShared")
     NODEIDS_FIELD_NUMBER: _ClassVar[int]
     INCLUDENONSHARED_FIELD_NUMBER: _ClassVar[int]
     nodeIds: _containers.RepeatedScalarFieldContainer[int]
@@ -1383,13 +1410,13 @@ class ComplianceRecordOwnersRequest(_message.Message):
     def __init__(self, nodeIds: _Optional[_Iterable[int]] = ..., includeNonShared: bool = ...) -> None: ...
 
 class ComplianceRecordOwnersResponse(_message.Message):
-    __slots__ = ["recordOwners"]
+    __slots__ = ("recordOwners",)
     RECORDOWNERS_FIELD_NUMBER: _ClassVar[int]
     recordOwners: _containers.RepeatedCompositeFieldContainer[RecordOwner]
     def __init__(self, recordOwners: _Optional[_Iterable[_Union[RecordOwner, _Mapping]]] = ...) -> None: ...
 
 class RecordOwner(_message.Message):
-    __slots__ = ["enterpriseUserId", "shared"]
+    __slots__ = ("enterpriseUserId", "shared")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     SHARED_FIELD_NUMBER: _ClassVar[int]
     enterpriseUserId: int
@@ -1397,7 +1424,7 @@ class RecordOwner(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., shared: bool = ...) -> None: ...
 
 class PreliminaryComplianceDataRequest(_message.Message):
-    __slots__ = ["enterpriseUserIds", "includeNonShared", "continuationToken", "includeTotalMatchingRecordsInFirstResponse"]
+    __slots__ = ("enterpriseUserIds", "includeNonShared", "continuationToken", "includeTotalMatchingRecordsInFirstResponse")
     ENTERPRISEUSERIDS_FIELD_NUMBER: _ClassVar[int]
     INCLUDENONSHARED_FIELD_NUMBER: _ClassVar[int]
     CONTINUATIONTOKEN_FIELD_NUMBER: _ClassVar[int]
@@ -1409,7 +1436,7 @@ class PreliminaryComplianceDataRequest(_message.Message):
     def __init__(self, enterpriseUserIds: _Optional[_Iterable[int]] = ..., includeNonShared: bool = ..., continuationToken: _Optional[bytes] = ..., includeTotalMatchingRecordsInFirstResponse: bool = ...) -> None: ...
 
 class PreliminaryComplianceDataResponse(_message.Message):
-    __slots__ = ["auditUserData", "continuationToken", "hasMore", "totalMatchingRecords"]
+    __slots__ = ("auditUserData", "continuationToken", "hasMore", "totalMatchingRecords")
     AUDITUSERDATA_FIELD_NUMBER: _ClassVar[int]
     CONTINUATIONTOKEN_FIELD_NUMBER: _ClassVar[int]
     HASMORE_FIELD_NUMBER: _ClassVar[int]
@@ -1421,7 +1448,7 @@ class PreliminaryComplianceDataResponse(_message.Message):
     def __init__(self, auditUserData: _Optional[_Iterable[_Union[AuditUserData, _Mapping]]] = ..., continuationToken: _Optional[bytes] = ..., hasMore: bool = ..., totalMatchingRecords: _Optional[int] = ...) -> None: ...
 
 class AuditUserRecord(_message.Message):
-    __slots__ = ["recordUid", "encryptedData", "shared"]
+    __slots__ = ("recordUid", "encryptedData", "shared")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDDATA_FIELD_NUMBER: _ClassVar[int]
     SHARED_FIELD_NUMBER: _ClassVar[int]
@@ -1431,7 +1458,7 @@ class AuditUserRecord(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., encryptedData: _Optional[bytes] = ..., shared: bool = ...) -> None: ...
 
 class AuditUserData(_message.Message):
-    __slots__ = ["enterpriseUserId", "auditUserRecords", "status"]
+    __slots__ = ("enterpriseUserId", "auditUserRecords", "status")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     AUDITUSERRECORDS_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -1441,7 +1468,7 @@ class AuditUserData(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., auditUserRecords: _Optional[_Iterable[_Union[AuditUserRecord, _Mapping]]] = ..., status: _Optional[_Union[AuditUserStatus, str]] = ...) -> None: ...
 
 class ComplianceReportFilters(_message.Message):
-    __slots__ = ["recordTitles", "recordUids", "jobTitles", "urls", "enterpriseUserIds"]
+    __slots__ = ("recordTitles", "recordUids", "jobTitles", "urls", "enterpriseUserIds")
     RECORDTITLES_FIELD_NUMBER: _ClassVar[int]
     RECORDUIDS_FIELD_NUMBER: _ClassVar[int]
     JOBTITLES_FIELD_NUMBER: _ClassVar[int]
@@ -1455,7 +1482,7 @@ class ComplianceReportFilters(_message.Message):
     def __init__(self, recordTitles: _Optional[_Iterable[str]] = ..., recordUids: _Optional[_Iterable[bytes]] = ..., jobTitles: _Optional[_Iterable[int]] = ..., urls: _Optional[_Iterable[str]] = ..., enterpriseUserIds: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class ComplianceReportRequest(_message.Message):
-    __slots__ = ["complianceReportRun", "reportName", "saveReport"]
+    __slots__ = ("complianceReportRun", "reportName", "saveReport")
     COMPLIANCEREPORTRUN_FIELD_NUMBER: _ClassVar[int]
     REPORTNAME_FIELD_NUMBER: _ClassVar[int]
     SAVEREPORT_FIELD_NUMBER: _ClassVar[int]
@@ -1465,7 +1492,7 @@ class ComplianceReportRequest(_message.Message):
     def __init__(self, complianceReportRun: _Optional[_Union[ComplianceReportRun, _Mapping]] = ..., reportName: _Optional[str] = ..., saveReport: bool = ...) -> None: ...
 
 class ComplianceReportRun(_message.Message):
-    __slots__ = ["reportCriteriaAndFilter", "users", "records"]
+    __slots__ = ("reportCriteriaAndFilter", "users", "records")
     REPORTCRITERIAANDFILTER_FIELD_NUMBER: _ClassVar[int]
     USERS_FIELD_NUMBER: _ClassVar[int]
     RECORDS_FIELD_NUMBER: _ClassVar[int]
@@ -1475,7 +1502,7 @@ class ComplianceReportRun(_message.Message):
     def __init__(self, reportCriteriaAndFilter: _Optional[_Union[ComplianceReportCriteriaAndFilter, _Mapping]] = ..., users: _Optional[_Iterable[int]] = ..., records: _Optional[_Iterable[bytes]] = ...) -> None: ...
 
 class ComplianceReportCriteriaAndFilter(_message.Message):
-    __slots__ = ["nodeId", "criteriaUid", "criteriaName", "criteria", "filters", "lastModified", "nodeEncryptedData"]
+    __slots__ = ("nodeId", "criteriaUid", "criteriaName", "criteria", "filters", "lastModified", "nodeEncryptedData")
     NODEID_FIELD_NUMBER: _ClassVar[int]
     CRITERIAUID_FIELD_NUMBER: _ClassVar[int]
     CRITERIANAME_FIELD_NUMBER: _ClassVar[int]
@@ -1493,7 +1520,7 @@ class ComplianceReportCriteriaAndFilter(_message.Message):
     def __init__(self, nodeId: _Optional[int] = ..., criteriaUid: _Optional[bytes] = ..., criteriaName: _Optional[str] = ..., criteria: _Optional[_Union[ComplianceReportCriteria, _Mapping]] = ..., filters: _Optional[_Iterable[_Union[ComplianceReportFilter, _Mapping]]] = ..., lastModified: _Optional[int] = ..., nodeEncryptedData: _Optional[bytes] = ...) -> None: ...
 
 class ComplianceReportCriteria(_message.Message):
-    __slots__ = ["jobTitles", "enterpriseUserIds", "includeNonShared"]
+    __slots__ = ("jobTitles", "enterpriseUserIds", "includeNonShared")
     JOBTITLES_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEUSERIDS_FIELD_NUMBER: _ClassVar[int]
     INCLUDENONSHARED_FIELD_NUMBER: _ClassVar[int]
@@ -1503,7 +1530,7 @@ class ComplianceReportCriteria(_message.Message):
     def __init__(self, jobTitles: _Optional[_Iterable[str]] = ..., enterpriseUserIds: _Optional[_Iterable[int]] = ..., includeNonShared: bool = ...) -> None: ...
 
 class ComplianceReportFilter(_message.Message):
-    __slots__ = ["recordTitles", "recordUids", "jobTitles", "urls", "recordTypes"]
+    __slots__ = ("recordTitles", "recordUids", "jobTitles", "urls", "recordTypes")
     RECORDTITLES_FIELD_NUMBER: _ClassVar[int]
     RECORDUIDS_FIELD_NUMBER: _ClassVar[int]
     JOBTITLES_FIELD_NUMBER: _ClassVar[int]
@@ -1517,7 +1544,7 @@ class ComplianceReportFilter(_message.Message):
     def __init__(self, recordTitles: _Optional[_Iterable[str]] = ..., recordUids: _Optional[_Iterable[bytes]] = ..., jobTitles: _Optional[_Iterable[str]] = ..., urls: _Optional[_Iterable[str]] = ..., recordTypes: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class ComplianceReportResponse(_message.Message):
-    __slots__ = ["dateGenerated", "runByUserName", "reportName", "reportUid", "complianceReportRun", "userProfiles", "auditTeams", "auditRecords", "userRecords", "sharedFolderRecords", "sharedFolderUsers", "sharedFolderTeams", "auditTeamUsers", "auditRoles", "linkedRecords"]
+    __slots__ = ("dateGenerated", "runByUserName", "reportName", "reportUid", "complianceReportRun", "userProfiles", "auditTeams", "auditRecords", "userRecords", "sharedFolderRecords", "sharedFolderUsers", "sharedFolderTeams", "auditTeamUsers", "auditRoles", "linkedRecords")
     DATEGENERATED_FIELD_NUMBER: _ClassVar[int]
     RUNBYUSERNAME_FIELD_NUMBER: _ClassVar[int]
     REPORTNAME_FIELD_NUMBER: _ClassVar[int]
@@ -1551,7 +1578,7 @@ class ComplianceReportResponse(_message.Message):
     def __init__(self, dateGenerated: _Optional[int] = ..., runByUserName: _Optional[str] = ..., reportName: _Optional[str] = ..., reportUid: _Optional[bytes] = ..., complianceReportRun: _Optional[_Union[ComplianceReportRun, _Mapping]] = ..., userProfiles: _Optional[_Iterable[_Union[UserProfile, _Mapping]]] = ..., auditTeams: _Optional[_Iterable[_Union[AuditTeam, _Mapping]]] = ..., auditRecords: _Optional[_Iterable[_Union[AuditRecord, _Mapping]]] = ..., userRecords: _Optional[_Iterable[_Union[UserRecord, _Mapping]]] = ..., sharedFolderRecords: _Optional[_Iterable[_Union[SharedFolderRecord, _Mapping]]] = ..., sharedFolderUsers: _Optional[_Iterable[_Union[SharedFolderUser, _Mapping]]] = ..., sharedFolderTeams: _Optional[_Iterable[_Union[SharedFolderTeam, _Mapping]]] = ..., auditTeamUsers: _Optional[_Iterable[_Union[AuditTeamUser, _Mapping]]] = ..., auditRoles: _Optional[_Iterable[_Union[AuditRole, _Mapping]]] = ..., linkedRecords: _Optional[_Iterable[_Union[LinkedRecord, _Mapping]]] = ...) -> None: ...
 
 class AuditRecord(_message.Message):
-    __slots__ = ["recordUid", "auditData", "hasAttachments", "inTrash", "treeLeft", "treeRight"]
+    __slots__ = ("recordUid", "auditData", "hasAttachments", "inTrash", "treeLeft", "treeRight")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     AUDITDATA_FIELD_NUMBER: _ClassVar[int]
     HASATTACHMENTS_FIELD_NUMBER: _ClassVar[int]
@@ -1567,7 +1594,7 @@ class AuditRecord(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., auditData: _Optional[bytes] = ..., hasAttachments: bool = ..., inTrash: bool = ..., treeLeft: _Optional[int] = ..., treeRight: _Optional[int] = ...) -> None: ...
 
 class AuditRole(_message.Message):
-    __slots__ = ["roleId", "encryptedData", "restrictShareOutsideEnterprise", "restrictShareAll", "restrictShareOfAttachments", "restrictMaskPasswordsWhileEditing", "roleNodeManagements"]
+    __slots__ = ("roleId", "encryptedData", "restrictShareOutsideEnterprise", "restrictShareAll", "restrictShareOfAttachments", "restrictMaskPasswordsWhileEditing", "roleNodeManagements")
     ROLEID_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDDATA_FIELD_NUMBER: _ClassVar[int]
     RESTRICTSHAREOUTSIDEENTERPRISE_FIELD_NUMBER: _ClassVar[int]
@@ -1585,7 +1612,7 @@ class AuditRole(_message.Message):
     def __init__(self, roleId: _Optional[int] = ..., encryptedData: _Optional[bytes] = ..., restrictShareOutsideEnterprise: bool = ..., restrictShareAll: bool = ..., restrictShareOfAttachments: bool = ..., restrictMaskPasswordsWhileEditing: bool = ..., roleNodeManagements: _Optional[_Iterable[_Union[RoleNodeManagement, _Mapping]]] = ...) -> None: ...
 
 class RoleNodeManagement(_message.Message):
-    __slots__ = ["treeLeft", "treeRight", "cascade", "privileges"]
+    __slots__ = ("treeLeft", "treeRight", "cascade", "privileges")
     TREELEFT_FIELD_NUMBER: _ClassVar[int]
     TREERIGHT_FIELD_NUMBER: _ClassVar[int]
     CASCADE_FIELD_NUMBER: _ClassVar[int]
@@ -1597,7 +1624,7 @@ class RoleNodeManagement(_message.Message):
     def __init__(self, treeLeft: _Optional[int] = ..., treeRight: _Optional[int] = ..., cascade: bool = ..., privileges: _Optional[int] = ...) -> None: ...
 
 class UserProfile(_message.Message):
-    __slots__ = ["enterpriseUserId", "fullName", "jobTitle", "email", "roleIds"]
+    __slots__ = ("enterpriseUserId", "fullName", "jobTitle", "email", "roleIds")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     FULLNAME_FIELD_NUMBER: _ClassVar[int]
     JOBTITLE_FIELD_NUMBER: _ClassVar[int]
@@ -1611,7 +1638,7 @@ class UserProfile(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., fullName: _Optional[str] = ..., jobTitle: _Optional[str] = ..., email: _Optional[str] = ..., roleIds: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class RecordPermission(_message.Message):
-    __slots__ = ["recordUid", "permissionBits"]
+    __slots__ = ("recordUid", "permissionBits")
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     PERMISSIONBITS_FIELD_NUMBER: _ClassVar[int]
     recordUid: bytes
@@ -1619,7 +1646,7 @@ class RecordPermission(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., permissionBits: _Optional[int] = ...) -> None: ...
 
 class UserRecord(_message.Message):
-    __slots__ = ["enterpriseUserId", "recordPermissions"]
+    __slots__ = ("enterpriseUserId", "recordPermissions")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     RECORDPERMISSIONS_FIELD_NUMBER: _ClassVar[int]
     enterpriseUserId: int
@@ -1627,7 +1654,7 @@ class UserRecord(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., recordPermissions: _Optional[_Iterable[_Union[RecordPermission, _Mapping]]] = ...) -> None: ...
 
 class AuditTeam(_message.Message):
-    __slots__ = ["teamUid", "teamName", "restrictEdit", "restrictShare"]
+    __slots__ = ("teamUid", "teamName", "restrictEdit", "restrictShare")
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
     TEAMNAME_FIELD_NUMBER: _ClassVar[int]
     RESTRICTEDIT_FIELD_NUMBER: _ClassVar[int]
@@ -1639,7 +1666,7 @@ class AuditTeam(_message.Message):
     def __init__(self, teamUid: _Optional[bytes] = ..., teamName: _Optional[str] = ..., restrictEdit: bool = ..., restrictShare: bool = ...) -> None: ...
 
 class AuditTeamUser(_message.Message):
-    __slots__ = ["teamUid", "enterpriseUserIds"]
+    __slots__ = ("teamUid", "enterpriseUserIds")
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEUSERIDS_FIELD_NUMBER: _ClassVar[int]
     teamUid: bytes
@@ -1647,7 +1674,7 @@ class AuditTeamUser(_message.Message):
     def __init__(self, teamUid: _Optional[bytes] = ..., enterpriseUserIds: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class SharedFolderRecord(_message.Message):
-    __slots__ = ["sharedFolderUid", "recordPermissions", "shareAdminRecords"]
+    __slots__ = ("sharedFolderUid", "recordPermissions", "shareAdminRecords")
     SHAREDFOLDERUID_FIELD_NUMBER: _ClassVar[int]
     RECORDPERMISSIONS_FIELD_NUMBER: _ClassVar[int]
     SHAREADMINRECORDS_FIELD_NUMBER: _ClassVar[int]
@@ -1657,7 +1684,7 @@ class SharedFolderRecord(_message.Message):
     def __init__(self, sharedFolderUid: _Optional[bytes] = ..., recordPermissions: _Optional[_Iterable[_Union[RecordPermission, _Mapping]]] = ..., shareAdminRecords: _Optional[_Iterable[_Union[ShareAdminRecord, _Mapping]]] = ...) -> None: ...
 
 class ShareAdminRecord(_message.Message):
-    __slots__ = ["enterpriseUserId", "recordPermissionIndexes"]
+    __slots__ = ("enterpriseUserId", "recordPermissionIndexes")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     RECORDPERMISSIONINDEXES_FIELD_NUMBER: _ClassVar[int]
     enterpriseUserId: int
@@ -1665,7 +1692,7 @@ class ShareAdminRecord(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., recordPermissionIndexes: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class SharedFolderUser(_message.Message):
-    __slots__ = ["sharedFolderUid", "enterpriseUserIds"]
+    __slots__ = ("sharedFolderUid", "enterpriseUserIds")
     SHAREDFOLDERUID_FIELD_NUMBER: _ClassVar[int]
     ENTERPRISEUSERIDS_FIELD_NUMBER: _ClassVar[int]
     sharedFolderUid: bytes
@@ -1673,7 +1700,7 @@ class SharedFolderUser(_message.Message):
     def __init__(self, sharedFolderUid: _Optional[bytes] = ..., enterpriseUserIds: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class SharedFolderTeam(_message.Message):
-    __slots__ = ["sharedFolderUid", "teamUids"]
+    __slots__ = ("sharedFolderUid", "teamUids")
     SHAREDFOLDERUID_FIELD_NUMBER: _ClassVar[int]
     TEAMUIDS_FIELD_NUMBER: _ClassVar[int]
     sharedFolderUid: bytes
@@ -1681,31 +1708,31 @@ class SharedFolderTeam(_message.Message):
     def __init__(self, sharedFolderUid: _Optional[bytes] = ..., teamUids: _Optional[_Iterable[bytes]] = ...) -> None: ...
 
 class GetComplianceReportRequest(_message.Message):
-    __slots__ = ["reportUid"]
+    __slots__ = ("reportUid",)
     REPORTUID_FIELD_NUMBER: _ClassVar[int]
     reportUid: bytes
     def __init__(self, reportUid: _Optional[bytes] = ...) -> None: ...
 
 class GetComplianceReportResponse(_message.Message):
-    __slots__ = ["downloadUrl"]
+    __slots__ = ("downloadUrl",)
     DOWNLOADURL_FIELD_NUMBER: _ClassVar[int]
     downloadUrl: str
     def __init__(self, downloadUrl: _Optional[str] = ...) -> None: ...
 
 class ComplianceReportCriteriaRequest(_message.Message):
-    __slots__ = ["criteriaUid"]
+    __slots__ = ("criteriaUid",)
     CRITERIAUID_FIELD_NUMBER: _ClassVar[int]
     criteriaUid: bytes
     def __init__(self, criteriaUid: _Optional[bytes] = ...) -> None: ...
 
 class SaveComplianceReportCriteriaResponse(_message.Message):
-    __slots__ = ["criteriaUid"]
+    __slots__ = ("criteriaUid",)
     CRITERIAUID_FIELD_NUMBER: _ClassVar[int]
     criteriaUid: bytes
     def __init__(self, criteriaUid: _Optional[bytes] = ...) -> None: ...
 
 class LinkedRecord(_message.Message):
-    __slots__ = ["ownerUid", "recordUids"]
+    __slots__ = ("ownerUid", "recordUids")
     OWNERUID_FIELD_NUMBER: _ClassVar[int]
     RECORDUIDS_FIELD_NUMBER: _ClassVar[int]
     ownerUid: bytes
@@ -1713,7 +1740,7 @@ class LinkedRecord(_message.Message):
     def __init__(self, ownerUid: _Optional[bytes] = ..., recordUids: _Optional[_Iterable[bytes]] = ...) -> None: ...
 
 class GetSharingAdminsRequest(_message.Message):
-    __slots__ = ["sharedFolderUid", "recordUid", "username"]
+    __slots__ = ("sharedFolderUid", "recordUid", "username")
     SHAREDFOLDERUID_FIELD_NUMBER: _ClassVar[int]
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     USERNAME_FIELD_NUMBER: _ClassVar[int]
@@ -1723,7 +1750,7 @@ class GetSharingAdminsRequest(_message.Message):
     def __init__(self, sharedFolderUid: _Optional[bytes] = ..., recordUid: _Optional[bytes] = ..., username: _Optional[str] = ...) -> None: ...
 
 class UserProfileExt(_message.Message):
-    __slots__ = ["email", "fullName", "jobTitle", "isMSPMCAdmin", "isInSharedFolder", "isShareAdminForRequestedObject", "isShareAdminForSharedFolderOwner", "hasAccessToObject"]
+    __slots__ = ("email", "fullName", "jobTitle", "isMSPMCAdmin", "isInSharedFolder", "isShareAdminForRequestedObject", "isShareAdminForSharedFolderOwner", "hasAccessToObject")
     EMAIL_FIELD_NUMBER: _ClassVar[int]
     FULLNAME_FIELD_NUMBER: _ClassVar[int]
     JOBTITLE_FIELD_NUMBER: _ClassVar[int]
@@ -1743,19 +1770,19 @@ class UserProfileExt(_message.Message):
     def __init__(self, email: _Optional[str] = ..., fullName: _Optional[str] = ..., jobTitle: _Optional[str] = ..., isMSPMCAdmin: bool = ..., isInSharedFolder: bool = ..., isShareAdminForRequestedObject: bool = ..., isShareAdminForSharedFolderOwner: bool = ..., hasAccessToObject: bool = ...) -> None: ...
 
 class GetSharingAdminsResponse(_message.Message):
-    __slots__ = ["userProfileExts"]
+    __slots__ = ("userProfileExts",)
     USERPROFILEEXTS_FIELD_NUMBER: _ClassVar[int]
     userProfileExts: _containers.RepeatedCompositeFieldContainer[UserProfileExt]
     def __init__(self, userProfileExts: _Optional[_Iterable[_Union[UserProfileExt, _Mapping]]] = ...) -> None: ...
 
 class TeamsEnterpriseUsersAddRequest(_message.Message):
-    __slots__ = ["teams"]
+    __slots__ = ("teams",)
     TEAMS_FIELD_NUMBER: _ClassVar[int]
     teams: _containers.RepeatedCompositeFieldContainer[TeamsEnterpriseUsersAddTeamRequest]
     def __init__(self, teams: _Optional[_Iterable[_Union[TeamsEnterpriseUsersAddTeamRequest, _Mapping]]] = ...) -> None: ...
 
 class TeamsEnterpriseUsersAddTeamRequest(_message.Message):
-    __slots__ = ["teamUid", "users"]
+    __slots__ = ("teamUid", "users")
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
     USERS_FIELD_NUMBER: _ClassVar[int]
     teamUid: bytes
@@ -1763,7 +1790,7 @@ class TeamsEnterpriseUsersAddTeamRequest(_message.Message):
     def __init__(self, teamUid: _Optional[bytes] = ..., users: _Optional[_Iterable[_Union[TeamsEnterpriseUsersAddUserRequest, _Mapping]]] = ...) -> None: ...
 
 class TeamsEnterpriseUsersAddUserRequest(_message.Message):
-    __slots__ = ["enterpriseUserId", "userType", "teamKey", "typedTeamKey"]
+    __slots__ = ("enterpriseUserId", "userType", "teamKey", "typedTeamKey")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     USERTYPE_FIELD_NUMBER: _ClassVar[int]
     TEAMKEY_FIELD_NUMBER: _ClassVar[int]
@@ -1775,7 +1802,7 @@ class TeamsEnterpriseUsersAddUserRequest(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., userType: _Optional[_Union[TeamUserType, str]] = ..., teamKey: _Optional[str] = ..., typedTeamKey: _Optional[_Union[TypedKey, _Mapping]] = ...) -> None: ...
 
 class TypedKey(_message.Message):
-    __slots__ = ["key", "keyType"]
+    __slots__ = ("key", "keyType")
     KEY_FIELD_NUMBER: _ClassVar[int]
     KEYTYPE_FIELD_NUMBER: _ClassVar[int]
     key: bytes
@@ -1783,7 +1810,7 @@ class TypedKey(_message.Message):
     def __init__(self, key: _Optional[bytes] = ..., keyType: _Optional[_Union[EncryptedKeyType, str]] = ...) -> None: ...
 
 class TeamsEnterpriseUsersAddResponse(_message.Message):
-    __slots__ = ["teams", "revision"]
+    __slots__ = ("teams", "revision")
     TEAMS_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
     teams: _containers.RepeatedCompositeFieldContainer[TeamsEnterpriseUsersAddTeamResponse]
@@ -1791,7 +1818,7 @@ class TeamsEnterpriseUsersAddResponse(_message.Message):
     def __init__(self, teams: _Optional[_Iterable[_Union[TeamsEnterpriseUsersAddTeamResponse, _Mapping]]] = ..., revision: _Optional[int] = ...) -> None: ...
 
 class TeamsEnterpriseUsersAddTeamResponse(_message.Message):
-    __slots__ = ["teamUid", "users", "success", "message", "resultCode", "additionalInfo"]
+    __slots__ = ("teamUid", "users", "success", "message", "resultCode", "additionalInfo")
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
     USERS_FIELD_NUMBER: _ClassVar[int]
     SUCCESS_FIELD_NUMBER: _ClassVar[int]
@@ -1807,7 +1834,7 @@ class TeamsEnterpriseUsersAddTeamResponse(_message.Message):
     def __init__(self, teamUid: _Optional[bytes] = ..., users: _Optional[_Iterable[_Union[TeamsEnterpriseUsersAddUserResponse, _Mapping]]] = ..., success: bool = ..., message: _Optional[str] = ..., resultCode: _Optional[str] = ..., additionalInfo: _Optional[str] = ...) -> None: ...
 
 class TeamsEnterpriseUsersAddUserResponse(_message.Message):
-    __slots__ = ["enterpriseUserId", "revision", "success", "message", "resultCode", "additionalInfo"]
+    __slots__ = ("enterpriseUserId", "revision", "success", "message", "resultCode", "additionalInfo")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
     SUCCESS_FIELD_NUMBER: _ClassVar[int]
@@ -1822,8 +1849,42 @@ class TeamsEnterpriseUsersAddUserResponse(_message.Message):
     additionalInfo: str
     def __init__(self, enterpriseUserId: _Optional[int] = ..., revision: _Optional[int] = ..., success: bool = ..., message: _Optional[str] = ..., resultCode: _Optional[str] = ..., additionalInfo: _Optional[str] = ...) -> None: ...
 
+class TeamEnterpriseUserRemove(_message.Message):
+    __slots__ = ("teamUid", "enterpriseUserId")
+    TEAMUID_FIELD_NUMBER: _ClassVar[int]
+    ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
+    teamUid: bytes
+    enterpriseUserId: int
+    def __init__(self, teamUid: _Optional[bytes] = ..., enterpriseUserId: _Optional[int] = ...) -> None: ...
+
+class TeamEnterpriseUserRemovesRequest(_message.Message):
+    __slots__ = ("teamEnterpriseUserRemove",)
+    TEAMENTERPRISEUSERREMOVE_FIELD_NUMBER: _ClassVar[int]
+    teamEnterpriseUserRemove: _containers.RepeatedCompositeFieldContainer[TeamEnterpriseUserRemove]
+    def __init__(self, teamEnterpriseUserRemove: _Optional[_Iterable[_Union[TeamEnterpriseUserRemove, _Mapping]]] = ...) -> None: ...
+
+class TeamEnterpriseUserRemovesResponse(_message.Message):
+    __slots__ = ("teamEnterpriseUserRemoveResponse",)
+    TEAMENTERPRISEUSERREMOVERESPONSE_FIELD_NUMBER: _ClassVar[int]
+    teamEnterpriseUserRemoveResponse: _containers.RepeatedCompositeFieldContainer[TeamEnterpriseUserRemoveResponse]
+    def __init__(self, teamEnterpriseUserRemoveResponse: _Optional[_Iterable[_Union[TeamEnterpriseUserRemoveResponse, _Mapping]]] = ...) -> None: ...
+
+class TeamEnterpriseUserRemoveResponse(_message.Message):
+    __slots__ = ("teamEnterpriseUserRemove", "success", "resultCode", "message", "additionalInfo")
+    TEAMENTERPRISEUSERREMOVE_FIELD_NUMBER: _ClassVar[int]
+    SUCCESS_FIELD_NUMBER: _ClassVar[int]
+    RESULTCODE_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    ADDITIONALINFO_FIELD_NUMBER: _ClassVar[int]
+    teamEnterpriseUserRemove: TeamEnterpriseUserRemove
+    success: bool
+    resultCode: str
+    message: str
+    additionalInfo: str
+    def __init__(self, teamEnterpriseUserRemove: _Optional[_Union[TeamEnterpriseUserRemove, _Mapping]] = ..., success: bool = ..., resultCode: _Optional[str] = ..., message: _Optional[str] = ..., additionalInfo: _Optional[str] = ...) -> None: ...
+
 class DomainAlias(_message.Message):
-    __slots__ = ["domain", "alias", "status", "message"]
+    __slots__ = ("domain", "alias", "status", "message")
     DOMAIN_FIELD_NUMBER: _ClassVar[int]
     ALIAS_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -1835,19 +1896,19 @@ class DomainAlias(_message.Message):
     def __init__(self, domain: _Optional[str] = ..., alias: _Optional[str] = ..., status: _Optional[int] = ..., message: _Optional[str] = ...) -> None: ...
 
 class DomainAliasRequest(_message.Message):
-    __slots__ = ["domainAlias"]
+    __slots__ = ("domainAlias",)
     DOMAINALIAS_FIELD_NUMBER: _ClassVar[int]
     domainAlias: _containers.RepeatedCompositeFieldContainer[DomainAlias]
     def __init__(self, domainAlias: _Optional[_Iterable[_Union[DomainAlias, _Mapping]]] = ...) -> None: ...
 
 class DomainAliasResponse(_message.Message):
-    __slots__ = ["domainAlias"]
+    __slots__ = ("domainAlias",)
     DOMAINALIAS_FIELD_NUMBER: _ClassVar[int]
     domainAlias: _containers.RepeatedCompositeFieldContainer[DomainAlias]
     def __init__(self, domainAlias: _Optional[_Iterable[_Union[DomainAlias, _Mapping]]] = ...) -> None: ...
 
 class EnterpriseUsersProvisionRequest(_message.Message):
-    __slots__ = ["users", "clientVersion"]
+    __slots__ = ("users", "clientVersion")
     USERS_FIELD_NUMBER: _ClassVar[int]
     CLIENTVERSION_FIELD_NUMBER: _ClassVar[int]
     users: _containers.RepeatedCompositeFieldContainer[EnterpriseUsersProvision]
@@ -1855,7 +1916,7 @@ class EnterpriseUsersProvisionRequest(_message.Message):
     def __init__(self, users: _Optional[_Iterable[_Union[EnterpriseUsersProvision, _Mapping]]] = ..., clientVersion: _Optional[str] = ...) -> None: ...
 
 class EnterpriseUsersProvision(_message.Message):
-    __slots__ = ["enterpriseUserId", "username", "nodeId", "encryptedData", "keyType", "fullName", "jobTitle", "enterpriseUsersDataKey", "authVerifier", "encryptionParams", "rsaPublicKey", "rsaEncryptedPrivateKey", "eccPublicKey", "eccEncryptedPrivateKey", "encryptedDeviceToken", "encryptedClientKey"]
+    __slots__ = ("enterpriseUserId", "username", "nodeId", "encryptedData", "keyType", "fullName", "jobTitle", "enterpriseUsersDataKey", "authVerifier", "encryptionParams", "rsaPublicKey", "rsaEncryptedPrivateKey", "eccPublicKey", "eccEncryptedPrivateKey", "encryptedDeviceToken", "encryptedClientKey")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     USERNAME_FIELD_NUMBER: _ClassVar[int]
     NODEID_FIELD_NUMBER: _ClassVar[int]
@@ -1891,13 +1952,13 @@ class EnterpriseUsersProvision(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., username: _Optional[str] = ..., nodeId: _Optional[int] = ..., encryptedData: _Optional[str] = ..., keyType: _Optional[_Union[EncryptedKeyType, str]] = ..., fullName: _Optional[str] = ..., jobTitle: _Optional[str] = ..., enterpriseUsersDataKey: _Optional[bytes] = ..., authVerifier: _Optional[bytes] = ..., encryptionParams: _Optional[bytes] = ..., rsaPublicKey: _Optional[bytes] = ..., rsaEncryptedPrivateKey: _Optional[bytes] = ..., eccPublicKey: _Optional[bytes] = ..., eccEncryptedPrivateKey: _Optional[bytes] = ..., encryptedDeviceToken: _Optional[bytes] = ..., encryptedClientKey: _Optional[bytes] = ...) -> None: ...
 
 class EnterpriseUsersProvisionResponse(_message.Message):
-    __slots__ = ["results"]
+    __slots__ = ("results",)
     RESULTS_FIELD_NUMBER: _ClassVar[int]
     results: _containers.RepeatedCompositeFieldContainer[EnterpriseUsersProvisionResult]
     def __init__(self, results: _Optional[_Iterable[_Union[EnterpriseUsersProvisionResult, _Mapping]]] = ...) -> None: ...
 
 class EnterpriseUsersProvisionResult(_message.Message):
-    __slots__ = ["enterpriseUserId", "code", "message", "additionalInfo"]
+    __slots__ = ("enterpriseUserId", "code", "message", "additionalInfo")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     CODE_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_FIELD_NUMBER: _ClassVar[int]
@@ -1909,7 +1970,7 @@ class EnterpriseUsersProvisionResult(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., code: _Optional[str] = ..., message: _Optional[str] = ..., additionalInfo: _Optional[str] = ...) -> None: ...
 
 class EnterpriseUsersAddRequest(_message.Message):
-    __slots__ = ["users", "clientVersion"]
+    __slots__ = ("users", "clientVersion")
     USERS_FIELD_NUMBER: _ClassVar[int]
     CLIENTVERSION_FIELD_NUMBER: _ClassVar[int]
     users: _containers.RepeatedCompositeFieldContainer[EnterpriseUsersAdd]
@@ -1917,7 +1978,7 @@ class EnterpriseUsersAddRequest(_message.Message):
     def __init__(self, users: _Optional[_Iterable[_Union[EnterpriseUsersAdd, _Mapping]]] = ..., clientVersion: _Optional[str] = ...) -> None: ...
 
 class EnterpriseUsersAdd(_message.Message):
-    __slots__ = ["enterpriseUserId", "username", "nodeId", "encryptedData", "keyType", "fullName", "jobTitle", "suppressEmailInvite", "inviteeLocale", "move", "roleId"]
+    __slots__ = ("enterpriseUserId", "username", "nodeId", "encryptedData", "keyType", "fullName", "jobTitle", "suppressEmailInvite", "inviteeLocale", "move", "roleId")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     USERNAME_FIELD_NUMBER: _ClassVar[int]
     NODEID_FIELD_NUMBER: _ClassVar[int]
@@ -1943,7 +2004,7 @@ class EnterpriseUsersAdd(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., username: _Optional[str] = ..., nodeId: _Optional[int] = ..., encryptedData: _Optional[str] = ..., keyType: _Optional[_Union[EncryptedKeyType, str]] = ..., fullName: _Optional[str] = ..., jobTitle: _Optional[str] = ..., suppressEmailInvite: bool = ..., inviteeLocale: _Optional[str] = ..., move: bool = ..., roleId: _Optional[int] = ...) -> None: ...
 
 class EnterpriseUsersAddResponse(_message.Message):
-    __slots__ = ["results", "success", "code", "message", "additionalInfo"]
+    __slots__ = ("results", "success", "code", "message", "additionalInfo")
     RESULTS_FIELD_NUMBER: _ClassVar[int]
     SUCCESS_FIELD_NUMBER: _ClassVar[int]
     CODE_FIELD_NUMBER: _ClassVar[int]
@@ -1957,7 +2018,7 @@ class EnterpriseUsersAddResponse(_message.Message):
     def __init__(self, results: _Optional[_Iterable[_Union[EnterpriseUsersAddResult, _Mapping]]] = ..., success: bool = ..., code: _Optional[str] = ..., message: _Optional[str] = ..., additionalInfo: _Optional[str] = ...) -> None: ...
 
 class EnterpriseUsersAddResult(_message.Message):
-    __slots__ = ["enterpriseUserId", "success", "verificationCode", "code", "message", "additionalInfo"]
+    __slots__ = ("enterpriseUserId", "success", "verificationCode", "code", "message", "additionalInfo")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     SUCCESS_FIELD_NUMBER: _ClassVar[int]
     VERIFICATIONCODE_FIELD_NUMBER: _ClassVar[int]
@@ -1973,7 +2034,7 @@ class EnterpriseUsersAddResult(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., success: bool = ..., verificationCode: _Optional[str] = ..., code: _Optional[str] = ..., message: _Optional[str] = ..., additionalInfo: _Optional[str] = ...) -> None: ...
 
 class UpdateMSPPermitsRequest(_message.Message):
-    __slots__ = ["mspEnterpriseId", "maxAllowedLicenses", "allowedMcProducts", "allowedAddOns", "maxFilePlanType", "allowUnlimitedLicenses"]
+    __slots__ = ("mspEnterpriseId", "maxAllowedLicenses", "allowedMcProducts", "allowedAddOns", "maxFilePlanType", "allowUnlimitedLicenses")
     MSPENTERPRISEID_FIELD_NUMBER: _ClassVar[int]
     MAXALLOWEDLICENSES_FIELD_NUMBER: _ClassVar[int]
     ALLOWEDMCPRODUCTS_FIELD_NUMBER: _ClassVar[int]
@@ -1989,13 +2050,13 @@ class UpdateMSPPermitsRequest(_message.Message):
     def __init__(self, mspEnterpriseId: _Optional[int] = ..., maxAllowedLicenses: _Optional[int] = ..., allowedMcProducts: _Optional[_Iterable[str]] = ..., allowedAddOns: _Optional[_Iterable[str]] = ..., maxFilePlanType: _Optional[str] = ..., allowUnlimitedLicenses: bool = ...) -> None: ...
 
 class DeleteEnterpriseUsersRequest(_message.Message):
-    __slots__ = ["enterpriseUserIds"]
+    __slots__ = ("enterpriseUserIds",)
     ENTERPRISEUSERIDS_FIELD_NUMBER: _ClassVar[int]
     enterpriseUserIds: _containers.RepeatedScalarFieldContainer[int]
     def __init__(self, enterpriseUserIds: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class DeleteEnterpriseUserStatus(_message.Message):
-    __slots__ = ["enterpriseUserId", "status"]
+    __slots__ = ("enterpriseUserId", "status")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     enterpriseUserId: int
@@ -2003,13 +2064,13 @@ class DeleteEnterpriseUserStatus(_message.Message):
     def __init__(self, enterpriseUserId: _Optional[int] = ..., status: _Optional[_Union[DeleteEnterpriseUsersResult, str]] = ...) -> None: ...
 
 class DeleteEnterpriseUsersResponse(_message.Message):
-    __slots__ = ["deleteStatus"]
+    __slots__ = ("deleteStatus",)
     DELETESTATUS_FIELD_NUMBER: _ClassVar[int]
     deleteStatus: _containers.RepeatedCompositeFieldContainer[DeleteEnterpriseUserStatus]
     def __init__(self, deleteStatus: _Optional[_Iterable[_Union[DeleteEnterpriseUserStatus, _Mapping]]] = ...) -> None: ...
 
 class ClearSecurityDataRequest(_message.Message):
-    __slots__ = ["enterpriseUserId", "allUsers", "type"]
+    __slots__ = ("enterpriseUserId", "allUsers", "type")
     ENTERPRISEUSERID_FIELD_NUMBER: _ClassVar[int]
     ALLUSERS_FIELD_NUMBER: _ClassVar[int]
     TYPE_FIELD_NUMBER: _ClassVar[int]
@@ -2017,3 +2078,23 @@ class ClearSecurityDataRequest(_message.Message):
     allUsers: bool
     type: ClearSecurityDataType
     def __init__(self, enterpriseUserId: _Optional[_Iterable[int]] = ..., allUsers: bool = ..., type: _Optional[_Union[ClearSecurityDataType, str]] = ...) -> None: ...
+
+class ListDomainsResponse(_message.Message):
+    __slots__ = ("domain",)
+    DOMAIN_FIELD_NUMBER: _ClassVar[int]
+    domain: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, domain: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class ReserveDomainRequest(_message.Message):
+    __slots__ = ("reserveDomainAction", "domain")
+    RESERVEDOMAINACTION_FIELD_NUMBER: _ClassVar[int]
+    DOMAIN_FIELD_NUMBER: _ClassVar[int]
+    reserveDomainAction: ReserveDomainAction
+    domain: str
+    def __init__(self, reserveDomainAction: _Optional[_Union[ReserveDomainAction, str]] = ..., domain: _Optional[str] = ...) -> None: ...
+
+class ReserveDomainResponse(_message.Message):
+    __slots__ = ("token",)
+    TOKEN_FIELD_NUMBER: _ClassVar[int]
+    token: str
+    def __init__(self, token: _Optional[str] = ...) -> None: ...
