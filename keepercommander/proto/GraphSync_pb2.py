@@ -18,8 +18,8 @@ DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0fGraphSync.prot
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'GraphSync_pb2', _globals)
-if _descriptor._USE_C_DESCRIPTORS == False:
-  _globals['DESCRIPTOR']._options = None
+if not _descriptor._USE_C_DESCRIPTORS:
+  _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\030com.keepersecurity.protoB\tGraphSync'
   _globals['_REFTYPE']._serialized_start=1074
   _globals['_REFTYPE']._serialized_end=1431
