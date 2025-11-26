@@ -1,8 +1,8 @@
 from __future__ import annotations
 from .utils import get_connection, make_agent
 from .types import JobContent, JobItem, Settings, DiscoveryDelta
-from keepercommander.keeper_dag import DAG, EdgeType
-from keepercommander.keeper_dag.types import PamGraphId, PamEndpoints
+from ..keeper_dag import DAG, EdgeType
+from ..keeper_dag.types import PamGraphId, PamEndpoints
 import logging
 import os
 import base64
@@ -12,7 +12,7 @@ import copy
 from typing import Any, Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
-    from keepercommander.keeper_dag.vertex import DAGVertex
+    from ..keeper_dag.vertex import DAGVertex
 
 
 class Jobs:
@@ -38,7 +38,7 @@ class Jobs:
                  log_prefix: str = "GS Jobs", save_batch_count: int = 200, agent: Optional[str] = None,
                  **kwargs):
 
-        self.conn = get_connection(**kwargs)
+        self.conn = get_connection(logger=logger, **kwargs)
 
         # This will either be a KSM Record, or Commander KeeperRecord
         self.record = record
@@ -62,7 +62,7 @@ class Jobs:
 
             self._dag = DAG(conn=self.conn,
                             record=self.record,
-                            endpoint=PamEndpoints.DISCOVERY_JOBS,
+                            # endpoint=PamEndpoints.DISCOVERY_JOBS,
                             graph_id=PamGraphId.DISCOVERY_JOBS,
                             auto_save=False,
                             logger=self.logger,
@@ -92,6 +92,27 @@ class Jobs:
                 )
                 self._dag.save()
         return self._dag
+
+    def close(self):
+        """
+        Clean up resources held by this Jobs instance.
+        Releases the DAG instance and connection to prevent memory leaks.
+        """
+        if self._dag is not None:
+            self._dag = None
+        self.conn = None
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensures cleanup."""
+        self.close()
+        return False
+
+    def __del__(self):
+        self.close()
 
     @property
     def data_path(self):
@@ -367,8 +388,8 @@ class Jobs:
         for job in jobs.job_history:
             if job.job_id == job_id:
                 self.logger.debug("found job to cancel")
-                job.end_ts = int(time())
-                job.success = None
+                if job.end_ts is None:
+                    job.end_ts = int(time())
         jobs.active_job_id = None
         self.set_jobs(jobs)
 

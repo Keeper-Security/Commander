@@ -1,17 +1,17 @@
 from __future__ import annotations
 import logging
 from .utils import get_connection, make_agent
-from keepercommander.keeper_dag import DAG, EdgeType
-from keepercommander.keeper_dag.exceptions import DAGVertexException
-from keepercommander.keeper_dag.crypto import urlsafe_str_to_bytes
-from keepercommander.keeper_dag.types import PamGraphId, PamEndpoints
+from ..keeper_dag import DAG, EdgeType
+from ..keeper_dag.exceptions import DAGVertexException
+from ..keeper_dag.crypto import urlsafe_str_to_bytes
+from ..keeper_dag.types import PamGraphId, PamEndpoints
 import os
 import importlib
 import time
 from typing import Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from keepercommander.keeper_dag.vertex import DAGVertex
+    from ..keeper_dag.vertex import DAGVertex
 
 
 class Infrastructure:
@@ -57,7 +57,7 @@ class Infrastructure:
         if agent is not None:
             self.agent += "; " + agent
 
-        self.conn = get_connection(**kwargs)
+        self.conn = get_connection(logger=logger, **kwargs)
 
     @property
     def dag(self) -> DAG:
@@ -68,7 +68,7 @@ class Infrastructure:
 
             self._dag = DAG(conn=self.conn,
                             record=self.record,
-                            endpoint=PamEndpoints.INFRASTRUCTURE,
+                            # endpoint=PamEndpoints.INFRASTRUCTURE,
                             graph_id=PamGraphId.INFRASTRUCTURE,
                             auto_save=self.auto_save,
                             logger=self.logger,
@@ -117,6 +117,27 @@ class Infrastructure:
         res = self.dag.load(sync_point=sync_point) or 0
         self.logger.debug(f"infrastructure took {time.time()-ts} secs to load")
         return res
+
+    def close(self):
+        """
+        Clean up resources held by this Infrastructure instance.
+        Releases the DAG instance and connection to prevent memory leaks.
+        """
+        if self._dag is not None:
+            self._dag = None
+        self.conn = None
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensures cleanup."""
+        self.close()
+        return False
+
+    def __del__(self):
+        self.close()
 
     def save(self, delta_graph: Optional[bool] = None):
         if delta_graph is None:

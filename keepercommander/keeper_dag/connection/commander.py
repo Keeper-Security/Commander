@@ -9,15 +9,15 @@ import requests
 import time
 
 try:  # pragma: no cover
-    from keepercommander import crypto, utils, rest_api
+    from ... import crypto, utils, rest_api
 except ImportError:  # pragma: no cover
     raise Exception("Please install the keepercommander module to use the Commander connection.")
 
-from typing import Optional, Union, TYPE_CHECKING
+from typing import Optional, Union, Dict, Tuple, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
-    from keepercommander.params import KeeperParams
-    from keepercommander.vault import KeeperRecord
+    from ...params import KeeperParams
+    from ...vault import KeeperRecord
     Content = Union[str, bytes, dict]
     QueryValue = Union[list, dict, str, float, int, bool]
     Logger = Union[logging.RootLogger, logging.Logger]
@@ -25,24 +25,33 @@ if TYPE_CHECKING:  # pragma: no cover
 
 class Connection(ConnectionBase):
 
-    def __init__(self, params: KeeperParams, encrypted_transmission_key: Optional[bytes] = None,
-                 encrypted_session_token: Optional[bytes] = None, verify_ssl: bool = True, is_ws: bool = False,
+    def __init__(self,
+                 params: KeeperParams,
+                 verify_ssl: bool = True,
+                 is_ws: bool = False,
                  logger: Optional[Logger] = None,
-                 log_transactions: Optional[bool] = None, log_transactions_dir: Optional[str] = None):
+                 log_transactions: Optional[bool] = False,
+                 log_transactions_dir: Optional[str] = None,
+                 use_read_protobuf: bool = False,
+                 use_write_protobuf: bool = False,
+                 **kwargs):
 
+        # Commander uses /api/user; hence is_device=False
         super().__init__(is_device=False,
                          logger=logger,
                          log_transactions=log_transactions,
-                         log_transactions_dir=log_transactions_dir)
+                         log_transactions_dir=log_transactions_dir,
+                         use_read_protobuf=use_read_protobuf,
+                         use_write_protobuf=use_write_protobuf)
 
         self.params = params
-        self.verify_ssl = verify_ssl
+        self.verify_ssl = value_to_boolean(os.environ.get("VERIFY_SSL", verify_ssl))
         self.is_ws = is_ws
-        self.encrypted_transmission_key = encrypted_transmission_key if encrypted_transmission_key else None
-        self.encrypted_session_token = encrypted_session_token if encrypted_session_token else None
 
-        if self.encrypted_transmission_key is None or self.encrypted_session_token is None:
-            self.get_keeper_tokens()
+        # Deprecated; setting this will override the per-transaction values.
+        self.transmission_key = kwargs.get("transmission_key")
+        self.dep_encrypted_transmission_key = kwargs.get("encrypted_transmission_key")
+        self.dep_encrypted_session_token = kwargs.get("encrypted_session_token")
 
     @staticmethod
     def get_record_uid(record: KeeperRecord) -> str:
@@ -83,33 +92,78 @@ class Connection(ConnectionBase):
 
         return f'{prot_pref}://{hostname}'
 
+    # deprecated
     def get_keeper_tokens(self):
-        transmission_key = utils.generate_aes_key()
+        self.transmission_key = utils.generate_aes_key()
         server_public_key = rest_api.SERVER_PUBLIC_KEYS[self.params.rest_context.server_key_id]
 
         if self.params.rest_context.server_key_id < 7:
-            self.encrypted_transmission_key = crypto.encrypt_rsa(transmission_key, server_public_key)
+            self.dep_encrypted_transmission_key = crypto.encrypt_rsa(self.transmission_key, server_public_key)
         else:
-            self.encrypted_transmission_key = crypto.encrypt_ec(transmission_key, server_public_key)
-        self.encrypted_session_token = crypto.encrypt_aes_v2(
-            utils.base64_url_decode(self.params.session_token), transmission_key)
+            self.dep_encrypted_transmission_key = crypto.encrypt_ec(self.transmission_key, server_public_key)
+        self.dep_encrypted_session_token = crypto.encrypt_aes_v2(
+            utils.base64_url_decode(self.params.session_token), self.transmission_key)
+
+    def payload_and_headers(self, payload: Any) -> Tuple[Union[str, bytes], Dict]:
+
+        # If the dep_encrypted_transmission_key, use the set value over the generated ones.
+        if self.dep_encrypted_transmission_key is not None:
+            encrypted_transmission_key = self.dep_encrypted_transmission_key
+            encrypted_session_token = self.dep_encrypted_session_token
+
+        # This is what we want to use; it's different for each call.
+        else:
+            # Create a new transmission key
+            self.transmission_key = utils.generate_aes_key()
+            self.logger.debug(f"transmission key is {self.transmission_key}")
+            # self.params.rest_context.transmission_key = self.transmission_key
+            server_public_key = rest_api.SERVER_PUBLIC_KEYS[self.params.rest_context.server_key_id]
+
+            if self.params.rest_context.server_key_id < 7:
+                encrypted_transmission_key = crypto.encrypt_rsa(self.transmission_key, server_public_key)
+            else:
+                encrypted_transmission_key = crypto.encrypt_ec(self.transmission_key, server_public_key)
+            encrypted_session_token = crypto.encrypt_aes_v2(
+                utils.base64_url_decode(self.params.session_token), self.transmission_key)
+
+        # We need the transmission_key for protobuf sync since it returns values encrypted with the transmission_key.
+        if self.transmission_key is None:
+            raise DAGConnectionException("The transmission key has not been set. If setting encrypted_transmission_key "
+                                         "and encrypted_session_token, also set transmission_key to 32 bytes. "
+                                         "Setting the encrypted_transmission_key and encrypted_session_token is "
+                                         "deprecated.")
+
+        payload, headers = super().payload_and_headers(payload)
+
+        headers["TransmissionKey"] = bytes_to_base64(encrypted_transmission_key)
+        headers["Authorization"] = f'KeeperUser {bytes_to_base64(encrypted_session_token)}'
+
+        return payload, headers
 
     def rest_call_to_router(self,
                             http_method: str,
                             endpoint: str,
                             agent: str,
-                            payload_json: Optional[Union[bytes, str]] = None,
+                            payload: Optional[Union[str, bytes]] = None,
                             retry: int = 5,
                             retry_wait: float = 10,
                             throttle_inc_factor: float = 1.5,
-                            timeout: Optional[int] = None) -> str:
-        if payload_json is not None and isinstance(payload_json, bytes) is False:
-            payload_json = payload_json.encode()
+                            timeout: Optional[int] = None,
+                            headers: Optional[Dict] = None) -> Optional[bytes]:
+
+        if timeout is None or timeout == 0:
+            timeout = Connection.TIMEOUT
+
+        if isinstance(payload, str):
+            payload = payload.encode()
 
         if not endpoint.startswith("/"):
             endpoint = "/" + endpoint
 
         url = self.dag_server_url + endpoint
+
+        if headers is None:
+            headers = {}
 
         attempt = 0
         while True:
@@ -121,16 +175,15 @@ class Connection(ConnectionBase):
                     url=url,
                     verify=self.verify_ssl,
                     headers={
-                        'TransmissionKey': bytes_to_base64(self.encrypted_transmission_key),
-                        'Authorization': f'KeeperUser {bytes_to_base64(self.encrypted_session_token)}',
+                        **headers,
                         'User-Agent': agent
                     },
-                    data=payload_json,
+                    data=payload,
                     timeout=timeout
                 )
                 self.logger.debug(f"response status: {response.status_code}")
                 response.raise_for_status()
-                return response.text
+                return response.content
 
             except requests.exceptions.HTTPError as http_err:
 
