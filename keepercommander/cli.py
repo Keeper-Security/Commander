@@ -126,6 +126,7 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
         ('pam rotation', 'Manage Rotations'),
         ('pam split', 'Split credentials from legacy PAM Machine'),
         ('pam tunnel', 'Manage Tunnels'),
+        ('pam workflow', 'Manage PAM Workflows'),
     ]
     domain_subcommands = [
         ('domain list (dl)', 'List all reserved domains for the enterprise'),
