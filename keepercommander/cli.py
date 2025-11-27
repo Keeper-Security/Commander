@@ -82,7 +82,7 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
     # Define colors for different categories - more variety and visual appeal
     category_colors = {
         'Record Commands': bcolors.OKGREEN,           # Green - primary functionality
-        'Sharing Commands': bcolors.OKBLUE,           # Blue - collaboration
+        'Sharing Commands': bcolors.OKBLUE,           # Blue - collaboration  
         'Record Type Commands': bcolors.HEADER,       # Purple/Magenta - special types
         'Import and Exporting Data': bcolors.WARNING, # Yellow - data operations
         'Reporting Commands': '\033[96m',             # Cyan - analytics
@@ -92,6 +92,7 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
         'Secrets Manager Commands': '\033[95m',       # Magenta - KSM
         'BreachWatch Commands': bcolors.FAIL,         # Red - security alerts
         'Device Management Commands': '\033[93m',     # Bright Yellow - devices
+        'Domain Management Commands': '\033[92m',     # Bright Green - domains
         'Service Mode REST API': '\033[36m',          # Dark Cyan - services
         'Email Configuration Commands': '\033[38;5;214m',  # Orange - email services
         'Miscellaneous Commands': '\033[37m',         # Light Gray - utilities
@@ -150,6 +151,24 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
                 pam_part = cmd_display.split(' ')[0]  # "pam"
                 sub_part = cmd_display.split(' ', 1)[1]  # "action", "config", etc.
                 formatted_cmd = f'{bcolors.BOLD}{pam_part}{bcolors.ENDC} {sub_part}'
+                # Adjust spacing to account for formatting codes
+                spacing = max_cmd_width - len(cmd_display) + len(bcolors.BOLD) + len(bcolors.ENDC)
+                print(f'  {formatted_cmd}{" " * spacing}   {description}')
+        elif category == 'Domain Management Commands':
+            # Define domain sub-commands with descriptions
+            domain_subcommands = [
+                ('domain list', 'List all reserved domains for the enterprise'),
+                ('domain reserve', 'Reserve, delete, or generate token for a domain'),
+            ]
+
+            # Calculate width for domain commands
+            max_cmd_width = max(len(cmd) for cmd, _ in domain_subcommands)
+
+            for cmd_display, description in sorted(domain_subcommands):
+                # Bold only the "domain" part
+                domain_part = cmd_display.split(' ')[0]  # "domain"
+                sub_part = cmd_display.split(' ', 1)[1]  # "list", "reserve"
+                formatted_cmd = f'{bcolors.BOLD}{domain_part}{bcolors.ENDC} {sub_part}'
                 # Adjust spacing to account for formatting codes
                 spacing = max_cmd_width - len(cmd_display) + len(bcolors.BOLD) + len(bcolors.ENDC)
                 print(f'  {formatted_cmd}{" " * spacing}   {description}')
