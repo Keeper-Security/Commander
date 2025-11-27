@@ -154,6 +154,24 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
                 # Adjust spacing to account for formatting codes
                 spacing = max_cmd_width - len(cmd_display) + len(bcolors.BOLD) + len(bcolors.ENDC)
                 print(f'  {formatted_cmd}{" " * spacing}   {description}')
+        elif category == 'Domain Management Commands':
+            # Define domain sub-commands with descriptions
+            domain_subcommands = [
+                ('domain list', 'List all reserved domains for the enterprise'),
+                ('domain reserve', 'Reserve, delete, or generate token for a domain'),
+            ]
+
+            # Calculate width for domain commands
+            max_cmd_width = max(len(cmd) for cmd, _ in domain_subcommands)
+
+            for cmd_display, description in sorted(domain_subcommands):
+                # Bold only the "domain" part
+                domain_part = cmd_display.split(' ')[0]  # "domain"
+                sub_part = cmd_display.split(' ', 1)[1]  # "list", "reserve"
+                formatted_cmd = f'{bcolors.BOLD}{domain_part}{bcolors.ENDC} {sub_part}'
+                # Adjust spacing to account for formatting codes
+                spacing = max_cmd_width - len(cmd_display) + len(bcolors.BOLD) + len(bcolors.ENDC)
+                print(f'  {formatted_cmd}{" " * spacing}   {description}')
         else:
             # Regular command display for other categories
             max_cmd_width = 0
