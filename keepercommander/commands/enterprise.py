@@ -59,9 +59,7 @@ def register_commands(commands):
     commands['team-approve'] = TeamApproveCommand()
     commands['device-approve'] = DeviceApproveCommand()
     commands['transfer-user'] = EnterpriseTransferUserCommand()
-    commands['list-domain'] = ListDomainsCommand()
-    commands['reserve-domain'] = ReserveDomainCommand()
-
+    commands['domain'] = DomainCommand()
     commands['audit-log'] = aram.AuditLogCommand()
     commands['audit-report'] = aram.AuditReportCommand()
     commands['aging-report'] = aram.AgingReportCommand()
@@ -85,14 +83,14 @@ def register_command_info(aliases, command_info):
     aliases['et'] = 'enterprise-team'
     aliases['esr'] = 'external-shares-report'
     aliases['tu'] = 'transfer-user'
-    aliases['ld'] = 'list-domain'
-    aliases['rd'] = 'reserve-domain'
+    aliases['dl'] = ('domain', 'list')
+    aliases['dr'] = ('domain', 'reserve')
 
     for p in [enterprise_data_parser, enterprise_info_parser, enterprise_node_parser, enterprise_user_parser,
               enterprise_role_parser, enterprise_team_parser, transfer_user_parser,
               enterprise_push_parser, team_approve_parser, device_approve_parser,
               aram.audit_log_parser, aram.audit_report_parser, aram.aging_report_parser, aram.action_report_parser,
-              user_report_parser, list_domains_parser, reserve_domain_parser]:
+              user_report_parser, domain_parser]:
         command_info[p.prog] = p.description
 
     command_info['audit-alert'] = 'Manage audit alerts and notifications'
@@ -285,30 +283,40 @@ user_report_parser.add_argument('-l', '--last-login', dest='last_login', action=
 user_report_parser.error = raise_parse_exception
 user_report_parser.exit = suppress_exit
 
-list_domains_parser = argparse.ArgumentParser(prog='list-domain', parents=[report_output_parser],
-                                              description='List all reserved domains for the enterprise.')
-list_domains_parser.error = raise_parse_exception
-list_domains_parser.exit = suppress_exit
+domain_parser = argparse.ArgumentParser(prog='domain', description='Manage enterprise domains')
+domain_parser.error = raise_parse_exception
+domain_parser.exit = suppress_exit
 
-reserve_domain_parser = argparse.ArgumentParser(prog='reserve-domain',
-                                                formatter_class=argparse.RawTextHelpFormatter,
-                                                description='Reserve and manage domains for the enterprise.\n\n'
-                                                'Process:\n'
-                                                ' 1. Use --action token to get DNS verification token\n'
-                                                ' 2. Add TXT record to your DNS\n'
-                                                ' 3. Use --action add to complete reservation\n'
-                                                ' 4. Use --action delete to remove domain')
-reserve_domain_parser.add_argument('--action', dest='action', required=True,
-                                   choices=['token', 'add', 'delete'],
-                                   help='Action to perform: token (get verification token), add (add domain after verification), delete (remove domain)')
-reserve_domain_parser.add_argument('--domain', dest='domain', required=True,
-                                   help='Domain name to reserve')
-reserve_domain_parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'],
-                                   default='text', help='Output format.')
-reserve_domain_parser.add_argument('--force', dest='force', action='store_true',
-                                   help='Skip confirmation prompt for delete action')
-reserve_domain_parser.error = raise_parse_exception
-reserve_domain_parser.exit = suppress_exit
+domain_subparsers = domain_parser.add_subparsers(dest='subcommand', help='Domain subcommands', metavar='{list,reserve}')
+
+# domain list subcommand (aliases: l, ls)
+domain_list_parser = domain_subparsers.add_parser('list', parents=[report_output_parser],
+                                                   help='List all reserved domains for the enterprise',
+                                                   description='List all reserved domains for the enterprise.')
+domain_list_parser.error = raise_parse_exception
+domain_list_parser.exit = suppress_exit
+
+# domain reserve subcommand (aliases: r, res)
+domain_reserve_parser = domain_subparsers.add_parser('reserve',
+                                                      formatter_class=argparse.RawTextHelpFormatter,
+                                                      help='Reserve and manage domains',
+                                                      description='Reserve and manage domains for the enterprise.\n\n'
+                                                      'Process:\n'
+                                                      ' 1. Use --action token to get DNS verification token\n'
+                                                      ' 2. Add TXT record to your DNS\n'
+                                                      ' 3. Use --action add to complete reservation\n'
+                                                      ' 4. Use --action delete to remove domain')
+domain_reserve_parser.add_argument('--action', dest='action', required=True,
+                                    choices=['token', 'add', 'delete'],
+                                    help='Action to perform: token (get verification token), add (add domain after verification), delete (remove domain)')
+domain_reserve_parser.add_argument('--domain', dest='domain', required=True,
+                                    help='Domain name to reserve')
+domain_reserve_parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'],
+                                    default='text', help='Output format.')
+domain_reserve_parser.add_argument('--force', dest='force', action='store_true',
+                                    help='Skip confirmation prompt for delete action')
+domain_reserve_parser.error = raise_parse_exception
+domain_reserve_parser.exit = suppress_exit
 
 
 _DEFAULT_PASSWORD_COMPLEXITY = """[
@@ -4044,11 +4052,92 @@ class DomainManagementHelper:
             return message_template
         
         return f'Unable to {action} domain "{domain}". Please try again or contact support if the issue persists.'
+    
+    @staticmethod
+    def handle_invalid_subcommand(subcommand, output_format='text'):
+        """
+        Handle invalid subcommand error with user-friendly message.
+        
+        Args:
+            subcommand: The invalid subcommand provided by the user
+            output_format: Output format (text or json)
+        """
+        error_message = (
+            f"Invalid subcommand: '{subcommand}'. "
+            f"Use 'domain --help' for more information."
+        )
+        
+        if output_format == 'json':
+            error_output = {
+                'error': error_message,
+            }
+            print(json.dumps(error_output, indent=2))
+        else:
+            logging.error(error_message)
+
+
+class DomainCommand(EnterpriseCommand):    
+    def __init__(self):
+        super().__init__()
+        self.list_cmd = ListDomainsCommand()
+        self.reserve_cmd = ReserveDomainCommand()
+    
+    def get_parser(self):
+        return domain_parser
+    
+    def execute_args(self, params, args, **kwargs):
+        import shlex
+        from .base import ParseError, expand_cmd_args, normalize_output_param
+        
+        try:
+            d = {}
+            d.update(kwargs)
+            self.extra_parameters = ''
+            parser = self._get_parser_safe()
+            envvars = params.environment_variables
+            args = '' if args is None else args
+            
+            if parser:
+                args = expand_cmd_args(args, envvars)
+                args = normalize_output_param(args)
+                opts = parser.parse_args(shlex.split(args))
+                d.update(opts.__dict__)
+
+            return self.execute(params, **d)
+            
+        except ParseError as e:
+            error_str = str(e)
+            if 'invalid choice' in error_str:
+                import re
+                match = re.search(r"invalid choice: '([^']+)'", error_str)
+                if match:
+                    invalid_cmd = match.group(1)
+                    output_format = kwargs.get('format', 'text')
+                    DomainManagementHelper.handle_invalid_subcommand(invalid_cmd, output_format)
+                    return None
+            logging.error(error_str)
+            return None
+    
+    def execute(self, params, **kwargs):
+        subcommand = kwargs.get('subcommand')
+        
+        if not subcommand:
+            self.get_parser().print_help()
+            return
+        
+        if subcommand in ('list'):
+            return self.list_cmd.execute(params, **kwargs)
+        elif subcommand in ('reserve'):
+            return self.reserve_cmd.execute(params, **kwargs)
+        else:
+            output_format = kwargs.get('format', 'text')
+            DomainManagementHelper.handle_invalid_subcommand(subcommand, output_format)
+            return None
 
 
 class ListDomainsCommand(EnterpriseCommand):
     def get_parser(self):
-        return list_domains_parser
+        return domain_list_parser
 
     def execute(self, params, **kwargs):
         try:
@@ -4095,7 +4184,7 @@ class ReserveDomainCommand(EnterpriseCommand):
     }
     
     def get_parser(self):
-        return reserve_domain_parser
+        return domain_reserve_parser
 
     def execute(self, params, **kwargs):
         action = kwargs.get('action')

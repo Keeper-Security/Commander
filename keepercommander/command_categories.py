@@ -77,7 +77,7 @@ COMMAND_CATEGORIES = {
 
     # Domain Management Commands
     'Domain Management Commands': {
-        'reserve-domain', 'list-domain'
+        'domain'
     },
     
     # Service Mode REST API
