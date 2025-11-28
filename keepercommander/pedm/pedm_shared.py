@@ -105,15 +105,16 @@ def approval_type_to_name(event_type: int) -> str:
         return 'Custom'
     return 'Other'
 
-def approval_status_to_name(approval_status: int, created: datetime.datetime) -> str:
-    expired_ts = datetime.datetime.now() - datetime.timedelta(hours=5)
+def approval_status_to_name(approval_status: int, created: datetime.datetime, expire_in: int) -> str:
     if approval_status == NotificationCenter_pb2.NAS_APPROVED:
         return 'Approved'
     elif approval_status == NotificationCenter_pb2.NAS_DENIED:
         return 'Denied'
     elif approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED:
-        if expired_ts > created:
-            return 'Expired'
-        return 'Pending'
+        status = 'Pending'
+        expire_time = created + datetime.timedelta(minutes=expire_in)
+        if expire_time < datetime.datetime.now():
+            status = 'Expired'
+        return status
     else:
         return 'Unsupported'
