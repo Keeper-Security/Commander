@@ -23,7 +23,7 @@ from datetime import datetime
 from functools import reduce
 from urllib.parse import urlunparse, urlparse
 
-from typing import Optional, Tuple, Iterable, List, Dict, Any, Union, Type
+from typing import Optional, Tuple, Iterable, List, Dict, Any, Union
 
 import google
 from Cryptodome.PublicKey import RSA
