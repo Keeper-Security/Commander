@@ -33,7 +33,7 @@ from .commands import (
     register_commands, register_enterprise_commands, register_msp_commands,
     aliases, commands, command_info, enterprise_commands, msp_commands
 )
-from .commands.base import dump_report_data, CliCommand, GroupCommand
+from .commands.base import CliCommand, GroupCommand
 from .commands.utils import LoginCommand
 from .commands import msp
 from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS

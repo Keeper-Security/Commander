@@ -35,7 +35,7 @@ from ..proto import APIRequest_pb2
 from ..recordv3 import RecordV3
 
 
-record_add_parser = argparse.ArgumentParser(prog='record-add', description='Add a record to folder.')
+record_add_parser = argparse.ArgumentParser(prog='record-add', description='Add a record to folder.', allow_abbrev=False)
 record_add_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true',
                                help='Display help on field parameters.')
 record_add_parser.add_argument('-f', '--force', dest='force', action='store_true', help='ignore warnings')
