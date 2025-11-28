@@ -44,7 +44,7 @@ class PasswordReportCommand(Command):
         if policy:
             comps = [x.strip() for x in policy.split(',')]
             if any(False for c in comps if len(c) > 0 and not c.isdigit()):
-                raise CommandError('Invalid policy format.  Must be list of integer values separated by commas.')
+                raise CommandError('password-report', 'Invalid policy format.  Must be list of integer values separated by commas.')
             if len(comps) > 0:
                 if comps[0]:
                     p_length = int(comps[0])

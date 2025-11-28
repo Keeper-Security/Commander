@@ -14,8 +14,6 @@ from typing import Tuple, List, Union, Optional
 from colorama import init, Fore, Back, Style
 from tabulate import tabulate
 
-from prompt_toolkit.styles.named_colors import NAMED_COLORS
-
 from . import __version__
 from .subfolder import BaseFolderNode
 

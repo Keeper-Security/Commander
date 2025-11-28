@@ -8,7 +8,7 @@ import fnmatch
 import json
 import os.path
 import re
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlunparse
 from typing import Any, List, Optional, Dict, Union, Tuple, Set, Pattern
 
 import requests
@@ -1750,7 +1750,8 @@ class PedmApprovalViewCommand(base.ArgparseCommand):
         approval_type = pedm_shared.approval_type_to_name(approval.approval_type)
         approval_status = pedm_shared.approval_status_to_name(
             a_status.approval_status if a_status else NotificationCenter_pb2.NAS_UNSPECIFIED,
-            approval.created
+            approval.created,
+            approval.expire_in
         )
 
         row = [approval.approval_uid, approval_type, approval_status, approval.agent_uid, approval.account_info,
@@ -1789,7 +1790,8 @@ class PedmApprovalListCommand(base.ArgparseCommand):
             a_status = plugin.storage.approval_status.get_entity(approval_uid)
             status = pedm_shared.approval_status_to_name(
                 a_status.approval_status if a_status else NotificationCenter_pb2.NAS_UNSPECIFIED,
-                approval.created
+                approval.created,
+                approval.expire_in
             )
             if approval_type and approval_type != status.lower():
                 continue

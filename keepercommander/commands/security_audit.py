@@ -10,8 +10,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa, ec
 from .helpers.enterprise import get_enterprise_key, try_enterprise_decrypt
 from .. import api, crypto, utils
 from ..breachwatch import BreachWatch
-from .base import GroupCommand, raise_parse_exception, suppress_exit, field_to_title, \
-    dump_report_data, report_output_parser
+from .base import GroupCommand, field_to_title, dump_report_data, report_output_parser
 from .enterprise_common import EnterpriseCommand
 from ..params import KeeperParams
 from ..proto import enterprise_pb2, APIRequest_pb2

@@ -3,7 +3,6 @@ import os
 import shutil
 import sys
 import subprocess
-import platform
 
 is_windows = sys.platform.startswith('win')
 is_macos = sys.platform.startswith('darwin')

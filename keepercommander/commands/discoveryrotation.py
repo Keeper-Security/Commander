@@ -1514,19 +1514,16 @@ class PAMConfigurationListCommand(Command):
                 return json.dumps({"error": f'Configuration {config_uid} not found'})
             else:
                 raise Exception(f'Configuration {config_uid} not found')
-            return
         if configuration.version != 6:
             if format_type == 'json':
                 return json.dumps({"error": f'{config_uid} is not PAM Configuration'})
             else:
                 raise Exception(f'{config_uid} is not PAM Configuration')
-            return
         if not isinstance(configuration, vault.TypedRecord):
             if format_type == 'json':
                 return json.dumps({"error": f'{config_uid} is not PAM Configuration'})
             else:
                 raise Exception(f'{config_uid} is not PAM Configuration')
-            return
 
         facade = PamConfigurationRecordFacade()
         facade.record = configuration

@@ -25,7 +25,7 @@ from colorama import Fore, Back, Style
 
 from . import record_edit, base, record_totp, record_file_report
 from .base import Command, GroupCommand, RecordMixin, FolderMixin, fields_to_titles
-from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3, record_types
+from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, record_types
 from ..breachwatch import BreachWatch
 from ..error import CommandError
 from ..params import KeeperParams
