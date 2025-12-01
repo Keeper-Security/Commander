@@ -46,6 +46,10 @@ class RestApiContext:
         self.proxies = None
         self._certificate_check = True
         self.fail_on_throttle = False
+    
+    def reset_qrc_key(self):
+        """Reset QRC key ID to force re-determination (called on server change or logout)"""
+        self.__qrc_key_id = -1
 
     def __get_server_base(self):
         return self.__server_base
@@ -54,7 +58,13 @@ class RestApiContext:
         if not value.startswith('http'):
             value = 'https://' + value
         p = urlparse(value)
-        self.__server_base = urlunparse((p.scheme or 'https', p.netloc, '/api/rest/', None, None, None))
+        new_server_base = urlunparse((p.scheme or 'https', p.netloc, '/api/rest/', None, None, None))
+        
+        # Reset QRC key ID if server changed
+        if hasattr(self, '_RestApiContext__server_base') and self.__server_base != new_server_base:
+            self.__qrc_key_id = -1
+        
+        self.__server_base = new_server_base
 
     def __get_server_key_id(self):
         return self.__server_key_id
@@ -231,6 +241,7 @@ class KeeperParams:
         self.session_token = None
         self.salt = None
         self.iterations = 0
+        self.__rest_context.reset_qrc_key()
         self.data_key = None
         self.client_key = None
         self.rsa_key = None
