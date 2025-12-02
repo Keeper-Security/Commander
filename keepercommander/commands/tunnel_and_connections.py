@@ -994,19 +994,57 @@ class PAMConnectionEditCommand(Command):
 class PAMRbiEditCommand(Command):
     choices = ['on', 'off', 'default']
     parser = argparse.ArgumentParser(prog='pam rbi edit')
+
+    # Record and Configuration
     parser.add_argument('--record', '-r', type=str, required=True, dest='record', action='store',
                         help='The record UID or path of the RBI record.')
     parser.add_argument('--configuration', '-c', required=False, dest='config', action='store',
                         help='The PAM Configuration UID or path to use for connections. '
                         'Use command `pam config list` to view available PAM Configurations.')
-    parser.add_argument('--autofill-credentials', '-a', type=str, required=False, dest='autofill', action='store',
-                        help='The record UID or path of the RBI Autofill Credentials record.')
-    parser.add_argument('--key-events', '-k', dest='key_events', choices=choices,
-                        help='Toggle Key Events settings')
+
+    # RBI and Recording Settings
     parser.add_argument('--remote-browser-isolation', '-rbi', dest='rbi', choices=choices,
                         help='Set RBI permissions')
     parser.add_argument('--connections-recording', '-cr', dest='recording', choices=choices,
                         help='Set recording connections permissions for the resource')
+    parser.add_argument('--key-events', '-k', dest='key_events', choices=choices,
+                        help='Toggle Key Events settings')
+
+    # Browser Settings
+    parser.add_argument('--allow-url-navigation', '-nav', dest='allow_url_navigation', choices=choices,
+                        help='Allow navigation via direct URL manipulation (on/off/default)')
+    parser.add_argument('--ignore-server-cert', '-isc', dest='ignore_server_cert', choices=choices,
+                        help='Ignore server certificate errors (on/off/default)')
+
+    # URL Filtering
+    parser.add_argument('--allowed-urls', '-au', dest='allowed_urls', action='append',
+                        help='Allowed URL patterns (can specify multiple times)')
+    parser.add_argument('--allowed-resource-urls', '-aru', dest='allowed_resource_urls', action='append',
+                        help='Allowed resource URL patterns (can specify multiple times)')
+
+    # Autofill Settings
+    parser.add_argument('--autofill-credentials', '-a', type=str, required=False, dest='autofill', action='store',
+                        help='The record UID or path of the RBI Autofill Credentials record.')
+    parser.add_argument('--autofill-targets', '-at', dest='autofill_targets', action='append',
+                        help='Autofill target selectors (can specify multiple times)')
+
+    # Clipboard Settings
+    parser.add_argument('--allow-copy', '-cpy', dest='allow_copy', choices=choices,
+                        help='Allow copying to clipboard (on/off/default)')
+    parser.add_argument('--allow-paste', '-p', dest='allow_paste', choices=choices,
+                        help='Allow pasting from clipboard (on/off/default)')
+
+    # Audio Settings
+    parser.add_argument('--disable-audio', '-da', dest='disable_audio', choices=choices,
+                        help='Disable audio for RBI sessions (on/off/default)')
+    parser.add_argument('--audio-channels', '-ac', dest='audio_channels', type=int,
+                        help='Number of audio channels (e.g., 1 for mono, 2 for stereo)')
+    parser.add_argument('--audio-bit-depth', '-bd', dest='audio_bit_depth', type=int, choices=[8, 16],
+                        help='Audio bit depth (8 or 16)')
+    parser.add_argument('--audio-sample-rate', '-sr', dest='audio_sample_rate', type=int,
+                        help='Audio sample rate in Hz (e.g., 44100, 48000)')
+
+    # Utility
     parser.add_argument('--silent', '-s', required=False, dest='silent', action='store_true',
                         help='Silent mode - don\'t print PAM User, PAM Config etc.')
 
@@ -1022,11 +1060,40 @@ class PAMRbiEditCommand(Command):
         recording = kwargs.get('recording')  # on/off/default
         silent = kwargs.get('silent') or False
 
+        # New RBI settings (Phase 1 - KC-1034)
+        allow_url_navigation = kwargs.get('allow_url_navigation')  # on/off/default/None
+        ignore_server_cert = kwargs.get('ignore_server_cert')  # on/off/default/None
+        allowed_urls = kwargs.get('allowed_urls')  # list or None
+        allowed_resource_urls = kwargs.get('allowed_resource_urls')  # list or None
+        autofill_targets = kwargs.get('autofill_targets')  # list or None
+        allow_copy = kwargs.get('allow_copy')  # on/off/default/None
+        allow_paste = kwargs.get('allow_paste')  # on/off/default/None
+        disable_audio = kwargs.get('disable_audio')  # on/off/default/None
+        audio_channels = kwargs.get('audio_channels')  # int or None
+        audio_bit_depth = kwargs.get('audio_bit_depth')  # int or None
+        audio_sample_rate = kwargs.get('audio_sample_rate')  # int or None
+
         if not record_name:
             raise CommandError('pam rbi edit', 'Record parameter is required.')
-        if not (autofill or key_events or config_name or rbi or recording):
-            raise CommandError('pam rbi edit', 'At least one parameter is required (-a -k -c -cr -rbi) '
-                               ' and if the record is not linked to PAM Config -c option is required.')
+
+        # Check if any setting argument is provided
+        has_new_settings = any([
+            allow_url_navigation is not None,
+            ignore_server_cert is not None,
+            allowed_urls is not None,
+            allowed_resource_urls is not None,
+            autofill_targets is not None,
+            allow_copy is not None,
+            allow_paste is not None,
+            disable_audio is not None,
+            audio_channels is not None,
+            audio_bit_depth is not None,
+            audio_sample_rate is not None
+        ])
+
+        if not (autofill or key_events or config_name or rbi or recording or has_new_settings):
+            raise CommandError('pam rbi edit', 'At least one parameter is required. '
+                               'If the record is not linked to PAM Config, -c option is required.')
 
         record = RecordMixin.resolve_single_record(params, record_name)
         if not record:
@@ -1110,6 +1177,119 @@ class PAMRbiEditCommand(Command):
                     logging.debug(f'recordingIncludeKeys is already disabled on record={record_uid}')
             else:
                 logging.debug(f'Unexpected value for --key-events {key_events} (ignored)')
+
+        # Handle new RBI settings (KC-1034)
+        # Helper function to update connection settings with on/off/default pattern
+        def update_connection_toggle(field_name, setting_value, invert=False):
+            """Update a connection field using on/off/default pattern.
+
+            Args:
+                field_name: The field name in the connection dict
+                setting_value: 'on', 'off', or 'default'
+                invert: If True, 'on' sets False and 'off' sets True (for disableCopy/disablePaste)
+            """
+            nonlocal dirty
+            rbs_fld = record.get_typed_field('pamRemoteBrowserSettings')
+            if rbs_fld and rbs_fld.value and isinstance(rbs_fld.value[0], dict):
+                connection = rbs_fld.value[0].get('connection', {})
+                current_value = connection.get(field_name)
+
+                if setting_value == 'default':
+                    if current_value is not None:
+                        rbs_fld.value[0]['connection'].pop(field_name, None)
+                        dirty = True
+                        logging.debug(f'Removed {field_name} (set to default) on record={record_uid}')
+                    else:
+                        logging.debug(f'{field_name} is already set to default on record={record_uid}')
+                elif setting_value == 'on':
+                    target_value = False if invert else True
+                    if current_value != target_value:
+                        rbs_fld.value[0]['connection'][field_name] = target_value
+                        dirty = True
+                        logging.debug(f'Set {field_name}={target_value} on record={record_uid}')
+                    else:
+                        logging.debug(f'{field_name} is already set to {target_value} on record={record_uid}')
+                elif setting_value == 'off':
+                    target_value = True if invert else False
+                    if current_value != target_value:
+                        rbs_fld.value[0]['connection'][field_name] = target_value
+                        dirty = True
+                        logging.debug(f'Set {field_name}={target_value} on record={record_uid}')
+                    else:
+                        logging.debug(f'{field_name} is already set to {target_value} on record={record_uid}')
+                else:
+                    logging.debug(f'Unexpected value for {field_name}: {setting_value} (ignored)')
+
+        # Helper function for multi-value string fields
+        def update_connection_string(field_name, values):
+            nonlocal dirty
+            rbs_fld = record.get_typed_field('pamRemoteBrowserSettings')
+            if rbs_fld and rbs_fld.value and isinstance(rbs_fld.value[0], dict):
+                connection = rbs_fld.value[0].get('connection', {})
+                new_value = '\n'.join(values) if values else ''
+                if connection.get(field_name) != new_value:
+                    rbs_fld.value[0]['connection'][field_name] = new_value
+                    dirty = True
+                    logging.debug(f'Set {field_name}={new_value!r} on record={record_uid}')
+                else:
+                    logging.debug(f'{field_name} is already set to {new_value!r} on record={record_uid}')
+
+        # Helper function for integer fields
+        def update_connection_int(field_name, value):
+            nonlocal dirty
+            rbs_fld = record.get_typed_field('pamRemoteBrowserSettings')
+            if rbs_fld and rbs_fld.value and isinstance(rbs_fld.value[0], dict):
+                connection = rbs_fld.value[0].get('connection', {})
+                if connection.get(field_name) != value:
+                    rbs_fld.value[0]['connection'][field_name] = value
+                    dirty = True
+                    logging.debug(f'Set {field_name}={value} on record={record_uid}')
+                else:
+                    logging.debug(f'{field_name} is already set to {value} on record={record_uid}')
+
+        # Browser Settings - allowUrlManipulation (on/off/default)
+        if allow_url_navigation:
+            update_connection_toggle('allowUrlManipulation', allow_url_navigation)
+
+        # Browser Settings - ignoreInitialSslCert (on/off/default)
+        if ignore_server_cert:
+            update_connection_toggle('ignoreInitialSslCert', ignore_server_cert)
+
+        # URL Filtering - allowedUrlPatterns (multi-value, joined with newlines)
+        if allowed_urls is not None:
+            update_connection_string('allowedUrlPatterns', allowed_urls)
+
+        # URL Filtering - allowedResourceUrlPatterns (multi-value, joined with newlines)
+        if allowed_resource_urls is not None:
+            update_connection_string('allowedResourceUrlPatterns', allowed_resource_urls)
+
+        # Autofill Targets - autofillConfiguration (multi-value, joined with newlines)
+        if autofill_targets is not None:
+            update_connection_string('autofillConfiguration', autofill_targets)
+
+        # Clipboard Settings - disableCopy (inverted: on -> disableCopy=False, off -> disableCopy=True)
+        if allow_copy:
+            update_connection_toggle('disableCopy', allow_copy, invert=True)
+
+        # Clipboard Settings - disablePaste (inverted: on -> disablePaste=False, off -> disablePaste=True)
+        if allow_paste:
+            update_connection_toggle('disablePaste', allow_paste, invert=True)
+
+        # Audio Settings - disableAudio (on -> disableAudio=True, off -> disableAudio=False)
+        if disable_audio:
+            update_connection_toggle('disableAudio', disable_audio)
+
+        # Audio Settings - audioChannels (integer) - same location as disableAudio (inside connection)
+        if audio_channels is not None:
+            update_connection_int('audioChannels', audio_channels)
+
+        # Audio Settings - audioBps (integer)
+        if audio_bit_depth is not None:
+            update_connection_int('audioBps', audio_bit_depth)
+
+        # Audio Settings - audioSampleRate (integer)
+        if audio_sample_rate is not None:
+            update_connection_int('audioSampleRate', audio_sample_rate)
 
         if dirty:
             record_management.update_record(params, record)
