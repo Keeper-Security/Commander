@@ -243,6 +243,7 @@ proxy_parser.exit = suppress_exit
 
 login_parser = argparse.ArgumentParser(prog='login', description='Start a login session on Commander')
 login_parser.add_argument('-p', '--pass', dest='password', action='store', help='master password')
+login_parser.add_argument('--new-login', dest='new_login', action='store_true', help='Force full login flow')
 login_parser.add_argument('email', nargs='?', type=str, help='account email')
 login_parser.error = raise_parse_exception
 login_parser.exit = suppress_exit
@@ -1476,9 +1477,9 @@ class LoginCommand(Command):
                     password = params.config['password']
 
         params.password = password
-
+        new_login = kwargs.get('new_login') is True
         try:
-            api.login(params, new_login=True)
+            api.login(params, new_login=new_login)
         except Exception as exc:
             logging.warning(str(exc))
 
