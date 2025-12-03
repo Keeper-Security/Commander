@@ -796,6 +796,8 @@ def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version
             return rs
     elif isinstance(rs, dict):
         kae = KeeperApiError(rs['error'], rs['message'])
+        kae.additional_info = rs.get('additional_info')
+
         if kae.result_code == 'session_token_expired':
             params.session_token = None
         raise kae
