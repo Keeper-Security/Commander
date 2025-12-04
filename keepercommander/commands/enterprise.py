@@ -289,14 +289,12 @@ domain_parser.exit = suppress_exit
 
 domain_subparsers = domain_parser.add_subparsers(dest='subcommand', help='Domain subcommands', metavar='{list,reserve}')
 
-# domain list subcommand (aliases: l, ls)
 domain_list_parser = domain_subparsers.add_parser('list', parents=[report_output_parser],
                                                    help='List all reserved domains for the enterprise',
                                                    description='List all reserved domains for the enterprise.')
 domain_list_parser.error = raise_parse_exception
 domain_list_parser.exit = suppress_exit
 
-# domain reserve subcommand (aliases: r, res)
 domain_reserve_parser = domain_subparsers.add_parser('reserve',
                                                       formatter_class=argparse.RawTextHelpFormatter,
                                                       help='Reserve and manage domains',
@@ -4332,7 +4330,7 @@ class ReserveDomainCommand(EnterpriseCommand):
         logging.info(f'2. Add a TXT record for domain "{domain}" with value:')
         logging.info(f'   {bcolors.WARNING}{token}{bcolors.ENDC}')
         logging.info('3. Wait for DNS propagation (may take a few minutes)')
-        logging.info(f'4. Run: reserve-domain --action add --domain {domain}')
+        logging.info(f'4. Run: domain reserve --action add --domain {domain}')
     
     def _refresh_enterprise_data(self, params, action_past_tense):
         try:
