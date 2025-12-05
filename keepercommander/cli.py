@@ -384,6 +384,7 @@ def do_command(params, command_line):
                             LoginCommand().execute(params, email=params.user, password=params.password, new_login=False)
                         except KeyboardInterrupt:
                             logging.info('Canceled')
+                        if not params.session_token:
                             return
 
                     if is_enterprise_command(cmd, command, args) or cmd in msp_commands:
