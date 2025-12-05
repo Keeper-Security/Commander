@@ -923,7 +923,7 @@ class ShareRecordCommand(Command):
             get_username = lambda addr: next(iter(addr.split('@')), '').casefold()
             matches = [c for c in contacts if get_username(user) == get_username(c)]
             if len(matches) > 1:
-                raise CommandError('More than 1 matching usernames found. Aborting')
+                raise CommandError('share-record', 'More than 1 matching usernames found. Aborting')
             return next(iter(matches), None)
 
         if use_contacts:

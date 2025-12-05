@@ -1410,13 +1410,23 @@ class TunnelSignalHandler:
                 unregister_tunnel_session(tube_id)
             return  # Local event, no gateway response needed
 
-        # Handle ICE candidates - use session to check if offer is sent
+        # Handle ICE candidates - use session to check if offer is sent AND WebSocket is ready
         elif signal_kind == 'icecandidate':
             logging.debug(f"Received ICE candidate for tube {tube_id}")
-            
-            if session and not session.offer_sent:
-                # Buffer the candidate until offer is sent
-                logging.debug(f"Buffering ICE candidate - offer not yet sent for tube {tube_id}")
+
+            # Check if we should buffer this candidate
+            should_buffer = False
+            if session:
+                # Buffer if offer not sent yet
+                if not session.offer_sent:
+                    should_buffer = True
+                    logging.debug(f"Buffering ICE candidate - offer not yet sent for tube {tube_id}")
+                # Also buffer if WebSocket is not ready yet (even if offer was sent)
+                elif session.websocket_ready_event and not session.websocket_ready_event.is_set():
+                    should_buffer = True
+                    logging.debug(f"Buffering ICE candidate - WebSocket not ready yet for tube {tube_id}")
+
+            if should_buffer:
                 session.buffered_ice_candidates.append(data)
             else:
                 # Send the candidate immediately (but still in array format for gateway consistency)
@@ -1511,8 +1521,21 @@ class TunnelSignalHandler:
                 logging.debug("ICE candidate sent via HTTP POST")
                 
         except Exception as e:
-            logging.error(f"Failed to send ICE candidate via HTTP: {e}")
-            print(f"{bcolors.WARNING}Failed to send ICE candidate: {e}{bcolors.ENDC}")
+            # Check if this is a gateway offline error (RRC_CONTROLLER_DOWN) or bad state error (RRC_BAD_STATE)
+            error_str = str(e)
+            is_gateway_offline = 'RRC_CONTROLLER_DOWN' in error_str
+            is_bad_state = 'RRC_BAD_STATE' in error_str
+
+            if is_gateway_offline:
+                # Gateway is offline - this is expected if gateway is down, log at debug level
+                logging.debug(f"Gateway offline when sending ICE candidate: {e}")
+            elif is_bad_state:
+                # Bad state - transient during WebSocket startup, log at debug level
+                logging.debug(f"Bad state when sending ICE candidate: {e}")
+            else:
+                # Other errors - log at error level and print to console
+                logging.error(f"Failed to send ICE candidate via HTTP: {e}")
+                print(f"{bcolors.WARNING}Failed to send ICE candidate: {e}{bcolors.ENDC}")
 
     def _send_restart_offer(self, restart_sdp, tube_id):
         """Send ICE restart offer via HTTP POST to /send_controller_message with encryption
@@ -1559,11 +1582,34 @@ class TunnelSignalHandler:
             print(f"{bcolors.OKGREEN}ICE restart offer sent successfully{bcolors.ENDC}")
 
         except Exception as e:
-            logging.error(f"Failed to send ICE restart offer for tube {tube_id}: {e}")
-            print(f"{bcolors.FAIL}Failed to send ICE restart offer: {e}{bcolors.ENDC}")
+            # Check if this is a gateway offline error (RRC_CONTROLLER_DOWN) or bad state error (RRC_BAD_STATE)
+            error_str = str(e)
+            is_gateway_offline = 'RRC_CONTROLLER_DOWN' in error_str
+            is_bad_state = 'RRC_BAD_STATE' in error_str
+
+            if is_gateway_offline:
+                # Gateway is offline - this is expected if gateway is down, log at debug level
+                logging.debug(f"Gateway offline when sending ICE restart offer for tube {tube_id}: {e}")
+            elif is_bad_state:
+                # Bad state - transient during WebSocket startup, log at debug level
+                logging.debug(f"Bad state when sending ICE restart offer for tube {tube_id}: {e}")
+            else:
+                # Other errors - log at error level and print to console
+                logging.error(f"Failed to send ICE restart offer for tube {tube_id}: {e}")
+                print(f"{bcolors.FAIL}Failed to send ICE restart offer: {e}{bcolors.ENDC}")
 
     def cleanup(self):
         """Cleanup resources"""
+        # Close the tube in Rust registry if it exists
+        if self.tube_id and self.tube_registry:
+            try:
+                logging.debug(f"Closing tube {self.tube_id} in cleanup")
+                self.tube_registry.close_tube(self.tube_id, reason=CloseConnectionReasons.Error)
+                logging.debug(f"Tube {self.tube_id} closed successfully")
+            except Exception as e:
+                # Tube might not exist yet or already closed
+                logging.debug(f"Could not close tube {self.tube_id} during cleanup: {e}")
+
         # Unregister conversation key from global store
         if self.conversation_id:
             unregister_conversation_key(self.conversation_id)
@@ -1577,7 +1623,7 @@ class TunnelSignalHandler:
         logging.debug("TunnelSignalHandler cleaned up")
 
 def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
-                      seed, target_host, target_port, socks, trickle_ice=True, record_title=None):
+                      seed, target_host, target_port, socks, trickle_ice=True, record_title=None, allow_supply_host=False):
     """
     Start a tunnel using Rust WebRTC with trickle ICE via HTTP POST and WebSocket responses.
     
@@ -1835,6 +1881,15 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
         
         # Prepare the offer data
         data = {"offer": offer.get("offer")}
+
+        # If allowSupplyHost is enabled, include the target host and port in the payload
+        if allow_supply_host:
+            data["host"] = {
+                "hostName": target_host,
+                "port": target_port
+            }
+            logging.debug(f"Including user-supplied host in payload: {target_host}:{target_port}")
+
         string_data = json.dumps(data)
         bytes_data = string_to_bytes(string_data)
         encrypted_data = tunnel_encrypt(symmetric_key, bytes_data)
@@ -1848,7 +1903,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
         for attempt in range(max_retries + 1):
             try:
                 if attempt > 0:
-                    logging.info(f"Retry attempt {attempt}/{max_retries} after {retry_delay}s delay...")
+                    logging.debug(f"Retry attempt {attempt}/{max_retries} after {retry_delay}s delay...")
                     time.sleep(retry_delay)
                 
                 router_response = router_send_action_to_gateway(
@@ -1885,9 +1940,9 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                 is_last_attempt = (attempt == max_retries)
                 
                 if is_bad_state and not is_last_attempt:
-                    # Retryable error and we have attempts left
-                    logging.warning(f"RRC_BAD_STATE on attempt {attempt + 1}/{max_retries + 1} - WebSocket backend may need more time")
-                    logging.info(f"Will retry in {retry_delay}s...")
+                    # Retryable error and we have attempts left - this is expected during WebSocket startup
+                    logging.debug(f"RRC_BAD_STATE on attempt {attempt + 1}/{max_retries + 1} - WebSocket backend may need more time")
+                    logging.debug(f"Will retry in {retry_delay}s...")
                     continue  # Retry
                 else:
                     # Fatal error or out of retries
@@ -1898,14 +1953,24 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                     logging.error(f"Failed to send offer via HTTP: {error_msg}")
                     
                     # Cleanup on final failure
+                    logging.debug(f"Cleaning up failed tunnel {commander_tube_id}")
+
+                    # Stop the WebSocket if it was started
+                    if tunnel_session.websocket_stop_event and tunnel_session.websocket_thread:
+                        logging.debug(f"Stopping WebSocket for failed tunnel {commander_tube_id}")
+                        tunnel_session.websocket_stop_event.set()
+                        tunnel_session.websocket_thread.join(timeout=2.0)
+                        if tunnel_session.websocket_thread.is_alive():
+                            logging.warning(f"WebSocket for tunnel {commander_tube_id} did not close in time")
+
                     if not is_bad_state:
                         # Non-retryable error - cleanup immediately
                         signal_handler.cleanup()
                     else:
                         # RRC_BAD_STATE after all retries - cleanup but log it
-                        logging.warning("Cleaning up after RRC_BAD_STATE exhausted retries")
+                        logging.debug("Cleaning up after RRC_BAD_STATE exhausted retries")
                         signal_handler.cleanup()
-                    
+
                     unregister_tunnel_session(commander_tube_id)
                     return {"success": False, "error": f"Failed to send offer via HTTP: {e}"}
         
@@ -1950,6 +2015,14 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
         
         # Send any buffered ICE candidates that arrived before offer was sent (trickle ICE only)
         if trickle_ice and tunnel_session.buffered_ice_candidates:
+            # Ensure WebSocket backend is fully ready before flushing candidates
+            # The backend might need a bit more time after the offer succeeds
+            if tunnel_session.websocket_ready_event and not tunnel_session.websocket_ready_event.is_set():
+                logging.debug(f"Waiting for WebSocket to be ready before flushing ICE candidates...")
+                websocket_ready = tunnel_session.websocket_ready_event.wait(timeout=5.0)
+                if not websocket_ready:
+                    logging.warning(f"WebSocket not ready after 5s, flushing candidates anyway")
+
             logging.debug(f"Flushing {len(tunnel_session.buffered_ice_candidates)} buffered ICE candidates after offer sent")
             for candidate in tunnel_session.buffered_ice_candidates:
                 signal_handler._send_ice_candidate_immediately(candidate, commander_tube_id)

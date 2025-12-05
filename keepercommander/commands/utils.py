@@ -56,6 +56,13 @@ KEEPER_API_FOLDER_BATCH_LIMIT = 500  # Maximum folders per pre_delete API reques
 
 is_windows = sys.platform.startswith('win')
 
+TFA_EXPIRATION_VALUES = {
+    'login': APIRequest_pb2.TWO_FA_EXP_IMMEDIATELY,
+    '12_hours': APIRequest_pb2.TWO_FA_EXP_12_HOURS,
+    '24_hours': APIRequest_pb2.TWO_FA_EXP_24_HOURS,
+    '30_days': APIRequest_pb2.TWO_FA_EXP_30_DAYS,
+    'forever': APIRequest_pb2.TWO_FA_EXP_NEVER,
+}
 
 @dataclass
 class DeletionStats:
@@ -226,7 +233,7 @@ whoami_parser.error = raise_parse_exception
 whoami_parser.exit = suppress_exit
 
 
-this_device_available_command_verbs = ['rename', 'register', 'persistent-login', 'ip-auto-approve', 'no-yubikey-pin', 'timeout']
+this_device_available_command_verbs = ['rename', 'register', 'persistent-login', 'ip-auto-approve', 'no-yubikey-pin', 'timeout', '2fa_expiration']
 this_device_parser = argparse.ArgumentParser(prog='this-device', description='Display and modify settings of the current device')
 this_device_parser.add_argument('ops', nargs='*', help="operation str: " + ", ".join(this_device_available_command_verbs))
 this_device_parser.error = raise_parse_exception
@@ -243,6 +250,7 @@ proxy_parser.exit = suppress_exit
 
 login_parser = argparse.ArgumentParser(prog='login', description='Start a login session on Commander')
 login_parser.add_argument('-p', '--pass', dest='password', action='store', help='master password')
+login_parser.add_argument('--new-login', dest='new_login', action='store_true', help='Force full login flow')
 login_parser.add_argument('email', nargs='?', type=str, help='account email')
 login_parser.error = raise_parse_exception
 login_parser.exit = suppress_exit
@@ -520,6 +528,18 @@ class ThisDeviceCommand(Command):
             loginv3.LoginV3API.set_user_setting(params, 'logout_timer', get_timeout_setting_from_delta(timeout_delta))
             dispay_value = 'default value' if timeout_delta == timedelta(0) else format_timeout(timeout_delta)
             print(f'Successfully set "logout_timer" to {dispay_value}.')
+
+        elif action == '2fa_expiration':
+            value = ops[1]
+            mfa_expiration = TFA_EXPIRATION_VALUES.get(value.lower())
+            if mfa_expiration is None:
+
+                raise CommandError('this-device', f"Unknown 2fa_expiration value \"{value}\". Available values: " + ", ".join(TFA_EXPIRATION_VALUES.keys()))
+
+            rq = APIRequest_pb2.TwoFactorUpdateExpirationRequest()
+            rq.expireIn = mfa_expiration
+            api.communicate_rest(params, rq, 'authentication/2fa_update_expiration')
+            print(f'Successfully set "2fa_expiration" to {value}.')
 
         else:
             raise Exception("Unknown sub-command " + action + ". Available sub-commands: ", ", ".join(this_device_available_command_verbs))
@@ -1455,8 +1475,6 @@ class LoginCommand(Command):
             msp.current_mc_id = None
             msp.mc_params_dict.clear()
 
-        params.clear_session()
-
         user = kwargs.get('email') or ''
         password = kwargs.get('password') or ''
 
@@ -1476,13 +1494,15 @@ class LoginCommand(Command):
                     password = params.config['password']
 
         params.password = password
-
+        new_login = kwargs.get('new_login') is True
         try:
-            api.login(params, new_login=True)
+            api.login(params, new_login=new_login)
         except Exception as exc:
             logging.warning(str(exc))
 
         if params.session_token:
+            params.enterprise = None
+            params._pedm_plugin = None
             SyncDownCommand().execute(params, force=True)
             if params.is_enterprise_admin:
                 api.query_enterprise(params, True)

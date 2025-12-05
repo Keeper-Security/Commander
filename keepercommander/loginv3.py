@@ -886,7 +886,7 @@ class LoginV3API:
         rq.verificationChannel = verification_channel
         rq.clientVersion = rest_api.CLIENT_VERSION
         if message_session_uid:
-            rq.messageSessionUid = utils.base64_url_encode(message_session_uid)
+            rq.messageSessionUid = message_session_uid
 
         api.communicate_rest(params, rq, 'authentication/request_device_verification',
                              rs_type=APIRequest_pb2.DeviceVerificationResponse)

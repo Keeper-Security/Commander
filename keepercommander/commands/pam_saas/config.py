@@ -10,7 +10,6 @@ from ...api import get_records_add_request, sync_down
 from ...error import KeeperApiError
 from tempfile import TemporaryDirectory
 import os
-import requests
 import json
 from typing import Optional, List, TYPE_CHECKING
 

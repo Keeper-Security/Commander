@@ -27,7 +27,6 @@ from colorama import Style
 from . import base
 from .base import user_choice, dump_report_data, suppress_exit, raise_parse_exception, Command, GroupCommand, \
     RecordMixin, FolderMixin
-from .utils import SyncDownCommand
 from .. import api, display, vault, vault_extensions, crypto, utils
 from ..error import CommandError
 from ..params import KeeperParams

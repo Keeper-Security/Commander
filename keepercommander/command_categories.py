@@ -74,11 +74,21 @@ COMMAND_CATEGORIES = {
     'Device Management Commands': {
         'device-list', 'device-action', 'device-rename', 'device-admin-list', 'device-admin-action'
     },
+
+    # Domain Management Commands
+    'Domain Management Commands': {
+        'domain'
+    },
     
     # Service Mode REST API
     'Service Mode REST API': {
         'service-create', 'service-add-config', 'service-start', 'service-stop', 'service-status',
         'service-config-add'
+    },
+
+    # Email Configuration Commands
+    'Email Configuration Commands': {
+        'email-config'
     },
     
     # Email Configuration Commands
@@ -128,6 +138,8 @@ def get_category_order():
         'Secrets Manager Commands',
         'BreachWatch Commands',
         'Device Management Commands',
+        'Domain Management Commands',
+        'Email Configuration Commands',
         'Service Mode REST API',
         'Email Configuration Commands',
         'Miscellaneous Commands',

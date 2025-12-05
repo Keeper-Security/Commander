@@ -323,7 +323,7 @@ def main(from_package=False):
     if isinstance(params.timedelay, int) and params.timedelay >= 1 and params.commands:
         cli.runcommands(params)
     else:
-        if opts.command in {'shell', '-'}:
+        if opts.command in {'shell', 'login', '-'}:
             if opts.command == '-':
                 params.batch_mode = True
         elif opts.command and os.path.isfile(opts.command):

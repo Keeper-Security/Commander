@@ -150,6 +150,7 @@ class TestRiskManagement(TestCase):
         self.assertIn('321321', output)
         self.assertIn('123456', output)
         self.assertIn('654321', output)
+        self.assertIn('Recovery Phrase Set Declined', output)
 
 
     @patch("keepercommander.commands.audit_alerts.AuditSettingMixin.EVENT_TYPES", [(123, "account_recovery_decline")])

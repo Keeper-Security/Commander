@@ -1,3 +1,4 @@
+from __future__ import annotations
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import base64
 import os
@@ -16,9 +17,19 @@ def decrypt_aes(data: bytes, key: bytes) -> bytes:
     return aesgcm.decrypt(data[:12], data[12:], None)
 
 
+def decrypt_aes_fancy(encrypted_data, key: bytes):
+    aesgcm = AESGCM(key)
+
+    nonce = encrypted_data[:12]
+    ciphertext = encrypted_data[12:]
+    plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+
+    return plaintext
+
+
 def bytes_to_base64(b: Union[str, bytes]) -> str:
 
-    if isinstance(b, str) is True:
+    if isinstance(b, str):
         b = b.encode()
 
     return base64.b64encode(b).decode()
@@ -34,7 +45,7 @@ def str_to_bytes(s: str) -> bytes:
     return b
 
 
-def bytes_to_urlsafe_str(b: Union[str,bytes]) -> str:
+def bytes_to_urlsafe_str(b: Union[str, bytes]) -> str:
     """
     Convert bytes to a URL-safe base64 encoded string.
 
@@ -44,7 +55,7 @@ def bytes_to_urlsafe_str(b: Union[str,bytes]) -> str:
     Returns:
         str: The URL-safe base64 encoded representation of the input bytes.
     """
-    if isinstance(b, str) is True:
+    if isinstance(b, str):
         b = b.encode()
 
     return base64.urlsafe_b64encode(b).decode().rstrip('=')

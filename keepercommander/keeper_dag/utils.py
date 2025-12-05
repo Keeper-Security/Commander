@@ -6,3 +6,7 @@ def value_to_boolean(value):
         return False
     else:
         return None
+
+
+def kotlin_bytes(data: bytes):
+    return [b if b < 128 else b - 256 for b in data]

@@ -1663,19 +1663,16 @@ class PAMConfigurationListCommand(Command):
                 return json.dumps({"error": f'Configuration {config_uid} not found'})
             else:
                 raise Exception(f'Configuration {config_uid} not found')
-            return
         if configuration.version != 6:
             if format_type == 'json':
                 return json.dumps({"error": f'{config_uid} is not PAM Configuration'})
             else:
                 raise Exception(f'{config_uid} is not PAM Configuration')
-            return
         if not isinstance(configuration, vault.TypedRecord):
             if format_type == 'json':
                 return json.dumps({"error": f'{config_uid} is not PAM Configuration'})
             else:
                 raise Exception(f'{config_uid} is not PAM Configuration')
-            return
 
         facade = PamConfigurationRecordFacade()
         facade.record = configuration
@@ -3039,7 +3036,9 @@ class PAMGatewayActionRotateCommand(Command):
                 pam_config = vault.KeeperRecord.load(params, config_uid)
 
                 # Check the graph for the noop setting.
-                record_link = RecordLink(record=pam_config, params=params, fail_on_corrupt=False)
+                record_link = RecordLink(record=pam_config,
+                                         params=params,
+                                         fail_on_corrupt=False)
                 acl = record_link.get_acl(record_uid, pam_config.record_uid)
                 if acl is not None and acl.rotation_settings is not None:
                     is_noop = acl.rotation_settings.noop

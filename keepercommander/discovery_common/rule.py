@@ -1,10 +1,10 @@
 from __future__ import annotations
-from .constants import DIS_RULES_GRAPH_ID
 from .types import (RuleTypeEnum, RuleItem, ActionRuleSet, ActionRuleItem, ScheduleRuleSet, ComplexityRuleSet,
                     Statement, RuleActionEnum)
 from .utils import value_to_boolean, get_connection, make_agent
 from ..keeper_dag import DAG, EdgeType
 from ..keeper_dag.exceptions import DAGException
+from ..keeper_dag.types import PamGraphId, PamEndpoints
 from time import time
 import base64
 import os
@@ -99,13 +99,19 @@ class Rules:
 
             # Turn auto_save on after the DAG has been created.
             # No need to call it six times in a row to initialize it.
-            self._dag = DAG(conn=self.conn, record=self.record, graph_id=DIS_RULES_GRAPH_ID, auto_save=False,
-                            logger=self.logger, debug_level=self.debug_level, fail_on_corrupt=self.fail_on_corrupt,
+            self._dag = DAG(conn=self.conn,
+                            record=self.record,
+                            # endpoint=PamEndpoints.DISCOVERY_RULES,
+                            graph_id=PamGraphId.DISCOVERY_RULES,
+                            auto_save=False,
+                            logger=self.logger,
+                            debug_level=self.debug_level,
+                            fail_on_corrupt=self.fail_on_corrupt,
                             agent=self.agent)
             self._dag.load()
 
             # Has the status been initialized?
-            if self._dag.has_graph is False:
+            if not self._dag.has_graph:
                 for rule_type_enum in Rules.RULE_TYPE_TO_SET_MAP:
                     rules = self._dag.add_vertex()
                     rules.belongs_to_root(
@@ -121,6 +127,26 @@ class Rules:
             # The graph exists now, turn on the auto_save.
             self._dag.auto_save = True
         return self._dag
+
+    def close(self):
+        """
+        Clean up resources held by this Rules instance.
+        Releases the DAG instance and connection to prevent memory leaks.
+        """
+        if self._dag is not None:
+            if self.logger:
+                self.logger.debug("closing Rules DAG instance")
+            self._dag = None
+        self.conn = None
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensures cleanup."""
+        self.close()
+        return False
 
     @staticmethod
     def data_path(rule_type: RuleTypeEnum):
@@ -244,7 +270,7 @@ class Rules:
         for field_label in record_fields:
             if field_label in Rules.OBJ_ATTR:
                 attr = Rules.OBJ_ATTR[field_label]
-                if hasattr(content, attr) is False:
+                if not hasattr(content, attr):
                     raise Exception(f"Discovery object is missing attribute {attr}")
                 value = getattr(content, attr)
                 statements.append(
@@ -275,7 +301,7 @@ class Rules:
                         )
 
         return ActionRuleItem(
-            enabeld=True,
+            enabled=True,
             priority=priority,
             case_sensitive=case_sensitive,
             statement=statements,

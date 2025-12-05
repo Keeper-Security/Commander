@@ -33,7 +33,7 @@ from .commands import (
     register_commands, register_enterprise_commands, register_msp_commands,
     aliases, commands, command_info, enterprise_commands, msp_commands
 )
-from .commands.base import dump_report_data, CliCommand, GroupCommand
+from .commands.base import CliCommand, GroupCommand
 from .commands.utils import LoginCommand
 from .commands import msp
 from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS
@@ -92,6 +92,7 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
         'Secrets Manager Commands': '\033[95m',       # Magenta - KSM
         'BreachWatch Commands': bcolors.FAIL,         # Red - security alerts
         'Device Management Commands': '\033[93m',     # Bright Yellow - devices
+        'Domain Management Commands': '\033[92m',     # Bright Green - domains
         'Service Mode REST API': '\033[36m',          # Dark Cyan - services
         'Email Configuration Commands': '\033[38;5;214m',  # Orange - email services
         'Miscellaneous Commands': '\033[37m',         # Light Gray - utilities
@@ -150,6 +151,24 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
                 pam_part = cmd_display.split(' ')[0]  # "pam"
                 sub_part = cmd_display.split(' ', 1)[1]  # "action", "config", etc.
                 formatted_cmd = f'{bcolors.BOLD}{pam_part}{bcolors.ENDC} {sub_part}'
+                # Adjust spacing to account for formatting codes
+                spacing = max_cmd_width - len(cmd_display) + len(bcolors.BOLD) + len(bcolors.ENDC)
+                print(f'  {formatted_cmd}{" " * spacing}   {description}')
+        elif category == 'Domain Management Commands':
+            # Define domain sub-commands with descriptions
+            domain_subcommands = [
+                ('domain list', 'List all reserved domains for the enterprise'),
+                ('domain reserve', 'Reserve, delete, or generate token for a domain'),
+            ]
+
+            # Calculate width for domain commands
+            max_cmd_width = max(len(cmd) for cmd, _ in domain_subcommands)
+
+            for cmd_display, description in sorted(domain_subcommands):
+                # Bold only the "domain" part
+                domain_part = cmd_display.split(' ')[0]  # "domain"
+                sub_part = cmd_display.split(' ', 1)[1]  # "list", "reserve"
+                formatted_cmd = f'{bcolors.BOLD}{domain_part}{bcolors.ENDC} {sub_part}'
                 # Adjust spacing to account for formatting codes
                 spacing = max_cmd_width - len(cmd_display) + len(bcolors.BOLD) + len(bcolors.ENDC)
                 print(f'  {formatted_cmd}{" " * spacing}   {description}')
@@ -365,6 +384,7 @@ def do_command(params, command_line):
                             LoginCommand().execute(params, email=params.user, password=params.password, new_login=False)
                         except KeyboardInterrupt:
                             logging.info('Canceled')
+                        if not params.session_token:
                             return
 
                     if is_enterprise_command(cmd, command, args) or cmd in msp_commands:
