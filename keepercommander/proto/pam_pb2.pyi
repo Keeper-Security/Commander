@@ -20,6 +20,7 @@ class WebRtcConnectionType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     MYSQL: _ClassVar[WebRtcConnectionType]
     SQL_SERVER: _ClassVar[WebRtcConnectionType]
     POSTGRESQL: _ClassVar[WebRtcConnectionType]
+    KUBERNETES: _ClassVar[WebRtcConnectionType]
 
 class PAMOperationType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = []
@@ -47,6 +48,15 @@ class PAMRecordingType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     PRT_SESSION: _ClassVar[PAMRecordingType]
     PRT_TYPESCRIPT: _ClassVar[PAMRecordingType]
     PRT_TIME: _ClassVar[PAMRecordingType]
+    PRT_SUMMARY: _ClassVar[PAMRecordingType]
+
+class PAMRecordingRiskLevel(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = []
+    PRR_UNSPECIFIED: _ClassVar[PAMRecordingRiskLevel]
+    PRR_LOW: _ClassVar[PAMRecordingRiskLevel]
+    PRR_MEDIUM: _ClassVar[PAMRecordingRiskLevel]
+    PRR_HIGH: _ClassVar[PAMRecordingRiskLevel]
+    PRR_CRITICAL: _ClassVar[PAMRecordingRiskLevel]
 CONNECTION: WebRtcConnectionType
 TUNNEL: WebRtcConnectionType
 SSH: WebRtcConnectionType
@@ -57,6 +67,7 @@ TELNET: WebRtcConnectionType
 MYSQL: WebRtcConnectionType
 SQL_SERVER: WebRtcConnectionType
 POSTGRESQL: WebRtcConnectionType
+KUBERNETES: WebRtcConnectionType
 ADD: PAMOperationType
 UPDATE: PAMOperationType
 REPLACE: PAMOperationType
@@ -72,6 +83,12 @@ CMT_CONNECT: ControllerMessageType
 PRT_SESSION: PAMRecordingType
 PRT_TYPESCRIPT: PAMRecordingType
 PRT_TIME: PAMRecordingType
+PRT_SUMMARY: PAMRecordingType
+PRR_UNSPECIFIED: PAMRecordingRiskLevel
+PRR_LOW: PAMRecordingRiskLevel
+PRR_MEDIUM: PAMRecordingRiskLevel
+PRR_HIGH: PAMRecordingRiskLevel
+PRR_CRITICAL: PAMRecordingRiskLevel
 
 class PAMRotationSchedule(_message.Message):
     __slots__ = ["recordUid", "configurationUid", "controllerUid", "scheduleData", "noSchedule"]
@@ -287,6 +304,14 @@ class PAMController(_message.Message):
     isInitialized: bool
     def __init__(self, controllerUid: _Optional[bytes] = ..., controllerName: _Optional[str] = ..., deviceToken: _Optional[str] = ..., deviceName: _Optional[str] = ..., nodeId: _Optional[int] = ..., created: _Optional[int] = ..., lastModified: _Optional[int] = ..., applicationUid: _Optional[bytes] = ..., appClientType: _Optional[_Union[_enterprise_pb2.AppClientType, str]] = ..., isInitialized: bool = ...) -> None: ...
 
+class PAMSetMaxInstanceCountRequest(_message.Message):
+    __slots__ = ["controllerUid", "maxInstanceCount"]
+    CONTROLLERUID_FIELD_NUMBER: _ClassVar[int]
+    MAXINSTANCECOUNT_FIELD_NUMBER: _ClassVar[int]
+    controllerUid: bytes
+    maxInstanceCount: int
+    def __init__(self, controllerUid: _Optional[bytes] = ..., maxInstanceCount: _Optional[int] = ...) -> None: ...
+
 class ControllerResponse(_message.Message):
     __slots__ = ["payload"]
     PAYLOAD_FIELD_NUMBER: _ClassVar[int]
@@ -325,8 +350,28 @@ class RelayAccessCreds(_message.Message):
     serverTime: int
     def __init__(self, username: _Optional[str] = ..., password: _Optional[str] = ..., serverTime: _Optional[int] = ...) -> None: ...
 
+class PAMRecordingsRequest(_message.Message):
+    __slots__ = ["recordUid", "maxCount", "rangeStart", "rangeEnd", "types", "risks", "protocols", "closeReasons"]
+    RECORDUID_FIELD_NUMBER: _ClassVar[int]
+    MAXCOUNT_FIELD_NUMBER: _ClassVar[int]
+    RANGESTART_FIELD_NUMBER: _ClassVar[int]
+    RANGEEND_FIELD_NUMBER: _ClassVar[int]
+    TYPES_FIELD_NUMBER: _ClassVar[int]
+    RISKS_FIELD_NUMBER: _ClassVar[int]
+    PROTOCOLS_FIELD_NUMBER: _ClassVar[int]
+    CLOSEREASONS_FIELD_NUMBER: _ClassVar[int]
+    recordUid: bytes
+    maxCount: int
+    rangeStart: int
+    rangeEnd: int
+    types: _containers.RepeatedScalarFieldContainer[PAMRecordingType]
+    risks: _containers.RepeatedScalarFieldContainer[PAMRecordingRiskLevel]
+    protocols: _containers.RepeatedScalarFieldContainer[str]
+    closeReasons: _containers.RepeatedScalarFieldContainer[int]
+    def __init__(self, recordUid: _Optional[bytes] = ..., maxCount: _Optional[int] = ..., rangeStart: _Optional[int] = ..., rangeEnd: _Optional[int] = ..., types: _Optional[_Iterable[_Union[PAMRecordingType, str]]] = ..., risks: _Optional[_Iterable[_Union[PAMRecordingRiskLevel, str]]] = ..., protocols: _Optional[_Iterable[str]] = ..., closeReasons: _Optional[_Iterable[int]] = ...) -> None: ...
+
 class PAMRecording(_message.Message):
-    __slots__ = ["connectionUid", "recordingType", "recordUid", "userName", "startedOn", "length", "fileSize", "protocol"]
+    __slots__ = ["connectionUid", "recordingType", "recordUid", "userName", "startedOn", "length", "fileSize", "createdOn", "protocol", "closeReason", "recordingDuration", "aiOverallRiskLevel", "aiOverallSummary"]
     CONNECTIONUID_FIELD_NUMBER: _ClassVar[int]
     RECORDINGTYPE_FIELD_NUMBER: _ClassVar[int]
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
@@ -334,7 +379,12 @@ class PAMRecording(_message.Message):
     STARTEDON_FIELD_NUMBER: _ClassVar[int]
     LENGTH_FIELD_NUMBER: _ClassVar[int]
     FILESIZE_FIELD_NUMBER: _ClassVar[int]
+    CREATEDON_FIELD_NUMBER: _ClassVar[int]
     PROTOCOL_FIELD_NUMBER: _ClassVar[int]
+    CLOSEREASON_FIELD_NUMBER: _ClassVar[int]
+    RECORDINGDURATION_FIELD_NUMBER: _ClassVar[int]
+    AIOVERALLRISKLEVEL_FIELD_NUMBER: _ClassVar[int]
+    AIOVERALLSUMMARY_FIELD_NUMBER: _ClassVar[int]
     connectionUid: bytes
     recordingType: PAMRecordingType
     recordUid: bytes
@@ -342,14 +392,21 @@ class PAMRecording(_message.Message):
     startedOn: int
     length: int
     fileSize: int
+    createdOn: int
     protocol: str
-    def __init__(self, connectionUid: _Optional[bytes] = ..., recordingType: _Optional[_Union[PAMRecordingType, str]] = ..., recordUid: _Optional[bytes] = ..., userName: _Optional[str] = ..., startedOn: _Optional[int] = ..., length: _Optional[int] = ..., fileSize: _Optional[int] = ..., protocol: _Optional[str] = ...) -> None: ...
+    closeReason: int
+    recordingDuration: int
+    aiOverallRiskLevel: PAMRecordingRiskLevel
+    aiOverallSummary: bytes
+    def __init__(self, connectionUid: _Optional[bytes] = ..., recordingType: _Optional[_Union[PAMRecordingType, str]] = ..., recordUid: _Optional[bytes] = ..., userName: _Optional[str] = ..., startedOn: _Optional[int] = ..., length: _Optional[int] = ..., fileSize: _Optional[int] = ..., createdOn: _Optional[int] = ..., protocol: _Optional[str] = ..., closeReason: _Optional[int] = ..., recordingDuration: _Optional[int] = ..., aiOverallRiskLevel: _Optional[_Union[PAMRecordingRiskLevel, str]] = ..., aiOverallSummary: _Optional[bytes] = ...) -> None: ...
 
 class PAMRecordingsResponse(_message.Message):
-    __slots__ = ["recordings"]
+    __slots__ = ["recordings", "hasMore"]
     RECORDINGS_FIELD_NUMBER: _ClassVar[int]
+    HASMORE_FIELD_NUMBER: _ClassVar[int]
     recordings: _containers.RepeatedCompositeFieldContainer[PAMRecording]
-    def __init__(self, recordings: _Optional[_Iterable[_Union[PAMRecording, _Mapping]]] = ...) -> None: ...
+    hasMore: bool
+    def __init__(self, recordings: _Optional[_Iterable[_Union[PAMRecording, _Mapping]]] = ..., hasMore: bool = ...) -> None: ...
 
 class PAMData(_message.Message):
     __slots__ = ["vertex", "content"]
@@ -366,7 +423,7 @@ class UidList(_message.Message):
     def __init__(self, uids: _Optional[_Iterable[bytes]] = ...) -> None: ...
 
 class PAMResourceConfig(_message.Message):
-    __slots__ = ["recordUid", "networkUid", "adminUid", "meta", "connectionSettings", "connectUsers", "domainUid", "jitSettings"]
+    __slots__ = ["recordUid", "networkUid", "adminUid", "meta", "connectionSettings", "connectUsers", "domainUid", "jitSettings", "keeperAiSettings"]
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
     NETWORKUID_FIELD_NUMBER: _ClassVar[int]
     ADMINUID_FIELD_NUMBER: _ClassVar[int]
@@ -375,6 +432,7 @@ class PAMResourceConfig(_message.Message):
     CONNECTUSERS_FIELD_NUMBER: _ClassVar[int]
     DOMAINUID_FIELD_NUMBER: _ClassVar[int]
     JITSETTINGS_FIELD_NUMBER: _ClassVar[int]
+    KEEPERAISETTINGS_FIELD_NUMBER: _ClassVar[int]
     recordUid: bytes
     networkUid: bytes
     adminUid: bytes
@@ -383,4 +441,5 @@ class PAMResourceConfig(_message.Message):
     connectUsers: UidList
     domainUid: bytes
     jitSettings: bytes
-    def __init__(self, recordUid: _Optional[bytes] = ..., networkUid: _Optional[bytes] = ..., adminUid: _Optional[bytes] = ..., meta: _Optional[bytes] = ..., connectionSettings: _Optional[bytes] = ..., connectUsers: _Optional[_Union[UidList, _Mapping]] = ..., domainUid: _Optional[bytes] = ..., jitSettings: _Optional[bytes] = ...) -> None: ...
+    keeperAiSettings: bytes
+    def __init__(self, recordUid: _Optional[bytes] = ..., networkUid: _Optional[bytes] = ..., adminUid: _Optional[bytes] = ..., meta: _Optional[bytes] = ..., connectionSettings: _Optional[bytes] = ..., connectUsers: _Optional[_Union[UidList, _Mapping]] = ..., domainUid: _Optional[bytes] = ..., jitSettings: _Optional[bytes] = ..., keeperAiSettings: _Optional[bytes] = ...) -> None: ...

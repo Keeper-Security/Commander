@@ -82,7 +82,7 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
     # Define colors for different categories - more variety and visual appeal
     category_colors = {
         'Record Commands': bcolors.OKGREEN,           # Green - primary functionality
-        'Sharing Commands': bcolors.OKBLUE,           # Blue - collaboration  
+        'Sharing Commands': bcolors.OKBLUE,           # Blue - collaboration
         'Record Type Commands': bcolors.HEADER,       # Purple/Magenta - special types
         'Import and Exporting Data': bcolors.WARNING, # Yellow - data operations
         'Reporting Commands': '\033[96m',             # Cyan - analytics
