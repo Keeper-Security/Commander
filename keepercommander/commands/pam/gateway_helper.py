@@ -77,3 +77,10 @@ def remove_gateway(params, gateway_uid):   # type: (KeeperParams, bytes) -> None
     controller = next((x for x in rs.controllers if x.controllerUid == gateway_uid), None)
     if controller:
         raise Exception(controller.message)
+
+
+def set_gateway_max_instances(params, gateway_uid, max_instance_count):   # type: (KeeperParams, bytes, int) -> None
+    rq = pam_pb2.PAMSetMaxInstanceCountRequest()
+    rq.controllerUid = gateway_uid
+    rq.maxInstanceCount = max_instance_count
+    api.communicate_rest(params, rq, 'pam/set_controller_max_instance_count')

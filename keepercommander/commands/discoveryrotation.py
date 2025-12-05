@@ -189,6 +189,7 @@ class PAMGatewayCommand(GroupCommand):
         self.register_command('list', PAMGatewayListCommand(), 'List Gateways', 'l')
         self.register_command('new', PAMCreateGatewayCommand(), 'Create new Gateway', 'n')
         self.register_command('remove', PAMGatewayRemoveCommand(), 'Remove Gateway', 'rm')
+        self.register_command('set-max-instances', PAMSetMaxInstancesCommand(), 'Set maximum gateway instances', 'smi')
         # self.register_command('connect', PAMConnect(), 'Connect')
         # self.register_command('disconnect', PAMDisconnect(), 'Disconnect')
         self.default_verb = 'list'
@@ -1350,17 +1351,21 @@ class PAMGatewayListCommand(Command):
                 headers.append('Machine Type')
                 headers.append('OS Version')
 
-        # Create a lookup dictionary for connected controllers
+        # Create a lookup dictionary for connected controllers - group by controllerUid
+        # Since multiple instances can have the same controllerUid, we need to store them as a list
         connected_controllers_dict = {}
         if enterprise_controllers_connected:
-            connected_controllers_dict = {controller.controllerUid: controller for controller in
-                                          list(enterprise_controllers_connected.controllers)}
+            for controller in list(enterprise_controllers_connected.controllers):
+                if controller.controllerUid not in connected_controllers_dict:
+                    connected_controllers_dict[controller.controllerUid] = []
+                connected_controllers_dict[controller.controllerUid].append(controller)
 
+        # Process each gateway and handle multiple instances
         for c in enterprise_controllers_all:
+            gateway_uid_bytes = c.controllerUid
+            gateway_uid_str = utils.base64_url_encode(c.controllerUid)
 
-            connected_controller = None
-            if enterprise_controllers_connected:
-                connected_controller = connected_controllers_dict.get(c.controllerUid)
+            connected_instances = connected_controllers_dict.get(gateway_uid_bytes, [])
 
             ksm_app_uid_str = utils.base64_url_encode(c.applicationUid)
             ksm_app = KSMCommand.get_app_record(params, ksm_app_uid_str)
@@ -1377,79 +1382,202 @@ class PAMGatewayListCommand(Command):
                 ksm_app_name = None
                 ksm_app_accessible = False
 
+            # Check if this is gateway pool
+            is_pool = len(connected_instances) > 1
+
+            # Determine overall status for the gateway
             if is_router_down:
-                status = 'UNKNOWN'
-            elif connected_controller:
-                status = "ONLINE"
+                overall_status = 'UNKNOWN'
+            elif len(connected_instances) > 0:
+                overall_status = f"ONLINE ({len(connected_instances)} instances)" if is_pool else "ONLINE"
             else:
-                status = "OFFLINE"
+                overall_status = "OFFLINE"
 
-            # Version information
-            version = ""
-            version_parts = []
-            if connected_controller and hasattr(connected_controller, 'version') and connected_controller.version:
-                version_parts = connected_controller.version.split(';')
-                # In non-verbose mode, just show the Gateway Version part
-                version = version_parts[0] if version_parts else connected_controller.version
+            # For a single instance or offline gateways, display as before
+            if not is_pool:
+                connected_controller = connected_instances[0] if connected_instances else None
 
-            gateway_uid_str = utils.base64_url_encode(c.controllerUid)
+                # Version information
+                version = ""
+                version_parts = []
+                if connected_controller and hasattr(connected_controller, 'version') and connected_controller.version:
+                    version_parts = connected_controller.version.split(';')
+                    version = version_parts[0] if version_parts else connected_controller.version
 
-            gateway_data = {
-                "ksm_app_name": ksm_app_name,
-                "ksm_app_uid": ksm_app_uid_str,
-                "ksm_app_accessible": ksm_app_accessible,
-                "gateway_name": c.controllerName,
-                "gateway_uid": gateway_uid_str,
-                "status": status,
-                "gateway_version": version
-            }
+                status = overall_status
 
-            if is_verbose:
-                os_name = version_parts[1] if len(version_parts) > 1 else ""
-                os_release = version_parts[2] if len(version_parts) > 2 else ""
-                machine_type = version_parts[3] if len(version_parts) > 3 else ""
-                os_version = version_parts[4] if len(version_parts) > 4 else ""
-                
-                gateway_data.update({
-                    "device_name": c.deviceName,
-                    "device_token": c.deviceToken,
-                    "created_on": datetime.fromtimestamp(c.created / 1000).strftime('%Y-%m-%d %H:%M:%S'),
-                    "last_modified": datetime.fromtimestamp(c.lastModified / 1000).strftime('%Y-%m-%d %H:%M:%S'),
-                    "node_id": c.nodeId,
-                    "os": os_name,
-                    "os_release": os_release,
-                    "machine_type": machine_type,
-                    "os_version": os_version
-                })
-
-            gateways_data.append(gateway_data)
-
-            if format_type == 'table':
-                row_color = ''
-                if not is_router_down:
-                    row_color = bcolors.FAIL
-                    if connected_controller:
-                        row_color = bcolors.OKGREEN
-
-                row = []
-                row.append(f'{row_color if ksm_app_accessible else bcolors.WHITE}{ksm_app_info_plain}{bcolors.ENDC}')
-                row.append(f'{row_color}{c.controllerName}{bcolors.ENDC}')
-                row.append(f'{row_color}{gateway_uid_str}{bcolors.ENDC}')
-                row.append(f'{row_color}{status}{bcolors.ENDC}')
-                row.append(f'{row_color}{version}{bcolors.ENDC}')
+                gateway_data = {
+                    "ksm_app_name": ksm_app_name,
+                    "ksm_app_uid": ksm_app_uid_str,
+                    "ksm_app_accessible": ksm_app_accessible,
+                    "gateway_name": c.controllerName,
+                    "gateway_uid": gateway_uid_str,
+                    "status": status,
+                    "gateway_version": version
+                }
 
                 if is_verbose:
-                    row.append(f'{row_color}{c.deviceName}{bcolors.ENDC}')
-                    row.append(f'{row_color}{c.deviceToken}{bcolors.ENDC}')
-                    row.append(f'{row_color}{datetime.fromtimestamp(c.created / 1000)}{bcolors.ENDC}')
-                    row.append(f'{row_color}{datetime.fromtimestamp(c.lastModified / 1000)}{bcolors.ENDC}')
-                    row.append(f'{row_color}{c.nodeId}{bcolors.ENDC}')
-                    row.append(f'{row_color}{os_name}{bcolors.ENDC}')
-                    row.append(f'{row_color}{os_release}{bcolors.ENDC}')
-                    row.append(f'{row_color}{machine_type}{bcolors.ENDC}')
-                    row.append(f'{row_color}{os_version}{bcolors.ENDC}')
+                    os_name = version_parts[1] if len(version_parts) > 1 else ""
+                    os_release = version_parts[2] if len(version_parts) > 2 else ""
+                    machine_type = version_parts[3] if len(version_parts) > 3 else ""
+                    os_version = version_parts[4] if len(version_parts) > 4 else ""
 
-                table.append(row)
+                    gateway_data.update({
+                        "device_name": c.deviceName,
+                        "device_token": c.deviceToken,
+                        "created_on": datetime.fromtimestamp(c.created / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+                        "last_modified": datetime.fromtimestamp(c.lastModified / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+                        "node_id": c.nodeId,
+                        "os": os_name,
+                        "os_release": os_release,
+                        "machine_type": machine_type,
+                        "os_version": os_version
+                    })
+
+                gateways_data.append(gateway_data)
+
+                if format_type == 'table':
+                    row_color = ''
+                    if not is_router_down:
+                        row_color = bcolors.FAIL
+                        if connected_controller:
+                            row_color = bcolors.OKGREEN
+
+                    row = []
+                    row.append(f'{row_color if ksm_app_accessible else bcolors.WHITE}{ksm_app_info_plain}{bcolors.ENDC}')
+                    row.append(f'{row_color}{c.controllerName}{bcolors.ENDC}')
+                    row.append(f'{row_color}{gateway_uid_str}{bcolors.ENDC}')
+                    row.append(f'{row_color}{status}{bcolors.ENDC}')
+                    row.append(f'{row_color}{version}{bcolors.ENDC}')
+
+                    if is_verbose:
+                        row.append(f'{row_color}{c.deviceName}{bcolors.ENDC}')
+                        row.append(f'{row_color}{c.deviceToken}{bcolors.ENDC}')
+                        row.append(f'{row_color}{datetime.fromtimestamp(c.created / 1000)}{bcolors.ENDC}')
+                        row.append(f'{row_color}{datetime.fromtimestamp(c.lastModified / 1000)}{bcolors.ENDC}')
+                        row.append(f'{row_color}{c.nodeId}{bcolors.ENDC}')
+                        row.append(f'{row_color}{os_name}{bcolors.ENDC}')
+                        row.append(f'{row_color}{os_release}{bcolors.ENDC}')
+                        row.append(f'{row_color}{machine_type}{bcolors.ENDC}')
+                        row.append(f'{row_color}{os_version}{bcolors.ENDC}')
+
+                    table.append(row)
+            else:
+                # Multi-instance pool - display parent gateway then instances
+                if format_type == 'json':
+                    # For JSON, create a gateway object with instances array
+                    instances_data = []
+                    for idx, instance in enumerate(connected_instances, 1):
+                        version_parts = []
+                        version = ""
+                        if hasattr(instance, 'version') and instance.version:
+                            version_parts = instance.version.split(';')
+                            version = version_parts[0] if version_parts else instance.version
+
+                        instance_data = {
+                            "instance_number": idx,
+                            "status": "ONLINE",
+                            "gateway_version": version,
+                            "ip_address": instance.ipAddress if hasattr(instance, 'ipAddress') else "",
+                            "connected_on": instance.connectedOn
+                        }
+
+                        if is_verbose:
+                            os_name = version_parts[1] if len(version_parts) > 1 else ""
+                            os_release = version_parts[2] if len(version_parts) > 2 else ""
+                            machine_type = version_parts[3] if len(version_parts) > 3 else ""
+                            os_version = version_parts[4] if len(version_parts) > 4 else ""
+
+                            instance_data.update({
+                                "os": os_name,
+                                "os_release": os_release,
+                                "machine_type": machine_type,
+                                "os_version": os_version
+                            })
+
+                        instances_data.append(instance_data)
+
+                    gateway_data = {
+                        "ksm_app_name": ksm_app_name,
+                        "ksm_app_uid": ksm_app_uid_str,
+                        "ksm_app_accessible": ksm_app_accessible,
+                        "gateway_name": c.controllerName,
+                        "gateway_uid": gateway_uid_str,
+                        "status": overall_status,
+                        "instances": instances_data
+                    }
+
+                    if is_verbose:
+                        gateway_data.update({
+                            "device_name": c.deviceName,
+                            "device_token": c.deviceToken,
+                            "created_on": datetime.fromtimestamp(c.created / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+                            "last_modified": datetime.fromtimestamp(c.lastModified / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+                            "node_id": c.nodeId
+                        })
+
+                    gateways_data.append(gateway_data)
+                else:
+                    # For table format, show parent row then indented instance rows
+                    row_color = bcolors.OKGREEN
+
+                    # Parent gateway row
+                    row = []
+                    row.append(f'{row_color if ksm_app_accessible else bcolors.WHITE}{ksm_app_info_plain}{bcolors.ENDC}')
+                    row.append(f'{row_color}{c.controllerName}{bcolors.ENDC}')
+                    row.append(f'{row_color}{gateway_uid_str}{bcolors.ENDC}')
+                    row.append(f'{row_color}{overall_status}{bcolors.ENDC}')
+                    row.append('')  # Empty version column for pool parent
+
+                    if is_verbose:
+                        row.append(f'{row_color}{c.deviceName}{bcolors.ENDC}')
+                        row.append(f'{row_color}{c.deviceToken}{bcolors.ENDC}')
+                        row.append(f'{row_color}{datetime.fromtimestamp(c.created / 1000)}{bcolors.ENDC}')
+                        row.append(f'{row_color}{datetime.fromtimestamp(c.lastModified / 1000)}{bcolors.ENDC}')
+                        row.append(f'{row_color}{c.nodeId}{bcolors.ENDC}')
+                        row.append('')
+                        row.append('')
+                        row.append('')
+                        row.append('')
+
+                    table.append(row)
+
+                    # Instance rows
+                    for idx, instance in enumerate(connected_instances, 1):
+                        version_parts = []
+                        version = ""
+                        if hasattr(instance, 'version') and instance.version:
+                            version_parts = instance.version.split(';')
+                            version = version_parts[0] if version_parts else instance.version
+
+                        ip_address = instance.ipAddress if hasattr(instance, 'ipAddress') else ""
+                        connected_on = datetime.fromtimestamp(instance.connectedOn / 1000).strftime('%Y-%m-%d %H:%M:%S') if hasattr(instance, 'connectedOn') else ""
+
+                        instance_row = []
+                        instance_row.append('')  # Empty KSM app column
+                        instance_row.append(f'{row_color}  |- Instance {idx} (connected: {connected_on}){bcolors.ENDC}')
+                        instance_row.append(f'{row_color}{ip_address}{bcolors.ENDC}')
+                        instance_row.append(f'{row_color}ONLINE{bcolors.ENDC}')
+                        instance_row.append(f'{row_color}{version}{bcolors.ENDC}')
+
+                        if is_verbose:
+                            os_name = version_parts[1] if len(version_parts) > 1 else ""
+                            os_release = version_parts[2] if len(version_parts) > 2 else ""
+                            machine_type = version_parts[3] if len(version_parts) > 3 else ""
+                            os_version = version_parts[4] if len(version_parts) > 4 else ""
+
+                            instance_row.append('')
+                            instance_row.append('')
+                            instance_row.append(f'{row_color}{datetime.fromtimestamp(instance.connectedOn / 1000) if hasattr(instance, "connectedOn") else ""}{bcolors.ENDC}')
+                            instance_row.append('')
+                            instance_row.append('')
+                            instance_row.append(f'{row_color}{os_name}{bcolors.ENDC}')
+                            instance_row.append(f'{row_color}{os_release}{bcolors.ENDC}')
+                            instance_row.append(f'{row_color}{machine_type}{bcolors.ENDC}')
+                            instance_row.append(f'{row_color}{os_version}{bcolors.ENDC}')
+
+                        table.append(instance_row)
+
         if format_type == 'json':
             # Sort JSON data by status and app name
             gateways_data.sort(key=lambda x: (x['status'], (x['ksm_app_name'] or '').lower()))
@@ -1465,7 +1593,28 @@ class PAMGatewayListCommand(Command):
             
             return json.dumps(result, indent=2)
         else:
-            table.sort(key=lambda x: (x[3] or '', x[0].lower()))
+            # Separate rows into groups: each parent with its instances
+            sorted_groups = []
+            current_group = []
+
+            for row in table:
+                # If the first column is not empty, this is a parent row
+                if row[0]:
+                    if current_group:
+                        sorted_groups.append(current_group)
+                    current_group = [row]
+                else:
+                    # This is an instance row, add to the current group
+                    current_group.append(row)
+
+            if current_group:
+                sorted_groups.append(current_group)
+
+            sorted_groups.sort(key=lambda group: (group[0][3] or '', group[0][0].lower()))
+
+            table = []
+            for group in sorted_groups:
+                table.extend(group)
 
             if is_verbose:
                 krouter_host = get_router_url(params)
@@ -3223,6 +3372,38 @@ class PAMGatewayRemoveCommand(Command):
             logging.info('Gateway %s has been removed.', gateway.controllerName)
         else:
             logging.warning('Gateway %s not found', gateway_name)
+
+
+class PAMSetMaxInstancesCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam gateway set-max-instances')
+    parser.add_argument('--gateway', '-g', required=True, dest='gateway',
+                        help='Gateway UID or Name', action='store')
+    parser.add_argument('--max-instances', '-m', required=True, dest='max_instances', type=int,
+                        help='Maximum number of gateway instances (must be >= 1)', action='store')
+
+    def get_parser(self):
+        return PAMSetMaxInstancesCommand.parser
+
+    def execute(self, params, **kwargs):
+        gateway_name = kwargs.get('gateway')
+        max_instances = kwargs.get('max_instances')
+
+        if max_instances < 1:
+            raise CommandError('pam gateway set-max-instances', '--max-instances must be at least 1')
+
+        gateways = gateway_helper.get_all_gateways(params)
+        gateway = next((x for x in gateways
+                        if utils.base64_url_encode(x.controllerUid) == gateway_name
+                        or x.controllerName.lower() == gateway_name.lower()), None)
+
+        if not gateway:
+            raise CommandError('', f'{bcolors.FAIL}Gateway "{gateway_name}" not found{bcolors.ENDC}')
+
+        try:
+            gateway_helper.set_gateway_max_instances(params, gateway.controllerUid, max_instances)
+            logging.info('%s: max instance count set to %d', gateway.controllerName, max_instances)
+        except Exception as e:
+            raise CommandError('', f'{bcolors.FAIL}Error setting max instances: {e}{bcolors.ENDC}')
 
 
 class PAMCreateGatewayCommand(Command):
