@@ -1475,8 +1475,6 @@ class LoginCommand(Command):
             msp.current_mc_id = None
             msp.mc_params_dict.clear()
 
-        params.clear_session()
-
         user = kwargs.get('email') or ''
         password = kwargs.get('password') or ''
 
@@ -1503,6 +1501,8 @@ class LoginCommand(Command):
             logging.warning(str(exc))
 
         if params.session_token:
+            params.enterprise = None
+            params._pedm_plugin = None
             SyncDownCommand().execute(params, force=True)
             if params.is_enterprise_admin:
                 api.query_enterprise(params, True)
