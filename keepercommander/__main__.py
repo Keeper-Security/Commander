@@ -266,6 +266,17 @@ def main(from_package=False):
     if from_package:
         sys.excepthook = handle_exceptions
 
+    # Check if we're running a service wrapper script (for background service mode in PyInstaller executable)
+    # If so, execute the script directly without argument parsing
+    if len(sys.argv) > 1 and sys.argv[1].endswith('service_wrapper.py'):
+        import runpy
+        try:
+            runpy.run_path(sys.argv[1], run_name='__main__')
+            return
+        except Exception as e:
+            logging.error(f"Failed to run service wrapper script: {e}")
+            sys.exit(1)
+
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
     opts, flags = parser.parse_known_args(sys.argv[1:])
     
