@@ -24,7 +24,7 @@ from .proto import APIRequest_pb2 as proto
 from . import crypto, utils
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
 
-CLIENT_VERSION = 'c17.1.9'
+CLIENT_VERSION = 'c17.2.0'
 
 SERVER_PUBLIC_KEYS = {
     1: crypto.load_rsa_public_key(utils.base64_url_decode(
