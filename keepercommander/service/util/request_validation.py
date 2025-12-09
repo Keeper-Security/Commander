@@ -127,8 +127,13 @@ class RequestValidator:
             logger.info("Request validation failed: Content-Type must be application/json")
             return jsonify({"status": "error", "error": "Content-Type must be application/json"}), 400
         
-        if not request.json:
-            logger.info("Request validation failed: Invalid or empty JSON")
-            return jsonify({"status": "error", "error": "Invalid or empty JSON"}), 400
+        try:
+            json_data = request.get_json(force=True, silent=False)
+            if json_data is None:
+                logger.info("Request validation failed: Invalid or empty JSON")
+                return jsonify({"status": "error", "error": "Invalid or empty JSON"}), 400
+        except Exception as e:
+            logger.warning(f"Request validation failed: JSON parsing error - {e}")
+            return jsonify({"status": "error", "error": f"Invalid JSON format: {str(e)}"}), 400
         
         return None
