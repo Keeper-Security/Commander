@@ -38,12 +38,17 @@ def create_legacy_command_blueprint():
             if json_error:
                 return json_error
             
-            command, validation_error = RequestValidator.validate_and_escape_command(request.json)
+            # Get JSON data safely
+            request_data = request.get_json(force=True, silent=True)
+            if not request_data:
+                return jsonify({"status": "error", "error": "Invalid or empty JSON"}), 400
+            
+            command, validation_error = RequestValidator.validate_and_escape_command(request_data)
             if validation_error:
                 return validation_error
             
             # Process file data if present
-            processed_command, temp_files = RequestValidator.process_file_data(request.json, command)
+            processed_command, temp_files = RequestValidator.process_file_data(request_data, command)
                 
             response, status_code = CommandExecutor.execute(processed_command)
             
@@ -78,12 +83,17 @@ def create_command_blueprint():
             if json_error:
                 return json_error
             
-            command, validation_error = RequestValidator.validate_and_escape_command(request.json)
+            # Get JSON data safely
+            request_data = request.get_json(force=True, silent=True)
+            if not request_data:
+                return jsonify({"status": "error", "error": "Invalid or empty JSON"}), 400
+            
+            command, validation_error = RequestValidator.validate_and_escape_command(request_data)
             if validation_error:
                 return validation_error
             
             # Process file data if present
-            processed_command, temp_files = RequestValidator.process_file_data(request.json, command)
+            processed_command, temp_files = RequestValidator.process_file_data(request_data, command)
             
             # Submit to queue and return request ID immediately
             try:

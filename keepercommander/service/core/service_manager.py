@@ -126,38 +126,112 @@ class ServiceManager:
 
             if config_data.get("run_mode") == "background":
 
-                base_dir = os.path.dirname(os.path.abspath(__file__))
                 service_module = "keepercommander.service.core.service_app"  # Use module path instead of file path
-                python_executable = sys.executable
-
-                # Create logs directory for subprocess output
-                log_dir = os.path.join(base_dir, "logs")
+                
+                # Detect if running as PyInstaller executable
+                is_frozen = getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
+                
+                # Create logs directory for subprocess output in user-writable location
+                # Use utils.get_default_path() to avoid permission issues in packaged apps
+                log_dir = os.path.join(utils.get_default_path(), "service_logs")
                 os.makedirs(log_dir, exist_ok=True)
                 log_file = os.path.join(log_dir, "service_subprocess.log")
 
                 try:
-                    if sys.platform == "win32":
-                        subprocess.DETACHED_PROCESS = 0x00000008
-                        with open(log_file, 'w') as log_f:
+                    python_executable = sys.executable
+                    
+                    if is_frozen:
+                        # Running as PyInstaller executable - create a wrapper script and execute it
+                        # PyInstaller executables can execute Python files, but we need to use the right approach
+                        wrapper_script = os.path.join(log_dir, "service_wrapper.py")
+                        wrapper_content = """# Service wrapper for PyInstaller executable
+import sys
+import os
+
+# Set flag to indicate we're running in service mode (bypass main entry point)
+os.environ['KEEPER_SERVICE_BACKGROUND'] = '1'
+
+# Ensure we can import the service module
+if hasattr(sys, '_MEIPASS'):
+    if sys._MEIPASS not in sys.path:
+        sys.path.insert(0, sys._MEIPASS)
+
+# Clear sys.argv to avoid argument parsing issues
+sys.argv = [sys.argv[0]]
+
+# Import and run the service module directly
+from keepercommander.service.app import create_app
+from keepercommander.service.config.service_config import ServiceConfig
+from keepercommander.service.core.service_manager import ServiceManager
+
+flask_app = create_app()
+
+service_config = ServiceConfig()
+config_data = service_config.load_config()
+
+try:
+    from keepercommander.service.core.globals import ensure_params_loaded
+    print("Pre-loading Keeper parameters for background mode...")
+    ensure_params_loaded()
+    print("Keeper parameters loaded successfully")
+except Exception as e:
+    print("Warning: Failed to pre-load parameters during startup: " + str(e))
+    print("Parameters will be loaded on first API call if needed")
+
+if not (port := config_data.get("port")):
+    print("Error: Service configuration is incomplete. Please configure the service port in service_config")
+    sys.exit(1)
+
+ssl_context = ServiceManager.get_ssl_context(config_data)
+
+flask_app.run(
+    host='0.0.0.0',
+    port=port,
+    ssl_context=ssl_context
+)
+"""
+                        with open(wrapper_script, 'w') as f:
+                            f.write(wrapper_content)
+                        # Use the executable to run the Python script directly
+                        # PyInstaller executables can execute .py files if we use the right method
+                        cmd = [python_executable, wrapper_script]
+                    else:
+                        # Running as Python script - use -m flag
+                        cmd = [python_executable, '-m', service_module]
+                    
+                    # Open log file in append mode and keep it open for the subprocess
+                    # Use 'a' mode to append, and don't close the file handle immediately
+                    log_f = open(log_file, 'a', buffering=1)  # Line buffering
+                    
+                    try:
+                        if sys.platform == "win32":
+                            subprocess.DETACHED_PROCESS = 0x00000008
                             cls = subprocess.Popen(
-                                [python_executable, '-m', service_module],
+                                cmd,
                                 creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
                                 stdout=log_f,
                                 stderr=subprocess.STDOUT,  # Combine stderr with stdout
+                                stdin=subprocess.DEVNULL,  # Close stdin to avoid issues
                                 cwd=os.getcwd(),  # Use current working directory to access config files
                                 env=os.environ.copy()  # Inherit environment variables
                             )
-                    else:
-                        # For macOS and Linux - improved subprocess handling
-                        with open(log_file, 'w') as log_f:
+                        else:
+                            # For macOS and Linux - improved subprocess handling
                             cls = subprocess.Popen(
-                                [python_executable, '-m', service_module],
+                                cmd,
                                 stdout=log_f,
                                 stderr=subprocess.STDOUT,  # Combine stderr with stdout
+                                stdin=subprocess.DEVNULL,  # Close stdin to avoid issues
                                 preexec_fn=os.setpgrp,
                                 cwd=os.getcwd(),  # Use current working directory to access config files
                                 env=os.environ.copy()  # Inherit environment variables
                             )
+                        # Don't close log_f here - let the subprocess handle it
+                        # The file will be closed when the subprocess exits
+                    except Exception:
+                        # Only close on error
+                        log_f.close()
+                        raise
                     
                     logger.debug(f"Service subprocess logs available at: {log_file}")
                     print(f"Commander Service started with PID: {cls.pid}")
