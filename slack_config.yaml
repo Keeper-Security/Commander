@@ -1,0 +1,26 @@
+slack:
+  app_token: "xapp-1-........"
+  bot_token: "xoxb-1......."
+  signing_secret: "3......."
+  approvals_channel_id: "channel_id"
+
+# ============================================================
+# KEEPER COMMANDER SERVICE MODE
+# ============================================================
+
+keeper:
+  service_url: "http://localhost:3001/api/v2/"
+  api_key: "your_api_key_here"
+
+
+
+
+
+
+
+
+
+
+
+
+
