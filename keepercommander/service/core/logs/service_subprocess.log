@@ -1,0 +1,9 @@
+Keeper Commander Service initialization complete
+Pre-loading Keeper parameters for background mode...
+Keeper parameters loaded successfully
+ * Serving Flask app 'keepercommander.service.app'
+ * Debug mode: off
+2025-11-17 14:46:41 [INFO] keeper_service - [94mGET[0m | [96m/api/v2/queue/status[0m | [95m127.0.0.1[0m | no-data | 200 | 0.00s
+2025-11-17 14:47:35 [INFO] keeper_service - Request f4f90d0c-45a9-4a74-89bc-7c4d46b9c443 queued: search kR3cF9Xm2Lp8NqT1uV6w
+2025-11-17 14:47:35 [INFO] keeper_service - [94mPOST[0m | [96m/api/v2/executecommand-async[0m | [95m127.0.0.1[0m | data={'command': 'search kR3cF9Xm2Lp8NqT1uV6w'} | 202 | 0.00s
+2025-11-17 14:47:35 [INFO] keeper_service - Processing request f4f90d0c-45a9-4a74-89bc-7c4d46b9c443: search kR3cF9Xm2Lp8NqT1uV6w
