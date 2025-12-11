@@ -1,6 +1,6 @@
 # QRC (Quantum Resistant Cryptography)
 
-Hybrid post-quantum encryption for Keeper Commander using **ECDH-P256** + **ML-KEM-768** to protect against future quantum computing threats.
+Hybrid post-quantum encryption for Keeper Commander using **ECDH-P256** + **ML-KEM-1024** to protect against future quantum computing threats.
 
 ## Overview
 
@@ -8,7 +8,7 @@ QRC enhances Keeper's API security by combining traditional elliptic curve crypt
 
 ## Key Features
 
-- **Hybrid Encryption**: Combines ECDH-P256 and ML-KEM-768 for dual-layer protection
+- **Hybrid Encryption**: Combines ECDH-P256 and ML-KEM-1024 for dual-layer protection
 - **Post-Quantum Ready**: Uses NIST FIPS 203 standardized ML-KEM algorithm
 - **Graceful Fallback**: Automatically falls back to EC-only encryption when QRC unavailable
 - **Performance Optimized**: Uses C extension via `keeper-mlkem` package for fast cryptographic operations
@@ -18,23 +18,18 @@ QRC enhances Keeper's API security by combining traditional elliptic curve crypt
 - **Python 3.11+** (required for ML-KEM implementation)
 - **keeper-mlkem** package (installed automatically with Commander dependencies)
 
-## Current Implementation
+## Server Support
 
-### ML-KEM Variant
-- **Current**: ML-KEM-768 (1184-byte keys, AES-192 equivalent security)
-- **Future**: Can transition to ML-KEM-1024 (1568-byte keys) when backend supports it
-
-### Server Support
-
-| Server | QRC Status | Key ID | Notes |
-|--------|------------|--------|-------|
-| `dev.keepersecurity.com` | ✅ Enabled | 100 | Only dev has ML-KEM key currently |
-| `qa.keepersecurity.com` | ⏳ EC Only | 7 | Falls back to EC encryption |
-| `staging.keepersecurity.com` | ⏳ EC Only | 7 | Falls back to EC encryption |
-| `keepersecurity.com` | ⏳ EC Only | 7 | Falls back to EC encryption |
-| GovCloud servers | ⏳ EC Only | 7 | Falls back to EC encryption |
-
-**Note**: As additional servers add ML-KEM keys, they'll automatically use QRC. The implementation supports key IDs 100-105 for different environments.
+| Server | QRC Status | Key ID |
+|--------|------------|--------|
+| `dev.keepersecurity.com` | EC Only | 100 |
+| `qa.keepersecurity.com` | ✅ Enabled | 107 |
+| `staging.keepersecurity.com` | ✅ Enabled | 124 |
+| `keepersecurity.com` | ✅ Enabled | 136 |
+| GovCloud DEV | ⏳ Pending | 148 |
+| GovCloud PROD | ⏳ Pending | 160 |
+| IL5 DEV | ⏳ Pending | 172 |
+| IL5 PROD | ⏳ Pending | 186 |
 
 ## How It Works
 
@@ -52,9 +47,9 @@ When QRC is available:
 
 ### 3. **Cipher Suite**
 ```
-HPKE_ML-KEM-768_ECDH-P256_HKDF-SHA256_AES-GCM-256
+HPKE_ML-KEM-1024_ECDH-P256_HKDF-SHA256_AES-GCM-256
 ```
-- ML-KEM-768 for post-quantum KEM
+- ML-KEM-1024 for post-quantum KEM
 - ECDH-P256 for classical key exchange
 - HKDF-SHA256 for key derivation
 - AES-256-GCM for encryption
@@ -90,20 +85,12 @@ qrc/
 ├── qrc_crypto.py          # QRC encryption interface & hybrid key derivation
 ├── mlkem/                 # Imports from keeper-mlkem package
 │   ├── __init__.py        # Package exports
-│   ├── mlkem_core.py      # ML-KEM implementation (768/1024 variants)
+│   ├── mlkem_core.py      # ML-KEM implementation (1024 variants)
 │   └── fastmath.so        # C extension (compiled per platform)
 └── README.md              # This file
 ```
 
 **External Package**: The `keeper-mlkem` library is published separately to PyPI and provides the ML-KEM cryptographic primitives with optimized C extensions.
-
-## Migration Path
-
-The implementation is designed for easy transition to ML-KEM-1024:
-
-1. **Client-side**: Change `MLKEM_768_PARAMETERS` → `MLKEM_1024_PARAMETERS` in `qrc_crypto.py`
-2. **Server-side**: Backend provisions 1568-byte ML-KEM-1024 keys
-3. **Backward compatible**: Older clients fall back to EC; newer clients use ML-KEM-1024
 
 ## Security Considerations
 

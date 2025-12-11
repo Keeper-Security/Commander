@@ -46,10 +46,17 @@ class RestApiContext:
         self.proxies = None
         self._certificate_check = True
         self.fail_on_throttle = False
+        self.client_ec_private_key = None  # EC private key for QRC ECDH exchange
     
     def reset_qrc_key(self):
-        """Reset QRC key ID to force re-determination (called on server change or logout)"""
+        """Reset QRC key ID to re-determine on next access (called on server change or logout)"""
         self.__qrc_key_id = -1
+        self.client_ec_private_key = None
+    
+    def disable_qrc(self):
+        """Disable QRC and fall back to EC-only encryption"""
+        self.__qrc_key_id = None
+        self.client_ec_private_key = None
 
     def __get_server_base(self):
         return self.__server_base
@@ -93,10 +100,9 @@ class RestApiContext:
             
             # Hostname to QRC key ID mapping
             qrc_key_map = {
-                'dev.keepersecurity.com': 100,
-                'qa.keepersecurity.com': 101,
-                'staging.keepersecurity.com': 102,
-                'keepersecurity.com': 103,
+                'qa.keepersecurity.com': 107,
+                'staging.keepersecurity.com': 124,
+                'keepersecurity.com': 136,
             }
             
             # Check exact match first
@@ -104,7 +110,11 @@ class RestApiContext:
             
             # Check govcloud pattern if no exact match
             if qrc_key_id is None and 'govcloud.keepersecurity.us' in hostname:
-                qrc_key_id = 104 if hostname.startswith('dev.') else 105
+                qrc_key_id = 148 if hostname.startswith('dev.') else 160
+            
+            # Check IL5 pattern
+            if qrc_key_id is None and 'il5.keepersecurity.us' in hostname:
+                qrc_key_id = 172 if hostname.startswith('dev.') else 186
             
             # If still no match, QRC not available
             if qrc_key_id is None:
