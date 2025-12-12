@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePublicKey
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
 from . import base, enterprise_common
+from .helpers import report_utils
 from .. import api, error, crypto
 from ..proto import MCTransfer_pb2, breachwatch_pb2
 
@@ -17,7 +18,7 @@ def register_commands(commands):
 class McTransferCommand(base.GroupCommand):
     def __init__(self):
         super().__init__()
-        self.register_command('init', McTransferInitCommand())
+        self.register_command('join-msp', McTransferJoinMspCommand())
         self.register_command('leave-msp', McTransferLeaveMspCommand())
         self.register_command('accept-mc', McTransferAcceptMcCommand())
         self.register_command('cancel', McTransferCancelCommand())
@@ -28,8 +29,8 @@ mc_transfer_target_parser = argparse.ArgumentParser(add_help=False)
 mc_transfer_target_parser.add_argument('--target-name', dest='target_name', help='Target enterprise name')
 mc_transfer_target_parser.add_argument('--target-email', dest='target_email', help='Target administrator email')
 
-mc_transfer_init_parser = argparse.ArgumentParser(
-    prog='mc-transfer init', description='Initializes Regular/MC/MSP transfer to MSP', parents=[mc_transfer_target_parser])
+mc_transfer_join_msp_parser = argparse.ArgumentParser(
+    prog='mc-transfer join-msp', description='Initializes Regular/MC/MSP transfer to MSP', parents=[mc_transfer_target_parser])
 
 mc_transfer_leave_msp_parser = argparse.ArgumentParser(
     prog='mc-transfer leave-msp', description='Initializes MC leaving MSP', parents=[mc_transfer_target_parser])
@@ -38,7 +39,7 @@ mc_transfer_accept_mc_parser = argparse.ArgumentParser(
     prog='mc-transfer accept-mc', description='MSP accepts Regular/MC/MSP transfer', parents=[mc_transfer_target_parser])
 
 mc_transfer_status_parser = argparse.ArgumentParser(
-    prog='mc-transfer status', description='Checks MC transfer status', parents=[mc_transfer_target_parser, base.report_output_parser])
+    prog='mc-transfer status', description='Checks MC transfer status', parents=[mc_transfer_target_parser])
 
 mc_transfer_cancel_parser = argparse.ArgumentParser(
     prog='mc-transfer cancel', description='Cancels MC transfer', parents=[mc_transfer_target_parser])
@@ -105,15 +106,15 @@ class McTransferMixin:
         return EnterpriseType.Unknown
 
 
-class McTransferInitCommand(enterprise_common.EnterpriseCommand, McTransferMixin):
+class McTransferJoinMspCommand(enterprise_common.EnterpriseCommand, McTransferMixin):
     def get_parser(self):
-        return mc_transfer_init_parser
+        return mc_transfer_join_msp_parser
 
     def execute(self, params, **kwargs):
-        enterprise_name, enterprise_email = self.get_transfer_parameters('mc-transfer init', **kwargs)
+        enterprise_name, enterprise_email = self.get_transfer_parameters('mc-transfer join-msp', **kwargs)
         enterprise_type = self.get_enterprise_license(params)
         if enterprise_type not in (EnterpriseType.Regular, EnterpriseType.MSP, EnterpriseType.MC, EnterpriseType.Distributor):
-            raise error.CommandError('mc-transfer init', 'Command is available to Regular, MSP, and MC enterprises')
+            raise error.CommandError('mc-transfer join-msp', 'Command is available to Regular, MSP, and MC enterprises')
 
         rq = MCTransfer_pb2.MCTransferRequest()
         rq.enterpriseName = enterprise_name
@@ -121,7 +122,7 @@ class McTransferInitCommand(enterprise_common.EnterpriseCommand, McTransferMixin
         try:
             api.communicate_rest(params, rq, 'enterprise/mc_transfer_join_msp')
         except error.KeeperApiError as kae:
-            raise error.CommandError('mc-transfer init', kae.message)
+            raise error.CommandError('mc-transfer join-msp', kae.message)
 
 
 class McTransferStatusCommand(enterprise_common.EnterpriseCommand, McTransferMixin):
@@ -133,7 +134,7 @@ class McTransferStatusCommand(enterprise_common.EnterpriseCommand, McTransferMix
 
         enterprise_type = self.get_enterprise_license(params)
         if enterprise_type not in (EnterpriseType.Regular, EnterpriseType.MSP, EnterpriseType.MC, EnterpriseType.Distributor):
-            raise error.CommandError('mc-transfer init', 'Command is available to Regular, MSP, and MC enterprises')
+            raise error.CommandError('mc-transfer status', 'Command is available to Regular, MSP, and MC enterprises')
 
         rq = MCTransfer_pb2.MCTransferRequest()
         rq.enterpriseName = enterprise_name
@@ -141,16 +142,15 @@ class McTransferStatusCommand(enterprise_common.EnterpriseCommand, McTransferMix
         transfer: Optional[MCTransfer_pb2.MCTransferState]
         transfer = api.communicate_rest(params, rq, 'enterprise/mc_transfer_status', rs_type=MCTransfer_pb2.MCTransferState)
         if transfer:
-            table = []
             headers = ['from_enterprise_name', 'from_admin_email', 'target_enterprise_name', 'target_admin_email', 'status', 'comments']
             status_text = self.transfer_status_to_text(transfer.transferStatus)
             row = [transfer.movingEnterpriseName, transfer.movingEnterpriseAdminEmail, transfer.recevingEnterpriseName,
                    transfer.recevingEnterpriseAdminEmail, status_text, transfer.comments]
-            table.append(row)
-            fmt = kwargs.get('format') or 'table'
-            if fmt != 'json':
-                headers = [base.field_to_title(x) for x in headers]
-            return base.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'))
+
+            headers = [report_utils.field_to_title(x) for x in headers]
+            table = [[x[0], x[1]] for x in zip(headers, row)]
+            headers = [report_utils.field_to_title(x) for x in ['property', 'value']]
+            return base.dump_report_data(table, headers)
         else:
             raise error.CommandError('mc-transfer status', 'MC Transfer status is empty')
 
@@ -163,7 +163,7 @@ class McTransferCancelCommand(enterprise_common.EnterpriseCommand, McTransferMix
         enterprise_name, enterprise_email = self.get_transfer_parameters('mc-transfer cancel', **kwargs)
         enterprise_type = self.get_enterprise_license(params)
         if enterprise_type not in (EnterpriseType.MSP, EnterpriseType.MC, EnterpriseType.Distributor):
-            raise error.CommandError('mc-transfer init', 'Command is available to MSP and MC enterprises')
+            raise error.CommandError('mc-transfer cancel', 'Command is available to MSP and MC enterprises')
 
         rq = MCTransfer_pb2.MCTransferRequest()
         rq.enterpriseName = enterprise_name
@@ -196,7 +196,7 @@ class McTransferAcceptMcCommand(enterprise_common.EnterpriseCommand, McTransferM
         enterprise_name, enterprise_email = self.get_transfer_parameters('mc-transfer accept-mc', **kwargs)
         enterprise_type = self.get_enterprise_license(params)
         if enterprise_type not in (EnterpriseType.MSP, EnterpriseType.Distributor):
-            raise error.CommandError('mc-transfer leave-msp', 'Command is available to MSP')
+            raise error.CommandError('mc-transfer accept-mc', 'Command is available to MSP')
 
         try:
             rq = MCTransfer_pb2.MCTransferRequest()
@@ -212,7 +212,7 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
         return mc_transfer_perform_parser
 
     def execute(self, params, **kwargs):
-        enterprise_name, enterprise_email = self.get_transfer_parameters('mc-transfer accept-mc', **kwargs)
+        enterprise_name, enterprise_email = self.get_transfer_parameters('mc-transfer perform', **kwargs)
         enterprise_type = self.get_enterprise_license(params)
         if enterprise_type not in (EnterpriseType.MSP, EnterpriseType.MC, EnterpriseType.Regular):
             raise error.CommandError('mc-transfer perform', 'Command is available to Regular, MSP, and MC enterprises')
