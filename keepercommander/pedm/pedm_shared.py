@@ -6,6 +6,7 @@ import enum
 import datetime
 import hashlib
 import hmac
+from typing import List, Optional
 
 from .. import utils
 from ..proto import pedm_pb2, NotificationCenter_pb2
@@ -118,3 +119,30 @@ def approval_status_to_name(approval_status: int, created: datetime.datetime, ex
         return status
     else:
         return 'Unsupported'
+
+@dataclass
+class CollectionRequiredFields:
+    all_fields: List[str]
+    primary_key_fields: Optional[List[str]] = None
+
+
+def get_collection_required_fields(collection_type: Optional[int]) -> Optional[CollectionRequiredFields]:
+    if collection_type is None:
+        return None
+    if collection_type == CollectionType.OsBuild:
+        return CollectionRequiredFields(['Name', 'Version'])
+    if collection_type == CollectionType.Application:
+        return CollectionRequiredFields(['FileHash', 'FileName', 'FileVersion'], ['FileHash'])
+    if collection_type == CollectionType.UserAccount:
+        return CollectionRequiredFields(['Domainname', 'Username', 'AccountType'])
+    if collection_type == CollectionType.GroupAccount:
+        return CollectionRequiredFields(['GroupName'])
+    if collection_type == CollectionType.ApplicationName:
+        return CollectionRequiredFields(['Name'])
+    if collection_type == CollectionType.UserName:
+        return CollectionRequiredFields(['Name'])
+    if collection_type == CollectionType.CustomUserCollection:
+        return CollectionRequiredFields(['Name'])
+    if collection_type == CollectionType.OsVersion:
+        return CollectionRequiredFields(['Name'])
+    return None
