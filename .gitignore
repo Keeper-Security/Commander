@@ -17,3 +17,4 @@ dr-logs
 /.venv*
 *.swp
 CLAUDE.md
+AGENTS.md
