@@ -11,6 +11,7 @@ from . import admin_storage, admin_types
 from .. import crypto, utils, api
 from ..proto import pedm_pb2, folder_pb2
 from ..storage import types as storage_types, in_memory
+from ..pedm import pedm_shared
 
 
 class RebuildTask:
@@ -670,17 +671,42 @@ class PedmPlugin(IPedmAdmin):
                         remove_collections: Optional[Iterable[str]] = None) -> admin_types.ModifyStatus:
         to_add: List[pedm_pb2.CollectionValue] = []
         to_update: List[pedm_pb2.CollectionValue] = []
-        for colls in (add_collections, update_collections):
-            if colls is not None:
-                for coll in colls:
-                    cv = pedm_pb2.CollectionValue()
-                    cv.collectionUid = utils.base64_url_decode(coll.collection_uid)
-                    cv.collectionType = coll.collection_type
-                    cv.encryptedData = crypto.encrypt_aes_v2(coll.collection_data.encode(), self.agent_key)
-                    if colls is add_collections:
-                        to_add.append(cv)
-                    elif colls is update_collections:
-                        to_update.append(cv)
+        if add_collections is not None:
+            for coll in add_collections:
+                if not coll.collection_uid:
+                    try:
+                        data = json.loads(coll.collection_data)
+                        if not isinstance(data, dict):
+                            raise Exception('Collection data must be JSON object to compute UID')
+                        required = pedm_shared.get_collection_required_fields(coll.collection_type)
+                        if not required:
+                            raise Exception(f'Unknown collection type: {coll.collection_type}')
+                        key_fields = required.primary_key_fields or required.all_fields
+                        key_parts: List[str] = []
+                        for k in key_fields:
+                            if k not in data or not isinstance(data[k], str):
+                                raise Exception(f'Collection data missing required text field "{k}"')
+                            key_parts.append(data[k])
+                        key = ''.join(key_parts)
+                        coll.collection_uid = pedm_shared.get_collection_uid(self.agent_key, coll.collection_type, key)
+                    except Exception as err:
+                        status.add.append(admin_types.EntityStatus(entity_uid='', success=False, message=str(err)))
+                        continue
+                cv = pedm_pb2.CollectionValue()
+                cv.collectionUid = utils.base64_url_decode(coll.collection_uid)
+                cv.collectionType = coll.collection_type
+                cv.encryptedData = crypto.encrypt_aes_v2(coll.collection_data.encode(), self.agent_key)
+                to_add.append(cv)
+
+        if update_collections is not None:
+            for coll in update_collections:
+                if not coll.collection_uid:
+                    raise Exception('Update collection requires collection_uid')
+                cv = pedm_pb2.CollectionValue()
+                cv.collectionUid = utils.base64_url_decode(coll.collection_uid)
+                cv.collectionType = coll.collection_type
+                cv.encryptedData = crypto.encrypt_aes_v2(coll.collection_data.encode(), self.agent_key)
+                to_update.append(cv)
         to_remove: List[bytes] = []
         if remove_collections is not None:
             for collection_uid in remove_collections:
