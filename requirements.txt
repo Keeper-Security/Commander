@@ -1,5 +1,6 @@
 asciitree
 bcrypt
+certifi
 colorama
 prompt_toolkit
 pycryptodomex
