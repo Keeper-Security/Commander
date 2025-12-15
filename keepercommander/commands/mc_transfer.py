@@ -232,12 +232,10 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
         rq = MCTransfer_pb2.MCTransferRequest()
         rq.enterpriseName = enterprise_name
         rq.enterpriseAdminEmail = enterprise_email
-        rs: Optional[MCTransfer_pb2.MCTransferListResponse]
-        rs = api.communicate_rest(params, rq, 'enterprise/mc_transfer_status', rs_type=MCTransfer_pb2.MCTransferListResponse)
-        approved = [x for x in rs.mcTransferStates
-                    if x.transferStatus == MCTransfer_pb2.MCTransferStatus.STATUS_APPROVED and x.movingEnterpriseId in valid_enterprises]
-        if len(approved) == 0:
-            raise error.CommandError('mc-transfer perform', 'There are no approved transfers')
+        approved: Optional[MCTransfer_pb2.MCTransferState]
+        approved = api.communicate_rest(params, rq, 'enterprise/mc_transfer_status', rs_type=MCTransfer_pb2.MCTransferState)
+        if approved.transferStatus != MCTransfer_pb2.MCTransferStatus.STATUS_APPROVED:
+            raise error.CommandError('mc-transfer perform', 'The transfer has not been approved')
 
         public_key_rs: Optional[breachwatch_pb2.EnterprisePublicKeyResponse]
         public_key_rs = api.communicate_rest(params, rq, 'enterprise/mc_transfer_get_pubic_key', rs_type=breachwatch_pb2.EnterprisePublicKeyResponse)
