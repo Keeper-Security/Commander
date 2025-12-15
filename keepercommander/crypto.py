@@ -91,12 +91,6 @@ def unload_ec_public_key(public_key):
     return public_key.public_bytes(encoding=serialization.Encoding.X962,
                                    format=serialization.PublicFormat.UncompressedPoint)
 
-def load_mlkem_public_key(pem_b64: bytes) -> bytes:
-    import base64
-    pem = base64.b64decode(pem_b64)
-    der = base64.b64decode(''.join(pem.decode('utf-8').strip().split('\n')[1:-1]))
-    return der[-1568:]
-
 def encrypt_aes_v1(data, key, iv=None, use_padding=True):
     iv = iv or get_random_bytes(16)
     cipher = Cipher(AES(key), CBC(iv), backend=_CRYPTO_BACKEND)
