@@ -1308,7 +1308,7 @@ class WhoamiCommand(Command):
                         elif product_type_id in (11, 12):
                             plan = 'Keeper MSP'
                         elif product_type_id == 8:
-                            plan = 'MC ' + 'Enterprise' if tier == 1 else 'Business'
+                            plan = 'MC ' + ('Enterprise' if tier == 1 else 'Business')
                         else:
                             plan = 'Unknown'
                         if product_type_id in (5, 10, 12):
