@@ -232,60 +232,62 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
         rq = MCTransfer_pb2.MCTransferRequest()
         rq.enterpriseName = enterprise_name
         rq.enterpriseAdminEmail = enterprise_email
-        approved: Optional[MCTransfer_pb2.MCTransferState]
-        approved = api.communicate_rest(params, rq, 'enterprise/mc_transfer_status', rs_type=MCTransfer_pb2.MCTransferState)
-        if approved.transferStatus != MCTransfer_pb2.MCTransferStatus.STATUS_APPROVED:
+
+        transfer: Optional[MCTransfer_pb2.MCTransferState]
+        transfer = api.communicate_rest(params, rq, 'enterprise/mc_transfer_status', rs_type=MCTransfer_pb2.MCTransferState)
+        if transfer.transferStatus != MCTransfer_pb2.MCTransferStatus.STATUS_APPROVED:
             raise error.CommandError('mc-transfer perform', 'The transfer has not been approved')
-
-        public_key_rs: Optional[breachwatch_pb2.EnterprisePublicKeyResponse]
-        public_key_rs = api.communicate_rest(params, rq, 'enterprise/mc_transfer_get_public_key', rs_type=breachwatch_pb2.EnterprisePublicKeyResponse)
-        if not public_key_rs:
-            raise error.CommandError('mc-transfer perform', 'Failed to get transfer key')
-
-        rsa_key: Optional[RSAPublicKey] = None
-        ec_key: Optional[EllipticCurvePublicKey] = None
-        if len(public_key_rs.enterprisePublicKey) > 0:
-            rsa_key = crypto.load_rsa_public_key(public_key_rs.enterprisePublicKey)
-        elif len(public_key_rs.enterpriseECCPublicKey):
-            ec_key = crypto.load_ec_public_key(public_key_rs.enterpriseECCPublicKey)
-        else:
-            raise error.CommandError('mc-transfer perform', 'Failed to get transfer key')
-
-        enterprise_tree_key = params.enterprise['unencrypted_tree_key']
 
         rq = MCTransfer_pb2.MCTransferRequest()
         rq.enterpriseName = enterprise_name
         rq.enterpriseAdminEmail = enterprise_email
-        transfer = approved
-        tree_key = None
-        if transfer.movingEnterpriseId == params.enterprise_id:
-            tree_key = enterprise_tree_key
-        elif isinstance(managed_companies, list):
-            mc = next((x for x in managed_companies if x.get('mc_enterprise_id') == transfer.movingEnterpriseId))
-            if mc:
-                encrypted_tree_key = mc.get('tree_key')
-                if enterprise_tree_key:
-                    try:
-                        tree_key = crypto.decrypt_aes_v2(encrypted_tree_key, enterprise_tree_key)
-                    except:
-                        pass
-        if tree_key:
-            try:
-                if rsa_key:
-                    encrypted_tree_key = crypto.encrypt_rsa(tree_key, rsa_key)
-                else:
-                    encrypted_tree_key = crypto.encrypt_ec(tree_key, ec_key)
-                key = MCTransfer_pb2.MCTransferTreeKey()
-                key.enterpriseId = transfer.movingEnterpriseId
-                key.treeKey = encrypted_tree_key
-                rq.mcTransferTreeKeys.append(key)
-            except:
-                logging.warning(f'Failed to encrypt enterprise key: ID: {transfer.movingEnterpriseId}, Name: {transfer.movingEnterpriseName}')
-        else:
-            logging.warning(f'Failed to resolve enterprise key: ID: {transfer.movingEnterpriseId}, Name: {transfer.movingEnterpriseName}')
 
-        if len(rq.mcTransferTreeKeys) == 0:
-            raise error.CommandError('mc-transfer perform', 'There are not enterprise to transfer')
+        if transfer.recevingEnterpriseName:
+            public_key_rs: Optional[breachwatch_pb2.EnterprisePublicKeyResponse]
+            public_key_rs = api.communicate_rest(params, rq, 'enterprise/mc_transfer_get_public_key', rs_type=breachwatch_pb2.EnterprisePublicKeyResponse)
+            if not public_key_rs:
+                raise error.CommandError('mc-transfer perform', 'Failed to get transfer key')
+
+            rsa_key: Optional[RSAPublicKey] = None
+            ec_key: Optional[EllipticCurvePublicKey] = None
+            if len(public_key_rs.enterprisePublicKey) > 0:
+                rsa_key = crypto.load_rsa_public_key(public_key_rs.enterprisePublicKey)
+            elif len(public_key_rs.enterpriseECCPublicKey):
+                ec_key = crypto.load_ec_public_key(public_key_rs.enterpriseECCPublicKey)
+            else:
+                raise error.CommandError('mc-transfer perform', 'Failed to get transfer key')
+
+            enterprise_tree_key = params.enterprise['unencrypted_tree_key']
+
+            tree_key = None
+            if transfer.movingEnterpriseId == params.enterprise_id:
+                tree_key = enterprise_tree_key
+            elif isinstance(managed_companies, list):
+                mc = next((x for x in managed_companies if x.get('mc_enterprise_id') == transfer.movingEnterpriseId))
+                if mc:
+                    encrypted_tree_key = mc.get('tree_key')
+                    if enterprise_tree_key:
+                        try:
+                            tree_key = crypto.decrypt_aes_v2(encrypted_tree_key, enterprise_tree_key)
+                        except:
+                            pass
+            if tree_key:
+                try:
+                    if rsa_key:
+                        encrypted_tree_key = crypto.encrypt_rsa(tree_key, rsa_key)
+                    else:
+                        encrypted_tree_key = crypto.encrypt_ec(tree_key, ec_key)
+                    key = MCTransfer_pb2.MCTransferTreeKey()
+                    key.enterpriseId = transfer.movingEnterpriseId
+                    key.treeKey = encrypted_tree_key
+                    rq.mcTransferTreeKeys.append(key)
+                except:
+                    logging.warning(f'Failed to encrypt enterprise key: ID: {transfer.movingEnterpriseId}, Name: {transfer.movingEnterpriseName}')
+            else:
+                logging.warning(f'Failed to resolve enterprise key: ID: {transfer.movingEnterpriseId}, Name: {transfer.movingEnterpriseName}')
+
+            if len(rq.mcTransferTreeKeys) == 0:
+                raise error.CommandError('mc-transfer perform', 'There are not enterprise to transfer')
 
         try:
             api.communicate_rest(params, rq, 'enterprise/mc_transfer_perform')
