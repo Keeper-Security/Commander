@@ -238,7 +238,7 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
             raise error.CommandError('mc-transfer perform', 'The transfer has not been approved')
 
         public_key_rs: Optional[breachwatch_pb2.EnterprisePublicKeyResponse]
-        public_key_rs = api.communicate_rest(params, rq, 'enterprise/mc_transfer_get_pubic_key', rs_type=breachwatch_pb2.EnterprisePublicKeyResponse)
+        public_key_rs = api.communicate_rest(params, rq, 'enterprise/mc_transfer_get_public_key', rs_type=breachwatch_pb2.EnterprisePublicKeyResponse)
         if not public_key_rs:
             raise error.CommandError('mc-transfer perform', 'Failed to get transfer key')
 
