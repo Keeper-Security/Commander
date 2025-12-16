@@ -132,8 +132,6 @@ class McTransferStatusCommand(enterprise_common.EnterpriseCommand, McTransferMix
     def execute(self, params, **kwargs):
         enterprise_name = kwargs.get('target_name')
         enterprise_email = kwargs.get('target_email')
-        if not enterprise_email:
-            raise error.CommandError('mc-transfer status', 'Target enterprise admin email cannot be empty')
 
         enterprise_type = self.get_enterprise_license(params)
         if enterprise_type not in (EnterpriseType.Regular, EnterpriseType.MSP, EnterpriseType.MC, EnterpriseType.Distributor):
@@ -142,7 +140,8 @@ class McTransferStatusCommand(enterprise_common.EnterpriseCommand, McTransferMix
         rq = MCTransfer_pb2.MCTransferRequest()
         if enterprise_name:
             rq.enterpriseName = enterprise_name
-        rq.enterpriseAdminEmail = enterprise_email
+        if enterprise_email:
+            rq.enterpriseAdminEmail = enterprise_email
         transfer: Optional[MCTransfer_pb2.MCTransferState]
         transfer = api.communicate_rest(params, rq, 'enterprise/mc_transfer_status', rs_type=MCTransfer_pb2.MCTransferState)
         if transfer:
