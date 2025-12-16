@@ -76,7 +76,7 @@ def _combine_secrets_hkdf(ec_secret: bytes, mlkem_secret: bytes, server_ec_pub: 
     hkdf = HKDF(
         algorithm=SHA256(),
         length=32,
-        salt=b'',  # Empty salt equivalent to zero-filled per HKDF spec
+        salt=b'\x00' * 32,  # 32-byte zero salt to match server implementation
         info=context_info,
         backend=crypto._CRYPTO_BACKEND
     )

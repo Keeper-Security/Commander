@@ -40,7 +40,7 @@ class RestApiContext:
         self.server_base = server
         self.transmission_key = None
         self.__server_key_id = 7
-        self.__qrc_key_id = -1  # -1 = not determined, None = not available, 100-105 = available
+        self.__qrc_key_id = -1  # -1 = not determined, None = not available
         self.locale = locale
         self.__store_server_key = False
         self.proxies = None
