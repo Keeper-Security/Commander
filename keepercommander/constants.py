@@ -46,6 +46,7 @@ MSP_ADDONS = [
     ('password_rotation', 'Password Rotation', False, 'Rotation'),
     ('remote_browser_isolation', 'Remote Browser Isolation', False, 'Browser Isolation'),
     ('privileged_access_manager', 'Privileged Access Manager (PAM)', True, 'PAM'),
+    ('keeper_endpoint_privilege_manager', 'Keeper Endpoint Privilege Manager (KEPM)', True, 'KEPM'),
 ]
 
 
