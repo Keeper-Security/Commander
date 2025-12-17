@@ -141,7 +141,7 @@ share_report_parser.add_argument('container', nargs='*', type=str, action='store
 record_permission_parser = argparse.ArgumentParser(prog='record-permission', description='Modify the permissions of a record')
 record_permission_parser.add_argument('--dry-run', dest='dry_run', action='store_true',
                                       help='Display the permissions changes without committing them')
-record_permission_parser.add_argument('--force', dest='force', action='store_true',
+record_permission_parser.add_argument('-f', '--force', dest='force', action='store_true',
                                       help='Apply permission changes without any confirmation')
 record_permission_parser.add_argument('-R', '--recursive', dest='recursive', action='store_true',
                                       help='Apply permission changes to all sub-folders')
@@ -750,9 +750,17 @@ class ShareRecordCommand(Command):
             raise CommandError('share-record', 'You can transfer ownership to a single account only')
 
         all_users = set((x.casefold() for x in emails))
+        
+        # Validate email format before attempting to share or send invitations
+        invalid_emails = [email for email in all_users if not is_email(email)]
+        if invalid_emails:
+            raise CommandError('share-record', f'Invalid email format: {", ".join(invalid_emails)}')
+        
+        invitations_sent = False
         if not dry_run and action in ('grant', 'owner'):
             invited = api.load_user_public_keys(params, list(all_users), send_invites=True)
             if invited:
+                invitations_sent = True
                 for email in invited:
                     logging.warning('Share invitation has been sent to \'%s\'', email)
                 logging.warning('Please repeat this command when invitation is accepted.')
@@ -760,6 +768,9 @@ class ShareRecordCommand(Command):
             all_users.intersection_update(params.key_cache.keys())
 
         if len(all_users) == 0:
+            if invitations_sent:
+                # Invitations were sent, this is a success case - return None to indicate no further action needed
+                return None
             raise CommandError('share-record', 'Nothing to do.')
 
         can_edit = kwargs.get('can_edit') or False
