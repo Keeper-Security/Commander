@@ -276,10 +276,12 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
                             pass
             if tree_key:
                 try:
-                    if rsa_key:
-                        encrypted_tree_key = crypto.encrypt_rsa(tree_key, rsa_key)
-                    else:
+                    if ec_key:
+                        key_type = 4
                         encrypted_tree_key = crypto.encrypt_ec(tree_key, ec_key)
+                    else:
+                        key_type = 1
+                        encrypted_tree_key = crypto.encrypt_rsa(tree_key, rsa_key)
                     key = MCTransfer_pb2.MCTransferTreeKey()
                     key.enterpriseId = transfer.movingEnterpriseId
                     key.treeKey = encrypted_tree_key

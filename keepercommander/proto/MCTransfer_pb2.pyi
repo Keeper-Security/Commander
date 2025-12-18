@@ -60,19 +60,19 @@ class MCTransferListResponse(_message.Message):
     def __init__(self, mcTransferStates: _Optional[_Iterable[_Union[MCTransferState, _Mapping]]] = ...) -> None: ...
 
 class MCTransferState(_message.Message):
-    __slots__ = ["movingEnterpriseId", "movingEnterpriseName", "movingEnterpriseAdminEmail", "recevingEnterpriseName", "recevingEnterpriseAdminEmail", "transferStatus", "comments"]
+    __slots__ = ["movingEnterpriseId", "movingEnterpriseName", "movingEnterpriseAdminEmail", "receivingEnterpriseName", "receivingEnterpriseAdminEmail", "transferStatus", "comments"]
     MOVINGENTERPRISEID_FIELD_NUMBER: _ClassVar[int]
     MOVINGENTERPRISENAME_FIELD_NUMBER: _ClassVar[int]
     MOVINGENTERPRISEADMINEMAIL_FIELD_NUMBER: _ClassVar[int]
-    RECEVINGENTERPRISENAME_FIELD_NUMBER: _ClassVar[int]
-    RECEVINGENTERPRISEADMINEMAIL_FIELD_NUMBER: _ClassVar[int]
+    RECEIVINGENTERPRISENAME_FIELD_NUMBER: _ClassVar[int]
+    RECEIVINGENTERPRISEADMINEMAIL_FIELD_NUMBER: _ClassVar[int]
     TRANSFERSTATUS_FIELD_NUMBER: _ClassVar[int]
     COMMENTS_FIELD_NUMBER: _ClassVar[int]
     movingEnterpriseId: int
     movingEnterpriseName: str
     movingEnterpriseAdminEmail: str
-    recevingEnterpriseName: str
-    recevingEnterpriseAdminEmail: str
+    receivingEnterpriseName: str
+    receivingEnterpriseAdminEmail: str
     transferStatus: MCTransferStatus
     comments: str
-    def __init__(self, movingEnterpriseId: _Optional[int] = ..., movingEnterpriseName: _Optional[str] = ..., movingEnterpriseAdminEmail: _Optional[str] = ..., recevingEnterpriseName: _Optional[str] = ..., recevingEnterpriseAdminEmail: _Optional[str] = ..., transferStatus: _Optional[_Union[MCTransferStatus, str]] = ..., comments: _Optional[str] = ...) -> None: ...
+    def __init__(self, movingEnterpriseId: _Optional[int] = ..., movingEnterpriseName: _Optional[str] = ..., movingEnterpriseAdminEmail: _Optional[str] = ..., receivingEnterpriseName: _Optional[str] = ..., receivingEnterpriseAdminEmail: _Optional[str] = ..., transferStatus: _Optional[_Union[MCTransferStatus, str]] = ..., comments: _Optional[str] = ...) -> None: ...

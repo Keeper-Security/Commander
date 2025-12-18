@@ -1468,12 +1468,13 @@ def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
     mc_params.session_token = loginv3.CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedSessionToken)
     mc_params.msp_tree_key = params.enterprise['unencrypted_tree_key']
     encrypted_tree_key = utils.base64_url_decode(resp.encryptedTreeKey)
-    if len(encrypted_tree_key) > 200:    # RSA
+    key_type = resp.keyTypeId
+    if key_type == 1 or  len(encrypted_tree_key) > 200:    # RSA
         private_key_bytes = utils.base64_url_decode(params.enterprise['keys']['rsa_encrypted_private_key'])
         private_key_bytes = crypto.decrypt_aes_v2(private_key_bytes, mc_params.msp_tree_key)
         private_key = crypto.load_rsa_private_key(private_key_bytes)
         tree_key = crypto.decrypt_rsa(encrypted_tree_key, private_key)
-    elif len(encrypted_tree_key) == 125:    # EC
+    elif key_type == 4 or len(encrypted_tree_key) == 125:    # EC
         private_key_bytes = utils.base64_url_decode(params.enterprise['keys']['ecc_encrypted_private_key'])
         private_key_bytes = crypto.decrypt_aes_v2(private_key_bytes, mc_params.msp_tree_key)
         private_key = crypto.load_ec_private_key(private_key_bytes)
