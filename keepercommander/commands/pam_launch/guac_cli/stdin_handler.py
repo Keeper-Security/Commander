@@ -429,8 +429,22 @@ class _UnixStdinReader:
         try:
             import termios
             import tty
+            import time
+
+            # Flush stdout before changing terminal attributes to ensure all output is complete
+            sys.stdout.flush()
+            sys.stderr.flush()
+
             self.old_settings = termios.tcgetattr(sys.stdin.fileno())
             tty.setraw(sys.stdin.fileno())
+
+            # Small delay to allow terminal to process the attribute change
+            # This helps prevent visual glitches where lines appear to be deleted
+            time.sleep(0.01)  # 10ms delay
+
+            # Flush again after setting raw mode
+            sys.stdout.flush()
+            sys.stderr.flush()
         except Exception as e:
             logging.warning(f"Failed to set raw mode: {e}")
 
@@ -486,9 +500,23 @@ class _MacOSStdinReader:
         try:
             import termios
             import tty
+            import time
+
+            # Flush stdout before changing terminal attributes to ensure all output is complete
+            sys.stdout.flush()
+            sys.stderr.flush()
+
             self.old_settings = termios.tcgetattr(sys.stdin.fileno())
             # Use setraw for macOS - same as Linux
             tty.setraw(sys.stdin.fileno())
+
+            # Small delay to allow terminal to process the attribute change
+            # This helps prevent visual glitches where lines appear to be deleted
+            time.sleep(0.01)  # 10ms delay
+
+            # Flush again after setting raw mode
+            sys.stdout.flush()
+            sys.stderr.flush()
         except Exception as e:
             logging.warning(f"Failed to set raw mode on macOS: {e}")
 
@@ -540,9 +568,26 @@ class _WindowsStdinReader:
 
     def set_raw_mode(self):
         """Set console to raw mode on Windows."""
-        # Windows console is already suitable for getch-style reading
-        # No explicit raw mode needed for msvcrt
-        pass
+        try:
+            import time
+
+            # Flush stdout before changing console mode to ensure all output is complete
+            sys.stdout.flush()
+            sys.stderr.flush()
+
+            # Windows console is already suitable for getch-style reading
+            # No explicit raw mode needed for msvcrt, but we still flush and delay
+            # to prevent visual glitches when entering CLI mode
+
+            # Small delay to allow console to process any pending output
+            # This helps prevent visual glitches where lines appear to be deleted
+            time.sleep(0.01)  # 10ms delay
+
+            # Flush again after the delay
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception as e:
+            logging.warning(f"Failed to set raw mode on Windows: {e}")
 
     def restore(self):
         """Restore console mode."""
