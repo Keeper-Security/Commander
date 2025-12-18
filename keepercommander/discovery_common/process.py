@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
 import os
-from .constants import PAM_DIRECTORY, PAM_USER, VERTICES_SORT_MAP, LOCAL_USER
+from .constants import PAM_DIRECTORY, PAM_USER, VERTICES_SORT_MAP, LOCAL_USER, PAM_CONFIGURATIONS
 from .jobs import Jobs
 from .infrastructure import Infrastructure
 from .record_link import RecordLink
@@ -144,7 +144,7 @@ class Process:
             object_id = object_id.split("\\")[1]
         if parent_content.record_type == PAM_DIRECTORY:
             domain = parent_content.name
-            if object_id.endswith(domain) is False:
+            if not object_id.endswith(domain):
                 object_id += f"@{domain}"
         else:
             object_id += parent_content.id
@@ -198,7 +198,7 @@ class Process:
 
         # If the current vertex is not active, then return.
         # It won't have a DATA edge.
-        if current_vertex.active is False:
+        if not current_vertex.active:
             return
 
         for vertex in current_vertex.has_vertices():
@@ -358,7 +358,7 @@ class Process:
         self.logger.debug(f"search for directories: {', '.join(domains)}")
 
         # Some providers provider directory type services.
-        # They can also provide mulitple domains
+        # They can also provide multiple domains
         provider_vertices = self.infra.dag.search_content({
             "record_type": ["pamAzureConfiguration", "pamDomainConfiguration"],
         }, ignore_case=True)
@@ -371,9 +371,9 @@ class Process:
                     if domain.lower() in provider_domain.lower():
                         found = True
                         break
-                if found is True:
+                if found:
                     break
-            if found is True:
+            if found:
                 found_provider_directories.append(provider_vertex)
         if len(found_provider_directories) > 0:
             return found_provider_directories
@@ -412,7 +412,7 @@ class Process:
                              find_dn: Optional[str] = None) -> Optional[DirectoryUserResult]:
 
         # If the passed in results were a DirectoryInfo then check the Vault for users.
-        if isinstance(results, DirectoryInfo) is True:
+        if isinstance(results, DirectoryInfo):
             self.logger.debug("search for directory user from vault records")
             self.logger.debug(f"have {len(results.directory_user_record_uids)} users")
             for user_record_id in results.directory_user_record_uids:
@@ -619,7 +619,7 @@ class Process:
                 # No need to create a record, just link, belongs_to is False
                 # Since we are using records, just the belongs_to method instead of
                 #   discovery_belongs_to.
-                if isinstance(directory_user, NormalizedRecord) is True:
+                if isinstance(directory_user, NormalizedRecord):
                     admin_acl.belongs_to = False
                     return directory_user.record_uid
                 else:
@@ -637,6 +637,8 @@ class Process:
                     if admin_content.record_uid is not None:
                         admin_acl.belongs_to = False
                         return admin_content.record_uid
+
+                    return None
             else:
                 raise UserNotFoundException(f"Could not find the directory user in domain {domain}")
         else:
@@ -650,16 +652,12 @@ class Process:
                                 record_prepare_func: Callable,
                                 directory_info_func: Callable,
                                 record_cache: dict,
-                                smart_add: bool = False,
-                                add_all: bool = False,
                                 context: Optional[Any] = None):
 
         """
         This method will add items to the bulk_add_records queue to be added by the client.
 
-        Items are added because:
-          * Smart Add is enabled, and the resource was logged into with credentials.
-          * The rule engine flagged an item as ADD
+        These are items where the rule engine has flagged them to be added.
 
         :param current_vertex: The current/parent discovery vertex.
         :param bulk_add_records: List of records to be added.
@@ -668,25 +666,23 @@ class Process:
         :param record_prepare_func: Function to convert content into an unsaved record.
         :param directory_info_func: Function to lookup directories.
         :param record_cache:
-        :param smart_add: Add the resource record if the admin exists.
-        :param add_all: Just add the record. This is not the params from Commander.
         :param context: Client context; could be anything.
         :return:
         """
 
-        if current_vertex.active is False:
+        if not current_vertex.active:
             self.logger.debug(f"vertex {current_vertex.uid} is not active, skip")
             return
 
         # Check if this vertex has a record.
         # We cannot add child vertices to a vertex that does not have a record.
-        current_content = current_vertex.content_as_object(DiscoveryObject)
+        current_content = DiscoveryObject.get_discovery_object(current_vertex)
         if current_content.record_uid is None:
             self.logger.debug(f"vertex {current_content.uid} does not have a record id")
             return
 
         self.logger.debug(f"Current Vertex: {current_content.record_type}, {current_vertex.uid}, "
-                          f"{current_content.name}, smart add {smart_add}, add all {add_all}")
+                          f"{current_content.name}")
 
         # Sort all the vertices under the current vertex.
         # Return a dictionary where the record type is the key.
@@ -698,8 +694,8 @@ class Process:
             self.logger.debug(f"  processing {record_type}")
             for vertex in record_type_to_vertices_map[record_type]:
 
-                content = DiscoveryObject.get_discovery_object(vertex)
-                self.logger.debug(f"    child vertex {vertex.uid}, {content.name}")
+                child_content = DiscoveryObject.get_discovery_object(vertex)
+                self.logger.debug(f"    child vertex {vertex.uid}, {child_content.name}")
 
                 # If we are going to add an admin user, this is the default ACL
                 # This is for the smart add feature
@@ -708,10 +704,10 @@ class Process:
 
                 # This ACL is None for resource, and populated for users.
                 default_acl = None
-                if content.record_type == PAM_USER:
+                if child_content.record_type == PAM_USER:
                     default_acl = self._default_acl(
                         discovery_vertex=vertex,
-                        content=content,
+                        content=child_content,
                         discovery_parent_vertex=current_vertex)
 
                 # Check for a vault record, if it exists.
@@ -720,16 +716,17 @@ class Process:
                 # We are doing this because the record might be an active directory user, that we have
                 #  not created a record for yet, however it might have been assigned a record UID from a prior prompt.
 
-                existing_record = content.record_exists
+                existing_record = child_content.record_exists
                 if record_lookup_func is not None:
                     check_the_vault = True
                     for item in bulk_add_records:
-                        if item.record_uid == content.record_uid:
+                        if item.record_uid == child_content.record_uid:
                             self.logger.debug(f"    record is in the bulk add list, do not check the vault if exists")
                             check_the_vault = False
                             break
-                    if check_the_vault is True:
-                        existing_record = record_lookup_func(record_uid=content.record_uid, context=context) is not None
+                    if check_the_vault:
+                        existing_record = record_lookup_func(record_uid=child_content.record_uid,
+                                                             context=context) is not None
                         self.logger.debug(f"    record exists in the vault: {existing_record}")
                 else:
                     self.logger.debug(f"    record lookup function not defined, record existing: {existing_record}")
@@ -737,247 +734,54 @@ class Process:
                 # Determine if we are going to add the item.
                 # If the item has a record UID already, we don't need to add.
                 add_record = False
-                add_all_users = False
-                if content.record_exists is False:
+                if (child_content.record_exists is False
+                        and child_content.action_rules_result == RuleActionEnum.ADD.value):
+                    self.logger.debug(f"    vertex {vertex.uid} had an ADD result for the rule engine, auto add")
+                    add_record = True
 
-                    #################################################################################################
-                    #
-                    # RULE ENGINE ADD
+                if add_record:
 
-                    if content.action_rules_result == RuleActionEnum.ADD.value:
-                        self.logger.debug(f"    vertex {vertex.uid} had an ADD result for the rule engine, auto add")
-                        add_record = True
+                    self.logger.debug(f"adding resource record")
+                    # The record could be a resource or user record.
+                    self._prepare_record(
+                        record_prepare_func=record_prepare_func,
+                        bulk_add_records=bulk_add_records,
+                        content=child_content,
+                        parent_content=current_content,
+                        vertex=vertex,
+                        context=context
+                    )
+                    if child_content.record_uid is None:
+                        raise Exception(f"the record uid is blank for {child_content.description} after prepare")
 
-                    #################################################################################################
-                    #
-                    # SMART ADD
+                    # For a resource, the ACL will be None.
+                    # It will a UserAcl if a user.
+                    self.record_link.belongs_to(child_content.record_uid, current_content.record_uid, acl=default_acl)
 
-                    # If we are using smart add and the there was an admin user, add it.
-                    elif smart_add is True and content.access_user is not None and content.record_type != PAM_USER:
-                        self.logger.debug(f"    resource has credentials, and using smart add")
-                        add_record = True
-                        add_all_users = True
+                    # If the rules have set the admin_uid then connect the user to the resource.
+                    if (child_content.admin_uid is not None
+                            and child_content.record_type != PAM_USER
+                            and record_lookup_func is not None):
 
-                    #################################################################################################
-                    #
-                    # ADD ALL FLAG (not Commander's)
+                        self.logger.debug("the admin UID has been set for this resource")
 
-                    # If add_all is set, then add it.
-                    # This is normally used with smart_add to add the resource's users.
-                    elif add_all is True:
-                        # If the current content/parent is not a Directory
-                        #   and the content is a User and the source is not 'local' user,
-                        #   then don't add the user.
-                        # We don't want an AD user to belongs_to a machine.
-                        if (current_content.record_type != PAM_DIRECTORY
-                                and content.record_type == PAM_USER
-                                and content.item.source != LOCAL_USER):
-                            add_record = False
+                        admin_record = record_lookup_func(record_uid=child_content.admin_uid,
+                                                          context=context)  # type: NormalizedRecord
+                        if admin_record is not None and admin_record.record_type == PAM_USER:
+                            self.logger.debug("was able to find the admin record, connect to resource")
+                            admin_acl.is_admin = True
+                            self.record_link.belongs_to(child_content.admin_uid, child_content.record_uid,
+                                                        acl=admin_acl)
                         else:
-                            self.logger.debug(f"    items is a user, add all is True, adding record")
-                            add_record = True
-
-                if add_record is True:
-
-                    # If we can create an admin user record, then the admin_user_record_uid will be populated.
-                    admin_user_record_uid = None
-                    admin_content = None
-                    admin_vertex = None
-
-                    # If this is a resource, then auto add the admin user if one exists.
-                    # In this scenario ...
-                    #   There is a rule to auto add.
-                    #   A credential was passed to discovery and it worked.
-                    #   Along with the resource, auto create the admin user.
-                    # First we need to make sure the current record type is a resource and logged in.
-                    if smart_add is True and content.access_user is not None:
-
-                        # Get the username and DN.
-                        # Lowercase them for the comparison.
-                        access_username_and_domain = content.access_user.user
-                        access_username = access_username_and_domain
-                        access_domain = None
-                        if access_username_and_domain is not None:
-                            access_username_and_domain = access_username_and_domain.lower()
-                            access_username, access_domain = split_user_and_domain(access_username_and_domain)
-
-                        # We want to pay attention to the admin source.
-                        # The users from the user list might not contain a source.
-                        # For example, Linux PAM that are remote users will not have a domain in their username.
-                        admin_source = content.access_user.source
-
-                        # If the admin source is the current directory name, then it local to the resource (directory).
-                        if content.record_type == PAM_DIRECTORY and content.name == admin_source:
-                            self.logger.debug("    change source to local for directory user")
-                            admin_source = LOCAL_USER
-
-                        access_dn = content.access_user.dn
-                        if access_dn is not None:
-                            access_dn = access_dn.lower()
-
-                        # Go through the users to find the administrative user.
-                        found_user_in_discovery_user_list = False
-                        for user_vertex in vertex.has_vertices():
-
-                            user_content = DiscoveryObject.get_discovery_object(user_vertex)
-                            if user_content.record_type != PAM_USER:
-                                continue
-
-                            # Get the user from the content.
-                            # We want to use the full username and also one without the domain, if there is a domain.
-                            user_and_domain = user_content.item.user
-                            user = user_and_domain
-                            domain = None
-                            if user_and_domain is not None:
-                                user_and_domain = user_and_domain.lower()
-                                user, domain = split_user_and_domain(user_and_domain)
-                                if user is None:
-                                    continue
-
-                            # Get the dn, if it exists.
-                            dn = user_content.item.dn
-                            if dn is not None:
-                                dn = dn.lower()
-
-                            if (access_username_and_domain == user_and_domain
-                                    or access_username_and_domain == user
-                                    or access_username == user
-                                    or access_dn == dn):
-
-                                self.logger.debug("    access user matches the current user")
-                                self.logger.debug(f"    access user source is {user_content.item.source}")
-
-                                # If the user has a record UID, it has already been created.
-                                # This means the record already belongs to another resource, so belongs_to is False.
-                                if user_content.record_uid is not None:
-                                    self.logger.debug("    user has a record uid, add this user as admin")
-                                    admin_acl.belongs_to = False
-                                    admin_user_record_uid = user_content.record_uid
-                                    found_user_in_discovery_user_list = True
-                                    break
-
-                                # Is this user a local user?
-                                # If so prepare a record and link it. Since its local belongs_to is True
-                                if admin_source == LOCAL_USER or admin_source is None:
-
-                                    self.logger.debug("    user is new local user, add this user as admin")
-                                    admin_acl.belongs_to = True
-                                    admin_content = user_content
-                                    admin_vertex = user_vertex
-                                    found_user_in_discovery_user_list = True
-                                    break
-
-                                # The user is a remote user.
-                                else:
-                                    self.logger.debug("    check directory for remote user")
-                                    domain = content.access_user.source
-                                    if content.record_type == PAM_DIRECTORY:
-                                        domain = content.name
-
-                                    try:
-                                        admin_user_record_uid = self._find_admin_directory_user(
-                                            domain=domain,
-                                            admin_acl=admin_acl,
-                                            directory_info_func=directory_info_func,
-                                            record_lookup_func=record_lookup_func,
-                                            context=context,
-                                            user=access_username,
-                                            dn=access_dn
-                                        )
-                                        self.logger.debug("     found directory user for admin")
-                                        found_user_in_discovery_user_list = True
-                                    except (DirectoryNotFoundException, UserNotFoundException) as err:
-                                        # Not an error.
-                                        # Just could not find the directory or directory user.
-                                        self.logger.debug(f"     did not find the directory user: {err}")
-
-                        self.logger.debug("done checking user list")
-
-                        # If the user_record_uid is None, and it's a domain user, and we didn't find a user
-                        #   then there is chance that it's dirctory user not picked up while getting users in
-                        #   discovery.
-                        # This is similar to the remote user code above, except the access user was not found in
-                        #   the user list.
-                        if (found_user_in_discovery_user_list is False and admin_user_record_uid is None
-                                and access_domain is not None):
-                            self.logger.debug("could not find admin user in the user list, "
-                                              "attempt to find in directory")
-                            try:
-                                admin_user_record_uid = self._find_admin_directory_user(
-                                    domain=access_domain,
-                                    admin_acl=admin_acl,
-                                    directory_info_func=directory_info_func,
-                                    record_lookup_func=record_lookup_func,
-                                    context=context,
-                                    user=access_username,
-                                    dn=access_dn
-                                )
-                            except (DirectoryNotFoundException, UserNotFoundException):
-                                # Not an error.
-                                # Just could not find the directory or directory user.
-                                pass
-
-                    # Create the record if we are not using smart add.
-                    # If we are using smart add, only added if we could make an admin record.
-                    if smart_add is False or (smart_add is True
-                                              and (admin_user_record_uid is not None or admin_content is not None)):
-
-                        self.logger.debug(f"adding resource record, smart add {smart_add}")
-                        # The record could be a resource or user record.
-                        self._prepare_record(
-                            record_prepare_func=record_prepare_func,
-                            bulk_add_records=bulk_add_records,
-                            content=content,
-                            parent_content=current_content,
-                            vertex=vertex,
-                            context=context
-                        )
-                        if content.record_uid is None:
-                            raise Exception(f"the record uid is blank for {content.description} after prepare")
-
-                        # For a resource, the ACL will be None.
-                        # It will a UserAcl if a user.
-                        self.record_link.belongs_to(content.record_uid, current_content.record_uid, acl=default_acl)
-
-                        # user_record_uid will only be populated if using smart add.
-                        # Link the admin user to the resource.
-                        if admin_user_record_uid is not None or admin_content is not None:
-
-                            if admin_content is not None:
-                                self.logger.debug("the admin record does not exists, create it")
-
-                                # Create the local admin here since we need the resource record added.
-                                self._prepare_record(
-                                    record_prepare_func=record_prepare_func,
-                                    bulk_add_records=bulk_add_records,
-                                    content=admin_content,
-                                    parent_content=content,
-                                    vertex=admin_vertex,
-                                    context=context
-                                )
-                                if admin_content.record_uid is None:
-                                    raise Exception(f"the record uid is blank for {admin_content.description} "
-                                                    "after prepare")
-
-                                admin_user_record_uid = admin_content.record_uid
-
-                            self.logger.debug("connecting admin user to resource")
-                            self.record_link.belongs_to(admin_user_record_uid, content.record_uid, acl=admin_acl)
+                            self.logger.info(f"The PAM User record {child_content.admin_uid} does not exists. "
+                                             "Cannot set the administrator for an auto added "
+                                             f"record {child_content.title}.")
 
                 # If the record type is a PAM User, we don't need to go deeper.
                 # In the future we might need to change if PAM User becomes a branch and not a leaf.
                 # This is for safety reasons
-                if content.record_type != PAM_USER:
+                if child_content.record_type != PAM_USER:
                     # Process the vertices that belong to the current vertex.
-
-                    next_smart_add = smart_add
-                    if add_all_users is True:
-                        add_all = True
-                    if add_all is True:
-                        self.logger.debug("turning off smart add since add_all is enabled")
-                        next_smart_add = False
-                    self.logger.debug(f"smart add = {next_smart_add}, add all = {add_all}")
-
                     self._process_auto_add_level(
                         current_vertex=vertex,
                         bulk_add_records=bulk_add_records,
@@ -986,13 +790,6 @@ class Process:
                         record_prepare_func=record_prepare_func,
                         directory_info_func=directory_info_func,
                         record_cache=record_cache,
-
-                        # Use the value of smart_add if add_all is False.
-                        # If add_all is True, we don't have to run it through the logic, we are going add a record.
-                        smart_add=next_smart_add,
-
-                        # If we could access a resource, add all it's users.
-                        add_all=add_all_users,
                         context=context
                     )
 
@@ -1030,13 +827,13 @@ class Process:
         :return:
         """
 
-        if current_vertex.active is False:
+        if not current_vertex.active:
             self.logger.debug(f"vertex {current_vertex.uid} is not active, skip")
             return
 
         # Check if this vertex has a record.
         # We cannot add child vertices to a vertex that does not have a record.
-        current_content = current_vertex.content_as_object(DiscoveryObject)
+        current_content = DiscoveryObject.get_discovery_object(current_vertex)
         if current_content.record_uid is None:
             self.logger.debug(f"vertex {current_content.uid} does not have a record id")
             return
@@ -1054,14 +851,14 @@ class Process:
             self.logger.debug(f"  processing {record_type}")
             for vertex in record_type_to_vertices_map[record_type]:
 
-                content = DiscoveryObject.get_discovery_object(vertex)
-                self.logger.debug(f"    child vertex {vertex.uid}, {content.name}")
+                child_content = DiscoveryObject.get_discovery_object(vertex)
+                self.logger.debug(f"    child vertex {vertex.uid}, {child_content.name}")
 
                 default_acl = None
-                if content.record_type == PAM_USER:
+                if child_content.record_type == PAM_USER:
                     default_acl = self._default_acl(
                         discovery_vertex=vertex,
-                        content=content,
+                        content=child_content,
                         discovery_parent_vertex=current_vertex)
 
                 # Check for a vault record, if it exists.
@@ -1070,16 +867,17 @@ class Process:
                 # We are doing this because the record might be an active directory user, that we have
                 #  not created a record for yet, however it might have been assigned a record UID from a prior prompt.
 
-                existing_record = content.record_exists
+                existing_record = child_content.record_exists
                 if record_lookup_func is not None:
                     check_the_vault = True
                     for item in bulk_add_records:
-                        if item.record_uid == content.record_uid:
+                        if item.record_uid == child_content.record_uid:
                             self.logger.debug(f"    record is in the bulk add list, do not check the vault if exists")
                             check_the_vault = False
                             break
-                    if check_the_vault is True:
-                        existing_record = record_lookup_func(record_uid=content.record_uid, context=context) is not None
+                    if check_the_vault:
+                        existing_record = record_lookup_func(record_uid=child_content.record_uid,
+                                                             context=context) is not None
                         self.logger.debug(f"    record exists in the vault: {existing_record}")
                 else:
                     self.logger.debug(f"    record lookup function not defined, record existing: {existing_record}")
@@ -1093,14 +891,14 @@ class Process:
                 # If the rule engine result is to ignore this object, then continue.
                 # This normally would not happen since discovery wouldn't add the object.
                 # However, make sure we skip any object where the rule engine action is to ignore the object.
-                elif content.action_rules_result == RuleActionEnum.IGNORE.value:
+                elif child_content.action_rules_result == RuleActionEnum.IGNORE.value:
                     self.logger.debug(f"    vertex {vertex.uid} had a IGNORE result for the rule engine, "
                                       "skip processing")
                     # If the rule engine result is to ignore this object, then continue.
                     continue
 
                 # If this flag is set, the user set the ignore_object flag when prompted.
-                elif content.ignore_object is True:
+                elif child_content.ignore_object:
                     self.logger.debug(f"    vertex {vertex.uid} was flagged as ignore, skip processing")
                     # If the ignore_object flag is set, then continue.
                     continue
@@ -1113,7 +911,7 @@ class Process:
                     # If not, prompt the user if they want to add this user as the admin.
                     # The returned ACL will have the is_admin flag set to True if they do.
                     resource_has_admin = False
-                    if content.record_type == PAM_USER:
+                    if child_content.record_type == PAM_USER:
                         resource_has_admin = (self.record_link.get_admin_record_uid(current_content.record_uid)
                                               is not None)
                         self.logger.debug(f"resource has an admin is {resource_has_admin}")
@@ -1121,8 +919,8 @@ class Process:
                     # If the current resource does not allow an admin, then it has and admin, it's just controlled by
                     #   us.
                     # This is going to be a resource record, or a configuration record.
-                    if hasattr(current_content.item, "allows_admin") is True:
-                        if current_content.item.allows_admin is False:
+                    if hasattr(current_content.item, "allows_admin"):
+                        if not current_content.item.allows_admin:
                             self.logger.debug(f"resource allows an admin is {current_content.item.allows_admin}")
                             resource_has_admin = True
                     else:
@@ -1132,7 +930,7 @@ class Process:
                     result = prompt_func(
                         vertex=vertex,
                         parent_vertex=current_vertex,
-                        content=content,
+                        content=child_content,
                         acl=default_acl,
                         resource_has_admin=resource_has_admin,
                         indent=indent,
@@ -1163,22 +961,24 @@ class Process:
 
                         # Use the content from the prompt.
                         # The user may have modified it.
-                        content = result.content
+                        add_content = result.content
                         acl = result.acl
+
+                        # If the current content is a PAM configuration and the child content/add content is a PAM User;
+                        #   then the user is an IAM user.
+                        if current_content.record_type in PAM_CONFIGURATIONS and add_content.record_type == PAM_USER:
+                            acl.is_iam_user = True
 
                         # The record could be a resource or user record.
                         # The content
                         self._prepare_record(
                             record_prepare_func=record_prepare_func,
                             bulk_add_records=bulk_add_records,
-                            content=content,
+                            content=add_content,
                             parent_content=current_content,
                             vertex=vertex,
                             context=context
                         )
-
-                        # Update the DATA edge for this vertex.
-                        # vertex.add_data(content)
 
                         # Make a record link.
                         # The acl will be None if not a pamUser.
@@ -1187,25 +987,46 @@ class Process:
                         # If the object is NOT a pamUser and the resource allows an admin.
                         # Prompt the user to create an admin.
                         should_prompt_for_admin = True
-                        self.logger.debug(f"    added record type was {content.record_type}")
-                        if (content.record_type != PAM_USER and content.item.allows_admin is True and
+                        self.logger.debug(f"    added record type was {add_content.record_type}")
+                        if (add_content.record_type != PAM_USER and add_content.item.allows_admin is True and
                                 prompt_admin_func is not None):
+
+                            self.logger.debug("checking if can add admin")
+
+                            # If the rule engine sets the admin UID
+                            if child_content.admin_uid is not None and record_lookup_func is not None:
+
+                                self.logger.debug(f"the resource rule set the admin uid to {add_content.admin_uid}")
+
+                                admin_record = record_lookup_func(record_uid=add_content.admin_uid,
+                                                                  context=context)  # type: NormalizedRecord
+                                if admin_record is not None and admin_record.record_type == PAM_USER:
+                                    self.logger.debug("was able to find the admin record, connect to resource")
+                                    admin_acl = UserAcl.default()
+                                    admin_acl.is_admin = True
+                                    self.record_link.belongs_to(child_content.admin_uid, child_content.record_uid,
+                                                                acl=admin_acl)
+                                    should_prompt_for_admin = False
+                                else:
+                                    self.logger.info(f"The PAM User record {child_content.admin_uid} does not exists. "
+                                                     "Cannot set the administrator for an auto added "
+                                                     f"record {child_content.title}.")
 
                             # This block checks to see if the admin is a directory user that exists.
                             # We don't want to prompt the user for an admin if we have one already.
-                            if content.access_user is not None and content.access_user.user is not None:
+                            elif add_content.access_user is not None and add_content.access_user.user is not None:
 
                                 self.logger.debug("    for this resource, credentials were provided.")
-                                self.logger.error(f"    {content.access_user.user}, {content.access_user.dn}, "
-                                                  f"{content.access_user.password}")
+                                self.logger.error(f"    {add_content.access_user.user}, {add_content.access_user.dn}, "
+                                                  f"{add_content.access_user.password}")
 
                                 # Check if this user is a directory users, first check the source.
                                 # If local, check the username incase the domain in part of the username.
-                                source = content.access_user.source
-                                if content.record_type == PAM_DIRECTORY:
-                                    source = content.name
+                                source = add_content.access_user.source
+                                if add_content.record_type == PAM_DIRECTORY:
+                                    source = add_content.name
                                 elif source == LOCAL_USER:
-                                    _, domain = split_user_and_domain(content.access_user.user)
+                                    _, domain = split_user_and_domain(add_content.access_user.user)
                                     if domain is not None:
                                         source = domain
 
@@ -1224,8 +1045,8 @@ class Process:
                                             directory_info_func=directory_info_func,
                                             record_lookup_func=record_lookup_func,
                                             context=context,
-                                            user=content.access_user.user,
-                                            dn=content.access_user.dn
+                                            user=add_content.access_user.user,
+                                            dn=add_content.access_user.dn
                                         )
                                     except DirectoryNotFoundException:
                                         self.logger.debug(f"    directory {source} was not found for admin user")
@@ -1233,17 +1054,17 @@ class Process:
                                         self.logger.debug(f"    directory user was not found in directory {source}")
                                     if admin_record_uid is not None:
                                         self.logger.debug("    found directory user admin, connect to resource")
-                                        self.record_link.belongs_to(admin_record_uid, content.record_uid, acl=acl)
+                                        self.record_link.belongs_to(admin_record_uid, add_content.record_uid, acl=acl)
                                         should_prompt_for_admin = False
                                     else:
                                         self.logger.debug("    did not find the directory user for the admin, "
                                                           "prompt the user")
 
-                            if should_prompt_for_admin is True:
+                            if should_prompt_for_admin:
                                 self.logger.debug(f"    prompt for admin user")
                                 self._process_admin_user(
                                     resource_vertex=vertex,
-                                    resource_content=content,
+                                    resource_content=add_content,
                                     bulk_add_records=bulk_add_records,
                                     bulk_convert_records=bulk_convert_records,
                                     record_lookup_func=record_lookup_func,
@@ -1259,7 +1080,7 @@ class Process:
                 # If the record type is a PAM User, we don't need to go deeper.
                 # In the future we might need to change if PAM User becomes a branch and not a leaf.
                 # This is for safety reasons
-                if content.record_type != PAM_USER:
+                if child_content.record_type != PAM_USER:
                     # Process the vertices that belong to the current vertex.
                     self._process_level(
                         current_vertex=vertex,
@@ -1392,7 +1213,7 @@ class Process:
                     self.populate_admin_content_ids(admin_content, resource_vertex)
 
                     ad_user, ad_domain = split_user_and_domain(admin_content.item.user)
-                    if ad_domain is not None and  admin_content.item.source == LOCAL_USER:
+                    if ad_domain is not None and admin_content.item.source == LOCAL_USER:
                         self.logger.debug("The admin is an directory user, but the source is set to a local user")
 
                         found_admin_record_uid = None
@@ -1437,7 +1258,7 @@ class Process:
 
                         # If the admin record does not belong to another resource, make this resource its owner.
                         if self.record_link.get_parent_record_uid(admin_record_uid) is None:
-                            self.logger.debug("the admin does not belong to another resourse, "
+                            self.logger.debug("the admin does not belong to another resources, "
                                               "setting it belong to this resource")
                             admin_acl.belongs_to = True
 
@@ -1534,7 +1355,7 @@ class Process:
         count = 0
 
         for vertex in current_vertex.has_vertices():
-            if vertex.active is False:
+            if not vertex.active:
                 continue
             content = DiscoveryObject.get_discovery_object(vertex)
 
@@ -1579,7 +1400,7 @@ class Process:
 
         :param record_cache: A dictionary of record types to keys to record UID.
         :param prompt_func: Function to call when the user needs to make a decision about an object.
-        :param smart_add: If we have resource cred, add the resource and the users.
+        :param smart_add: If we have resource cred, add the resource and the users. DEPRECATED
         :param record_lookup_func: Function to look up a record by UID.
         :param record_prepare_func: Function to call to prepare a record to be created.
         :param record_create_func: Function to call to save the prepared records.
@@ -1602,7 +1423,7 @@ class Process:
         # There will be only one.
         self.logger.debug(f"loading the graph at sync point {sync_point}")
         self.infra.load(sync_point=sync_point)
-        if self.infra.has_discovery_data is False:
+        if not self.infra.has_discovery_data:
             raise NoDiscoveryDataException("There is no discovery data to process.")
 
         # If the graph is corrupted, delete the bad vertices.
@@ -1656,7 +1477,6 @@ class Process:
                 current_vertex=configuration,
                 bulk_add_records=bulk_add_records,
                 bulk_convert_records=bulk_convert_records,
-                smart_add=smart_add,
                 record_lookup_func=record_lookup_func,
                 record_prepare_func=record_prepare_func,
                 directory_info_func=directory_info_func,
@@ -1693,7 +1513,7 @@ class Process:
 
             # This mainly for testing.
             # If throw and quit exception, so we can prompt the user.
-            if force_quit is True:
+            if force_quit:
                 raise QuitException()
 
         except QuitException:
@@ -1713,7 +1533,7 @@ class Process:
             should_add_records = False
 
         # We should add the record, and a method was passed in to create them; then add the records.
-        if should_add_records is True:
+        if should_add_records:
 
             self.logger.debug("# ####################################################################################")
             self.logger.debug("# CREATE NEW RECORD")
@@ -1766,7 +1586,7 @@ class Process:
 
         # Save the record linking, only if we added records.
         # This will be the additions and any changes to ACL.
-        if should_add_records is True:
+        if should_add_records:
 
             self.logger.debug("# ####################################################################################")
             self.logger.debug("# Save RECORD LINKING graph")

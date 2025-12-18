@@ -219,29 +219,7 @@ class DAG:
         self.debug(f"{self.log_prefix} UID {self.uid}", level=1)
         self.debug(f"{self.log_prefix} UID HEX {urlsafe_str_to_bytes(self.uid).hex()}", level=1)
 
-    def __del__(self):
-        self.cleanup()
-
-    def cleanup(self):
-        """
-        Explicitly clean up the DAG and break circular references.
-
-        This method allows users to manually trigger cleanup before the object
-        goes out of scope. This is useful in scenarios where you want to ensure
-        immediate memory release, such as:
-        - High-frequency DAG creation/destruction
-        - Long-running processes
-        - Memory-constrained environments
-
-        After calling this method, the DAG object should not be used.
-
-        Example:
-            dag = DAG(conn=conn, key_bytes=key)
-            # ... use the dag ...
-            dag.cleanup()  # Explicitly clean up
-            del dag
-        """
-
+    def close(self):
         try:
             # Safely get the root vertex without creating a new one
             if hasattr(self, '_vertices') and hasattr(self, 'uid') and hasattr(self, '_uid_lookup'):
@@ -266,12 +244,28 @@ class DAG:
                 pass
 
         # Clear all collections to break circular references
-        self.read_struct_obj = None
-        del self.read_struct_obj
-        self.write_struct_obj = None
-        del self.write_struct_obj
-        self.conn = None
-        del self.conn
+        try:
+            self.read_struct_obj = None
+            del self.read_struct_obj
+            self.write_struct_obj = None
+            del self.write_struct_obj
+            self.conn = None
+            del self.conn
+        except (Exception,):
+            pass
+
+    def cleanup(self):
+        self.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
+    def __del__(self):
+        self.close()
 
     def debug(self, msg: str, level: int = 0):
         """
@@ -839,7 +833,7 @@ class DAG:
 
                     edge.content = content
                     edge.needs_encryption = False
-                    self.debug(f"  * edge is not encrypted or key is incorrect.")
+                    self.debug(f"  * edge is not encrypted or key is incorrect.", level=3)
 
                 # Change the flag indicating that the content is in decrypted state.
                 edge.is_encrypted = False
@@ -1266,7 +1260,7 @@ class DAG:
                 content = content.lower()
                 value = value.lower()
 
-            return value in content
+            return value == content
 
     def search_content(self, query, ignore_case: bool = False):
         results = []

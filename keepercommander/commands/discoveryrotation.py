@@ -72,6 +72,7 @@ from .pam_debug.info import PAMDebugInfoCommand
 from .pam_debug.gateway import PAMDebugGatewayCommand
 from .pam_debug.rotation_setting import PAMDebugRotationSettingsCommand
 from .pam_debug.link import PAMDebugLinkCommand
+from .pam_debug.vertex import PAMDebugVertexCommand
 from .pam_import.edit import PAMProjectCommand
 from .pam_service.list import PAMActionServiceListCommand
 from .pam_service.add import PAMActionServiceAddCommand
@@ -300,11 +301,13 @@ class PAMDebugCommand(GroupCommand):
         self.register_command('graph', PAMDebugGraphCommand(), 'Render graphs', 'r')
 
         # Disable for now. Needs more work.
-        # self.register_command('verify', PAMDebugVerifyCommand(), 'Verify graphs', 'v')
+        # self.register_command('verify', PAMDebugVerifyCommand(), 'Verify graphs')
         self.register_command('acl', PAMDebugACLCommand(), 'Control ACL of PAM Users', 'c')
         self.register_command('link', PAMDebugLinkCommand(), 'Link resource to configuration', 'l')
         self.register_command('rs-reset', PAMDebugRotationSettingsCommand(),
                               'Create/reset rotation settings', 'rs')
+        self.register_command('vertex', PAMDebugVertexCommand(),
+                              'Debug a graph vertex', 'v')
 
 
 class PAMLegacyCommand(Command):

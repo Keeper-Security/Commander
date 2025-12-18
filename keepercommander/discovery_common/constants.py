@@ -21,11 +21,31 @@ PAM_MACHINE = "pamMachine"
 PAM_USER = "pamUser"
 LOCAL_USER = "local"
 
+PAM_RESOURCES = [
+    PAM_DIRECTORY,
+    PAM_DATABASE,
+    PAM_MACHINE
+]
+
+PAM_DOMAIN_CONFIGURATION = "pamDomainConfiguration"
+PAM_AZURE_CONFIGURATION = "pamAzureConfiguration"
+PAM_AWS_CONFIGURATION = "pamAwsConfiguration"
+PAM_NETWORK_CONFIGURATION = "pamNetworkConfiguration"
+PAM_GCP_CONFIGURATION = "pamGcpConfiguration"
+
+PAM_CONFIGURATIONS = [
+    PAM_DOMAIN_CONFIGURATION,
+    PAM_AZURE_CONFIGURATION,
+    PAM_AWS_CONFIGURATION,
+    PAM_NETWORK_CONFIGURATION,
+    PAM_GCP_CONFIGURATION
+]
+
 # These are configuration that could domain users.
 # Azure included because of AADDS.
 DOMAIN_USER_CONFIGS = [
-    "pamDomainConfiguration",
-    "pamAzureConfiguration"
+    PAM_DOMAIN_CONFIGURATION,
+    PAM_AZURE_CONFIGURATION
 ]
 
 # The record types to process.
