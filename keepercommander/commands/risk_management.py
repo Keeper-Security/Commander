@@ -170,7 +170,7 @@ class RiskManagementSecurityAlertDetailCommand(enterprise_common.EnterpriseComma
         aet = kwargs.get('aet')
         aetid = event_lookup.get(aet, 0)
         if aetid < 1:
-            raise ValueError(f'Invalid aetid {aetid}: valid aetid > 0')
+            raise base.CommandError('Valid Audit Event code or name required')
         request.auditEventTypeId = aetid
         done = False
         header = [
