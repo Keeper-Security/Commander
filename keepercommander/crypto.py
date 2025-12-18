@@ -91,7 +91,6 @@ def unload_ec_public_key(public_key):
     return public_key.public_bytes(encoding=serialization.Encoding.X962,
                                    format=serialization.PublicFormat.UncompressedPoint)
 
-
 def encrypt_aes_v1(data, key, iv=None, use_padding=True):
     iv = iv or get_random_bytes(16)
     cipher = Cipher(AES(key), CBC(iv), backend=_CRYPTO_BACKEND)
