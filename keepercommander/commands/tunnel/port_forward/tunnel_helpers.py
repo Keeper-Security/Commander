@@ -214,6 +214,11 @@ class TunnelSession:
         self.websocket_thread = None
         self.websocket_ready_event = None
         self.websocket_stop_event = None
+        # Optional attributes (set dynamically)
+        # Note: signal_handler is set after TunnelSignalHandler is created
+        self.signal_handler = None  # type: ignore[assignment]
+        # Note: gateway_ready_event is an optional threading.Event set if needed
+        self.gateway_ready_event = None  # type: ignore[assignment]
     
     def update_activity(self):
         """Update last activity timestamp"""
