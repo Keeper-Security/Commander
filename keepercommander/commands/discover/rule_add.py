@@ -22,10 +22,14 @@ class PAMGatewayActionDiscoverRuleAddCommand(PAMGatewayActionDiscoverCommandBase
                         dest='rule_action', action='store', help='Action to take if rule matches')
     parser.add_argument('--priority', '-p', required=True, dest='priority', action='store', type=int,
                         help='Rule execute priority')
+    parser.add_argument('--name', '-n', required=False, dest='name', action='store', type=str,
+                        help='Rule name')
     parser.add_argument('--ignore-case', required=False, dest='ignore_case', action='store_true',
                         help='Ignore value case. Rule value must be in lowercase.')
     parser.add_argument('--shared-folder-uid', required=False, dest='shared_folder_uid',
                         action='store', help='Folder to place record.')
+    parser.add_argument('--admin-uid', required=False, dest='admin_uid',
+                        action='store', help='Admin record UID to use for resource.')
     parser.add_argument('--statement', '-s', required=True, dest='statement', action='store',
                         help='Rule statement')
 
@@ -61,7 +65,7 @@ class PAMGatewayActionDiscoverRuleAddCommand(PAMGatewayActionDiscoverCommandBase
 
         statement_struct = data.get("statementStruct")
         logging.debug(f"Rule Structure = {statement_struct}")
-        if isinstance(statement_struct, list) is False:
+        if not isinstance(statement_struct, list):
             raise Exception(f"The structured rule statement is not a list.")
 
         return statement_struct
@@ -97,13 +101,27 @@ class PAMGatewayActionDiscoverRuleAddCommand(PAMGatewayActionDiscoverCommandBase
                 statement=statement
             )
 
+            shared_folder_uid = kwargs.get("shared_folder_uid")
+            if shared_folder_uid is not None and len(shared_folder_uid) != 22:
+                print(f"{bcolors.FAIL}The shared folder UID {shared_folder_uid} is not the correct length."
+                      f"{bcolors.ENDC}")
+                return
+
+            admin_uid = kwargs.get("admin_uid")
+            if admin_uid is not None and len(admin_uid) != 22:
+                print(f"{bcolors.FAIL}The admin UID {admin_uid} is not the correct length."
+                      f"{bcolors.ENDC}")
+                return
+
             # If the rule passes its validation, then add control DAG
             rules = Rules(record=gateway_context.configuration, params=params)
             new_rule = ActionRuleItem(
+                name=kwargs.get("name"),
                 action=kwargs.get("rule_action"),
                 priority=kwargs.get("priority"),
                 case_sensitive=not kwargs.get("ignore_case", False),
-                shared_folder_uid=kwargs.get("shared_folder_uid"),
+                shared_folder_uid=shared_folder_uid,
+                admin_uid=admin_uid,
                 statement=statement_struct,
                 enabled=True
             )

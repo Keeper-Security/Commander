@@ -67,6 +67,49 @@ class Verify:
         self.debug_level = debug_level
         self.logger.debug(f"configuration uid is {self.conn.get_record_uid(record)}")
 
+    def close(self):
+        """
+        Clean up all resources held by Verify instance.
+        Pattern matches keeper-dag's DAG.cleanup() defensive approach.
+        """
+        try:
+            # Close Infrastructure (has DAG connection)
+            if hasattr(self, 'infra') and self.infra is not None:
+                if hasattr(self.infra, 'close'):
+                    self.infra.close()
+                self.infra = None
+
+            # Close RecordLink
+            if hasattr(self, 'record_link') and self.record_link is not None:
+                if hasattr(self.record_link, 'close'):
+                    self.record_link.close()
+                self.record_link = None
+
+            # Close UserService
+            if hasattr(self, 'user_service') and self.user_service is not None:
+                if hasattr(self.user_service, 'close'):
+                    self.user_service.close()
+                self.user_service = None
+
+            # Close main connection
+            if hasattr(self, 'conn') and self.conn is not None:
+                if hasattr(self.conn, 'close'):
+                    self.conn.close()
+                self.conn = None
+
+        except (Exception,):
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
+    def __del__(self):
+        self.close()
+
     def _msg(self, msg, color_name="NONE"):
         print(f"{self.colors.get(color_name, '')}{msg}{self.colors.get(Verify.COLOR_RESET, '')}", file=self.output)
 

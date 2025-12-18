@@ -335,7 +335,7 @@ class RmBaseLdapUserAddMeta(RmMetaBase):
     auto_uid_number: bool = True
     gid_number_match_uid: bool = True
     home_dir_base: Optional[str] = "/home"
-    first_rdn_component: Optional[str] = None
+    first_rdn_component: Optional[str] = "CN"
     attributes: Optional[dict] = {}
     groups: List[str] = []
 
