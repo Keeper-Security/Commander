@@ -302,7 +302,6 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                 vertex = item.get("v")  # type: DAGVertex
                 print(f"{pad}    * {vertex.uid}")
 
-
     def _do_text_list_service(self, params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0,
                               indent: int = 0):
 

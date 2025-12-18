@@ -472,6 +472,13 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
                                 print(f"    * {task.name} = {task.user}")
                         else:
                             print("    Machines has no schedules tasks that are using non-builtin users.")
+
+                        print(f"  {self._b('IIS Pools')} (Non Builtin Users)")
+                        if len(content.item.facts.iis_pools) > 0:
+                            for iis_pool in content.item.facts.iis_pools:
+                                print(f"    * {iis_pool.name} = {iis_pool.user}")
+                        else:
+                            print("    Machines has no IIS Pools that are using non-builtin users.")
                     else:
                         print(f"{bcolors.FAIL}    Machine facts are not set. Discover inside may not have been "
                               f"performed.{bcolors.ENDC}")

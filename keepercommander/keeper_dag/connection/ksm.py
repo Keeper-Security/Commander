@@ -297,6 +297,7 @@ class Connection(ConnectionBase):
                 # If we get a 401 Unauthorized, and we have not yet refreshed,
                 #  refresh the signature.
                 if response.status_code == 401 and refresh is False:
+                    response.close()
                     self.logger.debug("rest call was Unauthorized")
 
                     # The attempt didn't count.

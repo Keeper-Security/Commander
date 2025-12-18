@@ -26,24 +26,28 @@ class PAMGatewayActionDiscoverRuleListCommand(PAMGatewayActionDiscoverCommandBas
 
         print("")
         print(f"{bcolors.HEADER}{'Rule ID'.ljust(15, ' ')} "
+              f"{'Name'.ljust(20, ' ')} "
               f"{'Action'.ljust(6, ' ')} "
               f"{'Priority'.ljust(8, ' ')} "
               f"{'Case'.ljust(12, ' ')} "
               f"{'Added'.ljust(19, ' ')} "
               f"{'Shared Folder UID'.ljust(22, ' ')} "
+              f"{'Admin UID'.ljust(22, ' ')} "
               "Rule"
               f"{bcolors.ENDC}")
 
         print(f"{''.ljust(15, '=')} "
+              f"{''.ljust(20, '=')} "
               f"{''.ljust(6, '=')} "
               f"{''.ljust(8, '=')} "
               f"{''.ljust(12, '=')} "
               f"{''.ljust(19, '=')} "
               f"{''.ljust(22, '=')} "
+              f"{''.ljust(22, '=')} "
               f"{''.ljust(10, '=')} ")
 
         for rule in rule_list:
-            if rule.case_sensitive is True:
+            if rule.case_sensitive:
                 ignore_case_str = "Sensitive"
             else:
                 ignore_case_str = "Insensitive"
@@ -51,12 +55,23 @@ class PAMGatewayActionDiscoverRuleListCommand(PAMGatewayActionDiscoverCommandBas
             shared_folder_uid = ""
             if rule.shared_folder_uid is not None:
                 shared_folder_uid = rule.shared_folder_uid
+
+            admin_uid = ""
+            if rule.admin_uid is not None:
+                admin_uid = rule.admin_uid
+
+            name = ""
+            if rule.name is not None:
+                name = rule.name
+
             print(f"{bcolors.OKGREEN}{rule.rule_id.ljust(14, ' ')}{bcolors.ENDC} "
+                  f"{name[:20].ljust(20, ' ')} "
                   f"{rule.action.value.ljust(6, ' ')} "
                   f"{str(rule.priority).rjust(8, ' ')} "
                   f"{ignore_case_str.ljust(12, ' ')} "
                   f"{rule.added_ts_str.ljust(19, ' ')} "
                   f"{shared_folder_uid.ljust(22, ' ')} "
+                  f"{admin_uid.ljust(22, ' ')} "
                   f"{Rules.make_action_rule_statement_str(rule.statement)}")
 
     def execute(self, params, **kwargs):
