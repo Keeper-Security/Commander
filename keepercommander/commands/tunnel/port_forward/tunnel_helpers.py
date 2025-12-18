@@ -296,6 +296,105 @@ def get_conversation_status():
 
 
 # Tunnel helper functions
+def _configure_rust_logger_levels(current_is_debug: bool, log_level: int):
+    """
+    Configure Rust logger levels based on debug mode.
+
+    Args:
+        current_is_debug: Whether debug mode is currently enabled
+        log_level: Current effective log level
+    """
+    # Quick Fix: switch only between ERROR and DEBUG
+    # RCA: Commander has 2 modes only DEBUG and non-debug (default)
+    # yet all rust log messages are always printed incl. DEBUG messages when non-debug mode is set
+
+    # Configure Rust logger level based on debug mode
+    if current_is_debug or log_level <= logging.DEBUG:
+        root_logger = logging.getLogger()
+        # Ensure root logger can handle DEBUG messages
+        if root_logger.level > logging.DEBUG:
+            root_logger.setLevel(logging.DEBUG)
+
+        # CRITICAL: Ensure root logger has a handler
+        # pyo3_log sends Rust logs to Python loggers, but if loggers have no handlers,
+        # messages are lost even if propagate=True
+        import sys
+        if not root_logger.handlers:
+            # Add a console handler if none exists
+            console_handler = logging.StreamHandler(sys.stderr)
+            console_handler.setFormatter(logging.Formatter(
+                '%(levelname)s:%(name)s:%(message)s'
+            ))
+            console_handler.setLevel(logging.DEBUG)
+            root_logger.addHandler(console_handler)
+
+        # Set up a custom logger factory that adds handlers to all Rust loggers
+        # This ensures handlers are added even if loggers are created dynamically
+        original_logger_class = logging.getLoggerClass()
+
+        class RustLoggerHandler(logging.Logger):
+            """Custom logger that auto-adds handlers for Rust loggers"""
+            def __init__(self, name, level=logging.NOTSET):
+                super().__init__(name, level)
+                if name.startswith('keeper_pam_webrtc_rs'):
+                    self.setLevel(logging.DEBUG)
+                    self.propagate = False  # Disable propagation to prevent duplicate logs
+                    if not self.handlers:
+                        handler = logging.StreamHandler(sys.stderr)
+                        handler.setFormatter(logging.Formatter(
+                            '%(levelname)s:%(name)s:%(message)s'
+                        ))
+                        handler.setLevel(logging.DEBUG)
+                        self.addHandler(handler)
+
+        # Temporarily set our custom logger class
+        logging.setLoggerClass(RustLoggerHandler)
+
+        # Now set up all existing loggers (disable propagation to prevent duplicates)
+        for logger_name in list(logging.Logger.manager.loggerDict.keys()):
+            if isinstance(logger_name, str) and logger_name.startswith('keeper_pam_webrtc_rs'):
+                rust_logger = logging.getLogger(logger_name)
+                rust_logger.setLevel(logging.DEBUG)
+                rust_logger.propagate = False  # Disable propagation to prevent duplicate logs
+                if not rust_logger.handlers:
+                    handler = logging.StreamHandler(sys.stderr)
+                    handler.setFormatter(logging.Formatter(
+                        '%(levelname)s:%(name)s:%(message)s'
+                    ))
+                    handler.setLevel(logging.DEBUG)
+                    rust_logger.addHandler(handler)
+
+        # pyo3_log creates loggers based on Rust module paths
+        tube_registry_logger = logging.getLogger("keeper_pam_webrtc_rs.python.tube_registry_binding")
+        tube_registry_logger.setLevel(logging.DEBUG)
+        tube_registry_logger.propagate = False  # Disable propagation to prevent duplicate logs
+        if not tube_registry_logger.handlers:
+            handler = logging.StreamHandler(sys.stderr)
+            handler.setFormatter(logging.Formatter(
+                '%(levelname)s:%(name)s:%(message)s'
+            ))
+            handler.setLevel(logging.DEBUG)
+            tube_registry_logger.addHandler(handler)
+
+        # Restore original logger class
+        logging.setLoggerClass(original_logger_class)
+
+        logging.debug(f"Rust loggers enabled at DEBUG level")
+        enabled_loggers = [name for name in logging.Logger.manager.loggerDict.keys()
+                         if isinstance(name, str) and name.startswith('keeper_pam_webrtc_rs')]
+        logging.debug(f"Enabled Rust loggers: {enabled_loggers}")
+    else:
+        # Set to ERROR when not debugging
+        main_rust_logger = logging.getLogger("keeper_pam_webrtc_rs")
+        main_rust_logger.setLevel(logging.ERROR)
+
+        # Also set all existing Rust sub-loggers to ERROR
+        for logger_name in list(logging.Logger.manager.loggerDict.keys()):
+            if isinstance(logger_name, str) and logger_name.startswith('keeper_pam_webrtc_rs'):
+                logger = logging.getLogger(logger_name)
+                logger.setLevel(logging.ERROR)
+
+
 def get_or_create_tube_registry(params):
     """Get or create the tube registry instance, storing it on params for reuse"""
     try:
@@ -311,88 +410,8 @@ def get_or_create_tube_registry(params):
             level=log_level
         )
 
-        # CRITICAL: Enable Rust logger at DEBUG level to see debug logs
-        # pyo3_log creates loggers dynamically when Rust code calls log macros
-        # We need to ensure handlers are added to any logger that gets created
-        if current_is_debug or log_level <= logging.DEBUG:
-            root_logger = logging.getLogger()
-            # Ensure root logger can handle DEBUG messages
-            if root_logger.level > logging.DEBUG:
-                root_logger.setLevel(logging.DEBUG)
-
-            # CRITICAL: Ensure root logger has a handler
-            # pyo3_log sends Rust logs to Python loggers, but if loggers have no handlers,
-            # messages are lost even if propagate=True
-            import sys
-            if not root_logger.handlers:
-                # Add a console handler if none exists
-                console_handler = logging.StreamHandler(sys.stderr)
-                console_handler.setFormatter(logging.Formatter(
-                    '%(levelname)s:%(name)s:%(message)s'
-                ))
-                console_handler.setLevel(logging.DEBUG)
-                root_logger.addHandler(console_handler)
-
-            # Set up a custom logger factory that adds handlers to all Rust loggers
-            # This ensures handlers are added even if loggers are created dynamically
-            original_logger_class = logging.getLoggerClass()
-
-            class RustLoggerHandler(logging.Logger):
-                """Custom logger that auto-adds handlers for Rust loggers"""
-                def __init__(self, name, level=logging.NOTSET):
-                    super().__init__(name, level)
-                    if name.startswith('keeper_pam_webrtc_rs'):
-                        self.setLevel(logging.DEBUG)
-                        self.propagate = False  # Disable propagation to prevent duplicate logs
-                        if not self.handlers:
-                            handler = logging.StreamHandler(sys.stderr)
-                            handler.setFormatter(logging.Formatter(
-                                '%(levelname)s:%(name)s:%(message)s'
-                            ))
-                            handler.setLevel(logging.DEBUG)
-                            self.addHandler(handler)
-
-            # Temporarily set our custom logger class
-            logging.setLoggerClass(RustLoggerHandler)
-
-            # Now set up all existing loggers (disable propagation to prevent duplicates)
-            for logger_name in list(logging.Logger.manager.loggerDict.keys()):
-                if isinstance(logger_name, str) and logger_name.startswith('keeper_pam_webrtc_rs'):
-                    rust_logger = logging.getLogger(logger_name)
-                    rust_logger.setLevel(logging.DEBUG)
-                    rust_logger.propagate = False  # Disable propagation to prevent duplicate logs
-                    if not rust_logger.handlers:
-                        handler = logging.StreamHandler(sys.stderr)
-                        handler.setFormatter(logging.Formatter(
-                            '%(levelname)s:%(name)s:%(message)s'
-                        ))
-                        handler.setLevel(logging.DEBUG)
-                        rust_logger.addHandler(handler)
-
-            # Pre-create logger for python.tube_registry_binding module (where "Sending unencrypted" log is)
-            # pyo3_log creates loggers based on Rust module paths
-            tube_registry_logger = logging.getLogger("keeper_pam_webrtc_rs.python.tube_registry_binding")
-            tube_registry_logger.setLevel(logging.DEBUG)
-            tube_registry_logger.propagate = False  # Disable propagation to prevent duplicate logs
-            if not tube_registry_logger.handlers:
-                handler = logging.StreamHandler(sys.stderr)
-                handler.setFormatter(logging.Formatter(
-                    '%(levelname)s:%(name)s:%(message)s'
-                ))
-                handler.setLevel(logging.DEBUG)
-                tube_registry_logger.addHandler(handler)
-
-            # Restore original logger class
-            logging.setLoggerClass(original_logger_class)
-
-            logging.debug(f"Rust loggers enabled at DEBUG level")
-            enabled_loggers = [name for name in logging.Logger.manager.loggerDict.keys()
-                             if isinstance(name, str) and name.startswith('keeper_pam_webrtc_rs')]
-            logging.debug(f"Enabled Rust loggers: {enabled_loggers}")
-        else:
-            # Set to INFO when not debugging
-            main_rust_logger = logging.getLogger("keeper_pam_webrtc_rs")
-            main_rust_logger.setLevel(logging.INFO)
+        # Configure Rust logger levels based on debug mode
+        _configure_rust_logger_levels(current_is_debug, log_level)
 
         # Reuse existing registry or create new one
         if not hasattr(params, 'tube_registry') or params.tube_registry is None:
@@ -781,7 +800,7 @@ async def connect_websocket_with_fallback(ws_endpoint, headers, ssl_context, tub
                     raise
         else:
             async with websockets_connect(ws_endpoint, **connect_kwargs) as websocket:
-                logging.info("WebSocket connection established")
+                logging.debug("WebSocket connection established")
                 await handle_websocket_messages(websocket, tube_registry, timeout)
 
     elif WEBSOCKETS_VERSION == "legacy":
@@ -793,11 +812,11 @@ async def connect_websocket_with_fallback(ws_endpoint, headers, ssl_context, tub
 
         if ssl_context:
             async with websockets_connect(ws_endpoint, ssl=ssl_context, **connect_kwargs) as websocket:
-                logging.info("WebSocket connection established (legacy)")
+                logging.debug("WebSocket connection established (legacy)")
                 await handle_websocket_messages(websocket, tube_registry, timeout)
         else:
             async with websockets_connect(ws_endpoint, **connect_kwargs) as websocket:
-                logging.info("WebSocket connection established (legacy)")
+                logging.debug("WebSocket connection established (legacy)")
                 await handle_websocket_messages(websocket, tube_registry, timeout)
     else:
         raise Exception("No compatible websockets version available")
@@ -880,7 +899,7 @@ async def handle_websocket_messages(websocket, tube_registry, timeout):
                 # No message received within 1 second, continue loop to check overall timeout
                 continue
             except ConnectionClosed:
-                logging.info("WebSocket connection closed")
+                logging.debug("WebSocket connection closed")
                 break
 
     except Exception as e:
@@ -992,7 +1011,7 @@ def route_message_to_rust(response_item, tube_registry):
                             return
 
                         # Log what type of data we received
-                        logging.info(f"🔓 Decrypted payload type: {data_json.get('type', 'unknown')}, keys: {list(data_json.keys())}")
+                        logging.debug(f"🔓 Decrypted payload type: {data_json.get('type', 'unknown')}, keys: {list(data_json.keys())}")
 
                         if "answer" in data_json:
                             answer_sdp = data_json.get('answer')
@@ -1007,8 +1026,7 @@ def route_message_to_rust(response_item, tube_registry):
                                     return
 
                                 tube_registry.set_remote_description(tube_id, answer_sdp, is_answer=True)
-                                print(
-                                    f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}SDP answer received, connecting...")
+                                logging.debug(f"Connection state: SDP answer received, connecting...")
 
                                 session = get_tunnel_session(tube_id)
                                 if session:
@@ -1031,7 +1049,7 @@ def route_message_to_rust(response_item, tube_registry):
                             offer_sdp = data_json.get('sdp') or data_json.get('offer')
 
                             if offer_sdp:
-                                logging.info(f"Received ICE restart offer from Gateway for conversation: {conversation_id}")
+                                logging.debug(f"Received ICE restart offer from Gateway for conversation: {conversation_id}")
 
                                 tube_id = tube_registry.tube_id_from_connection_id(conversation_id)
                                 if not tube_id:
@@ -1064,7 +1082,7 @@ def route_message_to_rust(response_item, tube_registry):
                                     answer_sdp = tube_registry.create_answer(tube_id)
 
                                     if answer_sdp:
-                                        logging.info(f"Generated ICE restart answer for tube {tube_id}")
+                                        logging.debug(f"Generated ICE restart answer for tube {tube_id}")
 
                                         # Get session to access symmetric key and other info
                                         session = get_tunnel_session(tube_id)
@@ -1089,7 +1107,7 @@ def route_message_to_rust(response_item, tube_registry):
                                             signal_handler = session.signal_handler
 
                                             # Send answer back to Gateway via HTTP POST
-                                            logging.info(f"Sending ICE restart answer to Gateway for tube {tube_id}")
+                                            logging.debug(f"Sending ICE restart answer to Gateway for tube {tube_id}")
                                             print(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}sending ICE restart answer...")
 
                                             router_response = router_send_action_to_gateway(
@@ -1113,7 +1131,7 @@ def route_message_to_rust(response_item, tube_registry):
                                                 destination_gateway_cookies=session.gateway_cookies
                                             )
 
-                                            logging.info(f"ICE restart answer sent for tube {tube_id}")
+                                            logging.debug(f"ICE restart answer sent for tube {tube_id}")
                                             print(f"{bcolors.OKGREEN}ICE restart answer sent successfully{bcolors.ENDC}")
                                         else:
                                             logging.error(f"No signal handler found for tube {tube_id} to send answer")
@@ -1287,7 +1305,7 @@ class TunnelSignalHandler:
         # Handle local connection state changes
         if signal_kind == 'connection_state_changed':
             new_state = data.lower()
-            logging.info(f"Connection state changed for tube {tube_id}: {new_state}")
+            logging.debug(f"Connection state changed for tube {tube_id}: {new_state}")
 
             # Detailed logging for specific states
             if new_state == 'disconnected':
@@ -1301,11 +1319,11 @@ class TunnelSignalHandler:
                 self.connection_connected = False  # Reset flag - may need to send candidates again
 
             elif new_state == 'connected':
-                logging.info(
+                logging.debug(
                     f"Connection established/restored for tube {tube_id} "
                     f"(conversation_id={conversation_id_from_signal or self.conversation_id})"
                 )
-                print(f"{bcolors.OKGREEN}Connection state: {bcolors.ENDC}connected")
+                logging.debug(f"Connection state: connected")
 
                 # CRITICAL: Mark connection as connected - IMMEDIATELY stop sending ICE candidates
                 self.connection_connected = True
@@ -1343,14 +1361,14 @@ class TunnelSignalHandler:
                         print(f"View all open tunnels   : {bcolors.OKGREEN}pam tunnel list{bcolors.ENDC}")
                         print(f"Stop a tunnel           : {bcolors.OKGREEN}pam tunnel stop {self.tube_id}{bcolors.ENDC}")
 
-                    print(f"{bcolors.OKGREEN}Tunnel is ready for traffic{bcolors.ENDC}")
+                    logging.debug(f"Tunnel is ready for traffic")
 
             elif new_state == "connecting":
                 logging.debug(f"Connection in progress for tube {tube_id}")
                 print(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}connecting...")
 
             elif new_state == "closed":
-                logging.info(f"Connection closed for tube {tube_id}")
+                logging.debug(f"Connection closed for tube {tube_id}")
                 print(f"{bcolors.FAIL}Connection state: {bcolors.ENDC}closed ✗")
 
             else:
@@ -1361,7 +1379,7 @@ class TunnelSignalHandler:
 
         elif signal_kind == 'channel_closed':
             conversation_id_from_signal = conversation_id_from_signal or self.conversation_id
-            logging.info(f"Received 'channel_closed' signal for conversation '{conversation_id_from_signal}' of tube '{tube_id}'.")
+            logging.debug(f"Received 'channel_closed' signal for conversation '{conversation_id_from_signal}' of tube '{tube_id}'.")
 
             # Check if the tunnel session exists and is already closed
             session = get_tunnel_session(tube_id) if tube_id else None
@@ -1379,13 +1397,13 @@ class TunnelSignalHandler:
                     reason_code = data_json["close_reason"].get("code")
                     if reason_code is not None:
                         close_reason = CloseConnectionReason.from_code(reason_code)
-                        logging.info(f"  Structured close reason: {close_reason.name} (code: {reason_code})")
+                        logging.debug(f"  Structured close reason: {close_reason.name} (code: {reason_code})")
 
                 # Fallback to old string-based outcome for backward compatibility
                 if close_reason is None:
                     outcome = data_json.get("outcome", "unknown")
                     close_reason = CloseConnectionReason.from_legacy_outcome(outcome)
-                    logging.info(f"  Legacy outcome: '{outcome}' -> {close_reason.name}")
+                    logging.debug(f"  Legacy outcome: '{outcome}' -> {close_reason.name}")
 
                 # Handle based on reason type
                 if close_reason.is_critical():
@@ -1393,16 +1411,16 @@ class TunnelSignalHandler:
                     print(f"{bcolors.FAIL}Tunnel closed due to critical failure: {close_reason.name}{bcolors.ENDC}")
 
                 elif close_reason.is_user_initiated():
-                    logging.info(f"User-initiated closure of tunnel '{tube_id}': {close_reason.name}.")
-                    print(f"{bcolors.OKBLUE}Tunnel closed: {close_reason.name}{bcolors.ENDC}")
+                    logging.debug(f"User-initiated closure of tunnel '{tube_id}': {close_reason.name}.")
+                    logging.debug(f"Tunnel closed: {close_reason.name}")
 
                 elif close_reason.is_retryable():
                     logging.warning(f"Retryable failure in tunnel '{tube_id}': {close_reason.name}.")
                     print(f"{bcolors.WARNING}Tunnel closed with retryable error: {close_reason.name}{bcolors.ENDC}")
 
                 else:
-                    logging.info(f"Tunnel '{tube_id}' closed with reason: {close_reason.name}.")
-                    print(f"{bcolors.OKBLUE}Tunnel closed: {close_reason.name}{bcolors.ENDC}")
+                    logging.debug(f"Tunnel '{tube_id}' closed with reason: {close_reason.name}.")
+                    logging.debug(f"Tunnel closed: {close_reason.name}")
 
             except (json.JSONDecodeError, KeyError) as e:
                 logging.error(f"Failed to parse close reason: {e}. Defaulting to critical handling.")
@@ -1457,7 +1475,7 @@ class TunnelSignalHandler:
                 self._send_ice_candidate_immediately(data, tube_id)
             return
         elif signal_kind == 'ice_restart_request':
-            logging.info(f"Received ICE restart request for tube {tube_id}")
+            logging.debug(f"Received ICE restart request for tube {tube_id}")
 
             # ICE restart requires trickle ICE mode
             if not self.trickle_ice:
@@ -1469,7 +1487,7 @@ class TunnelSignalHandler:
                 restart_sdp = self.tube_registry.restart_ice(tube_id)
 
                 if restart_sdp:
-                    logging.info(f"ICE restart successful for tube {tube_id}")
+                    logging.debug(f"ICE restart successful for tube {tube_id}")
                     self._send_restart_offer(restart_sdp, tube_id)
                 else:
                     logging.error(f"ICE restart failed for tube {tube_id}")
@@ -1482,7 +1500,7 @@ class TunnelSignalHandler:
         elif signal_kind == 'ice_restart_offer':
             # Rust initiated ICE restart and generated offer (e.g., network change detected)
             # We need to send this offer to Gateway and get an answer
-            logging.info(f"Received ice_restart_offer from Rust for tube {tube_id}")
+            logging.debug(f"Received ice_restart_offer from Rust for tube {tube_id}")
 
             # ICE restart requires trickle ICE mode
             if not self.trickle_ice:
@@ -1689,7 +1707,7 @@ class TunnelSignalHandler:
             bytes_data = string_to_bytes(string_data)
             encrypted_data = tunnel_encrypt(self.symmetric_key, bytes_data)
 
-            logging.info(f"Sending ICE restart offer to gateway for tube {tube_id}")
+            logging.debug(f"Sending ICE restart offer to gateway for tube {tube_id}")
             print(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}sending ICE restart offer...")
 
             # Send ICE restart offer via HTTP POST with streamResponse=True
@@ -1716,7 +1734,7 @@ class TunnelSignalHandler:
                 # Pass cookies for session affinity
             )
 
-            logging.info(f"ICE restart offer sent via HTTP POST for tube {tube_id} - response expected via WebSocket")
+            logging.debug(f"ICE restart offer sent via HTTP POST for tube {tube_id} - response expected via WebSocket")
             print(f"{bcolors.OKGREEN}ICE restart offer sent successfully{bcolors.ENDC}")
 
         except Exception as e:
@@ -1797,7 +1815,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             "status": "connecting"
         }
     """
-    logging.info(f"{bcolors.HIGHINTENSITYWHITE}Establishing tunnel with trickle ICE between Commander and Gateway. Please wait..."
+    logging.debug(f"{bcolors.HIGHINTENSITYWHITE}Establishing tunnel with trickle ICE between Commander and Gateway. Please wait..."
           f"{bcolors.ENDC}")
 
     try:

@@ -177,7 +177,7 @@ class GuacamoleHandler:
         if self.running:
             return
         self.running = True
-        logging.info(f"GuacamoleHandler started (conversation_id={self.conversation_id})")
+        logging.debug(f"GuacamoleHandler started (conversation_id={self.conversation_id})")
 
     def stop(self):
         """Stop the handler and send disconnect to guacd."""
@@ -483,8 +483,8 @@ class GuacamoleHandler:
 
     def _on_guac_disconnect(self, args: List[str]) -> None:
         """Handle disconnect instruction from guacd."""
-        logging.info("Server sent disconnect instruction")
-        print("[DISCONNECT] Server disconnected", file=sys.stderr, flush=True)
+        logging.debug("Server sent disconnect instruction")
+        logging.debug("[DISCONNECT] Server disconnected")
         self.running = False
 
         if self.on_disconnect:

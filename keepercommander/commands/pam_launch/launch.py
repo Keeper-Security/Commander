@@ -303,8 +303,8 @@ class PAMLaunchCommand(Command):
         result = launch_terminal_connection(params, record_uid, gateway_info, **kwargs)
 
         if result.get('success'):
-            logging.info(f"Terminal connection launched successfully")
-            logging.info(f"Protocol: {result.get('protocol')}")
+            logging.debug(f"Terminal connection launched successfully")
+            logging.debug(f"Protocol: {result.get('protocol')}")
 
             # Always start interactive CLI session
             self._start_cli_session(result, params)
@@ -358,7 +358,7 @@ class PAMLaunchCommand(Command):
 
             conversation_id = tunnel_result['tunnel'].get('conversation_id')
 
-            logging.info(f"Starting PythonHandler CLI session for tube {tube_id}")
+            logging.debug(f"Starting PythonHandler CLI session for tube {tube_id}")
 
             # Display connection banner
             logging.debug(f"\n{'-' * 60}")
@@ -376,7 +376,7 @@ class PAMLaunchCommand(Command):
             python_handler.start()
 
             # Wait for WebRTC connection to be established
-            logging.info("Waiting for WebRTC connection...")
+            logging.debug("Waiting for WebRTC connection...")
             max_wait = 15
             start_time = time.time()
             connected = False
@@ -397,14 +397,36 @@ class PAMLaunchCommand(Command):
 
             # Send OpenConnection to Gateway to initiate guacd session
             # This is critical - without it, Gateway doesn't start guacd and no Guacamole traffic flows
-            logging.info(f"Sending OpenConnection to Gateway (conn_no=1, conversation_id={conversation_id})")
-            print("📤 Sending OpenConnection to Gateway...")
-            try:
-                tube_registry.open_handler_connection(conversation_id, 1)
-                logging.info("✓ OpenConnection sent successfully")
-            except Exception as e:
-                logging.error(f"Failed to send OpenConnection: {e}")
-                raise CommandError('pam launch', f"Failed to send OpenConnection: {e}")
+            # NOTE: We must wait for the data channel to be opened before sending OpenConnection
+            # The connection_state can be 'connected' before the data channel is ready
+            logging.debug(f"Sending OpenConnection to Gateway (conn_no=1, conversation_id={conversation_id})")
+
+            # Retry loop: wait for data channel to be ready
+            max_retries = 30  # 3 seconds total (30 * 0.1s)
+            retry_count = 0
+            openconnection_sent = False
+
+            while retry_count < max_retries:
+                try:
+                    tube_registry.open_handler_connection(conversation_id, 1)
+                    logging.debug("✓ OpenConnection sent successfully")
+                    openconnection_sent = True
+                    break
+                except Exception as e:
+                    error_str = str(e)
+                    # Check if error is due to data channel not being opened yet
+                    if "DataChannel is not opened" in error_str or "not opened" in error_str.lower():
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            logging.debug(f"Data channel not ready yet, retrying ({retry_count}/{max_retries})...")
+                            time.sleep(0.1)
+                            continue
+                    # For other errors or max retries reached, fail immediately
+                    logging.error(f"Failed to send OpenConnection: {e}")
+                    raise CommandError('pam launch', f"Failed to send OpenConnection: {e}")
+
+            if not openconnection_sent:
+                raise CommandError('pam launch', "Failed to send OpenConnection: Data channel not ready after timeout")
 
             # Wait for Guacamole ready
             print("Waiting for Guacamole connection...")
@@ -420,8 +442,11 @@ class PAMLaunchCommand(Command):
             # Create stdin handler for pipe/blob/end input pattern
             # StdinHandler reads raw stdin and sends via send_stdin (base64-encoded)
             # This matches kcm-cli's implementation for plaintext SSH/TTY streams
+            # Enhanced: Also detects escape sequences (arrow keys, F1-F10) and sends
+            # them as X11 key events via send_key() instead of raw bytes
             stdin_handler = StdinHandler(
-                stdin_callback=lambda data: python_handler.send_stdin(data)
+                stdin_callback=lambda data: python_handler.send_stdin(data),
+                key_callback=lambda keysym, pressed: python_handler.send_key(keysym, pressed)
             )
 
             # Main event loop with stdin input
@@ -440,22 +465,22 @@ class PAMLaunchCommand(Command):
                         rx = python_handler.messages_received
                         tx = python_handler.messages_sent
                         syncs = python_handler.sync_count
-                        print(f"[{int(elapsed)}s] Session active (rx={rx}, tx={tx}, syncs={syncs})", file=sys.stderr)
+                        logging.debug(f"[{int(elapsed)}s] Session active (rx={rx}, tx={tx}, syncs={syncs})")
 
             except KeyboardInterrupt:
                 print("\n\nExiting CLI terminal mode...", file=sys.stderr)
 
             finally:
                 # Stop stdin handler first (restores terminal)
-                logging.info("Stopping stdin handler...")
+                logging.debug("Stopping stdin handler...")
                 stdin_handler.stop()
 
                 # Cleanup
-                logging.info("Stopping Python handler...")
+                logging.debug("Stopping Python handler...")
                 python_handler.stop()
 
                 # Close the tube (Rust handles CloseConnection automatically)
-                logging.info("Closing WebRTC tunnel...")
+                logging.debug("Closing WebRTC tunnel...")
                 try:
                     tube_registry.close_tube(tube_id)
                     logging.debug(f"Closed tube: {tube_id}")
