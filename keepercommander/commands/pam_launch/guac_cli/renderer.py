@@ -112,7 +112,7 @@ class TerminalRenderer:
             elif opcode == GuacOp.ERROR.value:
                 self._handle_error(args)
             elif opcode == GuacOp.DISCONNECT.value:
-                logging.info("Guacamole disconnect instruction received")
+                logging.debug("Guacamole disconnect instruction received")
             elif opcode in (GuacOp.ACK.value, GuacOp.NOP.value):
                 # Acknowledgment or no-op - ignore
                 pass

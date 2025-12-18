@@ -177,24 +177,33 @@ class GuacamoleHandler:
         if self.running:
             return
         self.running = True
-        logging.info(f"GuacamoleHandler started (conversation_id={self.conversation_id})")
+        logging.debug(f"GuacamoleHandler started (conversation_id={self.conversation_id})")
 
-    def stop(self):
-        """Stop the handler and send disconnect to guacd."""
+    def stop(self, skip_disconnect: bool = False):
+        """
+        Stop the handler and optionally send disconnect to guacd.
+
+        Args:
+            skip_disconnect: If True, skip sending disconnect instruction.
+                           Use this when connection is already closed to avoid deadlock.
+        """
         if not self.running:
             return
 
         self.running = False
 
-        # Send graceful disconnect to guacd
-        try:
-            disconnect_instruction = self._format_instruction('disconnect')
-            self._send_to_gateway(disconnect_instruction)
-            logging.debug("Sent disconnect instruction to guacd")
-        except Exception as e:
-            logging.warning(f"Failed to send disconnect instruction: {e}")
+        # Send graceful disconnect to guacd (unless connection already closed)
+        if not skip_disconnect:
+            try:
+                disconnect_instruction = self._format_instruction('disconnect')
+                self._send_to_gateway(disconnect_instruction)
+                logging.debug("Sent disconnect instruction to guacd")
+            except Exception as e:
+                # Don't warn if connection is already closed - this is expected
+                if "closed" not in str(e).lower() and "disconnected" not in str(e).lower():
+                    logging.warning(f"Failed to send disconnect instruction: {e}")
 
-        logging.info(
+        logging.debug(
             f"GuacamoleHandler stopped (conversation_id={self.conversation_id}, "
             f"rx={self.messages_received}, tx={self.messages_sent})"
         )
@@ -251,7 +260,7 @@ class GuacamoleHandler:
         5. Rust notifies Python via this callback
         6. Gateway/guacd sends 'args' instruction (Guacamole handshake starts)
         """
-        logging.info(f"✓ Connection opened: conn_no={conn_no}")
+        logging.debug(f"✓ Connection opened: conn_no={conn_no}")
         self.conn_no = conn_no
 
         # The connection is now ready for Guacamole protocol
@@ -295,9 +304,10 @@ class GuacamoleHandler:
         This is sent when the gateway/guacd closes the connection.
         """
         reason_name = self._close_reason_name(reason)
-        logging.info(f"Connection closed: conn_no={conn_no}, reason={reason} ({reason_name})")
+        logging.debug(f"Connection closed: conn_no={conn_no}, reason={reason} ({reason_name})")
 
-        self.running = False
+        # Stop without sending disconnect (connection already closed)
+        self.stop(skip_disconnect=True)
 
         if self.on_disconnect:
             try:
@@ -327,18 +337,15 @@ class GuacamoleHandler:
             logging.debug(f"Ignoring duplicate 'args' instruction (handshake already sent)")
             return
 
-        logging.info(f"✓ Received 'args' from guacd: {list(args)}")
-        print(f"[ARGS] Guacd requesting parameters: {list(args)}", file=sys.stderr, flush=True)
+        logging.debug(f"✓ Received 'args' from guacd: {list(args)}")
 
         try:
             # Build and send the handshake response
             self._send_handshake_response(list(args))
             self.handshake_sent = True
-            logging.info("✓ Guacamole handshake sent (connect+size+audio+image)")
-            print("📨 Guacamole handshake sent: connect → size/audio/image", file=sys.stderr, flush=True)
+            logging.debug("✓ Guacamole handshake sent (connect+size+audio+image)")
         except Exception as e:
             logging.error(f"Error sending handshake response: {e}", exc_info=True)
-            print(f"[ERROR] Failed to send handshake: {e}", file=sys.stderr, flush=True)
 
     def _send_handshake_response(self, args_list: List[str]):
         """
@@ -434,7 +441,7 @@ class GuacamoleHandler:
         # JS Client.js line 1679: if (currentState === WAITING) setState(CONNECTED)
         if self.sync_count == 1:
             self.data_flowing.set()
-            logging.info(f"* First sync received - connection ready (timestamp={timestamp})")
+            logging.debug(f"* First sync received - connection ready (timestamp={timestamp})")
 
             # Call on_ready callback if not already called by 'ready' instruction
             if self.on_ready and not self.handshake_complete.is_set():
@@ -472,8 +479,7 @@ class GuacamoleHandler:
         # This ensures wait_for_ready() returns true on either signal
         self.data_flowing.set()
 
-        logging.info(f"✓ Guacamole ready! connection_id={connection_id}")
-        print(f"[READY] Guacamole connection established (id: {connection_id})", file=sys.stderr, flush=True)
+        logging.debug(f"✓ Guacamole ready! Connection established: connection_id={connection_id}")
 
         if self.on_ready:
             try:
@@ -483,9 +489,10 @@ class GuacamoleHandler:
 
     def _on_guac_disconnect(self, args: List[str]) -> None:
         """Handle disconnect instruction from guacd."""
-        logging.info("Server sent disconnect instruction")
-        print("[DISCONNECT] Server disconnected", file=sys.stderr, flush=True)
-        self.running = False
+        logging.debug(f"Server sent disconnect instruction (args: {args})")
+
+        # Stop without sending disconnect (server already disconnected)
+        self.stop(skip_disconnect=True)
 
         if self.on_disconnect:
             try:
@@ -499,7 +506,6 @@ class GuacamoleHandler:
         code = args[1] if len(args) > 1 else "0"
 
         logging.error(f"Guacamole error {code}: {message}")
-        print(f"[ERROR] code={code}, message='{message}'", file=sys.stderr, flush=True)
 
     def _format_instruction(self, *elements) -> bytes:
         """Format elements into a Guacamole instruction."""

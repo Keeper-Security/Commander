@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import logging
 import re
+import shutil
 import signal
 import sys
 import time
@@ -254,63 +255,74 @@ class PAMLaunchCommand(Command):
             params: KeeperParams instance containing session state
             **kwargs: Command arguments including 'record' (record path or UID)
         """
-        record_token = kwargs.get('record')
+        # Save original root logger level and set to ERROR if not in DEBUG mode
+        root_logger = logging.getLogger()
+        original_level = root_logger.level
 
-        if not record_token:
-            logging.error("Record path or UID is required")
-            return
+        if root_logger.getEffectiveLevel() > logging.DEBUG:
+            root_logger.setLevel(logging.ERROR)
 
-        # Find the record
-        record_uid = self.find_record(params, record_token)
-
-        if not record_uid:
-            raise CommandError('pam launch', f'Record not found: {record_token}')
-
-        logging.info(f"Found record: {record_uid}")
-
-        # Find the gateway for this record
-        gateway_info = self.find_gateway(params, record_uid)
-
-        if not gateway_info:
-            raise CommandError('pam launch', f'No gateway found for record {record_uid}')
-
-        logging.info(f"Found gateway: {gateway_info['gateway_name']} ({gateway_info['gateway_uid']})")
-        logging.info(f"Configuration: {gateway_info['config_uid']}")
-
-        # Check if Gateway is online before attempting WebRTC connection
         try:
-            connected_gateways = router_get_connected_gateways(params)
-            connected_gateway_uids = [x.controllerUid for x in connected_gateways.controllers]
-            gateway_uid_bytes = url_safe_str_to_bytes(gateway_info['gateway_uid'])
+            record_token = kwargs.get('record')
 
-            if gateway_uid_bytes not in connected_gateway_uids:
-                raise CommandError(
-                    'pam launch',
-                    f'Gateway "{gateway_info["gateway_name"]}" ({gateway_info["gateway_uid"]}) is currently offline. '
-                    f'Please start the Gateway before attempting to connect. '
-                    f'Use "pam gateway list" to check Gateway status.'
-                )
+            if not record_token:
+                logging.error("Record path or UID is required")
+                return
 
-            logging.info(f"✓ Gateway is online and connected")
-        except Exception as e:
-            # If router is down or there's an error checking status, still try to connect
-            # (the connection attempt will fail later with a more specific error)
-            if isinstance(e, CommandError):
-                raise
-            logging.warning(f"Could not verify Gateway online status: {e}. Continuing anyway...")
+            # Find the record
+            record_uid = self.find_record(params, record_token)
 
-        # Launch terminal connection
-        result = launch_terminal_connection(params, record_uid, gateway_info, **kwargs)
+            if not record_uid:
+                raise CommandError('pam launch', f'Record not found: {record_token}')
 
-        if result.get('success'):
-            logging.info(f"Terminal connection launched successfully")
-            logging.info(f"Protocol: {result.get('protocol')}")
+            logging.debug(f"Found record: {record_uid}")
 
-            # Always start interactive CLI session
-            self._start_cli_session(result, params)
-        else:
-            error_msg = result.get('error', 'Unknown error')
-            raise CommandError('pam launch', f'Failed to launch connection: {error_msg}')
+            # Find the gateway for this record
+            gateway_info = self.find_gateway(params, record_uid)
+
+            if not gateway_info:
+                raise CommandError('pam launch', f'No gateway found for record {record_uid}')
+
+            logging.debug(f"Found gateway: {gateway_info['gateway_name']} ({gateway_info['gateway_uid']})")
+            logging.debug(f"Configuration: {gateway_info['config_uid']}")
+
+            # Check if Gateway is online before attempting WebRTC connection
+            try:
+                connected_gateways = router_get_connected_gateways(params)
+                connected_gateway_uids = [x.controllerUid for x in connected_gateways.controllers]
+                gateway_uid_bytes = url_safe_str_to_bytes(gateway_info['gateway_uid'])
+
+                if gateway_uid_bytes not in connected_gateway_uids:
+                    raise CommandError(
+                        'pam launch',
+                        f'Gateway "{gateway_info["gateway_name"]}" ({gateway_info["gateway_uid"]}) is currently offline. '
+                        f'Please start the Gateway before attempting to connect. '
+                        f'Use "pam gateway list" to check Gateway status.'
+                    )
+
+                logging.debug(f"✓ Gateway is online and connected")
+            except Exception as e:
+                # If router is down or there's an error checking status, still try to connect
+                # (the connection attempt will fail later with a more specific error)
+                if isinstance(e, CommandError):
+                    raise
+                logging.warning(f"Could not verify Gateway online status: {e}. Continuing anyway...")
+
+            # Launch terminal connection
+            result = launch_terminal_connection(params, record_uid, gateway_info, **kwargs)
+
+            if result.get('success'):
+                logging.debug(f"Terminal connection launched successfully")
+                logging.debug(f"Protocol: {result.get('protocol')}")
+
+                # Always start interactive CLI session
+                self._start_cli_session(result, params)
+            else:
+                error_msg = result.get('error', 'Unknown error')
+                raise CommandError('pam launch', f'Failed to launch connection: {error_msg}')
+        finally:
+            # Restore original root logger level
+            root_logger.setLevel(original_level)
 
     def _start_cli_session(self, tunnel_result: Dict[str, Any], params: KeeperParams):
         """
@@ -358,7 +370,7 @@ class PAMLaunchCommand(Command):
 
             conversation_id = tunnel_result['tunnel'].get('conversation_id')
 
-            logging.info(f"Starting PythonHandler CLI session for tube {tube_id}")
+            logging.debug(f"Starting PythonHandler CLI session for tube {tube_id}")
 
             # Display connection banner
             logging.debug(f"\n{'-' * 60}")
@@ -376,7 +388,7 @@ class PAMLaunchCommand(Command):
             python_handler.start()
 
             # Wait for WebRTC connection to be established
-            logging.info("Waiting for WebRTC connection...")
+            logging.debug("Waiting for WebRTC connection...")
             max_wait = 15
             start_time = time.time()
             connected = False
@@ -385,7 +397,7 @@ class PAMLaunchCommand(Command):
                 try:
                     state = tube_registry.get_connection_state(tube_id)
                     if state and state.lower() == 'connected':
-                        logging.info(f"✓ WebRTC connection established: {state}")
+                        logging.debug(f"✓ WebRTC connection established: {state}")
                         connected = True
                         break
                 except Exception as e:
@@ -397,22 +409,32 @@ class PAMLaunchCommand(Command):
 
             # Send OpenConnection to Gateway to initiate guacd session
             # This is critical - without it, Gateway doesn't start guacd and no Guacamole traffic flows
-            logging.info(f"Sending OpenConnection to Gateway (conn_no=1, conversation_id={conversation_id})")
-            print("📤 Sending OpenConnection to Gateway...")
+            logging.debug(f"Sending OpenConnection to Gateway (conn_no=1, conversation_id={conversation_id})")
             try:
                 tube_registry.open_handler_connection(conversation_id, 1)
-                logging.info("✓ OpenConnection sent successfully")
+                logging.debug("✓ OpenConnection sent successfully")
             except Exception as e:
                 logging.error(f"Failed to send OpenConnection: {e}")
                 raise CommandError('pam launch', f"Failed to send OpenConnection: {e}")
 
             # Wait for Guacamole ready
             print("Waiting for Guacamole connection...")
+
+            # Clear screen by printing terminal height worth of newlines
+            # This prevents raw mode from overwriting existing screen lines
+            terminal_height = 24
+            try:
+                terminal_size = shutil.get_terminal_size()
+                terminal_height = terminal_size.lines
+            except Exception:
+                terminal_height = 24
+            print("\n" * terminal_height, end='', flush=True)
+
             guac_ready_timeout = 10.0  # Reduced from 30s - sync triggers readiness quickly
 
             if python_handler.wait_for_ready(guac_ready_timeout):
-                logging.info("* Guacamole connection ready!")
-                logging.info("Terminal session active. Press Ctrl+C to exit.")
+                logging.debug("* Guacamole connection ready!")
+                logging.debug("Terminal session active. Press Ctrl+C to exit.")
             else:
                 logging.warning(f"Guacamole did not report ready within {guac_ready_timeout}s")
                 logging.warning("Terminal may still work if data is flowing.")
@@ -421,17 +443,29 @@ class PAMLaunchCommand(Command):
             # StdinHandler reads raw stdin and sends via send_stdin (base64-encoded)
             # This matches kcm-cli's implementation for plaintext SSH/TTY streams
             stdin_handler = StdinHandler(
-                stdin_callback=lambda data: python_handler.send_stdin(data)
+                stdin_callback=lambda data: python_handler.send_stdin(data),
+                key_callback=lambda keysym, pressed: python_handler.send_key(keysym, pressed)
             )
 
             # Main event loop with stdin input
             try:
                 # Start stdin handler (runs in background thread)
                 stdin_handler.start()
-                logging.info("STDIN handler started")  # (pipe/blob/end mode)
+                logging.debug("STDIN handler started")  # (pipe/blob/end mode)
 
                 elapsed = 0
                 while not shutdown_requested and python_handler.running:
+                    # Check if tube/connection is closed
+                    try:
+                        state = tube_registry.get_connection_state(tube_id)
+                        if state and state.lower() in ('closed', 'disconnected', 'failed'):
+                            logging.debug(f"Tube/connection closed (state: {state}) - exiting")
+                            python_handler.running = False
+                            break
+                    except Exception:
+                        # If we can't check state, continue (tube might be closing)
+                        pass
+
                     time.sleep(0.1)
                     elapsed += 0.1
 
@@ -440,22 +474,35 @@ class PAMLaunchCommand(Command):
                         rx = python_handler.messages_received
                         tx = python_handler.messages_sent
                         syncs = python_handler.sync_count
-                        print(f"[{int(elapsed)}s] Session active (rx={rx}, tx={tx}, syncs={syncs})", file=sys.stderr)
+                        logging.debug(f"[{int(elapsed)}s] Session active (rx={rx}, tx={tx}, syncs={syncs})")
 
             except KeyboardInterrupt:
-                print("\n\nExiting CLI terminal mode...", file=sys.stderr)
+                logging.debug("\n\nExiting CLI terminal mode...")
 
             finally:
                 # Stop stdin handler first (restores terminal)
-                logging.info("Stopping stdin handler...")
-                stdin_handler.stop()
+                logging.debug("Stopping stdin handler...")
+                try:
+                    stdin_handler.stop()
+                except Exception as e:
+                    logging.debug(f"Error stopping stdin handler: {e}")
 
-                # Cleanup
-                logging.info("Stopping Python handler...")
-                python_handler.stop()
+                # Cleanup - check if connection is already closed to avoid deadlock
+                logging.debug("Stopping Python handler...")
+                try:
+                    # Check if tube is already closed - if so, skip sending disconnect
+                    try:
+                        state = tube_registry.get_connection_state(tube_id)
+                        skip_disconnect = state and state.lower() in ('closed', 'disconnected', 'failed')
+                    except Exception:
+                        skip_disconnect = False
+
+                    python_handler.stop(skip_disconnect=skip_disconnect)
+                except Exception as e:
+                    logging.debug(f"Error stopping Python handler: {e}")
 
                 # Close the tube (Rust handles CloseConnection automatically)
-                logging.info("Closing WebRTC tunnel...")
+                logging.debug("Closing WebRTC tunnel...")
                 try:
                     tube_registry.close_tube(tube_id)
                     logging.debug(f"Closed tube: {tube_id}")

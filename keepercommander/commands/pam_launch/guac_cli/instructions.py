@@ -287,7 +287,7 @@ def handle_disconnect(args: List[str]) -> None:
     Args:
         args: Optional disconnect parameters
     """
-    logging.info(f"[DISCONNECT] {args if args else ''}")
+    logging.debug(f"[DISCONNECT] {args if args else ''}")
 
 
 def handle_mouse(args: List[str]) -> None:

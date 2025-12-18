@@ -205,7 +205,7 @@ def _notify_gateway_connection_close(params, router_token, terminated=True):
                 response.text,
             )
         else:
-            logging.info("Sent connection_close notification for router token")
+            logging.debug("Sent connection_close notification for router token")
     except Exception as notify_err:
         logging.debug(f"Failed to notify gateway about connection_close: {notify_err}")
 
@@ -661,7 +661,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         - websocket_thread: Thread
         - error: error message if failed
     """
-    logging.info(f"{bcolors.HIGHINTENSITYWHITE}Establishing {protocol.upper()} terminal connection via WebRTC...{bcolors.ENDC}")
+    logging.debug(f"{bcolors.HIGHINTENSITYWHITE}Establishing {protocol.upper()} terminal connection via WebRTC...{bcolors.ENDC}")
     screen_info = DEFAULT_SCREEN_INFO
 
     try:
@@ -803,7 +803,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             # Import and create PythonHandler for simplified Guacamole protocol handling
             from .python_handler import create_python_handler
 
-            logging.info("Using PythonHandler mode - Rust handles control frames automatically")
+            logging.debug("Using PythonHandler mode - Rust handles control frames automatically")
 
             # Set conversationType to "python_handler" to enable PythonHandler protocol mode in Rust
             # The actual protocol (ssh, telnet, etc.) is passed via guacd_params["protocol"]
@@ -861,9 +861,9 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             return {"success": False, "error": error_msg}
 
         commander_tube_id = offer['tube_id']
-        logging.info(f"Created tube with ID: {commander_tube_id}")
-        logging.info(f"Conversation ID for this tube: {conversation_id_original}")
-        logging.info(f"Data channel will be named: {conversation_id}")
+        logging.debug(f"Created tube with ID: {commander_tube_id}")
+        logging.debug(f"Conversation ID for this tube: {conversation_id_original}")
+        logging.debug(f"Data channel will be named: {conversation_id}")
 
         # Update signal handler and tunnel session with real tube ID
         signal_handler.tube_id = commander_tube_id
@@ -877,7 +877,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         logging.debug(f"Expecting WebSocket responses for conversation ID: {conversation_id}")
 
         # Start WebSocket listener
-        websocket_thread = start_websocket_listener(params, tube_registry, timeout=300, gateway_uid=gateway_uid)
+        websocket_thread = start_websocket_listener(params, tube_registry, timeout=300, gateway_uid=gateway_uid, tunnel_session=tunnel_session)
 
         # Wait a moment for WebSocket to establish connection
         import time
@@ -1036,8 +1036,8 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                         signal_handler._send_ice_candidate_immediately(candidate, commander_tube_id)
                     tunnel_session.buffered_ice_candidates.clear()
 
-                logging.info(f"{bcolors.OKGREEN}Terminal connection established for {protocol.upper()}{bcolors.ENDC}")
-                print(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}gathering candidates...")
+                logging.debug(f"{bcolors.OKGREEN}Terminal connection established for {protocol.upper()}{bcolors.ENDC}")
+                logging.debug(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}gathering candidates...")
 
                 return {
                     "success": True,
@@ -1116,7 +1116,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
 
                                             # Ensure data_json is a dictionary
                                             if isinstance(data_json, dict):
-                                                logging.info(f"🔓 Decrypted payload type: {data_json.get('type', 'unknown')}, keys: {list(data_json.keys())}")
+                                                logging.debug(f"🔓 Decrypted payload type: {data_json.get('type', 'unknown')}, keys: {list(data_json.keys())}")
 
                                                 # Handle SDP answer
                                                 if "answer" in data_json:
@@ -1127,7 +1127,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
 
                                                         if hasattr(tunnel_session, "gateway_ready_event") and tunnel_session.gateway_ready_event is not None:
                                                             tunnel_session.gateway_ready_event.set()
-                                                        print(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}SDP answer received, connecting...")
+                                                        logging.debug(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}SDP answer received, connecting...")
 
                                                         # Send any buffered local ICE candidates now that we have the answer
                                                         if tunnel_session.buffered_ice_candidates:
@@ -1153,8 +1153,8 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 tunnel_session.offer_sent = True
 
                 # No ICE candidates to send in non-streaming mode (all candidates in SDP)
-                logging.info(f"{bcolors.OKGREEN}Terminal connection established for {protocol.upper()}{bcolors.ENDC}")
-                print(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}established (non-streaming mode)...")
+                logging.debug(f"{bcolors.OKGREEN}Terminal connection established for {protocol.upper()}{bcolors.ENDC}")
+                logging.debug(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}established (non-streaming mode)...")
 
                 return {
                     "success": True,
@@ -1224,7 +1224,7 @@ def launch_terminal_connection(params: KeeperParams,
         if not protocol:
             raise CommandError('pam launch', f'Could not detect protocol for record {record_uid}')
 
-        logging.info(f"Detected protocol: {protocol}")
+        logging.debug(f"Detected protocol: {protocol}")
 
         # Step 2: Extract settings
         settings = extract_terminal_settings(params, record_uid, protocol)
@@ -1256,9 +1256,9 @@ def launch_terminal_connection(params: KeeperParams,
             error_msg = tunnel_result.get('error', 'Unknown error')
             raise CommandError('pam launch', f'Failed to open WebRTC tunnel: {error_msg}')
 
-        logging.info(f"Terminal connection established for {protocol}")
-        logging.info(f"Target: {settings['hostname']}:{settings['port']}")
-        logging.info(f"Gateway: {gateway_info['gateway_name']} ({gateway_info['gateway_uid']})")
+        logging.debug(f"Terminal connection established for {protocol}")
+        logging.debug(f"Target: {settings['hostname']}:{settings['port']}")
+        logging.debug(f"Gateway: {gateway_info['gateway_name']} ({gateway_info['gateway_uid']})")
 
         return {
             'success': True,
