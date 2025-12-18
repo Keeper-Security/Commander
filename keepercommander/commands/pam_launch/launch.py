@@ -465,7 +465,6 @@ class PAMLaunchCommand(Command):
                     except Exception:
                         # If we can't check state, continue (tube might be closing)
                         pass
-
                     time.sleep(0.1)
                     elapsed += 0.1
 

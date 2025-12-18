@@ -747,7 +747,6 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
 
         # Register the encryption key in the global conversation store
         register_conversation_key(conversation_id, symmetric_key)
-
         # Create a temporary tunnel session
         import uuid
         temp_tube_id = str(uuid.uuid4())

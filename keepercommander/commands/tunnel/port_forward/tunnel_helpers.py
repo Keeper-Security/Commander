@@ -312,6 +312,105 @@ def get_conversation_status():
 
 
 # Tunnel helper functions
+def _configure_rust_logger_levels(current_is_debug: bool, log_level: int):
+    """
+    Configure Rust logger levels based on debug mode.
+
+    Args:
+        current_is_debug: Whether debug mode is currently enabled
+        log_level: Current effective log level
+    """
+    # Quick Fix: switch only between ERROR and DEBUG
+    # RCA: Commander has 2 modes only DEBUG and non-debug (default)
+    # yet all rust log messages are always printed incl. DEBUG messages when non-debug mode is set
+
+    # Configure Rust logger level based on debug mode
+    if current_is_debug or log_level <= logging.DEBUG:
+        root_logger = logging.getLogger()
+        # Ensure root logger can handle DEBUG messages
+        if root_logger.level > logging.DEBUG:
+            root_logger.setLevel(logging.DEBUG)
+
+        # CRITICAL: Ensure root logger has a handler
+        # pyo3_log sends Rust logs to Python loggers, but if loggers have no handlers,
+        # messages are lost even if propagate=True
+        import sys
+        if not root_logger.handlers:
+            # Add a console handler if none exists
+            console_handler = logging.StreamHandler(sys.stderr)
+            console_handler.setFormatter(logging.Formatter(
+                '%(levelname)s:%(name)s:%(message)s'
+            ))
+            console_handler.setLevel(logging.DEBUG)
+            root_logger.addHandler(console_handler)
+
+        # Set up a custom logger factory that adds handlers to all Rust loggers
+        # This ensures handlers are added even if loggers are created dynamically
+        original_logger_class = logging.getLoggerClass()
+
+        class RustLoggerHandler(logging.Logger):
+            """Custom logger that auto-adds handlers for Rust loggers"""
+            def __init__(self, name, level=logging.NOTSET):
+                super().__init__(name, level)
+                if name.startswith('keeper_pam_webrtc_rs'):
+                    self.setLevel(logging.DEBUG)
+                    self.propagate = False  # Disable propagation to prevent duplicate logs
+                    if not self.handlers:
+                        handler = logging.StreamHandler(sys.stderr)
+                        handler.setFormatter(logging.Formatter(
+                            '%(levelname)s:%(name)s:%(message)s'
+                        ))
+                        handler.setLevel(logging.DEBUG)
+                        self.addHandler(handler)
+
+        # Temporarily set our custom logger class
+        logging.setLoggerClass(RustLoggerHandler)
+
+        # Now set up all existing loggers (disable propagation to prevent duplicates)
+        for logger_name in list(logging.Logger.manager.loggerDict.keys()):
+            if isinstance(logger_name, str) and logger_name.startswith('keeper_pam_webrtc_rs'):
+                rust_logger = logging.getLogger(logger_name)
+                rust_logger.setLevel(logging.DEBUG)
+                rust_logger.propagate = False  # Disable propagation to prevent duplicate logs
+                if not rust_logger.handlers:
+                    handler = logging.StreamHandler(sys.stderr)
+                    handler.setFormatter(logging.Formatter(
+                        '%(levelname)s:%(name)s:%(message)s'
+                    ))
+                    handler.setLevel(logging.DEBUG)
+                    rust_logger.addHandler(handler)
+
+        # pyo3_log creates loggers based on Rust module paths
+        tube_registry_logger = logging.getLogger("keeper_pam_webrtc_rs.python.tube_registry_binding")
+        tube_registry_logger.setLevel(logging.DEBUG)
+        tube_registry_logger.propagate = False  # Disable propagation to prevent duplicate logs
+        if not tube_registry_logger.handlers:
+            handler = logging.StreamHandler(sys.stderr)
+            handler.setFormatter(logging.Formatter(
+                '%(levelname)s:%(name)s:%(message)s'
+            ))
+            handler.setLevel(logging.DEBUG)
+            tube_registry_logger.addHandler(handler)
+
+        # Restore original logger class
+        logging.setLoggerClass(original_logger_class)
+
+        logging.debug(f"Rust loggers enabled at DEBUG level")
+        enabled_loggers = [name for name in logging.Logger.manager.loggerDict.keys()
+                         if isinstance(name, str) and name.startswith('keeper_pam_webrtc_rs')]
+        logging.debug(f"Enabled Rust loggers: {enabled_loggers}")
+    else:
+        # Set to ERROR when not debugging
+        main_rust_logger = logging.getLogger("keeper_pam_webrtc_rs")
+        main_rust_logger.setLevel(logging.ERROR)
+
+        # Also set all existing Rust sub-loggers to ERROR
+        for logger_name in list(logging.Logger.manager.loggerDict.keys()):
+            if isinstance(logger_name, str) and logger_name.startswith('keeper_pam_webrtc_rs'):
+                logger = logging.getLogger(logger_name)
+                logger.setLevel(logging.ERROR)
+
+
 def get_or_create_tube_registry(params):
     """Get or create the tube registry instance, storing it on params for reuse"""
     try:
@@ -326,6 +425,9 @@ def get_or_create_tube_registry(params):
             verbose=current_is_debug,  # Use current state, matches debug toggles
             level=log_level
         )
+
+        # Configure Rust logger levels based on debug mode
+        _configure_rust_logger_levels(current_is_debug, log_level)
 
         # Reuse existing registry or create new one
         if not hasattr(params, 'tube_registry') or params.tube_registry is None:
@@ -799,7 +901,6 @@ async def handle_websocket_responses(params, tube_registry, timeout=60, gateway_
         'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
         'Authorization': f'KeeperUser {bytes_to_base64(encrypted_session_token)}',
     }
-
     # Set up SSL context
     ssl_context = None
     if ws_endpoint.startswith('wss://'):
@@ -841,10 +942,17 @@ async def handle_websocket_messages(websocket, tube_registry, timeout, stop_even
                 response_data = json.loads(message_text)
                 if isinstance(response_data, list):
                     # Handle an array of responses
-                    for response_item in response_data:
+                    logging.debug(f"Received {len(response_data)} WebSocket messages")
+                    for idx, response_item in enumerate(response_data):
+                        logging.debug(f"  Message {idx+1}/{len(response_data)}: conversationId={response_item.get('conversationId', 'N/A')}, type={response_item.get('type', 'N/A')}")
+                        if 'payload' in response_item:
+                            logging.debug(f"    Payload preview: {str(response_item['payload'])[:100]}...")
                         route_message_to_rust(response_item, tube_registry)
                 elif isinstance(response_data, dict):
                     # Handle a single response object
+                    logging.debug(f"Received WebSocket message: conversationId={response_data.get('conversationId', 'N/A')}, type={response_data.get('type', 'N/A')}")
+                    if 'payload' in response_data:
+                        logging.debug(f"  Payload preview: {str(response_data['payload'])[:100]}...")
                     route_message_to_rust(response_data, tube_registry)
                 else:
                     logging.warning(f"Unexpected WebSocket message format: {type(response_data)}")
@@ -911,6 +1019,17 @@ def route_message_to_rust(response_item, tube_registry):
                     data_field.endswith(conversation_id)  # Plain text responses often end with conversation ID
                 ):
                     logging.debug(f"Received plain text acknowledgment: {data_field}")
+
+                    # CRITICAL: Mark ICE candidate response received to allow next candidate
+                    if "ice candidate" in data_field.lower() or "ice candidates" in data_field.lower():
+                        # Find the signal handler and mark response received
+                        tube_id = tube_registry.tube_id_from_connection_id(conversation_id)
+                        if tube_id:
+                            session = get_tunnel_session(tube_id)
+                            if session and hasattr(session, 'signal_handler') and session.signal_handler:
+                                session.signal_handler.ice_candidate_response_received = True
+                                logging.debug(f"Marked ICE candidate response received for tube {tube_id}")
+
                     return
 
                 # Check if this is just a buffered acknowledgment (these sometimes have invalid base64)
@@ -947,6 +1066,15 @@ def route_message_to_rust(response_item, tube_registry):
                             pass  # Not a simple JSON string, continue with normal processing
 
                         data_json = json.loads(data_text)
+
+                        # Ensure data_json is a dictionary before processing
+                        if not isinstance(data_json, dict):
+                            logging.debug(f"Data is not a dictionary (got {type(data_json).__name__}), treating as acknowledgment: {data_json}")
+                            return
+
+                        # Log what type of data we received
+                        logging.debug(f"🔓 Decrypted payload type: {data_json.get('type', 'unknown')}, keys: {list(data_json.keys())}")
+
                         if "answer" in data_json:
                             answer_sdp = data_json.get('answer')
 
@@ -972,17 +1100,21 @@ def route_message_to_rust(response_item, tube_registry):
 
                                 # Send any buffered local ICE candidates now that we have the answer
                                 session = get_tunnel_session(tube_id)
-                                if session and session.buffered_ice_candidates:
-                                    logging.debug(f"Sending {len(session.buffered_ice_candidates)} buffered ICE candidates after answer")
-                                    # Need to get the signal handler to send candidates
-                                    # Since we're in the routing function, we need to find the handler
-                                    #  is stored in the session for this purpose
-                                    if hasattr(session, 'signal_handler') and session.signal_handler:
-                                        for candidate in session.buffered_ice_candidates:
-                                            session.signal_handler._send_ice_candidate_immediately(candidate, tube_id)
-                                        session.buffered_ice_candidates.clear()
-                                    else:
-                                        logging.warning(f"No signal handler found for tube {tube_id} to send buffered candidates")
+                                if session:
+                                    session.gateway_ready_event.set()
+
+                                    # Send any buffered local ICE candidates now that we have the answer
+                                    if session.buffered_ice_candidates:
+                                        logging.debug(f"Sending {len(session.buffered_ice_candidates)} buffered ICE candidates after answer")
+                                        # Need to get the signal handler to send candidates
+                                        # Since we're in the routing function, we need to find the handler
+                                        #  is stored in the session for this purpose
+                                        if hasattr(session, 'signal_handler') and session.signal_handler:
+                                            for candidate in session.buffered_ice_candidates:
+                                                session.signal_handler._send_ice_candidate_immediately(candidate, tube_id)
+                                            session.buffered_ice_candidates.clear()
+                                        else:
+                                            logging.warning(f"No signal handler found for tube {tube_id} to send buffered candidates")
                         elif "offer" in data_json or (data_json.get("type") == "offer"):
                             # Gateway is sending us an ICE restart offer
                             offer_sdp = data_json.get('sdp') or data_json.get('offer')
@@ -1053,11 +1185,12 @@ def route_message_to_rust(response_item, tube_registry):
                                                 destination_gateway_uid_str=session.gateway_uid,
                                                 gateway_action=GatewayActionWebRTCSession(
                                                     conversation_id=session.conversation_id,
+                                                    message_id=GatewayAction.conversation_id_to_message_id(session.conversation_id),
                                                     inputs={
                                                         "recordUid": signal_handler.record_uid,
                                                         'kind': 'ice_restart_answer',
                                                         'base64Nonce': signal_handler.base64_nonce,
-                                                        'conversationType': 'tunnel',
+                                                        'conversationType': signal_handler.conversation_type,
                                                         "data": encrypted_data,
                                                         "trickleICE": signal_handler.trickle_ice,
                                                     }
@@ -1218,7 +1351,9 @@ class TunnelSignalHandler:
     - Maintains consistent protocol with gateway expectations
     """
 
-    def __init__(self, params, record_uid, gateway_uid, symmetric_key, base64_nonce, conversation_id, tube_registry, tube_id=None, trickle_ice=False, websocket_router=None):
+    def __init__(self, params, record_uid, gateway_uid, symmetric_key, base64_nonce, conversation_id,
+                 tube_registry, tube_id=None, trickle_ice=False, websocket_router=None,
+                 conversation_type='tunnel'):
         self.params = params
         self.record_uid = record_uid
         self.gateway_uid = gateway_uid
@@ -1252,6 +1387,11 @@ class TunnelSignalHandler:
         session = get_tunnel_session(tube_id) if tube_id else None
         if session:
             session.update_activity()
+        else:
+            if tube_id:
+                logging.debug(
+                    f"No tunnel session found for tube {tube_id} while handling signal '{signal_kind}'"
+                )
 
         # Handle local connection state changes
         if signal_kind == 'connection_state_changed':
@@ -1266,7 +1406,15 @@ class TunnelSignalHandler:
                 logging.error(f"Connection failed for tube {tube_id} - ICE restart may be attempted by Rust")
 
             elif new_state == 'connected':
-                logging.debug(f"Connection established/restored for tube {tube_id}")
+                logging.debug(
+                    f"Connection established/restored for tube {tube_id} "
+                    f"(conversation_id={conversation_id_from_signal or self.conversation_id})"
+                )
+                logging.debug(f"Connection state: connected")
+
+                # CRITICAL: Mark connection as connected - IMMEDIATELY stop sending ICE candidates
+                self.connection_connected = True
+                self.ice_sending_in_progress = False  # Stop any pending ICE candidate sends
 
                 if not self.connection_success_shown:
                     self.connection_success_shown = True
@@ -1407,6 +1555,20 @@ class TunnelSignalHandler:
 
         # Handle ICE candidates - use session to check if offer is sent AND WebSocket is ready
         elif signal_kind == 'icecandidate':
+            # CRITICAL: Stop immediately if connection is already established
+            if self.connection_connected:
+                logging.debug(f"Skipping ICE candidate - connection already established for tube {tube_id}")
+                return
+
+            # CRITICAL: Check if we're already sending a candidate (serialize)
+            if self.ice_sending_in_progress:
+                logging.debug(f"ICE candidate send already in progress for tube {tube_id}, buffering this candidate")
+                if session:
+                    session.buffered_ice_candidates.append(data)
+                    priority_score, candidate_type = self._get_ice_candidate_priority(data)
+                    logging.debug(f"Buffered candidate (priority={priority_score}, type={candidate_type})")
+                return
+
             logging.debug(f"Received ICE candidate for tube {tube_id}")
 
             # Check if we should buffer this candidate
@@ -1422,7 +1584,8 @@ class TunnelSignalHandler:
                     logging.debug(f"Buffering ICE candidate - WebSocket not ready yet for tube {tube_id}")
 
             if should_buffer:
-                session.buffered_ice_candidates.append(data)
+                if session:
+                    session.buffered_ice_candidates.append(data)
             else:
                 # Send the candidate immediately (but still in array format for gateway consistency)
                 self._send_ice_candidate_immediately(data, tube_id)
@@ -1474,12 +1637,85 @@ class TunnelSignalHandler:
         else:
             logging.debug(f"Unknown signal type: {signal_kind}")
 
+    def _get_ice_candidate_priority(self, candidate_data):
+        """
+        Extract priority from ICE candidate string to determine send order.
+
+        ICE candidate priority order (highest to lowest):
+        1. typ host - Direct local connection (fastest, most reliable)
+        2. typ srflx - Server reflexive via STUN (medium speed)
+        3. typ relay - Relay via TURN (slowest, last resort)
+
+        Args:
+            candidate_data: ICE candidate string (SDP format)
+
+        Returns:
+            tuple: (priority_score, candidate_type) where:
+                - priority_score: Higher = better (0-100)
+                - candidate_type: 'host', 'srflx', 'relay', or 'unknown'
+        """
+        if not isinstance(candidate_data, str):
+            candidate_str = str(candidate_data)
+        else:
+            candidate_str = candidate_data
+
+        # Parse candidate string for type
+        candidate_lower = candidate_str.lower()
+
+        if 'typ host' in candidate_lower:
+            # Highest priority: direct local connection
+            return (100, 'host')
+        elif 'typ srflx' in candidate_lower:
+            # Medium priority: server reflexive (NAT traversal via STUN)
+            return (50, 'srflx')
+        elif 'typ relay' in candidate_lower:
+            # Lowest priority: relay via TURN (most expensive/slowest)
+            return (0, 'relay')
+        else:
+            # Unknown type - try to extract priority number from candidate string
+            # Format: "candidate:foundation component priority protocol ..."
+            import re
+            priority_match = re.search(r'candidate:[^\s]+\s+\d+\s+\w+\s+(\d+)', candidate_str)
+            if priority_match:
+                priority_num = int(priority_match.group(1))
+                # Normalize priority (ICE priorities are typically 0-2^31)
+                # Higher priority number = better candidate
+                normalized = min(100, priority_num // 21474836)  # Scale to 0-100
+                return (normalized, 'unknown')
+            return (10, 'unknown')  # Default low priority for unknown types
+
+    def _sort_candidates_by_priority(self, candidates):
+        """
+        Sort ICE candidates by priority (best/fastest first).
+
+        Args:
+            candidates: List of candidate strings
+
+        Returns:
+            List of candidates sorted by priority (highest first)
+        """
+        def priority_key(candidate):
+            priority_score, candidate_type = self._get_ice_candidate_priority(candidate)
+            # Sort by priority score (descending), then by type
+            return (-priority_score, candidate_type)
+
+        return sorted(candidates, key=priority_key)
     def _send_ice_candidate_immediately(self, candidate_data, tube_id=None):
         """Send a single ICE candidate immediately via HTTP POST to /send_controller_message
 
         Always sends candidates as {"candidates": [candidate]} array format for gateway consistency.
         This matches the gateway expectation: action_inputs['data'].get('candidates')
+
+        Serializes sending to prevent parallel sends and stops immediately if connection is established.
         """
+        # CRITICAL: Double-check connection state before sending (connection might have been established)
+        if self.connection_connected:
+            logging.debug(f"Skipping ICE candidate send - connection already established")
+            return
+
+        # Set flag to serialize sending (prevent parallel sends)
+        self.ice_sending_in_progress = True
+
         try:
             # Always use array format for consistency with gateway expectations
             # Gateway expects: action_inputs['data'].get('candidates') and iterates: for candidate in ice_candidates
@@ -1496,11 +1732,12 @@ class TunnelSignalHandler:
                 destination_gateway_uid_str=self.gateway_uid,
                 gateway_action=GatewayActionWebRTCSession(
                     conversation_id=self.conversation_id,
+                    message_id=GatewayAction.conversation_id_to_message_id(self.conversation_id),
                     inputs={
                         "recordUid": self.record_uid,
                         'kind': 'icecandidate',
                         'base64Nonce': self.base64_nonce,
-                        'conversationType': 'tunnel',
+                        'conversationType': self.conversation_type,
                         "data": encrypted_data,
                         "trickleICE": self.trickle_ice,
                     }
@@ -1555,11 +1792,12 @@ class TunnelSignalHandler:
                 destination_gateway_uid_str=self.gateway_uid,
                 gateway_action=GatewayActionWebRTCSession(
                     conversation_id=self.conversation_id,
+                    message_id=GatewayAction.conversation_id_to_message_id(self.conversation_id),
                     inputs={
                         "recordUid": self.record_uid,
                         'kind': 'ice_restart_offer',  # New kind for ICE restart
                         'base64Nonce': self.base64_nonce,
-                        'conversationType': 'tunnel',
+                        'conversationType': self.conversation_type,
                         "data": encrypted_data,
                         "trickleICE": self.trickle_ice,
                     }
@@ -1710,6 +1948,9 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             params, host, port, target_host, target_port, socks, nonce
         )
 
+        # Determine conversation type (tunnel or protocol-specific)
+        conversation_type = webrtc_settings.get('conversationType', 'tunnel')
+
         # Register the encryption key in the global conversation store
         # IMPORTANT: Gateway may convert URL-safe base64 to standard base64 and add padding
         # Register both versions to handle the conversion:
@@ -1727,7 +1968,6 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
         if standard_conversation_id != conversation_id_original:
             register_conversation_key(standard_conversation_id, symmetric_key)
             logging.debug(f"Registered both URL-safe and standard base64 conversation IDs")
-
         # Create a temporary tunnel session BEFORE creating the tube so ICE candidates can be buffered immediately
         import uuid
         temp_tube_id = str(uuid.uuid4())
@@ -1764,6 +2004,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             tube_registry=tube_registry,
             tube_id=temp_tube_id,  # Use temp ID initially
             trickle_ice=trickle_ice,
+            conversation_type=conversation_type
         )
 
         # Store signal handler reference so we can send buffered candidates later
@@ -2156,6 +2397,6 @@ def wait_for_tunnel_connection(tunnel_result, timeout=30, show_progress=True):
             logging.debug("Tunnel connection wait completed successfully")
         else:
             error_msg = result.get("error", "Unknown error")
-            logging.error(f"{bcolors.FAIL}Tunnel connection failed: {error_msg}{bcolors.ENDC}")
+            logging.debug(f"{bcolors.FAIL}Tunnel connection failed: {error_msg}{bcolors.ENDC}")
 
     return result
