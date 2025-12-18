@@ -67,7 +67,6 @@ class RestApiContext:
         p = urlparse(value)
         new_server_base = urlunparse((p.scheme or 'https', p.netloc, '/api/rest/', None, None, None))
         
-        # Reset QRC key ID if server changed
         if hasattr(self, '_RestApiContext__server_base') and self.__server_base != new_server_base:
             self.__qrc_key_id = -1
         
@@ -98,29 +97,20 @@ class RestApiContext:
         try:
             hostname = urlparse(self.__server_base).netloc.lower().split(':')[0]
             
-            # Hostname to QRC key ID mapping
             qrc_key_map = {
                 'qa.keepersecurity.com': 107,
                 'staging.keepersecurity.com': 124,
                 'keepersecurity.com': 136,
             }
             
-            # Check exact match first
             qrc_key_id = qrc_key_map.get(hostname)
-            
-            # Check govcloud pattern if no exact match
             if qrc_key_id is None and 'govcloud.keepersecurity.us' in hostname:
                 qrc_key_id = 148 if hostname.startswith('dev.') else 160
-            
-            # Check IL5 pattern
             if qrc_key_id is None and 'il5.keepersecurity.us' in hostname:
                 qrc_key_id = 172 if hostname.startswith('dev.') else 186
-            
-            # If still no match, QRC not available
             if qrc_key_id is None:
                 self.__qrc_key_id = None
                 return
-            
             from .rest_api import SERVER_PUBLIC_KEYS
             if qrc_key_id in SERVER_PUBLIC_KEYS:
                 self.__qrc_key_id = qrc_key_id
