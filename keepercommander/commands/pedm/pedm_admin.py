@@ -5,6 +5,7 @@ import calendar
 import copy
 import datetime
 import fnmatch
+import getpass
 import json
 import logging
 import os.path
@@ -194,13 +195,13 @@ class PedmScimCommand(base.ArgparseCommand):
         azure_parser = subparsers.add_parser('azure', help='Connect via Azure AD')
         azure_parser.add_argument('--tenant-id', dest='tenant_id', required=True)
         azure_parser.add_argument('--client-id', dest='client_id', required=True)
-        azure_parser.add_argument('--client-secret', dest='client_secret', required=True)
+        azure_parser.add_argument('--client-secret', dest='client_secret')
         azure_parser.add_argument('--azure-cloud', dest='azure_cloud', choices=['US', 'GOV', 'CN', 'EU'],
                                   help='Azure cloud (AzureCloud, AzureChinaCloud, etc.)')
 
         ad_parser = subparsers.add_parser('ad', help='Connect via Active Directory')
-        ad_parser.add_argument('--ad-url', dest='ad_url', help='AD LDAP URL (e.g., ldap(s)://<host>)')
-        ad_parser.add_argument('--ad-user', dest='ad_user', help='AD bind user (DOMAIN\\username or DN)')
+        ad_parser.add_argument('--ad-url', dest='ad_url', required=True, help='AD LDAP URL (e.g., ldap(s)://<host>)')
+        ad_parser.add_argument('--ad-user', dest='ad_user', required=True, help='AD bind user (DOMAIN\\username or DN)')
         ad_parser.add_argument('--ad-password', dest='ad_password', help='AD password')
         ad_parser.add_argument('--group', dest='groups', action='append', help='AD group name or DN (repeatable)')
         ad_parser.add_argument('--netbios-domain', dest='use_netbios_domain', action='store_true',
@@ -334,9 +335,13 @@ class PedmScimCommand(base.ArgparseCommand):
             if scim_groups and not isinstance(scim_groups, list):
                 scim_groups = None
 
-            if not ad_url or not ad_user or not ad_password:
-                raise base.CommandError('AD source requires AD URL, AD User, and AD Password')
+            if not ad_url or not ad_user:
+                raise base.CommandError('AD source requires AD URL and AD User')
             try:
+                if not ad_password:
+                    ad_password = getpass.getpass(prompt=f'{ad_user} Password: ', stream=None)
+                    if not ad_password:
+                        raise base.CommandError('Cancelled')
                 data_source = AdCrmDataSource(ad_url, ad_user, ad_password, scim_groups, use_netbios_domain)
                 ad_domains = data_source.resolve_domains()
             except Exception as e:
@@ -348,8 +353,10 @@ class PedmScimCommand(base.ArgparseCommand):
             tenant_id = kwargs.get('tenant_id')
             client_id = kwargs.get('client_id')
             client_secret = kwargs.get('client_secret')
-            if not tenant_id or not client_id or not client_secret:
-                raise base.CommandError('Azure source requires tenant-id, client-id, and client-secret')
+            if not tenant_id or not client_id:
+                raise base.CommandError('Azure source requires tenant-id and client-id')
+            if not client_secret:
+                client_secret = getpass.getpass(prompt=f'Azure Client Secret: ', stream=None)
             azure_cloud = kwargs.get('azure_cloud')
             if isinstance(azure_cloud, str):
                 azure_cloud = azure_cloud.upper()
