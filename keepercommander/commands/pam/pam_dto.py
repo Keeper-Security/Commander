@@ -77,12 +77,14 @@ class GatewayActionDiscoverRuleValidateInputs:
 
 class GatewayAction(metaclass=abc.ABCMeta):
 
-    def __init__(self, action, is_scheduled, gateway_destination=None, inputs=None, conversation_id=None):
+    def __init__(self, action, is_scheduled, gateway_destination=None, inputs=None, conversation_id=None, message_id=None):
         self.action = action
         self.is_scheduled = is_scheduled
         self.gateway_destination = gateway_destination
         self.inputs = inputs
         self.conversationId = conversation_id
+        # messageId is derived from conversationId for WebRTC sessions
+        self.messageId = message_id
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
@@ -95,6 +97,14 @@ class GatewayAction(metaclass=abc.ABCMeta):
         else:
             message_id = CommonHelperMethods.bytes_to_url_safe_str(message_id_bytes)
             return message_id
+
+    @staticmethod
+    def conversation_id_to_message_id(conversation_id):
+        """Convert conversationId to messageId format (replace + with -, / with _)"""
+        if conversation_id:
+            # Remove any padding '=' characters and replace special chars
+            return conversation_id.rstrip('=').replace('+', '-').replace('/', '_')
+        return None
 
 
 class GatewayActionGatewayInfo(GatewayAction):
@@ -213,8 +223,8 @@ class GatewayActionListAccessRecords(GatewayAction):
 
 class GatewayActionWebRTCSession(GatewayAction):
 
-    def __init__(self, inputs: dict,conversation_id=None):
-        super().__init__('webrtc-session', inputs=inputs, conversation_id=conversation_id, is_scheduled=False)
+    def __init__(self, inputs: dict, conversation_id=None, message_id=None):
+        super().__init__('webrtc-session', inputs=inputs, conversation_id=conversation_id, message_id=message_id, is_scheduled=False)
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)

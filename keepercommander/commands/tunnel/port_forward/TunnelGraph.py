@@ -1,4 +1,4 @@
-from ....commands.tunnel.port_forward.tunnel_helpers import generate_random_bytes, get_config_uid
+from .tunnel_helpers import generate_random_bytes, get_config_uid
 from ....keeper_dag import DAG, EdgeType
 from ....keeper_dag.connection.commander import Connection
 from ....keeper_dag.types import RefType, PamEndpoints
