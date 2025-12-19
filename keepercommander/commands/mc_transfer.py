@@ -1,7 +1,7 @@
 import argparse
 import enum
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Set, Any
 
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePublicKey
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
@@ -147,8 +147,8 @@ class McTransferStatusCommand(enterprise_common.EnterpriseCommand, McTransferMix
         if transfer:
             headers = ['from_enterprise_name', 'from_admin_email', 'target_enterprise_name', 'target_admin_email', 'status', 'comments']
             status_text = self.transfer_status_to_text(transfer.transferStatus)
-            row = [transfer.movingEnterpriseName, transfer.movingEnterpriseAdminEmail, transfer.recevingEnterpriseName,
-                   transfer.recevingEnterpriseAdminEmail, status_text, transfer.comments]
+            row = [transfer.movingEnterpriseName, transfer.movingEnterpriseAdminEmail, transfer.receivingEnterpriseName,
+                   transfer.receivingEnterpriseAdminEmail, status_text, transfer.comments]
 
             headers = [report_utils.field_to_title(x) for x in headers]
             table = [[x[0], x[1]] for x in zip(headers, row)]
@@ -235,17 +235,20 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
         rq = MCTransfer_pb2.MCTransferRequest()
         rq.enterpriseName = enterprise_name
         rq.enterpriseAdminEmail = enterprise_email
-
         transfer: Optional[MCTransfer_pb2.MCTransferState]
         transfer = api.communicate_rest(params, rq, 'enterprise/mc_transfer_status', rs_type=MCTransfer_pb2.MCTransferState)
         if transfer.transferStatus != MCTransfer_pb2.MCTransferStatus.STATUS_APPROVED:
             raise error.CommandError('mc-transfer perform', 'The transfer has not been approved')
 
+
         rq = MCTransfer_pb2.MCTransferRequest()
         rq.enterpriseName = enterprise_name
         rq.enterpriseAdminEmail = enterprise_email
 
-        if transfer.recevingEnterpriseName:
+        CHECKBOX_EMPTY = "[ ]"
+        CHECKBOX_X = "[x]"
+
+        if transfer.receivingEnterpriseName:
             public_key_rs: Optional[breachwatch_pb2.EnterprisePublicKeyResponse]
             public_key_rs = api.communicate_rest(params, rq, 'enterprise/mc_transfer_get_public_key', rs_type=breachwatch_pb2.EnterprisePublicKeyResponse)
             if not public_key_rs:
@@ -262,38 +265,78 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
 
             enterprise_tree_key = params.enterprise['unencrypted_tree_key']
 
-            tree_key = None
-            if transfer.movingEnterpriseId == params.enterprise_id:
-                tree_key = enterprise_tree_key
-            elif isinstance(managed_companies, list):
-                mc = next((x for x in managed_companies if x.get('mc_enterprise_id') == transfer.movingEnterpriseId))
-                if mc:
-                    encrypted_tree_key = mc.get('tree_key')
-                    if enterprise_tree_key:
-                        try:
-                            tree_key = crypto.decrypt_aes_v2(encrypted_tree_key, enterprise_tree_key)
-                        except:
-                            pass
-            if tree_key:
+            if isinstance(managed_companies, list) and managed_companies:
+                selected_mc: Set[int] = set()
+                headers = ['', 'MC ID', 'MC Name', 'Seats']
+                mcs: List[List[Any]] = []
+                for mc in managed_companies:
+                    seats = mc.get('number_of_seats')
+                    if seats > 2000000:
+                        seats = None
+                    mcs.append([mc.get('mc_enterprise_id'), mc.get('mc_enterprise_name'), seats])
+                mcs.sort(key=lambda x: x[0])
+                while True:
+                    table = []
+                    for mc in mcs:
+                        selected = mc[0] in selected_mc
+                        row = [CHECKBOX_X if selected else CHECKBOX_EMPTY]
+                        row.extend(mc)
+                        table.append(row)
+                    base.dump_report_data(table, headers)
+                    answer = input('Select managed companies to transfer ([a]ll, [n]one, [d]one or list of MC IDs): ')
+                    answer = answer.lower()
+                    if answer in ['a', 'all']:
+                        selected_mc.clear()
+                        selected_mc.update([x[0] for x in mcs])
+                    elif answer in ['n', 'none']:
+                        selected_mc.clear()
+                    elif answer in ['d', 'done']:
+                        break
+                    else:
+                        answer = answer.replace(',', ' ')
+                        mc_ids = answer.split()
+                        for mc_id in mc_ids:
+                            try:
+                                id_mc = int(mc_id)
+                                mc = next((x for x in mcs if x[0] == id_mc), None)
+                                if mc:
+                                    selected_mc.add(id_mc)
+                                else:
+                                    logging.info(f'"{mc_id}" is not a valid Managed Company ID')
+                            except:
+                                logging.info(f'"{mc_id}" is not a valid Managed Company ID')
+                if len(selected_mc) > 0:
+                    for id_mc in selected_mc:
+                        mc = next((x for x in managed_companies if x.get('mc_enterprise_id') == id_mc), None)
+                        if mc:
+                            encrypted_tree_key = mc.get('tree_key')
+                            if enterprise_tree_key:
+                                try:
+                                    tree_key = crypto.decrypt_aes_v2(encrypted_tree_key, enterprise_tree_key)
+                                    if ec_key:
+                                        encrypted_tree_key = crypto.encrypt_ec(tree_key, ec_key)
+                                    else:
+                                        encrypted_tree_key = crypto.encrypt_rsa(tree_key, rsa_key)
+                                    key = MCTransfer_pb2.MCTransferTreeKey()
+                                    key.enterpriseId = transfer.movingEnterpriseId
+                                    key.treeKey = encrypted_tree_key
+                                    rq.mcTransferTreeKeys.append(key)
+                                except:
+                                    logging.info(f'"{id_mc}" cannot decrypt encryption key')
+            elif transfer.movingEnterpriseId == params.enterprise_id:
                 try:
                     if ec_key:
-                        key_type = 4
-                        encrypted_tree_key = crypto.encrypt_ec(tree_key, ec_key)
+                        encrypted_tree_key = crypto.encrypt_ec(enterprise_tree_key, ec_key)
                     else:
-                        key_type = 1
-                        encrypted_tree_key = crypto.encrypt_rsa(tree_key, rsa_key)
+                        encrypted_tree_key = crypto.encrypt_rsa(enterprise_tree_key, rsa_key)
                     key = MCTransfer_pb2.MCTransferTreeKey()
                     key.enterpriseId = transfer.movingEnterpriseId
                     key.treeKey = encrypted_tree_key
                     rq.mcTransferTreeKeys.append(key)
                 except:
                     logging.warning(f'Failed to encrypt enterprise key: ID: {transfer.movingEnterpriseId}, Name: {transfer.movingEnterpriseName}')
-            else:
-                logging.warning(f'Failed to resolve enterprise key: ID: {transfer.movingEnterpriseId}, Name: {transfer.movingEnterpriseName}')
-
             if len(rq.mcTransferTreeKeys) == 0:
-                raise error.CommandError('mc-transfer perform', 'There are not enterprise to transfer')
-
+                raise error.CommandError('mc-transfer perform', 'No enterprise to transfer')
         try:
             api.communicate_rest(params, rq, 'enterprise/mc_transfer_perform')
         except error.KeeperApiError as kae:
