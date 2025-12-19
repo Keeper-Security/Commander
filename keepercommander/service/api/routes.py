@@ -9,7 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
-from flask import Flask
+from flask import Flask, jsonify
 from typing import Optional
 from .command import create_command_blueprint, create_legacy_command_blueprint
 from .onboarding import create_onboarding_blueprint
@@ -40,7 +40,13 @@ def init_routes(app: Optional[Flask] = None) -> None:
     """Initialize routes and queue manager for the Keeper Commander Service."""
     if app is None:
         raise ValueError("App instance is required")
-    
+
+    # Add health check endpoint (no authentication required for Docker/orchestrators)
+    @app.route("/health", methods=["GET"])
+    def health_check():
+        """Health check endpoint for Docker and orchestrators."""
+        return jsonify({"status": "ok"}), 200
+
     logger.debug("Starting route initialization")
     
     try:
