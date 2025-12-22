@@ -318,7 +318,7 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
                                     else:
                                         encrypted_tree_key = crypto.encrypt_rsa(tree_key, rsa_key)
                                     key = MCTransfer_pb2.MCTransferTreeKey()
-                                    key.enterpriseId = transfer.movingEnterpriseId
+                                    key.enterpriseId = id_mc
                                     key.treeKey = encrypted_tree_key
                                     rq.mcTransferTreeKeys.append(key)
                                 except:
