@@ -26,7 +26,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.shortcuts import CompleteStyle
 
-from . import api, display, ttk
+from . import api, display, ttk, utils
 from . import versioning
 from .autocomplete import CommandCompleter
 from .commands import (
@@ -419,6 +419,8 @@ def do_command(params, command_line):
                         api.sync_down(params)
                 return result
             else:
+                if not params.session_token and utils.is_email(orig_cmd):
+                    return LoginCommand().execute(params, email=orig_cmd, new_login=False)
                 display_command_help(show_enterprise=(params.enterprise is not None))
 
 
