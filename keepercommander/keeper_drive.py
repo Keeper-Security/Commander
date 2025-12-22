@@ -1655,30 +1655,43 @@ def get_folder_access_v3(
                 access_type = folder_pb2.AccessType.Name(accessor.accessType)
                 role_type = folder_pb2.AccessRoleType.Name(accessor.accessRoleType)
                 
+                username = None
+                if access_type == 'AT_USER':
+                    # Try cache first
+                    if hasattr(params, 'user_cache') and params.user_cache:
+                        username = params.user_cache.get(accessor_uid)
+                    # Fallback to enterprise users
+                    if not username and hasattr(params, 'enterprise') and params.enterprise:
+                        for user in params.enterprise.get('users', []):
+                            if user.get('user_account_uid') == accessor_uid:
+                                username = user.get('username')
+                                break
+                
                 accessor_info = {
                     'accessor_uid': accessor_uid,
                     'access_type': access_type,
                     'role': role_type,
-                    'inherited': accessor.inherited if accessor.HasField('inherited') else False,
-                    'hidden': accessor.hidden if accessor.HasField('hidden') else False,
-                    'date_created': accessor.dateCreated if accessor.HasField('dateCreated') else None,
-                    'last_modified': accessor.lastModified if accessor.HasField('lastModified') else None
+                    'inherited': bool(accessor.inherited),
+                    'hidden': bool(accessor.hidden),
+                    'username': username,
+                    'date_created': accessor.dateCreated or None,
+                    'last_modified': accessor.lastModified or None
                 }
                 
                 # Add permissions if available
                 if accessor.HasField('permissions'):
                     perms = accessor.permissions
                     accessor_info['permissions'] = {
-                        'can_add_users': perms.canAddUsers if perms.HasField('canAddUsers') else False,
-                        'can_remove_users': perms.canRemoveUsers if perms.HasField('canRemoveUsers') else False,
-                        'can_add_records': perms.canAddRecords if perms.HasField('canAddRecords') else False,
-                        'can_remove_records': perms.canRemoveRecords if perms.HasField('canRemoveRecords') else False,
-                        'can_delete_records': perms.canDeleteRecords if perms.HasField('canDeleteRecords') else False,
-                        'can_create_folders': perms.canCreateFolders if perms.HasField('canCreateFolders') else False,
-                        'can_delete_folders': perms.canDeleteFolders if perms.HasField('canDeleteFolders') else False,
-                        'can_change_user_permissions': perms.canChangeUserPermissions if perms.HasField('canChangeUserPermissions') else False,
-                        'can_edit_records': perms.canEditRecords if perms.HasField('canEditRecords') else False,
-                        'can_view_records': perms.canViewRecords if perms.HasField('canViewRecords') else False,
+                        'can_add_users': bool(perms.canAddUsers),
+                        'can_remove_users': bool(perms.canRemoveUsers),
+                        'can_add_records': bool(perms.canAddRecords),
+                        'can_remove_records': bool(perms.canRemoveRecords),
+                        'can_delete_records': bool(perms.canDeleteRecords),
+                        'can_create_folders': bool(perms.canCreateFolders),
+                        'can_delete_folders': bool(perms.canDeleteFolders),
+                        'can_change_user_permissions': bool(perms.canChangeUserPermissions),
+                        'can_edit_records': bool(perms.canEditRecords),
+                        'can_view_records': bool(perms.canViewRecords),
                     }
                 
                 accessors.append(accessor_info)
@@ -1692,7 +1705,7 @@ def get_folder_access_v3(
     # Build response dictionary
     response_dict = {
         'results': results,
-        'has_more': response.hasMore if response.HasField('hasMore') else False
+        'has_more': bool(response.hasMore)
     }
     
     # Add continuation token if available
