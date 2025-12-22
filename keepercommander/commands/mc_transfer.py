@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
 from . import base, enterprise_common
 from .helpers import report_utils
-from .. import api, error, crypto
+from .. import api, error, crypto, utils
 from ..proto import MCTransfer_pb2, breachwatch_pb2
 
 
@@ -309,7 +309,7 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
                     for id_mc in selected_mc:
                         mc = next((x for x in managed_companies if x.get('mc_enterprise_id') == id_mc), None)
                         if mc:
-                            encrypted_tree_key = mc.get('tree_key')
+                            encrypted_tree_key = utils.base64_url_decode(mc['tree_key'])
                             if enterprise_tree_key:
                                 try:
                                     tree_key = crypto.decrypt_aes_v2(encrypted_tree_key, enterprise_tree_key)
