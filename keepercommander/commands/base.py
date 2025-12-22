@@ -203,8 +203,9 @@ def register_enterprise_commands(commands, aliases, command_info):
     if sys.version_info.major > 3 or (sys.version_info.major == 3 and sys.version_info.minor >= 9):
         from.pedm import pedm_admin
         pedm_command = pedm_admin.PedmCommand()
-        commands['pedm'] = pedm_command
-        command_info['pedm'] = pedm_command.description
+        commands['epm'] = pedm_command
+        command_info['epm'] = pedm_command.description
+        aliases['pedm'] = 'epm'
 
 
 def register_msp_commands(commands, aliases, command_info):
