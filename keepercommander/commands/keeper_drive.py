@@ -469,12 +469,10 @@ keeper_drive_get_folder_access_parser = argparse.ArgumentParser(
     allow_abbrev=False
 )
 keeper_drive_get_folder_access_parser.add_argument(
-    '--folder',
-    dest='folders',
-    action='append',
+    'folder_uids',
+    nargs='+',
     type=str,
-    required=True,
-    help='Folder UID, name, or path (can be specified multiple times, max 100)'
+    help='Folder UIDs, names, or paths to query (max 100)'
 )
 keeper_drive_get_folder_access_parser.add_argument(
     '--verbose',
@@ -2533,7 +2531,7 @@ class KeeperDriveGetFolderAccessCommand(Command):
         return keeper_drive_get_folder_access_parser
     
     def execute(self, params, **kwargs):
-        folders = kwargs.get('folders', [])
+        folders = kwargs.get('folder_uids', [])
         verbose = kwargs.get('verbose', False)
         
         if not folders:
@@ -2575,15 +2573,14 @@ class KeeperDriveGetFolderAccessCommand(Command):
                 for accessor in accessors:
                     accessor_uid = accessor['accessor_uid']
                     access_type = accessor['access_type']
-                    role = accessor['role']
-                    inherited = accessor['inherited']
-                    hidden = accessor['hidden']
+                    username = accessor.get('username')
                     
-                    print(f"\n  Accessor: {accessor_uid}")
+                    accessor_label = username if username else accessor_uid
+                    if username:
+                        accessor_label = f"{username}"
+                    
+                    print(f"\n  Accessor: {accessor_label}")
                     print(f"    Type: {access_type}")
-                    print(f"    Role: {role}")
-                    print(f"    Inherited: {inherited}")
-                    print(f"    Hidden: {hidden}")
                     
                     if accessor.get('date_created'):
                         import datetime
