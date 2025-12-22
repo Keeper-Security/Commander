@@ -89,16 +89,18 @@ PAM_DEFAULT_SPECIAL_CHAR = '''!@#$%^?();',.=+[]<>{}-_/\\*&:"`~|'''
 
 
 def validate_cron_field(field, min_val, max_val):
-    # Accept *, single number, range, step, list
-    pattern = r'^(\*|\d+|\d+-\d+|\*/\d+|\d+(,\d+)*|\d+-\d+/\d+)$'
+    # Accept *, single number, range, step, list, and L suffix for last day/week
+    pattern = r'^(\*|\d+L?|L[W]?|\d+-\d+|\*/\d+|\d+(,\d+)*|\d+-\d+/\d+)$'
     if not re.match(pattern, field):
         return False
 
     def is_valid_number(n):
-        return n.isdigit() and min_val <= int(n) <= max_val
+        # Strip L and W suffix if present (for last day/week expressions)
+        n_stripped = n.rstrip('LW')
+        return n_stripped and n_stripped.isdigit() and min_val <= int(n_stripped) <= max_val
 
     parts = re.split(r'[,\-/]', field)
-    return all(part == '*' or is_valid_number(part) for part in parts if part != '*')
+    return all(part == '*' or part in ('L', 'LW') or is_valid_number(part) for part in parts if part != '*')
 
 def validate_cron_expression(expr, for_rotation=False):
     parts = expr.strip().split()
