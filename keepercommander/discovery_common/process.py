@@ -55,6 +55,14 @@ class NoDiscoveryDataException(Exception):
 
 
 class Process:
+
+    """
+    Process discovery results
+
+    While this class update the PAM/record linking graph, it does not save it.
+
+    """
+
     # Warn when bulk record lists exceed this size (potential memory issue)
     BULK_LIST_WARNING_THRESHOLD = 10000
     # Hard limit for bulk record lists (safety mechanism)
@@ -236,16 +244,18 @@ class Process:
                         content: DiscoveryObject,
                         parent_content: DiscoveryObject,
                         vertex: DAGVertex,
+                        admin_uid: Optional[str] = None,
                         context: Optional[Any] = None) -> DiscoveryObject:
         """
         Prepare a record to be added.
 
-        :param record_prepare_func:
-        :param bulk_add_records:
-        :param content:
-        :param parent_content:
-        :param vertex:
-        :param context:
+        :param record_prepare_func: Function to call to prepare a record to be created.
+        :param bulk_add_records: List of records to be added.
+        :param content: Discovery content of the current discovery item.
+        :param parent_content: Discovery content of the parent of the current discovery item.
+        :param vertex: Infrastructure vertex of the current discovery item.
+        :params admin_uid: If resource, if there is an admin, this is the UID of that PAM User
+        :param context: The context; dictionary of random instances.
         :return:
         """
 
@@ -268,7 +278,8 @@ class Process:
                 record_type=content.record_type,
                 record_uid=record_uid,
                 parent_record_uid=parent_record_uid,
-                shared_folder_uid=content.shared_folder_uid
+                shared_folder_uid=content.shared_folder_uid,
+                admin_uid=admin_uid
             )
         )
 
@@ -532,66 +543,6 @@ class Process:
             else:
                 self.logger.debug("could not find user vertex")
 
-    def _record_link_user_to_directories(self,
-                                         directory_vertex: DAGVertex,
-                                         directory_content: DiscoveryObject,
-                                         user_content: DiscoveryObject,
-                                         directory_info_func: Callable,
-                                         context: Optional[Any] = None):
-
-        """
-        Connect a user to all the directories for a domain.
-
-        Directories may be in the vault or in the discovery graph.
-        The first step is to get all vault directories.
-
-        """
-
-        self.logger.debug("resource is directory and we are a user; handle record links to others")
-
-        record_link = context.get("record_link")  # type: RecordLink
-
-        # Get the directory user record UIDs from the vault that belong to directories using the same domain.
-        # We can skip getting directory users.
-        directory_record_uids = []
-        directory_info = directory_info_func(
-            domain=directory_content.name,
-            skip_users=True,
-            context=context
-        )  # type: DirectoryInfo
-        if directory_info is not None:
-            directory_record_uids = directory_info.directory_record_uids
-
-        self.logger.debug(f"found {len(directory_record_uids)} directories in records.")
-
-        # Check our current discovery data.
-        # This is a delta, it will not contain discovery from prior runs.
-        # This will only contain objects in this run.
-        # Make sure the object is a directory and the domain is the same.
-        # Also make sure there is a record UID; it might not be added yet.
-        for parent_vertex in directory_vertex.belongs_to_vertices():
-            self.logger.debug("finding directories in discovery vertices")
-            for child_vertex in parent_vertex.has_vertices():
-                try:
-                    other_directory_content = DiscoveryObject.get_discovery_object(child_vertex)
-                    self.logger.debug(f"{other_directory_content.record_type}, {other_directory_content.name}, "
-                                      f"{directory_content.name}, {other_directory_content.record_uid}")
-                    if (other_directory_content.record_type != PAM_DIRECTORY or
-                            other_directory_content.name != directory_content.name):
-                        continue
-                    if (other_directory_content.record_uid is not None and
-                            other_directory_content.record_uid not in directory_record_uids):
-                        self.logger.debug(f" * adding {other_directory_content.record_uid}")
-                        directory_record_uids.append(other_directory_content.record_uid)
-                except Exception as err:
-                    self.logger.debug(f"could not link user to directory {directory_content.name}: {err}")
-
-        self.logger.debug(f"found {len(directory_record_uids)} directories in records and discovery data.")
-
-        for directory_record_uid in directory_record_uids:
-            if record_link.get_acl(user_content.record_uid, directory_record_uid) is None:
-                record_link.belongs_to(user_content.record_uid, directory_record_uid, acl=UserAcl.default())
-
     def _find_admin_directory_user(self,
                                    domain: str,
                                    admin_acl: UserAcl,
@@ -742,22 +693,12 @@ class Process:
                 if add_record:
 
                     self.logger.debug(f"adding resource record")
-                    # The record could be a resource or user record.
-                    self._prepare_record(
-                        record_prepare_func=record_prepare_func,
-                        bulk_add_records=bulk_add_records,
-                        content=child_content,
-                        parent_content=current_content,
-                        vertex=vertex,
-                        context=context
-                    )
-                    if child_content.record_uid is None:
-                        raise Exception(f"the record uid is blank for {child_content.description} after prepare")
 
                     # For a resource, the ACL will be None.
                     # It will a UserAcl if a user.
                     self.record_link.belongs_to(child_content.record_uid, current_content.record_uid, acl=default_acl)
 
+                    admin_uid = None
                     # If the rules have set the admin_uid then connect the user to the resource.
                     if (child_content.admin_uid is not None
                             and child_content.record_type != PAM_USER
@@ -769,6 +710,7 @@ class Process:
                                                           context=context)  # type: NormalizedRecord
                         if admin_record is not None and admin_record.record_type == PAM_USER:
                             self.logger.debug("was able to find the admin record, connect to resource")
+                            admin_uid = child_content.admin_uid
                             admin_acl.is_admin = True
                             self.record_link.belongs_to(child_content.admin_uid, child_content.record_uid,
                                                         acl=admin_acl)
@@ -776,6 +718,19 @@ class Process:
                             self.logger.info(f"The PAM User record {child_content.admin_uid} does not exists. "
                                              "Cannot set the administrator for an auto added "
                                              f"record {child_content.title}.")
+
+                    # The record could be a resource or user record.
+                    self._prepare_record(
+                        record_prepare_func=record_prepare_func,
+                        bulk_add_records=bulk_add_records,
+                        content=child_content,
+                        parent_content=current_content,
+                        vertex=vertex,
+                        context=context,
+                        admin_uid=admin_uid
+                    )
+                    if child_content.record_uid is None:
+                        raise Exception(f"the record uid is blank for {child_content.description} after prepare")
 
                 # If the record type is a PAM User, we don't need to go deeper.
                 # In the future we might need to change if PAM User becomes a branch and not a leaf.
@@ -795,6 +750,16 @@ class Process:
 
             self.logger.debug(f"  finished auto add processing {record_type}")
         self.logger.debug(f"  Finished auto add current Vertex: {current_vertex.uid}, {current_content.name}")
+
+    @staticmethod
+    def _apply_admin_uid(bulk_add_records: List[BulkRecordAdd],
+                         resource_uid: str,
+                         admin_uid: str):
+
+        for item in bulk_add_records:
+            if item.record_uid == resource_uid:
+                item.admin_uid = admin_uid
+                break
 
     def _process_level(self,
                        current_vertex: DAGVertex,
@@ -970,7 +935,7 @@ class Process:
                             acl.is_iam_user = True
 
                         # The record could be a resource or user record.
-                        # The content
+                        # add_content will have record UID after this.
                         self._prepare_record(
                             record_prepare_func=record_prepare_func,
                             bulk_add_records=bulk_add_records,
@@ -979,6 +944,8 @@ class Process:
                             vertex=vertex,
                             context=context
                         )
+
+                        admin_uid = None
 
                         # Make a record link.
                         # The acl will be None if not a pamUser.
@@ -1002,10 +969,12 @@ class Process:
                                                                   context=context)  # type: NormalizedRecord
                                 if admin_record is not None and admin_record.record_type == PAM_USER:
                                     self.logger.debug("was able to find the admin record, connect to resource")
-                                    admin_acl = UserAcl.default()
-                                    admin_acl.is_admin = True
-                                    self.record_link.belongs_to(child_content.admin_uid, child_content.record_uid,
-                                                                acl=admin_acl)
+
+                                    admin_uid = add_content.admin_uid
+                                    # admin_acl = UserAcl.default()
+                                    # admin_acl.is_admin = True
+                                    # self.record_link.belongs_to(child_content.admin_uid, child_content.record_uid,
+                                    #                             acl=admin_acl)
                                     should_prompt_for_admin = False
                                 else:
                                     self.logger.info(f"The PAM User record {child_content.admin_uid} does not exists. "
@@ -1036,10 +1005,9 @@ class Process:
 
                                     acl = UserAcl.default()
                                     acl.is_admin = True
-                                    admin_record_uid = None
 
                                     try:
-                                        admin_record_uid = self._find_admin_directory_user(
+                                        admin_uid = self._find_admin_directory_user(
                                             domain=source,
                                             admin_acl=acl,
                                             directory_info_func=directory_info_func,
@@ -1048,21 +1016,22 @@ class Process:
                                             user=add_content.access_user.user,
                                             dn=add_content.access_user.dn
                                         )
+
+                                        if admin_uid is not None:
+                                            self.logger.debug("    found directory user admin, connect to resource")
+                                            # self.record_link.belongs_to(admin_uid, add_content.record_uid, acl=acl)
+                                            should_prompt_for_admin = False
+                                        else:
+                                            self.logger.debug("    did not find the directory user for the admin, "
+                                                              "prompt the user")
                                     except DirectoryNotFoundException:
                                         self.logger.debug(f"    directory {source} was not found for admin user")
                                     except UserNotFoundException:
                                         self.logger.debug(f"    directory user was not found in directory {source}")
-                                    if admin_record_uid is not None:
-                                        self.logger.debug("    found directory user admin, connect to resource")
-                                        self.record_link.belongs_to(admin_record_uid, add_content.record_uid, acl=acl)
-                                        should_prompt_for_admin = False
-                                    else:
-                                        self.logger.debug("    did not find the directory user for the admin, "
-                                                          "prompt the user")
 
                             if should_prompt_for_admin:
                                 self.logger.debug(f"    prompt for admin user")
-                                self._process_admin_user(
+                                admin_uid = self._process_admin_user(
                                     resource_vertex=vertex,
                                     resource_content=add_content,
                                     bulk_add_records=bulk_add_records,
@@ -1074,6 +1043,16 @@ class Process:
                                     indent=indent,
                                     context=context
                                 )
+
+                        # If we have an admin UID, add it to the last bulk record.
+                        # It will be the one we added above.
+                        if admin_uid is not None:
+
+                            self._apply_admin_uid(
+                                bulk_add_records=bulk_add_records,
+                                resource_uid=add_content.record_uid,
+                                admin_uid=admin_uid
+                            )
 
                     items_left -= 1
 
@@ -1110,228 +1089,227 @@ class Process:
                             prompt_admin_func: Callable,
                             record_prepare_func: Callable,
                             indent: int = 0,
-                            context: Optional[Any] = None):
+                            context: Optional[Any] = None) -> Optional[str]:
 
-        # Find the record UID that admins this resource.
-        # If it is None, there is a user vertex that has an ACL with is_admin with a true value.
-        record_uid = self.record_link.get_record_uid(resource_vertex)
-        admin = self.record_link.get_admin_record_uid(record_uid)
-        if admin is None:
+        # If the access_user is None, create an empty one.
+        # We will need this below when adding values to the fields.
+        if resource_content.access_user is None:
+            resource_content.access_user = DiscoveryUser()
 
-            # If the access_user is None, create an empty one.
-            # We will need this below when adding values to the fields.
-            if resource_content.access_user is None:
-                resource_content.access_user = DiscoveryUser()
+        # Initialize a discovery object for the admin user.
+        # The PLACEHOLDER will be replaced after the admin user prompt.
 
-            # Initialize a discovery object for the admin user.
-            # The PLACEHOLDER will be replaced after the admin user prompt.
+        values = {}
+        for field in ["user", "password", "private_key", "dn", "database"]:
+            value = getattr(resource_content.access_user, field)
+            if value is None:
+                value = []
+            else:
+                value = [value]
+            values[field] = value
 
-            values = {}
-            for field in ["user", "password", "private_key", "dn", "database"]:
-                value = getattr(resource_content.access_user, field)
-                if value is None:
-                    value = []
+        managed = [False]
+        if resource_content.access_user.managed is not None:
+            managed = [resource_content.access_user.managed]
+
+        admin_content = DiscoveryObject(
+            uid="PLACEHOLDER",
+            object_type_value="users",
+            parent_record_uid=resource_content.record_uid,
+            record_type=PAM_USER,
+            id="PLACEHOLDER",
+            name="PLACEHOLDER",
+            description=resource_content.description + ", Administrator",
+            title=resource_content.title + ", Administrator",
+            item=DiscoveryUser(
+                user="PLACEHOLDER"
+            ),
+            fields=[
+                RecordField(type="login", label="login", value=values["user"], required=True),
+                RecordField(type="password", label="password", value=values["password"], required=False),
+                RecordField(type="secret", label="privatePEMKey", value=values["private_key"], required=False),
+                RecordField(type="text", label="distinguishedName", value=values["dn"], required=False),
+                RecordField(type="text", label="connectDatabase", value=values["database"], required=False),
+                RecordField(type="checkbox", label="managed", value=managed, required=False),
+            ]
+        )
+
+        admin_acl = UserAcl.default()
+        admin_acl.is_admin = True
+
+        # Prompt to add an admin user to this resource.
+        # We are not passing an ACL instance.
+        # We'll make it based on if the user is adding a new record or linking to an existing record.
+        admin_result = prompt_admin_func(
+            parent_vertex=resource_vertex,
+            content=admin_content,
+            acl=admin_acl,
+            bulk_convert_records=bulk_convert_records,
+            indent=indent,
+            context=context
+        )
+
+        # If the action is to ADD, replace the PLACEHOLDER data.
+        if admin_result.action == PromptActionEnum.ADD:
+            self.logger.debug("adding admin user")
+
+            source = "local"
+            if resource_content.record_type == PAM_DIRECTORY:
+                source = resource_content.name
+
+            admin_record_uid = admin_result.record_uid
+
+            if admin_record_uid is None:
+                admin_content = admin_result.content
+
+                # With the result, we can fill in information in the object item.
+                admin_content.item.user = admin_content.get_field_value("login")
+                admin_content.item.password = admin_content.get_field_value("password")
+                admin_content.item.private_key = admin_content.get_field_value("privatePEMKey")
+                admin_content.item.dn = admin_content.get_field_value("distinguishedName")
+                admin_content.item.database = admin_content.get_field_value("connectDatabase")
+                admin_content.item.managed = value_to_boolean(
+                    admin_content.get_field_value("managed")) or False
+                admin_content.item.source = source
+                admin_content.name = admin_content.item.user
+
+                self.logger.debug(f"added admin user from content")
+
+                if admin_content.item.user is None or admin_content.item.user == "":
+                    raise ValueError("The user name is missing or is blank. Cannot create the administrator user.")
+
+                if admin_content.name is not None:
+                    admin_content.description = (resource_content.description + ", User " +
+                                                 admin_content.name)
+
+                # We need to populate the id and uid of the content, now that we have data in the content.
+                self.populate_admin_content_ids(admin_content, resource_vertex)
+
+                ad_user, ad_domain = split_user_and_domain(admin_content.item.user)
+                if ad_domain is not None and admin_content.item.source == LOCAL_USER:
+                    self.logger.debug("The admin is an directory user, but the source is set to a local user")
+
+                    found_admin_record_uid = None
+                    try:
+                        found_admin_record_uid = self._find_admin_directory_user(
+                            domain=ad_domain,
+                            admin_acl=admin_acl,
+                            directory_info_func=directory_info_func,
+                            record_lookup_func=record_lookup_func,
+                            context=context,
+                            user=admin_content.item.user,
+                            dn=admin_content.item.dn
+                        )
+                    except DirectoryNotFoundException:
+                        self.logger.debug(f"    directory {source} was not found for admin user")
+                    except UserNotFoundException:
+                        self.logger.debug(f"    directory user was not found in directory {source}")
+
+                    if found_admin_record_uid is not None:
+                        self.logger.debug("    found directory user admin, connect to resource")
+                        found_admin_vertices = self.infra.dag.search_content({"record_uid": found_admin_record_uid})
+                        if len(found_admin_vertices) == 1:
+                            found_admin_vertices[0].belongs_to(resource_vertex, edge_type=EdgeType.KEY)
+                        self.record_link.belongs_to(found_admin_record_uid, resource_content.record_uid,
+                                                    acl=admin_acl)
+                        return found_admin_record_uid
+
+                # Does an admin vertex already exist for this user?
+                # This most likely user on the gateway, since without a resource record users can be discovered.
+                # If we did find it, get the content for the admin; we really want any existing record uid.
+                admin_vertex = self.infra.dag.get_vertex(admin_content.uid)
+                if admin_vertex is not None and admin_vertex.active is True and admin_vertex.has_data is True:
+                    self.logger.debug("admin exists in the graph")
+                    found_content = DiscoveryObject.get_discovery_object(admin_vertex)
+                    admin_record_uid = found_content.record_uid
                 else:
-                    value = [value]
-                values[field] = value
+                    self.logger.debug("admin does not exists in the graph")
 
-            managed = [False]
-            if resource_content.access_user.managed is not None:
-                managed = [resource_content.access_user.managed]
+                # If there is a record UID for the admin user, connect it.
+                if admin_record_uid is not None:
+                    self.logger.debug("the admin has a record UID")
 
-            admin_content = DiscoveryObject(
-                uid="PLACEHOLDER",
-                object_type_value="users",
-                parent_record_uid=resource_content.record_uid,
-                record_type=PAM_USER,
-                id="PLACEHOLDER",
-                name="PLACEHOLDER",
-                description=resource_content.description + ", Administrator",
-                title=resource_content.title + ", Administrator",
-                item=DiscoveryUser(
-                    user="PLACEHOLDER"
-                ),
-                fields=[
-                    RecordField(type="login", label="login", value=values["user"], required=True),
-                    RecordField(type="password", label="password", value=values["password"], required=False),
-                    RecordField(type="secret", label="privatePEMKey", value=values["private_key"], required=False),
-                    RecordField(type="text", label="distinguishedName", value=values["dn"], required=False),
-                    RecordField(type="text", label="connectDatabase", value=values["database"], required=False),
-                    RecordField(type="checkbox", label="managed", value=managed, required=False),
-                ]
-            )
-
-            admin_acl = UserAcl.default()
-            admin_acl.is_admin = True
-
-            # Prompt to add an admin user to this resource.
-            # We are not passing an ACL instance.
-            # We'll make it based on if the user is adding a new record or linking to an existing record.
-            admin_result = prompt_admin_func(
-                parent_vertex=resource_vertex,
-                content=admin_content,
-                acl=admin_acl,
-                bulk_convert_records=bulk_convert_records,
-                indent=indent,
-                context=context
-            )
-
-            # If the action is to ADD, replace the PLACEHOLDER data.
-            if admin_result.action == PromptActionEnum.ADD:
-                self.logger.debug("adding admin user")
-
-                source = "local"
-                if resource_content.record_type == PAM_DIRECTORY:
-                    source = resource_content.name
-
-                admin_record_uid = admin_result.record_uid
-
-                if admin_record_uid is None:
-                    admin_content = admin_result.content
-
-                    # With the result, we can fill in information in the object item.
-                    admin_content.item.user = admin_content.get_field_value("login")
-                    admin_content.item.password = admin_content.get_field_value("password")
-                    admin_content.item.private_key = admin_content.get_field_value("privatePEMKey")
-                    admin_content.item.dn = admin_content.get_field_value("distinguishedName")
-                    admin_content.item.database = admin_content.get_field_value("connectDatabase")
-                    admin_content.item.managed = value_to_boolean(
-                        admin_content.get_field_value("managed")) or False
-                    admin_content.item.source = source
-                    admin_content.name = admin_content.item.user
-
-                    self.logger.debug(f"added admin user from content")
-
-                    if admin_content.item.user is None or admin_content.item.user == "":
-                        raise ValueError("The user name is missing or is blank. Cannot create the administrator user.")
-
-                    if admin_content.name is not None:
-                        admin_content.description = (resource_content.description + ", User " +
-                                                     admin_content.name)
-
-                    # We need to populate the id and uid of the content, now that we have data in the content.
-                    self.populate_admin_content_ids(admin_content, resource_vertex)
-
-                    ad_user, ad_domain = split_user_and_domain(admin_content.item.user)
-                    if ad_domain is not None and admin_content.item.source == LOCAL_USER:
-                        self.logger.debug("The admin is an directory user, but the source is set to a local user")
-
-                        found_admin_record_uid = None
-                        try:
-                            found_admin_record_uid = self._find_admin_directory_user(
-                                domain=ad_domain,
-                                admin_acl=admin_acl,
-                                directory_info_func=directory_info_func,
-                                record_lookup_func=record_lookup_func,
-                                context=context,
-                                user=admin_content.item.user,
-                                dn=admin_content.item.dn
-                            )
-                        except DirectoryNotFoundException:
-                            self.logger.debug(f"    directory {source} was not found for admin user")
-                        except UserNotFoundException:
-                            self.logger.debug(f"    directory user was not found in directory {source}")
-
-                        if found_admin_record_uid is not None:
-                            self.logger.debug("    found directory user admin, connect to resource")
-                            found_admin_vertices = self.infra.dag.search_content({"record_uid": found_admin_record_uid})
-                            if len(found_admin_vertices) == 1:
-                                found_admin_vertices[0].belongs_to(resource_vertex, edge_type=EdgeType.KEY)
-                            self.record_link.belongs_to(found_admin_record_uid, resource_content.record_uid,
-                                                        acl=admin_acl)
-                            return
-
-                    # Does an admin vertex already exist for this user?
-                    # This most likely user on the gateway, since without a resource record users can be discovered.
-                    # If we did find it, get the content for the admin; we really want any existing record uid.
-                    admin_vertex = self.infra.dag.get_vertex(admin_content.uid)
-                    if admin_vertex is not None and admin_vertex.active is True and admin_vertex.has_data is True:
-                        self.logger.debug("admin exists in the graph")
-                        found_content = DiscoveryObject.get_discovery_object(admin_vertex)
-                        admin_record_uid = found_content.record_uid
-                    else:
-                        self.logger.debug("admin does not exists in the graph")
-
-                    # If there is a record UID for the admin user, connect it.
-                    if admin_record_uid is not None:
-                        self.logger.debug("the admin has a record UID")
-
-                        # If the admin record does not belong to another resource, make this resource its owner.
-                        if self.record_link.get_parent_record_uid(admin_record_uid) is None:
-                            self.logger.debug("the admin does not belong to another resources, "
-                                              "setting it belong to this resource")
-                            admin_acl.belongs_to = True
-
-                        admin_vertex.belongs_to(resource_vertex, edge_type=EdgeType.KEY)
-                        self.record_link.belongs_to(admin_record_uid, resource_content.record_uid, acl=admin_acl)
-                    else:
-                        if admin_vertex is None:
-                            self.logger.debug("creating an entry in the graph for the admin")
-                            admin_vertex = self.infra.dag.add_vertex(uid=admin_content.uid,
-                                                                     name=admin_content.description)
-
-                        # Since this record does not exist, it will belong to the resource,
+                    # If the admin record does not belong to another resource, make this resource its owner.
+                    if self.record_link.get_parent_record_uid(admin_record_uid) is None:
+                        self.logger.debug("the admin does not belong to another resources, "
+                                          "setting it belong to this resource")
                         admin_acl.belongs_to = True
 
-                        # Connect the user vertex to the resource vertex.
-                        # We need to add a KEY edge for the admin content stored on the DATA edge.
-                        admin_vertex.belongs_to(resource_vertex, edge_type=EdgeType.KEY)
-                        admin_vertex.add_data(admin_content)
-
-                        # The record will be a user record; admin_acl will not be None
-                        self._prepare_record(
-                            record_prepare_func=record_prepare_func,
-                            bulk_add_records=bulk_add_records,
-                            content=admin_content,
-                            parent_content=resource_content,
-                            vertex=admin_vertex,
-                            context=context
-                        )
-
-                        self.record_link.discovery_belongs_to(admin_vertex, resource_vertex, acl=admin_acl)
-
+                    admin_vertex.belongs_to(resource_vertex, edge_type=EdgeType.KEY)
+                    self.record_link.belongs_to(admin_record_uid, resource_content.record_uid, acl=admin_acl)
                 else:
-                    self.logger.debug("add admin user from existing record")
+                    if admin_vertex is None:
+                        self.logger.debug("creating an entry in the graph for the admin")
+                        admin_vertex = self.infra.dag.add_vertex(uid=admin_content.uid,
+                                                                 name=admin_content.description)
 
-                    # If this is NOT existing directory user, we want to convert the record rotation setting to
-                    #   work with this gateway/controller.
-                    # If it is a directory user, we just want link this record; no conversion.
-                    if admin_result.is_directory_user is False:
+                    # Since this record does not exist, it will belong to the resource,
+                    admin_acl.belongs_to = True
 
-                        self.logger.debug("the admin user is NOT a directory user, convert record's rotation settings")
+                    # Connect the user vertex to the resource vertex.
+                    # We need to add a KEY edge for the admin content stored on the DATA edge.
+                    admin_vertex.belongs_to(resource_vertex, edge_type=EdgeType.KEY)
+                    admin_vertex.add_data(admin_content)
 
-                        # This is a pamUser record that may need to have the controller set.
-                        # Add it to this queue to make sure the protobuf items are current.
-                        parent_record_uid = resource_content.record_uid
-                        if resource_content.object_type_value == "providers":
-                            parent_record_uid = None
-
-                        bulk_convert_records.append(
-                            BulkRecordConvert(
-                                record_uid=admin_record_uid,
-                                parent_record_uid=parent_record_uid
-                            )
-                        )
-
-                        # If this user record does not belong to another resource, make it belong to this one.
-                        record_vertex = self.record_link.acl_has_belong_to_record_uid(admin_record_uid)
-                        if record_vertex is None:
-                            admin_acl.belongs_to = True
-
-                        # There is _prepare_record, the record exists.
-                        # Needs to add to records linking.
-                    else:
-                        self.logger.debug("the admin user is a directory user")
-
-                    # Link the record UIDs.
-                    # We might not have this user in discovery data.
-                    # It might not belong to the resource; if so, it cannot be rotated.
-                    # It only has is_admin in the ACL.
-                    self.record_link.belongs_to(
-                        admin_record_uid,
-                        record_uid,
-                        acl=admin_acl
+                    # The record will be a user record; admin_acl will not be None
+                    self._prepare_record(
+                        record_prepare_func=record_prepare_func,
+                        bulk_add_records=bulk_add_records,
+                        content=admin_content,
+                        parent_content=resource_content,
+                        vertex=admin_vertex,
+                        context=context
                     )
+
+                    self.record_link.discovery_belongs_to(admin_vertex, resource_vertex, acl=admin_acl)
+
+                    admin_record_uid = admin_content.record_uid
+            else:
+                self.logger.debug("add admin user from existing record")
+
+                # If this is NOT existing directory user, we want to convert the record rotation setting to
+                #   work with this gateway/controller.
+                # If it is a directory user, we just want link this record; no conversion.
+                if admin_result.is_directory_user is False:
+
+                    self.logger.debug("the admin user is NOT a directory user, convert record's rotation settings")
+
+                    # This is a pamUser record that may need to have the controller set.
+                    # Add it to this queue to make sure the protobuf items are current.
+                    parent_record_uid = resource_content.record_uid
+                    if resource_content.object_type_value == "providers":
+                        parent_record_uid = None
+
+                    bulk_convert_records.append(
+                        BulkRecordConvert(
+                            record_uid=admin_record_uid,
+                            parent_record_uid=parent_record_uid
+                        )
+                    )
+
+                    # If this user record does not belong to another resource, make it belong to this one.
+                    record_vertex = self.record_link.acl_has_belong_to_record_uid(admin_record_uid)
+                    if record_vertex is None:
+                        admin_acl.belongs_to = True
+
+                    # There is _prepare_record, the record exists.
+                    # Needs to add to records linking.
+                else:
+                    self.logger.debug("the admin user is a directory user")
+
+                # Link the record UIDs.
+                # We might not have this user in discovery data.
+                # It might not belong to the resource; if so, it cannot be rotated.
+                # It only has is_admin in the ACL.
+                # self.record_link.belongs_to(
+                #    admin_record_uid,
+                #    record_uid,
+                #    acl=admin_acl
+                # )
+
+            return admin_record_uid
+
+        return None
 
     def _get_count(self, current_vertex: DAGVertex) -> int:
 
@@ -1584,19 +1562,7 @@ class Process:
         self.infra.save(delta_graph=False)
         self.logger.debug("# ####################################################################################")
 
-        # Save the record linking, only if we added records.
-        # This will be the additions and any changes to ACL.
-        if should_add_records:
-
-            self.logger.debug("# ####################################################################################")
-            self.logger.debug("# Save RECORD LINKING graph")
-            self.logger.debug("#")
-
-            self.logger.debug(f"save additions from record linking ")
-            self.record_link.save()
-            self.logger.debug("# ####################################################################################")
-
-            # Map user to service/task on a machine
-            self.user_service.run(infra=self.infra)
+        # Update the user service mapping
+        self.user_service.run(infra=self.infra)
 
         return bulk_process_results
