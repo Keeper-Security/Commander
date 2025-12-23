@@ -95,8 +95,10 @@ class CommandValidator:
         main_command = parts[0]
         alias = None
         
-        # Check if there's an alias in parentheses as the next token
-        if len(parts) > 1 and parts[1].startswith('(') and parts[1].endswith(')'):
+        if len(parts) >= 3 and parts[2].startswith('(') and parts[2].endswith(')'):
+            main_command = f"{parts[0]} {parts[1]}"
+            alias = parts[2][1:-1].strip()
+        elif len(parts) > 1 and parts[1].startswith('(') and parts[1].endswith(')'):
             # Extract alias: "(alias)" -> "alias"
             alias = parts[1][1:-1].strip()
         # Check if command and alias are combined: "command (alias)"
