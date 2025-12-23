@@ -91,6 +91,15 @@ def router_set_record_rotation_information(params, proto_request, transmission_k
     return rs
 
 
+def router_configure_resource(params, proto_request, transmission_key=None,
+                              encrypted_transmission_key=None, encrypted_session_token=None):
+    rs = _post_request_to_router(params, 'configure_resource', proto_request, transmission_key=transmission_key,
+                                 encrypted_transmission_key=encrypted_transmission_key,
+                                 encrypted_session_token=encrypted_session_token)
+
+    return rs
+
+
 def router_get_rotation_schedules(params, proto_request):
     return _post_request_to_router(params, 'get_rotation_schedules', rq_proto=proto_request, rs_type=pam_pb2.PAMRotationSchedulesResponse)
 

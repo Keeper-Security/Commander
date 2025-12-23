@@ -7,10 +7,11 @@ import os.path
 
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
-from ..pam.router_helper import router_get_connected_gateways, router_set_record_rotation_information
+from ..pam.router_helper import (router_get_connected_gateways, router_set_record_rotation_information,
+                                 router_configure_resource)
 from ... import api, subfolder, utils, crypto, vault, vault_extensions
 from ...display import bcolors
-from ...proto import router_pb2, record_pb2
+from ...proto import router_pb2, record_pb2, pam_pb2
 from ...discovery_common.jobs import Jobs, JobItem
 from ...discovery_common.dag_sort import sort_infra_vertices
 from ...discovery_common.infrastructure import Infrastructure
@@ -18,6 +19,7 @@ from ...discovery_common.process import Process, QuitException, NoDiscoveryDataE
 from ...discovery_common.types import (
     DiscoveryObject, UserAcl, PromptActionEnum, PromptResult, BulkRecordAdd, BulkRecordConvert, BulkProcessResults,
     BulkRecordSuccess, BulkRecordFail, DirectoryInfo, NormalizedRecord, RecordField)
+from ...discovery_common.constants import PAM_USER
 from ...discovery_common.constants import VERTICES_SORT_MAP
 from pydantic import BaseModel
 from typing import Optional, List, Any, Tuple, Dict, TYPE_CHECKING
@@ -143,7 +145,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     keys.append(f"{host}:{port}".lower())
 
         elif key_field == "host":
-            values = self.get_field_values(record, "pamHostname")  # type: List[dict]
+            values = self.get_field_values(record, "pamHostname")
             if len(values) == 0:
                 return []
 
@@ -1062,6 +1064,10 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
     def _create_records(cls, bulk_add_records: List[BulkRecordAdd], context: Optional[Any] = None) -> (
             BulkProcessResults):
 
+        """
+        Create Vault records, setup rotation settings, and configure the resource (if resource).
+        """
+
         if len(bulk_add_records) == 1:
             print("Adding the record to the Vault ...")
         else:
@@ -1072,6 +1078,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
         build_process_results = BulkProcessResults()
 
+        ##############################################################################################################
+        #
         # STEP 1 - Batch add new records
 
         # Generate a list of RecordAdd instance.
@@ -1102,11 +1110,16 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             logging.debug(f"attempted to batch add {len(bulk_add_records)} record(s), "
                           f"only have {len(add_results)} results.")
 
-        # STEP 3 - Add rotation settings.
-        # Use the list we passed in, find the results, and add if the additions were successful.
+        ##############################################################################################################
+        #
+        # STEP 2 - Add rotation settings for user  and resource configuration for resources
+        #          At this point the all the records have been created.
 
         # Keep track of each record we create a rotation for to avoid version problems, if there was a dup.
         created_cache = []
+
+        # TODO: There is a bulk version of the following code, it's not live.
+        #       Wait until live, then switch code to use that.
 
         # For the records passed in to be created.
         print("add rotation settings: ", end="")
@@ -1157,24 +1170,39 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 logging.debug(f"Had problem adding record for {title}: {status}")
                 continue
 
-            rq = router_pb2.RouterRecordRotationRequest()
-            rq.recordUid = url_safe_str_to_bytes(bulk_record.record_uid)
-            rq.revision = 0
+            # Only set the rotation setting if the record is a PAM User.
+            if bulk_record.record_type == PAM_USER:
 
-            # Set the gateway/configuration that this record should be connected.
-            rq.configurationUid = url_safe_str_to_bytes(gateway_context.configuration_uid)
+                rq = router_pb2.RouterRecordRotationRequest()
+                rq.recordUid = url_safe_str_to_bytes(bulk_record.record_uid)
+                rq.revision = 0
 
-            # Only set the resource if the record type is a PAM User.
-            # Machines, databases, and directories have a login/password in the record that indicates who the admin is.
-            if bulk_record.record_type == "pamUser" and bulk_record.parent_record_uid is not None:
-                rq.resourceUid = url_safe_str_to_bytes(bulk_record.parent_record_uid)
+                # Set the gateway/configuration that this record should be connected.
+                rq.configurationUid = url_safe_str_to_bytes(gateway_context.configuration_uid)
 
-            # Right now, the schedule and password complexity are not set. This would be part of a rule engine.
-            rq.schedule = ''
-            rq.pwdComplexity = b''
-            rq.disabled = rotation_disabled
+                if bulk_record.parent_record_uid is not None:
+                    rq.resourceUid = url_safe_str_to_bytes(bulk_record.parent_record_uid)
 
-            router_set_record_rotation_information(params, rq)
+                # Right now, the schedule and password complexity are not set. This would be part of a rule engine.
+                rq.schedule = ''
+                rq.pwdComplexity = b''
+                rq.disabled = rotation_disabled
+
+                router_set_record_rotation_information(params, rq)
+
+            # This will be a resource.
+            # A LINK edge will be created between the configuration and resource.
+            # If there is an admin user, it will be set on the resource.
+            else:
+
+                # This will create a LINK between the PAM Configuration and the resource.
+                rq = pam_pb2.PAMResourceConfig()
+                rq.recordUid = url_safe_str_to_bytes(bulk_record.record_uid)
+                rq.networkUid = url_safe_str_to_bytes(gateway_context.configuration_uid)
+                if bulk_record.admin_uid:
+                    rq.adminUid = url_safe_str_to_bytes(bulk_record.admin_uid)
+
+                router_configure_resource(params, rq)
 
             created_cache.append(bulk_record.record_uid)
 
@@ -1290,8 +1318,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             logging.error(err)
             print(f"{bcolors.FAIL}No items left to process. Failed to remove discovery job.{bcolors.ENDC}")
 
-    def preview(self, job_item: JobItem, params: KeeperParams, gateway_context: GatewayContext, record_cache: Dict,
-                debug_level: int = 0):
+    def preview(self, job_item: JobItem, params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0):
 
         context = {
             "params": params,
@@ -1483,7 +1510,6 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     job_item=job_item,
                     params=params,
                     gateway_context=gateway_context,
-                    record_cache=record_cache,
                 )
                 return
 
