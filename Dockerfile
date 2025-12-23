@@ -9,7 +9,9 @@ RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
         openssl \
-        ca-certificates && \
+        ca-certificates \
+        gcc \
+        libc6-dev && \
     pip install --no-cache-dir --upgrade pip setuptools wheel && \
     apt-get autoremove -y && \
     apt-get clean && \
