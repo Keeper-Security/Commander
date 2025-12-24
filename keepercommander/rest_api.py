@@ -165,6 +165,7 @@ def execute_rest(context, endpoint, payload):
                     qrc_success = True
                 except Exception as e:
                     logging.warning(f"QRC encryption failed ({e}), falling back to EC encryption")
+                    context.disable_qrc()
         
         # Fallback to EC encryption if QRC not available or failed
         if not qrc_success:
