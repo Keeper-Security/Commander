@@ -123,6 +123,7 @@ class PedmPlugin(IPedmAdmin):
         # self._push_notifications = PedmAdminNotifications(on_message=self.on_push_message)
         # self.connect_pushes()
         self._need_sync = True
+        self._last_seen: Optional[Dict[str, int]] = None
         self.logger = logging.getLogger("keeper.pedm")
 
     """
@@ -671,6 +672,8 @@ class PedmPlugin(IPedmAdmin):
                         remove_collections: Optional[Iterable[str]] = None) -> admin_types.ModifyStatus:
         to_add: List[pedm_pb2.CollectionValue] = []
         to_update: List[pedm_pb2.CollectionValue] = []
+        status = admin_types.ModifyStatus(add=[], update=[], remove=[])
+
         if add_collections is not None:
             for coll in add_collections:
                 if not coll.collection_uid:
@@ -712,7 +715,6 @@ class PedmPlugin(IPedmAdmin):
             for collection_uid in remove_collections:
                 to_remove.append(utils.base64_url_decode(collection_uid))
 
-        status = admin_types.ModifyStatus(add=[], update=[], remove=[])
         while len(to_add) > 0 or len(to_update) > 0 or len(to_remove) > 0:
             crq = pedm_pb2.CollectionRequest()
             if len(to_add) > 0:
@@ -806,10 +808,10 @@ class PedmPlugin(IPedmAdmin):
         assert status_rs is not None
         return admin_types.ModifyStatus.from_proto(status_rs)
 
-    def modify_approvals(self, *,
-                        to_approve: Optional[List[bytes]] = None,
-                        to_deny: Optional[List[bytes]] = None,
-                        to_remove: Optional[List[bytes]] = None) -> admin_types.ModifyStatus:
+    def change_approval_status(self, *,
+                               to_approve: Optional[List[bytes]] = None,
+                               to_deny: Optional[List[bytes]] = None,
+                               to_remove: Optional[List[bytes]] = None) -> admin_types.ModifyStatus:
         rq = pedm_pb2.ApprovalActionRequest()
         if to_approve:
             rq.approve.extend(to_approve)
@@ -819,6 +821,42 @@ class PedmPlugin(IPedmAdmin):
             rq.remove.extend(to_remove)
 
         status_rs = api.execute_router(self.params, 'pedm/approval_action', rq, rs_type=pedm_pb2.PedmStatusResponse)
+        self._need_sync = True
+        assert status_rs is not None
+        return admin_types.ModifyStatus.from_proto(status_rs)
+
+    def load_last_seen(self) -> None:
+        if self._last_seen is None:
+            self._last_seen = {}
+        else:
+            self._last_seen.clear()
+        rq = pedm_pb2.GetAgentLastSeenRequest()
+        rq.activeOnly = True
+        last_seen_rs = api.execute_router(self.params,'pedm/get_agent_last_seen', rq, rs_type=pedm_pb2.GetAgentLastSeenResponse)
+        if last_seen_rs:
+            for ls in last_seen_rs.lastSeen:
+                self._last_seen[utils.base64_url_encode(ls.agentUid)] = ls.lastSeen
+
+    def agent_last_seen(self, agent_uid: str) -> Optional[datetime.datetime]:
+        if self._last_seen is None:
+            self.load_last_seen()
+
+        if agent_uid in self._last_seen:
+            millis = self._last_seen[agent_uid]
+            return datetime.datetime.fromtimestamp(millis / 1000)
+
+        return None
+
+    def extend_approvals(self, *, to_extend: Optional[List[admin_types.PedmUpdateApproval]] = None) -> admin_types.ModifyStatus:
+        rq = pedm_pb2.ModifyApprovalRequest()
+        if isinstance(to_extend, list):
+            for update in to_extend:
+                au = pedm_pb2.ApprovalExtendData()
+                au.approvalUid = utils.base64_url_decode(update.approval_uid)
+                au.expireIn = update.expire_in
+                rq.extendApproval.append(au)
+
+        status_rs = api.execute_router(self.params, 'pedm/modify_approval', rq, rs_type=pedm_pb2.PedmStatusResponse)
         self._need_sync = True
         assert status_rs is not None
         return admin_types.ModifyStatus.from_proto(status_rs)

@@ -21,7 +21,7 @@ from ... import crypto, constants, utils, api, vault
 from ...params import KeeperParams
 from ...pedm import admin_plugin, pedm_shared, admin_types, admin_storage
 from ...proto import NotificationCenter_pb2, pedm_pb2
-from .. import base
+from .. import base, register
 from ..helpers import report_utils, prompt_utils, whoami
 from . import pedm_aram
 from ...scim.data_sources import AdCrmDataSource, AzureAdCrmDataSource
@@ -169,6 +169,20 @@ class PedmUtils:
                 else:
                     found_collections[c.collection_uid] = c
         return list(found_collections.values())
+
+    @staticmethod
+    def resolve_existing_approvals(pedm: admin_plugin.PedmPlugin, approval_names: Any) -> List[admin_types.PedmApproval]:
+        found_approvals: Dict[str, admin_types.PedmApproval] = {}
+        p: Optional[admin_types.PedmApproval]
+        if isinstance(approval_names, list):
+            for approval_name in approval_names:
+                a = pedm.approvals.get_entity(approval_name)
+                if a is None:
+                    raise base.CommandError(f'Approval "{approval_name}" is not found')
+                found_approvals[a.approval_uid] = a
+        if len(found_approvals) == 0:
+            raise base.CommandError('No approvals were found')
+        return list(found_approvals.values())
 
 
 class PedmCommand(base.GroupCommandNew):
@@ -2060,6 +2074,7 @@ class PedmApprovalCommand(base.GroupCommandNew):
         self.register_command_new(PedmApprovalListCommand(), 'list', 'l')
         self.register_command_new(PedmApprovalViewCommand(), 'view')
         self.register_command_new(PedmApprovalStatusCommand(), 'action', 'a')
+        self.register_command_new(PedmApprovalExtendCommand(), 'extend')
         self.default_verb = 'list'
 
 
@@ -2170,7 +2185,6 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
         to_approve = verify_uid(kwargs.get('approve'))
         to_deny = verify_uid(kwargs.get('deny'))
         to_remove = kwargs.get('remove')
-        expire_ts = int(datetime.datetime.now().timestamp() * 1000)
         if to_remove:
             if isinstance(to_remove, str):
                 to_remove = [to_remove]
@@ -2185,10 +2199,10 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
                         (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_DENIED))
                 elif uid == '@pending':
                     to_remove_set.update(
-                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED and x.modified >= expire_ts))
+                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED))
                 elif uid == '@expired':
                     to_remove_set.update(
-                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED and x.modified < expire_ts))
+                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_LOST_APPROVAL_RIGHTS))
                 else:
                     to_resolve.append(uid)
             if len(to_resolve) > 0:
@@ -2198,7 +2212,7 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
             to_remove = list(to_remove_set)
 
         if to_approve or to_deny or to_remove:
-            status_rs = plugin.modify_approvals(to_approve=to_approve, to_deny=to_deny, to_remove=to_remove)
+            status_rs = plugin.change_approval_status(to_approve=to_approve, to_deny=to_deny, to_remove=to_remove)
             if status_rs.add:
                 for status in status_rs.add:
                     if not status.success:
@@ -2214,3 +2228,39 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
                     if not status.success:
                         if isinstance(status, admin_types.EntityStatus):
                             logger.warning(f'Failed to remove "{status.entity_uid}": {status.message}')
+
+
+class PedmApprovalExtendCommand(base.ArgparseCommand, PedmUtils):
+    def __init__(self):
+        parser = argparse.ArgumentParser(prog='extend', description='Extend KEPM approval request expiration time')
+        expiration = parser.add_mutually_exclusive_group()
+        expiration.add_argument('--expire-at', dest='expire_at', action='store', help='UTC datetime')
+        expiration.add_argument('--expire-in', dest='expire_in', action='store',
+                                help='expiration period (<NUMBER>[(mi)nutes|(h)ours|(d)ays|(mo)nths|(y)ears])')
+        parser.add_argument('approval', nargs='+', help='Approval UID or Name')
+        super().__init__(parser)
+
+    def execute(self, context: KeeperParams, **kwargs) -> None:
+        plugin = admin_plugin.get_pedm_plugin(context)
+
+        share_expiration = register.get_share_expiration(kwargs.get('expire_at'), kwargs.get('expire_in'))
+        if isinstance(share_expiration, int):
+            if share_expiration > 0:
+                share_expiration = share_expiration - int(datetime.datetime.now().timestamp())
+            if share_expiration < 100:
+                raise base.CommandError('Expiration time must be at least 1 minute')
+        else:
+            raise base.CommandError('Invalid expiration time')
+
+        expire_in = share_expiration // 60
+        approvals = PedmUtils.resolve_existing_approvals(plugin, kwargs.get('approval'))
+
+        to_extend: List[admin_types.PedmUpdateApproval] = []
+        for approval in approvals:
+            to_extend.append(admin_types.PedmUpdateApproval(approval_uid=approval.approval_uid, expire_in=expire_in))
+        status_rs = plugin.extend_approvals(to_extend=to_extend)
+        if status_rs.update:
+            for status in status_rs.update:
+                if not status.success:
+                    if isinstance(status, admin_types.EntityStatus):
+                        logging.warning(f'Failed to extend  approval "{status.entity_uid}": {status.message}')

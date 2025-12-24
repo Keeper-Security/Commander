@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import abc
 import datetime
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List, Protocol, Union
+from typing import Optional, Dict, Any, List, Union, Protocol
 
 from . import pedm_shared
 from .. import utils
@@ -89,6 +90,12 @@ class PedmApproval(storage_types.IUid[str]):
         return self.approval_uid
 
 
+@dataclass(frozen=True)
+class PedmUpdateApproval:
+    approval_uid: str
+    expire_in: int
+
+
 @dataclass()
 class AddDeployment:
     name: str
@@ -129,22 +136,21 @@ class CollectionLinkData:
     collection_link: CollectionLink
     link_data: Optional[bytes] = None
 
-class PedmStatus(Protocol):
-    success: bool
-    message: str
 
 @dataclass(frozen=True)
-class EntityStatus(PedmStatus):
+class EntityStatus:
     entity_uid: str
     success: bool
     message: str
 
+
 @dataclass(frozen=True)
-class LinkStatus(PedmStatus):
+class LinkStatus:
     subject_uid: str
     object_uid: str
     success: bool
     message: str
+
 
 def parse_pedm_status(status: pedm_pb2.PedmStatus) -> Optional[Union[EntityStatus, LinkStatus]]:
     if len(status.key) == 1:
