@@ -1630,126 +1630,67 @@ class SuperShellApp(App):
             return len(self.filtered_record_uids)
 
     def _format_record_for_tui(self, record_uid: str) -> str:
-        """Format record details specifically for TUI display with clean layout"""
+        """Format record details for TUI display using the 'get' command output"""
         t = self.theme_colors  # Get theme colors
 
-        def escape_markup(text):
-            """Escape Rich markup characters in user-provided text"""
-            if text is None:
-                return ""
-            return str(text).replace('[', '\\[').replace(']', '\\]')
-
         try:
-            if record_uid not in self.params.record_cache:
-                return "[red]Record not found in cache[/red]"
+            # Use the get command (same as shell) to fetch record details
+            output = self._get_record_output(record_uid, format_type='detail')
+            # Strip ANSI codes from command output
+            output = self._strip_ansi_codes(output)
 
-            cached_rec = self.params.record_cache[record_uid]
-            version = cached_rec.get('version', 2)
+            if not output or output.strip() == '':
+                return "[red]Failed to get record details[/red]"
 
-            # Load the record
-            r = api.get_record(self.params, record_uid)
-            if not r:
-                return "[red]Failed to load record[/red]"
+            # Escape any Rich markup characters in the output
+            output = output.replace('[', '\\[').replace(']', '\\]')
 
+            # Apply theme colors to the output
             lines = []
-
-            # Header with UID - using theme colors
             lines.append(f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]")
-            lines.append(f"[bold {t['primary']}]{escape_markup(r.title)}[/bold {t['primary']}]")
-            lines.append(f"[{t['text_dim']}]UID:[/{t['text_dim']}] [#ffff00]{record_uid}[/#ffff00]")
+
+            for line in output.split('\n'):
+                if not line.strip():
+                    lines.append("")
+                    continue
+
+                # Check if line contains a colon (key: value format)
+                if ':' in line:
+                    parts = line.split(':', 1)
+                    if len(parts) == 2:
+                        key = parts[0].strip()
+                        value = parts[1].strip()
+
+                        # Special formatting for UID
+                        if key in ['UID', 'Record UID']:
+                            lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [#ffff00]{value}[/#ffff00]")
+                        # Title/Name
+                        elif key in ['Title', 'Name']:
+                            lines.append(f"[bold {t['primary']}]{value}[/bold {t['primary']}]")
+                        # Section headers
+                        elif key in ['Custom Fields', 'Notes', 'Attachments', 'User Permissions',
+                                     'Shared Folder Permissions', 'One-Time Share URL']:
+                            lines.append("")
+                            lines.append(f"[bold {t['primary_bright']}]{key}:[/bold {t['primary_bright']}]")
+                            if value:
+                                lines.append(f"[{t['primary']}]  {value}[/{t['primary']}]")
+                        # Regular key-value pairs
+                        else:
+                            lines.append(f"[{t['secondary']}]{key}:[/{t['secondary']}] [{t['primary']}]{value}[/{t['primary']}]")
+                    else:
+                        lines.append(f"[{t['primary']}]{line}[/{t['primary']}]")
+                else:
+                    # Lines without colons (continuation of multi-line values)
+                    if line.strip():
+                        lines.append(f"[{t['primary_dim']}]  {line}[/{t['primary_dim']}]")
+
             lines.append(f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]")
-            lines.append("")
-
-            # Main fields with right-aligned labels - theme-colored labels and values
-            if r.login:
-                lines.append(f"[bold {t['secondary']}]{'Username':>20}:[/bold {t['secondary']}]  [{t['primary']}]{escape_markup(r.login)}[/{t['primary']}]")
-
-            if r.password:
-                masked = '•' * min(len(r.password), 16)
-                lines.append(f"[bold {t['secondary']}]{'Password':>20}:[/bold {t['secondary']}]  [{t['primary']}]{masked}[/{t['primary']}]")
-
-            if r.login_url:
-                lines.append(f"[bold {t['secondary']}]{'URL':>20}:[/bold {t['secondary']}]  [{t['primary']}]{escape_markup(r.login_url)}[/{t['primary']}]")
-
-            # Custom fields - using theme colors
-            if r.custom_fields:
-                lines.append("")
-                lines.append(f"[bold {t['primary_bright']}]Custom Fields:[/bold {t['primary_bright']}]")
-                for field in r.custom_fields:
-                    name = field.get('name', 'Field')
-                    value = field.get('value', '')
-                    if name:  # Skip empty names
-                        # Truncate long values
-                        if isinstance(value, str) and len(value) > 100:
-                            value = value[:100] + '...'
-                        lines.append(f"[{t['secondary']}]{'  ' + escape_markup(name):>22}:[/{t['secondary']}]  [{t['primary']}]{escape_markup(value)}[/{t['primary']}]")
-
-            # Notes - using theme colors
-            if r.notes:
-                lines.append("")
-                lines.append(f"[bold {t['primary_bright']}]Notes:[/bold {t['primary_bright']}]")
-                note_lines = r.notes.split('\n')
-                for line in note_lines[:10]:  # Limit to 10 lines
-                    lines.append(f"[{t['primary_dim']}]  {escape_markup(line)}[/{t['primary_dim']}]")
-                if len(note_lines) > 10:
-                    lines.append(f"[{t['primary_dim']}]  ... ({len(note_lines) - 10} more lines)[/{t['primary_dim']}]")
-
-            # Attachments - using theme colors
-            if r.attachments:
-                lines.append("")
-                lines.append(f"[bold {t['primary_bright']}]Attachments:[/bold {t['primary_bright']}]")
-                for atta in r.attachments:
-                    name = atta.get('title') or atta.get('name', 'Unknown')
-                    size = atta.get('size', 0)
-                    size_str = self._format_size(size)
-                    lines.append(f"[{t['secondary']}]  • {escape_markup(name)}[/{t['secondary']}] [{t['primary_dim']}]({size_str})[/{t['primary_dim']}]")
-
-            # Permissions - only if they exist
-            if cached_rec.get('shares'):
-                shares = cached_rec['shares']
-
-                # User permissions - using theme colors
-                if shares.get('user_permissions'):
-                    lines.append("")
-                    lines.append(f"[bold {t['primary_bright']}]User Permissions:[/bold {t['primary_bright']}]")
-                    for user in shares['user_permissions']:
-                        username = user.get('username', 'Unknown')
-                        shareable = user.get('sharable', user.get('shareable', False))
-                        lines.append(f"[{t['secondary']}]  • {escape_markup(username)}[/{t['secondary']}]")
-                        lines.append(f"[{t['primary_dim']}]    Shareable: {'Yes' if shareable else 'No'}[/{t['primary_dim']}]")
-
-                # Shared folder permissions
-                if shares.get('shared_folder_permissions'):
-                    lines.append("")
-                    lines.append(f"[bold {t['primary_bright']}]Shared Folder Permissions:[/bold {t['primary_bright']}]")
-                    for sf in shares['shared_folder_permissions']:
-                        sf_uid = sf.get('shared_folder_uid', 'Unknown')
-                        perms = []
-                        if sf.get('manage_users'): perms.append('Manage Users')
-                        if sf.get('manage_records'): perms.append('Manage Records')
-                        if sf.get('can_edit'): perms.append('Can Edit')
-                        if sf.get('can_share'): perms.append('Can Share')
-                        lines.append(f"[{t['secondary']}]  • Folder:[/{t['secondary']}] [{t['primary_dim']}]{escape_markup(sf_uid)}[/{t['primary_dim']}]")
-                        if perms:
-                            lines.append(f"[{t['primary_dim']}]    {', '.join(perms)}[/{t['primary_dim']}]")
-
             return "\n".join(lines)
 
         except Exception as e:
             logging.error(f"Error formatting record for TUI: {e}", exc_info=True)
             error_msg = str(e).replace('[', '\\[').replace(']', '\\]')
             return f"[red]Error formatting record:[/red]\n{error_msg}"
-
-    def _format_size(self, size: int) -> str:
-        """Format file size in human-readable format"""
-        if size < 1024:
-            return f"{size}B"
-        elif size < 1024 * 1024:
-            return f"{size / 1024:.1f}KB"
-        elif size < 1024 * 1024 * 1024:
-            return f"{size / (1024 * 1024):.1f}MB"
-        else:
-            return f"{size / (1024 * 1024 * 1024):.1f}GB"
 
     def _format_folder_for_tui(self, folder_uid: str) -> str:
         """Format folder/shared folder details for TUI display"""
