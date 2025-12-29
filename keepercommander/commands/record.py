@@ -518,12 +518,17 @@ class RecordGetUidCommand(Command):
                             for user in rec['shares']['user_permissions']:
                                 print('')
                                 if 'username' in user:
-                                    print('User: ' + user['username'])
+                                    print('  User: ' + user['username'])
                                 if 'user_uid' in user:
-                                    print('User UID: ' + user['user_uid'])
+                                    print('  User UID: ' + user['user_uid'])
                                 elif 'accountUid' in user:
-                                    print('User UID: ' + user['accountUid'])
-                                
+                                    print('  User UID: ' + user['accountUid'])
+
+                                # Show owner status
+                                is_owner = user.get('owner', False)
+                                if is_owner:
+                                    print('  Owner: Yes')
+
                                 # Handle both possible spellings of sharable/shareable
                                 if 'sharable' in user:
                                     shareable = user['sharable']
@@ -531,59 +536,64 @@ class RecordGetUidCommand(Command):
                                     shareable = user['shareable']
                                 else:
                                     shareable = False
-                                
+
                                 if shareable is None:
                                     shareable = False
-                                
+
                                 # Handle both possible spellings of readable
                                 if 'readable' in user:
                                     readable = user['readable']
                                 else:
                                     readable = False
-                                
+
                                 if readable is None:
                                     readable = False
-                                
-                                print('Shareable: ' + ('Yes' if shareable else 'No'))
-                                print('Read-Only: ' + ('Yes' if not shareable else 'No'))
-                            print('')
+
+                                print('  Shareable: ' + ('Yes' if shareable else 'No'))
+                                print('  Read-Only: ' + ('Yes' if not shareable else 'No'))
                         if 'shared_folder_permissions' in rec['shares'] and rec['shares']['shared_folder_permissions']:
                             print('')
                             print('Shared Folder Permissions:')
                             for sf in rec['shares']['shared_folder_permissions']:
                                 print('')
                                 if 'shared_folder_uid' in sf:
-                                    print('Shared Folder UID: ' + sf['shared_folder_uid'])
+                                    print('  Shared Folder UID: ' + sf['shared_folder_uid'])
                                 if 'user_uid' in sf:
-                                    print('User UID: ' + sf['user_uid'])
+                                    print('  User UID: ' + sf['user_uid'])
                                 elif 'accountUid' in sf:
-                                    print('User UID: ' + sf['accountUid'])
-                                
+                                    print('  User UID: ' + sf['accountUid'])
+
                                 # Safely access boolean fields with fallback to False
                                 if sf.get('manage_users', False) is True:
-                                    print('Manage Users: True')
+                                    print('  Manage Users: True')
                                 if sf.get('manage_records', False) is True:
-                                    print('Manage Records: True')
+                                    print('  Manage Records: True')
                                 if sf.get('can_edit', False) is True:
-                                    print('Can Edit: True')
+                                    print('  Can Edit: True')
                                 if sf.get('can_share', False) is True:
-                                    print('Can Share: True')
-                            print('')
+                                    print('  Can Share: True')
                         if 'team_permissions' in rec['shares'] and rec['shares']['team_permissions']:
                             print('')
                             print('Team Permissions:')
                             for team in rec['shares']['team_permissions']:
                                 print('')
                                 if 'team_uid' in team:
-                                    print('Team UID: ' + team['team_uid'])
+                                    print('  Team UID: ' + team['team_uid'])
                                 if 'name' in team:
-                                    print('Name: ' + team['name'])
-                            print('')
+                                    print('  Name: ' + team['name'])
                     if admins:
                         print('')
-                        print('Share Admins:')
-                        for admin in admins:
-                            print(admin)
+                        max_admins_shown = 10
+                        total_admins = len(admins)
+                        if total_admins <= max_admins_shown:
+                            print(f'Share Admins ({total_admins}):')
+                            for admin in admins:
+                                print(f'  {admin}')
+                        else:
+                            print(f'Share Admins ({total_admins}, showing first {max_admins_shown}):')
+                            for admin in admins[:max_admins_shown]:
+                                print(f'  {admin}')
+                            print(f'  ... and {total_admins - max_admins_shown} more')
                 direct_match = True
                 return
 

@@ -152,9 +152,202 @@ from textual import on, work
 from textual.message import Message
 from textual.timer import Timer
 from rich.text import Text
+from textual.events import Click
 
 from ..commands.base import Command
-from ..commands.record import RecordGetUidCommand
+
+
+class ClickableDetailLine(Static):
+    """A single line in the detail view that highlights on hover and copies on click"""
+
+    DEFAULT_CSS = """
+    ClickableDetailLine {
+        width: 100%;
+        height: auto;
+        padding: 0 1;
+    }
+
+    ClickableDetailLine:hover {
+        background: #1a1a2e;
+    }
+
+    ClickableDetailLine.has-value {
+        /* Clickable lines get a subtle left border indicator */
+    }
+
+    ClickableDetailLine.has-value:hover {
+        background: #16213e;
+        text-style: bold;
+        border-left: thick #00ff00;
+    }
+    """
+
+    def __init__(self, content: str, copy_value: str = None, record_uid: str = None, is_password: bool = False, *args, **kwargs):
+        """
+        Create a clickable detail line.
+
+        Args:
+            content: Rich markup content to display
+            copy_value: Value to copy on click (None = not copyable)
+            record_uid: Record UID for password audit events
+            is_password: If True, use ClipboardCommand for audit event
+        """
+        self.copy_value = copy_value
+        self.record_uid = record_uid
+        self.is_password = is_password
+        classes = "has-value" if copy_value else ""
+        super().__init__(content, classes=classes, *args, **kwargs)
+
+    def on_click(self, event: Click) -> None:
+        """Handle click to copy value"""
+        if self.copy_value:
+            try:
+                if self.is_password and self.record_uid:
+                    # Use ClipboardCommand to generate audit event for password copy
+                    cc = ClipboardCommand()
+                    cc.execute(self.app.params, record=self.record_uid, output='clipboard',
+                               username=None, copy_uid=False, login=False, totp=False, field=None, revision=None)
+                    self.app.notify("🔑 Password copied to clipboard!", severity="information")
+                else:
+                    # Regular copy for non-password fields
+                    pyperclip.copy(self.copy_value)
+                    self.app.notify(f"Copied: {self.copy_value[:50]}{'...' if len(self.copy_value) > 50 else ''}", severity="information")
+            except Exception as e:
+                self.app.notify(f"Copy failed: {e}", severity="error")
+
+
+class ClickableField(Static):
+    """A clickable field that copies value to clipboard on click"""
+
+    DEFAULT_CSS = """
+    ClickableField {
+        width: 100%;
+        height: auto;
+        padding: 0 1;
+    }
+
+    ClickableField:hover {
+        background: #333333;
+    }
+
+    ClickableField.clickable-value:hover {
+        background: #444444;
+        text-style: bold;
+    }
+    """
+
+    def __init__(self, label: str, value: str, copy_value: str = None,
+                 label_color: str = "#aaaaaa", value_color: str = "#00ff00",
+                 is_header: bool = False, indent: int = 0, *args, **kwargs):
+        """
+        Create a clickable field.
+
+        Args:
+            label: The field label (e.g., "Username:")
+            value: The display value
+            copy_value: The value to copy (defaults to value)
+            label_color: Color for label
+            value_color: Color for value
+            is_header: If True, style as section header
+            indent: Indentation level (spaces)
+        """
+        self.copy_value = copy_value if copy_value is not None else value
+
+        # Build content before calling super().__init__
+        indent_str = "  " * indent
+        # Escape brackets for Rich markup
+        safe_value = value.replace('[', '\\[').replace(']', '\\]') if value else ''
+        safe_label = label.replace('[', '\\[').replace(']', '\\]') if label else ''
+
+        if is_header:
+            content = f"[bold {value_color}]{indent_str}{safe_label}[/bold {value_color}]"
+        elif label:
+            content = f"{indent_str}[{label_color}]{safe_label}[/{label_color}] [{value_color}]{safe_value}[/{value_color}]"
+        else:
+            content = f"{indent_str}[{value_color}]{safe_value}[/{value_color}]"
+
+        # Set classes for hover effect
+        classes = "clickable-value" if self.copy_value else ""
+
+        super().__init__(content, classes=classes, *args, **kwargs)
+
+    def on_click(self, event: Click) -> None:
+        """Handle click to copy value"""
+        if self.copy_value:
+            try:
+                pyperclip.copy(self.copy_value)
+                self.app.notify(f"Copied to clipboard", severity="information")
+            except Exception as e:
+                self.app.notify(f"Copy failed: {e}", severity="error")
+
+
+class ClickableRecordUID(Static):
+    """A clickable record UID that navigates to the record when clicked"""
+
+    DEFAULT_CSS = """
+    ClickableRecordUID {
+        width: 100%;
+        height: auto;
+        padding: 0 1;
+    }
+
+    ClickableRecordUID:hover {
+        background: #333344;
+        text-style: bold underline;
+    }
+    """
+
+    def __init__(self, label: str, record_uid: str, record_title: str = None,
+                 label_color: str = "#aaaaaa", value_color: str = "#ffff00",
+                 indent: int = 0, *args, **kwargs):
+        """
+        Create a clickable record UID that navigates to the record.
+
+        Args:
+            label: The field label (e.g., "Record UID:")
+            record_uid: The UID of the record to navigate to
+            record_title: Optional title to display instead of UID
+            label_color: Color for label
+            value_color: Color for value
+            indent: Indentation level
+        """
+        self.record_uid = record_uid
+
+        # Build content before calling super().__init__
+        indent_str = "  " * indent
+        display_value = record_title or record_uid
+        safe_value = display_value.replace('[', '\\[').replace(']', '\\]')
+        safe_label = label.replace('[', '\\[').replace(']', '\\]') if label else ''
+
+        if label:
+            content = f"{indent_str}[{label_color}]{safe_label}[/{label_color}] [{value_color}]{safe_value} ↗[/{value_color}]"
+        else:
+            content = f"{indent_str}[{value_color}]{safe_value} ↗[/{value_color}]"
+
+        super().__init__(content, *args, **kwargs)
+
+    def on_click(self, event: Click) -> None:
+        """Handle click to navigate to record"""
+        # Find the app and trigger record selection
+        app = self.app
+        if hasattr(app, 'records') and self.record_uid in app.records:
+            # Navigate to the record in the tree
+            app.selected_record = self.record_uid
+            app.selected_folder = None
+            app._display_record_detail(self.record_uid)
+
+            # Try to select the node in the tree
+            tree = app.query_one("#folder_tree", Tree)
+            app._select_record_in_tree(tree, self.record_uid)
+
+            app.notify(f"Navigated to record", severity="information")
+        else:
+            # Just copy the UID if record not found
+            pyperclip.copy(self.record_uid)
+            app.notify(f"Record not in vault. UID copied.", severity="warning")
+
+
+from ..commands.record import RecordGetUidCommand, ClipboardCommand
 from ..display import bcolors
 from .. import api
 from .. import vault
@@ -597,10 +790,16 @@ class RecordDetailScreen(ModalScreen):
             return Static(f"[red]Error displaying record:[/red]\n{str(e)}")
 
     def action_copy_password(self):
-        """Copy password to clipboard"""
-        if 'password' in self.record_data:
-            pyperclip.copy(self.record_data['password'])
+        """Copy password to clipboard using clipboard-copy command (generates audit event)"""
+        try:
+            # Use ClipboardCommand to copy password - this generates the audit event
+            cc = ClipboardCommand()
+            cc.execute(self.params, record=self.record_uid, output='clipboard',
+                       username=None, copy_uid=False, login=False, totp=False, field=None, revision=None)
             self.app.notify("🔑 Password copied to clipboard!", severity="information")
+        except Exception as e:
+            logging.debug(f"ClipboardCommand error: {e}")
+            self.app.notify("⚠️ No password found for this record", severity="warning")
 
     def action_copy_username(self):
         """Copy username to clipboard"""
@@ -819,6 +1018,92 @@ class PreferencesScreen(ModalScreen):
         self.dismiss()
 
 
+class HelpScreen(ModalScreen):
+    """Modal screen for help/keyboard shortcuts"""
+
+    DEFAULT_CSS = """
+    HelpScreen {
+        align: center middle;
+    }
+
+    #help_container {
+        width: 70;
+        height: auto;
+        max-height: 90%;
+        background: #111111;
+        border: solid #444444;
+        padding: 1 2;
+    }
+
+    #help_title {
+        text-align: center;
+        text-style: bold;
+        padding-bottom: 1;
+    }
+
+    #help_content {
+        height: auto;
+        padding: 0 1;
+    }
+
+    #help_close_btn {
+        margin-top: 1;
+        width: 100%;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close", show=False),
+        Binding("q", "dismiss", "Close", show=False),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="help_container"):
+            yield Static("[bold cyan]⌨ Keyboard Shortcuts[/bold cyan]", id="help_title")
+            yield Static("""[green]Navigation:[/green]
+  j/k or ↑/↓    Move up/down
+  h/l or ←/→    Collapse/expand folder
+  g / G         Go to top / bottom
+  Ctrl+d/u      Half page down/up
+  :N            Go to line N (vim style)
+  Esc           Collapse folder / go to parent
+
+[green]Actions:[/green]
+  /             Search records
+  t             Toggle Detail/JSON view
+  d             Sync vault data
+  r             Refresh display
+  p             Preferences (color theme)
+
+[green]Copy to Clipboard:[/green]
+  c             Password
+  u             Username
+  w             URL
+  i             Record UID
+  y             Copy entire record
+
+[green]General:[/green]
+  ?             Show this help
+  q             Quit SuperShell""", id="help_content")
+            yield Button("Close [ESC]", id="help_close_btn", variant="primary")
+
+    @on(Button.Pressed, "#help_close_btn")
+    def close_help(self):
+        self.dismiss()
+
+    def action_dismiss(self):
+        """Close the help screen"""
+        self.dismiss()
+
+    def key_escape(self):
+        """Handle escape key directly"""
+        self.dismiss()
+
+    def key_q(self):
+        """Handle q key directly"""
+        self.dismiss()
+
+
 class SuperShellApp(App):
     """The Matrix-style Keeper SuperShell TUI application"""
 
@@ -987,11 +1272,21 @@ class SuperShellApp(App):
         color: #aaaaaa;
         padding: 0 2;
     }
+
+    #shortcuts_bar {
+        dock: bottom;
+        height: 2;
+        background: #111111;
+        color: #888888;
+        padding: 0 1;
+        border-top: solid #333333;
+    }
     """
 
     BINDINGS = [
         Binding("q", "quit", "Quit", show=False),
         Binding("r", "refresh", "Refresh", show=False),
+        Binding("d", "sync_vault", "Sync", show=False),
         Binding("/", "search", "Search", show=False),
         Binding("p", "show_preferences", "Preferences", show=False),
         Binding("c", "copy_password", "Copy Password", show=False),
@@ -999,7 +1294,6 @@ class SuperShellApp(App):
         Binding("w", "copy_url", "Copy URL", show=False),
         Binding("i", "copy_uid", "Copy UID", show=False),
         Binding("y", "copy_record", "Copy Record", show=False),
-        Binding("v", "view_record", "View Details", show=False),
         Binding("t", "toggle_view_mode", "Toggle JSON", show=False),
         Binding("?", "show_help", "Help", show=False),
         # Vim-style navigation
@@ -1065,9 +1359,7 @@ class SuperShellApp(App):
             if self.selected_record:
                 self._display_record_detail(self.selected_record)
             elif self.selected_folder:
-                detail_widget = self.query_one("#detail_content", Static)
-                content = self._format_folder_for_tui(self.selected_folder)
-                detail_widget.update(content)
+                self._display_folder_with_clickable_fields(self.selected_folder)
 
         except Exception as e:
             logging.debug(f"Error applying theme CSS: {e}")
@@ -1088,7 +1380,10 @@ class SuperShellApp(App):
                 yield Tree("[#00ff00]● My Vault[/#00ff00]", id="folder_tree")
             with Vertical(id="record_panel"):
                 with VerticalScroll(id="record_detail"):
-                    yield Static("[#00aaff]Press ? for help | / to search | j/k to navigate[/#00aaff]", id="detail_content")
+                    yield Static("", id="detail_content")
+                # Fixed footer for shortcuts
+                yield Static("", id="shortcuts_bar")
+        # Status bar at very bottom
         yield Static("", id="status_bar")
 
     async def on_mount(self):
@@ -1118,18 +1413,44 @@ class SuperShellApp(App):
             # Apply theme CSS after components are mounted
             self._apply_theme_css()
 
-            # Update initial help text with theme colors
+            # Update initial content with welcome/help and shortcuts bar
             t = self.theme_colors
             detail_widget = self.query_one("#detail_content", Static)
-            detail_widget.update(
-                f"[{t['secondary']}]Press ? for help | / to search | j/k to navigate[/{t['secondary']}]"
-            )
+            help_content = f"""[bold {t['primary']}]● Keeper SuperShell[/bold {t['primary']}]
+
+[{t['secondary']}]A CLI-based vault viewer with keyboard and mouse navigation.[/{t['secondary']}]
+
+[bold {t['primary_bright']}]Getting Started[/bold {t['primary_bright']}]
+  [{t['text_dim']}]•[/{t['text_dim']}] Use [{t['primary']}]j/k[/{t['primary']}] or [{t['primary']}]↑/↓[/{t['primary']}] to navigate up/down
+  [{t['text_dim']}]•[/{t['text_dim']}] Use [{t['primary']}]l[/{t['primary']}] or [{t['primary']}]→[/{t['primary']}] to expand folders
+  [{t['text_dim']}]•[/{t['text_dim']}] Use [{t['primary']}]h[/{t['primary']}] or [{t['primary']}]←[/{t['primary']}] to collapse folders
+  [{t['text_dim']}]•[/{t['text_dim']}] Press [{t['primary']}]/[/{t['primary']}] to search for records
+  [{t['text_dim']}]•[/{t['text_dim']}] Press [{t['primary']}]Esc[/{t['primary']}] to collapse and navigate back
+
+[bold {t['primary_bright']}]Vim-Style Navigation[/bold {t['primary_bright']}]
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]g[/{t['primary']}] - Go to top
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]G[/{t['primary']}] (Shift+G) - Go to bottom
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]:N[/{t['primary']}] - Go to line N (e.g., :20)
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+d/u[/{t['primary']}] - Half page down/up
+
+[bold {t['primary_bright']}]Quick Actions[/bold {t['primary_bright']}]
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]c[/{t['primary']}] - Copy password
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]u[/{t['primary']}] - Copy username
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]w[/{t['primary']}] - Copy URL
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]t[/{t['primary']}] - Toggle Detail/JSON view
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]d[/{t['primary']}] - Sync vault from server
+
+[{t['text_dim']}]Press [/{t['text_dim']}][{t['primary']}]?[/{t['primary']}][{t['text_dim']}] for full keyboard shortcuts[/{t['text_dim']}]"""
+            detail_widget.update(help_content)
+
+            # Initialize shortcuts bar
+            self._update_shortcuts_bar()
 
             # Focus the folder tree so vim keys work immediately
             self.query_one("#folder_tree", Tree).focus()
 
             logging.info("SuperShell ready!")
-            self._update_status("Ready. Navigate folders with j/k, expand with l, select record to view | Press ? for help")
+            self._update_status("Navigate: j/k  Expand: l  Search: /  Help: ?")
         except Exception as e:
             logging.error(f"Error initializing SuperShell: {e}", exc_info=True)
             self.exit(message=f"Error: {str(e)}")
@@ -1258,14 +1579,40 @@ class SuperShellApp(App):
                         if hasattr(record, 'notes'):
                             record_dict['notes'] = record.notes
 
-                        # For TypedRecords, extract fields
+                        # For TypedRecords, extract fields from the fields array
                         if hasattr(record, 'fields'):
                             custom_fields = []
                             for field in record.fields:
-                                if hasattr(field, 'label') and hasattr(field, 'value'):
+                                field_type = getattr(field, 'type', None)
+                                field_value = getattr(field, 'value', None)
+                                field_label = getattr(field, 'label', None)
+
+                                # Extract password from typed field if not already set
+                                if field_type == 'password' and field_value and not record_dict.get('password'):
+                                    if isinstance(field_value, list) and len(field_value) > 0:
+                                        record_dict['password'] = field_value[0]
+                                    elif isinstance(field_value, str):
+                                        record_dict['password'] = field_value
+
+                                # Extract login from typed field if not already set
+                                if field_type == 'login' and field_value and not record_dict.get('login'):
+                                    if isinstance(field_value, list) and len(field_value) > 0:
+                                        record_dict['login'] = field_value[0]
+                                    elif isinstance(field_value, str):
+                                        record_dict['login'] = field_value
+
+                                # Extract URL from typed field if not already set
+                                if field_type == 'url' and field_value and not record_dict.get('login_url'):
+                                    if isinstance(field_value, list) and len(field_value) > 0:
+                                        record_dict['login_url'] = field_value[0]
+                                    elif isinstance(field_value, str):
+                                        record_dict['login_url'] = field_value
+
+                                # Collect custom fields (those with labels)
+                                if field_label and field_value:
                                     custom_fields.append({
-                                        'name': field.label,
-                                        'value': str(field.value) if field.value else ''
+                                        'name': field_label,
+                                        'value': str(field_value) if field_value else ''
                                     })
                             if custom_fields:
                                 record_dict['custom_fields'] = custom_fields
@@ -1528,6 +1875,32 @@ class SuperShellApp(App):
         except Exception as e:
             logging.error(f"Error restoring tree selection: {e}", exc_info=True)
 
+    def _select_record_in_tree(self, tree: Tree, record_uid: str):
+        """Select a specific record in the tree by its UID"""
+        try:
+            def find_and_select(node):
+                if hasattr(node, 'data') and node.data:
+                    data = node.data
+                    node_uid = data.get('uid') if isinstance(data, dict) else None
+                    if node_uid == record_uid:
+                        # Found the node - select it
+                        tree.select_node(node)
+                        # Expand parent nodes to make visible
+                        parent = node.parent
+                        while parent:
+                            parent.expand()
+                            parent = parent.parent
+                        return True
+                # Check children
+                for child in node.children:
+                    if find_and_select(child):
+                        return True
+                return False
+
+            find_and_select(tree.root)
+        except Exception as e:
+            logging.debug(f"Error selecting record in tree: {e}")
+
     def _search_records(self, query: str) -> set:
         """
         Search records with smart partial matching.
@@ -1645,46 +2018,58 @@ class SuperShellApp(App):
             # Escape any Rich markup characters in the output
             output = output.replace('[', '\\[').replace(']', '\\]')
 
-            # Apply theme colors to the output
+            # Parse and format the output more cleanly
             lines = []
-            lines.append(f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]")
+            current_section = None
+            prev_was_blank = False
+            section_headers = {'Custom Fields', 'Notes', 'Attachments', 'User Permissions',
+                               'Shared Folder Permissions', 'Share Admins', 'One-Time Share URL'}
 
             for line in output.split('\n'):
-                if not line.strip():
-                    lines.append("")
+                stripped = line.strip()
+
+                # Skip multiple consecutive blank lines
+                if not stripped:
+                    if not prev_was_blank and lines:
+                        prev_was_blank = True
                     continue
+                prev_was_blank = False
 
                 # Check if line contains a colon (key: value format)
-                if ':' in line:
-                    parts = line.split(':', 1)
-                    if len(parts) == 2:
-                        key = parts[0].strip()
-                        value = parts[1].strip()
+                if ':' in stripped:
+                    parts = stripped.split(':', 1)
+                    key = parts[0].strip()
+                    value = parts[1].strip() if len(parts) > 1 else ''
 
-                        # Special formatting for UID
-                        if key in ['UID', 'Record UID']:
-                            lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [#ffff00]{value}[/#ffff00]")
-                        # Title/Name
-                        elif key in ['Title', 'Name']:
-                            lines.append(f"[bold {t['primary']}]{value}[/bold {t['primary']}]")
-                        # Section headers
-                        elif key in ['Custom Fields', 'Notes', 'Attachments', 'User Permissions',
-                                     'Shared Folder Permissions', 'One-Time Share URL']:
-                            lines.append("")
-                            lines.append(f"[bold {t['primary_bright']}]{key}:[/bold {t['primary_bright']}]")
-                            if value:
-                                lines.append(f"[{t['primary']}]  {value}[/{t['primary']}]")
-                        # Regular key-value pairs
+                    # UID - yellow value
+                    if key in ['UID', 'Record UID']:
+                        lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [#ffff00]{value}[/#ffff00]")
+                    # Title - bold primary with label
+                    elif key in ['Title', 'Name'] and not current_section:
+                        lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [bold {t['primary']}]{value}[/bold {t['primary']}]")
+                    # Type field
+                    elif key == 'Type':
+                        lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary_dim']}]{value}[/{t['primary_dim']}]")
+                    # Section headers
+                    elif key in section_headers:
+                        current_section = key
+                        if lines:
+                            lines.append("")  # Single blank line before section
+                        lines.append(f"[bold {t['secondary']}]{key}:[/bold {t['secondary']}]")
+                    # Regular key-value pairs
+                    elif value:
+                        if current_section:
+                            lines.append(f"  [{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{value}[/{t['primary']}]")
                         else:
-                            lines.append(f"[{t['secondary']}]{key}:[/{t['secondary']}] [{t['primary']}]{value}[/{t['primary']}]")
-                    else:
-                        lines.append(f"[{t['primary']}]{line}[/{t['primary']}]")
+                            lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{value}[/{t['primary']}]")
+                    elif key:
+                        # Key with no value (like a sub-header)
+                        lines.append(f"  [{t['primary_dim']}]{key}[/{t['primary_dim']}]")
                 else:
-                    # Lines without colons (continuation of multi-line values)
-                    if line.strip():
-                        lines.append(f"[{t['primary_dim']}]  {line}[/{t['primary_dim']}]")
+                    # Lines without colons (list items, continuation text)
+                    if stripped:
+                        lines.append(f"  [{t['primary_dim']}]{stripped}[/{t['primary_dim']}]")
 
-            lines.append(f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]")
             return "\n".join(lines)
 
         except Exception as e:
@@ -1805,6 +2190,325 @@ class SuperShellApp(App):
             logging.error(f"Error getting record output: {e}", exc_info=True)
             return f"Error getting record: {str(e)}"
 
+    def _clear_clickable_fields(self):
+        """Remove any dynamically mounted clickable field widgets"""
+        try:
+            detail_scroll = self.query_one("#record_detail", VerticalScroll)
+            # Remove all clickable widget types
+            for widget in list(detail_scroll.query(ClickableDetailLine)):
+                widget.remove()
+            for widget in list(detail_scroll.query(ClickableField)):
+                widget.remove()
+            for widget in list(detail_scroll.query(ClickableRecordUID)):
+                widget.remove()
+            # Also remove any dynamically added Static widgets (but keep #detail_content)
+            for widget in list(detail_scroll.query(Static)):
+                if widget.id != "detail_content" and widget.id != "shortcuts_bar":
+                    widget.remove()
+        except Exception as e:
+            logging.debug(f"Error clearing clickable fields: {e}")
+
+    def _display_record_with_clickable_fields(self, record_uid: str):
+        """Display record details with clickable fields for copy-on-click"""
+        t = self.theme_colors
+        detail_scroll = self.query_one("#record_detail", VerticalScroll)
+        detail_widget = self.query_one("#detail_content", Static)
+
+        # Clear previous clickable fields
+        self._clear_clickable_fields()
+
+        # Get and parse record output
+        output = self._get_record_output(record_uid, format_type='detail')
+        output = self._strip_ansi_codes(output)
+
+        if not output or output.strip() == '':
+            detail_widget.update("[red]Failed to get record details[/red]")
+            return
+
+        # Hide the static placeholder
+        detail_widget.update("")
+
+        # Helper to mount clickable lines
+        def mount_line(content: str, copy_value: str = None, is_password: bool = False):
+            line = ClickableDetailLine(content, copy_value, record_uid=record_uid, is_password=is_password)
+            detail_scroll.mount(line, before=detail_widget)
+
+        # Get the actual record data for password lookup
+        record_data = self.records.get(record_uid, {})
+        actual_password = record_data.get('password', '')
+
+        # Parse and create clickable lines
+        current_section = None
+        section_headers = {'Custom Fields', 'Notes', 'Attachments', 'User Permissions',
+                          'Shared Folder Permissions', 'Share Admins', 'One-Time Share URL'}
+
+        for line in output.split('\n'):
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            if ':' in stripped:
+                parts = stripped.split(':', 1)
+                key = parts[0].strip()
+                value = parts[1].strip() if len(parts) > 1 else ''
+
+                if key in ['UID', 'Record UID']:
+                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [#ffff00]{value}[/#ffff00]", value)
+                elif key in ['Title', 'Name'] and not current_section:
+                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [bold {t['primary']}]{value}[/bold {t['primary']}]", value)
+                elif key == 'Type':
+                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary_dim']}]{value}[/{t['primary_dim']}]", value)
+                elif key == 'Password':
+                    # Show masked password but use ClipboardCommand to copy (generates audit event)
+                    display_value = '******' if actual_password else value
+                    copy_value = actual_password if actual_password else None
+                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{display_value}[/{t['primary']}]", copy_value, is_password=True)
+                elif key in section_headers:
+                    current_section = key
+                    mount_line("", None)  # Blank line
+                    mount_line(f"[bold {t['secondary']}]{key}:[/bold {t['secondary']}]", None)
+                elif value:
+                    indent = "  " if current_section else ""
+                    mount_line(f"{indent}[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{value}[/{t['primary']}]", value)
+                elif key:
+                    mount_line(f"  [{t['primary_dim']}]{key}[/{t['primary_dim']}]", key)
+            else:
+                if stripped:
+                    mount_line(f"  [{t['primary_dim']}]{stripped}[/{t['primary_dim']}]", stripped)
+
+
+    def _display_json_with_clickable_fields(self, record_uid: str):
+        """Display JSON view with clickable string values, masking passwords"""
+        t = self.theme_colors
+        detail_widget = self.query_one("#detail_content", Static)
+
+        # Clear previous clickable fields
+        self._clear_clickable_fields()
+
+        # Get JSON output
+        output = self._get_record_output(record_uid, format_type='json')
+        output = self._strip_ansi_codes(output)
+
+        try:
+            json_obj = json.loads(output)
+            # Mask password values in the display
+            display_obj = self._mask_passwords_in_json(json_obj)
+            output = json.dumps(display_obj, indent=2)
+        except:
+            pass
+
+        # Use Rich Text object to mix styled header with plain JSON (no markup processing)
+        text = Text()
+        text.append("JSON View:\n\n", style=f"bold {t['primary']}")
+        text.append(output, style=t['primary'])  # Plain text, no markup processing
+        detail_widget.update(text)
+
+    def _mask_passwords_in_json(self, obj):
+        """Recursively mask password values in JSON object for display"""
+        if isinstance(obj, dict):
+            # Check if this dict is a password field (has type: "password")
+            if obj.get('type') == 'password':
+                masked = dict(obj)
+                if 'value' in masked and isinstance(masked['value'], list) and len(masked['value']) > 0:
+                    masked['value'] = ['************']
+                return masked
+            # Otherwise recurse into dict values
+            result = {}
+            for key, value in obj.items():
+                result[key] = self._mask_passwords_in_json(value)
+            return result
+        elif isinstance(obj, list):
+            return [self._mask_passwords_in_json(item) for item in obj]
+        else:
+            return obj
+
+    def _render_json_clickable(self, container, detail_widget, obj, t, indent=0):
+        """Recursively render JSON object with clickable string values"""
+        indent_str = "  " * indent
+
+        def mount_field(widget):
+            container.mount(widget, before=detail_widget)
+
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if isinstance(value, str):
+                    # String value - make it clickable
+                    field = ClickableField(
+                        label=f"{indent_str}\"{key}\":",
+                        value=f"\"{value}\"",
+                        copy_value=value,
+                        label_color=t['secondary'],
+                        value_color=t['primary']
+                    )
+                    mount_field(field)
+                elif isinstance(value, (int, float, bool)) or value is None:
+                    # Primitive value
+                    display_val = str(value).lower() if isinstance(value, bool) else str(value)
+                    if value is None:
+                        display_val = "null"
+                    field = ClickableField(
+                        label=f"{indent_str}\"{key}\":",
+                        value=display_val,
+                        copy_value=str(value) if value is not None else None,
+                        label_color=t['secondary'],
+                        value_color=t['primary_dim']
+                    )
+                    mount_field(field)
+                elif isinstance(value, list):
+                    # Array
+                    mount_field(Static(f"{indent_str}[{t['secondary']}]\"{key}\":[/{t['secondary']}] ["))
+                    for item in value:
+                        self._render_json_clickable(container, detail_widget, item, t, indent + 1)
+                    mount_field(Static(f"{indent_str}]"))
+                elif isinstance(value, dict):
+                    # Nested object
+                    mount_field(Static(f"{indent_str}[{t['secondary']}]\"{key}\":[/{t['secondary']}] {{"))
+                    self._render_json_clickable(container, detail_widget, value, t, indent + 1)
+                    mount_field(Static(f"{indent_str}}}"))
+        elif isinstance(obj, str):
+            # Direct string value (in array)
+            field = ClickableField(
+                label="",
+                value=f"{indent_str}\"{obj}\"",
+                copy_value=obj,
+                value_color=t['primary']
+            )
+            mount_field(field)
+
+    def _display_folder_with_clickable_fields(self, folder_uid: str):
+        """Display folder details with clickable fields for copy-on-click"""
+        t = self.theme_colors
+        detail_scroll = self.query_one("#record_detail", VerticalScroll)
+        detail_widget = self.query_one("#detail_content", Static)
+
+        # Clear previous clickable fields
+        self._clear_clickable_fields()
+
+        # Get folder from cache for type info
+        folder = self.params.folder_cache.get(folder_uid)
+        folder_type = ""
+        if folder:
+            folder_type = folder.get_folder_type() if hasattr(folder, 'get_folder_type') else str(folder.type)
+
+        # Get folder output from get command
+        try:
+            stdout_buffer = io.StringIO()
+            old_stdout = sys.stdout
+            sys.stdout = stdout_buffer
+            get_cmd = RecordGetUidCommand()
+            get_cmd.execute(self.params, uid=folder_uid, format='detail')
+            sys.stdout = old_stdout
+            output = stdout_buffer.getvalue()
+            output = self._strip_ansi_codes(output)
+        except Exception as e:
+            sys.stdout = old_stdout
+            logging.error(f"Error getting folder output: {e}")
+            output = ""
+
+        # Hide the static placeholder
+        detail_widget.update("")
+
+        # Helper to mount clickable lines
+        def mount_line(content: str, copy_value: str = None):
+            line = ClickableDetailLine(content, copy_value)
+            detail_scroll.mount(line, before=detail_widget)
+
+        # Header line
+        mount_line(f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]", None)
+
+        if not output or output.strip() == '':
+            # Fallback to basic folder info
+            if folder:
+                mount_line(f"[bold {t['primary']}]{folder.name}[/bold {t['primary']}]", folder.name)
+                mount_line(f"[{t['text_dim']}]UID:[/{t['text_dim']}] [#ffff00]{folder_uid}[/#ffff00]", folder_uid)
+                mount_line(f"[{t['text_dim']}]Type:[/{t['text_dim']}] [{t['primary']}]{folder_type}[/{t['primary']}]", folder_type)
+            mount_line(f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]", None)
+            return
+
+        # Parse the output and format with clickable lines
+        current_section = None
+        section_headers = {'Record Permissions', 'User Permissions', 'Team Permissions', 'Share Administrators'}
+        share_admins_count = 0
+
+        # First pass: count share admins
+        in_share_admins = False
+        for line in output.split('\n'):
+            stripped = line.strip()
+            if ':' in stripped:
+                key = stripped.split(':', 1)[0].strip()
+                if key == 'Share Administrators':
+                    in_share_admins = True
+                elif key in section_headers and key != 'Share Administrators':
+                    in_share_admins = False
+                elif in_share_admins and key == 'User':
+                    share_admins_count += 1
+
+        # Second pass: build clickable lines
+        in_share_admins = False
+        for line in output.split('\n'):
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            if ':' in stripped:
+                parts = stripped.split(':', 1)
+                key = parts[0].strip()
+                value = parts[1].strip() if len(parts) > 1 else ''
+
+                # UID fields
+                if key in ['Shared Folder UID', 'Folder UID', 'Team UID']:
+                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [#ffff00]{value}[/#ffff00]", value)
+                # Folder Type
+                elif key == 'Folder Type':
+                    display_type = value if value else folder_type
+                    mount_line(f"[{t['text_dim']}]Type:[/{t['text_dim']}] [{t['primary']}]{display_type}[/{t['primary']}]", display_type)
+                # Name - title
+                elif key == 'Name':
+                    mount_line(f"[bold {t['primary']}]{value}[/bold {t['primary']}]", value)
+                # Section headers
+                elif key in section_headers:
+                    current_section = key
+                    in_share_admins = (key == 'Share Administrators')
+                    mount_line("", None)
+                    if key == 'Share Administrators' and share_admins_count > 0:
+                        mount_line(f"[bold {t['primary_bright']}]{key}:[/bold {t['primary_bright']}] [{t['text_dim']}]({share_admins_count} users)[/{t['text_dim']}]", None)
+                    else:
+                        mount_line(f"[bold {t['primary_bright']}]{key}:[/bold {t['primary_bright']}]", None)
+                # Record UID in Record Permissions - show title
+                elif key == 'Record UID' and current_section == 'Record Permissions':
+                    if value in self.records:
+                        record_title = self.records[value].get('title', 'Untitled')
+                        mount_line(f"  [{t['text_dim']}]Record:[/{t['text_dim']}] [#ffff00]{record_title}[/#ffff00]", record_title)
+                        mount_line(f"    [{t['text_dim']}]UID:[/{t['text_dim']}] [{t['primary_dim']}]{value}[/{t['primary_dim']}]", value)
+                    else:
+                        mount_line(f"  [{t['text_dim']}]Record UID:[/{t['text_dim']}] [#ffff00]{value}[/#ffff00]", value)
+                # Boolean values
+                elif value.lower() in ['true', 'false']:
+                    color = t['primary'] if value.lower() == 'true' else t['primary_dim']
+                    indent = "  " if current_section else ""
+                    mount_line(f"{indent}[{t['secondary']}]{key}:[/{t['secondary']}] [{color}]{value}[/{color}]", value)
+                # Regular key-value pairs
+                elif value:
+                    indent = "  " if current_section else ""
+                    # Skip Share Admins details (collapsed)
+                    if in_share_admins and key in ['User', 'Email']:
+                        continue
+                    mount_line(f"{indent}[{t['secondary']}]{key}:[/{t['secondary']}] [{t['primary']}]{value}[/{t['primary']}]", value)
+                elif key:
+                    indent = "  " if current_section else ""
+                    if in_share_admins:
+                        continue
+                    mount_line(f"{indent}[{t['primary_dim']}]{key}[/{t['primary_dim']}]", key)
+            else:
+                if stripped:
+                    indent = "  " if current_section else ""
+                    if in_share_admins:
+                        continue
+                    mount_line(f"{indent}[{t['primary']}]{stripped}[/{t['primary']}]", stripped)
+
+        # Footer line
+        mount_line(f"\n[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]", None)
+
     def _display_record_detail(self, record_uid: str):
         """Display record details in the right panel using Commander's get command"""
         detail_widget = self.query_one("#detail_content", Static)
@@ -1812,51 +2516,58 @@ class SuperShellApp(App):
 
         try:
             if record_uid not in self.records:
+                self._clear_clickable_fields()
                 detail_widget.update("[red]Record not found[/red]")
                 return
 
-            # Get the record output
+            # Use clickable fields for both views
             if self.view_mode == 'json':
-                output = self._get_record_output(record_uid, format_type='json')
-                # Strip ANSI codes
-                output = self._strip_ansi_codes(output)
-                # Pretty print JSON
-                try:
-                    json_obj = json.loads(output)
-                    output = json.dumps(json_obj, indent=2)
-                except:
-                    # If JSON parsing fails, just use the raw output
-                    pass
-                # Use Rich Text object to mix styled header with plain JSON (no markup processing)
-                text = Text()
-                text.append("JSON View:\n\n", style=f"bold {t['primary']}")
-                text.append(output, style=t['primary'])  # Plain text, no markup processing
-                text.append("\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n", style=t['primary_dim'])
-                text.append("Mode: JSON\n", style=f"bold {t['secondary']}")
-                text.append("c=Password  u=Username  w=URL  i=UID  y=Copy All  v=Full  t=JSON", style=t['primary_dim'])
-                detail_widget.update(text)
-                return
+                self._display_json_with_clickable_fields(record_uid)
             else:
-                # Detail view - use TUI formatter
-                content = self._format_record_for_tui(record_uid)
+                self._display_record_with_clickable_fields(record_uid)
 
-            # Add keyboard shortcuts with theme colors
-            mode_indicator = f"[bold {t['secondary']}]Mode: JSON[/bold {t['secondary']}]" if self.view_mode == 'json' else f"[bold {t['secondary']}]Mode: Detail[/bold {t['secondary']}]"
-            footer = f"\n\n[{t['primary_dim']}]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/{t['primary_dim']}]\n{mode_indicator}\n[{t['primary_dim']}]c=Password  u=Username  w=URL  i=UID  y=Copy All  v=Full  t=JSON[/{t['primary_dim']}]"
-            content += footer
-
-            detail_widget.update(content)
+            # Update shortcuts bar to show record-specific shortcuts
+            self._update_shortcuts_bar(record_selected=True)
 
         except Exception as e:
             logging.error(f"Error displaying record detail: {e}", exc_info=True)
-            # Escape the error message to prevent Rich markup errors
-            error_msg = str(e).replace('[', '\\[').replace(']', '\\]')
-            detail_widget.update(f"[red]Error displaying record:[/red]\n{error_msg}\n\n[dim]Press 't' to toggle view mode[/dim]")
+            self._clear_clickable_fields()
+            # Fallback to simple static display
+            try:
+                content = self._format_record_for_tui(record_uid)
+                detail_widget.update(content)
+            except:
+                error_msg = str(e).replace('[', '\\[').replace(']', '\\]')
+                detail_widget.update(f"[red]Error displaying record:[/red]\n{error_msg}\n\n[dim]Press 't' to toggle view mode[/dim]")
 
     def _update_status(self, message: str):
         """Update the status bar"""
         status_bar = self.query_one("#status_bar", Static)
         status_bar.update(f"⚡ {message}")
+
+    def _update_shortcuts_bar(self, record_selected: bool = False):
+        """Update the shortcuts bar at bottom of detail panel"""
+        try:
+            shortcuts_bar = self.query_one("#shortcuts_bar", Static)
+            t = self.theme_colors
+
+            if record_selected:
+                mode = "JSON" if self.view_mode == 'json' else "Detail"
+                shortcuts_bar.update(
+                    f"[{t['secondary']}]Mode: {mode}[/{t['secondary']}]  "
+                    f"[{t['text_dim']}]c[/{t['text_dim']}]=Password  "
+                    f"[{t['text_dim']}]u[/{t['text_dim']}]=Username  "
+                    f"[{t['text_dim']}]w[/{t['text_dim']}]=URL  "
+                    f"[{t['text_dim']}]i[/{t['text_dim']}]=UID  "
+                    f"[{t['text_dim']}]y[/{t['text_dim']}]=Copy  "
+                    f"[{t['text_dim']}]t[/{t['text_dim']}]=Toggle"
+                )
+            else:
+                shortcuts_bar.update(
+                    f"[{t['text_dim']}]Navigate: j/k  Expand: l  Search: /  Sync: d  Help: ?[/{t['text_dim']}]"
+                )
+        except Exception as e:
+            logging.debug(f"Error updating shortcuts bar: {e}")
 
     @on(Tree.NodeSelected)
     def on_tree_node_selected(self, event: Tree.NodeSelected):
@@ -1875,22 +2586,24 @@ class SuperShellApp(App):
             self._display_record_detail(node_uid)
             self._update_status(f"Record selected: {self.records[node_uid].get('title', 'Untitled')}")
         elif node_type == 'folder':
-            # Folder selected - show folder info using get command
+            # Folder selected - show folder info with clickable fields
             self.selected_record = None  # Clear record selection
             self.selected_folder = node_uid  # Set folder selection
-            detail_widget = self.query_one("#detail_content", Static)
             folder = self.params.folder_cache.get(node_uid)
             if folder:
-                # Use the TUI formatter which internally calls get command
-                content = self._format_folder_for_tui(node_uid)
-                detail_widget.update(content)
-                self._update_status(f"Folder selected: {folder.name}")
+                # Use clickable fields for folder display
+                self._display_folder_with_clickable_fields(node_uid)
+                self._update_status(f"Folder: {folder.name}")
             else:
+                self._clear_clickable_fields()
+                detail_widget = self.query_one("#detail_content", Static)
                 detail_widget.update("[red]Folder not found[/red]")
+            self._update_shortcuts_bar(record_selected=False)
         elif node_type == 'virtual_folder':
             # Virtual folder selected (e.g., Secrets Manager Apps)
             self.selected_record = None
             self.selected_folder = None
+            self._clear_clickable_fields()
             detail_widget = self.query_one("#detail_content", Static)
             t = self.theme_colors
             if node_uid == '__secrets_manager_apps__':
@@ -1898,29 +2611,49 @@ class SuperShellApp(App):
                 app_count = len(self.app_record_uids)
                 detail_widget.update(
                     f"[bold {t['virtual_folder']}]★ Secrets Manager Apps[/bold {t['virtual_folder']}]\n\n"
-                    f"[{t['primary_dim']}]This virtual folder contains {app_count} Secrets Manager application record(s).\n\n"
-                    "These are 'app' type records used by Keeper Secrets Manager\n"
-                    "for programmatic access to secrets.\n\n"
-                    "Navigate: j/k (up/down) | h/l (collapse/expand)\n"
-                    f"Select a record to view details[/{t['primary_dim']}]"
+                    f"[{t['primary_dim']}]Contains {app_count} Secrets Manager application record(s).\n"
+                    f"Select a record to view details.[/{t['primary_dim']}]"
                 )
-                self._update_status("Secrets Manager Apps - Virtual folder")
+                self._update_status("Secrets Manager Apps")
             else:
                 detail_widget.update(f"[{t['primary_dim']}]Virtual folder[/{t['primary_dim']}]")
                 self._update_status("Virtual folder")
+            self._update_shortcuts_bar(record_selected=False)
         elif node_type == 'root':
-            # Root selected
+            # Root selected - show welcome/help content
             self.selected_record = None  # Clear record selection
             self.selected_folder = None  # Clear folder selection
+            self._clear_clickable_fields()
             detail_widget = self.query_one("#detail_content", Static)
             t = self.theme_colors
-            detail_widget.update(
-                f"[bold {t['primary']}]● My Vault[/bold {t['primary']}]\n\n"
-                f"[{t['primary_dim']}]Navigate: j/k (up/down) | h/l (collapse/expand)\n"
-                "Search: / | Help: ? | Copy: c/u/w/i/y\n\n"
-                f"Select a folder or record to view details[/{t['primary_dim']}]"
-            )
-            self._update_status("My Vault - Navigate to folders and records")
+            help_content = f"""[bold {t['primary']}]● Keeper SuperShell[/bold {t['primary']}]
+
+[{t['secondary']}]A CLI-based vault viewer with keyboard and mouse navigation.[/{t['secondary']}]
+
+[bold {t['primary_bright']}]Getting Started[/bold {t['primary_bright']}]
+  [{t['text_dim']}]•[/{t['text_dim']}] Use [{t['primary']}]j/k[/{t['primary']}] or [{t['primary']}]↑/↓[/{t['primary']}] to navigate up/down
+  [{t['text_dim']}]•[/{t['text_dim']}] Use [{t['primary']}]l[/{t['primary']}] or [{t['primary']}]→[/{t['primary']}] to expand folders
+  [{t['text_dim']}]•[/{t['text_dim']}] Use [{t['primary']}]h[/{t['primary']}] or [{t['primary']}]←[/{t['primary']}] to collapse folders
+  [{t['text_dim']}]•[/{t['text_dim']}] Press [{t['primary']}]/[/{t['primary']}] to search for records
+  [{t['text_dim']}]•[/{t['text_dim']}] Press [{t['primary']}]Esc[/{t['primary']}] to collapse and navigate back
+
+[bold {t['primary_bright']}]Vim-Style Navigation[/bold {t['primary_bright']}]
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]g[/{t['primary']}] - Go to top
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]G[/{t['primary']}] (Shift+G) - Go to bottom
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]:N[/{t['primary']}] - Go to line N (e.g., :20)
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+d/u[/{t['primary']}] - Half page down/up
+
+[bold {t['primary_bright']}]Quick Actions[/bold {t['primary_bright']}]
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]c[/{t['primary']}] - Copy password
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]u[/{t['primary']}] - Copy username
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]w[/{t['primary']}] - Copy URL
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]t[/{t['primary']}] - Toggle Detail/JSON view
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]d[/{t['primary']}] - Sync vault from server
+
+[{t['text_dim']}]Press [/{t['text_dim']}][{t['primary']}]?[/{t['primary']}][{t['text_dim']}] for full keyboard shortcuts[/{t['text_dim']}]"""
+            detail_widget.update(help_content)
+            self._update_status("My Vault")
+            self._update_shortcuts_bar(record_selected=False)
 
     def _update_search_display(self):
         """Update the search display and results with blinking cursor"""
@@ -2221,14 +2954,6 @@ class SuperShellApp(App):
             tree.focus()
             self._update_status("Navigate with j/k | / to search | ? for help")
 
-    def action_view_record(self):
-        """View selected record details"""
-        if self.selected_record and self.selected_record in self.records:
-            record_data = self.records[self.selected_record]
-            self.push_screen(RecordDetailScreen(record_data, self.params, self.selected_record))
-        else:
-            self.notify("⚠️ No record selected", severity="warning")
-
     def action_toggle_view_mode(self):
         """Toggle between detail and JSON view modes"""
         # Only works for records, not folders
@@ -2251,13 +2976,16 @@ class SuperShellApp(App):
             self.notify(f"⚠️ Error switching view: {str(e)}", severity="error")
 
     def action_copy_password(self):
-        """Copy password of selected record to clipboard"""
+        """Copy password of selected record to clipboard using clipboard-copy command (generates audit event)"""
         if self.selected_record and self.selected_record in self.records:
-            record = self.records[self.selected_record]
-            if 'password' in record:
-                pyperclip.copy(record['password'])
+            try:
+                # Use ClipboardCommand to copy password - this generates the audit event
+                cc = ClipboardCommand()
+                cc.execute(self.params, record=self.selected_record, output='clipboard',
+                           username=None, copy_uid=False, login=False, totp=False, field=None, revision=None)
                 self.notify("🔑 Password copied to clipboard!", severity="information")
-            else:
+            except Exception as e:
+                logging.debug(f"ClipboardCommand error: {e}")
                 self.notify("⚠️ No password found for this record", severity="warning")
         else:
             self.notify("⚠️ No record selected", severity="warning")
@@ -2317,13 +3045,20 @@ class SuperShellApp(App):
         """Copy entire record contents to clipboard (formatted or JSON based on view mode)"""
         if self.selected_record:
             try:
+                # Get record data to check if it has a password
+                record_data = self.records.get(self.selected_record, {})
+                has_password = bool(record_data.get('password'))
+
                 if self.view_mode == 'json':
-                    # Copy JSON format
+                    # Copy JSON format (with actual password, not masked)
                     output = self._get_record_output(self.selected_record, format_type='json')
                     output = self._strip_ansi_codes(output)
                     json_obj = json.loads(output)
                     formatted = json.dumps(json_obj, indent=2)
                     pyperclip.copy(formatted)
+                    # Generate audit event since JSON contains the password
+                    if has_password:
+                        self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
                     self.notify("📋 JSON copied to clipboard!", severity="information")
                 else:
                     # Copy formatted text (without Rich markup)
@@ -2332,6 +3067,9 @@ class SuperShellApp(App):
                     import re
                     plain = re.sub(r'\[/?[^\]]+\]', '', content)
                     pyperclip.copy(plain)
+                    # Generate audit event if record has password (detail view includes password)
+                    if has_password:
+                        self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
                     self.notify("📋 Record contents copied to clipboard!", severity="information")
             except Exception as e:
                 logging.error(f"Error copying record: {e}", exc_info=True)
@@ -2340,46 +3078,41 @@ class SuperShellApp(App):
             self.notify("⚠️ No record selected", severity="warning")
 
     def action_show_help(self):
-        """Show help information"""
-        help_text = """[bold cyan]Keeper SuperShell - Keyboard Shortcuts[/bold cyan]
+        """Show help modal"""
+        self.push_screen(HelpScreen())
 
-[green]Vim Navigation:[/green]
-  j/k        Navigate up/down
-  h/l        Navigate left/right (collapse/expand folders)
-  g          Go to top
-  G          Go to bottom
-  CTRL+d     Page down (half page)
-  CTRL+u     Page up (half page)
-  CTRL+f     Page down (full page)
-  CTRL+b     Page up (full page)
+    def action_sync_vault(self):
+        """Sync vault data from server (sync-down + enterprise-down)"""
+        self._update_status("Syncing vault data...")
 
-[green]Standard Navigation:[/green]
-  ↑/↓        Navigate items
-  ←/→        Collapse/expand folders
-  Tab        Switch between panels
-  Enter      Select item
+        try:
+            # Run sync-down command
+            from .utils import SyncDownCommand
+            SyncDownCommand().execute(self.params)
 
-[green]Actions:[/green]
-  /          Live interactive search (results update as you type)
-  v          View record details (full modal)
-  t          Toggle between Detail/JSON view
-  r          Refresh vault data
+            # Run enterprise-down if available (enterprise users)
+            try:
+                from .enterprise import EnterpriseDownCommand
+                EnterpriseDownCommand().execute(self.params)
+            except Exception:
+                pass  # Not an enterprise user or command not available
 
-[green]Copy Actions:[/green]
-  c          Copy password to clipboard
-  u          Copy username to clipboard
-  w          Copy URL to clipboard
-  i          Copy record UID to clipboard
-  y          Copy entire record (formatted/JSON based on mode)
+            # Reload vault data and refresh UI
+            self.records = {}
+            self.record_to_folder = {}
+            self.records_in_subfolders = set()
+            self.file_attachment_to_parent = {}
+            self.record_file_attachments = {}
+            self.app_record_uids = set()
+            self._load_vault_data()
+            self._setup_folder_tree()
 
-[green]General:[/green]
-  ?          Show this help
-  q          Quit SuperShell
-  Esc        Close modals
-
-[yellow]Tip: Follow the white rabbit... 🔐[/yellow]
-        """
-        self.notify(help_text, severity="information", timeout=10)
+            self._update_status("Vault synced successfully")
+            self.notify("Vault data synced", severity="information")
+        except Exception as e:
+            logging.error(f"Error syncing vault: {e}", exc_info=True)
+            self._update_status(f"Sync failed: {str(e)}")
+            self.notify(f"Sync failed: {str(e)}", severity="error")
 
     # Vim-style navigation actions
     def action_cursor_down(self):
@@ -2528,6 +3261,24 @@ class SuperShellCommand(Command):
 
     def execute(self, params, **kwargs):
         """Launch the SuperShell TUI - handles login if needed"""
+
+        # Disable debug mode for SuperShell to prevent log output from messing up the TUI
+        saved_debug = getattr(params, 'debug', False)
+        saved_log_level = logging.getLogger().level
+        if saved_debug:
+            params.debug = False
+            logging.getLogger().setLevel(logging.WARNING)
+
+        try:
+            self._execute_supershell(params, **kwargs)
+        finally:
+            # Restore debug state when SuperShell exits
+            if saved_debug:
+                params.debug = saved_debug
+                logging.getLogger().setLevel(saved_log_level)
+
+    def _execute_supershell(self, params, **kwargs):
+        """Internal method to run SuperShell"""
 
         # Check if authentication is needed
         if not params.session_token:

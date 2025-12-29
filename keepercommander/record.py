@@ -197,10 +197,28 @@ class Record:
             if len(idxs) == 1:
                 return self.custom_fields.pop(idxs[0])
 
+    def get_unmasked_field_params(self):
+        """Return unmasked field parameters (login, url, etc.)"""
+        if self.login:
+            yield 'login', self.login
+        if self.login_url:
+            yield 'login_url', self.login_url
+
+    def get_masked_field_params(self):
+        """Return masked field parameters (password, totp)"""
+        if self.password:
+            yield 'password', self.password
+        if self.totp:
+            yield 'totp', self.totp
+
+    def get_typed_fields(self):
+        """Return typed fields (for v3 records) - returns empty for legacy Record"""
+        return []
+
     def display(self, unmask=False):
         print('')
         print('{0:>20s}: {1:<20s}'.format('UID', self.record_uid))
-        print('{0:>20s}: {1:<20s}'.format('Type', ''))
+        print('{0:>20s}: {1:<20s}'.format('Type', self.record_type if self.record_type else ''))
         if self.title: print('{0:>20s}: {1:<20s}'.format('Title', self.title))
         if self.login: print('{0:>20s}: {1:<20s}'.format('Login', self.login))
         if self.password: print('{0:>20s}: {1:<20s}'.format('Password', self.password if unmask else '********'))
