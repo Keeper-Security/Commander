@@ -160,6 +160,8 @@ class BaseComplianceReportCommand(EnterpriseCommand):
         headers = self.report_headers if report_fmt == 'json' else [field_to_title(h) for h in self.report_headers]
         report = dump_report_data(report_data, headers, title=self.title, fmt=report_fmt, filename=kwargs.get('output'),
                                   column_width=32, group_by=self.group_by_column)
+        if no_cache:
+            sd.storage.delete_db()
         return report
 
 
@@ -454,27 +456,31 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
         def get_aging_data(rec_ids):
             if not rec_ids:
                 return {}
-            aging_data = {r: {'created': None, 'last_modified': None, 'last_rotation': None} for r in rec_ids}
+            aging_data = {r: {'created': None, 'last_modified': None, 'last_rotation': None} for r in rec_ids if r}
             now = datetime.datetime.now()
             max_stored_age_dt = now - datetime.timedelta(days=1)
             max_stored_age_ts = int(max_stored_age_dt.timestamp())
-            stored_entities = sox_data.storage.get_record_aging().get_all()
-            stored_aging_data = {e.record_uid: {'created': from_ts(e.created), 'last_modified': from_ts(e.last_modified), 'last_rotation': from_ts(e.last_rotation)} for e in stored_entities}
+            stored_aging_data = {}
+            if not kwargs.get('no_cache'):
+                stored_entities = sox_data.storage.get_record_aging().get_all()
+                stored_aging_data = {e.record_uid: {'created': from_ts(e.created), 'last_modified': from_ts(e.last_modified), 'last_rotation': from_ts(e.last_rotation)} for e in stored_entities if e.record_uid}
             aging_data.update(stored_aging_data)
 
-            def get_requests(filter_recs, filter_type, order='desc', aggregate='last_created'):
+            def get_requests(filter_recs, filter_type, order='descending', aggregate='last_created'):
                 columns = ['record_uid']
                 requests = []
                 while filter_recs:
                     chunk = filter_recs[:API_EVENT_SUMMARY_ROW_LIMIT]
                     filter_recs = filter_recs[API_EVENT_SUMMARY_ROW_LIMIT:]
+                    rq_filter = {'record_uid': chunk}
+                    if filter_type: rq_filter.update({'audit_event_type': filter_type})
                     request = dict(
                         command         = 'get_audit_event_reports',
                         report_type     = 'span',
                         scope           = 'enterprise',
                         aggregate       = [aggregate],
                         limit           = API_EVENT_SUMMARY_ROW_LIMIT,
-                        filter          = dict(record_uid=chunk, audit_event_type=filter_type),
+                        filter          = rq_filter,
                         columns         = columns,
                         order           = order
                     )
@@ -486,13 +492,13 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
                 known_events_map = get_known_aging_data(record_aging_event)
                 filter_recs = [uid for uid in rec_ids if uid not in known_events_map]
                 types_by_aging_event = dict(
-                    created         = None,
+                    created         = [],
                     last_modified   = ['record_update'],
                     last_rotation   = ['record_rotation_scheduled_ok', 'record_rotation_on_demand_ok']
                 )
                 filter_types = types_by_aging_event.get(record_aging_event)
-                order, aggregate = ('asc', 'first_created') if record_aging_event == 'created' \
-                    else ('desc', 'last_created')
+                order, aggregate = ('ascending', 'first_created') if record_aging_event == 'created' \
+                    else ('descending', 'last_created')
                 return filter_recs, filter_types, order, aggregate
 
             def fetch_events(requests):
@@ -513,8 +519,8 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
             def get_aging_event_dts(event_type):
                 events = get_aging_events(event_type)
                 aggregate = 'first_created' if event_type == 'created' else 'last_created'
-                record_timestamps = {event.get('record_uid', ''): event.get(aggregate) for event in events}
-                return {rec: format_datetime(ts) for rec, ts in record_timestamps.items()}
+                record_timestamps = {event.get('record_uid'): event.get(aggregate) for event in events if event.get('record_uid')}
+                return {rec: from_ts(ts) for rec, ts in record_timestamps.items()}
 
             aging_stats = ['created', 'last_modified', 'last_rotation']
             record_events_by_stat = {stat: get_aging_event_dts(stat) for stat in aging_stats}
@@ -523,13 +529,16 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
                     aging_data.get(record, {}).update({stat: dt})
                     stat == 'created' and aging_data.get(record, {}).setdefault('last_modified', dt)
 
-            save_aging_data(aging_data)
+            if not kwargs.get('no_cache'):
+                save_aging_data(aging_data)
             return aging_data
 
         def save_aging_data(aging_data):
             existing_entities = sox_data.storage.get_record_aging()
             updated_entities = []
             for r, events in aging_data.items():
+                if not r:
+                    continue
                 entity = existing_entities.get_entity(r) or StorageRecordAging(r)
                 created_dt = events.get('created')
                 created_ts = int(created_dt.timestamp()) if created_dt else 0
@@ -683,4 +692,3 @@ class ComplianceSharedFolderReportCommand(BaseComplianceReportCommand):
             row = [sfuid, sf_team_uids, sf_team_names, records, team_users + users]
             report_data.append(row)
         return report_data
-

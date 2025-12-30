@@ -39,8 +39,8 @@ def clear_lookup(lookup, uids=None):  # type: (dict, Optional[Iterable]) -> None
 
 
 class SoxData:
-    def __init__(self, params, storage, no_cache=False):
-        # type: (KeeperParams, sqlite_storage.SqliteSoxStorage, Optional[bool]) -> None
+    def __init__(self, params, storage):
+        # type: (KeeperParams, sqlite_storage.SqliteSoxStorage) -> None
         self.storage = storage                  # type: sqlite_storage.SqliteSoxStorage
         self._records = {}                      # type: Dict[str, sox_types.Record]
         self._users = {}                        # type: Dict[int, sox_types.EnterpriseUser]
@@ -49,7 +49,7 @@ class SoxData:
         self.ec_private_key = get_ec_private_key(params)
         self.tree_key = params.enterprise.get('unencrypted_tree_key', b'')
         task = RebuildTask(True)
-        self.rebuild_data(task, no_cache)
+        self.rebuild_data(task)
 
     def get_records(self, record_ids=None):
         return self._records if record_ids is None else {uid: self._records.get(uid) for uid in record_ids}
@@ -137,7 +137,7 @@ class SoxData:
     def record_count(self):   # type: () -> int
         return len(self._records)
 
-    def rebuild_data(self, changes, no_cache=False):   # type: (RebuildTask, Optional[bool]) -> None
+    def rebuild_data(self, changes):   # type: (RebuildTask) -> None
         def decrypt(data):  # type: (bytes or str) -> str
             if isinstance(data, str):
                 return data
@@ -267,5 +267,3 @@ class SoxData:
         self._records.update(load_records(self.storage, changes))
         if changes.is_full_sync or changes.load_compliance_data:
             self._users.update(load_users(self.storage))
-        if no_cache:
-            self.storage.delete_db()
