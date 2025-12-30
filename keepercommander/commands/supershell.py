@@ -521,7 +521,6 @@ class HelpScreen(ModalScreen):
   h/l or ←/→    Collapse/expand folder
   g / G         Go to top / bottom
   Ctrl+d/u      Half page down/up
-  :N            Go to line N (vim style)
   Esc           Clear search / collapse folder
 
 [green]Search:[/green]
@@ -532,8 +531,7 @@ class HelpScreen(ModalScreen):
 
 [green]Actions:[/green]
   t             Toggle Detail/JSON view
-  d             Sync vault data
-  r             Refresh display
+  d             Sync & refresh vault
   p             Preferences (color theme)
 
 [green]Copy to Clipboard:[/green]
@@ -750,7 +748,6 @@ class SuperShellApp(App):
 
     BINDINGS = [
         Binding("q", "quit", "Quit", show=False),
-        Binding("r", "refresh", "Refresh", show=False),
         Binding("d", "sync_vault", "Sync", show=False),
         Binding("/", "search", "Search", show=False),
         Binding("p", "show_preferences", "Preferences", show=False),
@@ -817,6 +814,10 @@ class SuperShellApp(App):
             # Update CSS dynamically for tree selection/hover
             self._apply_theme_css()
 
+    def notify(self, message, *, title="", severity="information", timeout=1.5):
+        """Override notify to use faster timeout (default 1.5s instead of 5s)"""
+        super().notify(message, title=title, severity=severity, timeout=timeout)
+
     def _apply_theme_css(self):
         """Apply dynamic CSS based on current theme"""
         t = self.theme_colors
@@ -860,6 +861,13 @@ class SuperShellApp(App):
         # Initialize clickable fields list for detail panel
         self.clickable_fields = []
 
+        # Cache for record output to avoid repeated get command calls
+        self._record_output_cache = {}
+
+        # TOTP auto-refresh timer
+        self._totp_timer = None
+        self._totp_record_uid = None  # Record currently showing TOTP
+
         # Sync vault data if needed
         if not hasattr(self.params, 'record_cache') or not self.params.record_cache:
             from .utils import SyncDownCommand
@@ -900,7 +908,6 @@ class SuperShellApp(App):
 [bold {t['primary_bright']}]Vim-Style Navigation[/bold {t['primary_bright']}]
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]g[/{t['primary']}] - Go to top
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]G[/{t['primary']}] (Shift+G) - Go to bottom
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]:N[/{t['primary']}] - Go to line N (e.g., :20)
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+d/u[/{t['primary']}] - Half page down/up
 
 [bold {t['primary_bright']}]Quick Actions[/bold {t['primary_bright']}]
@@ -908,7 +915,7 @@ class SuperShellApp(App):
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]u[/{t['primary']}] - Copy username
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]w[/{t['primary']}] - Copy URL
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]t[/{t['primary']}] - Toggle Detail/JSON view
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]d[/{t['primary']}] - Sync vault from server
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]d[/{t['primary']}] - Sync & refresh vault
 
 [{t['text_dim']}]Press [/{t['text_dim']}][{t['primary']}]?[/{t['primary']}][{t['text_dim']}] for full keyboard shortcuts[/{t['text_dim']}]"""
             detail_widget.update(help_content)
@@ -1073,6 +1080,9 @@ class SuperShellApp(App):
                             record_dict['login_url'] = record.login_url
                         if hasattr(record, 'notes'):
                             record_dict['notes'] = record.notes
+                        # Extract TOTP URL (v2 legacy records have it as 'totp' attribute)
+                        if hasattr(record, 'totp') and record.totp:
+                            record_dict['totp_url'] = record.totp
 
                         # For TypedRecords, extract fields from the fields array
                         if hasattr(record, 'fields'):
@@ -1102,6 +1112,13 @@ class SuperShellApp(App):
                                         record_dict['login_url'] = field_value[0]
                                     elif isinstance(field_value, str):
                                         record_dict['login_url'] = field_value
+
+                                # Extract TOTP URL from oneTimeCode field
+                                if field_type == 'oneTimeCode' and field_value and not record_dict.get('totp_url'):
+                                    if isinstance(field_value, list) and len(field_value) > 0:
+                                        record_dict['totp_url'] = field_value[0]
+                                    elif isinstance(field_value, str):
+                                        record_dict['totp_url'] = field_value
 
                                 # Collect custom fields (those with labels)
                                 if field_label and field_value:
@@ -1136,14 +1153,18 @@ class SuperShellApp(App):
 
         return True
 
-    def _add_record_with_attachments(self, parent_node, record: dict, idx: int, auto_expand: bool = False):
+    def _add_record_with_attachments(self, parent_node, record: dict, idx: int, auto_expand: bool = False, total_count: int = 0):
         """Add a record to the tree, including any file attachments and linked records as siblings."""
         record_uid = record.get('uid')
         record_title = record.get('title', 'Untitled')
         t = self.theme_colors  # Theme colors
 
+        # Calculate width for right-aligned numbers based on total count
+        width = len(str(total_count)) if total_count > 0 else len(str(idx))
+        idx_str = str(idx).rjust(width)
+
         # Always add record as a leaf (no expand/collapse indicator)
-        record_label = f"[{t['record_num']}]{idx}.[/{t['record_num']}] [{t['record']}]{record_title}[/{t['record']}]"
+        record_label = f"[{t['record_num']}]{idx_str}.[/{t['record_num']}] [{t['record']}]{record_title}[/{t['record']}]"
         parent_node.add_leaf(
             record_label,
             data={'type': 'record', 'uid': record_uid}
@@ -1253,9 +1274,10 @@ class SuperShellApp(App):
 
             # Sort and add records (with their file attachments as children)
             folder_records.sort(key=lambda r: r.get('title', '').lower())
+            total_records = len(folder_records)
 
             for idx, record in enumerate(folder_records, start=1):
-                self._add_record_with_attachments(tree_node, record, idx, auto_expand)
+                self._add_record_with_attachments(tree_node, record, idx, auto_expand, total_records)
 
             # Auto-expand if we're in search mode with < 100 results
             if auto_expand:
@@ -1291,9 +1313,10 @@ class SuperShellApp(App):
                 if self.filtered_record_uids is None or record_uid in self.filtered_record_uids:
                     root_records.append(r)
         root_records.sort(key=lambda r: r.get('title', '').lower())
+        total_root_records = len(root_records)
 
         for idx, record in enumerate(root_records, start=1):
-            self._add_record_with_attachments(root, record, idx, auto_expand)
+            self._add_record_with_attachments(root, record, idx, auto_expand, total_root_records)
 
         # Add virtual "Secrets Manager Apps" folder at the bottom for app records
         app_records = []
@@ -1305,6 +1328,7 @@ class SuperShellApp(App):
 
         if app_records:
             app_records.sort(key=lambda r: r.get('title', '').lower())
+            total_app_records = len(app_records)
             # Create virtual folder with distinct styling
             apps_folder = root.add(
                 f"[{t['virtual_folder']}]★ Secrets Manager Apps[/{t['virtual_folder']}]",
@@ -1312,7 +1336,7 @@ class SuperShellApp(App):
             )
 
             for idx, record in enumerate(app_records, start=1):
-                self._add_record_with_attachments(apps_folder, record, idx, auto_expand)
+                self._add_record_with_attachments(apps_folder, record, idx, auto_expand, total_app_records)
 
             if auto_expand:
                 apps_folder.expand()
@@ -1533,8 +1557,21 @@ class SuperShellApp(App):
             current_section = None
             prev_was_blank = False
             seen_first_user = False  # Track if we've seen first user in permissions section
-            section_headers = {'Custom Fields', 'Notes', 'Attachments', 'User Permissions',
+            in_totp_section = False
+            # Section headers - only when value is empty
+            section_headers = {'Custom Fields', 'Attachments', 'User Permissions',
                                'Shared Folder Permissions', 'Share Admins', 'One-Time Share URL'}
+
+            def is_section_header(key, value):
+                """Check if key is a section header (only when value is empty)"""
+                if value:
+                    return False
+                if key in section_headers:
+                    return True
+                for header in section_headers:
+                    if key.startswith(header):
+                        return True
+                return False
 
             for line in output.split('\n'):
                 stripped = line.strip()
@@ -1560,31 +1597,45 @@ class SuperShellApp(App):
                         lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [bold {t['primary']}]{value}[/bold {t['primary']}]")
                     # Type field
                     elif key == 'Type':
-                        lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary_dim']}]{value}[/{t['primary_dim']}]")
+                        display_type = value if value else 'app' if record_uid in self.app_record_uids else ''
+                        lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary_dim']}]{display_type}[/{t['primary_dim']}]")
+                    # Notes - always a section
+                    elif key == 'Notes':
+                        lines.append("")
+                        lines.append(f"[bold {t['secondary']}]Notes:[/bold {t['secondary']}]")
+                        current_section = 'Notes'
+                        if value:
+                            lines.append(f"  [{t['primary']}]{value}[/{t['primary']}]")
+                    # TOTP fields - skip, will be calculated from stored URL
+                    elif key == 'TOTP URL':
+                        pass
+                    elif key == 'Two Factor Code':
+                        pass
                     # Section headers
-                    elif key in section_headers:
+                    elif is_section_header(key, value):
                         current_section = key
-                        seen_first_user = False  # Reset for new section
+                        seen_first_user = False
+                        in_totp_section = False
                         if lines:
-                            lines.append("")  # Single blank line before section
+                            lines.append("")
                         lines.append(f"[bold {t['secondary']}]{key}:[/bold {t['secondary']}]")
                     # Regular key-value pairs
                     elif value:
-                        # Add blank line before each User entry in User Permissions section (except first)
                         if key == 'User' and current_section == 'User Permissions':
                             if seen_first_user:
-                                lines.append("")  # Blank line between users
+                                lines.append("")
                             seen_first_user = True
                         if current_section:
                             lines.append(f"  [{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{value}[/{t['primary']}]")
                         else:
                             lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{value}[/{t['primary']}]")
                     elif key:
-                        # Key with no value (like a sub-header)
                         lines.append(f"  [{t['primary_dim']}]{key}[/{t['primary_dim']}]")
                 else:
-                    # Lines without colons (list items, continuation text)
-                    if stripped:
+                    # Lines without colons - continuation of notes or other content
+                    if current_section == 'Notes':
+                        lines.append(f"  [{t['primary']}]{stripped}[/{t['primary']}]")
+                    elif stripped:
                         lines.append(f"  [{t['primary_dim']}]{stripped}[/{t['primary_dim']}]")
 
             return "\n".join(lines)
@@ -1684,7 +1735,12 @@ class SuperShellApp(App):
             return f"[red]Error displaying folder:[/red]\n{str(e)}"
 
     def _get_record_output(self, record_uid: str, format_type: str = 'detail') -> str:
-        """Get record output using Commander's get command"""
+        """Get record output using Commander's get command (cached for performance)"""
+        # Check cache first
+        cache_key = f"{record_uid}:{format_type}"
+        if hasattr(self, '_record_output_cache') and cache_key in self._record_output_cache:
+            return self._record_output_cache[cache_key]
+
         try:
             # Create a StringIO buffer to capture stdout
             stdout_buffer = io.StringIO()
@@ -1698,8 +1754,10 @@ class SuperShellApp(App):
             # Restore stdout
             sys.stdout = old_stdout
 
-            # Get the captured output
+            # Get the captured output and cache it
             output = stdout_buffer.getvalue()
+            if hasattr(self, '_record_output_cache'):
+                self._record_output_cache[cache_key] = output
             return output
 
         except Exception as e:
@@ -1711,17 +1769,18 @@ class SuperShellApp(App):
         """Remove any dynamically mounted clickable field widgets"""
         try:
             detail_scroll = self.query_one("#record_detail", VerticalScroll)
-            # Remove all clickable widget types
-            for widget in list(detail_scroll.query(ClickableDetailLine)):
-                widget.remove()
-            for widget in list(detail_scroll.query(ClickableField)):
-                widget.remove()
-            for widget in list(detail_scroll.query(ClickableRecordUID)):
-                widget.remove()
+            # Collect all widgets to remove first, then batch remove
+            widgets_to_remove = []
+            widgets_to_remove.extend(detail_scroll.query(ClickableDetailLine))
+            widgets_to_remove.extend(detail_scroll.query(ClickableField))
+            widgets_to_remove.extend(detail_scroll.query(ClickableRecordUID))
             # Also remove any dynamically added Static widgets (but keep #detail_content)
-            for widget in list(detail_scroll.query(Static)):
+            for widget in detail_scroll.query(Static):
                 if widget.id != "detail_content" and widget.id != "shortcuts_bar":
-                    widget.remove()
+                    widgets_to_remove.append(widget)
+            # Batch remove all at once
+            for widget in widgets_to_remove:
+                widget.remove()
         except Exception as e:
             logging.debug(f"Error clearing clickable fields: {e}")
 
@@ -1745,10 +1804,13 @@ class SuperShellApp(App):
         # Hide the static placeholder
         detail_widget.update("")
 
-        # Helper to mount clickable lines
+        # Collect all widgets first, then mount in batch for performance
+        widgets_to_mount = []
+
+        # Helper to collect clickable lines (batched for performance)
         def mount_line(content: str, copy_value: str = None, is_password: bool = False):
             line = ClickableDetailLine(content, copy_value, record_uid=record_uid, is_password=is_password)
-            detail_scroll.mount(line, before=detail_widget)
+            widgets_to_mount.append(line)
 
         # Get the actual record data for password lookup
         record_data = self.records.get(record_uid, {})
@@ -1757,8 +1819,39 @@ class SuperShellApp(App):
         # Parse and create clickable lines
         current_section = None
         seen_first_user = False  # Track if we've seen first user in permissions section
-        section_headers = {'Custom Fields', 'Notes', 'Attachments', 'User Permissions',
+        totp_displayed = False  # Track if TOTP has been displayed
+        totp_url = record_data.get('totp_url')  # Get TOTP URL once for use in display
+        # Section headers are only headers when they have NO value on the same line
+        section_headers = {'Custom Fields', 'Attachments', 'User Permissions',
                           'Shared Folder Permissions', 'Share Admins', 'One-Time Share URL'}
+
+        def display_totp():
+            """Helper to display TOTP section"""
+            nonlocal totp_displayed
+            if totp_url and not totp_displayed:
+                from ..record import get_totp_code
+                try:
+                    result = get_totp_code(totp_url)
+                    if result:
+                        code, seconds_remaining, period = result
+                        mount_line("", None)  # Blank line before TOTP
+                        mount_line(f"[bold {t['secondary']}]Two-Factor Authentication:[/bold {t['secondary']}]", None)
+                        mount_line(f"  [{t['text_dim']}]Code:[/{t['text_dim']}] [bold #00ff00]{code}[/bold #00ff00]    [{t['text_dim']}]valid for[/{t['text_dim']}] [bold #ffff00]{seconds_remaining} sec[/bold #ffff00]", code)
+                        totp_displayed = True
+                except Exception as e:
+                    logging.debug(f"Error calculating TOTP: {e}")
+
+        def is_section_header(key, value):
+            """Check if key is a section header (only when value is empty)"""
+            if value:  # If there's a value on same line, it's not a section header
+                return False
+            if key in section_headers:
+                return True
+            # Handle cases like "Share Admins (64, showing first 10)"
+            for header in section_headers:
+                if key.startswith(header):
+                    return True
+            return False
 
         for line in output.split('\n'):
             stripped = line.strip()
@@ -1775,13 +1868,35 @@ class SuperShellApp(App):
                 elif key in ['Title', 'Name'] and not current_section:
                     mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [bold {t['primary']}]{value}[/bold {t['primary']}]", value)
                 elif key == 'Type':
-                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary_dim']}]{value}[/{t['primary_dim']}]", value)
+                    # Show 'app' for app records if type is blank
+                    display_type = value if value else 'app' if record_uid in self.app_record_uids else ''
+                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary_dim']}]{display_type}[/{t['primary_dim']}]", display_type)
                 elif key == 'Password':
                     # Show masked password but use ClipboardCommand to copy (generates audit event)
                     display_value = '******' if actual_password else value
                     copy_value = actual_password if actual_password else None
                     mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{display_value}[/{t['primary']}]", copy_value, is_password=True)
-                elif key in section_headers:
+                elif key == 'URL':
+                    # Display URL, then TOTP if present
+                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{value}[/{t['primary']}]", value)
+                    display_totp()  # Add TOTP section right after URL (before Notes)
+                elif key == 'Notes':
+                    # Display TOTP before Notes if not already shown (for records without URL)
+                    display_totp()
+                    # Notes section - check if it has content on same line or is multi-line
+                    mount_line("", None)  # Blank line before Notes
+                    mount_line(f"[bold {t['secondary']}]Notes:[/bold {t['secondary']}]", None)
+                    current_section = 'Notes'
+                    if value:
+                        # Notes content is on the same line
+                        mount_line(f"  [{t['primary']}]{value}[/{t['primary']}]", value)
+                elif key == 'TOTP URL':
+                    # Skip TOTP URL - we'll show the code calculated from stored URL
+                    pass
+                elif key == 'Two Factor Code':
+                    # Skip - we'll calculate and show TOTP from stored URL below
+                    pass
+                elif is_section_header(key, value):
                     current_section = key
                     seen_first_user = False  # Reset for new section
                     mount_line("", None)  # Blank line
@@ -1797,12 +1912,60 @@ class SuperShellApp(App):
                 elif key:
                     mount_line(f"  [{t['primary_dim']}]{key}[/{t['primary_dim']}]", key)
             else:
-                if stripped:
+                # Lines without colons - continuation of notes or other multi-line content
+                if current_section == 'Notes':
+                    mount_line(f"  [{t['primary']}]{stripped}[/{t['primary']}]", stripped)
+                elif stripped:
                     mount_line(f"  [{t['primary_dim']}]{stripped}[/{t['primary_dim']}]", stripped)
 
+        # Batch mount all widgets at once for better performance
+        if widgets_to_mount:
+            detail_scroll.mount(*widgets_to_mount, before=detail_widget)
+
+        # Start TOTP auto-refresh timer if this record has TOTP
+        # Skip timer management if we're in a refresh callback
+        if not getattr(self, '_totp_refreshing', False):
+            self._stop_totp_timer()  # Stop any existing timer
+            if totp_url:
+                self._totp_record_uid = record_uid
+                self._totp_timer = self.set_interval(1.0, self._refresh_totp_display)
+
+    def _stop_totp_timer(self):
+        """Stop the TOTP auto-refresh timer"""
+        if hasattr(self, '_totp_timer') and self._totp_timer:
+            self._totp_timer.stop()
+            self._totp_timer = None
+        self._totp_record_uid = None
+
+    def _refresh_totp_display(self):
+        """Refresh the TOTP display (called by timer every second)"""
+        if not hasattr(self, '_totp_record_uid') or not self._totp_record_uid:
+            self._stop_totp_timer()
+            return
+
+        if self._totp_record_uid != self.selected_record:
+            self._stop_totp_timer()
+            return
+
+        # Don't refresh if in JSON view mode
+        if self.view_mode == 'json':
+            return
+
+        # Re-display the record (TOTP is calculated fresh each time)
+        record_uid = self._totp_record_uid
+        self._totp_refreshing = True  # Flag to prevent timer restart
+        try:
+            self._display_record_with_clickable_fields(record_uid)
+        finally:
+            self._totp_refreshing = False
+            # Restore the record UID since display clears it
+            self._totp_record_uid = record_uid
 
     def _display_json_with_clickable_fields(self, record_uid: str):
         """Display JSON view with clickable string values, syntax highlighting, masking passwords"""
+        # Stop TOTP timer when in JSON view (no live countdown)
+        self._stop_totp_timer()
+
         t = self.theme_colors
         container = self.query_one("#record_detail", VerticalScroll)
         detail_widget = self.query_one("#detail_content", Static)
@@ -1830,16 +1993,19 @@ class SuperShellApp(App):
         # Clear detail widget content
         detail_widget.update("")
 
-        # Helper to mount widgets
+        # Collect all widgets first for batch mounting
+        widgets_to_mount = []
+
+        # Helper to collect widgets (batched for performance)
         def mount_line(content: str, copy_value: str = None, is_password: bool = False):
-            """Mount a clickable line"""
+            """Collect a clickable line for batch mounting"""
             line = ClickableDetailLine(
                 content,
                 copy_value=copy_value,
                 record_uid=record_uid if is_password else None,
                 is_password=is_password
             )
-            container.mount(line, before=detail_widget)
+            widgets_to_mount.append(line)
             self.clickable_fields.append(line)
 
         # Render JSON header
@@ -1848,6 +2014,10 @@ class SuperShellApp(App):
 
         # Render JSON with syntax highlighting
         self._render_json_lines(display_obj, unmasked_obj, mount_line, t, record_uid)
+
+        # Batch mount all widgets at once for better performance
+        if widgets_to_mount:
+            container.mount(*widgets_to_mount, before=detail_widget)
 
     def _render_json_lines(self, display_obj, unmasked_obj, mount_line, t, record_uid, indent=0):
         """Recursively render JSON object as clickable lines with syntax highlighting"""
@@ -2017,6 +2187,9 @@ class SuperShellApp(App):
 
     def _display_folder_with_clickable_fields(self, folder_uid: str):
         """Display folder details with clickable fields for copy-on-click"""
+        # Stop TOTP timer when viewing folders
+        self._stop_totp_timer()
+
         t = self.theme_colors
         detail_scroll = self.query_one("#record_detail", VerticalScroll)
         detail_widget = self.query_one("#detail_content", Static)
@@ -2231,6 +2404,18 @@ class SuperShellApp(App):
     @on(Tree.NodeSelected)
     def on_tree_node_selected(self, event: Tree.NodeSelected):
         """Handle tree node selection (folder or record)"""
+        # Deactivate search input mode when selecting a node (clicking or navigating)
+        if self.search_input_active:
+            self.search_input_active = False
+            tree = self.query_one("#folder_tree", Tree)
+            tree.remove_class("search-input-active")
+            # Update search display to remove cursor
+            search_display = self.query_one("#search_display", Static)
+            if self.search_input_text:
+                search_display.update(self.search_input_text)
+            else:
+                search_display.update("[dim]Search... (Tab or /)[/dim]")
+
         node_data = event.node.data
         if not node_data:
             return
@@ -2299,7 +2484,6 @@ class SuperShellApp(App):
 [bold {t['primary_bright']}]Vim-Style Navigation[/bold {t['primary_bright']}]
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]g[/{t['primary']}] - Go to top
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]G[/{t['primary']}] (Shift+G) - Go to bottom
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]:N[/{t['primary']}] - Go to line N (e.g., :20)
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+d/u[/{t['primary']}] - Half page down/up
 
 [bold {t['primary_bright']}]Quick Actions[/bold {t['primary_bright']}]
@@ -2307,7 +2491,7 @@ class SuperShellApp(App):
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]u[/{t['primary']}] - Copy username
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]w[/{t['primary']}] - Copy URL
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]t[/{t['primary']}] - Toggle Detail/JSON view
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]d[/{t['primary']}] - Sync vault from server
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]d[/{t['primary']}] - Sync & refresh vault
 
 [{t['text_dim']}]Press [/{t['text_dim']}][{t['primary']}]?[/{t['primary']}][{t['text_dim']}] for full keyboard shortcuts[/{t['text_dim']}]"""
             detail_widget.update(help_content)
@@ -2381,7 +2565,7 @@ class SuperShellApp(App):
                 if event.key in ("j", "k", "h", "l", "up", "down", "left", "right", "enter", "space"):
                     return
                 # Action keys (copy, toggle view, etc.) - let them pass through
-                if event.key in ("t", "c", "u", "w", "i", "y", "d", "r", "p", "g", "question_mark"):
+                if event.key in ("t", "c", "u", "w", "i", "y", "d", "p", "g", "question_mark"):
                     return
                 # Shift+G for go to bottom
                 if event.character == "G":
@@ -2663,7 +2847,7 @@ class SuperShellApp(App):
         """Toggle between detail and JSON view modes"""
         # Only works for records, not folders
         if not self.selected_record:
-            self.notify("⚠️ View toggle only works for records, not folders", severity="warning")
+            self.notify("⚠️  View toggle only works for records, not folders", severity="warning")
             return
 
         if self.view_mode == 'detail':
@@ -2678,7 +2862,7 @@ class SuperShellApp(App):
             self._display_record_detail(self.selected_record)
         except Exception as e:
             logging.error(f"Error toggling view mode: {e}", exc_info=True)
-            self.notify(f"⚠️ Error switching view: {str(e)}", severity="error")
+            self.notify(f"⚠️  Error switching view: {str(e)}", severity="error")
 
     def action_copy_password(self):
         """Copy password of selected record to clipboard using clipboard-copy command (generates audit event)"""
@@ -2691,27 +2875,9 @@ class SuperShellApp(App):
                 self.notify("🔑 Password copied to clipboard!", severity="information")
             except Exception as e:
                 logging.debug(f"ClipboardCommand error: {e}")
-                self.notify("⚠️ No password found for this record", severity="warning")
+                self.notify("⚠️  No password found for this record", severity="warning")
         else:
-            self.notify("⚠️ No record selected", severity="warning")
-
-    def action_refresh(self):
-        """Refresh vault data"""
-        self._update_status("🔄 Refreshing vault data...")
-
-        # Reload vault data
-        self.records = {}
-        self.record_to_folder = {}
-        self.records_in_subfolders = set()
-        self.file_attachment_to_parent = {}
-        self.record_file_attachments = {}
-        self.linked_record_to_parent = {}
-        self.record_linked_records = {}
-        self.app_record_uids = set()
-        self._load_vault_data()
-        self._setup_folder_tree()
-
-        self._update_status("✅ Vault data refreshed")
+            self.notify("⚠️  No record selected", severity="warning")
 
     def action_copy_username(self):
         """Copy username of selected record to clipboard"""
@@ -2789,8 +2955,8 @@ class SuperShellApp(App):
         self.push_screen(HelpScreen())
 
     def action_sync_vault(self):
-        """Sync vault data from server (sync-down + enterprise-down)"""
-        self._update_status("Syncing vault data...")
+        """Sync vault data from server (sync-down + enterprise-down) and refresh UI"""
+        self._update_status("Syncing vault data from server...")
 
         try:
             # Run sync-down command
@@ -2813,11 +2979,12 @@ class SuperShellApp(App):
             self.linked_record_to_parent = {}
             self.record_linked_records = {}
             self.app_record_uids = set()
+            self._record_output_cache = {}  # Clear record output cache
             self._load_vault_data()
             self._setup_folder_tree()
 
-            self._update_status("Vault synced successfully")
-            self.notify("Vault data synced", severity="information")
+            self._update_status("Vault synced & refreshed")
+            self.notify("Vault synced & refreshed", severity="information")
         except Exception as e:
             logging.error(f"Error syncing vault: {e}", exc_info=True)
             self._update_status(f"Sync failed: {str(e)}")
@@ -2988,64 +3155,102 @@ class SuperShellCommand(Command):
 
     def _execute_supershell(self, params, **kwargs):
         """Internal method to run SuperShell"""
+        import threading
+        import time
+        import sys
+
+        class Spinner:
+            """Animated spinner that runs in a background thread"""
+            def __init__(self, message="Loading..."):
+                self.message = message
+                self.running = False
+                self.thread = None
+                self.chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+                self.colors = ['\033[36m', '\033[32m', '\033[33m', '\033[35m']
+
+            def _spin(self):
+                i = 0
+                while self.running:
+                    color = self.colors[i % len(self.colors)]
+                    char = self.chars[i % len(self.chars)]
+                    sys.stdout.write(f"\r  {color}{char}\033[0m {self.message}")
+                    sys.stdout.flush()
+                    time.sleep(0.1)
+                    i += 1
+
+            def start(self):
+                self.running = True
+                self.thread = threading.Thread(target=self._spin, daemon=True)
+                self.thread.start()
+
+            def stop(self, success_message=None):
+                self.running = False
+                if self.thread:
+                    self.thread.join(timeout=0.5)
+                # Clear spinner line
+                sys.stdout.write("\r\033[K")
+                sys.stdout.flush()
+                if success_message:
+                    print(f"  \033[32m✓\033[0m {success_message}")
+
+            def update(self, message):
+                self.message = message
 
         # Check if authentication is needed
         if not params.session_token:
-            # Simple animated loading message
-            import time
-            colors = ['\033[36m', '\033[32m', '\033[33m', '\033[35m']  # Cyan, Green, Yellow, Magenta
-            spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-
-            print("\n")
-            for i in range(10):
-                color = colors[i % len(colors)]
-                spin = spinner[i % len(spinner)]
-                print(f"\r  {color}{spin} Loading...\033[0m", end='', flush=True)
-                time.sleep(0.1)
-            print("\r\033[K", end='', flush=True)  # Clear the line
-
-            # Run the login flow
             from .utils import LoginCommand
+            login_spinner = None
             try:
+                # Start spinner for authentication
+                login_spinner = Spinner("Authenticating...")
+                login_spinner.start()
+
+                # Run login - password prompt will print over spinner
                 LoginCommand().execute(params, email=params.user, password=params.password, new_login=False)
 
                 if not params.session_token:
+                    login_spinner.stop()
                     logging.error("\nLogin failed or was cancelled.")
                     return
 
-                print("\n✓ Login successful!")
+                login_spinner.stop("Login successful!")
 
-                # Sync vault data after login
-                print("✓ Syncing vault data...")
-                from .utils import SyncDownCommand
-                SyncDownCommand().execute(params)
-                print("✓ Vault synced!\n")
+                # Sync vault data with spinner
+                sync_spinner = Spinner("Syncing vault data...")
+                sync_spinner.start()
+                try:
+                    from .utils import SyncDownCommand
+                    SyncDownCommand().execute(params)
+                    sync_spinner.stop("Vault synced!")
+                except Exception as e:
+                    sync_spinner.stop()
+                    raise
+
+                print()  # Blank line before TUI
 
             except KeyboardInterrupt:
+                if login_spinner:
+                    login_spinner.stop()
                 print("\n\nLogin cancelled.")
                 return
             except Exception as e:
+                if login_spinner:
+                    login_spinner.stop()
                 logging.error(f"\nLogin failed: {e}")
                 return
 
-        # Launch the TUI app
-        import time
-        colors = ['\033[36m', '\033[32m', '\033[33m', '\033[35m']  # Cyan, Green, Yellow, Magenta
-        spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-
-        print("")
-        for i in range(8):
-            color = colors[i % len(colors)]
-            spin = spinner[i % len(spinner)]
-            print(f"\r  {color}{spin} Loading...\033[0m", end='', flush=True)
-            time.sleep(0.08)
-        print("\r\033[K", end='', flush=True)  # Clear the line
+        # Launch the TUI app with spinner
+        spinner = Spinner("Starting SuperShell...")
+        spinner.start()
 
         try:
             app = SuperShellApp(params)
+            spinner.stop()  # Stop spinner before TUI takes over screen
             app.run()
         except KeyboardInterrupt:
+            spinner.stop()
             logging.info("SuperShell interrupted")
         except Exception as e:
+            spinner.stop()
             logging.error(f"Error running SuperShell: {e}")
             raise
