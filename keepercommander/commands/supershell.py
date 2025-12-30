@@ -29,13 +29,14 @@ COLOR_THEMES = {
         'text_dim': '#aaaaaa',       # Dim text
         'folder': '#44ff44',         # Folder color (light green)
         'folder_shared': '#00dd00',  # Shared folder (slightly different green)
-        'record': '#00ff00',         # Record color
+        'record': '#00aa00',         # Record color (dimmer than folders)
         'record_num': '#888888',     # Record number
         'attachment': '#00cc00',     # Attachment color
         'virtual_folder': '#00ff88', # Virtual folder
         'status': '#00ff00',         # Status bar
         'border': '#00aa00',         # Borders
         'root': '#00ff00',           # Root node
+        'header_user': '#00bbff',    # Header username (blue contrast)
     },
     'blue': {
         'primary': '#0099ff',
@@ -48,13 +49,14 @@ COLOR_THEMES = {
         'text_dim': '#aaaaaa',
         'folder': '#66bbff',
         'folder_shared': '#0099ff',
-        'record': '#0099ff',
+        'record': '#0077cc',         # Record color (dimmer than folders)
         'record_num': '#888888',
         'attachment': '#0077cc',
         'virtual_folder': '#00aaff',
         'status': '#0099ff',
         'border': '#0066cc',
         'root': '#0099ff',
+        'header_user': '#ff9900',    # Header username (orange contrast)
     },
     'magenta': {
         'primary': '#ff66ff',
@@ -67,13 +69,14 @@ COLOR_THEMES = {
         'text_dim': '#aaaaaa',
         'folder': '#ff99ff',
         'folder_shared': '#ff66ff',
-        'record': '#ff66ff',
+        'record': '#cc44cc',         # Record color (dimmer than folders)
         'record_num': '#888888',
         'attachment': '#cc44cc',
         'virtual_folder': '#ffaaff',
         'status': '#ff66ff',
         'border': '#cc44cc',
         'root': '#ff66ff',
+        'header_user': '#66ff66',    # Header username (green contrast)
     },
     'yellow': {
         'primary': '#ffff00',
@@ -86,13 +89,14 @@ COLOR_THEMES = {
         'text_dim': '#aaaaaa',
         'folder': '#ffff66',
         'folder_shared': '#ffcc00',
-        'record': '#ffff00',
+        'record': '#cccc00',         # Record color (dimmer than folders)
         'record_num': '#888888',
         'attachment': '#cccc00',
         'virtual_folder': '#ffff88',
         'status': '#ffff00',
         'border': '#cccc00',
         'root': '#ffff00',
+        'header_user': '#66ccff',    # Header username (blue contrast)
     },
     'white': {
         'primary': '#ffffff',
@@ -105,13 +109,14 @@ COLOR_THEMES = {
         'text_dim': '#999999',
         'folder': '#eeeeee',
         'folder_shared': '#dddddd',
-        'record': '#ffffff',
+        'record': '#bbbbbb',         # Record color (dimmer than folders)
         'record_num': '#888888',
         'attachment': '#cccccc',
         'virtual_folder': '#ffffff',
         'status': '#ffffff',
         'border': '#888888',
         'root': '#ffffff',
+        'header_user': '#66ccff',    # Header username (blue contrast)
     },
 }
 
@@ -351,7 +356,6 @@ from ..commands.record import RecordGetUidCommand, ClipboardCommand
 from ..display import bcolors
 from .. import api
 from .. import vault
-from .. import loginv3
 from .. import utils
 from ..proto import APIRequest_pb2
 
@@ -612,7 +616,7 @@ class SuperShellApp(App):
     }
 
     #search_display {
-        width: 70%;
+        width: 35%;
         background: #222222;
         color: #ffffff;
         padding: 0 2;
@@ -620,12 +624,33 @@ class SuperShellApp(App):
     }
 
     #search_results_label {
-        width: 30%;
+        width: 15%;
         color: #aaaaaa;
         text-align: right;
         padding: 0 2;
-        height: 1;
+        height: 3;
         background: #222222;
+    }
+
+    #user_info {
+        width: 25%;
+        height: 3;
+        background: #222222;
+        color: #888888;
+        padding: 0 1;
+    }
+
+    #device_status_info {
+        width: 25%;
+        height: 3;
+        background: #222222;
+        color: #888888;
+        padding: 0 1;
+        text-align: right;
+    }
+
+    .clickable-info:hover {
+        background: #333333;
     }
 
     #main_container {
@@ -842,6 +867,8 @@ class SuperShellApp(App):
         with Horizontal(id="search_bar"):
             yield Static("", id="search_display")
             yield Static("", id="search_results_label")
+            yield Static("", id="user_info", classes="clickable-info")
+            yield Static("", id="device_status_info", classes="clickable-info")
 
         with Horizontal(id="main_container"):
             with Vertical(id="folder_panel"):
@@ -884,6 +911,11 @@ class SuperShellApp(App):
             logging.info("Loading vault data...")
             self._load_vault_data()
 
+            # Load device and user info for header display
+            logging.info("Loading device and user info...")
+            self.device_info = self._load_device_info()
+            self.whoami_info = self._load_whoami_info()
+
             # Setup folder tree with records
             logging.info("Setting up folder tree...")
             self._setup_folder_tree()
@@ -896,7 +928,7 @@ class SuperShellApp(App):
             detail_widget = self.query_one("#detail_content", Static)
             help_content = f"""[bold {t['primary']}]● Keeper SuperShell[/bold {t['primary']}]
 
-[{t['secondary']}]A CLI-based vault viewer with keyboard and mouse navigation.[/{t['secondary']}]
+[{t['secondary']}]A CLI-based vault with vi-style keyboard and mouse navigation.[/{t['secondary']}]
 
 [bold {t['primary_bright']}]Getting Started[/bold {t['primary_bright']}]
   [{t['text_dim']}]•[/{t['text_dim']}] Use [{t['primary']}]j/k[/{t['primary']}] or [{t['primary']}]↑/↓[/{t['primary']}] to navigate up/down
@@ -926,6 +958,9 @@ class SuperShellApp(App):
             # Initialize search bar with placeholder
             search_display = self.query_one("#search_display", Static)
             search_display.update("[dim]Search... (Tab or /)[/dim]")
+
+            # Initialize header info display (user and device)
+            self._update_header_info_display()
 
             # Focus the folder tree so vim keys work immediately
             self.query_one("#folder_tree", Tree).focus()
@@ -1133,6 +1168,140 @@ class SuperShellApp(App):
                 except Exception as e:
                     logging.debug(f"Error loading record {record_uid}: {e}")
                     continue
+
+    def _load_device_info(self):
+        """Load device info using the 'this-device' command"""
+        try:
+            from .utils import ThisDeviceCommand
+
+            # Call get_device_info directly - returns dict without printing
+            return ThisDeviceCommand.get_device_info(self.params)
+
+        except Exception as e:
+            logging.error(f"Error loading device info: {e}", exc_info=True)
+            return None
+
+    def _load_whoami_info(self):
+        """Load whoami info using the 'whoami' command"""
+        try:
+            from .utils import WhoamiCommand
+
+            # Call get_whoami_info directly - returns dict without printing
+            return WhoamiCommand.get_whoami_info(self.params)
+
+        except Exception as e:
+            logging.error(f"Error loading whoami info: {e}", exc_info=True)
+            return None
+
+    def _update_header_info_display(self):
+        """Update the user and device info displays in the search bar area"""
+        try:
+            user_info_widget = self.query_one("#user_info", Static)
+            device_status_widget = self.query_one("#device_status_info", Static)
+            t = self.theme_colors
+
+            # Update user info (from whoami)
+            if hasattr(self, 'whoami_info') and self.whoami_info:
+                wi = self.whoami_info
+                user = wi.get('user', 'Unknown')
+                data_center = wi.get('data_center', '')
+                user_color = t.get('header_user', t['primary'])
+                user_info_widget.update(f"[{user_color}]{user}[/{user_color}] │ [{t['text_dim']}]{data_center}[/{t['text_dim']}]")
+            else:
+                user_info_widget.update("[dim]User info unavailable[/dim]")
+
+            # Update device status (from this-device)
+            if hasattr(self, 'device_info') and self.device_info:
+                di = self.device_info
+                persistent = "[green]ON[/green]" if di.get('persistent_login') else "[red]OFF[/red]"
+                timeout = di.get('effective_logout_timeout') or di.get('device_logout_timeout', 'Default')
+                device_status_widget.update(f"[{t['text_dim']}]Logged In:[/{t['text_dim']}] {persistent} │ [{t['text_dim']}]Timeout:[/{t['text_dim']}] [{t['primary_dim']}]{timeout}[/{t['primary_dim']}]")
+            else:
+                device_status_widget.update("[dim]Device info unavailable[/dim]")
+
+        except Exception as e:
+            logging.debug(f"Error updating header info display: {e}")
+
+    def _display_whoami_info(self):
+        """Display whoami info in the detail panel"""
+        try:
+            t = self.theme_colors
+            detail_widget = self.query_one("#detail_content", Static)
+
+            if not hasattr(self, 'whoami_info') or not self.whoami_info:
+                detail_widget.update("[dim]Whoami info unavailable[/dim]")
+                return
+
+            wi = self.whoami_info
+
+            lines = [f"[bold {t['primary']}]● User Information[/bold {t['primary']}]", ""]
+
+            # Format each field
+            fields = [
+                ('User', wi.get('user')),
+                ('Server', wi.get('server')),
+                ('Data Center', wi.get('data_center')),
+                ('Environment', wi.get('environment')),
+                ('Account Type', wi.get('account_type')),
+                ('Admin', 'Yes' if wi.get('admin') else 'No' if 'admin' in wi else None),
+                ('Renewal Date', wi.get('renewal_date')),
+                ('Storage Capacity', wi.get('storage_capacity')),
+                ('Storage Usage', wi.get('storage_usage')),
+                ('Storage Renewal', wi.get('storage_renewal_date')),
+                ('BreachWatch', 'Yes' if wi.get('breachwatch') else 'No'),
+                ('Reporting & Alerts', 'Yes' if wi.get('reporting_and_alerts') else 'No' if 'reporting_and_alerts' in wi else None),
+            ]
+
+            for label, value in fields:
+                if value is not None:
+                    lines.append(f"  [{t['text_dim']}]{label}:[/{t['text_dim']}] [{t['primary']}]{value}[/{t['primary']}]")
+
+            detail_widget.update("\n".join(lines))
+            self._update_status("User information | Press Esc to return")
+
+        except Exception as e:
+            logging.debug(f"Error displaying whoami info: {e}")
+
+    def _display_device_info(self):
+        """Display this-device info in the detail panel"""
+        try:
+            t = self.theme_colors
+            detail_widget = self.query_one("#detail_content", Static)
+
+            if not hasattr(self, 'device_info') or not self.device_info:
+                detail_widget.update("[dim]Device info unavailable[/dim]")
+                return
+
+            di = self.device_info
+
+            lines = [f"[bold {t['primary']}]● Device Information[/bold {t['primary']}]", ""]
+
+            # Helper for ON/OFF display
+            def on_off(val):
+                return "[green]ON[/green]" if val else "[red]OFF[/red]"
+
+            fields = [
+                ('Device Name', di.get('device_name')),
+                ('Data Key Present', 'Yes' if di.get('data_key_present') else 'No'),
+                ('IP Auto Approve', on_off(di.get('ip_auto_approve'))),
+                ('Persistent Login', on_off(di.get('persistent_login'))),
+                ('Security Key No PIN', on_off(di.get('security_key_no_pin'))),
+                ('Device Logout Timeout', di.get('device_logout_timeout')),
+                ('Enterprise Logout Timeout', di.get('enterprise_logout_timeout')),
+                ('Effective Logout Timeout', di.get('effective_logout_timeout')),
+                ('Is SSO User', 'Yes' if di.get('is_sso_user') else 'No'),
+                ('Config File', di.get('config_file')),
+            ]
+
+            for label, value in fields:
+                if value is not None:
+                    lines.append(f"  [{t['text_dim']}]{label}:[/{t['text_dim']}] [{t['primary']}]{value}[/{t['primary']}]")
+
+            detail_widget.update("\n".join(lines))
+            self._update_status("Device information | Press Esc to return")
+
+        except Exception as e:
+            logging.debug(f"Error displaying device info: {e}")
 
     def _is_displayable_record(self, record: dict) -> bool:
         """Check if a record should be displayed in normal folder structure.
@@ -2392,6 +2561,18 @@ class SuperShellApp(App):
         self._update_status("Type to search | Tab to navigate | Ctrl+U to clear")
         event.stop()
 
+    @on(Click, "#user_info")
+    def on_user_info_click(self, event: Click) -> None:
+        """Show whoami info when user info is clicked"""
+        self._display_whoami_info()
+        event.stop()
+
+    @on(Click, "#device_status_info")
+    def on_device_status_click(self, event: Click) -> None:
+        """Show this-device info when device status is clicked"""
+        self._display_device_info()
+        event.stop()
+
     def on_paste(self, event: Paste) -> None:
         """Handle paste events (Cmd+V on Mac, Ctrl+V on Windows/Linux)"""
         if self.search_input_active and event.text:
@@ -2981,7 +3162,10 @@ class SuperShellApp(App):
             self.app_record_uids = set()
             self._record_output_cache = {}  # Clear record output cache
             self._load_vault_data()
+            self.device_info = self._load_device_info()  # Refresh device info
+            self.whoami_info = self._load_whoami_info()  # Refresh whoami info
             self._setup_folder_tree()
+            self._update_header_info_display()  # Update header info display
 
             self._update_status("Vault synced & refreshed")
             self.notify("Vault synced & refreshed", severity="information")
