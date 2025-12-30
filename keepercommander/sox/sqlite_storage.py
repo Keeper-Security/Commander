@@ -29,8 +29,9 @@ class Metadata:
 
 
 class SqliteSoxStorage:
-    def __init__(self, get_connection, owner, database_name=''):
+    def __init__(self, get_connection, owner, database_name='', close_connection=None):
         self.get_connection = get_connection
+        self.close_connection = close_connection
         self.owner = owner
         self.database_name = database_name
 
@@ -207,8 +208,11 @@ class SqliteSoxStorage:
 
     def delete_db(self):
         try:
-            conn = self.get_connection()
-            conn.close()
+            if self.close_connection:
+                self.close_connection()
+            else:
+                conn = self.get_connection()
+                conn.close()
             os.remove(self.database_name)
         except Exception as e:
             logging.info(f'could not delete db from filesystem, name = {self.database_name}')
