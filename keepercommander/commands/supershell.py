@@ -152,7 +152,7 @@ from textual import on, work
 from textual.message import Message
 from textual.timer import Timer
 from rich.text import Text
-from textual.events import Click
+from textual.events import Click, Paste
 
 from ..commands.base import Command
 
@@ -356,550 +356,6 @@ from .. import utils
 from ..proto import APIRequest_pb2
 
 
-class MatrixRain(Static):
-    """Matrix-style falling characters animation"""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.columns = []
-        self.timer = None
-
-    def on_mount(self) -> None:
-        """Start the animation when mounted"""
-        self.timer = self.set_interval(0.1, self.update_rain)
-
-    def update_rain(self) -> None:
-        """Update the rain animation"""
-        # Matrix characters
-        chars = "ｦｱｳｴｵｶｷｹｺｻｼｽｾｿﾀﾂﾃﾅﾆﾇﾈﾊﾋﾎﾏﾐﾑﾒﾓﾔﾕﾗﾘﾜ0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-        width = self.size.width
-        height = self.size.height
-
-        if not self.columns or len(self.columns) != width:
-            self.columns = [{'y': random.randint(-height, 0), 'speed': random.randint(1, 3)} for _ in range(width)]
-
-        # Build the rain display
-        lines = [[' ' for _ in range(width)] for _ in range(height)]
-
-        for x, col in enumerate(self.columns):
-            if 0 <= col['y'] < height:
-                lines[col['y']][x] = random.choice(chars)
-
-            # Move column down
-            col['y'] += col['speed']
-            if col['y'] >= height + 5:
-                col['y'] = random.randint(-height, -1)
-                col['speed'] = random.randint(1, 3)
-
-        # Render as text
-        display = '\n'.join([''.join(line) for line in lines])
-        self.update(f"[green]{display}[/green]")
-
-
-class LoginScreen(ModalScreen):
-    """Modal screen for Matrix-style login with animation"""
-
-    DEFAULT_CSS = """
-    LoginScreen {
-        align: center middle;
-        background: $surface;
-    }
-
-    #matrix_bg {
-        width: 100%;
-        height: 100%;
-        color: #003300;
-    }
-
-    #login_container {
-        width: 70;
-        height: auto;
-        border: thick $success;
-        background: $surface;
-        padding: 2;
-    }
-
-    #matrix_title {
-        text-align: center;
-        padding: 1;
-        color: $success;
-        text-style: bold;
-    }
-
-    .login_label {
-        color: $accent;
-        text-style: bold;
-        margin: 1 0 0 0;
-    }
-
-    .login_input {
-        margin: 0 0 1 0;
-        border: solid $success;
-    }
-
-    #login_button {
-        margin: 1 0;
-        width: 100%;
-    }
-
-    #login_status {
-        text-align: center;
-        color: $warning;
-        height: auto;
-        margin: 1 0;
-    }
-    """
-
-    BINDINGS = [
-        Binding("escape", "dismiss", "Cancel", show=False),
-    ]
-
-    def __init__(self, params):
-        super().__init__()
-        self.params = params
-        self.login_in_progress = False
-
-    def compose(self) -> ComposeResult:
-        """Create the login screen"""
-        yield MatrixRain(id="matrix_bg")
-        with Center():
-            with Middle():
-                with Vertical(id="login_container"):
-                    yield Static(self._get_ascii_title(), id="matrix_title")
-                    yield Label("Email:", classes="login_label")
-                    yield Input(placeholder="your.email@example.com", id="email_input", classes="login_input")
-                    yield Label("Password:", classes="login_label")
-                    yield Input(placeholder="Enter your password", password=True, id="password_input", classes="login_input")
-                    yield Button("⚡ LOGIN TO THE MATRIX ⚡", variant="success", id="login_button")
-                    yield Static("", id="login_status")
-
-    def _get_ascii_title(self) -> str:
-        """Get Matrix-style ASCII art title"""
-        return """[bold green]
-╔═══════════════════════════════════════════════════════════╗
-║                                                           ║
-║   ██╗  ██╗███████╗███████╗██████╗ ███████╗██████╗        ║
-║   ██║ ██╔╝██╔════╝██╔════╝██╔══██╗██╔════╝██╔══██╗       ║
-║   █████╔╝ █████╗  █████╗  ██████╔╝█████╗  ██████╔╝       ║
-║   ██╔═██╗ ██╔══╝  ██╔══╝  ██╔═══╝ ██╔══╝  ██╔══██╗       ║
-║   ██║  ██╗███████╗███████╗██║     ███████╗██║  ██║       ║
-║   ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝     ╚══════╝╚═╝  ╚═╝       ║
-║                                                           ║
-║              ███████╗██╗   ██╗██████╗ ███████╗██████╗    ║
-║              ██╔════╝██║   ██║██╔══██╗██╔════╝██╔══██╗   ║
-║              ███████╗██║   ██║██████╔╝█████╗  ██████╔╝   ║
-║              ╚════██║██║   ██║██╔═══╝ ██╔══╝  ██╔══██╗   ║
-║              ███████║╚██████╔╝██║     ███████╗██║  ██║   ║
-║              ╚══════╝ ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═╝   ║
-║                                                           ║
-║               ███████╗██╗  ██╗███████╗██╗     ██╗        ║
-║               ██╔════╝██║  ██║██╔════╝██║     ██║        ║
-║               ███████╗███████║█████╗  ██║     ██║        ║
-║               ╚════██║██╔══██║██╔══╝  ██║     ██║        ║
-║               ███████║██║  ██║███████╗███████╗███████╗   ║
-║               ╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝   ║
-║                                                           ║
-║             [cyan]Wake up, Neo... The Matrix has you...[/cyan]       ║
-║                                                           ║
-╚═══════════════════════════════════════════════════════════╝
-[/bold green]"""
-
-    def on_mount(self):
-        """Focus email input when mounted"""
-        self.query_one("#email_input", Input).focus()
-
-    @on(Button.Pressed, "#login_button")
-    async def handle_login(self):
-        """Handle login button press"""
-        if self.login_in_progress:
-            return
-
-        email_input = self.query_one("#email_input", Input)
-        password_input = self.query_one("#password_input", Input)
-        status = self.query_one("#login_status", Static)
-
-        email = email_input.value.strip()
-        password = password_input.value
-
-        if not email:
-            status.update("[red]⚠ Email is required[/red]")
-            email_input.focus()
-            return
-
-        if not password:
-            status.update("[red]⚠ Password is required[/red]")
-            password_input.focus()
-            return
-
-        self.login_in_progress = True
-        status.update("[yellow]⚡ Authenticating...[/yellow]")
-
-        # Perform login
-        try:
-            self.params.user = email.lower()
-            self.params.password = password
-
-            # Run login in executor to avoid blocking
-            await self.run_worker(self._do_login, exclusive=True)
-        except Exception as e:
-            status.update(f"[red]⚠ Login failed: {str(e)}[/red]")
-            self.login_in_progress = False
-
-    async def _do_login(self):
-        """Perform the actual login (runs in thread)"""
-        try:
-            # Login using the API
-            api.login(self.params, new_login=False)
-
-            if self.params.session_token:
-                # Login successful, dismiss with success
-                self.dismiss(True)
-            else:
-                # Login failed
-                status = self.query_one("#login_status", Static)
-                status.update("[red]⚠ Login failed. Please check credentials.[/red]")
-                self.login_in_progress = False
-        except KeyboardInterrupt:
-            status = self.query_one("#login_status", Static)
-            status.update("[red]⚠ Login cancelled[/red]")
-            self.login_in_progress = False
-            raise
-        except Exception as e:
-            status = self.query_one("#login_status", Static)
-            status.update(f"[red]⚠ Error: {str(e)}[/red]")
-            self.login_in_progress = False
-
-    @on(Input.Submitted)
-    async def on_input_submitted(self, event: Input.Submitted):
-        """Handle Enter key in inputs"""
-        if event.input.id == "email_input":
-            self.query_one("#password_input", Input).focus()
-        elif event.input.id == "password_input":
-            await self.handle_login()
-
-    def action_dismiss(self):
-        """Cancel login"""
-        if not self.login_in_progress:
-            self.dismiss(False)
-
-
-class SyncScreen(ModalScreen):
-    """Loading screen while syncing vault data"""
-
-    DEFAULT_CSS = """
-    SyncScreen {
-        align: center middle;
-        background: $surface;
-    }
-
-    #sync_matrix_bg {
-        width: 100%;
-        height: 100%;
-        color: #003300;
-    }
-
-    #sync_container {
-        width: 60;
-        height: 20;
-        border: thick $success;
-        background: $surface;
-        padding: 2;
-    }
-
-    #sync_title {
-        text-align: center;
-        color: $success;
-        text-style: bold;
-        padding: 1;
-    }
-
-    #sync_spinner {
-        text-align: center;
-        color: $accent;
-        padding: 1;
-    }
-
-    #sync_status {
-        text-align: center;
-        color: $warning;
-        padding: 1;
-    }
-    """
-
-    def __init__(self, params):
-        super().__init__()
-        self.params = params
-        self.spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-        self.spinner_idx = 0
-
-    def compose(self) -> ComposeResult:
-        """Create the sync screen"""
-        yield MatrixRain(id="sync_matrix_bg")
-        with Center():
-            with Middle():
-                with Vertical(id="sync_container"):
-                    yield Static("[bold green]⚡ SYNCING VAULT DATA ⚡[/bold green]", id="sync_title")
-                    yield Static("", id="sync_spinner")
-                    yield Static("[yellow]Downloading encrypted records...[/yellow]", id="sync_status")
-
-    def on_mount(self):
-        """Start sync and spinner animation"""
-        self.set_interval(0.1, self.update_spinner)
-        self.run_worker(self._do_sync, exclusive=True)
-
-    def update_spinner(self):
-        """Update the loading spinner"""
-        spinner = self.query_one("#sync_spinner", Static)
-        spinner.update(f"[cyan]{self.spinner_frames[self.spinner_idx]} Loading...[/cyan]")
-        self.spinner_idx = (self.spinner_idx + 1) % len(self.spinner_frames)
-
-    async def _do_sync(self):
-        """Perform vault sync"""
-        try:
-            status = self.query_one("#sync_status", Static)
-
-            # Sync vault data
-            status.update("[yellow]⚡ Downloading vault structure...[/yellow]")
-            await asyncio.sleep(0.3)
-
-            from .utils import SyncDownCommand
-            SyncDownCommand().execute(self.params)
-
-            status.update("[green]✓ Vault data synchronized![/green]")
-            await asyncio.sleep(0.5)
-
-            # Success - dismiss and show main app
-            self.dismiss(True)
-        except Exception as e:
-            status = self.query_one("#sync_status", Static)
-            status.update(f"[red]⚠ Sync failed: {str(e)}[/red]")
-            await asyncio.sleep(2)
-            self.dismiss(False)
-
-
-class RecordDetailScreen(ModalScreen):
-    """Modal screen to display record details with Matrix styling"""
-
-    @staticmethod
-    def _strip_ansi_codes(text: str) -> str:
-        """Remove ANSI color codes from text"""
-        ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
-        return ansi_escape.sub('', text)
-
-    DEFAULT_CSS = """
-    RecordDetailScreen {
-        align: center middle;
-    }
-
-    #detail_container {
-        width: 80;
-        height: auto;
-        max-height: 80%;
-        border: thick $success;
-        background: $surface;
-        padding: 1 2;
-    }
-
-    #detail_title {
-        background: $success;
-        color: $surface;
-        text-align: center;
-        padding: 1;
-        text-style: bold;
-    }
-
-    #detail_content {
-        height: auto;
-        max-height: 60;
-        padding: 1;
-        color: $success;
-    }
-
-    .detail_field {
-        margin: 1 0;
-    }
-
-    .detail_label {
-        color: $accent;
-        text-style: bold;
-    }
-
-    .detail_value {
-        color: $success;
-    }
-    """
-
-    BINDINGS = [
-        Binding("escape,q", "dismiss", "Close", show=True),
-        Binding("c", "copy_password", "Copy Password", show=True),
-        Binding("u", "copy_username", "Copy Username", show=True),
-        Binding("w", "copy_url", "Copy URL", show=True),
-    ]
-
-    def __init__(self, record_data: Dict[str, Any], params, record_uid: str):
-        super().__init__()
-        self.record_data = record_data
-        self.params = params
-        self.record_uid = record_uid
-
-    def compose(self) -> ComposeResult:
-        """Create the modal content"""
-        with Vertical(id="detail_container"):
-            yield Static(f"📋 {self.record_data.get('title', 'Record Details')}", id="detail_title")
-            with VerticalScroll(id="detail_content"):
-                yield self._build_record_details()
-
-    def _get_record_output(self, format_type: str = 'detail') -> str:
-        """Get record output using Commander's get command"""
-        try:
-            # Create a StringIO buffer to capture stdout
-            stdout_buffer = io.StringIO()
-            old_stdout = sys.stdout
-            sys.stdout = stdout_buffer
-
-            # Execute the get command with unmask=True for full view
-            get_cmd = RecordGetUidCommand()
-            get_cmd.execute(self.params, uid=self.record_uid, format=format_type, unmask=True)
-
-            # Restore stdout
-            sys.stdout = old_stdout
-
-            # Get the captured output
-            output = stdout_buffer.getvalue()
-            return output
-
-        except Exception as e:
-            sys.stdout = old_stdout
-            logging.error(f"Error getting record output: {e}", exc_info=True)
-            return f"Error getting record: {str(e)}"
-
-    def _build_record_details(self) -> Static:
-        """Build the record details display using Commander's get command"""
-        try:
-            # Get the record output using Commander's get command (unmasked for full view)
-            output = self._get_record_output(format_type='detail')
-            # Strip ANSI codes
-            output = self._strip_ansi_codes(output)
-            # Escape brackets for Rich markup
-            output = output.replace('[', '\\[').replace(']', '\\]')
-            content = f"[green]{output}[/green]"
-            return Static(content)
-        except Exception as e:
-            logging.error(f"Error building record details: {e}", exc_info=True)
-            return Static(f"[red]Error displaying record:[/red]\n{str(e)}")
-
-    def action_copy_password(self):
-        """Copy password to clipboard using clipboard-copy command (generates audit event)"""
-        try:
-            # Use ClipboardCommand to copy password - this generates the audit event
-            cc = ClipboardCommand()
-            cc.execute(self.params, record=self.record_uid, output='clipboard',
-                       username=None, copy_uid=False, login=False, totp=False, field=None, revision=None)
-            self.app.notify("🔑 Password copied to clipboard!", severity="information")
-        except Exception as e:
-            logging.debug(f"ClipboardCommand error: {e}")
-            self.app.notify("⚠️ No password found for this record", severity="warning")
-
-    def action_copy_username(self):
-        """Copy username to clipboard"""
-        if 'login' in self.record_data:
-            pyperclip.copy(self.record_data['login'])
-            self.app.notify("👤 Username copied to clipboard!", severity="information")
-
-    def action_copy_url(self):
-        """Copy URL to clipboard"""
-        if 'login_url' in self.record_data:
-            pyperclip.copy(self.record_data['login_url'])
-            self.app.notify("🔗 URL copied to clipboard!", severity="information")
-
-    def action_dismiss(self):
-        """Close the modal"""
-        self.dismiss()
-
-
-class SearchScreen(ModalScreen):
-    """Modal screen for searching records with live filtering"""
-
-    DEFAULT_CSS = """
-    SearchScreen {
-        align: left top;
-        background: rgba(0, 0, 0, 0);
-    }
-
-    #search_container {
-        width: 100%;
-        height: 1;
-        dock: top;
-        background: rgba(0, 20, 0, 0.7);
-        border: none;
-        padding: 0;
-    }
-
-    #search_input {
-        width: 70%;
-        border: none;
-        background: rgba(0, 0, 0, 0);
-        color: #ffffff;
-        padding: 0 1;
-        height: 1;
-    }
-
-    #search_results_label {
-        width: 30%;
-        color: #aaaaaa;
-        text-align: right;
-        padding: 0 1;
-        height: 1;
-        background: rgba(0, 0, 0, 0);
-    }
-    """
-
-    BINDINGS = [
-        Binding("escape", "dismiss", "Cancel", show=False),
-        Binding("enter", "dismiss", "Done", show=False),
-    ]
-
-    def __init__(self, app_instance):
-        super().__init__()
-        self.app_instance = app_instance
-        self.result_count = 0
-
-    def compose(self) -> ComposeResult:
-        with Horizontal(id="search_container"):
-            yield Input(placeholder="🔍 Search...", id="search_input")
-            yield Static("", id="search_results_label")
-
-    def on_mount(self):
-        """Focus the input when mounted"""
-        self.query_one("#search_input", Input).focus()
-
-    def on_input_changed(self, event: Input.Changed):
-        """Handle search input changes in real-time"""
-        search_query = event.value
-        # Call parent app to filter results
-        self.result_count = self.app_instance._perform_live_search(search_query)
-        t = self.app_instance.theme_colors
-
-        # Update results label with theme colors
-        results_label = self.query_one("#search_results_label", Static)
-        if search_query:
-            if self.result_count == 0:
-                results_label.update(f"[#ff0000]No matches found[/#ff0000]")
-            elif self.result_count == 1:
-                results_label.update(f"[{t['primary']}]1 match found[/{t['primary']}]")
-            else:
-                results_label.update(f"[{t['primary']}]{self.result_count} matches found[/{t['primary']}]")
-        else:
-            results_label.update(f"[{t['text_dim']}]Start typing to search...[/{t['text_dim']}]")
-
-    def action_dismiss(self):
-        """Close search and restore full view"""
-        # Clear search when closing
-        self.app_instance._perform_live_search("")
-        self.dismiss()
-
-
 class PreferencesScreen(ModalScreen):
     """Modal screen for user preferences"""
 
@@ -1066,10 +522,15 @@ class HelpScreen(ModalScreen):
   g / G         Go to top / bottom
   Ctrl+d/u      Half page down/up
   :N            Go to line N (vim style)
-  Esc           Collapse folder / go to parent
+  Esc           Clear search / collapse folder
+
+[green]Search:[/green]
+  Tab or /      Focus search input
+  Shift+Tab     Switch to tree navigation
+  Ctrl+U        Clear search input
+  Esc           Clear search & focus tree
 
 [green]Actions:[/green]
-  /             Search records
   t             Toggle Detail/JSON view
   d             Sync vault data
   r             Refresh display
@@ -1150,7 +611,6 @@ class SuperShellApp(App):
         width: 100%;
         background: #222222;
         border: solid #666666;
-        display: none;
     }
 
     #search_display {
@@ -1212,6 +672,11 @@ class SuperShellApp(App):
 
     Tree > .tree--guides {
         color: #444444;
+    }
+
+    Tree > .tree--toggle {
+        /* Hide expand/collapse icons - nodes still expand/collapse on click */
+        width: 0;
     }
 
     Tree > .tree--cursor {
@@ -1318,6 +783,8 @@ class SuperShellApp(App):
         self.records_in_subfolders = set()  # Records in actual subfolders (not root)
         self.file_attachment_to_parent = {}  # Maps attachment_uid -> parent_record_uid
         self.record_file_attachments = {}  # Maps record_uid -> list of attachment_uids
+        self.linked_record_to_parent = {}  # Maps linked_record_uid -> parent_record_uid (for addressRef, cardRef, etc.)
+        self.record_linked_records = {}  # Maps record_uid -> list of linked_record_uids
         self.app_record_uids = set()  # Set of Secrets Manager app record UIDs
         self.current_folder = None
         self.selected_record = None
@@ -1390,6 +857,9 @@ class SuperShellApp(App):
         """Initialize the application when mounted"""
         logging.info("SuperShell on_mount called")
 
+        # Initialize clickable fields list for detail panel
+        self.clickable_fields = []
+
         # Sync vault data if needed
         if not hasattr(self.params, 'record_cache') or not self.params.record_cache:
             from .utils import SyncDownCommand
@@ -1446,11 +916,15 @@ class SuperShellApp(App):
             # Initialize shortcuts bar
             self._update_shortcuts_bar()
 
+            # Initialize search bar with placeholder
+            search_display = self.query_one("#search_display", Static)
+            search_display.update("[dim]Search... (Tab or /)[/dim]")
+
             # Focus the folder tree so vim keys work immediately
             self.query_one("#folder_tree", Tree).focus()
 
             logging.info("SuperShell ready!")
-            self._update_status("Navigate: j/k  Expand: l  Search: /  Help: ?")
+            self._update_status("Navigate: j/k  Tab: search  Help: ?")
         except Exception as e:
             logging.error(f"Error initializing SuperShell: {e}", exc_info=True)
             self.exit(message=f"Error: {str(e)}")
@@ -1472,6 +946,8 @@ class SuperShellApp(App):
         # Track file attachments and their parent records
         self.file_attachment_to_parent = {}  # Maps attachment_uid -> parent_record_uid
         self.record_file_attachments = {}  # Maps record_uid -> list of attachment_uids
+        self.linked_record_to_parent = {}  # Maps linked_record_uid -> parent_record_uid (for addressRef, cardRef, etc.)
+        self.record_linked_records = {}  # Maps record_uid -> list of linked_record_uids
 
         # Fetch Secrets Manager app UIDs from API (definitive list)
         self.app_record_uids = set()
@@ -1569,6 +1045,25 @@ class SuperShellApp(App):
                         if file_refs:
                             self.record_file_attachments[record_uid] = file_refs
 
+                        # Extract linked record references (addressRef, cardRef, etc.)
+                        # These are records that are embedded/linked into this record
+                        linked_refs = []
+                        if hasattr(record, 'fields'):
+                            for field in record.fields:
+                                field_type = getattr(field, 'type', None)
+                                field_value = getattr(field, 'value', None)
+
+                                # addressRef, cardRef, etc. - records linked by reference
+                                if field_type in ('addressRef', 'cardRef'):
+                                    if field_value and isinstance(field_value, list):
+                                        for ref_uid in field_value:
+                                            if isinstance(ref_uid, str) and ref_uid:
+                                                linked_refs.append(ref_uid)
+                                                self.linked_record_to_parent[ref_uid] = record_uid
+
+                        if linked_refs:
+                            self.record_linked_records[record_uid] = linked_refs
+
                         # Extract fields based on record type
                         if hasattr(record, 'login'):
                             record_dict['login'] = record.login
@@ -1624,11 +1119,15 @@ class SuperShellApp(App):
 
     def _is_displayable_record(self, record: dict) -> bool:
         """Check if a record should be displayed in normal folder structure.
-        Excludes file attachments (handled separately) and Secrets Manager app records (virtual folder)."""
+        Excludes file attachments, linked records, and Secrets Manager app records."""
         record_uid = record.get('uid')
 
         # Exclude file attachments - they'll be shown under their parent
         if record_uid in self.file_attachment_to_parent:
+            return False
+
+        # Exclude linked records (addressRef, cardRef) - they'll be shown under their parent
+        if record_uid in self.linked_record_to_parent:
             return False
 
         # Exclude Secrets Manager app records - they go in virtual folder
@@ -1638,42 +1137,49 @@ class SuperShellApp(App):
         return True
 
     def _add_record_with_attachments(self, parent_node, record: dict, idx: int, auto_expand: bool = False):
-        """Add a record to the tree, including any file attachments as children."""
+        """Add a record to the tree, including any file attachments and linked records as siblings."""
         record_uid = record.get('uid')
         record_title = record.get('title', 'Untitled')
         t = self.theme_colors  # Theme colors
 
-        # Check if this record has file attachments
+        # Always add record as a leaf (no expand/collapse indicator)
+        record_label = f"[{t['record_num']}]{idx}.[/{t['record_num']}] [{t['record']}]{record_title}[/{t['record']}]"
+        parent_node.add_leaf(
+            record_label,
+            data={'type': 'record', 'uid': record_uid}
+        )
+
+        # Check if this record has file attachments or linked records
         attachments = self.record_file_attachments.get(record_uid, [])
+        linked_records = self.record_linked_records.get(record_uid, [])
 
-        if attachments:
-            # Record has attachments - make it expandable
-            record_label = f"[{t['record_num']}]{idx}.[/{t['record_num']}] [{t['record']}]{record_title}[/{t['record']}]"
-            record_node = parent_node.add(
-                record_label,
-                data={'type': 'record', 'uid': record_uid}
-            )
+        if attachments or linked_records:
+            # Add linked records as indented siblings (with link icon)
+            for linked_uid in linked_records:
+                if linked_uid in self.records:
+                    linked_record = self.records[linked_uid]
+                    linked_title = linked_record.get('title', 'Linked Record')
+                    linked_type = linked_record.get('record_type', '')
+                    # Use appropriate icon based on type
+                    icon = '📍' if linked_type == 'address' else '🔗'
+                    # Add indentation with bullet to visually nest under parent record
+                    linked_label = f"    [{t['text_dim']}]•[/{t['text_dim']}] [{t['attachment']}]{icon} {linked_title}[/{t['attachment']}]"
+                    parent_node.add_leaf(
+                        linked_label,
+                        data={'type': 'record', 'uid': linked_uid, 'parent_record': record_uid}
+                    )
 
-            # Add file attachments as children
-            for att_idx, att_uid in enumerate(attachments, start=1):
+            # Add file attachments as indented siblings
+            for att_uid in attachments:
                 if att_uid in self.records:
                     att_record = self.records[att_uid]
                     att_title = att_record.get('title', 'Attachment')
-                    att_label = f"[{t['text_dim']}]{att_idx}.[/{t['text_dim']}] [{t['attachment']}]📎 {att_title}[/{t['attachment']}]"
-                    record_node.add_leaf(
+                    # Add indentation with bullet to visually nest under parent record
+                    att_label = f"    [{t['text_dim']}]•[/{t['text_dim']}] [{t['attachment']}]📎 {att_title}[/{t['attachment']}]"
+                    parent_node.add_leaf(
                         att_label,
-                        data={'type': 'record', 'uid': att_uid}
+                        data={'type': 'record', 'uid': att_uid, 'parent_record': record_uid}
                     )
-
-            if auto_expand:
-                record_node.expand()
-        else:
-            # No attachments - add as leaf
-            record_label = f"[{t['record_num']}]{idx}.[/{t['record_num']}] [{t['record']}]{record_title}[/{t['record']}]"
-            parent_node.add_leaf(
-                record_label,
-                data={'type': 'record', 'uid': record_uid}
-            )
 
     def _setup_folder_tree(self):
         """Setup the folder tree structure with records as children"""
@@ -1726,17 +1232,18 @@ class SuperShellApp(App):
             if not folder_records and not subfolders_with_records:
                 return None
 
-            # Determine icon and color based on folder type
+            # Determine label and color based on folder type
+            color = t['folder']
             if folder_node.type == 'shared_folder':
-                icon = "◆"  # Diamond for shared folders
-                color = t['folder_shared']
+                # Shared folder: bold green name with share icon after
+                label = f"[bold {color}]{folder_node.name}[/bold {color}] 👥"
             else:
-                icon = "▸"  # Triangle for regular folders
-                color = t['folder']
+                # Regular folder: bold green name
+                label = f"[bold {color}]{folder_node.name}[/bold {color}]"
 
             # Add this folder to the tree with color
             tree_node = parent_tree_node.add(
-                f"[{color}]{icon} {folder_node.name}[/{color}]",
+                label,
                 data={'type': 'folder', 'uid': folder_uid}
             )
 
@@ -1935,6 +1442,9 @@ class SuperShellApp(App):
             # Build searchable text from all record fields
             record_parts = []
 
+            # Record UID - important for searching by UID
+            record_parts.append(record_uid)
+
             # Title
             if record.get('title'):
                 record_parts.append(str(record['title']))
@@ -1964,12 +1474,12 @@ class SuperShellApp(App):
             # Combine record text
             record_text = ' '.join(record_parts).lower()
 
-            # Get folder name for this record
+            # Get folder UID and name for this record
             folder_uid = self.record_to_folder.get(record_uid)
             folder_name = folder_names.get(folder_uid, '') if folder_uid else ''
 
-            # Combined text includes both record fields AND folder name
-            combined_text = record_text + ' ' + folder_name
+            # Combined text includes record fields, folder UID, AND folder name
+            combined_text = record_text + ' ' + (folder_uid.lower() if folder_uid else '') + ' ' + folder_name
 
             # Check if ALL query tokens match somewhere (record OR folder)
             # This allows "customer 123 google" to match record "google" in folder "Customer 123"
@@ -2022,6 +1532,7 @@ class SuperShellApp(App):
             lines = []
             current_section = None
             prev_was_blank = False
+            seen_first_user = False  # Track if we've seen first user in permissions section
             section_headers = {'Custom Fields', 'Notes', 'Attachments', 'User Permissions',
                                'Shared Folder Permissions', 'Share Admins', 'One-Time Share URL'}
 
@@ -2053,11 +1564,17 @@ class SuperShellApp(App):
                     # Section headers
                     elif key in section_headers:
                         current_section = key
+                        seen_first_user = False  # Reset for new section
                         if lines:
                             lines.append("")  # Single blank line before section
                         lines.append(f"[bold {t['secondary']}]{key}:[/bold {t['secondary']}]")
                     # Regular key-value pairs
                     elif value:
+                        # Add blank line before each User entry in User Permissions section (except first)
+                        if key == 'User' and current_section == 'User Permissions':
+                            if seen_first_user:
+                                lines.append("")  # Blank line between users
+                            seen_first_user = True
                         if current_section:
                             lines.append(f"  [{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{value}[/{t['primary']}]")
                         else:
@@ -2239,6 +1756,7 @@ class SuperShellApp(App):
 
         # Parse and create clickable lines
         current_section = None
+        seen_first_user = False  # Track if we've seen first user in permissions section
         section_headers = {'Custom Fields', 'Notes', 'Attachments', 'User Permissions',
                           'Shared Folder Permissions', 'Share Admins', 'One-Time Share URL'}
 
@@ -2265,9 +1783,15 @@ class SuperShellApp(App):
                     mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{display_value}[/{t['primary']}]", copy_value, is_password=True)
                 elif key in section_headers:
                     current_section = key
+                    seen_first_user = False  # Reset for new section
                     mount_line("", None)  # Blank line
                     mount_line(f"[bold {t['secondary']}]{key}:[/bold {t['secondary']}]", None)
                 elif value:
+                    # Add blank line before each User entry in User Permissions section (except first)
+                    if key == 'User' and current_section == 'User Permissions':
+                        if seen_first_user:
+                            mount_line("", None)  # Blank line between users
+                        seen_first_user = True
                     indent = "  " if current_section else ""
                     mount_line(f"{indent}[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{value}[/{t['primary']}]", value)
                 elif key:
@@ -2278,8 +1802,9 @@ class SuperShellApp(App):
 
 
     def _display_json_with_clickable_fields(self, record_uid: str):
-        """Display JSON view with clickable string values, masking passwords"""
+        """Display JSON view with clickable string values, syntax highlighting, masking passwords"""
         t = self.theme_colors
+        container = self.query_one("#record_detail", VerticalScroll)
         detail_widget = self.query_one("#detail_content", Static)
 
         # Clear previous clickable fields
@@ -2291,17 +1816,185 @@ class SuperShellApp(App):
 
         try:
             json_obj = json.loads(output)
-            # Mask password values in the display
-            display_obj = self._mask_passwords_in_json(json_obj)
-            output = json.dumps(display_obj, indent=2)
         except:
-            pass
+            # If JSON parsing fails, show raw output
+            detail_widget.update(f"[{t['primary']}]JSON View:\n\n{output}[/{t['primary']}]")
+            return
 
-        # Use Rich Text object to mix styled header with plain JSON (no markup processing)
-        text = Text()
-        text.append("JSON View:\n\n", style=f"bold {t['primary']}")
-        text.append(output, style=t['primary'])  # Plain text, no markup processing
-        detail_widget.update(text)
+        # Keep unmasked JSON for copying actual values
+        unmasked_obj = json_obj
+
+        # Create masked version for display
+        display_obj = self._mask_passwords_in_json(json_obj)
+
+        # Clear detail widget content
+        detail_widget.update("")
+
+        # Helper to mount widgets
+        def mount_line(content: str, copy_value: str = None, is_password: bool = False):
+            """Mount a clickable line"""
+            line = ClickableDetailLine(
+                content,
+                copy_value=copy_value,
+                record_uid=record_uid if is_password else None,
+                is_password=is_password
+            )
+            container.mount(line, before=detail_widget)
+            self.clickable_fields.append(line)
+
+        # Render JSON header
+        mount_line(f"[bold {t['primary']}]JSON View:[/bold {t['primary']}]")
+        mount_line("")
+
+        # Render JSON with syntax highlighting
+        self._render_json_lines(display_obj, unmasked_obj, mount_line, t, record_uid)
+
+    def _render_json_lines(self, display_obj, unmasked_obj, mount_line, t, record_uid, indent=0):
+        """Recursively render JSON object as clickable lines with syntax highlighting"""
+        indent_str = "  " * indent
+        key_color = "#88ccff"      # Light blue for keys
+        string_color = t['primary']  # Theme color for strings
+        number_color = "#ffcc66"   # Orange for numbers
+        bool_color = "#ff99cc"     # Pink for booleans
+        null_color = "#999999"     # Gray for null
+        bracket_color = t['text_dim']
+
+        if isinstance(display_obj, dict):
+            mount_line(f"{indent_str}[{bracket_color}]{{[/{bracket_color}]")
+            items = list(display_obj.items())
+            for i, (key, value) in enumerate(items):
+                comma = "," if i < len(items) - 1 else ""
+                # Get unmasked value for copying
+                unmasked_value = unmasked_obj.get(key, value) if isinstance(unmasked_obj, dict) else value
+
+                if isinstance(value, str):
+                    # Escape brackets for Rich markup
+                    display_val = value.replace("[", "\\[")
+                    is_password = (value == "************")
+                    copy_val = unmasked_value if isinstance(unmasked_value, str) else str(unmasked_value)
+                    mount_line(
+                        f"{indent_str}  [{key_color}]\"{key}\"[/{key_color}]: [{string_color}]\"{display_val}\"[/{string_color}]{comma}",
+                        copy_value=copy_val,
+                        is_password=is_password
+                    )
+                elif isinstance(value, bool):
+                    bool_str = "true" if value else "false"
+                    mount_line(
+                        f"{indent_str}  [{key_color}]\"{key}\"[/{key_color}]: [{bool_color}]{bool_str}[/{bool_color}]{comma}",
+                        copy_value=str(value)
+                    )
+                elif isinstance(value, (int, float)):
+                    mount_line(
+                        f"{indent_str}  [{key_color}]\"{key}\"[/{key_color}]: [{number_color}]{value}[/{number_color}]{comma}",
+                        copy_value=str(value)
+                    )
+                elif value is None:
+                    mount_line(
+                        f"{indent_str}  [{key_color}]\"{key}\"[/{key_color}]: [{null_color}]null[/{null_color}]{comma}"
+                    )
+                elif isinstance(value, list):
+                    mount_line(f"{indent_str}  [{key_color}]\"{key}\"[/{key_color}]: [{bracket_color}]\\[[/{bracket_color}]")
+                    unmasked_list = unmasked_value if isinstance(unmasked_value, list) else value
+                    self._render_json_list_items(value, unmasked_list, mount_line, t, record_uid, indent + 2)
+                    mount_line(f"{indent_str}  [{bracket_color}]][/{bracket_color}]{comma}")
+                elif isinstance(value, dict):
+                    mount_line(f"{indent_str}  [{key_color}]\"{key}\"[/{key_color}]: [{bracket_color}]{{[/{bracket_color}]")
+                    unmasked_dict = unmasked_value if isinstance(unmasked_value, dict) else value
+                    self._render_json_dict_items(value, unmasked_dict, mount_line, t, record_uid, indent + 2)
+                    mount_line(f"{indent_str}  [{bracket_color}]}}[/{bracket_color}]{comma}")
+            mount_line(f"{indent_str}[{bracket_color}]}}[/{bracket_color}]")
+        elif isinstance(display_obj, list):
+            mount_line(f"{indent_str}[{bracket_color}]\\[[/{bracket_color}]")
+            self._render_json_list_items(display_obj, unmasked_obj, mount_line, t, record_uid, indent + 1)
+            mount_line(f"{indent_str}[{bracket_color}]][/{bracket_color}]")
+
+    def _render_json_dict_items(self, display_dict, unmasked_dict, mount_line, t, record_uid, indent):
+        """Render dict items for nested objects"""
+        indent_str = "  " * indent
+        key_color = "#88ccff"
+        string_color = t['primary']
+        number_color = "#ffcc66"
+        bool_color = "#ff99cc"
+        null_color = "#999999"
+        bracket_color = t['text_dim']
+
+        items = list(display_dict.items())
+        for i, (key, value) in enumerate(items):
+            comma = "," if i < len(items) - 1 else ""
+            unmasked_value = unmasked_dict.get(key, value) if isinstance(unmasked_dict, dict) else value
+
+            if isinstance(value, str):
+                display_val = value.replace("[", "\\[")
+                is_password = (value == "************")
+                copy_val = unmasked_value if isinstance(unmasked_value, str) else str(unmasked_value)
+                mount_line(
+                    f"{indent_str}[{key_color}]\"{key}\"[/{key_color}]: [{string_color}]\"{display_val}\"[/{string_color}]{comma}",
+                    copy_value=copy_val,
+                    is_password=is_password
+                )
+            elif isinstance(value, bool):
+                bool_str = "true" if value else "false"
+                mount_line(
+                    f"{indent_str}[{key_color}]\"{key}\"[/{key_color}]: [{bool_color}]{bool_str}[/{bool_color}]{comma}",
+                    copy_value=str(value)
+                )
+            elif isinstance(value, (int, float)):
+                mount_line(
+                    f"{indent_str}[{key_color}]\"{key}\"[/{key_color}]: [{number_color}]{value}[/{number_color}]{comma}",
+                    copy_value=str(value)
+                )
+            elif value is None:
+                mount_line(f"{indent_str}[{key_color}]\"{key}\"[/{key_color}]: [{null_color}]null[/{null_color}]{comma}")
+            elif isinstance(value, list):
+                mount_line(f"{indent_str}[{key_color}]\"{key}\"[/{key_color}]: [{bracket_color}]\\[[/{bracket_color}]")
+                unmasked_list = unmasked_value if isinstance(unmasked_value, list) else value
+                self._render_json_list_items(value, unmasked_list, mount_line, t, record_uid, indent + 1)
+                mount_line(f"{indent_str}[{bracket_color}]][/{bracket_color}]{comma}")
+            elif isinstance(value, dict):
+                mount_line(f"{indent_str}[{key_color}]\"{key}\"[/{key_color}]: [{bracket_color}]{{[/{bracket_color}]")
+                unmasked_inner = unmasked_value if isinstance(unmasked_value, dict) else value
+                self._render_json_dict_items(value, unmasked_inner, mount_line, t, record_uid, indent + 1)
+                mount_line(f"{indent_str}[{bracket_color}]}}[/{bracket_color}]{comma}")
+
+    def _render_json_list_items(self, display_list, unmasked_list, mount_line, t, record_uid, indent):
+        """Render list items for arrays"""
+        indent_str = "  " * indent
+        string_color = t['primary']
+        number_color = "#ffcc66"
+        bool_color = "#ff99cc"
+        null_color = "#999999"
+        bracket_color = t['text_dim']
+
+        for i, value in enumerate(display_list):
+            comma = "," if i < len(display_list) - 1 else ""
+            unmasked_value = unmasked_list[i] if isinstance(unmasked_list, list) and i < len(unmasked_list) else value
+
+            if isinstance(value, str):
+                display_val = value.replace("[", "\\[")
+                is_password = (value == "************")
+                copy_val = unmasked_value if isinstance(unmasked_value, str) else str(unmasked_value)
+                mount_line(
+                    f"{indent_str}[{string_color}]\"{display_val}\"[/{string_color}]{comma}",
+                    copy_value=copy_val,
+                    is_password=is_password
+                )
+            elif isinstance(value, bool):
+                bool_str = "true" if value else "false"
+                mount_line(f"{indent_str}[{bool_color}]{bool_str}[/{bool_color}]{comma}", copy_value=str(value))
+            elif isinstance(value, (int, float)):
+                mount_line(f"{indent_str}[{number_color}]{value}[/{number_color}]{comma}", copy_value=str(value))
+            elif value is None:
+                mount_line(f"{indent_str}[{null_color}]null[/{null_color}]{comma}")
+            elif isinstance(value, dict):
+                mount_line(f"{indent_str}[{bracket_color}]{{[/{bracket_color}]")
+                unmasked_inner = unmasked_value if isinstance(unmasked_value, dict) else value
+                self._render_json_dict_items(value, unmasked_inner, mount_line, t, record_uid, indent + 1)
+                mount_line(f"{indent_str}[{bracket_color}]}}[/{bracket_color}]{comma}")
+            elif isinstance(value, list):
+                mount_line(f"{indent_str}[{bracket_color}]\\[[/{bracket_color}]")
+                unmasked_inner = unmasked_value if isinstance(unmasked_value, list) else value
+                self._render_json_list_items(value, unmasked_inner, mount_line, t, record_uid, indent + 1)
+                mount_line(f"{indent_str}[{bracket_color}]][/{bracket_color}]{comma}")
 
     def _mask_passwords_in_json(self, obj):
         """Recursively mask password values in JSON object for display"""
@@ -2321,59 +2014,6 @@ class SuperShellApp(App):
             return [self._mask_passwords_in_json(item) for item in obj]
         else:
             return obj
-
-    def _render_json_clickable(self, container, detail_widget, obj, t, indent=0):
-        """Recursively render JSON object with clickable string values"""
-        indent_str = "  " * indent
-
-        def mount_field(widget):
-            container.mount(widget, before=detail_widget)
-
-        if isinstance(obj, dict):
-            for key, value in obj.items():
-                if isinstance(value, str):
-                    # String value - make it clickable
-                    field = ClickableField(
-                        label=f"{indent_str}\"{key}\":",
-                        value=f"\"{value}\"",
-                        copy_value=value,
-                        label_color=t['secondary'],
-                        value_color=t['primary']
-                    )
-                    mount_field(field)
-                elif isinstance(value, (int, float, bool)) or value is None:
-                    # Primitive value
-                    display_val = str(value).lower() if isinstance(value, bool) else str(value)
-                    if value is None:
-                        display_val = "null"
-                    field = ClickableField(
-                        label=f"{indent_str}\"{key}\":",
-                        value=display_val,
-                        copy_value=str(value) if value is not None else None,
-                        label_color=t['secondary'],
-                        value_color=t['primary_dim']
-                    )
-                    mount_field(field)
-                elif isinstance(value, list):
-                    # Array
-                    mount_field(Static(f"{indent_str}[{t['secondary']}]\"{key}\":[/{t['secondary']}] ["))
-                    for item in value:
-                        self._render_json_clickable(container, detail_widget, item, t, indent + 1)
-                    mount_field(Static(f"{indent_str}]"))
-                elif isinstance(value, dict):
-                    # Nested object
-                    mount_field(Static(f"{indent_str}[{t['secondary']}]\"{key}\":[/{t['secondary']}] {{"))
-                    self._render_json_clickable(container, detail_widget, value, t, indent + 1)
-                    mount_field(Static(f"{indent_str}}}"))
-        elif isinstance(obj, str):
-            # Direct string value (in array)
-            field = ClickableField(
-                label="",
-                value=f"{indent_str}\"{obj}\"",
-                copy_value=obj,
-                value_color=t['primary']
-            )
-            mount_field(field)
 
     def _display_folder_with_clickable_fields(self, folder_uid: str):
         """Display folder details with clickable fields for copy-on-click"""
@@ -2569,6 +2209,25 @@ class SuperShellApp(App):
         except Exception as e:
             logging.debug(f"Error updating shortcuts bar: {e}")
 
+    @on(Click, "#search_bar, #search_display")
+    def on_search_bar_click(self, event: Click) -> None:
+        """Activate search mode when search bar is clicked"""
+        tree = self.query_one("#folder_tree", Tree)
+        self.search_input_active = True
+        tree.add_class("search-input-active")
+        self._update_search_display()
+        self._update_status("Type to search | Tab to navigate | Ctrl+U to clear")
+        event.stop()
+
+    def on_paste(self, event: Paste) -> None:
+        """Handle paste events (Cmd+V on Mac, Ctrl+V on Windows/Linux)"""
+        if self.search_input_active and event.text:
+            # Append pasted text to search input (strip newlines)
+            pasted_text = event.text.replace('\n', ' ').replace('\r', '')
+            self.search_input_text += pasted_text
+            self._update_search_display()
+            event.stop()
+
     @on(Tree.NodeSelected)
     def on_tree_node_selected(self, event: Tree.NodeSelected):
         """Handle tree node selection (folder or record)"""
@@ -2704,39 +2363,93 @@ class SuperShellApp(App):
         if search_bar.styles.display != "none":
             # Search bar is active
 
-            # If we're navigating results (not typing), let tree handle its keys
+            # If we're navigating results (not typing), let tree/app handle its keys
             if not self.search_input_active and tree.has_focus:
+                # Ctrl+Y scrolls viewport up (like vim)
+                if event.key == "ctrl+y":
+                    tree.scroll_relative(y=-1)
+                    event.prevent_default()
+                    event.stop()
+                    return
+                # Ctrl+E scrolls viewport down (like vim)
+                if event.key == "ctrl+e":
+                    tree.scroll_relative(y=1)
+                    event.prevent_default()
+                    event.stop()
+                    return
+                # Navigation keys for tree
                 if event.key in ("j", "k", "h", "l", "up", "down", "left", "right", "enter", "space"):
+                    return
+                # Action keys (copy, toggle view, etc.) - let them pass through
+                if event.key in ("t", "c", "u", "w", "i", "y", "d", "r", "p", "g", "question_mark"):
+                    return
+                # Shift+G for go to bottom
+                if event.character == "G":
+                    return
+                # Tab switches to search input
+                if event.key == "tab":
+                    self.search_input_active = True
+                    tree.add_class("search-input-active")
+                    self._update_search_display()
+                    self._update_status("Type to search | Tab to navigate | Ctrl+U to clear")
+                    event.prevent_default()
+                    event.stop()
                     return
                 elif event.key == "slash":
                     # Switch back to search input mode
                     self.search_input_active = True
-                    # Hide tree selection while typing
                     tree.add_class("search-input-active")
-                    # Restore cursor in search display
                     self._update_search_display()
                     event.prevent_default()
                     event.stop()
                     return
 
+            # Ctrl+U clears the search input (like bash)
+            if event.key == "ctrl+u" and self.search_input_active:
+                self.search_input_text = ""
+                self._update_search_display()
+                self._perform_live_search("")
+                event.prevent_default()
+                event.stop()
+                return
+
+            # "/" to switch to search input mode (works from anywhere when search bar visible)
+            if event.key == "slash" and not self.search_input_active:
+                self.search_input_active = True
+                tree.add_class("search-input-active")
+                self._update_search_display()
+                event.prevent_default()
+                event.stop()
+                return
+
             if event.key == "escape":
-                # Close search and clear filter
-                search_bar.styles.display = "none"
+                # Clear search and move focus to tree (don't hide search bar)
                 self.search_input_text = ""
                 self.search_input_active = False
-                # Show tree selection again
                 tree.remove_class("search-input-active")
                 self._perform_live_search("")  # Reset to show all
+
+                # Update search display to show placeholder
+                search_display = self.query_one("#search_display", Static)
+                search_display.update("[dim]Search... (Tab or /)[/dim]")
+                results_label = self.query_one("#search_results_label", Static)
+                results_label.update("")
 
                 # Restore previous selection
                 self.selected_record = self.pre_search_selected_record
                 self.selected_folder = self.pre_search_selected_folder
-
-                # Navigate tree to the previously selected item
                 self._restore_tree_selection(tree)
 
                 tree.focus()
-                self._update_status("Navigate with j/k | / to search | ? for help")
+                self._update_status("Navigate with j/k | Tab to search | ? for help")
+                event.prevent_default()
+                event.stop()
+            elif event.key == "shift+tab":
+                # Switch focus to search input
+                self.search_input_active = True
+                tree.add_class("search-input-active")
+                self._update_search_display()
+                self._update_status("Type to search | Tab to navigate | Ctrl+U to clear")
                 event.prevent_default()
                 event.stop()
             elif event.key in ("enter", "down", "tab"):
@@ -2771,10 +2484,7 @@ class SuperShellApp(App):
                 event.stop()
             elif self.search_input_active and event.character and event.character.isprintable():
                 # Only add characters when search input is active (not when navigating results)
-                # event.key gives key names like "minus", "period" while event.character gives the actual char
-                logging.info(f"Character pressed: '{event.character}' (key={event.key})")
                 self.search_input_text += event.character
-                logging.info(f"New search_input_text: '{self.search_input_text}'")
                 self._update_search_display()
                 event.prevent_default()
                 event.stop()
@@ -2829,6 +2539,20 @@ class SuperShellApp(App):
                 self.command_mode = True
                 self.command_buffer = ""
                 self._update_status(":")
+                event.prevent_default()
+                event.stop()
+                return
+
+            # Ctrl+Y scrolls viewport up (like vim)
+            if event.key == "ctrl+y":
+                tree.scroll_relative(y=-1)
+                event.prevent_default()
+                event.stop()
+                return
+
+            # Ctrl+E scrolls viewport down (like vim)
+            if event.key == "ctrl+e":
+                tree.scroll_relative(y=1)
                 event.prevent_default()
                 event.stop()
                 return
@@ -2921,38 +2645,19 @@ class SuperShellApp(App):
         return True
 
     def action_search(self):
-        """Toggle search bar visibility"""
-        search_bar = self.query_one("#search_bar")
+        """Activate search input mode"""
         tree = self.query_one("#folder_tree", Tree)
 
-        if search_bar.styles.display == "none":
-            # Save current selection before opening search
+        # Save current selection before activating search
+        if not self.search_input_active:
             self.pre_search_selected_record = self.selected_record
             self.pre_search_selected_folder = self.selected_folder
-            # Show search bar
-            search_bar.styles.display = "block"
-            self.search_input_text = ""
-            self.search_input_active = True  # Start in input mode
-            # Hide tree selection while typing in search
-            tree.add_class("search-input-active")
-            self._update_search_display()
-        else:
-            # Hide search bar and clear search
-            search_bar.styles.display = "none"
-            self.search_input_text = ""
-            self.search_input_active = False
-            # Show tree selection again
-            tree.remove_class("search-input-active")
-            self._perform_live_search("")  # Reset to show all
 
-            # Restore previous selection
-            self.selected_record = self.pre_search_selected_record
-            self.selected_folder = self.pre_search_selected_folder
-            self._restore_tree_selection(tree)
-
-            # Focus back on tree
-            tree.focus()
-            self._update_status("Navigate with j/k | / to search | ? for help")
+        # Activate search input mode
+        self.search_input_active = True
+        tree.add_class("search-input-active")
+        self._update_search_display()
+        self._update_status("Type to search | Tab to navigate | Ctrl+U to clear")
 
     def action_toggle_view_mode(self):
         """Toggle between detail and JSON view modes"""
@@ -3000,6 +2705,8 @@ class SuperShellApp(App):
         self.records_in_subfolders = set()
         self.file_attachment_to_parent = {}
         self.record_file_attachments = {}
+        self.linked_record_to_parent = {}
+        self.record_linked_records = {}
         self.app_record_uids = set()
         self._load_vault_data()
         self._setup_folder_tree()
@@ -3014,9 +2721,9 @@ class SuperShellApp(App):
                 pyperclip.copy(record['login'])
                 self.notify("👤 Username copied to clipboard!", severity="information")
             else:
-                self.notify("⚠️ No username found for this record", severity="warning")
+                self.notify("⚠️  No username found for this record", severity="warning")
         else:
-            self.notify("⚠️ No record selected", severity="warning")
+            self.notify("⚠️  No record selected", severity="warning")
 
     def action_copy_url(self):
         """Copy URL of selected record to clipboard"""
@@ -3026,9 +2733,9 @@ class SuperShellApp(App):
                 pyperclip.copy(record['login_url'])
                 self.notify("🔗 URL copied to clipboard!", severity="information")
             else:
-                self.notify("⚠️ No URL found for this record", severity="warning")
+                self.notify("⚠️  No URL found for this record", severity="warning")
         else:
-            self.notify("⚠️ No record selected", severity="warning")
+            self.notify("⚠️  No record selected", severity="warning")
 
     def action_copy_uid(self):
         """Copy UID of selected record or folder to clipboard"""
@@ -3039,7 +2746,7 @@ class SuperShellApp(App):
             pyperclip.copy(self.selected_folder)
             self.notify("📋 Folder UID copied to clipboard!", severity="information")
         else:
-            self.notify("⚠️ No record or folder selected", severity="warning")
+            self.notify("⚠️  No record or folder selected", severity="warning")
 
     def action_copy_record(self):
         """Copy entire record contents to clipboard (formatted or JSON based on view mode)"""
@@ -3073,9 +2780,9 @@ class SuperShellApp(App):
                     self.notify("📋 Record contents copied to clipboard!", severity="information")
             except Exception as e:
                 logging.error(f"Error copying record: {e}", exc_info=True)
-                self.notify("⚠️ Failed to copy record contents", severity="error")
+                self.notify("⚠️  Failed to copy record contents", severity="error")
         else:
-            self.notify("⚠️ No record selected", severity="warning")
+            self.notify("⚠️  No record selected", severity="warning")
 
     def action_show_help(self):
         """Show help modal"""
@@ -3103,6 +2810,8 @@ class SuperShellApp(App):
             self.records_in_subfolders = set()
             self.file_attachment_to_parent = {}
             self.record_file_attachments = {}
+            self.linked_record_to_parent = {}
+            self.record_linked_records = {}
             self.app_record_uids = set()
             self._load_vault_data()
             self._setup_folder_tree()
