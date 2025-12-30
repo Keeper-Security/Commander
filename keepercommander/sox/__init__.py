@@ -6,6 +6,26 @@ import sys
 from typing import Dict, Tuple
 
 from .. import api, crypto, utils
+
+# Module-level connection cache to ensure single connection per database
+_connection_cache = {}  # type: Dict[str, sqlite3.Connection]
+
+
+def get_cached_connection(database_name):  # type: (str) -> sqlite3.Connection
+    """Get or create a cached connection for the given database."""
+    if database_name not in _connection_cache:
+        _connection_cache[database_name] = sqlite3.connect(database_name)
+    return _connection_cache[database_name]
+
+
+def close_cached_connection(database_name):  # type: (str) -> None
+    """Close and remove a cached connection."""
+    if database_name in _connection_cache:
+        try:
+            _connection_cache[database_name].close()
+        except Exception:
+            pass
+        del _connection_cache[database_name]
 from ..commands.helpers.enterprise import user_has_privilege, is_addon_enabled
 from ..error import CommandError, Error, KeeperApiError
 from ..params import KeeperParams
@@ -161,7 +181,10 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
     ecc_key = crypto.decrypt_aes_v2(ecc_key, tree_key)
     key = crypto.load_ec_private_key(ecc_key)
     storage = sqlite_storage.SqliteSoxStorage(
-        get_connection=lambda: sqlite3.connect(database_name), owner=params.user, database_name=database_name
+        get_connection=lambda: get_cached_connection(database_name),
+        owner=params.user,
+        database_name=database_name,
+        close_connection=lambda: close_cached_connection(database_name)
     )
     last_updated = storage.last_prelim_data_update
     only_shared_cached = storage.shared_records_only
@@ -171,7 +194,7 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
         storage.clear_non_aging_data()
         sync_down(user_lookup, storage)
         storage.set_shared_records_only(shared_only)
-    return sox_data.SoxData(params, storage=storage, no_cache=no_cache)
+    return sox_data.SoxData(params, storage=storage)
 
 
 def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_updated=0, no_cache=False, shared_only=False):
@@ -359,7 +382,7 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
         user_node_ids = {e_user.get('enterprise_user_id'): e_user.get('node_id') for e_user in enterprise_users}
         sync_down(sd, node_id, user_node_id_lookup=user_node_ids)
     rebuild_task = sox_data.RebuildTask(is_full_sync=False, load_compliance_data=True)
-    sd.rebuild_data(rebuild_task, no_cache=no_cache)
+    sd.rebuild_data(rebuild_task)
     return sd
 
 
