@@ -2007,6 +2007,17 @@ class PamConfigurationEditMixin(RecordEditMixin):
             if region_names:
                 regions = '\n'.join(region_names)
                 extra_properties.append(f'multiline.regionNames={regions}')
+            universal_secrets_enabled = utils.value_to_boolean(kwargs.get('universal_secrets_enabled'))
+            if universal_secrets_enabled is not None:
+                val = 'true' if universal_secrets_enabled else 'false'
+                extra_properties.append(f'checkbox.universalSecretsEnabled={val}')
+            universal_secrets_dry_run = utils.value_to_boolean(kwargs.get('universal_secrets_dry_run_workflow'))
+            if universal_secrets_dry_run is not None:
+                val = 'true' if universal_secrets_dry_run else 'false'
+                extra_properties.append(f'checkbox.universalSecretsDryRunWorkflow={val}')
+            universal_secrets_folder_uid = kwargs.get('universal_secrets_folder_uid')
+            if universal_secrets_folder_uid:
+                extra_properties.append(f'text.universalSecretsFolderUid={universal_secrets_folder_uid}')
         elif record.record_type == 'pamGcpConfiguration':
             gcp_id = kwargs.get('gcp_id')
             if gcp_id:
