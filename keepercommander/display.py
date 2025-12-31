@@ -107,7 +107,8 @@ def welcome():
                     white_line = ''
             print('\033[2K' + Fore.LIGHTYELLOW_EX + yellow_line + Fore.LIGHTWHITE_EX + white_line)
 
-    print('\033[2K' + Fore.LIGHTBLACK_EX + f'{("v" + __version__):>93}\n' + Style.RESET_ALL)
+    print('\033[2K' + Fore.LIGHTBLACK_EX + f'{("v" + __version__):>93}' + Style.RESET_ALL)
+    print('\033[2K' + Fore.LIGHTCYAN_EX + '                        💻 ' + Fore.WHITE + "Type 'supershell' for full-screen vault browser" + Style.RESET_ALL + '\n')
 
 
 def formatted_records(records, **kwargs):

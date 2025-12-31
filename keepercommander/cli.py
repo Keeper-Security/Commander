@@ -694,7 +694,7 @@ def read_command_with_continuation(prompt_session, params):
     return result
 
 
-def loop(params):  # type: (KeeperParams) -> int
+def loop(params, skip_init=False):  # type: (KeeperParams, bool) -> int
     global prompt_session
     error_no = 0
     suppress_errno = False
@@ -711,10 +711,11 @@ def loop(params):  # type: (KeeperParams) -> int
                                            complete_style=CompleteStyle.MULTI_COLUMN,
                                            complete_while_typing=False)
 
-        display.welcome()
-        versioning.welcome_print_version(params)
+        if not skip_init:
+            display.welcome()
+            versioning.welcome_print_version(params)
 
-    if not params.batch_mode:
+    if not params.batch_mode and not skip_init:
         if params.user:
             try:
                 LoginCommand().execute(params, email=params.user, password=params.password, new_login=False)
@@ -732,6 +733,9 @@ def loop(params):  # type: (KeeperParams) -> int
                 for region in KEEPER_PUBLIC_HOSTS:
                     logging.info('\t%s: %s', region, KEEPER_PUBLIC_HOSTS[region])
             logging.info('To login type: login <email>')
+
+    # Mark that we're in the shell loop (used by supershell to know if it should start a shell on exit)
+    params._in_shell_loop = True
 
     while True:
         if params.session_token:
@@ -803,6 +807,9 @@ def loop(params):  # type: (KeeperParams) -> int
 
         if params.batch_mode and error_no != 0 and not suppress_errno:
             break
+
+    # Clear the shell loop flag
+    params._in_shell_loop = False
 
     if not params.batch_mode:
         logging.info('\nGoodbye.\n')

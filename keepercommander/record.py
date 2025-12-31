@@ -94,7 +94,8 @@ class Record:
         if 'notes' in data:
             self.notes = Record.xstr(data['notes'])
 
-        if self.version == 2:
+        if self.version in (1, 2):
+            self.record_type = 'general'
             if 'secret1' in data:
                 self.login = Record.xstr(data['secret1'])
             if 'secret2' in data:
@@ -229,7 +230,34 @@ class Record:
             for c in self.custom_fields:
                 if not 'value' in c: c['value'] = ''
                 if not 'name' in c: c['name'] = c['type'] if 'type' in c else ''
-                print('{0:>20s}: {1:<s}'.format(str(c['name']), str(c['value'])))
+                field_name = str(c['name'])
+                # Skip fileRef fields - they're shown in Attachments section
+                # Check for both 'fileRef' and 'fileRef:' (with trailing colon when no label)
+                if field_name.rstrip(':') in ('fileRef', 'addressRef', 'cardRef'):
+                    continue
+                # Strip type prefixes from field names (e.g., "text:Sign-In Address" -> "Sign-In Address")
+                field_type_prefixes = ('text:', 'multiline:', 'url:', 'phone:', 'email:', 'secret:', 'date:', 'name:', 'host:', 'address:')
+                display_name = field_name
+                for prefix in field_type_prefixes:
+                    if field_name.lower().startswith(prefix):
+                        display_name = field_name[len(prefix):]
+                        # If label was empty, use a friendly name based on type
+                        if not display_name:
+                            type_friendly_names = {
+                                'text:': 'Text',
+                                'multiline:': 'Note',
+                                'url:': 'URL',
+                                'phone:': 'Phone',
+                                'email:': 'Email',
+                                'secret:': 'Secret',
+                                'date:': 'Date',
+                                'name:': 'Name',
+                                'host:': 'Host',
+                                'address:': 'Address',
+                            }
+                            display_name = type_friendly_names.get(prefix, prefix.rstrip(':').title())
+                        break
+                print('{0:>20s}: {1:<s}'.format(display_name, str(c['value'])))
 
         if self.notes:
             lines = self.notes.split('\n')

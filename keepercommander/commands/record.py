@@ -395,6 +395,7 @@ class RecordGetUidCommand(Command):
                     }
                     if version < 3 or kwargs.get('legacy') is True:
                         ro['title'] = r.title
+                        ro['record_type'] = r.record_type
                         if r.login:
                             ro['login'] = r.login
                         if r.password:

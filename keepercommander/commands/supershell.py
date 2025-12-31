@@ -1,5 +1,5 @@
 """
-Keeper SuperShell - A Matrix-style full-screen terminal interface for Keeper vault
+Keeper SuperShell - A full-screen terminal UI for Keeper vault
 """
 
 import logging
@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 import pyperclip
+from rich.markup import escape as rich_escape
 
 
 # Color themes - each theme uses variations of a primary color
@@ -506,9 +507,10 @@ class HelpScreen(ModalScreen):
         padding: 0 1;
     }
 
-    #help_close_btn {
-        margin-top: 1;
-        width: 100%;
+    #help_footer {
+        text-align: center;
+        padding-top: 1;
+        color: #666666;
     }
     """
 
@@ -525,6 +527,7 @@ class HelpScreen(ModalScreen):
   h/l or ←/→    Collapse/expand folder
   g / G         Go to top / bottom
   Ctrl+d/u      Half page down/up
+  Ctrl+e/y      Scroll down/up one line
   Esc           Clear search / collapse folder
 
 [green]Search:[/green]
@@ -547,12 +550,9 @@ class HelpScreen(ModalScreen):
 
 [green]General:[/green]
   ?             Show this help
-  q             Quit SuperShell""", id="help_content")
-            yield Button("Close [ESC]", id="help_close_btn", variant="primary")
-
-    @on(Button.Pressed, "#help_close_btn")
-    def close_help(self):
-        self.dismiss()
+  !             Exit to Keeper shell
+  Ctrl+q        Quit SuperShell""", id="help_content")
+            yield Static("[dim]Press Esc or q to close[/dim]", id="help_footer")
 
     def action_dismiss(self):
         """Close the help screen"""
@@ -568,7 +568,7 @@ class HelpScreen(ModalScreen):
 
 
 class SuperShellApp(App):
-    """The Matrix-style Keeper SuperShell TUI application"""
+    """The Keeper SuperShell TUI application"""
 
     @staticmethod
     def _strip_ansi_codes(text: str) -> str:
@@ -641,7 +641,8 @@ class SuperShellApp(App):
     }
 
     #device_status_info {
-        width: 25%;
+        width: auto;
+        min-width: 30;
         height: 3;
         background: #222222;
         color: #888888;
@@ -772,7 +773,7 @@ class SuperShellApp(App):
     """
 
     BINDINGS = [
-        Binding("q", "quit", "Quit", show=False),
+        Binding("ctrl+q", "quit", "Quit", show=False),
         Binding("d", "sync_vault", "Sync", show=False),
         Binding("/", "search", "Search", show=False),
         Binding("p", "show_preferences", "Preferences", show=False),
@@ -883,7 +884,7 @@ class SuperShellApp(App):
 
     async def on_mount(self):
         """Initialize the application when mounted"""
-        logging.info("SuperShell on_mount called")
+        logging.debug("SuperShell on_mount called")
 
         # Initialize clickable fields list for detail panel
         self.clickable_fields = []
@@ -899,7 +900,7 @@ class SuperShellApp(App):
         if not hasattr(self.params, 'record_cache') or not self.params.record_cache:
             from .utils import SyncDownCommand
             try:
-                logging.info("Syncing vault data...")
+                logging.debug("Syncing vault data...")
                 SyncDownCommand().execute(self.params)
             except Exception as e:
                 logging.error(f"Sync failed: {e}", exc_info=True)
@@ -908,16 +909,16 @@ class SuperShellApp(App):
 
         try:
             # Load vault data
-            logging.info("Loading vault data...")
+            logging.debug("Loading vault data...")
             self._load_vault_data()
 
             # Load device and user info for header display
-            logging.info("Loading device and user info...")
+            logging.debug("Loading device and user info...")
             self.device_info = self._load_device_info()
             self.whoami_info = self._load_whoami_info()
 
             # Setup folder tree with records
-            logging.info("Setting up folder tree...")
+            logging.debug("Setting up folder tree...")
             self._setup_folder_tree()
 
             # Apply theme CSS after components are mounted
@@ -941,6 +942,7 @@ class SuperShellApp(App):
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]g[/{t['primary']}] - Go to top
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]G[/{t['primary']}] (Shift+G) - Go to bottom
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+d/u[/{t['primary']}] - Half page down/up
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+e/y[/{t['primary']}] - Scroll down/up one line
 
 [bold {t['primary_bright']}]Quick Actions[/bold {t['primary_bright']}]
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]c[/{t['primary']}] - Copy password
@@ -948,6 +950,8 @@ class SuperShellApp(App):
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]w[/{t['primary']}] - Copy URL
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]t[/{t['primary']}] - Toggle Detail/JSON view
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]d[/{t['primary']}] - Sync & refresh vault
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]![/{t['primary']}] - Exit to Keeper shell
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+q[/{t['primary']}] - Quit SuperShell
 
 [{t['text_dim']}]Press [/{t['text_dim']}][{t['primary']}]?[/{t['primary']}][{t['text_dim']}] for full keyboard shortcuts[/{t['text_dim']}]"""
             detail_widget.update(help_content)
@@ -965,7 +969,7 @@ class SuperShellApp(App):
             # Focus the folder tree so vim keys work immediately
             self.query_one("#folder_tree", Tree).focus()
 
-            logging.info("SuperShell ready!")
+            logging.debug("SuperShell ready!")
             self._update_status("Navigate: j/k  Tab: search  Help: ?")
         except Exception as e:
             logging.error(f"Error initializing SuperShell: {e}", exc_info=True)
@@ -999,7 +1003,7 @@ class SuperShellApp(App):
             for app_summary in rs.applicationSummary:
                 app_uid = utils.base64_url_encode(app_summary.appRecordUid)
                 self.app_record_uids.add(app_uid)
-            logging.info(f"Found {len(self.app_record_uids)} Secrets Manager apps")
+            logging.debug(f"Found {len(self.app_record_uids)} Secrets Manager apps")
         except Exception as e:
             logging.debug(f"Could not fetch app list: {e}")
 
@@ -1214,8 +1218,11 @@ class SuperShellApp(App):
             if hasattr(self, 'device_info') and self.device_info:
                 di = self.device_info
                 persistent = "[green]ON[/green]" if di.get('persistent_login') else "[red]OFF[/red]"
-                timeout = di.get('effective_logout_timeout') or di.get('device_logout_timeout', 'Default')
-                device_status_widget.update(f"[{t['text_dim']}]Logged In:[/{t['text_dim']}] {persistent} │ [{t['text_dim']}]Timeout:[/{t['text_dim']}] [{t['primary_dim']}]{timeout}[/{t['primary_dim']}]")
+                timeout = di.get('effective_logout_timeout') or di.get('device_logout_timeout') or 'Default'
+                # Ensure timeout has a unit (should already, but just in case)
+                if timeout and timeout != 'Default' and not any(u in str(timeout) for u in ['day', 'hour', 'minute']):
+                    timeout = f"{timeout} days"
+                device_status_widget.update(f"[{t['text_dim']}]Persistent Login:[/{t['text_dim']}] {persistent} │ [{t['text_dim']}]Timeout:[/{t['text_dim']}] [{t['primary_dim']}]{timeout}[/{t['primary_dim']}]")
             else:
                 device_status_widget.update("[dim]Device info unavailable[/dim]")
 
@@ -1225,6 +1232,9 @@ class SuperShellApp(App):
     def _display_whoami_info(self):
         """Display whoami info in the detail panel"""
         try:
+            # Clear any clickable fields from previous record display
+            self._clear_clickable_fields()
+
             t = self.theme_colors
             detail_widget = self.query_one("#detail_content", Static)
 
@@ -1258,6 +1268,7 @@ class SuperShellApp(App):
 
             detail_widget.update("\n".join(lines))
             self._update_status("User information | Press Esc to return")
+            self._update_shortcuts_bar(clear=True)
 
         except Exception as e:
             logging.debug(f"Error displaying whoami info: {e}")
@@ -1265,6 +1276,9 @@ class SuperShellApp(App):
     def _display_device_info(self):
         """Display this-device info in the detail panel"""
         try:
+            # Clear any clickable fields from previous record display
+            self._clear_clickable_fields()
+
             t = self.theme_colors
             detail_widget = self.query_one("#detail_content", Static)
 
@@ -1299,6 +1313,7 @@ class SuperShellApp(App):
 
             detail_widget.update("\n".join(lines))
             self._update_status("Device information | Press Esc to return")
+            self._update_shortcuts_bar(clear=True)
 
         except Exception as e:
             logging.debug(f"Error displaying device info: {e}")
@@ -1323,7 +1338,7 @@ class SuperShellApp(App):
         return True
 
     def _add_record_with_attachments(self, parent_node, record: dict, idx: int, auto_expand: bool = False, total_count: int = 0):
-        """Add a record to the tree, including any file attachments and linked records as siblings."""
+        """Add a record to the tree. Records with attachments show 📎 indicator."""
         record_uid = record.get('uid')
         record_title = record.get('title', 'Untitled')
         t = self.theme_colors  # Theme colors
@@ -1332,44 +1347,20 @@ class SuperShellApp(App):
         width = len(str(total_count)) if total_count > 0 else len(str(idx))
         idx_str = str(idx).rjust(width)
 
-        # Always add record as a leaf (no expand/collapse indicator)
-        record_label = f"[{t['record_num']}]{idx_str}.[/{t['record_num']}] [{t['record']}]{record_title}[/{t['record']}]"
-        parent_node.add_leaf(
-            record_label,
-            data={'type': 'record', 'uid': record_uid}
-        )
-
         # Check if this record has file attachments or linked records
         attachments = self.record_file_attachments.get(record_uid, [])
         linked_records = self.record_linked_records.get(record_uid, [])
 
-        if attachments or linked_records:
-            # Add linked records as indented siblings (with link icon)
-            for linked_uid in linked_records:
-                if linked_uid in self.records:
-                    linked_record = self.records[linked_uid]
-                    linked_title = linked_record.get('title', 'Linked Record')
-                    linked_type = linked_record.get('record_type', '')
-                    # Use appropriate icon based on type
-                    icon = '📍' if linked_type == 'address' else '🔗'
-                    # Add indentation with bullet to visually nest under parent record
-                    linked_label = f"    [{t['text_dim']}]•[/{t['text_dim']}] [{t['attachment']}]{icon} {linked_title}[/{t['attachment']}]"
-                    parent_node.add_leaf(
-                        linked_label,
-                        data={'type': 'record', 'uid': linked_uid, 'parent_record': record_uid}
-                    )
+        # Add [+] indicator if record has attachments
+        attachment_indicator = f" [{t['text_dim']}]\\[+][/{t['text_dim']}]" if (attachments or linked_records) else ""
 
-            # Add file attachments as indented siblings
-            for att_uid in attachments:
-                if att_uid in self.records:
-                    att_record = self.records[att_uid]
-                    att_title = att_record.get('title', 'Attachment')
-                    # Add indentation with bullet to visually nest under parent record
-                    att_label = f"    [{t['text_dim']}]•[/{t['text_dim']}] [{t['attachment']}]📎 {att_title}[/{t['attachment']}]"
-                    parent_node.add_leaf(
-                        att_label,
-                        data={'type': 'record', 'uid': att_uid, 'parent_record': record_uid}
-                    )
+        record_label = f"[{t['record_num']}]{idx_str}.[/{t['record_num']}] [{t['record']}]{rich_escape(str(record_title))}[/{t['record']}]{attachment_indicator}"
+
+        # All records are leaf nodes for consistent alignment
+        parent_node.add_leaf(
+            record_label,
+            data={'type': 'record', 'uid': record_uid, 'has_attachments': bool(attachments or linked_records)}
+        )
 
     def _setup_folder_tree(self):
         """Setup the folder tree structure with records as children"""
@@ -1570,7 +1561,7 @@ class SuperShellApp(App):
                 folder_name = folder.name if folder else "Unknown"
                 detail = self.query_one("#detail_content", Static)
                 t = self.theme_colors
-                detail.update(f"[bold {t['primary']}]📁 {folder_name}[/bold {t['primary']}]")
+                detail.update(f"[bold {t['primary']}]📁 {rich_escape(str(folder_name))}[/bold {t['primary']}]")
 
         except Exception as e:
             logging.error(f"Error restoring tree selection: {e}", exc_info=True)
@@ -1760,21 +1751,21 @@ class SuperShellApp(App):
 
                     # UID - yellow value
                     if key in ['UID', 'Record UID']:
-                        lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [#ffff00]{value}[/#ffff00]")
+                        lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [#ffff00]{rich_escape(str(value))}[/#ffff00]")
                     # Title - bold primary with label
                     elif key in ['Title', 'Name'] and not current_section:
-                        lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [bold {t['primary']}]{value}[/bold {t['primary']}]")
+                        lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [bold {t['primary']}]{rich_escape(str(value))}[/bold {t['primary']}]")
                     # Type field
                     elif key == 'Type':
                         display_type = value if value else 'app' if record_uid in self.app_record_uids else ''
-                        lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary_dim']}]{display_type}[/{t['primary_dim']}]")
+                        lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary_dim']}]{rich_escape(str(display_type))}[/{t['primary_dim']}]")
                     # Notes - always a section
                     elif key == 'Notes':
                         lines.append("")
                         lines.append(f"[bold {t['secondary']}]Notes:[/bold {t['secondary']}]")
                         current_section = 'Notes'
                         if value:
-                            lines.append(f"  [{t['primary']}]{value}[/{t['primary']}]")
+                            lines.append(f"  [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]")
                     # TOTP fields - skip, will be calculated from stored URL
                     elif key == 'TOTP URL':
                         pass
@@ -1795,17 +1786,17 @@ class SuperShellApp(App):
                                 lines.append("")
                             seen_first_user = True
                         if current_section:
-                            lines.append(f"  [{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{value}[/{t['primary']}]")
+                            lines.append(f"  [{t['text_dim']}]{rich_escape(str(key))}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]")
                         else:
-                            lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{value}[/{t['primary']}]")
+                            lines.append(f"[{t['text_dim']}]{rich_escape(str(key))}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]")
                     elif key:
-                        lines.append(f"  [{t['primary_dim']}]{key}[/{t['primary_dim']}]")
+                        lines.append(f"  [{t['primary_dim']}]{rich_escape(str(key))}[/{t['primary_dim']}]")
                 else:
                     # Lines without colons - continuation of notes or other content
                     if current_section == 'Notes':
-                        lines.append(f"  [{t['primary']}]{stripped}[/{t['primary']}]")
+                        lines.append(f"  [{t['primary']}]{rich_escape(str(stripped))}[/{t['primary']}]")
                     elif stripped:
-                        lines.append(f"  [{t['primary_dim']}]{stripped}[/{t['primary_dim']}]")
+                        lines.append(f"  [{t['primary_dim']}]{rich_escape(str(stripped))}[/{t['primary_dim']}]")
 
             return "\n".join(lines)
 
@@ -1843,10 +1834,10 @@ class SuperShellApp(App):
                     folder_type = folder.get_folder_type() if hasattr(folder, 'get_folder_type') else folder.type
                     return (
                         f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]\n"
-                        f"[bold {t['primary']}]{folder.name}[/bold {t['primary']}]\n"
-                        f"[{t['text_dim']}]UID:[/{t['text_dim']}] [#ffff00]{folder_uid}[/#ffff00]\n"
+                        f"[bold {t['primary']}]{rich_escape(str(folder.name))}[/bold {t['primary']}]\n"
+                        f"[{t['text_dim']}]UID:[/{t['text_dim']}] [#ffff00]{rich_escape(str(folder_uid))}[/#ffff00]\n"
                         f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]\n\n"
-                        f"[{t['secondary']}]{'Type':>20}:[/{t['secondary']}]  [{t['primary']}]{folder_type}[/{t['primary']}]\n\n"
+                        f"[{t['secondary']}]{'Type':>20}:[/{t['secondary']}]  [{t['primary']}]{rich_escape(str(folder_type))}[/{t['primary']}]\n\n"
                         f"[{t['primary_dim']}]Expand folder (press 'l' or →) to view records[/{t['primary_dim']}]"
                     )
                 return "[red]Folder not found[/red]"
@@ -1870,9 +1861,9 @@ class SuperShellApp(App):
 
                         # Special formatting for headers
                         if key in ['Shared Folder UID', 'Folder UID', 'Team UID']:
-                            lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [#ffff00]{value}[/#ffff00]")
+                            lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [#ffff00]{rich_escape(str(value))}[/#ffff00]")
                         elif key == 'Name':
-                            lines.append(f"[bold {t['primary']}]{value}[/bold {t['primary']}]")
+                            lines.append(f"[bold {t['primary']}]{rich_escape(str(value))}[/bold {t['primary']}]")
                         # Section headers (no value or short value)
                         elif key in ['Record Permissions', 'User Permissions', 'Team Permissions', 'Share Administrators']:
                             lines.append("")
@@ -1880,20 +1871,20 @@ class SuperShellApp(App):
                         # Boolean values
                         elif value.lower() in ['true', 'false']:
                             color = t['primary'] if value.lower() == 'true' else t['primary_dim']
-                            lines.append(f"[{t['secondary']}]{key:>25}:[/{t['secondary']}]  [{color}]{value}[/{color}]")
+                            lines.append(f"[{t['secondary']}]{rich_escape(str(key)):>25}:[/{t['secondary']}]  [{color}]{rich_escape(str(value))}[/{color}]")
                         # Regular key-value pairs
                         else:
                             # Add indentation for permission entries
                             if key and not key[0].isspace():
-                                lines.append(f"[{t['secondary']}]  • {key}:[/{t['secondary']}]  [{t['primary']}]{value}[/{t['primary']}]")
+                                lines.append(f"[{t['secondary']}]  • {rich_escape(str(key))}:[/{t['secondary']}]  [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]")
                             else:
-                                lines.append(f"[{t['secondary']}]{key:>25}:[/{t['secondary']}]  [{t['primary']}]{value}[/{t['primary']}]")
+                                lines.append(f"[{t['secondary']}]{rich_escape(str(key)):>25}:[/{t['secondary']}]  [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]")
                     else:
-                        lines.append(f"[{t['primary']}]{line}[/{t['primary']}]")
+                        lines.append(f"[{t['primary']}]{rich_escape(str(line))}[/{t['primary']}]")
                 else:
                     # Lines without colons (section content)
                     if line:
-                        lines.append(f"[{t['primary']}]  {line}[/{t['primary']}]")
+                        lines.append(f"[{t['primary']}]  {rich_escape(str(line))}[/{t['primary']}]")
 
             lines.append(f"\n[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]")
             return "\n".join(lines)
@@ -2006,6 +1997,7 @@ class SuperShellApp(App):
                         mount_line("", None)  # Blank line before TOTP
                         mount_line(f"[bold {t['secondary']}]Two-Factor Authentication:[/bold {t['secondary']}]", None)
                         mount_line(f"  [{t['text_dim']}]Code:[/{t['text_dim']}] [bold #00ff00]{code}[/bold #00ff00]    [{t['text_dim']}]valid for[/{t['text_dim']}] [bold #ffff00]{seconds_remaining} sec[/bold #ffff00]", code)
+                        mount_line("", None)  # Blank line after TOTP
                         totp_displayed = True
                 except Exception as e:
                     logging.debug(f"Error calculating TOTP: {e}")
@@ -2022,6 +2014,38 @@ class SuperShellApp(App):
                     return True
             return False
 
+        # Get attachments for this record
+        file_attachment_uids = self.record_file_attachments.get(record_uid, [])
+        linked_record_uids = self.record_linked_records.get(record_uid, [])
+        attachments_displayed = False
+
+        def display_attachments():
+            """Helper to display file attachments section"""
+            nonlocal attachments_displayed
+            if attachments_displayed:
+                return
+            if not file_attachment_uids and not linked_record_uids:
+                return
+
+            mount_line("", None)  # Blank line before attachments
+            mount_line(f"[bold {t['secondary']}]File Attachments:[/bold {t['secondary']}]", None)
+
+            # Display file attachments (use + symbol instead of emoji)
+            for att_uid in file_attachment_uids:
+                att_record = self.records.get(att_uid, {})
+                att_title = att_record.get('title', att_uid)
+                mount_line(f"  [{t['text_dim']}]+[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(att_title))}[/{t['primary']}]", att_uid)
+
+            # Display linked records (addressRef, cardRef, etc.)
+            for link_uid in linked_record_uids:
+                link_record = self.records.get(link_uid, {})
+                link_title = link_record.get('title', link_uid)
+                link_type = link_record.get('record_type', '')
+                type_label = f" ({rich_escape(str(link_type))})" if link_type else ""
+                mount_line(f"  [{t['text_dim']}]→[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(link_title))}[/{t['primary']}][{t['text_dim']}]{type_label}[/{t['text_dim']}]", link_uid)
+
+            attachments_displayed = True
+
         for line in output.split('\n'):
             stripped = line.strip()
             if not stripped:
@@ -2033,21 +2057,21 @@ class SuperShellApp(App):
                 value = parts[1].strip() if len(parts) > 1 else ''
 
                 if key in ['UID', 'Record UID']:
-                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [#ffff00]{value}[/#ffff00]", value)
+                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [#ffff00]{rich_escape(str(value))}[/#ffff00]", value)
                 elif key in ['Title', 'Name'] and not current_section:
-                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [bold {t['primary']}]{value}[/bold {t['primary']}]", value)
+                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [bold {t['primary']}]{rich_escape(str(value))}[/bold {t['primary']}]", value)
                 elif key == 'Type':
                     # Show 'app' for app records if type is blank
                     display_type = value if value else 'app' if record_uid in self.app_record_uids else ''
-                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary_dim']}]{display_type}[/{t['primary_dim']}]", display_type)
+                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary_dim']}]{rich_escape(str(display_type))}[/{t['primary_dim']}]", display_type)
                 elif key == 'Password':
                     # Show masked password but use ClipboardCommand to copy (generates audit event)
                     display_value = '******' if actual_password else value
                     copy_value = actual_password if actual_password else None
-                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{display_value}[/{t['primary']}]", copy_value, is_password=True)
+                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(display_value))}[/{t['primary']}]", copy_value, is_password=True)
                 elif key == 'URL':
                     # Display URL, then TOTP if present
-                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{value}[/{t['primary']}]", value)
+                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]", value)
                     display_totp()  # Add TOTP section right after URL (before Notes)
                 elif key == 'Notes':
                     # Display TOTP before Notes if not already shown (for records without URL)
@@ -2058,7 +2082,7 @@ class SuperShellApp(App):
                     current_section = 'Notes'
                     if value:
                         # Notes content is on the same line
-                        mount_line(f"  [{t['primary']}]{value}[/{t['primary']}]", value)
+                        mount_line(f"  [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]", value)
                 elif key == 'TOTP URL':
                     # Skip TOTP URL - we'll show the code calculated from stored URL
                     pass
@@ -2066,26 +2090,58 @@ class SuperShellApp(App):
                     # Skip - we'll calculate and show TOTP from stored URL below
                     pass
                 elif is_section_header(key, value):
+                    # Display attachments BEFORE Share Admins section
+                    if key.startswith('Share Admins') and not attachments_displayed:
+                        display_attachments()
                     current_section = key
                     seen_first_user = False  # Reset for new section
                     mount_line("", None)  # Blank line
                     mount_line(f"[bold {t['secondary']}]{key}:[/bold {t['secondary']}]", None)
+                elif key.rstrip(':') in ('fileRef', 'addressRef', 'cardRef'):
+                    # Skip reference fields - we handle attachments/linked records separately
+                    pass
                 elif value:
+                    # Strip type prefixes from field names (e.g., "text:Sign-In Address" -> "Sign-In Address")
+                    display_key = key
+                    field_type_prefixes = ('text:', 'multiline:', 'url:', 'phone:', 'email:', 'secret:', 'date:', 'name:', 'host:', 'address:')
+                    for prefix in field_type_prefixes:
+                        if key.lower().startswith(prefix):
+                            display_key = key[len(prefix):]
+                            # If label was empty, use a friendly name based on type
+                            if not display_key:
+                                type_friendly_names = {
+                                    'text:': 'Text',
+                                    'multiline:': 'Note',
+                                    'url:': 'URL',
+                                    'phone:': 'Phone',
+                                    'email:': 'Email',
+                                    'secret:': 'Secret',
+                                    'date:': 'Date',
+                                    'name:': 'Name',
+                                    'host:': 'Host',
+                                    'address:': 'Address',
+                                }
+                                display_key = type_friendly_names.get(prefix, prefix.rstrip(':').title())
+                            break
+
                     # Add blank line before each User entry in User Permissions section (except first)
-                    if key == 'User' and current_section == 'User Permissions':
+                    if display_key == 'User' and current_section == 'User Permissions':
                         if seen_first_user:
                             mount_line("", None)  # Blank line between users
                         seen_first_user = True
                     indent = "  " if current_section else ""
-                    mount_line(f"{indent}[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{value}[/{t['primary']}]", value)
+                    mount_line(f"{indent}[{t['text_dim']}]{rich_escape(str(display_key))}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]", value)
                 elif key:
-                    mount_line(f"  [{t['primary_dim']}]{key}[/{t['primary_dim']}]", key)
+                    mount_line(f"  [{t['primary_dim']}]{rich_escape(str(key))}[/{t['primary_dim']}]", key)
             else:
                 # Lines without colons - continuation of notes or other multi-line content
                 if current_section == 'Notes':
-                    mount_line(f"  [{t['primary']}]{stripped}[/{t['primary']}]", stripped)
+                    mount_line(f"  [{t['primary']}]{rich_escape(str(stripped))}[/{t['primary']}]", stripped)
                 elif stripped:
-                    mount_line(f"  [{t['primary_dim']}]{stripped}[/{t['primary_dim']}]", stripped)
+                    mount_line(f"  [{t['primary_dim']}]{rich_escape(str(stripped))}[/{t['primary_dim']}]", stripped)
+
+        # Display attachments at end if not already shown (records without Share Admins section)
+        display_attachments()
 
         # Batch mount all widgets at once for better performance
         if widgets_to_mount:
@@ -2150,7 +2206,7 @@ class SuperShellApp(App):
             json_obj = json.loads(output)
         except:
             # If JSON parsing fails, show raw output
-            detail_widget.update(f"[{t['primary']}]JSON View:\n\n{output}[/{t['primary']}]")
+            detail_widget.update(f"[{t['primary']}]JSON View:\n\n{rich_escape(str(output))}[/{t['primary']}]")
             return
 
         # Keep unmasked JSON for copying actual values
@@ -2263,34 +2319,34 @@ class SuperShellApp(App):
             unmasked_value = unmasked_dict.get(key, value) if isinstance(unmasked_dict, dict) else value
 
             if isinstance(value, str):
-                display_val = value.replace("[", "\\[")
+                display_val = rich_escape(value)
                 is_password = (value == "************")
                 copy_val = unmasked_value if isinstance(unmasked_value, str) else str(unmasked_value)
                 mount_line(
-                    f"{indent_str}[{key_color}]\"{key}\"[/{key_color}]: [{string_color}]\"{display_val}\"[/{string_color}]{comma}",
+                    f"{indent_str}[{key_color}]\"{rich_escape(str(key))}\"[/{key_color}]: [{string_color}]\"{display_val}\"[/{string_color}]{comma}",
                     copy_value=copy_val,
                     is_password=is_password
                 )
             elif isinstance(value, bool):
                 bool_str = "true" if value else "false"
                 mount_line(
-                    f"{indent_str}[{key_color}]\"{key}\"[/{key_color}]: [{bool_color}]{bool_str}[/{bool_color}]{comma}",
+                    f"{indent_str}[{key_color}]\"{rich_escape(str(key))}\"[/{key_color}]: [{bool_color}]{bool_str}[/{bool_color}]{comma}",
                     copy_value=str(value)
                 )
             elif isinstance(value, (int, float)):
                 mount_line(
-                    f"{indent_str}[{key_color}]\"{key}\"[/{key_color}]: [{number_color}]{value}[/{number_color}]{comma}",
+                    f"{indent_str}[{key_color}]\"{rich_escape(str(key))}\"[/{key_color}]: [{number_color}]{value}[/{number_color}]{comma}",
                     copy_value=str(value)
                 )
             elif value is None:
-                mount_line(f"{indent_str}[{key_color}]\"{key}\"[/{key_color}]: [{null_color}]null[/{null_color}]{comma}")
+                mount_line(f"{indent_str}[{key_color}]\"{rich_escape(str(key))}\"[/{key_color}]: [{null_color}]null[/{null_color}]{comma}")
             elif isinstance(value, list):
-                mount_line(f"{indent_str}[{key_color}]\"{key}\"[/{key_color}]: [{bracket_color}]\\[[/{bracket_color}]")
+                mount_line(f"{indent_str}[{key_color}]\"{rich_escape(str(key))}\"[/{key_color}]: [{bracket_color}]\\[[/{bracket_color}]")
                 unmasked_list = unmasked_value if isinstance(unmasked_value, list) else value
                 self._render_json_list_items(value, unmasked_list, mount_line, t, record_uid, indent + 1)
                 mount_line(f"{indent_str}[{bracket_color}]][/{bracket_color}]{comma}")
             elif isinstance(value, dict):
-                mount_line(f"{indent_str}[{key_color}]\"{key}\"[/{key_color}]: [{bracket_color}]{{[/{bracket_color}]")
+                mount_line(f"{indent_str}[{key_color}]\"{rich_escape(str(key))}\"[/{key_color}]: [{bracket_color}]{{[/{bracket_color}]")
                 unmasked_inner = unmasked_value if isinstance(unmasked_value, dict) else value
                 self._render_json_dict_items(value, unmasked_inner, mount_line, t, record_uid, indent + 1)
                 mount_line(f"{indent_str}[{bracket_color}]}}[/{bracket_color}]{comma}")
@@ -2309,7 +2365,7 @@ class SuperShellApp(App):
             unmasked_value = unmasked_list[i] if isinstance(unmasked_list, list) and i < len(unmasked_list) else value
 
             if isinstance(value, str):
-                display_val = value.replace("[", "\\[")
+                display_val = rich_escape(value)
                 is_password = (value == "************")
                 copy_val = unmasked_value if isinstance(unmasked_value, str) else str(unmasked_value)
                 mount_line(
@@ -2401,9 +2457,9 @@ class SuperShellApp(App):
         if not output or output.strip() == '':
             # Fallback to basic folder info
             if folder:
-                mount_line(f"[bold {t['primary']}]{folder.name}[/bold {t['primary']}]", folder.name)
-                mount_line(f"[{t['text_dim']}]UID:[/{t['text_dim']}] [#ffff00]{folder_uid}[/#ffff00]", folder_uid)
-                mount_line(f"[{t['text_dim']}]Type:[/{t['text_dim']}] [{t['primary']}]{folder_type}[/{t['primary']}]", folder_type)
+                mount_line(f"[bold {t['primary']}]{rich_escape(str(folder.name))}[/bold {t['primary']}]", folder.name)
+                mount_line(f"[{t['text_dim']}]UID:[/{t['text_dim']}] [#ffff00]{rich_escape(str(folder_uid))}[/#ffff00]", folder_uid)
+                mount_line(f"[{t['text_dim']}]Type:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(folder_type))}[/{t['primary']}]", folder_type)
             mount_line(f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]", None)
             return
 
@@ -2439,14 +2495,14 @@ class SuperShellApp(App):
 
                 # UID fields
                 if key in ['Shared Folder UID', 'Folder UID', 'Team UID']:
-                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [#ffff00]{value}[/#ffff00]", value)
+                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [#ffff00]{rich_escape(str(value))}[/#ffff00]", value)
                 # Folder Type
                 elif key == 'Folder Type':
                     display_type = value if value else folder_type
-                    mount_line(f"[{t['text_dim']}]Type:[/{t['text_dim']}] [{t['primary']}]{display_type}[/{t['primary']}]", display_type)
+                    mount_line(f"[{t['text_dim']}]Type:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(display_type))}[/{t['primary']}]", display_type)
                 # Name - title
                 elif key == 'Name':
-                    mount_line(f"[bold {t['primary']}]{value}[/bold {t['primary']}]", value)
+                    mount_line(f"[bold {t['primary']}]{rich_escape(str(value))}[/bold {t['primary']}]", value)
                 # Section headers
                 elif key in section_headers:
                     current_section = key
@@ -2460,33 +2516,33 @@ class SuperShellApp(App):
                 elif key == 'Record UID' and current_section == 'Record Permissions':
                     if value in self.records:
                         record_title = self.records[value].get('title', 'Untitled')
-                        mount_line(f"  [{t['text_dim']}]Record:[/{t['text_dim']}] [#ffff00]{record_title}[/#ffff00]", record_title)
-                        mount_line(f"    [{t['text_dim']}]UID:[/{t['text_dim']}] [{t['primary_dim']}]{value}[/{t['primary_dim']}]", value)
+                        mount_line(f"  [{t['text_dim']}]Record:[/{t['text_dim']}] [#ffff00]{rich_escape(str(record_title))}[/#ffff00]", record_title)
+                        mount_line(f"    [{t['text_dim']}]UID:[/{t['text_dim']}] [{t['primary_dim']}]{rich_escape(str(value))}[/{t['primary_dim']}]", value)
                     else:
-                        mount_line(f"  [{t['text_dim']}]Record UID:[/{t['text_dim']}] [#ffff00]{value}[/#ffff00]", value)
+                        mount_line(f"  [{t['text_dim']}]Record UID:[/{t['text_dim']}] [#ffff00]{rich_escape(str(value))}[/#ffff00]", value)
                 # Boolean values
                 elif value.lower() in ['true', 'false']:
                     color = t['primary'] if value.lower() == 'true' else t['primary_dim']
                     indent = "  " if current_section else ""
-                    mount_line(f"{indent}[{t['secondary']}]{key}:[/{t['secondary']}] [{color}]{value}[/{color}]", value)
+                    mount_line(f"{indent}[{t['secondary']}]{rich_escape(str(key))}:[/{t['secondary']}] [{color}]{rich_escape(str(value))}[/{color}]", value)
                 # Regular key-value pairs
                 elif value:
                     indent = "  " if current_section else ""
                     # Skip Share Admins details (collapsed)
                     if in_share_admins and key in ['User', 'Email']:
                         continue
-                    mount_line(f"{indent}[{t['secondary']}]{key}:[/{t['secondary']}] [{t['primary']}]{value}[/{t['primary']}]", value)
+                    mount_line(f"{indent}[{t['secondary']}]{rich_escape(str(key))}:[/{t['secondary']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]", value)
                 elif key:
                     indent = "  " if current_section else ""
                     if in_share_admins:
                         continue
-                    mount_line(f"{indent}[{t['primary_dim']}]{key}[/{t['primary_dim']}]", key)
+                    mount_line(f"{indent}[{t['primary_dim']}]{rich_escape(str(key))}[/{t['primary_dim']}]", key)
             else:
                 if stripped:
                     indent = "  " if current_section else ""
                     if in_share_admins:
                         continue
-                    mount_line(f"{indent}[{t['primary']}]{stripped}[/{t['primary']}]", stripped)
+                    mount_line(f"{indent}[{t['primary']}]{rich_escape(str(stripped))}[/{t['primary']}]", stripped)
 
         # Footer line
         mount_line(f"\n[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]", None)
@@ -2527,13 +2583,16 @@ class SuperShellApp(App):
         status_bar = self.query_one("#status_bar", Static)
         status_bar.update(f"⚡ {message}")
 
-    def _update_shortcuts_bar(self, record_selected: bool = False):
+    def _update_shortcuts_bar(self, record_selected: bool = False, folder_selected: bool = False, clear: bool = False):
         """Update the shortcuts bar at bottom of detail panel"""
         try:
             shortcuts_bar = self.query_one("#shortcuts_bar", Static)
             t = self.theme_colors
 
-            if record_selected:
+            if clear:
+                # Clear the shortcuts bar (for info displays like device/user info)
+                shortcuts_bar.update("")
+            elif record_selected:
                 mode = "JSON" if self.view_mode == 'json' else "Detail"
                 shortcuts_bar.update(
                     f"[{t['secondary']}]Mode: {mode}[/{t['secondary']}]  "
@@ -2544,10 +2603,13 @@ class SuperShellApp(App):
                     f"[{t['text_dim']}]y[/{t['text_dim']}]=Copy  "
                     f"[{t['text_dim']}]t[/{t['text_dim']}]=Toggle"
                 )
-            else:
+            elif folder_selected:
                 shortcuts_bar.update(
-                    f"[{t['text_dim']}]Navigate: j/k  Expand: l  Search: /  Sync: d  Help: ?[/{t['text_dim']}]"
+                    f"[{t['text_dim']}]Navigate: j/k  Search: /  Sync: d  Help: ?  Shell: ![/{t['text_dim']}]"
                 )
+            else:
+                # Root or other - hide navigation help
+                shortcuts_bar.update("")
         except Exception as e:
             logging.debug(f"Error updating shortcuts bar: {e}")
 
@@ -2623,7 +2685,7 @@ class SuperShellApp(App):
                 self._clear_clickable_fields()
                 detail_widget = self.query_one("#detail_content", Static)
                 detail_widget.update("[red]Folder not found[/red]")
-            self._update_shortcuts_bar(record_selected=False)
+            self._update_shortcuts_bar(folder_selected=True)
         elif node_type == 'virtual_folder':
             # Virtual folder selected (e.g., Secrets Manager Apps)
             self.selected_record = None
@@ -2643,7 +2705,7 @@ class SuperShellApp(App):
             else:
                 detail_widget.update(f"[{t['primary_dim']}]Virtual folder[/{t['primary_dim']}]")
                 self._update_status("Virtual folder")
-            self._update_shortcuts_bar(record_selected=False)
+            self._update_shortcuts_bar(folder_selected=True)
         elif node_type == 'root':
             # Root selected - show welcome/help content
             self.selected_record = None  # Clear record selection
@@ -2666,6 +2728,7 @@ class SuperShellApp(App):
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]g[/{t['primary']}] - Go to top
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]G[/{t['primary']}] (Shift+G) - Go to bottom
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+d/u[/{t['primary']}] - Half page down/up
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+e/y[/{t['primary']}] - Scroll down/up one line
 
 [bold {t['primary_bright']}]Quick Actions[/bold {t['primary_bright']}]
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]c[/{t['primary']}] - Copy password
@@ -2673,11 +2736,13 @@ class SuperShellApp(App):
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]w[/{t['primary']}] - Copy URL
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]t[/{t['primary']}] - Toggle Detail/JSON view
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]d[/{t['primary']}] - Sync & refresh vault
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]![/{t['primary']}] - Exit to Keeper shell
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+q[/{t['primary']}] - Quit SuperShell
 
 [{t['text_dim']}]Press [/{t['text_dim']}][{t['primary']}]?[/{t['primary']}][{t['text_dim']}] for full keyboard shortcuts[/{t['text_dim']}]"""
             detail_widget.update(help_content)
             self._update_status("My Vault")
-            self._update_shortcuts_bar(record_selected=False)
+            self._update_shortcuts_bar(clear=True)  # Help content is already in the panel
 
     def _update_search_display(self):
         """Update the search display and results with blinking cursor"""
@@ -2746,10 +2811,16 @@ class SuperShellApp(App):
                 if event.key in ("j", "k", "h", "l", "up", "down", "left", "right", "enter", "space"):
                     return
                 # Action keys (copy, toggle view, etc.) - let them pass through
-                if event.key in ("t", "c", "u", "w", "i", "y", "d", "p", "g", "question_mark"):
+                if event.key in ("t", "c", "u", "w", "i", "y", "d", "g", "p", "question_mark"):
                     return
                 # Shift+G for go to bottom
                 if event.character == "G":
+                    return
+                # ! exits to regular shell
+                if event.character == "!":
+                    self.exit("Exited to shell. Type 'supershell' to return.")
+                    event.prevent_default()
+                    event.stop()
                     return
                 # Tab switches to search input
                 if event.key == "tab":
@@ -2886,8 +2957,8 @@ class SuperShellApp(App):
                     event.prevent_default()
                     event.stop()
                     return
-                elif event.character and (event.character.isdigit() or event.character in "qwW"):
-                    # Accept digits and some commands (q=quit, w=write not applicable here)
+                elif event.character and event.character.isdigit():
+                    # Accept digits for line number navigation
                     self.command_buffer += event.character
                     self._update_status(f":{self.command_buffer}")
                     event.prevent_default()
@@ -2927,6 +2998,14 @@ class SuperShellApp(App):
                 self._collapse_current_or_parent(tree)
                 event.prevent_default()
                 event.stop()
+                return
+
+            # ! exits to regular shell (also works when search bar hidden)
+            if event.character == "!":
+                self.exit("Exited to shell. Type 'supershell' to return.")
+                event.prevent_default()
+                event.stop()
+                return
 
     def _collapse_current_or_parent(self, tree: Tree):
         """Collapse current node if expanded, or go to parent. Stop at root."""
@@ -2949,12 +3028,8 @@ class SuperShellApp(App):
             self._update_status("Moved to parent")
 
     def _execute_command(self, command: str):
-        """Execute vim-style command (e.g., :20 to go to line 20, :q to quit)"""
+        """Execute vim-style command (e.g., :20 to go to line 20)"""
         command = command.strip()
-
-        if command == "q":
-            self.exit()
-            return
 
         # Try to parse as line number
         try:
@@ -3357,6 +3432,9 @@ class SuperShellCommand(Command):
                 while self.running:
                     color = self.colors[i % len(self.colors)]
                     char = self.chars[i % len(self.chars)]
+                    # Check running again before writing to avoid race condition
+                    if not self.running:
+                        break
                     sys.stdout.write(f"\r  {color}{char}\033[0m {self.message}")
                     sys.stdout.flush()
                     time.sleep(0.1)
@@ -3371,7 +3449,10 @@ class SuperShellCommand(Command):
                 self.running = False
                 if self.thread:
                     self.thread.join(timeout=0.5)
-                # Clear spinner line
+                # Small delay to ensure thread has stopped writing
+                time.sleep(0.15)
+                # Clear spinner line (do it twice to handle any race condition)
+                sys.stdout.write("\r\033[K")
                 sys.stdout.write("\r\033[K")
                 sys.stdout.flush()
                 if success_message:
@@ -3383,21 +3464,13 @@ class SuperShellCommand(Command):
         # Check if authentication is needed
         if not params.session_token:
             from .utils import LoginCommand
-            login_spinner = None
             try:
-                # Start spinner for authentication
-                login_spinner = Spinner("Authenticating...")
-                login_spinner.start()
-
-                # Run login - password prompt will print over spinner
+                # Run login (no spinner - login may prompt for 2FA, password, etc.)
                 LoginCommand().execute(params, email=params.user, password=params.password, new_login=False)
 
                 if not params.session_token:
-                    login_spinner.stop()
                     logging.error("\nLogin failed or was cancelled.")
                     return
-
-                login_spinner.stop("Login successful!")
 
                 # Sync vault data with spinner
                 sync_spinner = Spinner("Syncing vault data...")
@@ -3413,28 +3486,34 @@ class SuperShellCommand(Command):
                 print()  # Blank line before TUI
 
             except KeyboardInterrupt:
-                if login_spinner:
-                    login_spinner.stop()
                 print("\n\nLogin cancelled.")
                 return
             except Exception as e:
-                if login_spinner:
-                    login_spinner.stop()
                 logging.error(f"\nLogin failed: {e}")
                 return
 
-        # Launch the TUI app with spinner
-        spinner = Spinner("Starting SuperShell...")
-        spinner.start()
-
+        # Launch the TUI app
         try:
             app = SuperShellApp(params)
-            spinner.stop()  # Stop spinner before TUI takes over screen
-            app.run()
+            result = app.run()
+
+            # If user pressed '!' to exit to shell, start the Keeper shell
+            if result and "Exited to shell" in str(result):
+                print(result)  # Show the exit message
+                # Check if we were in batch mode BEFORE modifying it
+                was_batch_mode = params.batch_mode
+                # Clear batch mode and pending commands so the shell runs interactively
+                params.batch_mode = False
+                params.commands = [c for c in params.commands if c.lower() not in ('q', 'quit')]
+                # Only start a new shell if we were in batch mode (ran 'keeper supershell' directly)
+                # Otherwise, just return to the existing interactive shell
+                if was_batch_mode:
+                    from ..cli import loop as shell_loop
+                    shell_loop(params, skip_init=True)
+                    # When the inner shell exits, queue 'q' so the outer batch-mode loop also exits
+                    params.commands.append('q')
         except KeyboardInterrupt:
-            spinner.stop()
-            logging.info("SuperShell interrupted")
+            logging.debug("SuperShell interrupted")
         except Exception as e:
-            spinner.stop()
             logging.error(f"Error running SuperShell: {e}")
             raise
