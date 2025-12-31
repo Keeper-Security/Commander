@@ -150,6 +150,7 @@ class TestRiskManagement(TestCase):
         self.assertIn('321321', output)
         self.assertIn('123456', output)
         self.assertIn('654321', output)
+        self.assertIn('Recovery Phrase Set Declined', output)
 
 
     @patch("keepercommander.commands.audit_alerts.AuditSettingMixin.EVENT_TYPES", [(123, "account_recovery_decline")])
@@ -184,6 +185,7 @@ class TestRiskManagement(TestCase):
         output = captured_output.getvalue()
         self.assertIn('SB_DEPLOY_ACROSS_ENTIRE_ORGANIZATION', output)
         self.assertIn('RESOLVED', output)
+        self.assertIn('Deploy across your entire organization', output)
 
 
     def test_risk_management_set_security_benchmarks(self):

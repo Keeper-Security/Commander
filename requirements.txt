@@ -14,7 +14,7 @@ keeper-secrets-manager-core>=16.6.0
 keeper_pam_webrtc_rs; python_version>='3.8'
 pydantic>=2.6.4; python_version>='3.8'
 flask; python_version>='3.8'
-pyngrok; python_version>='3.8'
+pyngrok>=7.5.0
 flask-limiter; python_version>='3.8'
 psutil; python_version>='3.8'
 python-dotenv
@@ -24,3 +24,4 @@ pyobjc-framework-LocalAuthentication; sys_platform == "darwin" and python_versio
 winrt-runtime; sys_platform == "win32"
 winrt-Windows.Foundation; sys_platform == "win32"
 winrt-Windows.Security.Credentials.UI; sys_platform == "win32"
+keeper-mlkem; python_version>='3.11'

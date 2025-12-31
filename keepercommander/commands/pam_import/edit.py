@@ -1789,8 +1789,8 @@ class PamConfigEnvironment():
         if environment_type not in PAM_ENVIRONMENT_TYPES:
             environment_type = str(settings.get("environment", "")).strip()
         if environment_type not in PAM_ENVIRONMENT_TYPES:
-            logging.warning("Unrecognized environment type "\
-                            f"""{bcolors.WARNING}"{environment_type}"{bcolors.ENDC} """\
+            logging.warning("Unrecognized environment type "
+                            f"""{bcolors.WARNING}"{environment_type}"{bcolors.ENDC} """
                             f"""must be one of {PAM_ENVIRONMENT_TYPES} - switching to "local" """)
             environment_type = "local"
         self.environment = environment_type

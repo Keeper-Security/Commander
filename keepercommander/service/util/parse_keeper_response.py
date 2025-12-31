@@ -516,7 +516,7 @@ class KeeperResponseParser:
         
         # Check for error messages first
         response_lower = response_str.lower()
-        error_patterns = ["error", "failed", "invalid"]
+        error_patterns = ["error", "failed", "invalid", "unrecognized"]
         warning_patterns = ["already exists"]
         
         if any(pattern in response_lower for pattern in error_patterns):
@@ -936,7 +936,7 @@ class KeeperResponseParser:
         # Check for error patterns (case insensitive)
         error_patterns = [
             "error", "failed", "invalid", "not found", "does not exist", 
-            "permission denied", "unauthorized", "cannot be", "character", "reserved"
+            "permission denied", "unauthorized", "cannot be", "character", "reserved", "unrecognized"
         ]
         
         # Check for warning patterns

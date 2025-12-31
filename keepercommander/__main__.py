@@ -31,7 +31,7 @@ from .params import KeeperParams
 from .config_storage import loader
 
 
-def get_params_from_config(config_filename=None, launched_with_shortcut=False):    # type: (Optional[str], bool) -> KeeperParams
+def get_params_from_config(config_filename=None, launched_with_shortcut=False, data_dir=None):    # type: (Optional[str], bool, Optional[str]) -> KeeperParams
     if os.getenv("KEEPER_COMMANDER_DEBUG"):
         logging.getLogger().setLevel(logging.DEBUG)
         logging.info('Debug ON')
@@ -46,7 +46,7 @@ def get_params_from_config(config_filename=None, launched_with_shortcut=False): 
     if not config_filename:
         config_filename = 'config.json'
         if launched_with_shortcut or not os.path.isfile(config_filename):
-            config_filename = os.path.join(utils.get_default_path(), config_filename)
+            config_filename = os.path.join(utils.get_default_path(data_dir), config_filename)
         else:
             config_filename = os.path.join(os.getcwd(), config_filename)
     else:
@@ -119,6 +119,7 @@ parser.add_argument('--unmask-all', action='store_true', help=unmask_help)
 fail_on_throttle_help = 'Disable default client-side pausing of command execution and re-sending of requests upon ' \
                         'server-side throttling'
 parser.add_argument('--fail-on-throttle', action='store_true', help=fail_on_throttle_help)
+parser.add_argument('--data-dir', dest='data_dir', action='store', help='Directory to use for Commander data (config, cache, etc.). Overrides environment variables.')
 parser.add_argument('command', nargs='?', type=str, action='store', help='Command')
 parser.add_argument('options', nargs='*', action='store', help='Options')
 parser.error = usage
@@ -242,7 +243,7 @@ def main(from_package=False):
                 # Skip arguments that were handled by main parser
                 main_parser_args = ['--config', '--server', '--user', '--password', '--version', '--debug', 
                                   '--batch-mode', '--launched-with-shortcut', '--proxy', '--unmask-all', '--fail-on-throttle',
-                                  '-ks', '-ku', '-kp', '-lwsc']
+                                  '--data-dir', '-ks', '-ku', '-kp', '-lwsc']
                 
                 is_main_parser_arg = False
                 for main_arg in main_parser_args:
@@ -265,7 +266,7 @@ def main(from_package=False):
     if opts.launched_with_shortcut:
         os.chdir(Path.home())
 
-    params = get_params_from_config(opts.config, opts.launched_with_shortcut)
+    params = get_params_from_config(opts.config, opts.launched_with_shortcut, opts.data_dir)
 
     if opts.batch_mode:
         params.batch_mode = True
@@ -322,7 +323,7 @@ def main(from_package=False):
     if isinstance(params.timedelay, int) and params.timedelay >= 1 and params.commands:
         cli.runcommands(params)
     else:
-        if opts.command in {'shell', '-'}:
+        if opts.command in {'shell', 'login', '-'}:
             if opts.command == '-':
                 params.batch_mode = True
         elif opts.command and os.path.isfile(opts.command):

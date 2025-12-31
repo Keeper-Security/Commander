@@ -119,6 +119,8 @@ def store_config_properties(params):
         try:
             with open(params.config_filename, 'w') as fd:
                 json.dump(config_json, fd, ensure_ascii=False, indent=2)
+            # Set secure file permissions (600) for configuration files containing sensitive data
+            utils.set_file_permissions(params.config_filename)
         except Exception as error:
             logging.debug(error, exc_info=True)
             logging.error(f'Failed to write configuration to {params.config_filename}. '
@@ -131,6 +133,10 @@ def load_config_properties(params):
 
     if not isinstance(params.config, dict):
         return
+
+    # Check and fix permissions for existing config files
+    if hasattr(params, 'config_filename') and params.config_filename:
+        utils.ensure_config_permissions(params.config_filename)
 
     if CONFIG_STORAGE_URL in params.config:
         url = params.config[CONFIG_STORAGE_URL]

@@ -15,7 +15,7 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Optional, Any, List, Dict, Union, Tuple
+from typing import Optional, Any, List, Tuple
 
 from .. import api, utils
 from ..proto import DeviceManagement_pb2, APIRequest_pb2

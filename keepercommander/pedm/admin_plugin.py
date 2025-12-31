@@ -11,8 +11,7 @@ from . import admin_storage, admin_types
 from .. import crypto, utils, api
 from ..proto import pedm_pb2, folder_pb2
 from ..storage import types as storage_types, in_memory
-#from ...enterprise import enterprise_loader, sqlite_enterprise_storage
-#from ...authentication import notifications, endpoint
+from ..pedm import pedm_shared
 
 
 class RebuildTask:
@@ -490,12 +489,12 @@ class PedmPlugin(IPedmAdmin):
             self.storage.collection_links.delete_links_for_objects(delete_collections)
             self.storage.collections.delete_uids(delete_collections)
         if len(delete_collection_links) > 0:
+            task.add_collections((x[0] for x in delete_collection_links))
             self.storage.collection_links.delete_links(delete_collection_links)
         if len(delete_approvals) > 0:
             task.add_approvals(delete_approvals)
             self.storage.approvals.delete_uids(delete_approvals)
             self.storage.approval_status.delete_uids(delete_approvals)
-
         if len(deployments) > 0:
             self.storage.deployments.put_entities(deployments)
         if len(policies) > 0:
@@ -672,17 +671,42 @@ class PedmPlugin(IPedmAdmin):
                         remove_collections: Optional[Iterable[str]] = None) -> admin_types.ModifyStatus:
         to_add: List[pedm_pb2.CollectionValue] = []
         to_update: List[pedm_pb2.CollectionValue] = []
-        for colls in (add_collections, update_collections):
-            if colls is not None:
-                for coll in colls:
-                    cv = pedm_pb2.CollectionValue()
-                    cv.collectionUid = utils.base64_url_decode(coll.collection_uid)
-                    cv.collectionType = coll.collection_type
-                    cv.encryptedData = crypto.encrypt_aes_v2(coll.collection_data.encode(), self.agent_key)
-                    if colls is add_collections:
-                        to_add.append(cv)
-                    elif colls is update_collections:
-                        to_update.append(cv)
+        if add_collections is not None:
+            for coll in add_collections:
+                if not coll.collection_uid:
+                    try:
+                        data = json.loads(coll.collection_data)
+                        if not isinstance(data, dict):
+                            raise Exception('Collection data must be JSON object to compute UID')
+                        required = pedm_shared.get_collection_required_fields(coll.collection_type)
+                        if not required:
+                            raise Exception(f'Unknown collection type: {coll.collection_type}')
+                        key_fields = required.primary_key_fields or required.all_fields
+                        key_parts: List[str] = []
+                        for k in key_fields:
+                            if k not in data or not isinstance(data[k], str):
+                                raise Exception(f'Collection data missing required text field "{k}"')
+                            key_parts.append(data[k])
+                        key = ''.join(key_parts)
+                        coll.collection_uid = pedm_shared.get_collection_uid(self.agent_key, coll.collection_type, key)
+                    except Exception as err:
+                        status.add.append(admin_types.EntityStatus(entity_uid='', success=False, message=str(err)))
+                        continue
+                cv = pedm_pb2.CollectionValue()
+                cv.collectionUid = utils.base64_url_decode(coll.collection_uid)
+                cv.collectionType = coll.collection_type
+                cv.encryptedData = crypto.encrypt_aes_v2(coll.collection_data.encode(), self.agent_key)
+                to_add.append(cv)
+
+        if update_collections is not None:
+            for coll in update_collections:
+                if not coll.collection_uid:
+                    raise Exception('Update collection requires collection_uid')
+                cv = pedm_pb2.CollectionValue()
+                cv.collectionUid = utils.base64_url_decode(coll.collection_uid)
+                cv.collectionType = coll.collection_type
+                cv.encryptedData = crypto.encrypt_aes_v2(coll.collection_data.encode(), self.agent_key)
+                to_update.append(cv)
         to_remove: List[bytes] = []
         if remove_collections is not None:
             for collection_uid in remove_collections:
@@ -800,9 +824,10 @@ class PedmPlugin(IPedmAdmin):
         return admin_types.ModifyStatus.from_proto(status_rs)
 
 
-def get_pedm_plugin(context: KeeperParams) -> PedmPlugin:
+def get_pedm_plugin(context: KeeperParams, *, skip_sync:bool=False) -> PedmPlugin:
     if context._pedm_plugin is None:
         context._pedm_plugin = PedmPlugin(context)
-    if context._pedm_plugin.need_sync:
+
+    if not skip_sync and context._pedm_plugin.need_sync:
         context._pedm_plugin.sync_down()
     return context._pedm_plugin

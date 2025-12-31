@@ -3,7 +3,7 @@ import datetime
 import json
 
 from . import base, enterprise_common, audit_alerts
-from .. import api
+from .. import api, constants
 from ..proto import rmd_pb2
 
 
@@ -14,11 +14,14 @@ class RiskManagementReportCommand(base.GroupCommand):
         self.register_command('enterprise-stat-details', RiskManagementEnterpriseStatDetailsCommand(), 'Gets the recent login count (users who logged in the last 30 days) '
                               'and the number of users who have at least one record in their Vault', 'esd')
         self.register_command('security-alerts-summary', RiskManagementSecurityAlertsSummaryCommand(), 'Gets the summary of events that happened in the last 30 days with '
-                              'a comparison to the previous 30 days.', 'sas')
+                              'a comparison to the previous 30 days', 'sas')
         self.register_command('security-alerts-detail', RiskManagementSecurityAlertDetailCommand(), 'Gets the details of event that happened in the last 30 days with a '
-                              'comparison to the previous 30 days. The response is paginated with a page size of 10000 users.', 'sad')
-        self.register_command('security-benchmarks-get', RiskManagementSecurityBenchmarksGetCommand(), 'Get the list of security benchmark set for the calling enterprise.', 'sbg')
-        self.register_command('security-benchmarks-set', RiskManagementSecurityBenchmarksSetCommand(), 'Set a list of security benchmark. Corresponding audit events will be logged.', 'sbs')
+                              'comparison to the previous 30 days', 'sad')
+        self.register_command('security-benchmarks-get', RiskManagementSecurityBenchmarksGetCommand(), 'Get the list of security benchmark set for the calling enterprise', 'sbg')
+        self.register_command('security-benchmarks-set', RiskManagementSecurityBenchmarksSetCommand(), 'Set a list of security benchmark. Corresponding audit events will be logged', 'sbs')
+        #Backward compatibility
+        self.register_command('user', RiskManagementEnterpriseStatDetailsCommand(), 'Show Risk Management User report (absolete)', 'u')
+        self.register_command('alert', RiskManagementSecurityAlertsSummaryCommand(), 'Show Risk Management Alert report (absolete)', 'a')
 
 
 rmd_enterprise_stat_parser = argparse.ArgumentParser(prog='risk-management enterprise-stat', description='Risk management enterprise stat', parents=[base.report_output_parser])
@@ -31,6 +34,7 @@ rmd_security_alerts_detail_parser = argparse.ArgumentParser(prog='risk-managemen
 rmd_security_alerts_detail_parser.add_argument('aet', nargs='?', type=str, action='store', help='show the details for audit event type.')
 
 rmd_security_benchmarks_get_parser = argparse.ArgumentParser(prog='risk-management security-benchmarks-get', description='Risk management get security benchmarks', parents=[base.report_output_parser])
+rmd_security_benchmarks_get_parser.add_argument('--description', dest='description', action='store_true', help='Add description.')
 
 rmd_security_benchmarks_set_parser = argparse.ArgumentParser(prog='risk-management security-benchmarks-set', description='Risk management set security benchmarks', parents=[base.report_output_parser])
 rmd_security_benchmarks_set_parser.add_argument('fields', nargs='*', type=str, action='store', help='fields to set for benchmark results.')
@@ -87,15 +91,16 @@ class RiskManagementSecurityAlertsSummaryCommand(enterprise_common.EnterpriseCom
         event_lookup = {x[0]: x[1] for x in audit_alerts.AuditSettingMixin.EVENT_TYPES}
         fmt = kwargs.get('format')
         if fmt == 'json':
-            header = ['event', 'event_occurrences', 'last_events', 'unique_users', 'last_users']
+            header = ['event', 'event_occurrences', 'last_events', 'unique_users', 'last_users', 'event_title']
         else:
-            header = ['event', 'event_occurrences', 'last_events', 'unique_users', 'last_users', 'event_trend', 'user_trend']
+            header = ['event', 'event_occurrences', 'last_events', 'unique_users', 'last_users', 'event_title', 'event_trend', 'user_trend']
         rows = []
         rs = api.communicate_rest(params, None, 'rmd/get_security_alerts_summary', rs_type=rmd_pb2.SecurityAlertsSummaryResponse)
         for sas in rs.securityAlertsSummary:
             event_id = sas.auditEventTypeId
             if event_id in event_lookup:
                 event_id = event_lookup[event_id]
+            event_title = constants.AUDIT_EVENT_STATE_MAPPING.get(event_id, "")
             event_count = sas.currentCount
             prev_event_count = sas.previousCount
             user_count = sas.currentUserCount
@@ -124,9 +129,9 @@ class RiskManagementSecurityAlertsSummaryCommand(enterprise_common.EnterpriseCom
                 user_trend = '[  -  ]'
 
             if fmt == 'json':
-                rows.append([event_id, event_count, prev_event_count, user_count, prev_user_count])
+                rows.append([event_id, event_count, prev_event_count, user_count, prev_user_count, event_title])
             else:
-                rows.append([event_id, event_count, prev_event_count, user_count, prev_user_count, event_trend, user_trend])
+                rows.append([event_id, event_count, prev_event_count, user_count, prev_user_count, event_title, event_trend, user_trend])
 
         if kwargs.get('format') != 'json':
             header = [base.field_to_title(x) for x in header]
@@ -202,12 +207,16 @@ class RiskManagementSecurityBenchmarksGetCommand(enterprise_common.EnterpriseCom
         return rmd_security_benchmarks_get_parser
 
     def execute(self, params, **kwargs):
+        is_description = kwargs.get('description')
         header = [
-                'security_benchmark',
+                'id',
                 'status',
                 'last_updated',
                 'auto_resolve',
+                'title',
                 ]
+        if is_description:
+            header.append("description")
         out_format = kwargs.get('format')
         if out_format != 'json':
             header = [base.field_to_title(x) for x in header]
@@ -217,12 +226,17 @@ class RiskManagementSecurityBenchmarksGetCommand(enterprise_common.EnterpriseCom
             last_updated = None
             if node.lastUpdated and node.lastUpdated > 0:
                 last_updated = datetime.datetime.fromtimestamp(node.lastUpdated // 1000)
-            rows.append([
-                rmd_pb2.SecurityBenchmark.Name(node.securityBenchmark),
+            name = rmd_pb2.SecurityBenchmark.Name(node.securityBenchmark)
+            row = [
+                name,
                 rmd_pb2.SecurityBenchmarkStatus.Name(node.securityBenchmarkStatus),
                 last_updated,
                 node.autoResolve,
-                ])
+                constants.RMD_BENCHMARK_MAPPING.get(name, {}).get("title", ""),
+                ]
+            if is_description:
+                row.append(constants.RMD_BENCHMARK_MAPPING.get(name, {}).get("description", ""))
+            rows.append(row)
         return base.dump_report_data(rows, headers=header, fmt=out_format, filename=kwargs.get('output'))
 
 

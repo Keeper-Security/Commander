@@ -5,23 +5,27 @@ import calendar
 import copy
 import datetime
 import fnmatch
+import getpass
 import json
+import logging
 import os.path
 import re
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlunparse
 from typing import Any, List, Optional, Dict, Union, Tuple, Set, Pattern
 
 import requests
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
-from ... import crypto, constants, utils, api
+from ... import crypto, constants, utils, api, vault
 from ...params import KeeperParams
 from ...pedm import admin_plugin, pedm_shared, admin_types, admin_storage
 from ...proto import NotificationCenter_pb2, pedm_pb2
 from .. import base
 from ..helpers import report_utils, prompt_utils, whoami
 from . import pedm_aram
+from ...scim.data_sources import AdCrmDataSource, AzureAdCrmDataSource
+from ...scim.models import ScimUser, ScimGroup
 
 
 class PedmUtils:
@@ -76,6 +80,16 @@ class PedmUtils:
         if isinstance(policy, admin_types.PedmPolicy):
             return policy
         raise base.CommandError(f'Policy UID \"{policy_uid}\" does not exist')
+
+    @staticmethod
+    def resolve_single_approval(pedm: admin_plugin.PedmPlugin, approval_uid: Any) -> admin_types.PedmApproval:
+        if not isinstance(approval_uid, str):
+            raise base.CommandError(f'Invalid approval UID: {approval_uid}')
+        approval = pedm.approvals.get_entity(approval_uid)
+
+        if isinstance(approval, admin_types.PedmApproval):
+            return approval
+        raise base.CommandError(f'Approval UID \"{approval_uid}\" does not exist')
 
     @staticmethod
     def get_collection_name_lookup(
@@ -166,8 +180,328 @@ class PedmCommand(base.GroupCommandNew):
         self.register_command_new(PedmPolicyCommand(), 'policy', 'p')
         self.register_command_new(PedmCollectionCommand(), 'collection', 'c')
         self.register_command_new(PedmApprovalCommand(), 'approval')
+        self.register_command_new(PedmScimCommand(), 'scim')
         self.register_command_new(pedm_aram.PedmReportCommand(), 'report')
         #self.register_command_new(PedmBICommand(), 'bi')
+
+class PedmScimCommand(base.ArgparseCommand):
+    def __init__(self):
+        parser = argparse.ArgumentParser(prog='scim', description='Sync PEDM user/group collections from AD or AzureAD')
+
+        subparsers = parser.add_subparsers(title='Directory Type', dest='auth_type', required=True, help='Authentication method')
+        record_parser = subparsers.add_parser('record', help='Connection parameters from Keeper record')
+        record_parser.add_argument('record_uid', help='Keeper record UID')
+
+        azure_parser = subparsers.add_parser('azure', help='Connect via Azure AD')
+        azure_parser.add_argument('--tenant-id', dest='tenant_id', required=True)
+        azure_parser.add_argument('--client-id', dest='client_id', required=True)
+        azure_parser.add_argument('--client-secret', dest='client_secret')
+        azure_parser.add_argument('--azure-cloud', dest='azure_cloud', choices=['US', 'GOV', 'CN', 'EU'],
+                                  help='Azure cloud (AzureCloud, AzureChinaCloud, etc.)')
+
+        ad_parser = subparsers.add_parser('ad', help='Connect via Active Directory')
+        ad_parser.add_argument('--ad-url', dest='ad_url', required=True, help='AD LDAP URL (e.g., ldap(s)://<host>)')
+        ad_parser.add_argument('--ad-user', dest='ad_user', required=True, help='AD bind user (DOMAIN\\username or DN)')
+        ad_parser.add_argument('--ad-password', dest='ad_password', help='AD password')
+        ad_parser.add_argument('--group', dest='groups', action='append', help='AD group name or DN (repeatable)')
+        ad_parser.add_argument('--netbios-domain', dest='use_netbios_domain', action='store_true',
+                              help='Use NetBIOS domain names (e.g., TEST) instead of DNS names (e.g., test.local)')
+
+        for subparser in subparsers.choices.values():
+            subparser.exit = base.suppress_exit
+            subparser.error = base.raise_parse_exception
+
+        super().__init__(parser)
+
+    def execute(self, context: KeeperParams, **kwargs):
+        plugin = admin_plugin.get_pedm_plugin(context)
+
+        source = (kwargs.get('auth_type') or '').lower()
+        if source == 'record':
+            config_record: vault.TypedRecord
+            record_uid = kwargs.get('record_uid')
+
+            if not record_uid:
+                raise base.CommandError(f'Record UID parameter cannot be empty')
+            if record_uid not in context.record_cache:
+                raise base.CommandError(f'Record UID "{record_uid}" not found')
+            r = vault.KeeperRecord.load(context, record_uid)
+            if isinstance(r, vault.TypedRecord):
+                config_record = r
+            else:
+                raise base.CommandError(f'Record UID "{record_uid}" is not a typed record')
+
+            login: Optional[str] = None
+            login_field = config_record.get_typed_field(field_type='login')
+            if login_field:
+                login = login_field.get_default_value(str)
+
+            password: Optional[str] = None
+            password_field = config_record.get_typed_field(field_type='password')
+            if password_field:
+                password = password_field.get_default_value(str)
+
+            url: Optional[str] = None
+            url_field = config_record.get_typed_field(field_type='url')
+            if url_field:
+                url = url_field.get_default_value(str)
+
+            azure_tenant: Optional[str] = None
+            custom_field = config_record.get_typed_field(field_type=None, label='Azure Tenant ID')
+            if custom_field:
+                azure_tenant = custom_field.get_default_value(str)
+
+            if azure_tenant:
+                source = 'azure'
+                kwargs['tenant_id'] = azure_tenant
+                client_id: Optional[str] = None
+                custom_field = config_record.get_typed_field(field_type=None, label='Azure Client ID')
+                if custom_field:
+                    client_id = custom_field.get_default_value(str)
+                if not client_id:
+                    client_id = login
+                if not client_id:
+                    raise base.CommandError(f'Record "{config_record.title}" does not contain either "Azure Client ID" or "Login" value')
+                kwargs['client_id'] = client_id
+                client_secret: Optional[str] = None
+                custom_field = config_record.get_typed_field(field_type=None, label='Azure Client Secret')
+                if custom_field:
+                    client_secret = custom_field.get_default_value(str)
+                if not client_secret:
+                    client_secret = password
+                if not client_secret:
+                    raise base.CommandError(f'Record "{config_record.title}" does not contain either "Azure Client Secret" or "Password" value')
+                kwargs['client_secret'] = client_secret
+            else:
+                custom_field = config_record.get_typed_field(field_type=None, label='AD URL')
+                if custom_field:
+                    ad_url = custom_field.get_default_value(str)
+                else:
+                    ad_url = url
+                if ad_url:
+                    source = 'ad'
+                    kwargs['ad_url'] = ad_url
+
+                    ad_user: Optional[str] = None
+                    custom_field = config_record.get_typed_field(field_type=None, label='AD User')
+                    if custom_field:
+                        ad_user = custom_field.get_default_value(str)
+                    if not ad_user:
+                        ad_user = login
+                    if not ad_user:
+                        raise base.CommandError(f'Record "{config_record.title}" does not contain either "AD User" or "Login" value')
+                    kwargs['ad_user'] = ad_user
+
+                    ad_password: Optional[str] = None
+                    custom_field = config_record.get_typed_field(field_type=None, label='AD Password')
+                    if custom_field:
+                        ad_password = custom_field.get_default_value(str)
+                    if not ad_password:
+                        ad_password = password
+                    if not ad_password:
+                        raise base.CommandError(f'Record "{config_record.title}" does not contain either "AD Password" or "Password" value')
+                    kwargs['ad_password'] = ad_password
+
+                    custom_field = config_record.get_typed_field(field_type=None, label='SCIM Group')
+                    if custom_field:
+                        group_value = custom_field.get_default_value(str)
+                        if isinstance(group_value, str):
+                            groups = [x.strip() for x in group_value.split('\n')]
+                            if groups:
+                                kwargs['groups'] = groups
+
+                    custom_field = config_record.get_typed_field(field_type=None, label='NetBIOS Domain')
+                    if custom_field:
+                        netbios_domain = custom_field.get_default_value(bool)
+                        if netbios_domain is None:
+                            custom_value = custom_field.get_default_value(str)
+                            if custom_value:
+                                try:
+                                    netbios_domain = bool(custom_value)
+                                except:
+                                    pass
+                        if netbios_domain is True:
+                            kwargs['use_netbios_domain'] = netbios_domain
+
+                else:
+                    raise base.CommandError(f'Record "{config_record.title}" does not contain either "Azure Tenant ID" or "AD URL" value')
+
+        if source == 'ad':
+            ad_url = kwargs.get('ad_url')
+            ad_user = kwargs.get('ad_user')
+            ad_password = kwargs.get('ad_password')
+            scim_groups = kwargs.get('groups')
+            use_netbios_domain = kwargs.get('use_netbios_domain', False)
+            if scim_groups and not isinstance(scim_groups, list):
+                scim_groups = None
+
+            if not ad_url or not ad_user:
+                raise base.CommandError('AD source requires AD URL and AD User')
+            try:
+                if not ad_password:
+                    ad_password = getpass.getpass(prompt=f'{ad_user} Password: ', stream=None)
+                    if not ad_password:
+                        raise base.CommandError('Cancelled')
+                data_source = AdCrmDataSource(ad_url, ad_user, ad_password, scim_groups, use_netbios_domain)
+                ad_domains = data_source.resolve_domains()
+            except Exception as e:
+                raise base.CommandError(f'Error connecting to Active Directory: {e}')
+            account_type = 'AD'
+            domain_name = ad_domains[0] if ad_domains else ''
+
+        elif source == 'azure':
+            tenant_id = kwargs.get('tenant_id')
+            client_id = kwargs.get('client_id')
+            client_secret = kwargs.get('client_secret')
+            if not tenant_id or not client_id:
+                raise base.CommandError('Azure source requires tenant-id and client-id')
+            if not client_secret:
+                client_secret = getpass.getpass(prompt=f'Azure Client Secret: ', stream=None)
+            azure_cloud = kwargs.get('azure_cloud')
+            if isinstance(azure_cloud, str):
+                azure_cloud = azure_cloud.upper()
+                if azure_cloud == 'CN':
+                    azure_cloud = 'AzureChinaCloud'
+                elif azure_cloud == 'GOV':
+                    azure_cloud = 'AzureUSGovernment'
+                elif azure_cloud == 'EU':
+                    azure_cloud = 'AzureGermanCloud'
+                else:
+                    azure_cloud = None
+            else:
+                azure_cloud = None
+            data_source = AzureAdCrmDataSource(tenant_id, client_id, client_secret, azure_cloud)
+            account_type = 'Azure'
+            domain_name = 'AzureAD'
+        else:
+            raise base.CommandError(f'Unsupported source: {source}')
+
+        account_type_key = account_type.lower()
+        domain_name_key = domain_name.lower()
+        existing_users: Dict[tuple, admin_types.PedmCollection] = {}
+        existing_groups: Dict[tuple, admin_types.PedmCollection] = {}
+        for coll in plugin.collections.get_all_entities():
+            if coll.collection_type == pedm_shared.CollectionType.UserAccount:
+                acct_type = str(coll.collection_data.get('AccountType') or '').lower()
+                if acct_type != account_type_key:
+                    continue
+                domain = str(coll.collection_data.get('Domainname') or '').lower()
+                if domain != domain_name_key:
+                    continue
+                username = str(coll.collection_data.get('Username') or '').lower()
+                if not username:
+                    continue
+                existing_users[(acct_type, domain, username)] = coll
+            elif coll.collection_type == pedm_shared.CollectionType.GroupAccount:
+                domain = str(coll.collection_data.get('Domainname') or '').lower()
+                if domain != domain_name_key:
+                    continue
+                group_name = str(coll.collection_data.get('GroupName') or '').lower()
+                if group_name:
+                    existing_groups[(domain, group_name)] = coll
+            else:
+                continue
+
+        add_map: Dict[str, admin_types.CollectionData] = {}
+        update_map: Dict[str, admin_types.CollectionData] = {}
+
+        def build_user(user: ScimUser) -> Optional[Tuple[admin_types.CollectionData, bool]]:
+            user_login = user.login
+            if not user_login:
+                return None
+            if source == 'azure':
+                user_domain = domain_name
+            else:
+                user_domain = user.domain
+                if not user_domain:
+                    return None
+                if user_login.endswith('$'):
+                    return None
+            key = (account_type_key, user_domain.lower(), user_login.lower())
+            data = {
+                'Domainname': user_domain,
+                'Username': user_login,
+                'AccountType': account_type,
+            }
+            if user.full_name:
+                data['FullName'] = user.full_name
+            if user.email:
+                data['Email'] = user.email
+
+            key_value = ''.join(key)
+            collection_uid = pedm_shared.get_collection_uid(plugin.agent_key, int(pedm_shared.CollectionType.UserAccount), key_value)
+            collection_json = json.dumps(data)
+            existing = existing_users.get(key)
+            if existing:
+                if existing.collection_data != data:
+                    cd = admin_types.CollectionData(collection_uid=collection_uid,
+                                                    collection_type=int(pedm_shared.CollectionType.UserAccount),
+                                                    collection_data=collection_json)
+                    return cd, True
+                return None
+            cd = admin_types.CollectionData(collection_uid=collection_uid,
+                                            collection_type=int(pedm_shared.CollectionType.UserAccount),
+                                            collection_data=collection_json)
+            return cd, False
+
+        def build_group(group: ScimGroup) -> Optional[Tuple[admin_types.CollectionData, bool]]:
+            if not group.name:
+                return None
+            group_domain = group.domain or domain_name
+            data = {
+                'GroupName': group.name,
+                'Domainname': group_domain
+            }
+
+            key = (group_domain.lower(), group.name.lower())
+            key_value = '\\'.join(key)
+            collection_uid = pedm_shared.get_collection_uid(plugin.agent_key, int(pedm_shared.CollectionType.GroupAccount), key_value)
+            collection_json = json.dumps(data)
+            existing = existing_groups.get(key)
+            if existing:
+                if existing.collection_data != data:
+                    cd = admin_types.CollectionData(collection_uid=collection_uid,
+                                                    collection_type=int(pedm_shared.CollectionType.GroupAccount),
+                                                    collection_data=collection_json)
+                    return cd, True
+                return None
+            cd = admin_types.CollectionData(collection_uid=collection_uid,
+                                            collection_type=int(pedm_shared.CollectionType.GroupAccount),
+                                            collection_data=collection_json)
+            return cd, False
+
+        try:
+            scim_records = list(data_source.populate())
+        except Exception as e:
+            raise base.CommandError(f'Error connecting to {account_type}: {e}')
+        
+        for element in scim_records:
+            if isinstance(element, ScimUser):
+                result = build_user(element)
+                if isinstance(result, tuple):
+                    cd, is_update = result
+                    if is_update:
+                        update_map[cd.collection_uid] = cd
+                    else:
+                        add_map[cd.collection_uid] = cd
+            elif isinstance(element, ScimGroup):
+                result = build_group(element)
+                if isinstance(result, tuple):
+                    cd, is_update = result
+                    if is_update:
+                        update_map[cd.collection_uid] = cd
+                    else:
+                        add_map[cd.collection_uid] = cd
+
+        add_collections = list(add_map.values())
+        update_collections = list(update_map.values())
+
+        if len(add_collections) == 0 and len(update_collections) == 0:
+            logging.info('No PEDM collections to add or update.')
+            return
+
+        status = plugin.modify_collections(add_collections=add_collections, update_collections=update_collections)
+        logging.info('PEDM SCIM sync completed. Added: %d, Updated: %d', len(status.add), len(status.update))
 
 
 class PedmSyncDownCommand(base.ArgparseCommand):
@@ -177,7 +511,7 @@ class PedmSyncDownCommand(base.ArgparseCommand):
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs):
-        plugin = admin_plugin.get_pedm_plugin(context)
+        plugin = admin_plugin.get_pedm_plugin(context, skip_sync=True)
         plugin.sync_down(reload=kwargs.get('reload') is True)
 
 
@@ -1298,34 +1632,38 @@ class PedmCollectionAddCommand(base.ArgparseCommand):
         parser = argparse.ArgumentParser(prog='add', description='Creates PEDM collections')
         parser.add_argument('--type', dest='type', action='store', type=int,
                             help='collection type')
-        parser.add_argument('collection', type=str, nargs='+',  help='Collection name')
+        parser.add_argument('data', nargs='+', help='Field assignment key=value (repeatable)')
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
         plugin = admin_plugin.get_pedm_plugin(context)
 
-        collection: Any = kwargs.get('collection')
         collection_type = kwargs.get('type')
         if not collection_type:
             raise base.CommandError('Collection type is required')
-        # if collection_type < 100:
-        #     raise base.CommandError('Only collections with type greater than 100 are supported')
 
-        if isinstance(collection, str):
-            collection = [collection]
+        extra_data: Dict[str, str] = {}
+        for item in kwargs.get('data') or []:
+            if '=' not in item:
+                raise base.CommandError(f'Invalid data "{item}". Use key=value format.')
+            k, v = item.split('=', 1)
+            extra_data[k.strip()] = v.strip()
 
-        collections: Dict[str, admin_types.CollectionData] = {}
-        for c in collection:
-            collection_uid = utils.generate_uid()
-            collection_data = {
-                'Name': c,
-                'IsCustom': True
-            }
-            collections[collection_uid] = admin_types.CollectionData(
-                collection_uid=collection_uid, collection_type=collection_type,
-                collection_data=json.dumps(collection_data))
+        required = pedm_shared.get_collection_required_fields(collection_type)
+        if required is None:
+            raise base.CommandError(f'Unknown collection type: {collection_type}')
+        for field in required.all_fields:
+            if field not in extra_data or not isinstance(extra_data[field], str) or not extra_data[field]:
+                raise base.CommandError(f'Missing required field "{field}" for collection type {collection_type}')
 
-        status = plugin.modify_collections(add_collections=collections.values())
+        collection_data = json.dumps(extra_data)
+        collection = admin_types.CollectionData(
+            collection_uid='',
+            collection_type=collection_type,
+            collection_data=collection_data
+        )
+
+        status = plugin.modify_collections(add_collections=[collection])
         if len(status.add) > 0:
             for st in status.add:
                 if isinstance(st, admin_types.EntityStatus) and not st.success:
@@ -1591,7 +1929,7 @@ class PedmCollectionListCommand(base.ArgparseCommand):
                 else:
                     table.append([col_type, col_type_name, len(collections)])
 
-        regex: Optional[Pattern[str]] = re.compile(fnmatch.translate(f'*{pattern}*')) if pattern else None
+        regex: Optional[Pattern[str]] = re.compile(fnmatch.translate(f'*{pattern}*'), re.IGNORECASE) if pattern else None
         if regex is not None:
             def any_match(row: Any) -> bool:
                 if not row:
@@ -1720,15 +2058,47 @@ class PedmApprovalCommand(base.GroupCommandNew):
     def __init__(self):
         super().__init__('Manage PEDM approval requests and approvals')
         self.register_command_new(PedmApprovalListCommand(), 'list', 'l')
+        self.register_command_new(PedmApprovalViewCommand(), 'view')
         self.register_command_new(PedmApprovalStatusCommand(), 'action', 'a')
         self.default_verb = 'list'
 
+
+class PedmApprovalViewCommand(base.ArgparseCommand):
+    def __init__(self):
+        parser = argparse.ArgumentParser(prog='view', parents=[base.json_output_parser], description='View PEDM approval')
+        parser.add_argument('approval', help='Approval UID')
+        super().__init__(parser)
+
+    def execute(self, context: KeeperParams, **kwargs) -> Any:
+        plugin = admin_plugin.get_pedm_plugin(context)
+
+        approval = PedmUtils.resolve_single_approval(plugin, kwargs.get('approval'))
+        a_status = plugin.storage.approval_status.get_entity(approval.approval_uid)
+        headers = ['approval_uid', 'approval_type', 'status', 'agent_uid', 'account_info', 'application_info', 'justification', 'expire_in', 'created']
+        approval_type = pedm_shared.approval_type_to_name(approval.approval_type)
+        approval_status = pedm_shared.approval_status_to_name(
+            a_status.approval_status if a_status else NotificationCenter_pb2.NAS_UNSPECIFIED,
+            approval.created,
+            approval.expire_in
+        )
+
+        row = [approval.approval_uid, approval_type, approval_status, approval.agent_uid, approval.account_info,
+               approval.application_info, approval.justification, approval.expire_in, approval.created]
+
+        fmt = kwargs.get('format')
+        if fmt == 'json':
+            table = [row]
+        else:
+            headers = [report_utils.field_to_title(x) for x in headers]
+            table = [[x[0], x[1]] for x in zip(headers, row)]
+            headers = [report_utils.field_to_title(x) for x in ['property', 'value']]
+        return report_utils.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'))
 
 class PedmApprovalListCommand(base.ArgparseCommand):
     def __init__(self):
         parser = argparse.ArgumentParser(prog='list', description='List PEDM approval requests',
                                          parents=[base.report_output_parser])
-        parser.add_argument('--type', dest='type', action='store', choices=['approved', 'denied', 'pending'],
+        parser.add_argument('--type', dest='type', action='store', choices=['approved', 'denied', 'pending', 'expired'],
                             help='approval type filter')
 
         super().__init__(parser)
@@ -1746,17 +2116,11 @@ class PedmApprovalListCommand(base.ArgparseCommand):
         for approval in plugin.approvals.get_all_entities():
             approval_uid = approval.approval_uid
             a_status = plugin.storage.approval_status.get_entity(approval_uid)
-            if a_status:
-                if a_status.approval_status == NotificationCenter_pb2.NAS_APPROVED:
-                    status = 'Approved'
-                elif a_status.approval_status == NotificationCenter_pb2.NAS_DENIED:
-                    status = 'Denied'
-                elif a_status.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED:
-                    status = 'Pending'
-                else:
-                    status = 'Unsupported'
-            else:
-                status = 'Pending'
+            status = pedm_shared.approval_status_to_name(
+                a_status.approval_status if a_status else NotificationCenter_pb2.NAS_UNSPECIFIED,
+                approval.created,
+                approval.expire_in
+            )
             if approval_type and approval_type != status.lower():
                 continue
 
@@ -1781,7 +2145,7 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
         parser.add_argument('--deny', dest='deny', action='append',
                             help='Request UIDs for denial')
         parser.add_argument('--remove', dest='remove', action='append',
-                            help='Request UIDs for removal. UID, @approved, @denied, @pending')
+                            help='Request UIDs for removal. UID, @approved, @denied, @expired, @pending')
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
@@ -1806,6 +2170,7 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
         to_approve = verify_uid(kwargs.get('approve'))
         to_deny = verify_uid(kwargs.get('deny'))
         to_remove = kwargs.get('remove')
+        expire_ts = int(datetime.datetime.now().timestamp() * 1000)
         if to_remove:
             if isinstance(to_remove, str):
                 to_remove = [to_remove]
@@ -1820,7 +2185,10 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
                         (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_DENIED))
                 elif uid == '@pending':
                     to_remove_set.update(
-                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED))
+                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED and x.modified >= expire_ts))
+                elif uid == '@expired':
+                    to_remove_set.update(
+                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED and x.modified < expire_ts))
                 else:
                     to_resolve.append(uid)
             if len(to_resolve) > 0:
@@ -1829,19 +2197,20 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
                     to_remove_set.update(to_remove)
             to_remove = list(to_remove_set)
 
-        status_rs = plugin.modify_approvals(to_approve=to_approve, to_deny=to_deny, to_remove=to_remove)
-        if status_rs.add:
-            for status in status_rs.add:
-                if not status.success:
-                    if isinstance(status, admin_types.EntityStatus):
-                        logger.warning(f'Failed to approved "{status.entity_uid}": {status.message}')
-        if status_rs.update:
-            for status in status_rs.update:
-                if not status.success:
-                    if isinstance(status, admin_types.EntityStatus):
-                        logger.warning(f'Failed to deny "{status.entity_uid}": {status.message}')
-        if status_rs.remove:
-            for status in status_rs.remove:
-                if not status.success:
-                    if isinstance(status, admin_types.EntityStatus):
-                        logger.warning(f'Failed to remove "{status.entity_uid}": {status.message}')
+        if to_approve or to_deny or to_remove:
+            status_rs = plugin.modify_approvals(to_approve=to_approve, to_deny=to_deny, to_remove=to_remove)
+            if status_rs.add:
+                for status in status_rs.add:
+                    if not status.success:
+                        if isinstance(status, admin_types.EntityStatus):
+                            logger.warning(f'Failed to approved "{status.entity_uid}": {status.message}')
+            if status_rs.update:
+                for status in status_rs.update:
+                    if not status.success:
+                        if isinstance(status, admin_types.EntityStatus):
+                            logger.warning(f'Failed to deny "{status.entity_uid}": {status.message}')
+            if status_rs.remove:
+                for status in status_rs.remove:
+                    if not status.success:
+                        if isinstance(status, admin_types.EntityStatus):
+                            logger.warning(f'Failed to remove "{status.entity_uid}": {status.message}')

@@ -934,7 +934,7 @@ def _import(params, file_format, filename, **kwargs):
                         if 'fileRef' in field.value:
                             reference_uids.add(field.value['fileRef'])
 
-            if import_record.type and import_record.fields:
+            if import_record.fields:
                 for field in import_record.fields:
                     if field.type in record_types.RecordFields:
                         rf = record_types.RecordFields[field.type]
@@ -1019,8 +1019,6 @@ def _import(params, file_format, filename, **kwargs):
                         if folder.type == BaseFolderNode.RootFolderType:
                             folder_uid = ''
 
-                if not import_record.type:
-                    import_record.type = 'login'
                 v3_add_rq = record_pb2.RecordAdd()
                 v3_add_rq.record_uid = utils.base64_url_decode(import_record.uid)
                 import_uids[import_record.uid] = {'ver': 'v3', 'op': 'add'}
@@ -2088,26 +2086,27 @@ def prepare_record_add_or_update(update_flag, params, records):
     external_lookup = {}
 
     for import_record in records:
-        if import_record.type:
-            if len(import_record.notes or '') > RECORD_MAX_DATA_LEN - 2 * (2 ** 10):
-                if import_record.attachments is None:
-                    import_record.attachments = []
-                atta = BytesAttachment(f'{import_record.title}_notes_field.txt', import_record.notes.encode('utf-8'))
-                import_record.attachments.append(atta)
-                import_record.notes = LARGE_FIELD_MSG.format(atta.name)
+        if not import_record.type:
+            import_record.type = 'login'
+        if len(import_record.notes or '') > RECORD_MAX_DATA_LEN - 2 * (2 ** 10):
+            if import_record.attachments is None:
+                import_record.attachments = []
+            atta = BytesAttachment(f'{import_record.title}_notes_field.txt', import_record.notes.encode('utf-8'))
+            import_record.attachments.append(atta)
+            import_record.notes = LARGE_FIELD_MSG.format(atta.name)
 
-            for f in import_record.fields:
-                if not f.value:
-                    continue
-                if not f.type:
-                    f.type = 'text'
-                if isinstance(f.value, str):
-                    if len(f.value) > RECORD_MAX_DATA_LEN - 2 * (2 ** 10):
-                        if import_record.attachments is None:
-                            import_record.attachments = []
-                        atta = BytesAttachment(f'{import_record.title}_{f.type}_field.txt', f.value.encode('utf-8'))
-                        import_record.attachments.append(atta)
-                        f.value = LARGE_FIELD_MSG.format(atta.name)
+        for f in import_record.fields:
+            if not f.value:
+                continue
+            if not f.type:
+                f.type = 'text'
+            if isinstance(f.value, str):
+                if len(f.value) > RECORD_MAX_DATA_LEN - 2 * (2 ** 10):
+                    if import_record.attachments is None:
+                        import_record.attachments = []
+                    atta = BytesAttachment(f'{import_record.title}_{f.type}_field.txt', f.value.encode('utf-8'))
+                    import_record.attachments.append(atta)
+                    f.value = LARGE_FIELD_MSG.format(atta.name)
 
         record_hash = build_record_hash(tokenize_full_import_record(import_record))
         if record_hash in preexisting_entire_record_hash:

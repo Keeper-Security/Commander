@@ -159,7 +159,9 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         if indent > 0:
             pad = "".ljust(4 * indent, ' ')
 
-        record_link = RecordLink(record=gateway_context.configuration, params=params, logger=logging,
+        record_link = RecordLink(record=gateway_context.configuration,
+                                 params=params,
+                                 logger=logging,
                                  debug_level=debug_level)
         configuration = record_link.dag.get_root
         
@@ -176,8 +178,8 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                 print(f"{pad}  . data")
                 for k, v in data.items():
                     print(f"{pad}    + {k} = {v}")
-            except (Exception,):
-                print(f"{pad}    ! data not JSON")
+            except Exception as err:
+                print(f"{pad}    ! data not JSON: {err}")
 
         def _group(configuration_vertex: DAGVertex) -> dict:
 
@@ -246,8 +248,8 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                             print(f"{pad}      . data")
                             for k, v in data.items():
                                 print(f"{pad}        + {k} = {v}")
-                        except (Exception,):
-                            print(f"{pad}        ! data not JSON")
+                        except Exception as err:
+                            print(f"{pad}        ! data not JSON: {err}")
 
                     children = vertex.has_vertices()
                     if len(children) > 0:
@@ -277,8 +279,8 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                                         print(f"{pad}        . data")
                                         for k, v in data.items():
                                             print(f"{pad}          + {k} = {v}")
-                                    except (Exception,):
-                                        print(f"{pad}          ! data not JSON")
+                                    except Exception as err:
+                                        print(f"{pad}          ! data not JSON: {err}")
                         for i in bad:
                             print("{pad}      " + i)
 
@@ -469,7 +471,10 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
     def _do_render_rl(self, params: KeeperParams, gateway_context: GatewayContext, filepath: str, graph_format: str,
                       debug_level: int = 0):
 
-        rl = RecordLink(record=gateway_context.configuration, params=params, logger=logging, debug_level=debug_level)
+        rl = RecordLink(record=gateway_context.configuration,
+                        params=params,
+                        logger=logging,
+                        debug_level=debug_level)
 
         print("")
         dot_instance = rl.to_dot(

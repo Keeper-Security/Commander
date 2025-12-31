@@ -8,7 +8,6 @@ from ... import api, vault, vault_extensions, attachment, record_management, uti
 from . import (get_plugins_map, make_script_signature, SaasCatalog, get_field_input, get_record_field_value,
                set_record_field_value)
 from tempfile import TemporaryDirectory
-import requests
 import os
 from typing import List, Optional, TYPE_CHECKING
 

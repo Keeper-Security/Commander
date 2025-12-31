@@ -1,3 +1,5 @@
+# NOTE: The graph_id constant are part of keeper-dag as enums now.
+
 # This should the relationship between Keeper Vault record
 RECORD_LINK_GRAPH_ID = 0
 
@@ -18,6 +20,13 @@ PAM_DATABASE = "pamDatabase"
 PAM_MACHINE = "pamMachine"
 PAM_USER = "pamUser"
 LOCAL_USER = "local"
+
+# These are configuration that could domain users.
+# Azure included because of AADDS.
+DOMAIN_USER_CONFIGS = [
+    "pamDomainConfiguration",
+    "pamAzureConfiguration"
+]
 
 # The record types to process.
 # The order defined the order the user will be presented the new discovery objects.

@@ -12,7 +12,7 @@ class BaseEnum(Enum):
             for e in cls:
                 if e == value or e.value == value:
                     return e
-            if hasattr(cls, str(value).upper()) is True:
+            if hasattr(cls, str(value).upper()):
                 return getattr(cls, value.upper())
         return default
 
@@ -42,8 +42,20 @@ class RefType(BaseEnum):
     PAM_USER = "pam_user"
     # 11
     PAM_NETWORK = "pam_network"
-    #12
+    # 12
     PAM_BROWSER = "pam_browser"
+    # 13
+    CONNECTION = "connetion"
+    # 14
+    WORKFLOW = "workflow"
+    # 15
+    NOTIFICATION = "notification"
+    # 16
+    USER_INFO = "user_info"
+    # 17
+    TEAM_INFO = "team_info"
+    # 18
+    ROLE = "role"
 
     def __str__(self):
         return self.value
@@ -78,6 +90,31 @@ class EdgeType(BaseEnum):
         return str(self.value)
 
 
+class PamGraphId(BaseEnum):
+    PAM = 0
+    DISCOVERY_RULES = 10
+    DISCOVERY_JOBS = 11
+    INFRASTRUCTURE = 12
+    SERVICE_LINKS = 13
+
+
+class PamEndpoints(BaseEnum):
+    PAM = "/graph-sync/pam"
+    DISCOVERY_RULES = "/graph-sync/discovery_rules"
+    DISCOVERY_JOBS = "/graph-sync/discovery_jobs"
+    INFRASTRUCTURE = "/graph-sync/infrastructure"
+    SERVICE_LINKS = "/graph-sync/service_links"
+
+
+ENDPOINT_TO_GRAPH_ID_MAP = {
+    PamEndpoints.PAM.value: PamGraphId.PAM.value,
+    PamEndpoints.DISCOVERY_RULES.value: PamGraphId.DISCOVERY_RULES.value,
+    PamEndpoints.DISCOVERY_JOBS.value: PamGraphId.DISCOVERY_JOBS.value,
+    PamEndpoints.INFRASTRUCTURE.value: PamGraphId.INFRASTRUCTURE.value,
+    PamEndpoints.SERVICE_LINKS.value: PamGraphId.SERVICE_LINKS.value,
+}
+
+
 class SyncQuery(BaseModel):
     streamId: Optional[str] = None    # base64 of a user's ID who is syncing.
     deviceId: Optional[str] = None
@@ -86,9 +123,10 @@ class SyncQuery(BaseModel):
 
 
 class SyncDataItem(BaseModel):
-    ref: dict
-    parentRef: Optional[dict] = None
+    ref: Ref
+    parentRef: Optional[Ref] = None
     content: Optional[str] = None
+    content_is_base64: bool = True
     type: Optional[str] = None
     path: Optional[str] = None
     deletion: Optional[bool] = False
@@ -124,4 +162,3 @@ class DataPayload(BaseModel):
     origin: Ref
     dataList: List
     graphId: Optional[int] = 0
-

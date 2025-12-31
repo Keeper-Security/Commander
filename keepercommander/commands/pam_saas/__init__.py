@@ -9,7 +9,6 @@ from ... import vault
 from ...discovery_common.record_link import RecordLink
 from ... import utils
 import logging
-import requests
 import hmac
 import hashlib
 import os

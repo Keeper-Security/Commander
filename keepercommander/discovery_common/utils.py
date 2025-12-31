@@ -1,10 +1,10 @@
 from __future__ import annotations
 import os
-from .__version__ import __version__
 from .constants import PAM_USER
 from .types import DiscoveryObject
 from ..keeper_dag.vertex import DAGVertex
-from typing import List, Optional, TYPE_CHECKING
+from .__version__ import __version__
+from typing import List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..keeper_dag.dag import DAG
@@ -43,18 +43,27 @@ def get_connection(**kwargs):
         from ..keeper_dag.connection.local import Connection
         conn = Connection(logger=logger)
     else:
+        use_read_protobuf = kwargs.get("use_read_protobuf")
+        use_write_protobuf = kwargs.get("use_write_protobuf")
+
         if ksm is not None:
             from ..keeper_dag.connection.ksm import Connection
-            conn = Connection(config=ksm.storage_config, logger=logger)
+            conn = Connection(config=ksm.storage_config,
+                              logger=logger,
+                              use_read_protobuf=use_read_protobuf,
+                              use_write_protobuf=use_write_protobuf)
         elif params is not None:
             from ..keeper_dag.connection.commander import Connection
-            conn = Connection(params=params, logger=logger)
+            conn = Connection(params=params,
+                              logger=logger,
+                              use_read_protobuf=use_read_protobuf,
+                              use_write_protobuf=use_write_protobuf)
         else:
             raise ValueError("Must pass 'ksm' for KSM, 'params' for Commander. Found neither.")
     return conn
 
 
-def split_user_and_domain(user: str) -> (Optional[str], Optional[str]):
+def split_user_and_domain(user: str) -> Tuple[Optional[str], Optional[str]]:
 
     if user is None:
         return None, None
@@ -76,25 +85,30 @@ def split_user_and_domain(user: str) -> (Optional[str], Optional[str]):
 def user_check_list(user: str, name: Optional[str] = None, source: Optional[str] = None) -> List[str]:
     user, domain = split_user_and_domain(user)
     user = user.lower()
-    check_list = [user, f".\\{user}", ]
+
+    # TODO: Add boolean for tasks to include `local users` patterns.
+    #       It appears that for task lists, directory users do not have domains.
+    #       A problem could arise where the customer uses a local user and directory with the same name.
+    check_list = [user, f".\\{user}"]
     if name is not None:
         name = name.lower()
         check_list += [name, f".\\{name}"]
     if source is not None:
-        check_list.append(f"{source.lower()[:15]}\\{user}")
-        check_list.append(f"{user}@{source.lower()}")
+        source = source.lower()
+        check_list.append(f"{source[:15]}\\{user}")
+        check_list.append(f"{user}@{source}")
         netbios_parts = source.split(".")
         if len(netbios_parts) > 1:
             check_list.append(f"{netbios_parts[0][:15]}\\{user}")
             check_list.append(f"{user}@{netbios_parts[0]}")
     if domain is not None:
         domain = domain.lower()
-        check_list.append(f"{domain}[:15]\\{user}")
+        check_list.append(f"{domain[:15]}\\{user}")
         check_list.append(f"{user}@{domain}")
         domain_parts = domain.split(".")
         if len(domain_parts) > 1:
             check_list.append(f"{domain_parts[0][:15]}\\{user}")
-            check_list.append(f"\\{user}@{domain_parts[0]}")
+            check_list.append(f"{user}@{domain_parts[0]}")
 
     return list(set(check_list))
 

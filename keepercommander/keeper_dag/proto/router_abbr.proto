@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+
+package Router;
+option java_package = "com.keepersecurity.proto";
+option java_outer_classname = "Router";
+
+enum RouterResponseCode {
+  RRC_OK = 0;
+  RRC_GENERAL_ERROR = 1;   // Any other error
+  RRC_NOT_ALLOWED = 2;     // Insufficient permissions
+  RRC_BAD_REQUEST = 3;     // Malformed request
+  RRC_TIMEOUT = 4;
+  RRC_BAD_STATE = 5;       // Some conditions are not met
+  RRC_CONTROLLER_DOWN = 6; // Controller is not listening
+  RRC_WRONG_INSTANCE = 7;  // Controller is listening on a different instance
+  RRC_NOT_ALLOWED_ENFORCEMENT_NOT_ENABLED = 8; // access is restricted due to enforcement
+  RRC_NOT_ALLOWED_PAM_CONFIG_FEATURES_NOT_ENABLED = 9; // access is restricted due to pam configuration features
+}
+
+message RouterResponse {
+  RouterResponseCode responseCode = 1;
+  string errorMessage = 2;
+  bytes encryptedPayload = 3;
+}

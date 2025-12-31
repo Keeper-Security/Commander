@@ -17,6 +17,7 @@ import re
 import time
 from datetime import datetime
 from typing import Dict, Optional, Any, Set, List
+from urllib.parse import urlparse, urlunparse
 
 
 import requests
@@ -44,13 +45,16 @@ from .pam.router_helper import router_send_action_to_gateway, print_router_respo
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, \
     get_router_url
 from .record_edit import RecordEditMixin
+from .helpers.timeout import parse_timeout
+from .email_commands import find_email_config_record, load_email_config_from_record, update_oauth_tokens_in_record
+from ..email_service import EmailSender, build_onboarding_email
 from .tunnel.port_forward.TunnelGraph import TunnelDAG
 from .tunnel.port_forward.tunnel_helpers import get_config_uid, get_keeper_tokens
 from .. import api, utils, vault_extensions, crypto, vault, record_management, attachment, record_facades
 from ..display import bcolors
 from ..error import CommandError, KeeperApiError
 from ..params import KeeperParams, LAST_RECORD_UID
-from ..proto import pam_pb2, router_pb2, record_pb2
+from ..proto import pam_pb2, router_pb2, record_pb2, APIRequest_pb2
 from ..subfolder import find_parent_top_folder, try_resolve_path, BaseFolderNode
 from ..vault import TypedField
 from ..discovery_common.record_link import RecordLink
@@ -185,6 +189,7 @@ class PAMGatewayCommand(GroupCommand):
         self.register_command('list', PAMGatewayListCommand(), 'List Gateways', 'l')
         self.register_command('new', PAMCreateGatewayCommand(), 'Create new Gateway', 'n')
         self.register_command('remove', PAMGatewayRemoveCommand(), 'Remove Gateway', 'rm')
+        self.register_command('set-max-instances', PAMSetMaxInstancesCommand(), 'Set maximum gateway instances', 'smi')
         # self.register_command('connect', PAMConnect(), 'Connect')
         # self.register_command('disconnect', PAMDisconnect(), 'Disconnect')
         self.default_verb = 'list'
@@ -1346,17 +1351,21 @@ class PAMGatewayListCommand(Command):
                 headers.append('Machine Type')
                 headers.append('OS Version')
 
-        # Create a lookup dictionary for connected controllers
+        # Create a lookup dictionary for connected controllers - group by controllerUid
+        # Since multiple instances can have the same controllerUid, we need to store them as a list
         connected_controllers_dict = {}
         if enterprise_controllers_connected:
-            connected_controllers_dict = {controller.controllerUid: controller for controller in
-                                          list(enterprise_controllers_connected.controllers)}
+            for controller in list(enterprise_controllers_connected.controllers):
+                if controller.controllerUid not in connected_controllers_dict:
+                    connected_controllers_dict[controller.controllerUid] = []
+                connected_controllers_dict[controller.controllerUid].append(controller)
 
+        # Process each gateway and handle multiple instances
         for c in enterprise_controllers_all:
+            gateway_uid_bytes = c.controllerUid
+            gateway_uid_str = utils.base64_url_encode(c.controllerUid)
 
-            connected_controller = None
-            if enterprise_controllers_connected:
-                connected_controller = connected_controllers_dict.get(c.controllerUid)
+            connected_instances = connected_controllers_dict.get(gateway_uid_bytes, [])
 
             ksm_app_uid_str = utils.base64_url_encode(c.applicationUid)
             ksm_app = KSMCommand.get_app_record(params, ksm_app_uid_str)
@@ -1373,79 +1382,202 @@ class PAMGatewayListCommand(Command):
                 ksm_app_name = None
                 ksm_app_accessible = False
 
+            # Check if this is gateway pool
+            is_pool = len(connected_instances) > 1
+
+            # Determine overall status for the gateway
             if is_router_down:
-                status = 'UNKNOWN'
-            elif connected_controller:
-                status = "ONLINE"
+                overall_status = 'UNKNOWN'
+            elif len(connected_instances) > 0:
+                overall_status = f"ONLINE ({len(connected_instances)} instances)" if is_pool else "ONLINE"
             else:
-                status = "OFFLINE"
+                overall_status = "OFFLINE"
 
-            # Version information
-            version = ""
-            version_parts = []
-            if connected_controller and hasattr(connected_controller, 'version') and connected_controller.version:
-                version_parts = connected_controller.version.split(';')
-                # In non-verbose mode, just show the Gateway Version part
-                version = version_parts[0] if version_parts else connected_controller.version
+            # For a single instance or offline gateways, display as before
+            if not is_pool:
+                connected_controller = connected_instances[0] if connected_instances else None
 
-            gateway_uid_str = utils.base64_url_encode(c.controllerUid)
+                # Version information
+                version = ""
+                version_parts = []
+                if connected_controller and hasattr(connected_controller, 'version') and connected_controller.version:
+                    version_parts = connected_controller.version.split(';')
+                    version = version_parts[0] if version_parts else connected_controller.version
 
-            gateway_data = {
-                "ksm_app_name": ksm_app_name,
-                "ksm_app_uid": ksm_app_uid_str,
-                "ksm_app_accessible": ksm_app_accessible,
-                "gateway_name": c.controllerName,
-                "gateway_uid": gateway_uid_str,
-                "status": status,
-                "gateway_version": version
-            }
+                status = overall_status
 
-            if is_verbose:
-                os_name = version_parts[1] if len(version_parts) > 1 else ""
-                os_release = version_parts[2] if len(version_parts) > 2 else ""
-                machine_type = version_parts[3] if len(version_parts) > 3 else ""
-                os_version = version_parts[4] if len(version_parts) > 4 else ""
-                
-                gateway_data.update({
-                    "device_name": c.deviceName,
-                    "device_token": c.deviceToken,
-                    "created_on": datetime.fromtimestamp(c.created / 1000).strftime('%Y-%m-%d %H:%M:%S'),
-                    "last_modified": datetime.fromtimestamp(c.lastModified / 1000).strftime('%Y-%m-%d %H:%M:%S'),
-                    "node_id": c.nodeId,
-                    "os": os_name,
-                    "os_release": os_release,
-                    "machine_type": machine_type,
-                    "os_version": os_version
-                })
-
-            gateways_data.append(gateway_data)
-
-            if format_type == 'table':
-                row_color = ''
-                if not is_router_down:
-                    row_color = bcolors.FAIL
-                    if connected_controller:
-                        row_color = bcolors.OKGREEN
-
-                row = []
-                row.append(f'{row_color if ksm_app_accessible else bcolors.WHITE}{ksm_app_info_plain}{bcolors.ENDC}')
-                row.append(f'{row_color}{c.controllerName}{bcolors.ENDC}')
-                row.append(f'{row_color}{gateway_uid_str}{bcolors.ENDC}')
-                row.append(f'{row_color}{status}{bcolors.ENDC}')
-                row.append(f'{row_color}{version}{bcolors.ENDC}')
+                gateway_data = {
+                    "ksm_app_name": ksm_app_name,
+                    "ksm_app_uid": ksm_app_uid_str,
+                    "ksm_app_accessible": ksm_app_accessible,
+                    "gateway_name": c.controllerName,
+                    "gateway_uid": gateway_uid_str,
+                    "status": status,
+                    "gateway_version": version
+                }
 
                 if is_verbose:
-                    row.append(f'{row_color}{c.deviceName}{bcolors.ENDC}')
-                    row.append(f'{row_color}{c.deviceToken}{bcolors.ENDC}')
-                    row.append(f'{row_color}{datetime.fromtimestamp(c.created / 1000)}{bcolors.ENDC}')
-                    row.append(f'{row_color}{datetime.fromtimestamp(c.lastModified / 1000)}{bcolors.ENDC}')
-                    row.append(f'{row_color}{c.nodeId}{bcolors.ENDC}')
-                    row.append(f'{row_color}{os_name}{bcolors.ENDC}')
-                    row.append(f'{row_color}{os_release}{bcolors.ENDC}')
-                    row.append(f'{row_color}{machine_type}{bcolors.ENDC}')
-                    row.append(f'{row_color}{os_version}{bcolors.ENDC}')
+                    os_name = version_parts[1] if len(version_parts) > 1 else ""
+                    os_release = version_parts[2] if len(version_parts) > 2 else ""
+                    machine_type = version_parts[3] if len(version_parts) > 3 else ""
+                    os_version = version_parts[4] if len(version_parts) > 4 else ""
 
-                table.append(row)
+                    gateway_data.update({
+                        "device_name": c.deviceName,
+                        "device_token": c.deviceToken,
+                        "created_on": datetime.fromtimestamp(c.created / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+                        "last_modified": datetime.fromtimestamp(c.lastModified / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+                        "node_id": c.nodeId,
+                        "os": os_name,
+                        "os_release": os_release,
+                        "machine_type": machine_type,
+                        "os_version": os_version
+                    })
+
+                gateways_data.append(gateway_data)
+
+                if format_type == 'table':
+                    row_color = ''
+                    if not is_router_down:
+                        row_color = bcolors.FAIL
+                        if connected_controller:
+                            row_color = bcolors.OKGREEN
+
+                    row = []
+                    row.append(f'{row_color if ksm_app_accessible else bcolors.WHITE}{ksm_app_info_plain}{bcolors.ENDC}')
+                    row.append(f'{row_color}{c.controllerName}{bcolors.ENDC}')
+                    row.append(f'{row_color}{gateway_uid_str}{bcolors.ENDC}')
+                    row.append(f'{row_color}{status}{bcolors.ENDC}')
+                    row.append(f'{row_color}{version}{bcolors.ENDC}')
+
+                    if is_verbose:
+                        row.append(f'{row_color}{c.deviceName}{bcolors.ENDC}')
+                        row.append(f'{row_color}{c.deviceToken}{bcolors.ENDC}')
+                        row.append(f'{row_color}{datetime.fromtimestamp(c.created / 1000)}{bcolors.ENDC}')
+                        row.append(f'{row_color}{datetime.fromtimestamp(c.lastModified / 1000)}{bcolors.ENDC}')
+                        row.append(f'{row_color}{c.nodeId}{bcolors.ENDC}')
+                        row.append(f'{row_color}{os_name}{bcolors.ENDC}')
+                        row.append(f'{row_color}{os_release}{bcolors.ENDC}')
+                        row.append(f'{row_color}{machine_type}{bcolors.ENDC}')
+                        row.append(f'{row_color}{os_version}{bcolors.ENDC}')
+
+                    table.append(row)
+            else:
+                # Multi-instance pool - display parent gateway then instances
+                if format_type == 'json':
+                    # For JSON, create a gateway object with instances array
+                    instances_data = []
+                    for idx, instance in enumerate(connected_instances, 1):
+                        version_parts = []
+                        version = ""
+                        if hasattr(instance, 'version') and instance.version:
+                            version_parts = instance.version.split(';')
+                            version = version_parts[0] if version_parts else instance.version
+
+                        instance_data = {
+                            "instance_number": idx,
+                            "status": "ONLINE",
+                            "gateway_version": version,
+                            "ip_address": instance.ipAddress if hasattr(instance, 'ipAddress') else "",
+                            "connected_on": instance.connectedOn
+                        }
+
+                        if is_verbose:
+                            os_name = version_parts[1] if len(version_parts) > 1 else ""
+                            os_release = version_parts[2] if len(version_parts) > 2 else ""
+                            machine_type = version_parts[3] if len(version_parts) > 3 else ""
+                            os_version = version_parts[4] if len(version_parts) > 4 else ""
+
+                            instance_data.update({
+                                "os": os_name,
+                                "os_release": os_release,
+                                "machine_type": machine_type,
+                                "os_version": os_version
+                            })
+
+                        instances_data.append(instance_data)
+
+                    gateway_data = {
+                        "ksm_app_name": ksm_app_name,
+                        "ksm_app_uid": ksm_app_uid_str,
+                        "ksm_app_accessible": ksm_app_accessible,
+                        "gateway_name": c.controllerName,
+                        "gateway_uid": gateway_uid_str,
+                        "status": overall_status,
+                        "instances": instances_data
+                    }
+
+                    if is_verbose:
+                        gateway_data.update({
+                            "device_name": c.deviceName,
+                            "device_token": c.deviceToken,
+                            "created_on": datetime.fromtimestamp(c.created / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+                            "last_modified": datetime.fromtimestamp(c.lastModified / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+                            "node_id": c.nodeId
+                        })
+
+                    gateways_data.append(gateway_data)
+                else:
+                    # For table format, show parent row then indented instance rows
+                    row_color = bcolors.OKGREEN
+
+                    # Parent gateway row
+                    row = []
+                    row.append(f'{row_color if ksm_app_accessible else bcolors.WHITE}{ksm_app_info_plain}{bcolors.ENDC}')
+                    row.append(f'{row_color}{c.controllerName}{bcolors.ENDC}')
+                    row.append(f'{row_color}{gateway_uid_str}{bcolors.ENDC}')
+                    row.append(f'{row_color}{overall_status}{bcolors.ENDC}')
+                    row.append('')  # Empty version column for pool parent
+
+                    if is_verbose:
+                        row.append(f'{row_color}{c.deviceName}{bcolors.ENDC}')
+                        row.append(f'{row_color}{c.deviceToken}{bcolors.ENDC}')
+                        row.append(f'{row_color}{datetime.fromtimestamp(c.created / 1000)}{bcolors.ENDC}')
+                        row.append(f'{row_color}{datetime.fromtimestamp(c.lastModified / 1000)}{bcolors.ENDC}')
+                        row.append(f'{row_color}{c.nodeId}{bcolors.ENDC}')
+                        row.append('')
+                        row.append('')
+                        row.append('')
+                        row.append('')
+
+                    table.append(row)
+
+                    # Instance rows
+                    for idx, instance in enumerate(connected_instances, 1):
+                        version_parts = []
+                        version = ""
+                        if hasattr(instance, 'version') and instance.version:
+                            version_parts = instance.version.split(';')
+                            version = version_parts[0] if version_parts else instance.version
+
+                        ip_address = instance.ipAddress if hasattr(instance, 'ipAddress') else ""
+                        connected_on = datetime.fromtimestamp(instance.connectedOn / 1000).strftime('%Y-%m-%d %H:%M:%S') if hasattr(instance, 'connectedOn') else ""
+
+                        instance_row = []
+                        instance_row.append('')  # Empty KSM app column
+                        instance_row.append(f'{row_color}  |- Instance {idx} (connected: {connected_on}){bcolors.ENDC}')
+                        instance_row.append(f'{row_color}{ip_address}{bcolors.ENDC}')
+                        instance_row.append(f'{row_color}ONLINE{bcolors.ENDC}')
+                        instance_row.append(f'{row_color}{version}{bcolors.ENDC}')
+
+                        if is_verbose:
+                            os_name = version_parts[1] if len(version_parts) > 1 else ""
+                            os_release = version_parts[2] if len(version_parts) > 2 else ""
+                            machine_type = version_parts[3] if len(version_parts) > 3 else ""
+                            os_version = version_parts[4] if len(version_parts) > 4 else ""
+
+                            instance_row.append('')
+                            instance_row.append('')
+                            instance_row.append(f'{row_color}{datetime.fromtimestamp(instance.connectedOn / 1000) if hasattr(instance, "connectedOn") else ""}{bcolors.ENDC}')
+                            instance_row.append('')
+                            instance_row.append('')
+                            instance_row.append(f'{row_color}{os_name}{bcolors.ENDC}')
+                            instance_row.append(f'{row_color}{os_release}{bcolors.ENDC}')
+                            instance_row.append(f'{row_color}{machine_type}{bcolors.ENDC}')
+                            instance_row.append(f'{row_color}{os_version}{bcolors.ENDC}')
+
+                        table.append(instance_row)
+
         if format_type == 'json':
             # Sort JSON data by status and app name
             gateways_data.sort(key=lambda x: (x['status'], (x['ksm_app_name'] or '').lower()))
@@ -1461,7 +1593,28 @@ class PAMGatewayListCommand(Command):
             
             return json.dumps(result, indent=2)
         else:
-            table.sort(key=lambda x: (x[3] or '', x[0].lower()))
+            # Separate rows into groups: each parent with its instances
+            sorted_groups = []
+            current_group = []
+
+            for row in table:
+                # If the first column is not empty, this is a parent row
+                if row[0]:
+                    if current_group:
+                        sorted_groups.append(current_group)
+                    current_group = [row]
+                else:
+                    # This is an instance row, add to the current group
+                    current_group.append(row)
+
+            if current_group:
+                sorted_groups.append(current_group)
+
+            sorted_groups.sort(key=lambda group: (group[0][3] or '', group[0][0].lower()))
+
+            table = []
+            for group in sorted_groups:
+                table.extend(group)
 
             if is_verbose:
                 krouter_host = get_router_url(params)
@@ -1510,19 +1663,16 @@ class PAMConfigurationListCommand(Command):
                 return json.dumps({"error": f'Configuration {config_uid} not found'})
             else:
                 raise Exception(f'Configuration {config_uid} not found')
-            return
         if configuration.version != 6:
             if format_type == 'json':
                 return json.dumps({"error": f'{config_uid} is not PAM Configuration'})
             else:
                 raise Exception(f'{config_uid} is not PAM Configuration')
-            return
         if not isinstance(configuration, vault.TypedRecord):
             if format_type == 'json':
                 return json.dumps({"error": f'{config_uid} is not PAM Configuration'})
             else:
                 raise Exception(f'{config_uid} is not PAM Configuration')
-            return
 
         facade = PamConfigurationRecordFacade()
         facade.record = configuration
@@ -2671,6 +2821,17 @@ class PAMGatewayActionRotateCommand(Command):
     parser.add_argument('--dry-run', '-n', dest='dry_run', default=False, action='store_true', help='Enable dry-run mode')
     # parser.add_argument('--config', '-c', dest='configuration_uid', action='store', help='Rotation configuration UID')
 
+    # Email and share link arguments
+    parser.add_argument('--self-destruct', dest='self_destruct', action='store',
+                       metavar='<NUMBER>[(m)inutes|(h)ours|(d)ays]',
+                       help='Create one-time share link that expires after duration')
+    parser.add_argument('--email-config', dest='email_config', action='store',
+                       help='Email configuration name to use for sending (required with --send-email)')
+    parser.add_argument('--send-email', dest='send_email', action='store',
+                       help='Email address to send credentials after rotation')
+    parser.add_argument('--email-message', dest='email_message', action='store',
+                       help='Custom message to include in email')
+
     def get_parser(self):
         return PAMGatewayActionRotateCommand.parser
 
@@ -2680,6 +2841,35 @@ class PAMGatewayActionRotateCommand(Command):
         recursive = kwargs.get('recursive', False)
         pattern = kwargs.get('pattern', '')  # additional record title match pattern
         dry_run = kwargs.get('dry_run', False)
+
+        # Store email/share arguments as instance variables
+        self.self_destruct = kwargs.get('self_destruct')
+        self.email_config = kwargs.get('email_config')
+        self.send_email = kwargs.get('send_email')
+        self.email_message = kwargs.get('email_message')
+
+        # Validate email setup early (before rotation) to avoid rotating password without being able to send email
+        if self.send_email:
+            if not self.email_config:
+                raise CommandError('pam action rotate', '--send-email requires --email-config to specify email configuration')
+
+            # Find and load email config to validate provider and dependencies
+            try:
+                config_uid = find_email_config_record(params, self.email_config)
+                email_config_obj = load_email_config_from_record(params, config_uid)
+
+                # Check if required dependencies are installed for this provider
+                from ..email_service import validate_email_provider_dependencies
+                is_valid, error_message = validate_email_provider_dependencies(email_config_obj.provider)
+
+                if not is_valid:
+                    raise CommandError('pam action rotate', f'\n{error_message}')
+
+            except Exception as e:
+                # Re-raise CommandError as-is, wrap other exceptions
+                if isinstance(e, CommandError):
+                    raise
+                raise CommandError('pam action rotate', f'Failed to validate email configuration: {e}')
 
         # record, folder or pattern - at least one required
         if not record_uid and not folder:
@@ -2846,7 +3036,9 @@ class PAMGatewayActionRotateCommand(Command):
                 pam_config = vault.KeeperRecord.load(params, config_uid)
 
                 # Check the graph for the noop setting.
-                record_link = RecordLink(record=pam_config, params=params, fail_on_corrupt=False)
+                record_link = RecordLink(record=pam_config,
+                                         params=params,
+                                         fail_on_corrupt=False)
                 acl = record_link.get_acl(record_uid, pam_config.record_uid)
                 if acl is not None and acl.rotation_settings is not None:
                     is_noop = acl.rotation_settings.noop
@@ -2919,8 +3111,138 @@ class PAMGatewayActionRotateCommand(Command):
             encrypted_transmission_key=encrypted_transmission_key,
             encrypted_session_token=encrypted_session_token)
 
+        # Handle post-rotation email/share if requested
+        if (self.self_destruct or self.send_email) and router_response:
+            try:
+                # Sync params to get updated record with rotated password
+                api.sync_down(params)
+                # Reload record to get latest credentials
+                record = vault.KeeperRecord.load(params, record_uid)
+                if isinstance(record, vault.TypedRecord):
+                    self._handle_post_rotation_email(params, record)
+            except Exception as e:
+                logging.warning(f'{bcolors.WARNING}Post-rotation email handling failed: {e}{bcolors.ENDC}')
+                # Don't fail the rotation if email fails
+
         if not slient:
             print_router_response(router_response, 'job_info', conversation_id, gateway_uid=gateway_uid)
+
+    def _handle_post_rotation_email(self, params, record):
+        """Handle email sending and share link creation after successful rotation."""
+        try:
+            # 1. Validate email arguments
+            if self.send_email and not self.email_config:
+                logging.warning(f'{bcolors.WARNING}--send-email requires --email-config. Skipping email.{bcolors.ENDC}')
+                return
+
+            # Track whether user explicitly requested self-destruct
+            user_requested_self_destruct = bool(self.self_destruct)
+
+            # Auto-set expiration to 24 hours if send-email is used without explicit self-destruct
+            if self.send_email and not self.self_destruct:
+                self.self_destruct = '24h'
+                logging.info('--send-email used without --self-destruct, creating 24 hour time-based share link')
+
+            # 2. Parse timeout and create share link
+            share_url = None
+            expiration_text = None
+            if self.self_destruct:
+                try:
+                    # parse_timeout returns a timedelta object
+                    expiration_period = parse_timeout(self.self_destruct)
+                    expire_seconds = int(expiration_period.total_seconds())
+
+                    if expire_seconds <= 0:
+                        logging.warning(f'{bcolors.WARNING}Invalid --self-destruct value. Skipping share link.{bcolors.ENDC}')
+                        return
+
+                    # Calculate human-readable expiration text
+                    if expire_seconds >= 86400:  # days
+                        days = expire_seconds // 86400
+                        expiration_text = f"{days} day{'s' if days > 1 else ''}"
+                    elif expire_seconds >= 3600:  # hours
+                        hours = expire_seconds // 3600
+                        expiration_text = f"{hours} hour{'s' if hours > 1 else ''}"
+                    else:  # minutes
+                        minutes = expire_seconds // 60
+                        expiration_text = f"{minutes} minute{'s' if minutes > 1 else ''}"
+
+                    # 3. Create one-time share link manually (same as record_edit.py)
+                    logging.info(f'Creating one-time share link expiring in {self.self_destruct}...')
+                    record_uid = record.record_uid
+                    record_key = record.record_key
+                    client_key = utils.generate_aes_key()
+                    client_id = crypto.hmac_sha512(client_key, 'KEEPER_SECRETS_MANAGER_CLIENT_ID'.encode())
+                    rq = APIRequest_pb2.AddExternalShareRequest()
+                    rq.recordUid = utils.base64_url_decode(record_uid)
+                    rq.encryptedRecordKey = crypto.encrypt_aes_v2(record_key, client_key)
+                    rq.clientId = client_id
+                    rq.accessExpireOn = utils.current_milli_time() + int(expiration_period.total_seconds() * 1000)
+                    rq.isSelfDestruct = user_requested_self_destruct
+                    api.communicate_rest(params, rq, 'vault/external_share_add', rs_type=APIRequest_pb2.Device)
+                    # Extract hostname from params.server
+                    parsed = urlparse(params.server)
+                    server_netloc = parsed.netloc if parsed.netloc else parsed.path
+                    share_url = urlunparse(('https', server_netloc, '/vault/share', None, None, utils.base64_url_encode(client_key)))
+                    logging.info(f'{bcolors.OKGREEN}Share link created successfully{bcolors.ENDC}')
+                except Exception as e:
+                    logging.warning(f'{bcolors.WARNING}Failed to create share link: {e}{bcolors.ENDC}')
+                    return
+
+            # 4. Send email if requested
+            if self.send_email and self.email_config and share_url:
+                try:
+                    # Find email configuration record by name
+                    logging.info(f'Loading email configuration: {self.email_config}')
+                    config_uid = find_email_config_record(params, self.email_config)
+                    if not config_uid:
+                        logging.warning(f'{bcolors.WARNING}Email configuration "{self.email_config}" not found. Skipping email.{bcolors.ENDC}')
+                        return
+
+                    # Load the email configuration
+                    email_config = load_email_config_from_record(params, config_uid)
+
+                    # 5. Build email HTML content with share link
+                    custom_message = self.email_message or 'Your password has been rotated. Click the link below to view your new credentials.'
+
+                    html_content = build_onboarding_email(
+                        share_url=share_url,
+                        custom_message=custom_message,
+                        record_title=record.title,
+                        expiration=expiration_text
+                    )
+
+                    # 6. Send email
+                    logging.info(f'Sending email to {self.send_email}...')
+                    email_sender = EmailSender(email_config)
+                    email_sender.send(
+                        to=self.send_email,
+                        subject=f"Password Rotated: {record.title}",
+                        body=html_content,
+                        html=True
+                    )
+
+                    # 7. Persist OAuth tokens if refreshed
+                    if email_config.is_oauth_provider() and email_config._oauth_tokens_updated:
+                        logging.info('Updating OAuth tokens in email configuration record...')
+                        update_oauth_tokens_in_record(
+                            params,
+                            config_uid,
+                            email_config.oauth_access_token,
+                            email_config.oauth_refresh_token,
+                            email_config.oauth_token_expiry
+                        )
+
+                    logging.info(f'{bcolors.OKGREEN}Email sent successfully to {self.send_email}{bcolors.ENDC}')
+
+                except Exception as e:
+                    logging.warning(f'{bcolors.WARNING}Failed to send email: {e}{bcolors.ENDC}')
+                    # Don't fail the rotation if email fails
+                    return
+
+        except Exception as e:
+            logging.warning(f'{bcolors.WARNING}Error in post-rotation email handler: {e}{bcolors.ENDC}')
+            # Don't fail the rotation if email fails
 
     def str_to_regex(self, text):
         text = str(text)
@@ -3050,6 +3372,38 @@ class PAMGatewayRemoveCommand(Command):
             logging.info('Gateway %s has been removed.', gateway.controllerName)
         else:
             logging.warning('Gateway %s not found', gateway_name)
+
+
+class PAMSetMaxInstancesCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam gateway set-max-instances')
+    parser.add_argument('--gateway', '-g', required=True, dest='gateway',
+                        help='Gateway UID or Name', action='store')
+    parser.add_argument('--max-instances', '-m', required=True, dest='max_instances', type=int,
+                        help='Maximum number of gateway instances (must be >= 1)', action='store')
+
+    def get_parser(self):
+        return PAMSetMaxInstancesCommand.parser
+
+    def execute(self, params, **kwargs):
+        gateway_name = kwargs.get('gateway')
+        max_instances = kwargs.get('max_instances')
+
+        if max_instances < 1:
+            raise CommandError('pam gateway set-max-instances', '--max-instances must be at least 1')
+
+        gateways = gateway_helper.get_all_gateways(params)
+        gateway = next((x for x in gateways
+                        if utils.base64_url_encode(x.controllerUid) == gateway_name
+                        or x.controllerName.lower() == gateway_name.lower()), None)
+
+        if not gateway:
+            raise CommandError('', f'{bcolors.FAIL}Gateway "{gateway_name}" not found{bcolors.ENDC}')
+
+        try:
+            gateway_helper.set_gateway_max_instances(params, gateway.controllerUid, max_instances)
+            logging.info('%s: max instance count set to %d', gateway.controllerName, max_instances)
+        except Exception as e:
+            raise CommandError('', f'{bcolors.FAIL}Error setting max instances: {e}{bcolors.ENDC}')
 
 
 class PAMCreateGatewayCommand(Command):

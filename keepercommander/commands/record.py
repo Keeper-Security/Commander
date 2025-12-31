@@ -25,7 +25,7 @@ from colorama import Fore, Back, Style
 
 from . import record_edit, base, record_totp, record_file_report
 from .base import Command, GroupCommand, RecordMixin, FolderMixin, fields_to_titles
-from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, recordv3, record_types
+from .. import api, display, crypto, utils, vault, vault_extensions, subfolder, record_types
 from ..breachwatch import BreachWatch
 from ..error import CommandError
 from ..params import KeeperParams
@@ -1845,11 +1845,13 @@ class RecordHistoryCommand(Command, RecordMixin):
                         rows.append([name, value])
                 modified = datetime.datetime.fromtimestamp(int(rev['client_modified_time'] / 1000.0))
                 rows.append(['Modified', modified])
-                base.dump_report_data(rows, headers=['Name', 'Value'],
-                                 title=f'Record Revision V.{revision}', no_header=True, right_align=(0,))
+                fmt = kwargs.get('format') or ''
+                return base.dump_report_data(rows, headers=['Name', 'Value'],
+                                 title=f'Record Revision V.{revision}', no_header=True, right_align=(0,),
+                                 fmt=fmt, filename=kwargs.get('output'))
 
             elif action == 'diff':
-                count = 5
+                count = length - 1
                 current = vault.KeeperRecord.load(params, history[index])
                 rows = []
                 while count >= 0 and current:
@@ -1903,7 +1905,8 @@ class RecordHistoryCommand(Command, RecordMixin):
                                 lines.append('...')
                             row[index] = '\n'.join(lines)
 
-                base.dump_report_data(rows, headers)
+                fmt = kwargs.get('format') or ''
+                return base.dump_report_data(rows, headers, fmt=fmt, filename=kwargs.get('output'))
 
             elif action == 'restore':
                 if revision == 0:

@@ -15,6 +15,7 @@ import json
 import logging
 import ssl
 import time
+import sys
 
 from typing import Union, Dict, Optional
 
@@ -24,7 +25,7 @@ from .proto import APIRequest_pb2 as proto
 from . import crypto, utils
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
 
-CLIENT_VERSION = 'c17.1.9'
+CLIENT_VERSION = 'c17.2.0'
 
 SERVER_PUBLIC_KEYS = {
     1: crypto.load_rsa_public_key(utils.base64_url_decode(
@@ -106,8 +107,14 @@ SERVER_PUBLIC_KEYS = {
         'BDXyZZnrl0tc2jdC5I61JjwkjK2kr7uet9tZjt8StTiJTAQQmnVOYBgbtP08PWDbecxnHghx3kJ8QXq1XE68y8c')),
 
     17: crypto.load_ec_public_key(utils.base64_url_decode(
-        'BFX68cb97m9_sweGdOVavFM3j5ot6gveg6xT4BtGahfGhKib-zdZyO9pwvv1cBda9ahkSzo1BQ4NVXp9qRyqVGU')),
-}   # type: Dict[int, Union[rsa.RSAPublicKey, ec.EllipticCurvePublicKey]]
+        'BFX68cb97m9_sweGdOVavFM3j5ot6gveg6xT4BtGahfGhKib-zdZyO9pwvv1cBda9ahkSzo1BQ4NVXp9qRyqVGU')),   
+    
+    107: utils.base64_url_decode('rsSl4OfJIffO0Fxp6oBgGqJtniM8eyhi5lwlOiVZnwGrn_qnTch5fXbJwpAbnvoIa6VS00MeNShBvDo6bNIR2RRuq4lkgHUXNfap79l8JDi6xllfVLKRn5psVrGqXkybxjJH9UNQWJKr5TurXRnG9Wll0xXCC6ppHNszZ3e7D_xt5kFO2NS5PVl83uNp-Qp7iRAzcEtizvB55pkrAbyGkAALlCqsOSMPWXI544ult8EVCgU1CRk8vMsNSmNG8mO3FcCg0rmA7ljNdSQPQjQ231NJqDeRdlUAZclK8gks3WKF0CIsbVmbTZICFesd42Cw9CbHusZUjKoyVIDPVowFmHg72kcmPovBwMuesGg3coAj_NoFAlSyiXsvgPNMDciND-Z7OiRpK-eG6RGyUvhcdlw6k5FzjfNab5Zix9hHkoZhkyG-h9exzTxxgdeu6AMLEKl2QHtXpqle4zelOSiOtkgC8BRyPfjD5PBwrJsduwoXf0KljDXP0ceAmPbMaSMabeMj3CJY8OuHZOIxzQF2J8xEnAC9wuOD2ElNcVyOQ6lyFCueXfofHce_gMAIZpABZVZDxsB2jLBW1VF1yksRb1MAjPYBHFV7YJhHyiMI34VRbPo1o3lq9vk-4rwPwYUWDWQePDUkiYuxQTs36WwXVAtY-XOF9HMnkRjK25sqV_uwzbAIHAyf8SomVHUX7AtjyMYu52d33kkHhiA7ofqXjwBK69odR8Ckzam-egKkuUWlkPJeDXyR_AhpYhAqbzqgQHw7QhpEayBIS9xRcCixONLGkKtn8xIs-6HKhPCjTEDEN_IjVxM-HEY_rHpY_wSWibtNPEPAgAEtZSQIWyjJyPMRYTEgJZEBUUk1hiuNi_FFiNM71wkJldxngipdWYd9KFt5shExO4CAzxtd3MOTrHQEBuXNz6GL50diBJuioRR5QhgCddNejAcet8Ul0duAXuCyI2QDZnCQf0RO97Z9alwYllbA67EZMScBq6s81lAqqXWPJNNWQbQEVzidmdW28ZIbaOaPLOUuIqYJv_J60XuLLcYP4hrMBANqtwAb_HNlXGaW06vJT7wasEMzhDKVNSpFs4VYSMk1tIR6wjspGYJRGGE7hpiaDCPKOQRe24Y2HPJEBmNGWmMjREKpZYKg2nsV9nWvDVShKol1JpZM2kI9AEQPIIo9ZiHBleh_OnynWcCVAdl9ZsOkpOtMFPZap8gooqqMt2FO-gofSpGkFkNs41a5gxGeqRETiBsoa-ZNyqq2wJm77qJqSvC54oGOjFE_mfJBH0I4Fahy6Kkm-zKrJEAuehaVTXVHamgJeSkfLemt3WVlgPwZjNJMh5FsM8W8rclE78yI2WYpY9i0RhOJkNViBGcn5EovgERJPEsLO7SBviJwetmUQyUVbOAyX4ag_cBJ2fmUkwVQuhV6PdsnTqFfV2dM2ptbQgcopypvHyggh1vFooMYDIUCZ7qfBZYx7ZclV0woecJGjiK9mKgTlumnHtkx1zCETtNubQaDANkpAlZkKuS42WczUDEzpye8OpeYgaF6NIolqNFs_plgZVhg9_ZBEIZcnNGd1sgbg3it_Rk7EZXJDHB_6cWoS8VW1Wcq72FBpFDOWDiiCapw0QknC9pfB_gV7zm6nJpzFRcInIqGuNNJdMcCbmPAV0cKBxGR7PfKS4KCLoTCGctS3fKpE-Q-ZJBNwWRwB-cogesufQdr1oKJ3xXJtzGcoMK2n9OSAAStt3A_V-YvkVVzb0Z32HMG79NgAAeCG9xXkidVLIpzLuhg4AQRVzpXf8gry6qBZUppbPCriSSBr-vDlJIHh6gu7-y1cLi2zHinriOoElMK3fWI1JO7HUItxLCHrkzJt4R2N9nOD8gDqIK16-OG9SssQNlex5e0MVkbAA0BR1mn7MSTBvevw2VcsTJoIxXEIjS87fRvuadwrKqw3nKFOPSCZzgC7XFtzxIpazSCGWi_5RSDWnSXGLJvNcKhcvgfpgk4jSoEdDIJ30FUDFzHkusUnfVAbTnCIWCYDKWyk7G8bsRcVZwNxwKJ7G2Mz4a3yrkYuxaFmGJX5EdCEM4EWceF5rVW3ZQuvzo'),
+
+    124: utils.base64_url_decode('oOWRIAhfmuFV0WiH3QxnN1O81VqlUdPOXJqxIXpKFKFxZoJfKuGSPRZDzbhFYuwQccNswyJlvMZ0C5GuPfwoGWyPt2FOOKcoM8rASDpr1liu5nRmiBLFKTxMG6qccITD4XZyx6kb8KZZNnyu1euSQGE7dVl-DIM1ySi5MKNRJgWr3GpbhJA0oJxntxp_WWldAnqEq2tukWoKici34YEIhnQeXnBtekVAM0U7j7FzHEa5BaKdbIpP74VAS7ScsSMcRoloQWSsg5eIOPcAT7ZcycUhtbii7om6NQESEJxhUdjMWTTFiUGEoRBgtJYY59wkx0IvQbqUT8qSk0Ik3fasfjIRQehWeKk670KfFBswHRqgrNqY37wCUPOuDTKj4mnOq5gkQSiu55GvYzpUV4m4YJMxRPgp-RzPYwkbvKtZIKgMsLOeR0aGCTApdUAn3FoxQNxgLUqQW-aMNyUtHIsw9ZwXxnQAmEkif5UNiGDDfgScmkhKHKtC00FtRwNFRmaZuLUwqrly4DKnzfwJOJjPADCDSpoelwxQI7JE1yMZ9_UWxwSAk5AgFANXCfubrsl7J7ihFaywx-UhWGUX24xByXHAsGW_hPAROPV-r9lBYktaFkBfZmojijRCO6d0oEVzofJpkQMjZmVEzyZoiFw1mJMXppoSWVB_lEK_LpisWaUmT1JztoANlLZcb5fBktpihMNA7NHB_ioKdDWGNxa0miutZqhWDPOs87gOv8Nu70RdFxoUGnCMgAQwrHErebVdZKCGOxd8fYOrGeoH0kWC9mA7-8GKQqdsmOUtVcyQToCrsPkXBvjKhvqwfMirsjk70uiZ6QABdBy7j9svCyiyjaVHJYiSfRJDqNB47PyVskhH3WsnPqhfKcQroTI6pTnCYdJeJHgqKCp2ICeWZYKbRbeKQOI__DmYp2C1AB1PB7nFD1AVuvnGnOeLaRaE72h1dNyVQIFyzIOw8WY24-B_g1JXUmyaiQU4zvooGJlCrmm6n_MN36u0R2cwWwp9FjQ8bWMYCtqbSXtwtqQrM0PIKHxteUqqS6kWmjmy7_hPUwYbYiEszGKYI3fFD6HLutim8PISh6yDlflwzhaZO4KjewYc0TdKpsetmPF9AsBTlBciPylO66k9iEnCwIBgHSqtDraUUNVRbNaUz_VSixV_uEI8ZvoBzhExWwvH1hxC0yRdKskZ9GdiUzle-iAR4YBQ0oiXP8uDFCjF7qg__kHAOPtWBjKjN3tXwCmwJntwxURxbNAFqaGScqJSwGkQlGHOW_FLlRkZOgN_ztpDyKx4Trq4SgOd-KFiAee0GgpG9Qoq0_fHYJi6XsKdLiXMd5ZTUAWokCk4VoZeJYNY75Z4bkZFEgnCc5OjFvJmKwNzWvu5_ed5QoiLxeAWdpsyoGTKxruJR9VHCqMWkZieTnt-tQGNXqcy2Zqc2nBz8muk1gjNl6t2cZOvnACaW4nNxhYlTKHN49zDLPYmVzQU7YAEdLU-tIxv_IGOG9ulKhRdoYCrNgOInQVp7zJUSVIVDoK9jmxxrutMyyl0xbesB8lYeAO7f5DCuOF5Skq4KDHMY2GAo2zLIHJi4lR7mTirKgClyBUUBLZJAQSeArinnyRGy2Y9aBucHbdqvnqqjBgFXnFDZLaseDu0bMAGsVNLqHMUfaCq5nhHUDIe-pBaMuGmq9pMbMp1kNQj8ReJVEqBLAi2ZcR1QeK8zuyw98JF4cLAvZJ93PNZmdO87UmpBUJL72SXmKUJlzZtF2lma1QajwYCOTlyQcNP3ckd3Kit0VifCPVxJaqjxCDLnhiaQCALLFZnA7UuH8FEWeJZdpyxYEOqzOwA1Qq7JjYYdWJ-oUSfDGl6dgPFpIkVt2h37FFDz4hOCzM-SIgqlEqoA6rGDCAWrvSviveslAVUR2iDilKylpKiU_K2j2hKFnZ7B0Qv-rF-uUEHG-ZYzoOmkImArdeav1i7U-S4DZSuENJnO4NiwKlyxcAfrcd_GYIGolWa5pDPIctVwjqbUthGxzukiGku76sufqu2fRdPauLLuMdTnf6vXN0TRo-RPbf8GrijSi9UN-52OU7E7C7qUJLExlg'),
+
+    136: utils.base64_url_decode('F9FKL1aEqbMMsaSH-Ig3EOa1rJUdL1vPAXE3wcFSpbw8yUgI3NWbScM_S3ho3EQVxduSjTBWfpcbsVtkx6c5QauUYVx3rtx5bggMr-V_KSTC5RgYpkIZwHSSoxoO-PVamOWpnGKbNAsVsmQWc8Wi8JMQHDFn7uw5pVMZWEq5uNJRLAKvqlVo4Ux1dTSIaQgsBfLNvYZO9qFpc7XClaU-NhfHecNm3hEHQgmlixxs0HbOQqmi90YrCZwS3mkjFgvANauTmhTFiuWbgoUb3EWhausazlQ3A5tmjyRRm8ISniVrCmOrbEy-92qe2zasEyzL4mpdWUNjzCQC6qrKc4KfyHaJhwdaqocYp1VmwEmSrmdv5vKpHoSGcAZECMOFQVENuuEXlcsG7kYEOnEn0llllgOTbZwNsrIpVjHAKGJIaOCjxOsc46dB1XozHQuZs_QjZRpKEPsJJjcN3YVwglaDuLB3XgditEJJ1okrWYgC4ehHqkKYaSSoT_BTh6e8jqesYpF5SOjGMtAS0piZG_zGXxgYuCaZUUptaKi2FdyftfgCJEtLF9nFrNI_GOosDcydBBW2Z0sRf1aUDjI3nJKvMNokITQ77nRHj8yjoeEhDAZ6etm-jTDCROHIePoojgOwpRiTJRxeARy9m9i2BWGZuoq93eVxzuMv9nbFT5Nkpxwo1YnK0qAhp6ArkLShXIMy7dkLQRUVtVqKgPl2lyVwqiWSazM_t2KmAyY9LYJ9xCIxVNJUCvNrZzELrIsJdRRq9Cd0KBhuEmxUwGDD01qNzVOclgwnyQDMmTNHtnS46icX1AlDwkq3V3a1xDhF14SMwVZLHkixjyowVGKFoEswd6Ux2GAa5OV-8JODWVGxhIgtVspZklautfGMlXRl9sh8UiC63dyorsPHp8QrK7uBp2ZAhkmQDFIrrQydUhYkgUtEA3A9xhodaOa9XyZ6GVXFEDB1Q3iti2BkoaBZcLId8MSgjahOUzq4YYMT0mwP-orEkgujv2BhSmsuFkCuumksSxUOzpia96lsfpbN--utsiIhmqgm9rM9NAcj5mMbCwcuuYBbaPhW8QjAhYt_2uC53cEK4BUxgwUN-yCfMqGZw7WlIlemuUR5zMAksTyWPsq8esdfHnW_Q-Wh8shTOJQRDzkvo4KVBjIKoPJPOwKmo_Uv00gIiwB59imnQhEm7MYyW5sudNkDlwRjs_ehtYVTgiVyiBRKH3rKVmJQXSAbkVVuadyMZLQy6SkWvbmpekUzwgCEdYZjs3Mg6vXBiIGZ6Ym-K7Zsr7CzbmCWrcZblifFrOEIEagV7hGbyeFmIpZ-tVwVEjgpTPLAbqxfbtyHNuuK2RxN5NMLw7VxzJJTOTwvddk9OTNJk2Q5bMZJd-g258aOU-qmDaBIyYaPuHpS_3kjg0s8ZXG0w8MOZGN2-eaq8bWR3TbFd-ujsjR2sSkYVeYGcSJ6XvtF7UtXL7CfE2ujRMd8k_lW6tbDZ4uA17Bv2XVmo1cWENYiy2V5CXJk4Um9qRathlxRtjsifPaskYx26TC2yFlYNcJ-7CwKwXRvg4UWMSY2ngN53RUJigoQ82li5jsf3XtQwBIt58Qy6xlTzDST1scfTOuyc_AwiLgKECOCYxSTimiq4qOvszBJp_AAHGNHdXsgoxiTlkNDL6QIL-pIDcu374okz6m5e4t28wwWiDWPhWu1wAFmp0tsK8M-d-Z4UVY8FmYHrYgYNnA7i1jHUiwYijhGlyV3KUiWhqOxiGfN4LYRcJKi0vmlUox977F3yqR9BMMayIduHzirsCS6SqCcW3dZskUbk9jKLLBr8_IdmuaoZFNGnmUAQucOsHca6qpM3np-kVkI_Dl8ohAGcOOlDWhTr-CGaXcd3xJ63QQGMLYRFJirkUMP26qu6hqbhkuZXiO712laX4ybdUdmxde2GkmDnLyzhYOQSSUiMmDDYgmjbUc3GCcVrCRHmsbJTykq6neQB_Kj1lOFlAate4RDU_LGXyWxpImuQpHCqMazJpWCo-GauACBSBhFDucovzKbXjeds6Zpq3lBK_T9EaPvGASD6FO23qv-HxUEyHgnW-VkHhVirk4')
+}   # type: Dict[int, Union[rsa.RSAPublicKey, ec.EllipticCurvePublicKey, Dict[str, Union[ec.EllipticCurvePublicKey, bytes]]]]
 
 
 def encrypt_with_keeper_key(context, data: bytes) -> bytes:
@@ -133,14 +140,43 @@ def execute_rest(context, endpoint, payload):
         run_request = False
 
         api_request = proto.ApiRequest()
-        server_public_key = SERVER_PUBLIC_KEYS[context.server_key_id]
-        if isinstance(server_public_key, rsa.RSAPublicKey):
-            api_request.encryptedTransmissionKey = crypto.encrypt_rsa(context.transmission_key, server_public_key)
-        elif isinstance(server_public_key, ec.EllipticCurvePublicKey):
-            api_request.encryptedTransmissionKey = crypto.encrypt_ec(context.transmission_key, server_public_key)
-        else:
-            raise ValueError('Invalid server public key')
-        api_request.publicKeyId = context.server_key_id
+        qrc_success = False
+        
+        # Try QRC encryption if qrc_key_id is available
+        if context.qrc_key_id and context.qrc_key_id >= 100:
+            qrc_mlkem_key = SERVER_PUBLIC_KEYS.get(context.qrc_key_id)
+            if qrc_mlkem_key and isinstance(qrc_mlkem_key, bytes):
+                try:
+                    logging.debug(f"Using QRC hybrid encryption (ML-KEM key ID: {context.qrc_key_id}, EC key ID: {context.server_key_id})")
+
+                    if not context.client_ec_private_key:
+                        context.client_ec_private_key = crypto.generate_ec_key()[0]
+                    
+                    from .qrc.qrc_crypto import encrypt_qrc
+                    ec_public_key = SERVER_PUBLIC_KEYS[context.server_key_id]
+                    qrc_message = encrypt_qrc(context.transmission_key, context.client_ec_private_key, ec_public_key, qrc_mlkem_key)
+
+                    api_request.qrcMessageKey.clientEcPublicKey = qrc_message['client_ec_public_key']
+                    api_request.qrcMessageKey.mlKemEncapsulatedKey = qrc_message['ml_kem_encapsulated_key']
+                    api_request.qrcMessageKey.data = qrc_message['data']
+                    api_request.qrcMessageKey.msgVersion = qrc_message['msg_version']
+                    api_request.qrcMessageKey.ecKeyId = context.server_key_id
+                    
+                    qrc_success = True
+                except Exception as e:
+                    logging.warning(f"QRC encryption failed ({e}), falling back to EC encryption")
+        
+        # Fallback to EC encryption if QRC not available or failed
+        if not qrc_success:
+            server_public_key = SERVER_PUBLIC_KEYS[context.server_key_id]
+            if isinstance(server_public_key, rsa.RSAPublicKey):
+                api_request.encryptedTransmissionKey = crypto.encrypt_rsa(context.transmission_key, server_public_key)
+            elif isinstance(server_public_key, ec.EllipticCurvePublicKey):
+                api_request.encryptedTransmissionKey = crypto.encrypt_ec(context.transmission_key, server_public_key)
+            else:
+                raise ValueError('Invalid server public key')
+        
+        api_request.publicKeyId = context.qrc_key_id if qrc_success else context.server_key_id
         api_request.locale = context.locale or 'en_US'
 
         api_request.encryptedPayload = crypto.encrypt_aes_v2(payload.SerializeToString(), context.transmission_key)
@@ -184,7 +220,15 @@ def execute_rest(context, endpoint, payload):
                 if rs.status_code == 401:
                     if failure.get('error') == 'key':
                         server_key_id = failure['key_id']
-                        if server_key_id != context.server_key_id:
+                        if 'qrc_ec_key_id' in failure:
+                            qrc_ec_key_id = failure['qrc_ec_key_id']
+                            if context.server_key_id != qrc_ec_key_id:
+                                # EC key mismatch: update and retry with QRC
+                                logging.debug(f"QRC EC key mismatch: updating from {context.server_key_id} to {qrc_ec_key_id}")
+                                context.server_key_id = qrc_ec_key_id
+                                run_request = True
+                                continue
+                        elif server_key_id != context.server_key_id:
                             context.server_key_id = server_key_id
                             run_request = True
                             continue
@@ -194,6 +238,11 @@ def execute_rest(context, endpoint, payload):
                         time.sleep(10)
                         run_request = True
                         continue
+                elif rs.status_code in (400, 500) and context.qrc_key_id is not None:
+                    logging.warning(f"QRC request failed with {rs.status_code} error, falling back to EC encryption")
+                    context.disable_qrc()
+                    run_request = True
+                    continue
                 return failure
             else:
                 if logging.getLogger().level <= logging.DEBUG:

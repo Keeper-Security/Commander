@@ -35,7 +35,7 @@ from ..proto import APIRequest_pb2
 from ..recordv3 import RecordV3
 
 
-record_add_parser = argparse.ArgumentParser(prog='record-add', description='Add a record to folder.')
+record_add_parser = argparse.ArgumentParser(prog='record-add', description='Add a record to folder.', allow_abbrev=False)
 record_add_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true',
                                help='Display help on field parameters.')
 record_add_parser.add_argument('-f', '--force', dest='force', action='store_true', help='ignore warnings')
@@ -47,6 +47,14 @@ record_add_parser.add_argument('--folder', dest='folder', action='store',
 record_add_parser.add_argument('--self-destruct', dest='self_destruct', action='store',
                                metavar='<NUMBER>[(m)inutes|(h)ours|(d)ays]',
                                help='Time period record share URL is valid. The record will be deleted in your vault in 5 minutes since open')
+record_add_parser.add_argument('--pam-config', dest='pam_config', action='store',
+                               help='PAM configuration UID or name to sync password to cloud provider (Azure AD, AWS IAM)')
+record_add_parser.add_argument('--send-email', dest='send_email', action='store',
+                               help='Email address to send onboarding email with share URL (requires --self-destruct)')
+record_add_parser.add_argument('--email-config', dest='email_config', action='store',
+                               help='Email configuration name to use for sending (required with --send-email)')
+record_add_parser.add_argument('--email-message', dest='email_message', action='store',
+                               help='Custom message to include in onboarding email')
 record_add_parser.add_argument('fields', nargs='*', type=str,
                                help='load record type data from strings with dot notation')
 
@@ -733,12 +741,50 @@ class RecordAddCommand(Command, RecordEditMixin):
             print(record_fields_description)
             return
 
+        # Validate email parameters
+        send_email = kwargs.get('send_email')
+        if send_email:
+            if not kwargs.get('email_config'):
+                raise CommandError('record-add', '--send-email requires --email-config to specify email configuration')
+
+            # Validate email provider dependencies early (before creating record)
+            try:
+                from .email_commands import find_email_config_record, load_email_config_from_record
+                from ..email_service import validate_email_provider_dependencies
+
+                email_config_name = kwargs.get('email_config')
+                config_uid = find_email_config_record(params, email_config_name)
+                email_config_obj = load_email_config_from_record(params, config_uid)
+
+                # Check if required dependencies are installed for this provider
+                is_valid, error_message = validate_email_provider_dependencies(email_config_obj.provider)
+
+                if not is_valid:
+                    raise CommandError('record-add', f'\n{error_message}')
+
+            except Exception as e:
+                # Re-raise CommandError as-is, wrap other exceptions
+                if isinstance(e, CommandError):
+                    raise
+                raise CommandError('record-add', f'Failed to validate email configuration: {e}')
+
+        # Handle share link creation
+        # If --send-email is used without --self-destruct, create a 24h time-based expiration (not self-destruct)
         expiration_period = None
         self_destruct = kwargs.get('self_destruct')
+        is_self_destruct_link = False  # Track whether to enable self-destruct on first use
+
         if self_destruct:
             expiration_period = parse_timeout(self_destruct)
             if expiration_period.total_seconds() > 182 * 24 * 60 * 60:
                 raise CommandError('', 'URL expiration period cannot be greater than 6 months.')
+            is_self_destruct_link = True  # User explicitly requested self-destruct
+        elif send_email:
+            # Auto-create share link with 24-hour time-based expiration (without self-destruct)
+            expiration_period = parse_timeout('24h')
+            self_destruct = '24h'  # For email template text
+            is_self_destruct_link = False  # Time-based only, can be used multiple times
+            logging.info('--send-email used without --self-destruct, creating 24 hour time-based share link')
 
         folder_uid = FolderMixin.resolve_folder(params, kwargs.get('folder'))
 
@@ -815,6 +861,17 @@ class RecordAddCommand(Command, RecordEditMixin):
         record_management.add_record_to_folder(params, record, folder_uid)
         params.sync_data = True
         params.environment_variables[LAST_RECORD_UID] = record.record_uid
+
+        # PAM password sync (best-effort, Decision 4)
+        pam_config_name = kwargs.get('pam_config')
+        if pam_config_name:
+            try:
+                self._sync_password_to_pam(params, record, pam_config_name)
+            except Exception as e:
+                logging.warning(f'[PAM] Failed to sync password to cloud provider: {e}')
+                # Best-effort: continue with record creation
+
+        share_url = None
         if expiration_period is not None:
             record_uid = record.record_uid
             record_key = record.record_key
@@ -825,17 +882,269 @@ class RecordAddCommand(Command, RecordEditMixin):
             rq.encryptedRecordKey = crypto.encrypt_aes_v2(record_key, client_key)
             rq.clientId = client_id
             rq.accessExpireOn = utils.current_milli_time() + int(expiration_period.total_seconds() * 1000)
-            rq.isSelfDestruct = True
+            rq.isSelfDestruct = is_self_destruct_link
             api.communicate_rest(params, rq, 'vault/external_share_add', rs_type=APIRequest_pb2.Device)
             # Extract hostname from params.server in case it contains full URL with protocol
             from urllib.parse import urlparse
             parsed = urlparse(params.server)
             server_netloc = parsed.netloc if parsed.netloc else parsed.path  # parsed.path for plain hostname
-            url = urlunparse(('https', server_netloc, '/vault/share', None, None, utils.base64_url_encode(client_key)))
-            return url
+            share_url = urlunparse(('https', server_netloc, '/vault/share', None, None, utils.base64_url_encode(client_key)))
+
+        # Send onboarding email (best-effort, Decision 4)
+        if send_email and share_url:
+            try:
+                self._send_onboarding_email(
+                    params=params,
+                    email_config_name=kwargs.get('email_config'),
+                    to_address=send_email,
+                    share_url=share_url,
+                    record_title=record.title,
+                    custom_message=kwargs.get('email_message', ''),
+                    expiration=self_destruct
+                )
+            except Exception as e:
+                logging.warning(f'[EMAIL] Failed to send onboarding email: {e}')
+                # Best-effort: continue and return share URL
+
+        if share_url:
+            return share_url
         else:
             BreachWatch.scan_and_update_security_data(params, record.record_uid, params.breach_watch)
             return record.record_uid
+
+    def _sync_password_to_pam(self, params: KeeperParams, record: vault.TypedRecord, pam_config_name: str):
+        """
+        Sync password to cloud provider using PAM configuration.
+
+        Args:
+            params: KeeperParams session
+            record: TypedRecord containing credentials
+            pam_config_name: PAM configuration UID or name
+
+        Raises:
+            CommandError: If PAM sync fails
+        """
+        logging.info(f'[PAM] Syncing password to cloud provider using config: {pam_config_name}')
+
+        # Find PAM configuration record
+        pam_config_uid = None
+        if pam_config_name in params.record_cache:
+            pam_config_uid = pam_config_name
+        else:
+            # Search by name
+            for record_uid in params.record_cache:
+                rec = vault.KeeperRecord.load(params, record_uid)
+                if isinstance(rec, vault.TypedRecord) and rec.title == pam_config_name:
+                    # Check if this is a PAM config (look for pamConfig record type)
+                    if rec.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration'):
+                        pam_config_uid = record_uid
+                        break
+
+        if not pam_config_uid:
+            raise CommandError('record-add', f'PAM configuration "{pam_config_name}" not found')
+
+        # Extract username and password from record
+        username = None
+        password = None
+
+        for field in record.fields:
+            if field.type == 'login' and field.value:
+                username = field.value[0] if isinstance(field.value, list) else field.value
+            elif field.type == 'password' and field.value:
+                password = field.value[0] if isinstance(field.value, list) else field.value
+
+        if not username or not password:
+            raise CommandError('record-add', 'Record must have login and password fields for PAM sync')
+
+        # Load PAM configuration
+        pam_record = vault.KeeperRecord.load(params, pam_config_uid)
+        if not isinstance(pam_record, vault.TypedRecord):
+            raise CommandError('record-add', f'PAM configuration record {pam_config_uid} is not a typed record')
+
+        # Determine PAM plugin based on record type
+        plugin_name = None
+        if pam_record.record_type == 'pamAzureConfiguration':
+            plugin_name = 'azureadpwd'
+        elif pam_record.record_type == 'pamAwsConfiguration':
+            plugin_name = 'awspswd'
+        else:
+            raise CommandError('record-add', f'Unsupported PAM configuration type: {pam_record.record_type}')
+
+        # Invoke PAM plugin to set password
+        try:
+            logging.info(f'[PAM] Calling {plugin_name} plugin to set password for user: {username}')
+
+            if plugin_name == 'azureadpwd':
+                # Import Azure AD plugin
+                from ...plugins.azureadpwd import azureadpwd
+
+                # Call the rotate function with PAM config record
+                success = azureadpwd.rotate(pam_record, password)
+
+                if not success:
+                    raise CommandError('record-add', 'Azure AD password rotation failed')
+
+                logging.info(f'[PAM] Successfully synced password to Azure AD for user: {username}')
+
+            elif plugin_name == 'awspswd':
+                # Import AWS plugin and common rotator
+                from ...plugins.awspswd import aws_passwd
+
+                # Extract AWS credentials from PAM config
+                aws_access_key = None
+                aws_secret_key = None
+                aws_profile = None
+                aws_assume_role = None
+
+                for field in pam_record.fields:
+                    if field.type == 'login' and field.value:
+                        aws_access_key = field.value[0] if isinstance(field.value, list) else field.value
+                    elif field.type == 'password' and field.value:
+                        aws_secret_key = field.value[0] if isinstance(field.value, list) else field.value
+
+                # Check custom fields for profile and assume role
+                for field in pam_record.custom:
+                    if field.label == 'cmdr:aws_profile' and field.value:
+                        aws_profile = field.value[0] if isinstance(field.value, list) else field.value
+                    elif field.label == 'cmdr:aws_assume_role' and field.value:
+                        aws_assume_role = field.value[0] if isinstance(field.value, list) else field.value
+
+                # Create rotator instance
+                rotator = aws_passwd.Rotator(
+                    login=username,
+                    password=password,
+                    aws_profile=aws_profile,
+                    aws_assume_role=aws_assume_role
+                )
+
+                # Set AWS credentials in environment or use profile
+                if aws_access_key and aws_secret_key:
+                    import os
+                    original_access_key = os.environ.get('AWS_ACCESS_KEY_ID')
+                    original_secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+
+                    try:
+                        os.environ['AWS_ACCESS_KEY_ID'] = aws_access_key
+                        os.environ['AWS_SECRET_ACCESS_KEY'] = aws_secret_key
+
+                        # Rotate password
+                        success = rotator.rotate(pam_record, password)
+                    finally:
+                        # Restore original environment
+                        if original_access_key:
+                            os.environ['AWS_ACCESS_KEY_ID'] = original_access_key
+                        else:
+                            os.environ.pop('AWS_ACCESS_KEY_ID', None)
+                        if original_secret_key:
+                            os.environ['AWS_SECRET_ACCESS_KEY'] = original_secret_key
+                        else:
+                            os.environ.pop('AWS_SECRET_ACCESS_KEY', None)
+                else:
+                    # Use AWS profile
+                    success = rotator.rotate(pam_record, password)
+
+                if not success:
+                    raise CommandError('record-add', 'AWS IAM password rotation failed')
+
+                logging.info(f'[PAM] Successfully synced password to AWS IAM for user: {username}')
+
+            else:
+                raise CommandError('record-add', f'Unknown PAM plugin: {plugin_name}')
+
+        except ImportError as e:
+            raise CommandError('record-add', f'PAM plugin "{plugin_name}" dependencies not installed: {e}')
+        except Exception as e:
+            raise CommandError('record-add', f'PAM password sync failed: {e}')
+
+    def _send_onboarding_email(
+        self,
+        params: KeeperParams,
+        email_config_name: str,
+        to_address: str,
+        share_url: str,
+        record_title: str,
+        custom_message: str,
+        expiration: str
+    ):
+        """
+        Send onboarding email with one-time share URL.
+
+        Args:
+            params: KeeperParams session
+            email_config_name: Email configuration name
+            to_address: Recipient email address
+            share_url: One-time share URL
+            record_title: Title of the record
+            custom_message: Custom message from administrator
+            expiration: Expiration period string (e.g., "24h", "1d")
+
+        Raises:
+            CommandError: If email sending fails
+        """
+        logging.info(f'[EMAIL] Sending onboarding email to {to_address}')
+
+        # Load email configuration
+        from .email_commands import find_email_config_record, load_email_config_from_record
+        from ..email_service import EmailSender, build_onboarding_email
+        from .helpers.timeout import parse_timeout
+
+        config_uid = find_email_config_record(params, email_config_name)
+        if not config_uid:
+            raise CommandError('record-add', f'Email configuration "{email_config_name}" not found')
+
+        email_config = load_email_config_from_record(params, config_uid)
+
+        # Build email - convert expiration to human-readable format
+        expiration_text = '24 hours'  # default
+        if expiration:
+            try:
+                expiration_period = parse_timeout(expiration)
+                expire_seconds = int(expiration_period.total_seconds())
+
+                # Convert to human-readable format
+                if expire_seconds >= 86400:  # days
+                    days = expire_seconds // 86400
+                    expiration_text = f"{days} day{'s' if days > 1 else ''}"
+                elif expire_seconds >= 3600:  # hours
+                    hours = expire_seconds // 3600
+                    expiration_text = f"{hours} hour{'s' if hours > 1 else ''}"
+                else:  # minutes
+                    minutes = expire_seconds // 60
+                    expiration_text = f"{minutes} minute{'s' if minutes > 1 else ''}"
+            except:
+                expiration_text = expiration  # fallback to original if parsing fails
+
+        html_body = build_onboarding_email(
+            share_url=share_url,
+            custom_message=custom_message or 'Your administrator has shared account credentials with you.',
+            record_title=record_title,
+            expiration=expiration_text
+        )
+
+        # Send email
+        sender = EmailSender(email_config)
+        subject = f'Keeper Security: Credentials for {record_title}'
+
+        sender.send(
+            to=to_address,
+            subject=subject,
+            body=html_body,
+            html=True
+        )
+
+        # Persist OAuth tokens if they were refreshed
+        if email_config.is_oauth_provider() and email_config._oauth_tokens_updated:
+            from .email_commands import update_oauth_tokens_in_record
+            logging.debug(f'[EMAIL] Persisting refreshed OAuth tokens for "{email_config_name}"')
+            update_oauth_tokens_in_record(
+                params,
+                config_uid,
+                email_config.oauth_access_token,
+                email_config.oauth_refresh_token,
+                email_config.oauth_token_expiry
+            )
+
+        logging.info(f'[EMAIL] Onboarding email sent successfully to {to_address}')
 
 
 class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
