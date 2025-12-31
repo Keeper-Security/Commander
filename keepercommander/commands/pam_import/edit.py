@@ -1745,6 +1745,9 @@ class PamConfigEnvironment():
         self.aws_access_key_id: str = ""        # required, secret:accessKeyId
         self.aws_secret_access_key: str = ""    # required, secret:accessSecretKey
         self.aws_region_names: List[str] = []   # optional, multiline:regionNames
+        self.aws_universal_secrets_enabled: bool = False   # optional, checkbox:universalSecretsEnabled
+        self.aws_universal_secrets_dry_run: bool = False   # optional, checkbox:universalSecretsDryRunWorkflow
+        self.aws_universal_secrets_folder_uid: str = ""    # optional, text:universalSecretsFolderUid
 
         # Azure environment: pamAzureConfiguration
         self.az_entra_id: str = ""              # required, text:azureId
