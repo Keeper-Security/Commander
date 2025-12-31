@@ -48,7 +48,7 @@ class LoginV3Flow:
         logging.info("Falling back to default authentication...")
         return LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes, loginType=login_type)
 
-    def login(self, params, new_device=False, new_login=False, new_password_if_reset_required=None):   # type: (KeeperParams, bool, bool) -> None
+    def login(self, params, new_device=False, new_login=False, new_password_if_reset_required=None):   # type: (KeeperParams, bool, bool, string) -> None
 
         logging.debug("Login v3 Start as '%s'", params.user)
 
