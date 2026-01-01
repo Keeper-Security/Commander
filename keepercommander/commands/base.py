@@ -136,7 +136,8 @@ def register_commands(commands, aliases, command_info):
     try:
         from .supershell import SuperShellCommand
         commands['supershell'] = SuperShellCommand()
-        command_info['supershell'] = 'Launch full-screen Matrix-style vault interface'
+        command_info['supershell'] = 'Launch full terminal vault UI with vim navigation'
+        aliases['ss'] = 'supershell'
     except ImportError:
         pass  # textual not installed, skip supershell
 

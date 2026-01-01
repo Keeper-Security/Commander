@@ -67,6 +67,23 @@ def keeper_colorize(text, color):
     return text
 
 
+def show_government_warning():
+    """Display U.S. Government Information System warning for GOV environments."""
+    print('')
+    print(f'{bcolors.WARNING}' + '=' * 80 + f'{bcolors.ENDC}')
+    print(f'{bcolors.WARNING}U.S. GOVERNMENT INFORMATION SYSTEM{bcolors.ENDC}')
+    print(f'{bcolors.WARNING}' + '=' * 80 + f'{bcolors.ENDC}')
+    print('')
+    print('You are about to access a U.S. Government Information System. Although the')
+    print('encrypted vault adheres to a zero-knowledge security architecture, system')
+    print('access logs are subject to monitoring, recording and audit. Unauthorized')
+    print('use of this system is prohibited and may result in civil and criminal')
+    print('penalties. Your use of this system indicates your acknowledgement and consent.')
+    print('')
+    print(f'{bcolors.WARNING}' + '=' * 80 + f'{bcolors.ENDC}')
+    print('')
+
+
 def welcome():
     lines = []    # type: List[Union[str, Tuple[str, str]]]
 

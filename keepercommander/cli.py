@@ -694,7 +694,7 @@ def read_command_with_continuation(prompt_session, params):
     return result
 
 
-def loop(params, skip_init=False):  # type: (KeeperParams, bool) -> int
+def loop(params, skip_init=False, suppress_goodbye=False):  # type: (KeeperParams, bool, bool) -> int
     global prompt_session
     error_no = 0
     suppress_errno = False
@@ -714,6 +714,9 @@ def loop(params, skip_init=False):  # type: (KeeperParams, bool) -> int
         if not skip_init:
             display.welcome()
             versioning.welcome_print_version(params)
+            # Show government warning for GOV environments when entering interactive shell
+            if params.server and 'govcloud' in params.server.lower():
+                display.show_government_warning()
 
     if not params.batch_mode and not skip_init:
         if params.user:
@@ -811,7 +814,7 @@ def loop(params, skip_init=False):  # type: (KeeperParams, bool) -> int
     # Clear the shell loop flag
     params._in_shell_loop = False
 
-    if not params.batch_mode:
+    if not params.batch_mode and not suppress_goodbye:
         logging.info('\nGoodbye.\n')
 
     return error_no

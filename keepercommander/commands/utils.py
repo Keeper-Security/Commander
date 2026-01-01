@@ -2164,7 +2164,7 @@ class SyncSecurityDataCommand(Command):
             api.sync_down(params)
         if not kwargs.get('quiet'):
             if num_updated:
-                logging.info(f'Updated security data for [{num_updated}] record(s)')
+                logging.info(f'Updated security data for {num_updated} {"record" if num_updated == 1 else "records"}')
             elif not kwargs.get('suppress_no_op') and not num_to_update:
                 logging.info('No records requiring security-data updates found')
 

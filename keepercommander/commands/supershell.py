@@ -530,9 +530,10 @@ class HelpScreen(ModalScreen):
   Ctrl+e/y      Scroll down/up one line
   Esc           Clear search / collapse folder
 
-[green]Search:[/green]
-  Tab or /      Focus search input
-  Shift+Tab     Switch to tree navigation
+[green]Focus Cycling:[/green]
+  Tab           Cycle: Tree → Detail → Search
+  Shift+Tab     Cycle backwards
+  /             Focus search input directly
   Ctrl+U        Clear search input
   Esc           Clear search & focus tree
 
@@ -754,6 +755,15 @@ class SuperShellApp(App):
         background: #000000;
     }
 
+    #record_detail:focus {
+        background: #0a0a0a;
+        border: solid #333333;
+    }
+
+    #record_detail:focus-within {
+        background: #0a0a0a;
+    }
+
     #status_bar {
         dock: bottom;
         height: 1;
@@ -970,7 +980,7 @@ class SuperShellApp(App):
             self.query_one("#folder_tree", Tree).focus()
 
             logging.debug("SuperShell ready!")
-            self._update_status("Navigate: j/k  Tab: search  Help: ?")
+            self._update_status("Navigate: j/k  Tab: detail  Help: ?")
         except Exception as e:
             logging.error(f"Error initializing SuperShell: {e}", exc_info=True)
             self.exit(message=f"Error: {str(e)}")
@@ -2415,6 +2425,11 @@ class SuperShellApp(App):
         # Stop TOTP timer when viewing folders
         self._stop_totp_timer()
 
+        # Check if JSON view is requested
+        if self.view_mode == 'json':
+            self._display_folder_json(folder_uid)
+            return
+
         t = self.theme_colors
         detail_scroll = self.query_one("#record_detail", VerticalScroll)
         detail_widget = self.query_one("#detail_content", Static)
@@ -2547,6 +2562,114 @@ class SuperShellApp(App):
         # Footer line
         mount_line(f"\n[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]", None)
 
+    def _display_folder_json(self, folder_uid: str):
+        """Display folder/shared folder as JSON with clickable values"""
+        t = self.theme_colors
+        container = self.query_one("#record_detail", VerticalScroll)
+        detail_widget = self.query_one("#detail_content", Static)
+
+        # Clear previous clickable fields
+        self._clear_clickable_fields()
+
+        # Get JSON output from get command
+        try:
+            stdout_buffer = io.StringIO()
+            old_stdout = sys.stdout
+            sys.stdout = stdout_buffer
+            get_cmd = RecordGetUidCommand()
+            get_cmd.execute(self.params, uid=folder_uid, format='json')
+            sys.stdout = old_stdout
+            output = stdout_buffer.getvalue()
+            output = self._strip_ansi_codes(output)
+        except Exception as e:
+            sys.stdout = old_stdout
+            logging.error(f"Error getting folder JSON output: {e}")
+            detail_widget.update(f"[red]Error getting folder JSON: {str(e)}[/red]")
+            return
+
+        try:
+            json_obj = json.loads(output)
+        except:
+            # If JSON parsing fails, show raw output
+            detail_widget.update(f"[{t['primary']}]JSON View:\n\n{rich_escape(str(output))}[/{t['primary']}]")
+            return
+
+        # Clear detail widget content
+        detail_widget.update("")
+
+        # Helper to mount clickable JSON lines
+        def mount_json_line(content: str, copy_value: str = None, indent: int = 0):
+            line = ClickableDetailLine(content, copy_value)
+            container.mount(line, before=detail_widget)
+
+        # Build formatted JSON output with clickable values
+        mount_json_line(f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]", None)
+        mount_json_line(f"[bold {t['primary']}]JSON View[/bold {t['primary']}] [{t['text_dim']}](press 't' for detail view)[/{t['text_dim']}]", None)
+        mount_json_line(f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]", None)
+        mount_json_line("", None)
+
+        def render_json(obj, indent=0):
+            """Recursively render JSON with clickable string values"""
+            prefix = "  " * indent
+            if isinstance(obj, dict):
+                mount_json_line(f"{prefix}{{", None)
+                items = list(obj.items())
+                for i, (key, value) in enumerate(items):
+                    comma = "," if i < len(items) - 1 else ""
+                    if isinstance(value, str):
+                        escaped_value = rich_escape(value)
+                        mount_json_line(
+                            f"{prefix}  [{t['secondary']}]\"{rich_escape(key)}\"[/{t['secondary']}]: [{t['primary']}]\"{escaped_value}\"[/{t['primary']}]{comma}",
+                            value
+                        )
+                    elif isinstance(value, bool):
+                        bool_str = "true" if value else "false"
+                        mount_json_line(
+                            f"{prefix}  [{t['secondary']}]\"{rich_escape(key)}\"[/{t['secondary']}]: [{t['primary_bright']}]{bool_str}[/{t['primary_bright']}]{comma}",
+                            str(value)
+                        )
+                    elif isinstance(value, (int, float)):
+                        mount_json_line(
+                            f"{prefix}  [{t['secondary']}]\"{rich_escape(key)}\"[/{t['secondary']}]: [{t['primary_bright']}]{value}[/{t['primary_bright']}]{comma}",
+                            str(value)
+                        )
+                    elif value is None:
+                        mount_json_line(
+                            f"{prefix}  [{t['secondary']}]\"{rich_escape(key)}\"[/{t['secondary']}]: [{t['text_dim']}]null[/{t['text_dim']}]{comma}",
+                            None
+                        )
+                    elif isinstance(value, dict):
+                        mount_json_line(f"{prefix}  [{t['secondary']}]\"{rich_escape(key)}\"[/{t['secondary']}]:", None)
+                        render_json(value, indent + 1)
+                        if comma:
+                            # Add comma after nested object
+                            pass
+                    elif isinstance(value, list):
+                        mount_json_line(f"{prefix}  [{t['secondary']}]\"{rich_escape(key)}\"[/{t['secondary']}]:", None)
+                        render_json(value, indent + 1)
+                mount_json_line(f"{prefix}}}", None)
+            elif isinstance(obj, list):
+                mount_json_line(f"{prefix}[", None)
+                for i, item in enumerate(obj):
+                    comma = "," if i < len(obj) - 1 else ""
+                    if isinstance(item, str):
+                        escaped_item = rich_escape(item)
+                        mount_json_line(f"{prefix}  [{t['primary']}]\"{escaped_item}\"[/{t['primary']}]{comma}", item)
+                    elif isinstance(item, (dict, list)):
+                        render_json(item, indent + 1)
+                    else:
+                        mount_json_line(f"{prefix}  [{t['primary_bright']}]{item}[/{t['primary_bright']}]{comma}", str(item))
+                mount_json_line(f"{prefix}]", None)
+
+        render_json(json_obj)
+
+        mount_json_line("", None)
+        mount_json_line(f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]", None)
+
+        # Add copy full JSON option
+        full_json = json.dumps(json_obj, indent=2)
+        mount_json_line(f"\n[{t['text_dim']}]Click to copy full JSON:[/{t['text_dim']}]", full_json)
+
     def _display_record_detail(self, record_uid: str):
         """Display record details in the right panel using Commander's get command"""
         detail_widget = self.query_one("#detail_content", Static)
@@ -2604,8 +2727,13 @@ class SuperShellApp(App):
                     f"[{t['text_dim']}]t[/{t['text_dim']}]=Toggle"
                 )
             elif folder_selected:
+                mode = "JSON" if self.view_mode == 'json' else "Detail"
                 shortcuts_bar.update(
-                    f"[{t['text_dim']}]Navigate: j/k  Search: /  Sync: d  Help: ?  Shell: ![/{t['text_dim']}]"
+                    f"[{t['secondary']}]Mode: {mode}[/{t['secondary']}]  "
+                    f"[{t['text_dim']}]i[/{t['text_dim']}]=UID  "
+                    f"[{t['text_dim']}]y[/{t['text_dim']}]=Copy  "
+                    f"[{t['text_dim']}]t[/{t['text_dim']}]=Toggle  "
+                    f"[{t['text_dim']}]?[/{t['text_dim']}]=Help"
                 )
             else:
                 # Root or other - hide navigation help
@@ -2619,7 +2747,7 @@ class SuperShellApp(App):
         tree = self.query_one("#folder_tree", Tree)
         self.search_input_active = True
         tree.add_class("search-input-active")
-        self._update_search_display()
+        self._update_search_display(perform_search=False)  # Don't change tree when entering search
         self._update_status("Type to search | Tab to navigate | Ctrl+U to clear")
         event.stop()
 
@@ -2655,7 +2783,7 @@ class SuperShellApp(App):
             # Update search display to remove cursor
             search_display = self.query_one("#search_display", Static)
             if self.search_input_text:
-                search_display.update(self.search_input_text)
+                search_display.update(rich_escape(self.search_input_text))
             else:
                 search_display.update("[dim]Search... (Tab or /)[/dim]")
 
@@ -2698,7 +2826,7 @@ class SuperShellApp(App):
                 app_count = len(self.app_record_uids)
                 detail_widget.update(
                     f"[bold {t['virtual_folder']}]★ Secrets Manager Apps[/bold {t['virtual_folder']}]\n\n"
-                    f"[{t['primary_dim']}]Contains {app_count} Secrets Manager application record(s).\n"
+                    f"[{t['primary_dim']}]Contains {app_count} Secrets Manager application {'record' if app_count == 1 else 'records'}.\n"
                     f"Select a record to view details.[/{t['primary_dim']}]"
                 )
                 self._update_status("Secrets Manager Apps")
@@ -2744,8 +2872,13 @@ class SuperShellApp(App):
             self._update_status("My Vault")
             self._update_shortcuts_bar(clear=True)  # Help content is already in the panel
 
-    def _update_search_display(self):
-        """Update the search display and results with blinking cursor"""
+    def _update_search_display(self, perform_search=True):
+        """Update the search display and results with blinking cursor.
+
+        Args:
+            perform_search: If True, perform search when text changes. Set to False
+                           when just entering search mode to avoid tree changes.
+        """
         try:
             search_display = self.query_one("#search_display", Static)
             results_label = self.query_one("#search_results_label", Static)
@@ -2756,30 +2889,35 @@ class SuperShellApp(App):
 
             # Update display with blinking cursor at end
             if self.search_input_text:
-                # Show text with blinking cursor
-                display_text = f"{self.search_input_text}[blink]▎[/blink]"
+                # Show text with blinking cursor (escape special chars for Rich markup)
+                display_text = f"> {rich_escape(self.search_input_text)}[blink]▎[/blink]"
             else:
-                # Show placeholder with blinking cursor
-                display_text = "[dim]Search...[/dim][blink]▎[/blink]"
+                # Show prompt with blinking cursor (ready to type)
+                display_text = "> [blink]▎[/blink]"
 
             search_display.update(display_text)
 
             # Update status bar
             self._update_status("Type to search | Enter/Tab/↓ to navigate | ESC to close")
 
-            # Perform search and update results
-            result_count = self._perform_live_search(self.search_input_text)
-            t = self.theme_colors
+            # Only perform search when requested and there's text, or when clearing
+            if perform_search:
+                if self.search_input_text:
+                    result_count = self._perform_live_search(self.search_input_text)
+                    t = self.theme_colors
 
-            if self.search_input_text:
-                if result_count == 0:
-                    results_label.update("[#ff0000]No matches[/#ff0000]")
-                elif result_count == 1:
-                    results_label.update(f"[{t['secondary']}]1 match[/{t['secondary']}]")
+                    if result_count == 0:
+                        results_label.update("[#ff0000]No matches[/#ff0000]")
+                    elif result_count == 1:
+                        results_label.update(f"[{t['secondary']}]1 match[/{t['secondary']}]")
+                    else:
+                        results_label.update(f"[{t['secondary']}]{result_count} matches[/{t['secondary']}]")
                 else:
-                    results_label.update(f"[{t['secondary']}]{result_count} matches[/{t['secondary']}]")
+                    # Clear results label when no text
+                    results_label.update("")
             else:
-                results_label.update("")
+                # Just entering search mode - don't change results label
+                pass
 
         except Exception as e:
             logging.error(f"Error in _update_search_display: {e}", exc_info=True)
@@ -2789,6 +2927,71 @@ class SuperShellApp(App):
         """Handle keyboard events"""
         search_bar = self.query_one("#search_bar")
         tree = self.query_one("#folder_tree", Tree)
+
+        # Global key handlers that work regardless of focus
+        # ! exits to regular shell (works from any widget)
+        if event.character == "!" and not self.search_input_active:
+            self.exit("Exited to Keeper shell. Type 'supershell' or 'ss' to return.")
+            event.prevent_default()
+            event.stop()
+            return
+
+        # Handle Tab/Shift+Tab cycling: Tree → Detail → Search (counterclockwise)
+        detail_scroll = self.query_one("#record_detail", VerticalScroll)
+
+        # Handle search input mode Tab/Shift+Tab first (search_input_active takes priority)
+        if self.search_input_active:
+            if event.key == "tab":
+                # Search input → Tree (forward in cycle)
+                self.search_input_active = False
+                tree.remove_class("search-input-active")
+                search_display = self.query_one("#search_display", Static)
+                if self.search_input_text:
+                    search_display.update(rich_escape(self.search_input_text))
+                else:
+                    search_display.update("[dim]Search...[/dim]")
+                tree.focus()
+                self._update_status("Navigate with j/k | Tab to detail | ? for help")
+                event.prevent_default()
+                event.stop()
+                return
+            elif event.key == "shift+tab":
+                # Search input → Detail pane (backwards in cycle)
+                self.search_input_active = False
+                tree.remove_class("search-input-active")
+                search_display = self.query_one("#search_display", Static)
+                if self.search_input_text:
+                    search_display.update(rich_escape(self.search_input_text))
+                else:
+                    search_display.update("[dim]Search...[/dim]")
+                detail_scroll.focus()
+                self._update_status("Detail pane | Tab to search | Shift+Tab to tree")
+                event.prevent_default()
+                event.stop()
+                return
+
+        if detail_scroll.has_focus:
+            if event.key == "tab":
+                # Detail pane → Search input
+                self.search_input_active = True
+                tree.add_class("search-input-active")
+                self._update_search_display(perform_search=False)  # Don't change tree when entering search
+                self._update_status("Type to search | Tab to tree | Ctrl+U to clear")
+                event.prevent_default()
+                event.stop()
+                return
+            elif event.key == "shift+tab":
+                # Detail pane → Tree
+                tree.focus()
+                self._update_status("Navigate with j/k | Tab to detail | ? for help")
+                event.prevent_default()
+                event.stop()
+                return
+            elif event.key == "escape":
+                tree.focus()
+                event.prevent_default()
+                event.stop()
+                return
 
         if search_bar.styles.display != "none":
             # Search bar is active
@@ -2816,18 +3019,19 @@ class SuperShellApp(App):
                 # Shift+G for go to bottom
                 if event.character == "G":
                     return
-                # ! exits to regular shell
-                if event.character == "!":
-                    self.exit("Exited to shell. Type 'supershell' to return.")
+                # Tab switches to detail pane
+                if event.key == "tab":
+                    detail_scroll.focus()
+                    self._update_status("Detail pane | Tab to search | Shift+Tab to tree")
                     event.prevent_default()
                     event.stop()
                     return
-                # Tab switches to search input
-                if event.key == "tab":
+                # Shift+Tab switches to search input
+                elif event.key == "shift+tab":
                     self.search_input_active = True
                     tree.add_class("search-input-active")
-                    self._update_search_display()
-                    self._update_status("Type to search | Tab to navigate | Ctrl+U to clear")
+                    self._update_search_display(perform_search=False)  # Don't change tree when entering search
+                    self._update_status("Type to search | Tab to tree | Ctrl+U to clear")
                     event.prevent_default()
                     event.stop()
                     return
@@ -2835,16 +3039,17 @@ class SuperShellApp(App):
                     # Switch back to search input mode
                     self.search_input_active = True
                     tree.add_class("search-input-active")
-                    self._update_search_display()
+                    self._update_search_display(perform_search=False)  # Don't change tree when entering search
                     event.prevent_default()
                     event.stop()
                     return
 
             # Ctrl+U clears the search input (like bash)
+            # Reset tree to show all items when clearing search
             if event.key == "ctrl+u" and self.search_input_active:
                 self.search_input_text = ""
-                self._update_search_display()
-                self._perform_live_search("")
+                self._update_search_display(perform_search=False)  # Just update display
+                self._perform_live_search("")  # Reset tree to show all
                 event.prevent_default()
                 event.stop()
                 return
@@ -2853,7 +3058,7 @@ class SuperShellApp(App):
             if event.key == "slash" and not self.search_input_active:
                 self.search_input_active = True
                 tree.add_class("search-input-active")
-                self._update_search_display()
+                self._update_search_display(perform_search=False)  # Don't change tree when entering search
                 event.prevent_default()
                 event.stop()
                 return
@@ -2877,18 +3082,10 @@ class SuperShellApp(App):
                 self._restore_tree_selection(tree)
 
                 tree.focus()
-                self._update_status("Navigate with j/k | Tab to search | ? for help")
+                self._update_status("Navigate with j/k | Tab to detail | ? for help")
                 event.prevent_default()
                 event.stop()
-            elif event.key == "shift+tab":
-                # Switch focus to search input
-                self.search_input_active = True
-                tree.add_class("search-input-active")
-                self._update_search_display()
-                self._update_status("Type to search | Tab to navigate | Ctrl+U to clear")
-                event.prevent_default()
-                event.stop()
-            elif event.key in ("enter", "down", "tab"):
+            elif event.key in ("enter", "down"):
                 # Move focus to tree to navigate results
                 # Switch to navigation mode
                 self.search_input_active = False
@@ -2899,7 +3096,7 @@ class SuperShellApp(App):
                 # Remove cursor from search display
                 search_display = self.query_one("#search_display", Static)
                 if self.search_input_text:
-                    search_display.update(self.search_input_text)  # No cursor
+                    search_display.update(rich_escape(self.search_input_text))  # No cursor
                 else:
                     search_display.update("[dim]Search...[/dim]")
 
@@ -3000,13 +3197,6 @@ class SuperShellApp(App):
                 event.stop()
                 return
 
-            # ! exits to regular shell (also works when search bar hidden)
-            if event.character == "!":
-                self.exit("Exited to shell. Type 'supershell' to return.")
-                event.prevent_default()
-                event.stop()
-                return
-
     def _collapse_current_or_parent(self, tree: Tree):
         """Collapse current node if expanded, or go to parent. Stop at root."""
         cursor_node = tree.cursor_node
@@ -3096,14 +3286,14 @@ class SuperShellApp(App):
         # Activate search input mode
         self.search_input_active = True
         tree.add_class("search-input-active")
-        self._update_search_display()
+        self._update_search_display(perform_search=False)  # Don't change tree when entering search
         self._update_status("Type to search | Tab to navigate | Ctrl+U to clear")
 
     def action_toggle_view_mode(self):
         """Toggle between detail and JSON view modes"""
-        # Only works for records, not folders
-        if not self.selected_record:
-            self.notify("⚠️  View toggle only works for records, not folders", severity="warning")
+        # Works for records, folders, and shared folders
+        if not self.selected_record and not self.selected_folder:
+            self.notify("⚠️  No record or folder selected", severity="warning")
             return
 
         if self.view_mode == 'detail':
@@ -3113,9 +3303,12 @@ class SuperShellApp(App):
             self.view_mode = 'detail'
             self.notify("📋 Switched to Detail view", severity="information")
 
-        # Refresh the current record display
+        # Refresh the current display
         try:
-            self._display_record_detail(self.selected_record)
+            if self.selected_record:
+                self._display_record_detail(self.selected_record)
+            elif self.selected_folder:
+                self._display_folder_with_clickable_fields(self.selected_folder)
         except Exception as e:
             logging.error(f"Error toggling view mode: {e}", exc_info=True)
             self.notify(f"⚠️  Error switching view: {str(e)}", severity="error")
@@ -3396,6 +3589,11 @@ class SuperShellCommand(Command):
 
     def execute(self, params, **kwargs):
         """Launch the SuperShell TUI - handles login if needed"""
+        from .. import display
+
+        # Show government warning for GOV environments when entering SuperShell
+        if params.server and 'govcloud' in params.server.lower():
+            display.show_government_warning()
 
         # Disable debug mode for SuperShell to prevent log output from messing up the TUI
         saved_debug = getattr(params, 'debug', False)
@@ -3509,7 +3707,7 @@ class SuperShellCommand(Command):
                 # Otherwise, just return to the existing interactive shell
                 if was_batch_mode:
                     from ..cli import loop as shell_loop
-                    shell_loop(params, skip_init=True)
+                    shell_loop(params, skip_init=True, suppress_goodbye=True)
                     # When the inner shell exits, queue 'q' so the outer batch-mode loop also exits
                     params.commands.append('q')
         except KeyboardInterrupt:
