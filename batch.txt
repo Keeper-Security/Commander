@@ -1,4 +1,0 @@
-add --login=user@gmail.com --pass=somemasterpass --url=https://google.com --force "Some Record Title"
-upload-attachment --file="/path/to/some/file.txt" "Some Record Title"
-share-record --email="user@company.com" --write "Some Record Title"
-search "github" --format=json

@@ -1199,9 +1199,88 @@ class SuperShellApp(App):
         """Load whoami info using the 'whoami' command"""
         try:
             from .utils import WhoamiCommand
+            from .. import constants
+            import datetime
 
             # Call get_whoami_info directly - returns dict without printing
-            return WhoamiCommand.get_whoami_info(self.params)
+            data = WhoamiCommand.get_whoami_info(self.params)
+
+            # Add enterprise license info if available (similar to whoami --json)
+            if self.params.enterprise:
+                enterprise_licenses = []
+                for x in self.params.enterprise.get('licenses', []):
+                    license_info = {}
+                    product_type_id = x.get('product_type_id', 0)
+                    tier = x.get('tier', 0)
+                    if product_type_id in (3, 5):
+                        plan = 'Enterprise' if tier == 1 else 'Business'
+                    elif product_type_id in (9, 10):
+                        distributor = x.get('distributor', False)
+                        plan = 'Distributor' if distributor else 'Managed MSP'
+                    elif product_type_id in (11, 12):
+                        plan = 'Keeper MSP'
+                    elif product_type_id == 8:
+                        plan = 'MC ' + ('Enterprise' if tier == 1 else 'Business')
+                    else:
+                        plan = 'Unknown'
+                    if product_type_id in (5, 10, 12):
+                        plan += ' Trial'
+                    license_info['base_plan'] = plan
+
+                    paid = x.get('paid') is True
+                    if paid:
+                        exp = x.get('expiration')
+                        if exp and exp > 0:
+                            dt = datetime.datetime.fromtimestamp(exp // 1000) + datetime.timedelta(days=1)
+                            n = datetime.datetime.now()
+                            td = (dt - n).days
+                            expires = str(dt.date())
+                            if td > 0:
+                                expires += f' (in {td} days)'
+                            else:
+                                expires += ' (expired)'
+                            license_info['license_expires'] = expires
+
+                    license_info['user_licenses'] = {
+                        'plan': x.get("number_of_seats", ""),
+                        'active': x.get("seats_allocated", ""),
+                        'invited': x.get("seats_pending", "")
+                    }
+
+                    file_plan = x.get('file_plan')
+                    file_plan_lookup = {fp[0]: fp[2] for fp in constants.ENTERPRISE_FILE_PLANS}
+                    license_info['secure_file_storage'] = file_plan_lookup.get(file_plan, '')
+
+                    addons = []
+                    addon_lookup = {a[0]: a[1] for a in constants.MSP_ADDONS}
+                    for ao in x.get('add_ons', []):
+                        if isinstance(ao, dict):
+                            enabled = ao.get('enabled') is True
+                            if enabled:
+                                name = ao.get('name')
+                                addon_name = addon_lookup.get(name) or name
+                                if name == 'secrets_manager':
+                                    api_count = ao.get('api_call_count')
+                                    if isinstance(api_count, int) and api_count > 0:
+                                        addon_name += f' ({api_count:,} API calls)'
+                                elif name == 'connection_manager':
+                                    seats = ao.get('seats')
+                                    if isinstance(seats, int) and seats > 0:
+                                        addon_name += f' ({seats} licenses)'
+                                addons.append(addon_name)
+                    if addons:
+                        license_info['add_ons'] = addons
+
+                    enterprise_licenses.append(license_info)
+
+                if enterprise_licenses:
+                    data['enterprise_licenses'] = enterprise_licenses
+
+                # Add enterprise name if available
+                if 'enterprise_name' in self.params.enterprise:
+                    data['enterprise_name'] = self.params.enterprise['enterprise_name']
+
+            return data
 
         except Exception as e:
             logging.error(f"Error loading whoami info: {e}", exc_info=True)
@@ -1256,7 +1335,7 @@ class SuperShellApp(App):
 
             lines = [f"[bold {t['primary']}]● User Information[/bold {t['primary']}]", ""]
 
-            # Format each field
+            # Format basic fields
             fields = [
                 ('User', wi.get('user')),
                 ('Server', wi.get('server')),
@@ -1264,6 +1343,7 @@ class SuperShellApp(App):
                 ('Environment', wi.get('environment')),
                 ('Account Type', wi.get('account_type')),
                 ('Admin', 'Yes' if wi.get('admin') else 'No' if 'admin' in wi else None),
+                ('Enterprise', wi.get('enterprise_name')),
                 ('Renewal Date', wi.get('renewal_date')),
                 ('Storage Capacity', wi.get('storage_capacity')),
                 ('Storage Usage', wi.get('storage_usage')),
@@ -1275,6 +1355,39 @@ class SuperShellApp(App):
             for label, value in fields:
                 if value is not None:
                     lines.append(f"  [{t['text_dim']}]{label}:[/{t['text_dim']}] [{t['primary']}]{value}[/{t['primary']}]")
+
+            # Add enterprise license info if available
+            enterprise_licenses = wi.get('enterprise_licenses', [])
+            for lic in enterprise_licenses:
+                lines.append("")
+                lines.append(f"[bold {t['primary']}]● Enterprise License[/bold {t['primary']}]")
+                lines.append("")
+
+                lic_fields = [
+                    ('Base Plan', lic.get('base_plan')),
+                    ('License Expires', lic.get('license_expires')),
+                    ('Secure File Storage', lic.get('secure_file_storage')),
+                ]
+                for label, value in lic_fields:
+                    if value:
+                        lines.append(f"  [{t['text_dim']}]{label}:[/{t['text_dim']}] [{t['primary']}]{value}[/{t['primary']}]")
+
+                # User licenses
+                user_lic = lic.get('user_licenses', {})
+                if user_lic:
+                    plan_seats = user_lic.get('plan', '')
+                    active = user_lic.get('active', '')
+                    invited = user_lic.get('invited', '')
+                    if plan_seats:
+                        lines.append(f"  [{t['text_dim']}]User Licenses:[/{t['text_dim']}] [{t['primary']}]{plan_seats}[/{t['primary']}] [{t['text_dim']}](Active: {active}, Invited: {invited})[/{t['text_dim']}]")
+
+                # Add-ons
+                addons = lic.get('add_ons', [])
+                if addons:
+                    lines.append("")
+                    lines.append(f"  [{t['text_dim']}]Add-ons:[/{t['text_dim']}]")
+                    for addon in addons:
+                        lines.append(f"    [{t['primary']}]• {addon}[/{t['primary']}]")
 
             detail_widget.update("\n".join(lines))
             self._update_status("User information | Press Esc to return")
@@ -1419,8 +1532,9 @@ class SuperShellApp(App):
                             subfolders_with_records.append((subfolder.name.lower() if subfolder.name else '', subfolder_uid, subfolder))
                 subfolders_with_records.sort(key=lambda x: x[0])
 
-            # Skip this folder if it has no matching records and no subfolders with records
-            if not folder_records and not subfolders_with_records:
+            # Skip this folder only when SEARCHING and it has no matching records/subfolders
+            # When not searching (filtered_record_uids is None), show all folders including empty ones
+            if self.filtered_record_uids is not None and not folder_records and not subfolders_with_records:
                 return None
 
             # Determine label and color based on folder type
@@ -1515,12 +1629,17 @@ class SuperShellApp(App):
         root.expand()
 
     def _folder_has_matching_records(self, folder_uid: str) -> bool:
-        """Check if a folder or any of its subfolders has matching records.
-        Excludes file attachments and 'app' type records from consideration."""
-        # Check if this folder has any matching displayable records
+        """Check if a folder should be displayed.
+        When no search filter is active, all folders are shown (including empty ones).
+        When searching, only folders with matching records are shown."""
+        # If no search filter, show all folders including empty ones
+        if self.filtered_record_uids is None:
+            return True
+
+        # When searching, check if this folder has any matching displayable records
         for r in self.records.values():
             if r.get('folder_uid') == folder_uid and self._is_displayable_record(r):
-                if self.filtered_record_uids is None or r['uid'] in self.filtered_record_uids:
+                if r['uid'] in self.filtered_record_uids:
                     return True
 
         # Check subfolders recursively
