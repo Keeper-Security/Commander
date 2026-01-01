@@ -355,10 +355,8 @@ class ClickableRecordUID(Static):
 
 from ..commands.record import RecordGetUidCommand, ClipboardCommand
 from ..display import bcolors
-from .. import api
 from .. import vault
 from .. import utils
-from ..proto import APIRequest_pb2
 
 
 class PreferencesScreen(ModalScreen):
@@ -1005,17 +1003,10 @@ class SuperShellApp(App):
         self.linked_record_to_parent = {}  # Maps linked_record_uid -> parent_record_uid (for addressRef, cardRef, etc.)
         self.record_linked_records = {}  # Maps record_uid -> list of linked_record_uids
 
-        # Fetch Secrets Manager app UIDs from API (definitive list)
+        # Secrets Manager app UIDs - identified by record type 'app' in the vault cache
+        # NOTE: SuperShell should not make direct API calls during initialization.
+        # Apps are identified by their record type instead of calling vault/get_applications_summary.
         self.app_record_uids = set()
-        try:
-            rs = api.communicate_rest(self.params, None, 'vault/get_applications_summary',
-                                      rs_type=APIRequest_pb2.GetApplicationsSummaryResponse)
-            for app_summary in rs.applicationSummary:
-                app_uid = utils.base64_url_encode(app_summary.appRecordUid)
-                self.app_record_uids.add(app_uid)
-            logging.debug(f"Found {len(self.app_record_uids)} Secrets Manager apps")
-        except Exception as e:
-            logging.debug(f"Could not fetch app list: {e}")
 
         # Build record dictionary
         if hasattr(self.params, 'record_cache'):
@@ -1071,6 +1062,10 @@ class SuperShellApp(App):
                             'folder_uid': self.record_to_folder.get(record_uid),
                             'record_type': record_type,
                         }
+
+                        # Identify Secrets Manager apps by record type
+                        if record_type == 'app':
+                            self.app_record_uids.add(record_uid)
 
                         # Extract fileRef fields to build parent-child relationship
                         # Handles both 'fileRef' type fields and 'script' type fields (rotation scripts)
@@ -2023,10 +2018,10 @@ class SuperShellApp(App):
             logging.error(f"Error formatting folder for TUI: {e}", exc_info=True)
             return f"[red]Error displaying folder:[/red]\n{str(e)}"
 
-    def _get_record_output(self, record_uid: str, format_type: str = 'detail') -> str:
+    def _get_record_output(self, record_uid: str, format_type: str = 'detail', include_dag: bool = False) -> str:
         """Get record output using Commander's get command (cached for performance)"""
         # Check cache first
-        cache_key = f"{record_uid}:{format_type}"
+        cache_key = f"{record_uid}:{format_type}:{include_dag}"
         if hasattr(self, '_record_output_cache') and cache_key in self._record_output_cache:
             return self._record_output_cache[cache_key]
 
@@ -2038,7 +2033,7 @@ class SuperShellApp(App):
 
             # Execute the get command
             get_cmd = RecordGetUidCommand()
-            get_cmd.execute(self.params, uid=record_uid, format=format_type)
+            get_cmd.execute(self.params, uid=record_uid, format=format_type, include_dag=include_dag)
 
             # Restore stdout
             sys.stdout = old_stdout
@@ -2053,6 +2048,173 @@ class SuperShellApp(App):
             sys.stdout = old_stdout
             logging.error(f"Error getting record output: {e}", exc_info=True)
             return f"Error getting record: {str(e)}"
+
+    def _get_rotation_info(self, record_uid: str) -> Optional[Dict[str, Any]]:
+        """Get rotation info for pamUser records from DAG and rotation cache.
+
+        NOTE: This method fetches DAG data which makes API calls. This is acceptable
+        because it only runs when a user explicitly views a pamUser record in SuperShell,
+        not during initialization or sync operations.
+        """
+        try:
+            record_data = self.records.get(record_uid, {})
+            record_type = record_data.get('record_type', '')
+
+            # Check if this is a PAM User record (or has rotation data configured)
+            has_rotation_data = record_uid in self.params.record_rotation_cache
+            is_pam_user = record_type == 'pamUser'
+
+            if not is_pam_user and not has_rotation_data:
+                return None
+
+            from .. import vault
+
+            rotation_info = {}
+            rotation_profile = None
+            config_uid = None
+            resource_uid = None
+
+            # Get rotation data from cache
+            rotation_data = self.params.record_rotation_cache.get(record_uid)
+
+            # Only fetch DAG data for pamUser records (requires PAM infrastructure)
+            if is_pam_user:
+                try:
+                    from .tunnel.port_forward.tunnel_helpers import get_keeper_tokens
+                    from .tunnel.port_forward.TunnelGraph import TunnelDAG
+                    from keeper_dag.edge import EdgeType
+
+                    encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(self.params)
+                    tdag = TunnelDAG(self.params, encrypted_session_token, encrypted_transmission_key, record_uid,
+                                     transmission_key=transmission_key)
+
+                    if tdag.linking_dag.has_graph:
+                        record_vertex = tdag.linking_dag.get_vertex(record_uid)
+                        if record_vertex:
+                            for parent_vertex in record_vertex.belongs_to_vertices():
+                                acl_edge = record_vertex.get_edge(parent_vertex, EdgeType.ACL)
+                                if acl_edge:
+                                    edge_content = acl_edge.content_as_dict or {}
+                                    belongs_to = edge_content.get('belongs_to', False)
+                                    is_iam_user = edge_content.get('is_iam_user', False)
+                                    rotation_settings = edge_content.get('rotation_settings', {})
+                                    is_noop = rotation_settings.get('noop', False) if isinstance(rotation_settings, dict) else False
+
+                                    if is_noop:
+                                        rotation_profile = 'Scripts Only'
+                                        config_uid = parent_vertex.uid
+                                    elif is_iam_user:
+                                        rotation_profile = 'IAM User'
+                                        config_uid = parent_vertex.uid
+                                    elif belongs_to:
+                                        rotation_profile = 'General'
+                                        resource_uid = parent_vertex.uid
+                except Exception:
+                    pass  # DAG fetch failed, continue with cached data only
+
+            # Get config UID from rotation cache if not from DAG
+            if not config_uid and rotation_data:
+                config_uid = rotation_data.get('configuration_uid')
+            if not resource_uid and rotation_data:
+                resource_uid = rotation_data.get('resource_uid')
+                # If resource_uid equals config_uid, it's an IAM/NOOP user, not General
+                if resource_uid and resource_uid == config_uid:
+                    resource_uid = None
+
+            # Get configuration name
+            config_name = None
+            if config_uid:
+                config_record = vault.KeeperRecord.load(self.params, config_uid)
+                if config_record:
+                    config_name = config_record.title
+
+            # Get resource name
+            resource_name = None
+            if resource_uid:
+                resource_record = vault.KeeperRecord.load(self.params, resource_uid)
+                if resource_record:
+                    resource_name = resource_record.title
+
+            # Determine rotation status
+            if not rotation_data and not rotation_profile:
+                rotation_info['status'] = 'Not configured'
+                return rotation_info
+
+            # Rotation status
+            if rotation_data:
+                disabled = rotation_data.get('disabled', False)
+                rotation_info['status'] = 'Disabled' if disabled else 'Enabled'
+            else:
+                rotation_info['status'] = 'Enabled'
+
+            # Rotation profile
+            if rotation_profile:
+                rotation_info['profile'] = rotation_profile
+
+            # PAM Configuration
+            if config_name:
+                rotation_info['config_name'] = config_name
+            elif config_uid:
+                rotation_info['config_uid'] = config_uid
+
+            # Resource (for General profile)
+            if resource_name:
+                rotation_info['resource_name'] = resource_name
+            elif resource_uid:
+                rotation_info['resource_uid'] = resource_uid
+
+            # Schedule
+            if rotation_data and rotation_data.get('schedule'):
+                try:
+                    schedule_json = json.loads(rotation_data['schedule'])
+                    if isinstance(schedule_json, list) and len(schedule_json) > 0:
+                        schedule = schedule_json[0]
+                        schedule_type = schedule.get('type', 'ON_DEMAND')
+                        if schedule_type == 'ON_DEMAND':
+                            rotation_info['schedule'] = 'On Demand'
+                        else:
+                            # Format schedule description
+                            time_str = schedule.get('utcTime', schedule.get('time', ''))
+                            tz = schedule.get('tz', 'UTC')
+                            if schedule_type == 'DAILY':
+                                interval = schedule.get('intervalCount', 1)
+                                rotation_info['schedule'] = f"Every {interval} day(s) at {time_str} {tz}"
+                            elif schedule_type == 'WEEKLY':
+                                weekday = schedule.get('weekday', '')
+                                rotation_info['schedule'] = f"Weekly on {weekday} at {time_str} {tz}"
+                            elif schedule_type == 'MONTHLY_BY_DAY':
+                                day = schedule.get('monthDay', 1)
+                                rotation_info['schedule'] = f"Monthly on day {day} at {time_str} {tz}"
+                            elif schedule_type == 'MONTHLY_BY_WEEKDAY':
+                                week = schedule.get('occurrence', 'FIRST')
+                                weekday = schedule.get('weekday', '')
+                                rotation_info['schedule'] = f"{week.title()} {weekday} of month at {time_str} {tz}"
+                            else:
+                                rotation_info['schedule'] = f"{schedule_type} at {time_str} {tz}"
+                    else:
+                        rotation_info['schedule'] = 'On Demand'
+                except:
+                    rotation_info['schedule'] = 'On Demand'
+
+            # Last rotation
+            if rotation_data and rotation_data.get('last_rotation'):
+                last_rotation_ts = rotation_data['last_rotation']
+                if last_rotation_ts > 0:
+                    import datetime
+                    last_rotation_dt = datetime.datetime.fromtimestamp(last_rotation_ts / 1000)
+                    rotation_info['last_rotated'] = last_rotation_dt.strftime("%b %d, %Y at %I:%M %p")
+
+                    # Show rotation status if available
+                    last_status = rotation_data.get('last_rotation_status')
+                    # RecordRotationStatus enum: 0=NOT_ROTATED, 1=IN_PROGRESS, 2=SUCCESS, 3=FAILURE
+                    if last_status is not None:
+                        status_map = {0: 'Not Rotated', 1: 'In Progress', 2: 'Success', 3: 'Failure'}
+                        rotation_info['last_status'] = status_map.get(last_status, f'Unknown ({last_status})')
+
+            return rotation_info if rotation_info else None
+
+        except Exception:
+            return None
 
     def _clear_clickable_fields(self):
         """Remove any dynamically mounted clickable field widgets"""
@@ -2175,6 +2337,49 @@ class SuperShellApp(App):
 
             attachments_displayed = True
 
+        # Rotation info for pamUser records
+        rotation_info = self._get_rotation_info(record_uid)
+        rotation_displayed = False
+
+        def display_rotation():
+            """Helper to display rotation info section"""
+            nonlocal rotation_displayed
+            if rotation_displayed or not rotation_info:
+                return
+
+            mount_line("", None)  # Blank line before rotation section
+            mount_line(f"[bold {t['secondary']}]Rotation:[/bold {t['secondary']}]", None)
+
+            status = rotation_info.get('status', 'Unknown')
+            status_color = '#00ff00' if status == 'Enabled' else '#ff6600' if status == 'Disabled' else t['text_dim']
+            mount_line(f"  [{t['text_dim']}]Status:[/{t['text_dim']}] [{status_color}]{status}[/{status_color}]", status)
+
+            if rotation_info.get('profile'):
+                mount_line(f"  [{t['text_dim']}]Profile:[/{t['text_dim']}] [{t['primary']}]{rotation_info['profile']}[/{t['primary']}]", rotation_info['profile'])
+
+            if rotation_info.get('config_name'):
+                mount_line(f"  [{t['text_dim']}]Configuration:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(rotation_info['config_name']))}[/{t['primary']}]", rotation_info['config_name'])
+            elif rotation_info.get('config_uid'):
+                mount_line(f"  [{t['text_dim']}]Configuration UID:[/{t['text_dim']}] [{t['primary']}]{rotation_info['config_uid']}[/{t['primary']}]", rotation_info['config_uid'])
+
+            if rotation_info.get('resource_name'):
+                mount_line(f"  [{t['text_dim']}]Resource:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(rotation_info['resource_name']))}[/{t['primary']}]", rotation_info['resource_name'])
+            elif rotation_info.get('resource_uid'):
+                mount_line(f"  [{t['text_dim']}]Resource UID:[/{t['text_dim']}] [{t['primary']}]{rotation_info['resource_uid']}[/{t['primary']}]", rotation_info['resource_uid'])
+
+            if rotation_info.get('schedule'):
+                mount_line(f"  [{t['text_dim']}]Schedule:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(rotation_info['schedule']))}[/{t['primary']}]", rotation_info['schedule'])
+
+            if rotation_info.get('last_rotated'):
+                mount_line(f"  [{t['text_dim']}]Last Rotated:[/{t['text_dim']}] [{t['primary']}]{rotation_info['last_rotated']}[/{t['primary']}]", rotation_info['last_rotated'])
+
+            if rotation_info.get('last_status'):
+                last_status = rotation_info['last_status']
+                last_status_color = '#00ff00' if last_status == 'Success' else '#ff0000' if last_status == 'Failure' else '#ffff00'
+                mount_line(f"  [{t['text_dim']}]Last Status:[/{t['text_dim']}] [{last_status_color}]{last_status}[/{last_status_color}]", last_status)
+
+            rotation_displayed = True
+
         for line in output.split('\n'):
             stripped = line.strip()
             if not stripped:
@@ -2219,6 +2424,9 @@ class SuperShellApp(App):
                     # Skip - we'll calculate and show TOTP from stored URL below
                     pass
                 elif is_section_header(key, value):
+                    # Display rotation BEFORE User Permissions section
+                    if key == 'User Permissions' and not rotation_displayed:
+                        display_rotation()
                     # Display attachments BEFORE Share Admins section
                     if key.startswith('Share Admins') and not attachments_displayed:
                         display_attachments()
@@ -2271,6 +2479,9 @@ class SuperShellApp(App):
 
         # Display attachments at end if not already shown (records without Share Admins section)
         display_attachments()
+
+        # Display rotation at end if not already shown (records without User Permissions section)
+        display_rotation()
 
         # Batch mount all widgets at once for better performance
         if widgets_to_mount:
@@ -2327,8 +2538,8 @@ class SuperShellApp(App):
         # Clear previous clickable fields
         self._clear_clickable_fields()
 
-        # Get JSON output
-        output = self._get_record_output(record_uid, format_type='json')
+        # Get JSON output (include DAG data for PAM records)
+        output = self._get_record_output(record_uid, format_type='json', include_dag=True)
         output = self._strip_ansi_codes(output)
 
         try:

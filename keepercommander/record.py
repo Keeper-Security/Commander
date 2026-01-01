@@ -111,7 +111,7 @@ class Record:
                     for field in extra['fields']:
                         if field['field_type'] == 'totp':
                             self.totp = field['data']
-        elif self.version == 3:
+        elif self.version in (3, 5, 6):
             self.record_type = data.get('type', 'login')
             for field in itertools.chain(data['fields'], data.get('custom') or []):
                 field_label = field.get('label', '')

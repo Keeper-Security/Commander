@@ -602,8 +602,9 @@ class PAMProjectImportCommand(Command):
         resources_folder_uid = project["folders"]["resources_folder_uid"]
         pam_config_uid = project["pam_config"]["pam_config_uid"]
 
-        encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
-        tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_config_uid, True)
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_config_uid, True,
+                         transmission_key=transmission_key)
         # if not tdag.check_tunneling_enabled_config(enable_connections=True):
         #     logging.warning(f"{bcolors.WARNING}Warning: {bcolors.ENDC} Connections are disabled by PAM Configuration!")
         # Fix: Rotation is disabled by the PAM configuration.
@@ -1607,8 +1608,9 @@ class PAMProjectImportCommand(Command):
         #         return
         print("Started importing data...")
 
-        encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
-        tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_cfg_uid, True)
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_cfg_uid, True,
+                         transmission_key=transmission_key)
         pte = PAMTunnelEditCommand()
         prc = PAMCreateRecordRotationCommand()
 

@@ -323,7 +323,8 @@ class PAMTunnelEditCommand(Command):
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         if record_type in "pamNetworkConfiguration pamAwsConfiguration pamAzureConfiguration".split():
-            tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid, is_config=True)
+            tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid, is_config=True,
+                                transmission_key=transmission_key)
             tmp_dag.edit_tunneling_config(tunneling=_tunneling)
             tmp_dag.print_tunneling_config(record_uid, None)
         else:
@@ -355,8 +356,10 @@ class PAMTunnelEditCommand(Command):
 
             existing_config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
 
-            tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, config_uid)
-            old_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, existing_config_uid)
+            tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, config_uid,
+                                transmission_key=transmission_key)
+            old_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, existing_config_uid,
+                                transmission_key=transmission_key)
 
             if config_uid and existing_config_uid != config_uid:
                 old_dag.remove_from_dag(record_uid)
@@ -827,7 +830,8 @@ class PAMConnectionEditCommand(Command):
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         if record_type in "pamNetworkConfiguration pamAwsConfiguration pamAzureConfiguration".split():
-            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid, is_config=True)
+            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid, is_config=True,
+                             transmission_key=transmission_key)
             tdag.edit_tunneling_config(connections=_connections, session_recording=_recording, typescript_recording=_typescript_recording)
             if not kwargs.get("silent", False): tdag.print_tunneling_config(record_uid, None)
         else:
@@ -922,8 +926,10 @@ class PAMConnectionEditCommand(Command):
 
             existing_config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
 
-            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, config_uid)
-            old_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, existing_config_uid)
+            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, config_uid,
+                             transmission_key=transmission_key)
+            old_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, existing_config_uid,
+                                transmission_key=transmission_key)
 
             if config_uid and existing_config_uid != config_uid:
                 old_dag.remove_from_dag(record_uid)
@@ -1307,7 +1313,7 @@ class PAMRbiEditCommand(Command):
             return
 
         # resolve PAM Config
-        encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         existing_config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
         existing_config_uid = str(existing_config_uid) if existing_config_uid else ''
 
@@ -1333,7 +1339,8 @@ class PAMRbiEditCommand(Command):
         if not config_uid:
             raise CommandError('pam rbi edit', f'{bcolors.FAIL}PAM Config record not found.{bcolors.ENDC}')
 
-        tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, config_uid)
+        tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, config_uid,
+                         transmission_key=transmission_key)
         if tdag is None or not tdag.linking_dag.has_graph:
             raise CommandError('', f"{bcolors.FAIL}No valid PAM Configuration UID set. "
                                "This must be set or supplied for connections to work. "
@@ -1342,7 +1349,8 @@ class PAMRbiEditCommand(Command):
 
         if config_uid:
             if existing_config_uid and existing_config_uid != config_uid:
-                old_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, existing_config_uid)
+                old_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, existing_config_uid,
+                                    transmission_key=transmission_key)
                 old_dag.remove_from_dag(record_uid)
                 logging.debug(f'Updated existing PAM Config UID from: {existing_config_uid} to: {config_uid}')
             tdag.link_resource_to_config(record_uid)
@@ -1527,7 +1535,8 @@ class PAMSplitCommand(Command):
 
         if pam_config_uid:
             encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
-            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_config_uid, True)
+            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_config_uid, True,
+                             transmission_key=transmission_key)
             tdag.link_resource_to_config(record_uid)
             tdag.link_user_to_resource(pam_user_uid, record_uid, True, True)
 

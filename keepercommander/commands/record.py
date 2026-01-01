@@ -595,6 +595,11 @@ class RecordGetUidCommand(Command):
                             for admin in admins[:max_admins_shown]:
                                 print(f'  {admin}')
                             print(f'  ... and {total_admins - max_admins_shown} more')
+
+                    # Display rotation info for pamUser records when --include-dag is specified
+                    if kwargs.get('include_dag') and r.record_type == 'pamUser':
+                        self.display_rotation_info(params, r)
+
                 direct_match = True
                 return
 
@@ -801,7 +806,7 @@ class RecordGetUidCommand(Command):
             ro: Record output dictionary to be modified
             r: Record object
         """
-        valid_record_types = {'pamDatabase', 'pamDirectory', 'pamMachine'}
+        valid_record_types = {'pamDatabase', 'pamDirectory', 'pamMachine', 'pamUser', 'pamRemoteBrowser'}
         if r.record_type not in valid_record_types:
             return
 
@@ -826,19 +831,31 @@ class RecordGetUidCommand(Command):
             from .tunnel.port_forward.TunnelGraph import TunnelDAG
             from ..keeper_dag import EdgeType
 
-            encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
-            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, r.record_uid)
+            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, r.record_uid,
+                             transmission_key=transmission_key)
 
             if not tdag.linking_dag.has_graph:
+                ro['dagDebug'] = {'error': 'No graph loaded', 'has_graph': False}
                 return
 
             record_vertex = tdag.linking_dag.get_vertex(r.record_uid)
             if record_vertex is None:
+                ro['dagDebug'] = {'error': f'Record vertex not found for {r.record_uid}', 'has_graph': True}
                 return
+
+            # Add debug info about the vertex
+            ro['dagDebug'] = {
+                'has_graph': True,
+                'vertex_uid': record_vertex.uid,
+                'vertex_name': getattr(record_vertex, 'name', None),
+                'vertex_type': str(getattr(record_vertex, 'vertex_type', None)),
+            }
 
             # Extract allowedSettings from vertex content
             try:
                 content = record_vertex.content_as_dict
+                ro['dagDebug']['vertex_content'] = content
                 if content and 'allowedSettings' in content:
                     allowed_settings = content['allowedSettings']
                     if isinstance(allowed_settings, dict):
@@ -848,13 +865,14 @@ class RecordGetUidCommand(Command):
                         ro['pamSettingsEnabled']['sessionRecording'] = allowed_settings.get('sessionRecording')
                         ro['pamSettingsEnabled']['typescriptRecording'] = allowed_settings.get('typescriptRecording')
                         ro['pamSettingsEnabled']['remoteBrowserIsolation'] = allowed_settings.get('remoteBrowserIsolation')
-            except Exception:
-                pass
+            except Exception as e:
+                ro['dagDebug']['content_error'] = str(e)
 
             # Find all ACL links where Head is recordUID
             admin_credential = None
             launch_credential = None
             linked_credentials = []
+            acl_debug = []
 
             # Get vertices that have ACL edges pointing to this record (has_vertices)
             for user_vertex in record_vertex.has_vertices(EdgeType.ACL):
@@ -862,6 +880,10 @@ class RecordGetUidCommand(Command):
                 if acl_edge:
                     try:
                         content = acl_edge.content_as_dict or {}
+                        acl_debug.append({
+                            'user_vertex_uid': user_vertex.uid,
+                            'edge_content': content
+                        })
                         # belongs_to = content.get('belongs_to', False)
                         is_admin = content.get('is_admin', False)
                         is_launch_credential = content.get('is_launch_credential', None)
@@ -875,8 +897,57 @@ class RecordGetUidCommand(Command):
 
                         if is_launch_credential and launch_credential is None:
                             launch_credential = user_vertex.uid
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        acl_debug.append({'error': str(e), 'user_vertex_uid': user_vertex.uid})
+
+            ro['dagDebug']['acl_edges'] = acl_debug
+            ro['dagDebug']['all_edges'] = [{'type': str(e.edge_type), 'head_uid': e.head_uid} for e in record_vertex.edges]
+
+            # For pamUser records, show rotation profile from the ACL edge to parent (config/resource)
+            if r.record_type == 'pamUser':
+                rotation_profile = None
+                rotation_profile_config_uid = None
+                rotation_profile_resource_uid = None
+
+                for parent_vertex in record_vertex.belongs_to_vertices():
+                    acl_edge = record_vertex.get_edge(parent_vertex, EdgeType.ACL)
+                    if acl_edge:
+                        try:
+                            edge_content = acl_edge.content_as_dict or {}
+
+                            # Extract rotation profile flags from edge content
+                            # (matches web vault PamUserAclData type in dag-pam-link.ts)
+                            belongs_to = edge_content.get('belongs_to', False)
+                            is_iam_user = edge_content.get('is_iam_user', False)
+                            rotation_settings = edge_content.get('rotation_settings', {})
+                            is_noop = rotation_settings.get('noop', False) if isinstance(rotation_settings, dict) else False
+
+                            # Determine rotation profile using same logic as web vault
+                            # (dag-pam-link.ts configLinkRotationProfile)
+                            if is_noop:
+                                rotation_profile = 'scripts_only'  # "Run PAM scripts only"
+                                rotation_profile_config_uid = parent_vertex.uid
+                            elif is_iam_user:
+                                rotation_profile = 'iam_user'  # "IAM User"
+                                rotation_profile_config_uid = parent_vertex.uid
+                            elif belongs_to:
+                                rotation_profile = 'general'  # "General" (linked to resource)
+                                rotation_profile_resource_uid = parent_vertex.uid
+
+                            # Store full edge content in dagDebug for troubleshooting
+                            ro['dagDebug']['parentAclEdge'] = {
+                                'parent_uid': parent_vertex.uid,
+                                'parent_type': str(getattr(parent_vertex, 'vertex_type', None)),
+                                'content': edge_content
+                            }
+                        except Exception as e:
+                            ro['dagDebug']['parentAclEdge'] = {'error': str(e), 'parent_uid': parent_vertex.uid}
+
+                ro['rotationProfile'] = {
+                    'type': rotation_profile,
+                    'configUid': rotation_profile_config_uid,
+                    'resourceUid': rotation_profile_resource_uid
+                }
 
             # Update associatedCredentials with found values
             ro['associatedCredentials']['adminCredential'] = admin_credential
@@ -885,6 +956,157 @@ class RecordGetUidCommand(Command):
 
         except Exception as e:
             logging.debug(f"Error accessing DAG for record {r.record_uid}: {e}")
+            ro['dagDebug'] = {'error': str(e)}
+
+    def display_rotation_info(self, params, r):
+        """Display rotation info for pamUser records in table format (similar to web vault)"""
+        from .tunnel.port_forward.tunnel_helpers import get_keeper_tokens
+        from .tunnel.port_forward.TunnelGraph import TunnelDAG
+        from keeper_dag.edge import EdgeType
+
+        try:
+            # Get rotation data from cache
+            rotation_data = params.record_rotation_cache.get(r.record_uid)
+
+            # Get DAG data for rotation profile
+            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+            tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, r.record_uid,
+                             transmission_key=transmission_key)
+
+            rotation_profile = None
+            config_uid = None
+            resource_uid = None
+
+            if tdag.linking_dag.has_graph:
+                record_vertex = tdag.linking_dag.get_vertex(r.record_uid)
+                if record_vertex:
+                    for parent_vertex in record_vertex.belongs_to_vertices():
+                        acl_edge = record_vertex.get_edge(parent_vertex, EdgeType.ACL)
+                        if acl_edge:
+                            edge_content = acl_edge.content_as_dict or {}
+                            belongs_to = edge_content.get('belongs_to', False)
+                            is_iam_user = edge_content.get('is_iam_user', False)
+                            rotation_settings = edge_content.get('rotation_settings', {})
+                            is_noop = rotation_settings.get('noop', False) if isinstance(rotation_settings, dict) else False
+
+                            if is_noop:
+                                rotation_profile = 'Scripts Only'
+                                config_uid = parent_vertex.uid
+                            elif is_iam_user:
+                                rotation_profile = 'IAM User'
+                                config_uid = parent_vertex.uid
+                            elif belongs_to:
+                                rotation_profile = 'General'
+                                resource_uid = parent_vertex.uid
+
+            # Get config UID from rotation cache if not from DAG
+            if not config_uid and rotation_data:
+                config_uid = rotation_data.get('configuration_uid')
+            if not resource_uid and rotation_data:
+                resource_uid = rotation_data.get('resource_uid')
+                # If resource_uid equals config_uid, it's an IAM/NOOP user, not General
+                if resource_uid and resource_uid == config_uid:
+                    resource_uid = None
+
+            # Get configuration name
+            config_name = None
+            if config_uid:
+                config_record = vault.KeeperRecord.load(params, config_uid)
+                if config_record:
+                    config_name = config_record.title
+
+            # Get resource name
+            resource_name = None
+            if resource_uid:
+                resource_record = vault.KeeperRecord.load(params, resource_uid)
+                if resource_record:
+                    resource_name = resource_record.title
+
+            print('')
+            print('Rotation:')
+
+            if not rotation_data and not rotation_profile:
+                print('  Status: Not configured')
+                return
+
+            # Rotation status
+            if rotation_data:
+                disabled = rotation_data.get('disabled', False)
+                print(f'  Status: {"Disabled" if disabled else "Enabled"}')
+            else:
+                print('  Status: Enabled')
+
+            # Rotation profile
+            if rotation_profile:
+                print(f'  Profile: {rotation_profile}')
+
+            # PAM Configuration
+            if config_name:
+                print(f'  Configuration: {config_name}')
+            elif config_uid:
+                print(f'  Configuration UID: {config_uid}')
+
+            # Resource (for General profile)
+            if resource_name:
+                print(f'  Resource: {resource_name}')
+            elif resource_uid:
+                print(f'  Resource UID: {resource_uid}')
+
+            # Schedule
+            if rotation_data and rotation_data.get('schedule'):
+                try:
+                    schedule_json = json.loads(rotation_data['schedule'])
+                    if isinstance(schedule_json, list) and len(schedule_json) > 0:
+                        schedule = schedule_json[0]
+                        schedule_type = schedule.get('type', 'ON_DEMAND')
+                        if schedule_type == 'ON_DEMAND':
+                            print('  Schedule: On Demand')
+                        else:
+                            # Format schedule description
+                            time_str = schedule.get('utcTime', '')
+                            tz = schedule.get('tz', 'UTC')
+                            if schedule_type == 'DAILY':
+                                interval = schedule.get('intervalCount', 1)
+                                desc = f"Every {interval} day(s) at {time_str} {tz}"
+                            elif schedule_type == 'WEEKLY':
+                                weekday = schedule.get('weekday', '')
+                                desc = f"Weekly on {weekday} at {time_str} {tz}"
+                            elif schedule_type == 'MONTHLY_BY_DAY':
+                                day = schedule.get('day', 1)
+                                desc = f"Monthly on day {day} at {time_str} {tz}"
+                            elif schedule_type == 'MONTHLY_BY_WEEKDAY':
+                                week = schedule.get('week', 'FIRST')
+                                weekday = schedule.get('weekday', '')
+                                desc = f"{week.title()} {weekday} of the month at {time_str} {tz}"
+                            else:
+                                desc = f"{schedule_type} at {time_str} {tz}"
+                            print(f'  Schedule: {desc}')
+                    else:
+                        print('  Schedule: On Demand')
+                except:
+                    print('  Schedule: On Demand')
+
+            # Last rotation
+            if rotation_data and rotation_data.get('last_rotation'):
+                last_rotation_ts = rotation_data['last_rotation']
+                if last_rotation_ts > 0:
+                    # Convert milliseconds to datetime
+                    last_rotation_dt = datetime.datetime.fromtimestamp(last_rotation_ts / 1000)
+                    print(f'  Last Rotated: {last_rotation_dt.strftime("%b %d, %Y at %I:%M %p")}')
+
+                    # Show rotation status if available
+                    # RecordRotationStatus enum: 0=NOT_ROTATED, 1=IN_PROGRESS, 2=SUCCESS, 3=FAILURE
+                    last_status = rotation_data.get('last_rotation_status')
+                    if last_status is not None:
+                        status_map = {0: 'Not Rotated', 1: 'In Progress', 2: 'Success', 3: 'Failure'}
+                        status_text = status_map.get(last_status, f'Unknown ({last_status})')
+                        print(f'  Last Status: {status_text}')
+
+        except Exception as e:
+            logging.debug(f"Error displaying rotation info for {r.record_uid}: {e}")
+            print('')
+            print('Rotation:')
+            print(f'  Error: Could not retrieve rotation info')
 
 
 class SearchCommand(Command):
