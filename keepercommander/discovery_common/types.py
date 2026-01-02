@@ -676,6 +676,9 @@ class BulkRecordAdd(BaseModel):
     record: Any
     record_type: str
 
+    # If record_type is a PAM User, is this user the admin of the resource?
+    admin_uid: Optional[str] = None
+
     # Normal record UID strings
     record_uid: str
     parent_record_uid: Optional[str] = None

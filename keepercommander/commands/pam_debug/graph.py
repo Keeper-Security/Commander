@@ -10,10 +10,10 @@ from ...discovery_common.record_link import RecordLink
 from ...discovery_common.user_service import UserService
 from ...discovery_common.jobs import Jobs
 from ...discovery_common.constants import (PAM_USER, PAM_DIRECTORY, PAM_MACHINE, PAM_DATABASE, VERTICES_SORT_MAP,
-                                        DIS_INFRA_GRAPH_ID, RECORD_LINK_GRAPH_ID, USER_SERVICE_GRAPH_ID,
-                                        DIS_JOBS_GRAPH_ID)
+                                           DIS_INFRA_GRAPH_ID, RECORD_LINK_GRAPH_ID, USER_SERVICE_GRAPH_ID,
+                                           DIS_JOBS_GRAPH_ID)
 from ...discovery_common.types import (DiscoveryObject, DiscoveryUser, DiscoveryDirectory, DiscoveryMachine,
-                                    DiscoveryDatabase, JobContent)
+                                       DiscoveryDatabase, JobContent)
 from ...discovery_common.dag_sort import sort_infra_vertices
 from ...keeper_dag import DAG
 from ...keeper_dag.connection.commander import Connection as CommanderConnection
@@ -228,6 +228,8 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                         if acl is None:
                             print(f"{pad}      {self._f('missing ACL')}")
                         else:
+                            if acl.is_iam_user is True:
+                                print(f"{pad}      . is IAM user")
                             if acl.is_admin is True:
                                 print(f"{pad}        . is the {self._b('Admin')}")
                             if acl.belongs_to is True:
@@ -240,6 +242,12 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                                     print(f"{pad}      . is a NOOP")
                                 if acl.rotation_settings.disabled is True:
                                     print(f"{pad}      . rotation is disabled")
+
+                                if (acl.rotation_settings.saas_record_uid_list is not None
+                                        and len(acl.rotation_settings.saas_record_uid_list) > 0):
+                                    print(f"{pad}      . has SaaS rotation: "
+                                          f"{acl.rotation_settings.saas_record_uid_list[0]}")
+
                         continue
 
                     if vertex.has_data is True:
@@ -282,7 +290,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                                     except Exception as err:
                                         print(f"{pad}          ! data not JSON: {err}")
                         for i in bad:
-                            print("{pad}      " + i)
+                            print(f"{pad}      " + i)
 
         if len(group[PAMDebugGraphCommand.OTHER]) > 0:
             print(f"{pad}  " + self._b("Other PAM Types"))

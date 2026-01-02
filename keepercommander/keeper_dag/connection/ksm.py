@@ -116,9 +116,10 @@ class Connection(ConnectionBase):
 
     def router_url_from_ksm_config(self) -> str:
         hostname = self.hostname
-        # In GovCloud environments, the router service is not under the govcloud subdomain
-        if 'govcloud.' in hostname:
-            hostname = hostname.replace('govcloud.', '')
+        # Only PROD GovCloud strips the subdomain (workaround for prod infrastructure).
+        # DEV/QA GOV (govcloud.dev.keepersecurity.us, govcloud.qa.keepersecurity.us) keep govcloud.
+        if hostname == 'govcloud.keepersecurity.us':
+            hostname = 'keepersecurity.us'
         return f'connect.{hostname}'
 
     def ws_router_url_from_ksm_config(self, is_ws: bool = False) -> str:
