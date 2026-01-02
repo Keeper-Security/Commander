@@ -557,6 +557,13 @@ class HelpScreen(ModalScreen):
 
 class SuperShellApp(App):
     """The Keeper SuperShell TUI application"""
+    
+    # Constants for thresholds and limits
+    AUTO_EXPAND_THRESHOLD = 100  # Auto-expand tree when search results < this number
+    DEVICE_DISPLAY_LIMIT = 5     # Max devices to show before truncating
+    SHARE_DISPLAY_LIMIT = 10     # Max shares to show before truncating
+    PAGE_DOWN_NODES = 10         # Number of nodes to move for half-page down
+    PAGE_DOWN_FULL_NODES = 20    # Number of nodes to move for full-page down
 
     @staticmethod
     def _strip_ansi_codes(text: str) -> str:
@@ -796,6 +803,9 @@ class SuperShellApp(App):
         Binding("ctrl+u", "page_up", "Page Up", show=False),
         Binding("ctrl+f", "page_down_full", "Page Down (Full)", show=False),
         Binding("ctrl+b", "page_up_full", "Page Up (Full)", show=False),
+        # Vim line scrolling
+        Binding("ctrl+e", "scroll_down", "Scroll Down", show=False),
+        Binding("ctrl+y", "scroll_up", "Scroll Up", show=False),
     ]
 
     def __init__(self, params):
@@ -836,14 +846,90 @@ class SuperShellApp(App):
         if theme_name in COLOR_THEMES:
             self.color_theme = theme_name
             self.theme_colors = COLOR_THEMES[theme_name]
+            
+            # Save the current tree expansion state before rebuilding
+            tree = self.query_one("#folder_tree", Tree)
+            expanded_nodes = set()
+            
+            def collect_expanded(node):
+                """Recursively collect UIDs of expanded nodes"""
+                if node.is_expanded and hasattr(node, 'data') and node.data:
+                    node_uid = node.data.get('uid') if isinstance(node.data, dict) else None
+                    node_type = node.data.get('type') if isinstance(node.data, dict) else None
+                    if node_uid:
+                        expanded_nodes.add(node_uid)
+                    elif node_type == 'root':
+                        expanded_nodes.add('__root__')
+                    elif node_type == 'virtual_folder':
+                        expanded_nodes.add('__secrets_manager_apps__')
+                for child in node.children:
+                    collect_expanded(child)
+            
+            collect_expanded(tree.root)
+            
             # Refresh the tree to apply new colors
             self._setup_folder_tree()
+            
+            # Restore expansion state
+            def restore_expanded(node):
+                """Recursively restore expanded state"""
+                if hasattr(node, 'data') and node.data:
+                    node_uid = node.data.get('uid') if isinstance(node.data, dict) else None
+                    node_type = node.data.get('type') if isinstance(node.data, dict) else None
+                    
+                    should_expand = False
+                    if node_uid and node_uid in expanded_nodes:
+                        should_expand = True
+                    elif node_type == 'root' and '__root__' in expanded_nodes:
+                        should_expand = True
+                    elif node_type == 'virtual_folder' and node_uid == '__secrets_manager_apps__' and '__secrets_manager_apps__' in expanded_nodes:
+                        should_expand = True
+                    
+                    if should_expand and node.allow_expand:
+                        node.expand()
+                
+                for child in node.children:
+                    restore_expanded(child)
+            
+            restore_expanded(tree.root)
+            
             # Update CSS dynamically for tree selection/hover
             self._apply_theme_css()
 
     def notify(self, message, *, title="", severity="information", timeout=1.5):
         """Override notify to use faster timeout (default 1.5s instead of 5s)"""
         super().notify(message, title=title, severity=severity, timeout=timeout)
+
+    def _get_welcome_screen_content(self) -> str:
+        """Generate the My Vault welcome screen content with current theme colors"""
+        t = self.theme_colors
+        return f"""[bold {t['primary']}]● Keeper SuperShell[/bold {t['primary']}]
+
+[{t['secondary']}]A CLI-based vault viewer with keyboard and mouse navigation.[/{t['secondary']}]
+
+[bold {t['primary_bright']}]Getting Started[/bold {t['primary_bright']}]
+  [{t['text_dim']}]•[/{t['text_dim']}] Use [{t['primary']}]j/k[/{t['primary']}] or [{t['primary']}]↑/↓[/{t['primary']}] to navigate up/down
+  [{t['text_dim']}]•[/{t['text_dim']}] Use [{t['primary']}]l[/{t['primary']}] or [{t['primary']}]→[/{t['primary']}] to expand folders
+  [{t['text_dim']}]•[/{t['text_dim']}] Use [{t['primary']}]h[/{t['primary']}] or [{t['primary']}]←[/{t['primary']}] to collapse folders
+  [{t['text_dim']}]•[/{t['text_dim']}] Press [{t['primary']}]/[/{t['primary']}] to search for records
+  [{t['text_dim']}]•[/{t['text_dim']}] Press [{t['primary']}]Esc[/{t['primary']}] to collapse and navigate back
+
+[bold {t['primary_bright']}]Vim-Style Navigation[/bold {t['primary_bright']}]
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]g[/{t['primary']}] - Go to top
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]G[/{t['primary']}] (Shift+G) - Go to bottom
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+d/u[/{t['primary']}] - Half page down/up
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+e/y[/{t['primary']}] - Scroll down/up one line
+
+[bold {t['primary_bright']}]Quick Actions[/bold {t['primary_bright']}]
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]c[/{t['primary']}] - Copy password
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]u[/{t['primary']}] - Copy username
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]w[/{t['primary']}] - Copy URL
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]t[/{t['primary']}] - Toggle Detail/JSON view
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]d[/{t['primary']}] - Sync & refresh vault
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]![/{t['primary']}] - Exit to Keeper shell
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+q[/{t['primary']}] - Quit SuperShell
+
+[{t['text_dim']}]Press [/{t['text_dim']}][{t['primary']}]?[/{t['primary']}][{t['text_dim']}] for full keyboard shortcuts[/{t['text_dim']}]"""
 
     def _apply_theme_css(self):
         """Apply dynamic CSS based on current theme"""
@@ -852,9 +938,17 @@ class SuperShellApp(App):
         try:
             # Update detail content - will be refreshed when record is selected
             if self.selected_record:
-                self._display_record_detail(self.selected_record)
+                # Check if it's a Secrets Manager app record
+                if self.selected_record in self.app_record_uids:
+                    self._display_secrets_manager_app(self.selected_record)
+                else:
+                    self._display_record_detail(self.selected_record)
             elif self.selected_folder:
                 self._display_folder_with_clickable_fields(self.selected_folder)
+            else:
+                # No record/folder selected - update the "My Vault" welcome screen
+                detail_widget = self.query_one("#detail_content", Static)
+                detail_widget.update(self._get_welcome_screen_content())
 
         except Exception as e:
             logging.debug(f"Error applying theme CSS: {e}")
@@ -1490,9 +1584,9 @@ class SuperShellApp(App):
             root.label = f"[{t['root']}]● My Vault[/{t['root']}]"
             root.data = {'type': 'root', 'uid': None}
 
-        # Determine if we should auto-expand (when filtering with < 100 results)
+        # Determine if we should auto-expand (when filtering with < AUTO_EXPAND_THRESHOLD results)
         auto_expand = False
-        if self.filtered_record_uids is not None and len(self.filtered_record_uids) < 100:
+        if self.filtered_record_uids is not None and len(self.filtered_record_uids) < self.AUTO_EXPAND_THRESHOLD:
             auto_expand = True
 
         # Build tree recursively from root using proper folder structure
@@ -1867,9 +1961,9 @@ class SuperShellApp(App):
                     key = parts[0].strip()
                     value = parts[1].strip() if len(parts) > 1 else ''
 
-                    # UID - yellow value
+                    # UID - use theme primary color
                     if key in ['UID', 'Record UID']:
-                        lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [#ffff00]{rich_escape(str(value))}[/#ffff00]")
+                        lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]")
                     # Title - bold primary with label
                     elif key in ['Title', 'Name'] and not current_section:
                         lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [bold {t['primary']}]{rich_escape(str(value))}[/bold {t['primary']}]")
@@ -1953,7 +2047,7 @@ class SuperShellApp(App):
                     return (
                         f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]\n"
                         f"[bold {t['primary']}]{rich_escape(str(folder.name))}[/bold {t['primary']}]\n"
-                        f"[{t['text_dim']}]UID:[/{t['text_dim']}] [#ffff00]{rich_escape(str(folder_uid))}[/#ffff00]\n"
+                        f"[{t['text_dim']}]UID:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(folder_uid))}[/{t['primary']}]\n"
                         f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]\n\n"
                         f"[{t['secondary']}]{'Type':>20}:[/{t['secondary']}]  [{t['primary']}]{rich_escape(str(folder_type))}[/{t['primary']}]\n\n"
                         f"[{t['primary_dim']}]Expand folder (press 'l' or →) to view records[/{t['primary_dim']}]"
@@ -1979,7 +2073,7 @@ class SuperShellApp(App):
 
                         # Special formatting for headers
                         if key in ['Shared Folder UID', 'Folder UID', 'Team UID']:
-                            lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [#ffff00]{rich_escape(str(value))}[/#ffff00]")
+                            lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]")
                         elif key == 'Name':
                             lines.append(f"[bold {t['primary']}]{rich_escape(str(value))}[/bold {t['primary']}]")
                         # Section headers (no value or short value)
@@ -2025,23 +2119,30 @@ class SuperShellApp(App):
             old_stdout = sys.stdout
             sys.stdout = stdout_buffer
 
-            # Execute the get command
-            get_cmd = RecordGetUidCommand()
-            get_cmd.execute(self.params, uid=record_uid, format=format_type, include_dag=include_dag)
-
-            # Restore stdout
-            sys.stdout = old_stdout
+            try:
+                # Execute the get command
+                get_cmd = RecordGetUidCommand()
+                get_cmd.execute(self.params, uid=record_uid, format=format_type, include_dag=include_dag)
+            finally:
+                # Always restore stdout
+                sys.stdout = old_stdout
 
             # Get the captured output and cache it
             output = stdout_buffer.getvalue()
-            if hasattr(self, '_record_output_cache'):
+            
+            # If output is empty or error, don't cache it
+            if output and not output.startswith("Error"):
+                if not hasattr(self, '_record_output_cache'):
+                    self._record_output_cache = {}
                 self._record_output_cache[cache_key] = output
-            return output
+            
+            return output if output else "Record data not available"
 
         except Exception as e:
-            sys.stdout = old_stdout
-            logging.error(f"Error getting record output: {e}", exc_info=True)
-            return f"Error getting record: {str(e)}"
+            if sys.stdout != old_stdout:
+                sys.stdout = old_stdout
+            logging.error(f"Error getting record output for {record_uid}: {e}", exc_info=True)
+            return f"Error displaying record: {str(e)}"
 
     def _get_rotation_info(self, record_uid: str) -> Optional[Dict[str, Any]]:
         """Get rotation info for pamUser records from DAG and rotation cache.
@@ -2187,7 +2288,8 @@ class SuperShellApp(App):
                                 rotation_info['schedule'] = f"{schedule_type} at {time_str} {tz}"
                     else:
                         rotation_info['schedule'] = 'On Demand'
-                except:
+                except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+                    logging.debug(f"Error parsing schedule: {e}")
                     rotation_info['schedule'] = 'On Demand'
 
             # Last rotation
@@ -2207,7 +2309,8 @@ class SuperShellApp(App):
 
             return rotation_info if rotation_info else None
 
-        except Exception:
+        except (KeyError, AttributeError, ValueError, TypeError) as e:
+            logging.debug(f"Error getting rotation info: {e}")
             return None
 
     def _clear_clickable_fields(self):
@@ -2226,6 +2329,7 @@ class SuperShellApp(App):
             # Batch remove all at once
             for widget in widgets_to_remove:
                 widget.remove()
+            self.clickable_fields.clear()
         except Exception as e:
             logging.debug(f"Error clearing clickable fields: {e}")
 
@@ -2281,7 +2385,7 @@ class SuperShellApp(App):
                         code, seconds_remaining, period = result
                         mount_line("", None)  # Blank line before TOTP
                         mount_line(f"[bold {t['secondary']}]Two-Factor Authentication:[/bold {t['secondary']}]", None)
-                        mount_line(f"  [{t['text_dim']}]Code:[/{t['text_dim']}] [bold #00ff00]{code}[/bold #00ff00]    [{t['text_dim']}]valid for[/{t['text_dim']}] [bold #ffff00]{seconds_remaining} sec[/bold #ffff00]", code)
+                        mount_line(f"  [{t['text_dim']}]Code:[/{t['text_dim']}] [bold {t['primary']}]{code}[/bold {t['primary']}]    [{t['text_dim']}]valid for[/{t['text_dim']}] [bold {t['secondary']}]{seconds_remaining} sec[/bold {t['secondary']}]", code)
                         mount_line("", None)  # Blank line after TOTP
                         totp_displayed = True
                 except Exception as e:
@@ -2385,7 +2489,7 @@ class SuperShellApp(App):
                 value = parts[1].strip() if len(parts) > 1 else ''
 
                 if key in ['UID', 'Record UID']:
-                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [#ffff00]{rich_escape(str(value))}[/#ffff00]", value)
+                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]", value)
                 elif key in ['Title', 'Name'] and not current_section:
                     mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [bold {t['primary']}]{rich_escape(str(value))}[/bold {t['primary']}]", value)
                 elif key == 'Type':
@@ -2831,7 +2935,7 @@ class SuperShellApp(App):
             # Fallback to basic folder info
             if folder:
                 mount_line(f"[bold {t['primary']}]{rich_escape(str(folder.name))}[/bold {t['primary']}]", folder.name)
-                mount_line(f"[{t['text_dim']}]UID:[/{t['text_dim']}] [#ffff00]{rich_escape(str(folder_uid))}[/#ffff00]", folder_uid)
+                mount_line(f"[{t['text_dim']}]UID:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(folder_uid))}[/{t['primary']}]", folder_uid)
                 mount_line(f"[{t['text_dim']}]Type:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(folder_type))}[/{t['primary']}]", folder_type)
             mount_line(f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]", None)
             return
@@ -2868,7 +2972,7 @@ class SuperShellApp(App):
 
                 # UID fields
                 if key in ['Shared Folder UID', 'Folder UID', 'Team UID']:
-                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [#ffff00]{rich_escape(str(value))}[/#ffff00]", value)
+                    mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]", value)
                 # Folder Type
                 elif key == 'Folder Type':
                     display_type = value if value else folder_type
@@ -2889,10 +2993,10 @@ class SuperShellApp(App):
                 elif key == 'Record UID' and current_section == 'Record Permissions':
                     if value in self.records:
                         record_title = self.records[value].get('title', 'Untitled')
-                        mount_line(f"  [{t['text_dim']}]Record:[/{t['text_dim']}] [#ffff00]{rich_escape(str(record_title))}[/#ffff00]", record_title)
-                        mount_line(f"    [{t['text_dim']}]UID:[/{t['text_dim']}] [{t['primary_dim']}]{rich_escape(str(value))}[/{t['primary_dim']}]", value)
+                        mount_line(f"  [{t['text_dim']}]Record:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(record_title))}[/{t['primary']}]", record_title)
+                        mount_line(f"    [{t['text_dim']}]UID:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]", value)
                     else:
-                        mount_line(f"  [{t['text_dim']}]Record UID:[/{t['text_dim']}] [#ffff00]{rich_escape(str(value))}[/#ffff00]", value)
+                        mount_line(f"  [{t['text_dim']}]Record UID:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]", value)
                 # Boolean values
                 elif value.lower() in ['true', 'false']:
                     color = t['primary'] if value.lower() == 'true' else t['primary_dim']
@@ -3028,6 +3132,157 @@ class SuperShellApp(App):
         full_json = json.dumps(json_obj, indent=2)
         mount_json_line(f"\n[{t['text_dim']}]Click to copy full JSON:[/{t['text_dim']}]", full_json)
 
+    def _display_secrets_manager_app(self, app_uid: str):
+        """Display Secrets Manager application details"""
+        # Clear any previous content
+        self._clear_clickable_fields()
+        
+        detail_widget = self.query_one("#detail_content", Static)
+        t = self.theme_colors
+        
+        try:
+            from ..proto import APIRequest_pb2, enterprise_pb2
+            from .. import api, utils
+            import json
+            
+            record = self.records[app_uid]
+            app_title = record.get('title', 'Untitled')
+            
+            # Fetch app info from API
+            app_data = {
+                "app_name": app_title,
+                "app_uid": app_uid,
+                "client_devices": [],
+                "shares": []
+            }
+            
+            try:
+                rq = APIRequest_pb2.GetAppInfoRequest()
+                rq.appRecordUid.append(utils.base64_url_decode(app_uid))
+                rs = api.communicate_rest(self.params, rq, 'vault/get_app_info', rs_type=APIRequest_pb2.GetAppInfoResponse)
+                
+                if rs.appInfo:
+                    app_info = rs.appInfo[0]
+                    
+                    # Collect client devices
+                    client_devices = [x for x in app_info.clients if x.appClientType == enterprise_pb2.GENERAL]
+                    for client in client_devices:
+                        app_data["client_devices"].append({
+                            "device_name": client.id
+                        })
+                    
+                    # Collect application access (shares)
+                    for share in app_info.shares:
+                        uid_str = utils.base64_url_encode(share.secretUid)
+                        share_type = APIRequest_pb2.ApplicationShareType.Name(share.shareType)
+                        
+                        # Get title from cache
+                        title = "Unknown"
+                        if share_type == 'SHARE_TYPE_RECORD':
+                            if uid_str in self.params.record_cache:
+                                rec = self.params.record_cache[uid_str]
+                                if 'data_unencrypted' in rec:
+                                    data = json.loads(rec['data_unencrypted'])
+                                    title = data.get('title', 'Untitled')
+                            share_type_display = "RECORD"
+                        elif share_type == 'SHARE_TYPE_FOLDER':
+                            if hasattr(self.params, 'folder_cache'):
+                                folder = self.params.folder_cache.get(uid_str)
+                                if folder:
+                                    title = folder.name
+                            share_type_display = "FOLDER"
+                        else:
+                            share_type_display = share_type
+                        
+                        app_data["shares"].append({
+                            "share_type": share_type,
+                            "uid": uid_str,
+                            "editable": share.editable,
+                            "title": title,
+                            "type": share_type_display
+                        })
+                    
+            except (KeyError, AttributeError, json.JSONDecodeError, ValueError) as e:
+                logging.debug(f"Error fetching app info: {e}", exc_info=True)
+            
+            # Display based on view mode
+            if self.view_mode == 'json':
+                # JSON view with syntax highlighting
+                # Clear previous clickable fields
+                self._clear_clickable_fields()
+                detail_widget.update("")
+                
+                # Collect widgets for batch mounting
+                container = self.query_one("#record_detail", VerticalScroll)
+                widgets_to_mount = []
+                
+                def mount_line(content: str, copy_value: str = None, is_password: bool = False):
+                    """Collect a clickable line for batch mounting"""
+                    line = ClickableDetailLine(
+                        content,
+                        copy_value=copy_value,
+                        record_uid=app_uid if is_password else None,
+                        is_password=is_password
+                    )
+                    widgets_to_mount.append(line)
+                    self.clickable_fields.append(line)
+                
+                # Render JSON header
+                mount_line(f"[bold {t['primary']}]JSON View:[/bold {t['primary']}]")
+                mount_line("")
+                
+                # Render JSON with syntax highlighting
+                self._render_json_lines(app_data, app_data, mount_line, t, app_uid)
+                
+                # Batch mount all widgets
+                if widgets_to_mount:
+                    container.mount(*widgets_to_mount, before=detail_widget)
+            else:
+                # Detail view
+                lines = []
+                lines.append(f"[bold {t['primary']}]Secrets Manager Application[/bold {t['primary']}]")
+                lines.append(f"[{t['text_dim']}]App Name:[/{t['text_dim']}] [{t['primary']}]{app_title}[/{t['primary']}]")
+                lines.append(f"[{t['text_dim']}]App UID:[/{t['text_dim']}] [{t['primary']}]{app_uid}[/{t['primary']}]")
+                lines.append("")
+                
+                # Show client devices
+                if app_data["client_devices"]:
+                    lines.append(f"[bold {t['secondary']}]Client Devices ({len(app_data['client_devices'])}):[/bold {t['secondary']}]")
+                    for idx, device in enumerate(app_data["client_devices"][:self.DEVICE_DISPLAY_LIMIT], 1):
+                        lines.append(f"  [{t['text_dim']}]{idx}.[/{t['text_dim']}] [{t['primary']}]{device['device_name']}[/{t['primary']}]")
+                    if len(app_data["client_devices"]) > self.DEVICE_DISPLAY_LIMIT:
+                        lines.append(f"  [{t['text_dim']}]... and {len(app_data['client_devices']) - self.DEVICE_DISPLAY_LIMIT} more[/{t['text_dim']}]")
+                    lines.append("")
+                else:
+                    lines.append(f"[{t['text_dim']}]No client devices registered for this Application[/{t['text_dim']}]")
+                    lines.append("")
+                
+                # Show application access
+                if app_data["shares"]:
+                    lines.append(f"[bold {t['secondary']}]Application Access:[/bold {t['secondary']}]")
+                    lines.append("")
+                    for idx, share in enumerate(app_data["shares"][:self.SHARE_DISPLAY_LIMIT], 1):
+                        lines.append(f"  [{t['text_dim']}]{share['type']}:[/{t['text_dim']}] [{t['primary']}]{share['title']}[/{t['primary']}]")
+                        lines.append(f"    [{t['text_dim']}]UID:[/{t['text_dim']}] [{t['text']}]{share['uid']}[/{t['text']}]")
+                        permissions = "Editable" if share['editable'] else "Read-Only"
+                        lines.append(f"    [{t['text_dim']}]Permissions:[/{t['text_dim']}] [{t['primary_dim']}]{permissions}[/{t['primary_dim']}]")
+                        lines.append("")
+                    if len(app_data["shares"]) > self.SHARE_DISPLAY_LIMIT:
+                        lines.append(f"  [{t['text_dim']}]... and {len(app_data['shares']) - self.SHARE_DISPLAY_LIMIT} more shares[/{t['text_dim']}]")
+                        lines.append("")
+                else:
+                    lines.append(f"[bold {t['secondary']}]Application Access:[/bold {t['secondary']}]")
+                    lines.append(f"[{t['text_dim']}]No shared folders or records[/{t['text_dim']}]")
+                    lines.append("")
+                
+                detail_widget.update("\n".join(lines))
+            
+            self._update_shortcuts_bar(record_selected=True)
+            
+        except Exception as e:
+            logging.error(f"Error displaying Secrets Manager app: {e}", exc_info=True)
+            detail_widget.update(f"[red]Error displaying app:[/red]\n{str(e)}")
+
     def _display_record_detail(self, record_uid: str):
         """Display record details in the right panel using Commander's get command"""
         detail_widget = self.query_one("#detail_content", Static)
@@ -3156,8 +3411,22 @@ class SuperShellApp(App):
             # Record selected - show details
             self.selected_record = node_uid
             self.selected_folder = None  # Clear folder selection
-            self._display_record_detail(node_uid)
-            self._update_status(f"Record selected: {self.records[node_uid].get('title', 'Untitled')}")
+            
+            # Verify record exists before displaying
+            if node_uid in self.records:
+                # Check if this is an app record (Secrets Manager)
+                if node_uid in self.app_record_uids:
+                    # Display Secrets Manager app info
+                    self._display_secrets_manager_app(node_uid)
+                    self._update_status(f"App record selected: {self.records[node_uid].get('title', 'Untitled')}")
+                else:
+                    self._display_record_detail(node_uid)
+                    self._update_status(f"Record selected: {self.records[node_uid].get('title', 'Untitled')}")
+            else:
+                # Record not found - show error
+                detail_widget = self.query_one("#detail_content", Static)
+                detail_widget.update(f"[red]Error: Record not found[/red]\n\nUID: {node_uid}\n\nThis record may have been deleted or you may not have access to it.")
+                self._update_status(f"Record not found: {node_uid}")
         elif node_type == 'folder':
             # Folder selected - show folder info with clickable fields
             self.selected_record = None  # Clear record selection
@@ -3198,36 +3467,7 @@ class SuperShellApp(App):
             self.selected_folder = None  # Clear folder selection
             self._clear_clickable_fields()
             detail_widget = self.query_one("#detail_content", Static)
-            t = self.theme_colors
-            help_content = f"""[bold {t['primary']}]● Keeper SuperShell[/bold {t['primary']}]
-
-[{t['secondary']}]A CLI-based vault viewer with keyboard and mouse navigation.[/{t['secondary']}]
-
-[bold {t['primary_bright']}]Getting Started[/bold {t['primary_bright']}]
-  [{t['text_dim']}]•[/{t['text_dim']}] Use [{t['primary']}]j/k[/{t['primary']}] or [{t['primary']}]↑/↓[/{t['primary']}] to navigate up/down
-  [{t['text_dim']}]•[/{t['text_dim']}] Use [{t['primary']}]l[/{t['primary']}] or [{t['primary']}]→[/{t['primary']}] to expand folders
-  [{t['text_dim']}]•[/{t['text_dim']}] Use [{t['primary']}]h[/{t['primary']}] or [{t['primary']}]←[/{t['primary']}] to collapse folders
-  [{t['text_dim']}]•[/{t['text_dim']}] Press [{t['primary']}]/[/{t['primary']}] to search for records
-  [{t['text_dim']}]•[/{t['text_dim']}] Press [{t['primary']}]Esc[/{t['primary']}] to collapse and navigate back
-
-[bold {t['primary_bright']}]Vim-Style Navigation[/bold {t['primary_bright']}]
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]g[/{t['primary']}] - Go to top
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]G[/{t['primary']}] (Shift+G) - Go to bottom
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+d/u[/{t['primary']}] - Half page down/up
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+e/y[/{t['primary']}] - Scroll down/up one line
-
-[bold {t['primary_bright']}]Quick Actions[/bold {t['primary_bright']}]
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]p[/{t['primary']}] - Copy password
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]u[/{t['primary']}] - Copy username
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]c[/{t['primary']}] - Copy all
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]t[/{t['primary']}] - Toggle Detail/JSON view
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]m[/{t['primary']}] - Mask/Unmask secrets
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]d[/{t['primary']}] - Sync & refresh vault
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]![/{t['primary']}] - Exit to Keeper shell
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+q[/{t['primary']}] - Quit SuperShell
-
-[{t['text_dim']}]Press [/{t['text_dim']}][{t['primary']}]?[/{t['primary']}][{t['text_dim']}] for full keyboard shortcuts[/{t['text_dim']}]"""
-            detail_widget.update(help_content)
+            detail_widget.update(self._get_welcome_screen_content())
             self._update_status("My Vault")
             self._update_shortcuts_bar(clear=True)  # Help content is already in the panel
 
@@ -3369,20 +3609,21 @@ class SuperShellApp(App):
 
             # If we're navigating results (not typing), let tree/app handle its keys
             if not self.search_input_active and tree.has_focus:
-                # Ctrl+Y scrolls viewport up (like vim)
-                if event.key == "ctrl+y":
-                    tree.scroll_relative(y=-1)
+                # Handle left/right arrow keys for expand/collapse
+                if event.key == "left":
+                    if tree.cursor_node and tree.cursor_node.allow_expand:
+                        tree.cursor_node.collapse()
                     event.prevent_default()
                     event.stop()
                     return
-                # Ctrl+E scrolls viewport down (like vim)
-                if event.key == "ctrl+e":
-                    tree.scroll_relative(y=1)
+                elif event.key == "right":
+                    if tree.cursor_node and tree.cursor_node.allow_expand:
+                        tree.cursor_node.expand()
                     event.prevent_default()
                     event.stop()
                     return
                 # Navigation keys for tree
-                if event.key in ("j", "k", "h", "l", "up", "down", "left", "right", "enter", "space"):
+                if event.key in ("j", "k", "h", "l", "up", "down", "enter", "space"):
                     return
                 # Action keys (copy, toggle view, etc.) - let them pass through
                 if event.key in ("t", "c", "u", "w", "i", "y", "d", "g", "p", "question_mark"):
@@ -3547,19 +3788,20 @@ class SuperShellApp(App):
                 event.stop()
                 return
 
-            # Ctrl+Y scrolls viewport up (like vim)
-            if event.key == "ctrl+y":
-                tree.scroll_relative(y=-1)
-                event.prevent_default()
-                event.stop()
-                return
-
-            # Ctrl+E scrolls viewport down (like vim)
-            if event.key == "ctrl+e":
-                tree.scroll_relative(y=1)
-                event.prevent_default()
-                event.stop()
-                return
+            # Handle arrow keys for expand/collapse when search is not active
+            if tree.has_focus:
+                if event.key == "left":
+                    if tree.cursor_node and tree.cursor_node.allow_expand:
+                        tree.cursor_node.collapse()
+                    event.prevent_default()
+                    event.stop()
+                    return
+                elif event.key == "right":
+                    if tree.cursor_node and tree.cursor_node.allow_expand:
+                        tree.cursor_node.expand()
+                    event.prevent_default()
+                    event.stop()
+                    return
 
             if event.key == "escape":
                 # Escape: collapse current folder or go to parent, stop at root
@@ -3677,7 +3919,11 @@ class SuperShellApp(App):
         # Refresh the current display
         try:
             if self.selected_record:
-                self._display_record_detail(self.selected_record)
+                # Check if it's a Secret Manager app
+                if self.selected_record in self.app_record_uids:
+                    self._display_secrets_manager_app(self.selected_record)
+                else:
+                    self._display_record_detail(self.selected_record)
             elif self.selected_folder:
                 self._display_folder_with_clickable_fields(self.selected_folder)
         except Exception as e:
@@ -3759,32 +4005,137 @@ class SuperShellApp(App):
         """Copy entire record contents to clipboard (formatted or JSON based on view mode)"""
         if self.selected_record:
             try:
-                # Get record data to check if it has a password
-                record_data = self.records.get(self.selected_record, {})
-                has_password = bool(record_data.get('password'))
-
-                if self.view_mode == 'json':
-                    # Copy JSON format (with actual password, not masked)
-                    output = self._get_record_output(self.selected_record, format_type='json')
-                    output = self._strip_ansi_codes(output)
-                    json_obj = json.loads(output)
-                    formatted = json.dumps(json_obj, indent=2)
-                    pyperclip.copy(formatted)
-                    # Generate audit event since JSON contains the password
-                    if has_password:
-                        self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
-                    self.notify("📋 JSON copied to clipboard!", severity="information")
+                # Check if it's a Secrets Manager app record
+                if self.selected_record in self.app_record_uids:
+                    # For Secrets Manager apps, copy the app data in JSON format
+                    from ..proto import APIRequest_pb2, enterprise_pb2
+                    from .. import api, utils
+                    import json
+                    
+                    record = self.records[self.selected_record]
+                    app_title = record.get('title', 'Untitled')
+                    
+                    app_data = {
+                        "app_name": app_title,
+                        "app_uid": self.selected_record,
+                        "client_devices": [],
+                        "shares": []
+                    }
+                    
+                    try:
+                        rq = APIRequest_pb2.GetAppInfoRequest()
+                        rq.appRecordUid.append(utils.base64_url_decode(self.selected_record))
+                        rs = api.communicate_rest(self.params, rq, 'vault/get_app_info', rs_type=APIRequest_pb2.GetAppInfoResponse)
+                        
+                        if rs.appInfo:
+                            app_info = rs.appInfo[0]
+                            
+                            # Collect client devices
+                            client_devices = [x for x in app_info.clients if x.appClientType == enterprise_pb2.GENERAL]
+                            for client in client_devices:
+                                app_data["client_devices"].append({"device_name": client.id})
+                            
+                            # Collect application access (shares)
+                            for share in app_info.shares:
+                                uid_str = utils.base64_url_encode(share.secretUid)
+                                share_type = APIRequest_pb2.ApplicationShareType.Name(share.shareType)
+                                
+                                title = "Unknown"
+                                if share_type == 'SHARE_TYPE_RECORD':
+                                    if uid_str in self.params.record_cache:
+                                        rec = self.params.record_cache[uid_str]
+                                        if 'data_unencrypted' in rec:
+                                            data = json.loads(rec['data_unencrypted'])
+                                            title = data.get('title', 'Untitled')
+                                    share_type_display = "RECORD"
+                                elif share_type == 'SHARE_TYPE_FOLDER':
+                                    if hasattr(self.params, 'folder_cache'):
+                                        folder = self.params.folder_cache.get(uid_str)
+                                        if folder:
+                                            title = folder.name
+                                    share_type_display = "FOLDER"
+                                else:
+                                    share_type_display = share_type
+                                
+                                app_data["shares"].append({
+                                    "share_type": share_type,
+                                    "uid": uid_str,
+                                    "editable": share.editable,
+                                    "title": title,
+                                    "type": share_type_display
+                                })
+                    except Exception as e:
+                        logging.debug(f"Error fetching app info for copy: {e}")
+                    
+                    # Format based on view mode
+                    if self.view_mode == 'json':
+                        # Copy as JSON
+                        formatted = json.dumps(app_data, indent=2)
+                        pyperclip.copy(formatted)
+                        self.notify("📋 Secrets Manager app JSON copied to clipboard!", severity="information")
+                    else:
+                        # Copy as formatted text (detail view)
+                        lines = []
+                        lines.append("Secrets Manager Application")
+                        lines.append(f"App Name: {app_title}")
+                        lines.append(f"App UID: {self.selected_record}")
+                        lines.append("")
+                        
+                        # Client devices
+                        if app_data["client_devices"]:
+                            lines.append(f"Client Devices ({len(app_data['client_devices'])}):")
+                            for idx, device in enumerate(app_data["client_devices"], 1):
+                                lines.append(f"  {idx}. {device['device_name']}")
+                            lines.append("")
+                        else:
+                            lines.append("No client devices registered for this Application")
+                            lines.append("")
+                        
+                        # Application access
+                        if app_data["shares"]:
+                            lines.append("Application Access:")
+                            lines.append("")
+                            for share in app_data["shares"]:
+                                lines.append(f"  {share['type']}: {share['title']}")
+                                lines.append(f"    UID: {share['uid']}")
+                                permissions = "Editable" if share['editable'] else "Read-Only"
+                                lines.append(f"    Permissions: {permissions}")
+                                lines.append("")
+                        else:
+                            lines.append("Application Access:")
+                            lines.append("No shared folders or records")
+                            lines.append("")
+                        
+                        formatted = "\n".join(lines)
+                        pyperclip.copy(formatted)
+                        self.notify("📋 Secrets Manager app details copied to clipboard!", severity="information")
                 else:
-                    # Copy formatted text (without Rich markup)
-                    content = self._format_record_for_tui(self.selected_record)
-                    # Strip Rich markup for plain text clipboard
-                    import re
-                    plain = re.sub(r'\[/?[^\]]+\]', '', content)
-                    pyperclip.copy(plain)
-                    # Generate audit event if record has password (detail view includes password)
-                    if has_password:
-                        self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
-                    self.notify("📋 Record contents copied to clipboard!", severity="information")
+                    # Regular record handling
+                    record_data = self.records.get(self.selected_record, {})
+                    has_password = bool(record_data.get('password'))
+
+                    if self.view_mode == 'json':
+                        # Copy JSON format (with actual password, not masked)
+                        output = self._get_record_output(self.selected_record, format_type='json')
+                        output = self._strip_ansi_codes(output)
+                        json_obj = json.loads(output)
+                        formatted = json.dumps(json_obj, indent=2)
+                        pyperclip.copy(formatted)
+                        # Generate audit event since JSON contains the password
+                        if has_password:
+                            self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
+                        self.notify("📋 JSON copied to clipboard!", severity="information")
+                    else:
+                        # Copy formatted text (without Rich markup)
+                        content = self._format_record_for_tui(self.selected_record)
+                        # Strip Rich markup for plain text clipboard
+                        import re
+                        plain = re.sub(r'\[/?[^\]]+\]', '', content)
+                        pyperclip.copy(plain)
+                        # Generate audit event if record has password (detail view includes password)
+                        if has_password:
+                            self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
+                        self.notify("📋 Record contents copied to clipboard!", severity="information")
             except Exception as e:
                 logging.error(f"Error copying record: {e}", exc_info=True)
                 self.notify("⚠️  Failed to copy record contents", severity="error")
@@ -3883,7 +4234,12 @@ class SuperShellApp(App):
         if isinstance(focused, DataTable):
             focused.move_cursor(row=0)
         elif isinstance(focused, Tree):
-            focused.select_node(focused.root)
+            # Get first child of root instead of root itself to avoid collapsing
+            if focused.root and focused.root.children:
+                first_child = focused.root.children[0]
+                focused.select_node(first_child)
+            else:
+                focused.select_node(focused.root)
         elif isinstance(focused, VerticalScroll):
             focused.scroll_home(animate=False)
 
@@ -3915,7 +4271,7 @@ class SuperShellApp(App):
             focused.move_cursor(row=new_row)
         elif isinstance(focused, Tree):
             # Move down through tree nodes
-            for _ in range(10):  # Move down 10 nodes
+            for _ in range(self.PAGE_DOWN_NODES):  # Move down half page
                 focused.action_cursor_down()
         elif isinstance(focused, VerticalScroll):
             # Scroll down by page in detail view
@@ -3932,7 +4288,7 @@ class SuperShellApp(App):
             focused.move_cursor(row=new_row)
         elif isinstance(focused, Tree):
             # Move up through tree nodes
-            for _ in range(10):  # Move up 10 nodes
+            for _ in range(self.PAGE_DOWN_NODES):  # Move up half page
                 focused.action_cursor_up()
         elif isinstance(focused, VerticalScroll):
             # Scroll up by page in detail view
@@ -3949,7 +4305,7 @@ class SuperShellApp(App):
             focused.move_cursor(row=new_row)
         elif isinstance(focused, Tree):
             # Move down through tree nodes
-            for _ in range(20):  # Move down 20 nodes
+            for _ in range(self.PAGE_DOWN_FULL_NODES):  # Move down full page
                 focused.action_cursor_down()
         elif isinstance(focused, VerticalScroll):
             # Scroll down by full page in detail view
@@ -3966,14 +4322,33 @@ class SuperShellApp(App):
             focused.move_cursor(row=new_row)
         elif isinstance(focused, Tree):
             # Move up through tree nodes
-            for _ in range(20):  # Move up 20 nodes
+            for _ in range(self.PAGE_DOWN_FULL_NODES):  # Move up full page
                 focused.action_cursor_up()
         elif isinstance(focused, VerticalScroll):
             # Scroll up by full page in detail view
             focused.scroll_page_up(animate=False)
 
+    def action_scroll_up(self):
+        """Scroll up one line (Vim CTRL+y)"""
+        focused = self.focused
+        if not self.search_input_active:
+            if isinstance(focused, Tree):
+                focused.scroll_relative(y=-1)
+            elif isinstance(focused, VerticalScroll):
+                focused.scroll_relative(y=-1)
+
+    def action_scroll_down(self):
+        """Scroll down one line (Vim CTRL+e)"""
+        focused = self.focused
+        if not self.search_input_active:
+            if isinstance(focused, Tree):
+                focused.scroll_relative(y=1)
+            elif isinstance(focused, VerticalScroll):
+                focused.scroll_relative(y=1)
+
     def action_quit(self):
         """Quit the application"""
+        self._stop_totp_timer()
         self.exit()
 
 
@@ -3981,7 +4356,10 @@ class SuperShellCommand(Command):
     """Command to launch the SuperShell TUI"""
 
     def get_parser(self):
-        return None  # No arguments needed
+        from argparse import ArgumentParser
+        parser = ArgumentParser(prog='supershell', description='Launch full terminal vault UI with vim navigation')
+        # -h/--help is automatically added by ArgumentParser
+        return parser
 
     def is_authorised(self):
         """Don't require pre-authentication - TUI handles all auth"""
@@ -3990,6 +4368,7 @@ class SuperShellCommand(Command):
     def execute(self, params, **kwargs):
         """Launch the SuperShell TUI - handles login if needed"""
         from .. import display
+        from ..cli import debug_manager
 
         # Show government warning for GOV environments when entering SuperShell
         if params.server and 'govcloud' in params.server.lower():
@@ -3998,8 +4377,10 @@ class SuperShellCommand(Command):
         # Disable debug mode for SuperShell to prevent log output from messing up the TUI
         saved_debug = getattr(params, 'debug', False)
         saved_log_level = logging.getLogger().level
-        if saved_debug:
+        if saved_debug or logging.getLogger().level == logging.DEBUG:
             params.debug = False
+            debug_manager.set_console_debug(False, params.batch_mode)
+            # Also set root logger level to suppress all debug output
             logging.getLogger().setLevel(logging.WARNING)
 
         try:
@@ -4008,6 +4389,7 @@ class SuperShellCommand(Command):
             # Restore debug state when SuperShell exits
             if saved_debug:
                 params.debug = saved_debug
+                debug_manager.set_console_debug(True, params.batch_mode)
                 logging.getLogger().setLevel(saved_log_level)
 
     def _execute_supershell(self, params, **kwargs):
