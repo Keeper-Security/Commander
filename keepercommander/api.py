@@ -70,6 +70,7 @@ def login(params, new_login=False, login_ui=None):
     # type: (KeeperParams, bool, Optional[Any]) -> None
 
     logging.info('Logging in to Keeper Commander')
+
     flow = loginv3.LoginV3Flow(login_ui)
     try:
         flow.login(params, new_login=new_login)

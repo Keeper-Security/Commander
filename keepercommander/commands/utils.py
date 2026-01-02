@@ -236,6 +236,7 @@ whoami_parser.exit = suppress_exit
 this_device_available_command_verbs = ['rename', 'register', 'persistent-login', 'ip-auto-approve', 'no-yubikey-pin', 'timeout', '2fa_expiration']
 this_device_parser = argparse.ArgumentParser(prog='this-device', description='Display and modify settings of the current device')
 this_device_parser.add_argument('ops', nargs='*', help="operation str: " + ", ".join(this_device_available_command_verbs))
+this_device_parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'], default='text', help='output format (text or json)')
 this_device_parser.error = raise_parse_exception
 this_device_parser.exit = suppress_exit
 
@@ -451,9 +452,10 @@ class ThisDeviceCommand(Command):
     def execute(self, params, **kwargs):
 
         ops = kwargs.get('ops')
+        output_format = kwargs.get('format', 'text')
         if len(ops) == 0:
-            ThisDeviceCommand.print_device_info(params)
-            return
+            return ThisDeviceCommand.print_device_info(params, output_format=output_format)
+
 
         if len(ops) >= 1 and ops[0].lower() != 'register':
             if len(ops) == 1 and ops[0].lower() != 'register':
@@ -589,66 +591,108 @@ class ThisDeviceCommand(Command):
         return acct_summary_dict, this_device
 
     @staticmethod
-    def print_device_info(params: KeeperParams):
+    def get_device_info(params: KeeperParams):
+        """Get device info as a dictionary (for programmatic use)"""
         acct_summary_dict, this_device = ThisDeviceCommand.get_account_summary_and_this_device(params)
 
-        print('{:>32}: {}'.format('Device Name', this_device['deviceName']))
-        # print("{:>32}: {}".format('API Client Version', rest_api.CLIENT_VERSION))
+        # Build device info dictionary
+        device_name = this_device.get('deviceName', 'Unknown')
+        data_key_present = this_device.get('encryptedDataKeyPresent', False)
 
-        if 'encryptedDataKeyPresent' in this_device:
-            print("{:>32}: {}".format('Data Key Present', (bcolors.OKGREEN + 'YES' + bcolors.ENDC) if this_device['encryptedDataKeyPresent'] else (bcolors.FAIL + 'NO' + bcolors.ENDC)))
-        else:
-            print("{:>32}: {}".format('Data Key Present', (bcolors.FAIL + 'missing' + bcolors.ENDC)))
+        # IP Auto Approve (inverted from ipDisableAutoApprove)
+        ip_auto_approve = not acct_summary_dict['settings'].get('ipDisableAutoApprove', False)
 
-        if 'ipDisableAutoApprove' in acct_summary_dict['settings']:
-            ipDisableAutoApprove = acct_summary_dict['settings']['ipDisableAutoApprove']
-            # ip_disable_auto_approve - If enabled, the device is NOT automatically approved
-            # If disabled, the device will be auto approved
-            ipAutoApprove = not ipDisableAutoApprove
-            print("{:>32}: {}".format('IP Auto Approve',
-                                      (bcolors.OKGREEN + 'ON' + bcolors.ENDC)
-                                      if ipAutoApprove else
-                                      (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
-        else:
-            print("{:>32}: {}".format('IP Auto Approve', (bcolors.OKGREEN + 'ON' + bcolors.ENDC)))
-            # ip_disable_auto_approve = 0 / disabled (default) <==> IP Auto Approve :ON
+        # Persistent Login
+        persistent_login = acct_summary_dict['settings'].get('persistentLogin', False)
+        if persistent_login:
+            persistent_login = not ThisDeviceCommand.is_persistent_login_disabled(params)
 
-        persistentLogin = acct_summary_dict['settings'].get('persistentLogin', False)
-        print("{:>32}: {}".format('Persistent Login',
-                                  (bcolors.OKGREEN + 'ON' + bcolors.ENDC)
-                                  if persistentLogin and not ThisDeviceCommand.is_persistent_login_disabled(params) else
-                                  (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
+        # Security Key No PIN
+        security_key_no_pin = acct_summary_dict['settings'].get('securityKeysNoUserVerify', False)
 
-        no_user_verify = acct_summary_dict['settings'].get('securityKeysNoUserVerify', False)
-        print("{:>32}: {}".format(
-            'Security Key No PIN', (bcolors.OKGREEN + 'ON' + bcolors.ENDC)
-            if no_user_verify else (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
-
-        if 'securityKeysNoUserVerify' in acct_summary_dict['settings']:
-            device_timeout = get_delta_from_timeout_setting(acct_summary_dict['settings']['logoutTimer'])
-            print("{:>32}: {}".format('Device Logout Timeout', format_timeout(device_timeout)))
-
+        # Device Logout Timeout
         if 'logoutTimer' in acct_summary_dict['settings']:
             device_timeout = get_delta_from_timeout_setting(acct_summary_dict['settings']['logoutTimer'])
-            print("{:>32}: {}".format('Device Logout Timeout', format_timeout(device_timeout)))
-
+            device_timeout_str = format_timeout(device_timeout)
         else:
             device_timeout = timedelta(hours=1)
-            print("{:>32}: Default".format('Logout Timeout'))
+            device_timeout_str = 'Default'
 
+        # Enterprise Logout Timeout
+        enterprise_timeout = None
+        enterprise_timeout_str = None
+        effective_timeout_str = None
         if 'Enforcements' in acct_summary_dict and 'longs' in acct_summary_dict['Enforcements']:
             logout_timeout = next((x['value'] for x in acct_summary_dict['Enforcements']['longs']
                                     if x['key'] == 'logout_timer_desktop'), None)
             if logout_timeout:
                 enterprise_timeout = timedelta(minutes=int(logout_timeout))
-                print("{:>32}: {}".format('Enterprise Logout Timeout', format_timeout(enterprise_timeout)))
+                enterprise_timeout_str = format_timeout(enterprise_timeout)
+                effective_timeout_str = format_timeout(min(enterprise_timeout, device_timeout))
 
-                print("{:>32}: {}".format('Effective Logout Timeout',
-                                          format_timeout(min(enterprise_timeout, device_timeout))))
+        is_sso_user = params.settings.get('sso_user', False) if hasattr(params, 'settings') else False
+        config_file = params.config_filename if hasattr(params, 'config_filename') else None
 
-        print('{:>32}: {}'.format('Is SSO User', params.settings['sso_user'] if 'sso_user' in params.settings else False))
+        return {
+            'device_name': device_name,
+            'data_key_present': data_key_present,
+            'ip_auto_approve': ip_auto_approve,
+            'persistent_login': persistent_login,
+            'security_key_no_pin': security_key_no_pin,
+            'device_logout_timeout': device_timeout_str,
+            'enterprise_logout_timeout': enterprise_timeout_str,
+            'effective_logout_timeout': effective_timeout_str,
+            'is_sso_user': is_sso_user,
+            'config_file': config_file,
+        }
 
-        print('{:>32}: {}'.format('Config file', params.config_filename))
+    @staticmethod
+    def print_device_info(params: KeeperParams, output_format: str = 'text'):
+        device_info = ThisDeviceCommand.get_device_info(params)
+
+        device_name = device_info['device_name']
+        data_key_present = device_info['data_key_present']
+        ip_auto_approve = device_info['ip_auto_approve']
+        persistent_login = device_info['persistent_login']
+        security_key_no_pin = device_info['security_key_no_pin']
+        device_timeout_str = device_info['device_logout_timeout']
+        enterprise_timeout_str = device_info['enterprise_logout_timeout']
+        effective_timeout_str = device_info['effective_logout_timeout']
+        is_sso_user = device_info['is_sso_user']
+        config_file = device_info['config_file']
+
+        # JSON output
+        if output_format == 'json':
+            import json
+            print(json.dumps(device_info))
+            return
+
+        # Text output
+        print('{:>32}: {}'.format('Device Name', device_name))
+
+        if data_key_present is not None:
+            print("{:>32}: {}".format('Data Key Present', (bcolors.OKGREEN + 'YES' + bcolors.ENDC) if data_key_present else (bcolors.FAIL + 'NO' + bcolors.ENDC)))
+        else:
+            print("{:>32}: {}".format('Data Key Present', (bcolors.FAIL + 'missing' + bcolors.ENDC)))
+
+        print("{:>32}: {}".format('IP Auto Approve',
+                                  (bcolors.OKGREEN + 'ON' + bcolors.ENDC) if ip_auto_approve else (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
+
+        print("{:>32}: {}".format('Persistent Login',
+                                  (bcolors.OKGREEN + 'ON' + bcolors.ENDC) if persistent_login else (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
+
+        print("{:>32}: {}".format('Security Key No PIN',
+                                  (bcolors.OKGREEN + 'ON' + bcolors.ENDC) if security_key_no_pin else (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
+
+        print("{:>32}: {}".format('Device Logout Timeout', device_timeout_str))
+
+        if enterprise_timeout_str:
+            print("{:>32}: {}".format('Enterprise Logout Timeout', enterprise_timeout_str))
+            print("{:>32}: {}".format('Effective Logout Timeout', effective_timeout_str))
+
+        print('{:>32}: {}'.format('Is SSO User', is_sso_user))
+
+        print('{:>32}: {}'.format('Config file', config_file))
 
         print("\nAvailable sub-commands: ", bcolors.OKBLUE + (", ".join(this_device_available_command_verbs)) + bcolors.ENDC)
 
@@ -1121,6 +1165,60 @@ class RecordDeleteAllCommand(Command):
 class WhoamiCommand(Command):
     def get_parser(self):
         return whoami_parser
+
+    @staticmethod
+    def get_whoami_info(params: KeeperParams, verbose: bool = False):
+        """Get whoami info as a dictionary (for programmatic use)"""
+        data = {}
+
+        if params.session_token:
+            data['logged_in'] = True
+            hostname = get_hostname(params.rest_context.server_base)
+            data['user'] = params.user
+            data['server'] = hostname
+            data['data_center'] = get_data_center(hostname)
+
+            environment = get_environment(hostname)
+            if environment:
+                data['environment'] = environment
+
+            if params.license:
+                account_type = params.license['account_type'] if 'account_type' in params.license else None
+                if account_type == 2:
+                    data['admin'] = params.enterprise is not None
+
+                account_type_name = 'Enterprise' if account_type == 2 \
+                    else 'Family Plan' if account_type == 1 \
+                    else params.license['product_type_name']
+                data['account_type'] = account_type_name
+                data['renewal_date'] = params.license['expiration_date']
+
+                if 'bytes_total' in params.license:
+                    storage_bytes = int(params.license['bytes_total'])
+                    storage_gb = storage_bytes >> 30
+                    storage_bytes_used = params.license['bytes_used'] if 'bytes_used' in params.license else 0
+                    data['storage_capacity'] = f'{storage_gb}GB'
+                    storage_usage = (int(storage_bytes_used) * 100 // storage_bytes) if storage_bytes != 0 else 0
+                    data['storage_usage'] = f'{storage_usage}%'
+                    data['storage_renewal_date'] = params.license['storage_expiration_date']
+
+                data['breachwatch'] = params.license.get('breach_watch_enabled', False)
+                if params.enterprise:
+                    data['reporting_and_alerts'] = params.license.get('audit_and_reporting_enabled', False)
+
+            if verbose:
+                data['records_count'] = len(params.record_cache)
+                sf_count = len(params.shared_folder_cache)
+                if sf_count > 0:
+                    data['shared_folders_count'] = sf_count
+                team_count = len(params.team_cache)
+                if team_count > 0:
+                    data['teams_count'] = team_count
+        else:
+            data['logged_in'] = False
+            data['message'] = 'Not logged in'
+
+        return data
 
     def execute(self, params, **kwargs):
         json_output = kwargs.get('json_output', False)
@@ -2066,7 +2164,7 @@ class SyncSecurityDataCommand(Command):
             api.sync_down(params)
         if not kwargs.get('quiet'):
             if num_updated:
-                logging.info(f'Updated security data for [{num_updated}] record(s)')
+                logging.info(f'Updated security data for {num_updated} {"record" if num_updated == 1 else "records"}')
             elif not kwargs.get('suppress_no_op') and not num_to_update:
                 logging.info('No records requiring security-data updates found')
 

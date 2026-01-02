@@ -1026,7 +1026,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                 weak_count += 1
             if weak_count > 0:
                 logging.info(bcolors.WARNING +
-                             f'The number of records that are affected by breaches or contain high-risk passwords: {weak_count}' +
+                             f'The number of BreachWatch high-risk passwords: {weak_count}' +
                              '\nUse \"breachwatch list\" command to get more details' +
                              bcolors.ENDC)
 
@@ -1036,7 +1036,7 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             if r.get('version', 0) in valid_versions:
                 record_count += 1
         if record_count:
-            logging.info('Decrypted [%d] record(s)', record_count)
+            logging.info('Decrypted %d %s', record_count, 'record' if record_count == 1 else 'records')
 
 
 def _sync_record_types(params):  # type: (KeeperParams) -> Any

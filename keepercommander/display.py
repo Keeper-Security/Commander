@@ -67,6 +67,23 @@ def keeper_colorize(text, color):
     return text
 
 
+def show_government_warning():
+    """Display U.S. Government Information System warning for GOV environments."""
+    print('')
+    print(f'{bcolors.WARNING}' + '=' * 80 + f'{bcolors.ENDC}')
+    print(f'{bcolors.WARNING}U.S. GOVERNMENT INFORMATION SYSTEM{bcolors.ENDC}')
+    print(f'{bcolors.WARNING}' + '=' * 80 + f'{bcolors.ENDC}')
+    print('')
+    print('You are about to access a U.S. Government Information System. Although the')
+    print('encrypted vault adheres to a zero-knowledge security architecture, system')
+    print('access logs are subject to monitoring, recording and audit. Unauthorized')
+    print('use of this system is prohibited and may result in civil and criminal')
+    print('penalties. Your use of this system indicates your acknowledgement and consent.')
+    print('')
+    print(f'{bcolors.WARNING}' + '=' * 80 + f'{bcolors.ENDC}')
+    print('')
+
+
 def welcome():
     lines = []    # type: List[Union[str, Tuple[str, str]]]
 
@@ -107,7 +124,8 @@ def welcome():
                     white_line = ''
             print('\033[2K' + Fore.LIGHTYELLOW_EX + yellow_line + Fore.LIGHTWHITE_EX + white_line)
 
-    print('\033[2K' + Fore.LIGHTBLACK_EX + f'{("v" + __version__):>93}\n' + Style.RESET_ALL)
+    print('\033[2K' + Fore.LIGHTBLACK_EX + f'{("v" + __version__):>93}' + Style.RESET_ALL)
+    print('\033[2K' + Fore.LIGHTCYAN_EX + '                        💻 ' + Fore.WHITE + "Type 'supershell' for full-screen vault browser" + Style.RESET_ALL + '\n')
 
 
 def formatted_records(records, **kwargs):
