@@ -158,7 +158,7 @@ from textual import on, work
 from textual.message import Message
 from textual.timer import Timer
 from rich.text import Text
-from textual.events import Click, Paste
+from textual.events import Click, MouseDown, Paste
 
 from ..commands.base import Command
 
@@ -204,8 +204,8 @@ class ClickableDetailLine(Static):
         classes = "has-value" if copy_value else ""
         super().__init__(content, classes=classes, *args, **kwargs)
 
-    def on_click(self, event: Click) -> None:
-        """Handle click to copy value"""
+    def on_mouse_down(self, event: MouseDown) -> None:
+        """Handle mouse down to copy value - fires immediately without waiting for focus"""
         if self.copy_value:
             try:
                 if self.is_password and self.record_uid:
@@ -277,8 +277,8 @@ class ClickableField(Static):
 
         super().__init__(content, classes=classes, *args, **kwargs)
 
-    def on_click(self, event: Click) -> None:
-        """Handle click to copy value"""
+    def on_mouse_down(self, event: MouseDown) -> None:
+        """Handle mouse down to copy value - fires immediately without waiting for focus"""
         if self.copy_value:
             try:
                 pyperclip.copy(self.copy_value)
@@ -332,8 +332,8 @@ class ClickableRecordUID(Static):
 
         super().__init__(content, *args, **kwargs)
 
-    def on_click(self, event: Click) -> None:
-        """Handle click to navigate to record"""
+    def on_mouse_down(self, event: MouseDown) -> None:
+        """Handle mouse down to navigate to record - fires immediately without waiting for focus"""
         # Find the app and trigger record selection
         app = self.app
         if hasattr(app, 'records') and self.record_uid in app.records:
@@ -368,8 +368,9 @@ class PreferencesScreen(ModalScreen):
     }
 
     #prefs_container {
-        width: 50;
+        width: 40;
         height: auto;
+        max-height: 90%;
         background: #111111;
         border: solid #444444;
         padding: 1 2;
@@ -381,29 +382,21 @@ class PreferencesScreen(ModalScreen):
         padding-bottom: 1;
     }
 
-    .theme_option {
-        width: 100%;
-        height: 3;
-        margin: 0 0 1 0;
-        content-align: center middle;
+    #prefs_content {
+        height: auto;
+        padding: 0 1;
     }
 
-    .theme_option:hover {
-        background: #333333;
-    }
-
-    .theme_selected {
-        border: solid;
-    }
-
-    #close_btn {
-        margin-top: 1;
-        width: 100%;
+    #prefs_footer {
+        text-align: center;
+        padding-top: 1;
+        color: #666666;
     }
     """
 
     BINDINGS = [
         Binding("escape", "dismiss", "Close", show=False),
+        Binding("q", "dismiss", "Close", show=False),
         Binding("1", "select_green", "Green", show=False),
         Binding("2", "select_blue", "Blue", show=False),
         Binding("3", "select_magenta", "Magenta", show=False),
@@ -418,37 +411,25 @@ class PreferencesScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         current = self.app_instance.color_theme
         with Vertical(id="prefs_container"):
-            yield Static("[bold]⚙ Preferences[/bold]", id="prefs_title")
-            yield Static("[dim]Select color theme (1-5):[/dim]")
-            yield Button(f"{'●' if current == 'green' else '○'} [#00ff00]1. Green[/#00ff00]", id="btn_green", classes="theme_option")
-            yield Button(f"{'●' if current == 'blue' else '○'} [#0099ff]2. Blue[/#0099ff]", id="btn_blue", classes="theme_option")
-            yield Button(f"{'●' if current == 'magenta' else '○'} [#ff66ff]3. Magenta[/#ff66ff]", id="btn_magenta", classes="theme_option")
-            yield Button(f"{'●' if current == 'yellow' else '○'} [#ffff00]4. Yellow[/#ffff00]", id="btn_yellow", classes="theme_option")
-            yield Button(f"{'●' if current == 'white' else '○'} [#ffffff]5. White[/#ffffff]", id="btn_white", classes="theme_option")
-            yield Button("Close [ESC]", id="close_btn", variant="primary")
+            yield Static("[bold cyan]⚙ Preferences[/bold cyan]", id="prefs_title")
+            yield Static(f"""[green]Color Theme:[/green]
+  [#00ff00]1[/#00ff00]  {'●' if current == 'green' else '○'} Green
+  [#0099ff]2[/#0099ff]  {'●' if current == 'blue' else '○'} Blue
+  [#ff66ff]3[/#ff66ff]  {'●' if current == 'magenta' else '○'} Magenta
+  [#ffff00]4[/#ffff00]  {'●' if current == 'yellow' else '○'} Yellow
+  [#ffffff]5[/#ffffff]  {'●' if current == 'white' else '○'} White""", id="prefs_content")
+            yield Static("[dim]Press 1-5 to select, Esc or q to close[/dim]", id="prefs_footer")
 
-    @on(Button.Pressed, "#btn_green")
-    def select_green_btn(self):
-        self._apply_theme('green')
+    def action_dismiss(self):
+        """Close the preferences screen"""
+        self.dismiss()
 
-    @on(Button.Pressed, "#btn_blue")
-    def select_blue_btn(self):
-        self._apply_theme('blue')
+    def key_escape(self):
+        """Handle escape key directly"""
+        self.dismiss()
 
-    @on(Button.Pressed, "#btn_magenta")
-    def select_magenta_btn(self):
-        self._apply_theme('magenta')
-
-    @on(Button.Pressed, "#btn_yellow")
-    def select_yellow_btn(self):
-        self._apply_theme('yellow')
-
-    @on(Button.Pressed, "#btn_white")
-    def select_white_btn(self):
-        self._apply_theme('white')
-
-    @on(Button.Pressed, "#close_btn")
-    def close_prefs(self):
+    def key_q(self):
+        """Handle q key directly"""
         self.dismiss()
 
     def action_select_green(self):
@@ -535,17 +516,18 @@ class HelpScreen(ModalScreen):
   Ctrl+U        Clear search input
   Esc           Clear search & focus tree
 
-[green]Actions:[/green]
-  t             Toggle Detail/JSON view
-  d             Sync & refresh vault
-  p             Preferences (color theme)
-
 [green]Copy to Clipboard:[/green]
-  c             Password
+  p             Password
   u             Username
+  c             Copy all (entire record)
   w             URL
   i             Record UID
-  y             Copy entire record
+
+[green]Actions:[/green]
+  t             Toggle Detail/JSON view
+  m             Mask/Unmask secrets
+  d             Sync & refresh vault
+  P             Preferences (color theme)
 
 [green]General:[/green]
   ?             Show this help
@@ -784,13 +766,14 @@ class SuperShellApp(App):
         Binding("ctrl+q", "quit", "Quit", show=False),
         Binding("d", "sync_vault", "Sync", show=False),
         Binding("/", "search", "Search", show=False),
-        Binding("p", "show_preferences", "Preferences", show=False),
-        Binding("c", "copy_password", "Copy Password", show=False),
+        Binding("P", "show_preferences", "Preferences", show=False),
+        Binding("p", "copy_password", "Copy Password", show=False),
         Binding("u", "copy_username", "Copy Username", show=False),
         Binding("w", "copy_url", "Copy URL", show=False),
         Binding("i", "copy_uid", "Copy UID", show=False),
-        Binding("y", "copy_record", "Copy Record", show=False),
+        Binding("c", "copy_record", "Copy All", show=False),
         Binding("t", "toggle_view_mode", "Toggle JSON", show=False),
+        Binding("m", "toggle_unmask", "Toggle Unmask", show=False),
         Binding("?", "show_help", "Help", show=False),
         # Vim-style navigation
         Binding("j", "cursor_down", "Down", show=False),
@@ -821,6 +804,7 @@ class SuperShellApp(App):
         self.selected_record = None
         self.selected_folder = None
         self.view_mode = 'detail'  # 'detail' or 'json'
+        self.unmask_secrets = False  # When True, show secret/password/passphrase field values
         self.search_query = ""  # Current search query
         self.search_input_text = ""  # Text being typed in search
         self.search_input_active = False  # True when typing in search, False when navigating results
@@ -953,10 +937,11 @@ class SuperShellApp(App):
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+e/y[/{t['primary']}] - Scroll down/up one line
 
 [bold {t['primary_bright']}]Quick Actions[/bold {t['primary_bright']}]
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]c[/{t['primary']}] - Copy password
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]p[/{t['primary']}] - Copy password
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]u[/{t['primary']}] - Copy username
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]w[/{t['primary']}] - Copy URL
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]c[/{t['primary']}] - Copy all
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]t[/{t['primary']}] - Toggle Detail/JSON view
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]m[/{t['primary']}] - Mask/Unmask secrets
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]d[/{t['primary']}] - Sync & refresh vault
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]![/{t['primary']}] - Exit to Keeper shell
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+q[/{t['primary']}] - Quit SuperShell
@@ -2400,7 +2385,11 @@ class SuperShellApp(App):
                     mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary_dim']}]{rich_escape(str(display_type))}[/{t['primary_dim']}]", display_type)
                 elif key == 'Password':
                     # Show masked password but use ClipboardCommand to copy (generates audit event)
-                    display_value = '******' if actual_password else value
+                    # Respect unmask_secrets toggle
+                    if self.unmask_secrets:
+                        display_value = actual_password if actual_password else value
+                    else:
+                        display_value = '******' if actual_password else value
                     copy_value = actual_password if actual_password else None
                     mount_line(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(display_value))}[/{t['primary']}]", copy_value, is_password=True)
                 elif key == 'URL':
@@ -2467,7 +2456,16 @@ class SuperShellApp(App):
                             mount_line("", None)  # Blank line between users
                         seen_first_user = True
                     indent = "  " if current_section else ""
-                    mount_line(f"{indent}[{t['text_dim']}]{rich_escape(str(display_key))}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]", value)
+
+                    # Check if this is a sensitive field that should be masked
+                    is_sensitive = self._is_sensitive_field(display_key) or self._is_sensitive_field(key)
+                    if is_sensitive and not self.unmask_secrets:
+                        display_value = '******'
+                        # Use is_password=False so it uses pyperclip.copy(value) instead of ClipboardCommand
+                        # ClipboardCommand only copies the record's Password field, not arbitrary secret fields
+                        mount_line(f"{indent}[{t['text_dim']}]{rich_escape(str(display_key))}:[/{t['text_dim']}] [{t['primary']}]{display_value}[/{t['primary']}]", value)
+                    else:
+                        mount_line(f"{indent}[{t['text_dim']}]{rich_escape(str(display_key))}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]", value)
                 elif key:
                     mount_line(f"  [{t['primary_dim']}]{rich_escape(str(key))}[/{t['primary_dim']}]", key)
             else:
@@ -2731,8 +2729,18 @@ class SuperShellApp(App):
                 self._render_json_list_items(value, unmasked_inner, mount_line, t, record_uid, indent + 1)
                 mount_line(f"{indent_str}[{bracket_color}]][/{bracket_color}]{comma}")
 
-    def _mask_passwords_in_json(self, obj):
-        """Recursively mask password values in JSON object for display"""
+    def _is_sensitive_field(self, field_name: str) -> bool:
+        """Check if a field name indicates it contains sensitive data"""
+        if not field_name:
+            return False
+        name_lower = field_name.lower()
+        return any(term in name_lower for term in ('secret', 'password', 'passphrase'))
+
+    def _mask_passwords_in_json(self, obj, parent_key: str = None):
+        """Recursively mask password/secret/passphrase values in JSON object for display"""
+        if self.unmask_secrets:
+            return obj  # Don't mask if unmask mode is enabled
+
         if isinstance(obj, dict):
             # Check if this dict is a password field (has type: "password")
             if obj.get('type') == 'password':
@@ -2740,13 +2748,24 @@ class SuperShellApp(App):
                 if 'value' in masked and isinstance(masked['value'], list) and len(masked['value']) > 0:
                     masked['value'] = ['************']
                 return masked
+            # Check if this dict has a label that indicates sensitive data
+            label = obj.get('label', '')
+            if self._is_sensitive_field(label):
+                masked = dict(obj)
+                if 'value' in masked and isinstance(masked['value'], list) and len(masked['value']) > 0:
+                    masked['value'] = ['************']
+                return masked
             # Otherwise recurse into dict values
             result = {}
             for key, value in obj.items():
-                result[key] = self._mask_passwords_in_json(value)
+                # Check if key itself indicates sensitive data
+                if self._is_sensitive_field(key) and isinstance(value, str) and value:
+                    result[key] = '************'
+                else:
+                    result[key] = self._mask_passwords_in_json(value, parent_key=key)
             return result
         elif isinstance(obj, list):
-            return [self._mask_passwords_in_json(item) for item in obj]
+            return [self._mask_passwords_in_json(item, parent_key=parent_key) for item in obj]
         else:
             return obj
 
@@ -3047,23 +3066,23 @@ class SuperShellApp(App):
                 shortcuts_bar.update("")
             elif record_selected:
                 mode = "JSON" if self.view_mode == 'json' else "Detail"
+                mask_label = "Mask" if self.unmask_secrets else "Unmask"
                 shortcuts_bar.update(
                     f"[{t['secondary']}]Mode: {mode}[/{t['secondary']}]  "
-                    f"[{t['text_dim']}]c[/{t['text_dim']}]=Password  "
+                    f"[{t['text_dim']}]t[/{t['text_dim']}]=Toggle  "
+                    f"[{t['text_dim']}]p[/{t['text_dim']}]=Password  "
                     f"[{t['text_dim']}]u[/{t['text_dim']}]=Username  "
-                    f"[{t['text_dim']}]w[/{t['text_dim']}]=URL  "
-                    f"[{t['text_dim']}]i[/{t['text_dim']}]=UID  "
-                    f"[{t['text_dim']}]y[/{t['text_dim']}]=Copy  "
-                    f"[{t['text_dim']}]t[/{t['text_dim']}]=Toggle"
+                    f"[{t['text_dim']}]c[/{t['text_dim']}]=Copy All  "
+                    f"[{t['text_dim']}]m[/{t['text_dim']}]={mask_label}"
                 )
             elif folder_selected:
                 mode = "JSON" if self.view_mode == 'json' else "Detail"
+                mask_label = "Mask" if self.unmask_secrets else "Unmask"
                 shortcuts_bar.update(
                     f"[{t['secondary']}]Mode: {mode}[/{t['secondary']}]  "
-                    f"[{t['text_dim']}]i[/{t['text_dim']}]=UID  "
-                    f"[{t['text_dim']}]y[/{t['text_dim']}]=Copy  "
                     f"[{t['text_dim']}]t[/{t['text_dim']}]=Toggle  "
-                    f"[{t['text_dim']}]?[/{t['text_dim']}]=Help"
+                    f"[{t['text_dim']}]c[/{t['text_dim']}]=Copy All  "
+                    f"[{t['text_dim']}]m[/{t['text_dim']}]={mask_label}"
                 )
             else:
                 # Root or other - hide navigation help
@@ -3189,10 +3208,11 @@ class SuperShellApp(App):
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+e/y[/{t['primary']}] - Scroll down/up one line
 
 [bold {t['primary_bright']}]Quick Actions[/bold {t['primary_bright']}]
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]c[/{t['primary']}] - Copy password
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]p[/{t['primary']}] - Copy password
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]u[/{t['primary']}] - Copy username
-  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]w[/{t['primary']}] - Copy URL
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]c[/{t['primary']}] - Copy all
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]t[/{t['primary']}] - Toggle Detail/JSON view
+  [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]m[/{t['primary']}] - Mask/Unmask secrets
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]d[/{t['primary']}] - Sync & refresh vault
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]![/{t['primary']}] - Exit to Keeper shell
   [{t['text_dim']}]•[/{t['text_dim']}] [{t['primary']}]Ctrl+q[/{t['primary']}] - Quit SuperShell
@@ -3643,6 +3663,27 @@ class SuperShellApp(App):
             logging.error(f"Error toggling view mode: {e}", exc_info=True)
             self.notify(f"⚠️  Error switching view: {str(e)}", severity="error")
 
+    def action_toggle_unmask(self):
+        """Toggle unmasking of secret/password/passphrase fields"""
+        if not self.selected_record and not self.selected_folder:
+            self.notify("No record or folder selected", severity="warning")
+            return
+
+        self.unmask_secrets = not self.unmask_secrets
+        status = "unmasked" if self.unmask_secrets else "masked"
+        self.notify(f"Secrets {status}", severity="information")
+
+        # Refresh the current display and shortcuts bar
+        try:
+            if self.selected_record:
+                self._display_record_detail(self.selected_record)
+                self._update_shortcuts_bar(record_selected=True)
+            elif self.selected_folder:
+                self._display_folder_with_clickable_fields(self.selected_folder)
+                self._update_shortcuts_bar(folder_selected=True)
+        except Exception as e:
+            logging.error(f"Error toggling unmask: {e}", exc_info=True)
+
     def action_copy_password(self):
         """Copy password of selected record to clipboard using clipboard-copy command (generates audit event)"""
         if self.selected_record and self.selected_record in self.records:
@@ -4026,7 +4067,7 @@ class SuperShellCommand(Command):
             result = app.run()
 
             # If user pressed '!' to exit to shell, start the Keeper shell
-            if result and "Exited to shell" in str(result):
+            if result and "Exited to Keeper shell" in str(result):
                 print(result)  # Show the exit message
                 # Check if we were in batch mode BEFORE modifying it
                 was_batch_mode = params.batch_mode
