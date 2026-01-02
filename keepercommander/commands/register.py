@@ -1890,14 +1890,15 @@ class FindOwnerlessCommand(Command):
         verbose = kwargs.get('verbose') or not claim_records or out
         records_dump = None
         if ownerless_records:
-            logging.info(f'Found [{len(ownerless_records)}] ownerless record(s)')
+            count = len(ownerless_records)
+            logging.info(f'Found {count} ownerless {"record" if count == 1 else "records"}')
             if verbose:
                 records_dump = dump_record_details(ownerless_records, out, fmt)
             if claim_records:
                 claim_ownerless_records(ownerless_records)
                 SyncDownCommand().execute(params, force=True)
             else:
-                logging.info('To claim the record(s) found above, re-run this command with the --claim flag.')
+                logging.info('To claim the records found above, re-run this command with the --claim flag.')
         else:
             logging.info('No ownerless records found')
         return records_dump

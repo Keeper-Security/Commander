@@ -5,6 +5,7 @@ prompt_toolkit
 pycryptodomex
 pyperclip
 tabulate
+textual>=0.82.0
 websockets
 fido2>=2.0.0; python_version>='3.10'
 requests>=2.31.0

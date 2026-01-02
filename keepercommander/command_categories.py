@@ -90,18 +90,13 @@ COMMAND_CATEGORIES = {
     'Email Configuration Commands': {
         'email-config'
     },
-    
-    # Email Configuration Commands
-    'Email Configuration Commands': {
-        'email-config'
-    },
 
     # Miscellaneous Commands
     'Miscellaneous Commands': {
         'this-device', 'login', 'login-status', 'biometric', 'whoami', 'logout',
         'help', 'sync-down', 'version', 'clear', 'run-batch', 'generate',
         'reset-password', 'sync-security-data', 'keeper-fill', '2fa', 'create-account',
-        'run-as', 'sleep', 'server', 'proxy', 'keep-alive'
+        'run-as', 'sleep', 'server', 'proxy', 'keep-alive', 'supershell'
     },
 
     # KeeperPAM Commands
@@ -141,7 +136,6 @@ def get_category_order():
         'Domain Management Commands',
         'Email Configuration Commands',
         'Service Mode REST API',
-        'Email Configuration Commands',
         'Miscellaneous Commands',
         'KeeperPAM Commands',
         'Legacy Commands',

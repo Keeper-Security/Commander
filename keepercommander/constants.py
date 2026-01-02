@@ -323,6 +323,72 @@ KEEPER_PUBLIC_HOSTS = {
     'GOV': 'govcloud.keepersecurity.us'
 }
 
+# All valid Keeper server hosts including dev and QA environments
+KEEPER_SERVERS = {
+    # Production
+    'US': 'keepersecurity.com',
+    'EU': 'keepersecurity.eu',
+    'AU': 'keepersecurity.com.au',
+    'CA': 'keepersecurity.ca',
+    'JP': 'keepersecurity.jp',
+    'GOV': 'govcloud.keepersecurity.us',
+    # Dev environments
+    'US_DEV': 'dev.keepersecurity.com',
+    'EU_DEV': 'dev.keepersecurity.eu',
+    'AU_DEV': 'dev.keepersecurity.com.au',
+    'CA_DEV': 'dev.keepersecurity.ca',
+    'JP_DEV': 'dev.keepersecurity.jp',
+    'GOV_DEV': 'govcloud.dev.keepersecurity.us',
+    # QA environments
+    'US_QA': 'qa.keepersecurity.com',
+    'EU_QA': 'qa.keepersecurity.eu',
+    'AU_QA': 'qa.keepersecurity.com.au',
+    'CA_QA': 'qa.keepersecurity.ca',
+    'JP_QA': 'qa.keepersecurity.jp',
+    'GOV_QA': 'govcloud.qa.keepersecurity.us',
+}
+
+
+def resolve_server(server_input):
+    """
+    Resolve a server input to a valid Keeper host.
+
+    Args:
+        server_input: Can be a region code (US, EU, GOV_DEV, etc.) or a full hostname
+
+    Returns:
+        The resolved hostname if valid, None if invalid
+
+    Examples:
+        resolve_server('US') -> 'keepersecurity.com'
+        resolve_server('us') -> 'keepersecurity.com'
+        resolve_server('GOV_DEV') -> 'govcloud.dev.keepersecurity.us'
+        resolve_server('keepersecurity.eu') -> 'keepersecurity.eu'
+        resolve_server('foo.com') -> None
+    """
+    if not server_input:
+        return None
+
+    # Normalize input - uppercase for lookup
+    server_upper = server_input.upper().replace('-', '_')
+
+    # Check if it's a region code
+    if server_upper in KEEPER_SERVERS:
+        return KEEPER_SERVERS[server_upper]
+
+    # Check if it's already a valid hostname (direct match)
+    server_lower = server_input.lower()
+    if server_lower in KEEPER_SERVERS.values():
+        return server_lower
+
+    # Not a valid server
+    return None
+
+
+def get_valid_server_codes():
+    """Return list of valid server codes for help text"""
+    return sorted(KEEPER_SERVERS.keys())
+
 
 def get_abbrev_by_host(host):
     # Return abbreviation of the Keeper's public host
