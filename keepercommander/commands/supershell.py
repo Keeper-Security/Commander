@@ -467,7 +467,7 @@ class HelpScreen(ModalScreen):
     }
 
     #help_container {
-        width: 70;
+        width: 90;
         height: auto;
         max-height: 90%;
         background: #111111;
@@ -481,7 +481,12 @@ class HelpScreen(ModalScreen):
         padding-bottom: 1;
     }
 
-    #help_content {
+    #help_columns {
+        height: auto;
+    }
+
+    .help_column {
+        width: 1fr;
         height: auto;
         padding: 0 1;
     }
@@ -501,38 +506,40 @@ class HelpScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="help_container"):
             yield Static("[bold cyan]⌨ Keyboard Shortcuts[/bold cyan]", id="help_title")
-            yield Static("""[green]Navigation:[/green]
-  j/k or ↑/↓    Move up/down
-  h/l or ←/→    Collapse/expand folder
-  g / G         Go to top / bottom
-  Ctrl+d/u      Half page down/up
-  Ctrl+e/y      Scroll down/up one line
-  Esc           Clear search / collapse folder
+            with Horizontal(id="help_columns"):
+                yield Static("""[green]Navigation:[/green]
+  j/k ↑/↓       Move up/down
+  h/l ←/→       Collapse/expand
+  g / G         Top / bottom
+  Ctrl+d/u      Half page
+  Ctrl+e/y      Scroll line
+  Esc           Clear/collapse
 
 [green]Focus Cycling:[/green]
-  Tab           Cycle: Tree → Detail → Search
+  Tab           Tree→Detail→Search
   Shift+Tab     Cycle backwards
-  /             Focus search input directly
-  Ctrl+U        Clear search input
-  Esc           Clear search & focus tree
+  /             Focus search
+  Ctrl+U        Clear search
+  Esc           Focus tree
 
-[green]Copy to Clipboard:[/green]
+[green]General:[/green]
+  ?             Help
+  !             Keeper shell
+  Ctrl+q        Quit""", classes="help_column")
+                yield Static("""[green]Copy to Clipboard:[/green]
   p             Password
   u             Username
-  c             Copy all (entire record)
+  c             Copy all
   w             URL
   i             Record UID
 
 [green]Actions:[/green]
-  t             Toggle Detail/JSON view
-  m             Mask/Unmask secrets
-  d             Sync & refresh vault
-  P             Preferences (color theme)
-
-[green]General:[/green]
-  ?             Show this help
-  !             Exit to Keeper shell
-  Ctrl+q        Quit SuperShell""", id="help_content")
+  t             Toggle JSON view
+  m             Mask/Unmask
+  d             Sync vault
+  W             User info
+  D             Device info
+  P             Preferences""", classes="help_column")
             yield Static("[dim]Press Esc or q to close[/dim]", id="help_footer")
 
     def action_dismiss(self):
@@ -774,6 +781,8 @@ class SuperShellApp(App):
         Binding("c", "copy_record", "Copy All", show=False),
         Binding("t", "toggle_view_mode", "Toggle JSON", show=False),
         Binding("m", "toggle_unmask", "Toggle Unmask", show=False),
+        Binding("W", "show_user_info", "User Info", show=False),
+        Binding("D", "show_device_info", "Device Info", show=False),
         Binding("?", "show_help", "Help", show=False),
         # Vim-style navigation
         Binding("j", "cursor_down", "Down", show=False),
@@ -3342,6 +3351,18 @@ class SuperShellApp(App):
                 event.prevent_default()
                 event.stop()
                 return
+            elif event.key == "ctrl+y":
+                # Ctrl+Y scrolls viewport up (like vim)
+                detail_scroll.scroll_relative(y=-1)
+                event.prevent_default()
+                event.stop()
+                return
+            elif event.key == "ctrl+e":
+                # Ctrl+E scrolls viewport down (like vim)
+                detail_scroll.scroll_relative(y=1)
+                event.prevent_default()
+                event.stop()
+                return
 
         if search_bar.styles.display != "none":
             # Search bar is active
@@ -3773,6 +3794,14 @@ class SuperShellApp(App):
     def action_show_help(self):
         """Show help modal"""
         self.push_screen(HelpScreen())
+
+    def action_show_user_info(self):
+        """Show user/whoami information in detail panel"""
+        self._display_whoami_info()
+
+    def action_show_device_info(self):
+        """Show device information in detail panel"""
+        self._display_device_info()
 
     def action_sync_vault(self):
         """Sync vault data from server (sync-down + enterprise-down) and refresh UI"""
