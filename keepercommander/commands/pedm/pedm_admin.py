@@ -173,7 +173,7 @@ class PedmUtils:
 
 class PedmCommand(base.GroupCommandNew):
     def __init__(self):
-        super().__init__('Enterprise Privilege Manager - EPM')
+        super().__init__('Administration of Endpoint Privilege Manager features')
         self.register_command_new(PedmSyncDownCommand(), 'sync-down')
         self.register_command_new(PedmDeploymentCommand(), 'deployment', 'd')
         self.register_command_new(PedmAgentCommand(), 'agent', 'a')

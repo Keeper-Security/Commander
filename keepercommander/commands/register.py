@@ -159,7 +159,7 @@ record_permission_parser.add_argument('folder', nargs='?', type=str, action='sto
 record_permission_parser.error = raise_parse_exception
 record_permission_parser.exit = suppress_exit
 
-find_ownerless_desc = 'List (and, optionally, claim) records in the user\'s vault that currently do not have an owner'
+find_ownerless_desc = 'List (and, optionally, claim) ownerless records in the vault'
 find_ownerless_parser = argparse.ArgumentParser(prog='find-ownerless', description=find_ownerless_desc,
                                                 parents=[base.report_output_parser])
 find_ownerless_parser.add_argument('--claim', dest='claim', action='store_true', help='claim records found')

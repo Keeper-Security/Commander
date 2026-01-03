@@ -628,7 +628,7 @@ class SuperShellApp(App):
     }
 
     #user_info {
-        width: 25%;
+        width: auto;
         height: 3;
         background: #222222;
         color: #888888;
@@ -637,11 +637,10 @@ class SuperShellApp(App):
 
     #device_status_info {
         width: auto;
-        min-width: 30;
         height: 3;
         background: #222222;
         color: #888888;
-        padding: 0 1;
+        padding: 0 2;
         text-align: right;
     }
 
@@ -1071,6 +1070,10 @@ class SuperShellApp(App):
             logging.error(f"Error initializing SuperShell: {e}", exc_info=True)
             self.exit(message=f"Error: {str(e)}")
 
+    def on_resize(self, event) -> None:
+        """Handle window resize - update header to show/hide sections based on available width"""
+        self._update_header_info_display()
+
     def _load_vault_data(self):
         """Load vault data from params"""
         # Build record to folder mapping using subfolder_record_cache
@@ -1376,27 +1379,74 @@ class SuperShellApp(App):
             device_status_widget = self.query_one("#device_status_info", Static)
             t = self.theme_colors
 
-            # Update user info (from whoami)
-            if hasattr(self, 'whoami_info') and self.whoami_info:
-                wi = self.whoami_info
-                user = wi.get('user', 'Unknown')
-                data_center = wi.get('data_center', '')
-                user_color = t.get('header_user', t['primary'])
-                user_info_widget.update(f"[{user_color}]{user}[/{user_color}] │ [{t['text_dim']}]{data_center}[/{t['text_dim']}]")
-            else:
-                user_info_widget.update("[dim]User info unavailable[/dim]")
+            # Get available width for the header info area (roughly half the screen minus search)
+            try:
+                available_width = self.size.width // 2 - 10  # Approximate space for header info
+            except:
+                available_width = 80  # Default fallback
 
-            # Update device status (from this-device)
+            separator = " │ "
+            sep_len = 3
+
+            # === User info widget: email | DC (click shows whoami) ===
+            user_parts = []
+            user_len = 0
+
+            if hasattr(self, 'whoami_info') and self.whoami_info:
+                user = self.whoami_info.get('user', '')
+                if user:
+                    # Truncate email if longer than 30 chars
+                    max_email_len = 30
+                    if len(user) > max_email_len:
+                        user_display = user[:max_email_len-3] + '...'
+                    else:
+                        user_display = user
+                    user_parts.append(f"[{t['primary']}]{user_display}[/{t['primary']}]")
+                    user_len = len(user_display)
+
+                # Data center
+                data_center = self.whoami_info.get('data_center', '')
+                if data_center and user_len + sep_len + len(data_center) < available_width // 2:
+                    user_parts.append(f"[{t['primary']}]{data_center}[/{t['primary']}]")
+                    user_len += sep_len + len(data_center)
+
+            if user_parts:
+                user_info_widget.update(separator.join(user_parts))
+            else:
+                user_info_widget.update("")
+
+            # === Device status widget: Stay Logged In | Logout (click shows device info) ===
+            device_parts = []
+            device_len = 0
+            remaining_width = available_width - user_len - sep_len
+
             if hasattr(self, 'device_info') and self.device_info:
                 di = self.device_info
-                persistent = "[green]ON[/green]" if di.get('persistent_login') else "[red]OFF[/red]"
-                timeout = di.get('effective_logout_timeout') or di.get('device_logout_timeout') or 'Default'
-                # Ensure timeout has a unit (should already, but just in case)
-                if timeout and timeout != 'Default' and not any(u in str(timeout) for u in ['day', 'hour', 'minute']):
-                    timeout = f"{timeout} days"
-                device_status_widget.update(f"[{t['text_dim']}]Persistent Login:[/{t['text_dim']}] {persistent} │ [{t['text_dim']}]Timeout:[/{t['text_dim']}] [{t['primary_dim']}]{timeout}[/{t['primary_dim']}]")
+
+                # Stay Logged In status
+                stay_logged_in_len = 19  # "Stay Logged In: OFF"
+                if stay_logged_in_len < remaining_width:
+                    if di.get('persistent_login'):
+                        device_parts.append(f"[{t['text_dim']}]Stay Logged In:[/{t['text_dim']}] [green]ON[/green]")
+                    else:
+                        device_parts.append(f"[{t['text_dim']}]Stay Logged In:[/{t['text_dim']}] [red]OFF[/red]")
+                    device_len = stay_logged_in_len
+
+                # Logout timeout
+                timeout = di.get('effective_logout_timeout') or di.get('device_logout_timeout') or ''
+                if timeout:
+                    timeout_str = str(timeout)
+                    timeout_str = timeout_str.replace(' days', 'd').replace(' day', 'd')
+                    timeout_str = timeout_str.replace(' hours', 'h').replace(' hour', 'h')
+                    timeout_str = timeout_str.replace(' minutes', 'm').replace(' minute', 'm')
+                    logout_text = f"Logout: {timeout_str}"
+                    if device_len + sep_len + len(logout_text) < remaining_width:
+                        device_parts.append(f"[{t['text_dim']}]Logout:[/{t['text_dim']}] [{t['primary_dim']}]{timeout_str}[/{t['primary_dim']}]")
+
+            if device_parts:
+                device_status_widget.update(separator.join(device_parts))
             else:
-                device_status_widget.update("[dim]Device info unavailable[/dim]")
+                device_status_widget.update("")
 
         except Exception as e:
             logging.debug(f"Error updating header info display: {e}")
@@ -3372,7 +3422,7 @@ class SuperShellApp(App):
 
     @on(Click, "#device_status_info")
     def on_device_status_click(self, event: Click) -> None:
-        """Show this-device info when device status is clicked"""
+        """Show device info when Stay Logged In / Logout section is clicked"""
         self._display_device_info()
         event.stop()
 

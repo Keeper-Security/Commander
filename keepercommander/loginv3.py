@@ -447,7 +447,7 @@ class LoginV3Flow:
         elif resp.encryptedDataKeyType == APIRequest_pb2.BY_PASSWORD:
             decrypted_data_key = \
                 utils.decrypt_encryption_params(resp.encryptedDataKey, params.password)
-            login_type_message = bcolors.UNDERLINE + "Password"
+            login_type_message = bcolors.UNDERLINE + "Master Password"
 
         elif resp.encryptedDataKeyType == APIRequest_pb2.BY_ALTERNATE:
             decryption_key = crypto.derive_keyhash_v2('data_key', params.password, params.salt, params.iterations)
