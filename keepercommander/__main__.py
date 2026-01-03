@@ -100,7 +100,7 @@ def usage(m):
     """Show full help with all commands - used for 'keeper help' or 'keeper ?'"""
     print(m)
     parser.print_help()
-    cli.display_command_help(show_enterprise=True, show_shell=True, show_legacy=True)
+    cli.display_command_help(show_enterprise=True, show_shell=True, show_legacy=False)
     sys.exit(1)
 
 
@@ -121,6 +121,7 @@ def show_brief_help():
     print('  --debug                  Turn on debug mode')
     print('  --batch-mode             Run in batch/non-interactive mode')
     print('  --proxy PROXY            Proxy server')
+    print('  --new-login              Force full login (bypass persistent login)')
     print('  --version                Display version')
     print('')
     print('Getting Started:')
@@ -162,6 +163,7 @@ fail_on_throttle_help = 'Disable default client-side pausing of command executio
                         'server-side throttling'
 parser.add_argument('--fail-on-throttle', action='store_true', help=fail_on_throttle_help)
 parser.add_argument('--data-dir', dest='data_dir', action='store', help='Directory to use for Commander data (config, cache, etc.). Overrides environment variables.')
+parser.add_argument('--new-login', dest='new_login', action='store_true', help='Force full login flow (bypass persistent login)')
 parser.add_argument('command', nargs='?', type=str, action='store', help='Command')
 parser.add_argument('options', nargs='*', action='store', help='Options')
 parser.error = usage
@@ -411,10 +413,13 @@ def main(from_package=False):
         # Check if -h/--help is in the arguments for a command
         command_wants_help = any(arg in ('-h', '--help') for arg in original_args_after_command)
 
-        if opts.command in {'shell', 'login', '-'} and not command_wants_help:
-            # Special handling for shell/login/- when NOT asking for help
+        if opts.command in {'shell', '-'} and not command_wants_help:
+            # Special handling for shell/- when NOT asking for help
             if opts.command == '-':
                 params.batch_mode = True
+        elif opts.command == 'login' and not original_args_after_command and not command_wants_help:
+            # 'keeper login' with no args - just open shell and let it handle login
+            pass
         elif opts.command and os.path.isfile(opts.command):
             with open(opts.command, 'r') as f:
                 lines = f.readlines()
@@ -425,12 +430,15 @@ def main(from_package=False):
             if opts.command:
                 # Use the filtered original argument order to preserve proper flag/value pairing
                 options = ' '.join([shlex.quote(x) for x in original_args_after_command]) if original_args_after_command else ''
+                # Inject --new-login into login command if main parser captured it
+                if opts.command == 'login' and opts.new_login:
+                    options = '--new-login ' + options if options else '--new-login'
                 command = ' '.join([opts.command or '', options]).strip()
                 params.commands.append(command)
             params.commands.append('q')
             params.batch_mode = True
 
-        errno = cli.loop(params)
+        errno = cli.loop(params, new_login=opts.new_login)
 
     sys.exit(errno)
 

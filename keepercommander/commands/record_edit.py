@@ -71,7 +71,7 @@ record_update_parser.add_argument('fields', nargs='*', type=str,
                                   help='load record type data from strings with dot notation')
 
 
-append_parser = argparse.ArgumentParser(prog='append-notes', description='Append notes to an existing record.')
+append_parser = argparse.ArgumentParser(prog='append-notes', description='Append notes to an existing record')
 append_parser.add_argument('--notes', dest='notes', action='store', help='notes')
 append_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 

@@ -137,7 +137,7 @@ download_record_type_parser.add_argument(
 
 
 load_record_type_parser = argparse.ArgumentParser(
-    prog='load-record-types', description='Loads custom record types from JSON file into Keeper.')
+    prog='load-record-types', description='Loads custom record types from JSON file')
 load_record_type_parser.add_argument(
     'name', type=str, nargs='?', help='Input file name. "record_types.json" if omitted.')
 

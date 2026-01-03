@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Optional, Dict, List, Set
 
+from colorama import Fore, Style
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from google.protobuf.json_format import MessageToDict
 
@@ -40,7 +41,7 @@ from .ksm import KSMCommand, ksm_parser
 from .. import __version__, vault
 from .. import api, rest_api, loginv3, crypto, utils, constants, error, vault_extensions
 from ..breachwatch import BreachWatch
-from ..display import bcolors
+from ..display import bcolors, post_login_summary
 from ..error import CommandError
 from ..generator import KeeperPasswordGenerator, DicewarePasswordGenerator, CryptoPassphraseGenerator
 from ..params import KeeperParams, LAST_RECORD_UID, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
@@ -234,9 +235,51 @@ whoami_parser.exit = suppress_exit
 
 
 this_device_available_command_verbs = ['rename', 'register', 'persistent-login', 'ip-auto-approve', 'no-yubikey-pin', 'timeout', '2fa_expiration']
-this_device_parser = argparse.ArgumentParser(prog='this-device', description='Display and modify settings of the current device')
-this_device_parser.add_argument('ops', nargs='*', help="operation str: " + ", ".join(this_device_available_command_verbs))
-this_device_parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'], default='text', help='output format (text or json)')
+this_device_help_epilog = """
+Sub-commands:
+
+  this-device rename <name>
+      Change the display name of this device
+      Example: this-device rename "My Laptop"
+
+  this-device register
+      Register device for persistent login (stores encrypted data key)
+
+  this-device persistent-login <on|off>
+      Enable/disable 'Stay Logged In' on this device
+      Example: this-device persistent-login on
+
+  this-device timeout <duration>
+      Set auto-logout timer
+      Examples: this-device timeout 10m   (10 minutes)
+                this-device timeout 1h    (1 hour)
+                this-device timeout 7d    (7 days)
+                this-device timeout 30d   (30 days)
+
+  this-device ip-auto-approve <on|off>
+      Auto-approve device when logging in from same IP address
+      Example: this-device ip-auto-approve on
+
+  this-device no-yubikey-pin <on|off>
+      Skip PIN prompt for YubiKey/security key authentication
+      Example: this-device no-yubikey-pin on
+
+  this-device 2fa_expiration <duration>
+      Set how long 2FA approval is remembered
+      Examples: this-device 2fa_expiration login    (every login)
+                this-device 2fa_expiration 12h      (12 hours)
+                this-device 2fa_expiration 24h      (24 hours)
+                this-device 2fa_expiration 30d      (30 days)
+                this-device 2fa_expiration forever  (remember forever)
+"""
+this_device_parser = argparse.ArgumentParser(
+    prog='this-device',
+    description='Display and modify settings of the current device',
+    epilog=this_device_help_epilog,
+    formatter_class=argparse.RawDescriptionHelpFormatter
+)
+this_device_parser.add_argument('ops', nargs='*', metavar='command', help='sub-command to run (see below)')
+this_device_parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'], default='text', help='output format')
 this_device_parser.error = raise_parse_exception
 this_device_parser.exit = suppress_exit
 
@@ -287,7 +330,7 @@ set_parser.exit = suppress_exit
 
 
 help_parser = argparse.ArgumentParser(prog='help', description='Displays help on a specific command')
-help_help = 'Commander\'s command (Optional -- if not specified, list of available commands is displayed)'
+help_help = 'Command name, or "basics" for essential commands guide'
 help_parser.add_argument('command', action='store', type=str, nargs='*',  help=help_help)
 help_parser.add_argument('--legacy', dest='legacy', action='store_true', help='Show legacy/deprecated commands')
 help_parser.error = raise_parse_exception
@@ -457,16 +500,30 @@ class ThisDeviceCommand(Command):
             return ThisDeviceCommand.print_device_info(params, output_format=output_format)
 
 
-        if len(ops) >= 1 and ops[0].lower() != 'register':
-            if len(ops) == 1 and ops[0].lower() != 'register':
-                logging.error("Must supply action and value. Available sub-commands: " + ", ".join(this_device_available_command_verbs))
-                return
+        action = ops[0].lower() if ops else ''
 
-            if len(ops) != 2:
-                logging.error("Must supply action and value. Available sub-commands: " + ", ".join(this_device_available_command_verbs))
-                return
+        # Check for valid sub-commands that need a value
+        if len(ops) == 1 and action != 'register':
+            if action in ('timeout', 'to'):
+                print(f"Usage: this-device timeout <duration>  (e.g., 10m, 1h, 7d, 30d)")
+            elif action == '2fa_expiration':
+                print(f"Usage: this-device 2fa_expiration <duration>  (e.g., login, 12h, 24h, 30d, forever)")
+            elif action in ('persistent_login', 'persistent-login', 'pl'):
+                print(f"Usage: this-device persistent-login <on|off>")
+            elif action in ('ip_auto_approve', 'ip-auto-approve', 'iaa'):
+                print(f"Usage: this-device ip-auto-approve <on|off>")
+            elif action == 'no-yubikey-pin':
+                print(f"Usage: this-device no-yubikey-pin <on|off>")
+            elif action in ('rename', 'ren'):
+                print(f"Usage: this-device rename <name>")
+            else:
+                print(f"Unknown sub-command: {action}")
+            print(f"Run {Fore.GREEN}this-device -h{Fore.RESET} for detailed help.")
+            return
 
-        action = ops[0].lower()
+        if len(ops) >= 1 and action != 'register' and len(ops) != 2:
+            print(f"Invalid arguments. Run {Fore.GREEN}this-device -h{Fore.RESET} for help.")
+            return
 
         def register_device():
             is_device_registered = loginv3.LoginV3API.register_encrypted_data_key_for_device(params)
@@ -667,34 +724,43 @@ class ThisDeviceCommand(Command):
             print(json.dumps(device_info))
             return
 
-        # Text output
-        print('{:>32}: {}'.format('Device Name', device_name))
+        # Text output - clean display
+        DIM = Fore.WHITE
+
+        def label_value(label, value):
+            return f"  {DIM}{label:>22}{Fore.RESET}: {value}"
+
+        print()
+        print(f"  {Style.BRIGHT}Device Settings{Style.RESET_ALL}")
+        print(f"  {DIM}{'─' * 50}{Fore.RESET}")
+
+        print(label_value('Device Name', device_name))
 
         if data_key_present is not None:
-            print("{:>32}: {}".format('Data Key Present', (bcolors.OKGREEN + 'YES' + bcolors.ENDC) if data_key_present else (bcolors.FAIL + 'NO' + bcolors.ENDC)))
+            dk_display = f"{Fore.GREEN}YES{Fore.RESET}" if data_key_present else f"{Fore.RED}NO{Fore.RESET}"
         else:
-            print("{:>32}: {}".format('Data Key Present', (bcolors.FAIL + 'missing' + bcolors.ENDC)))
+            dk_display = f"{Fore.RED}missing{Fore.RESET}"
+        print(label_value('Data Key Present', dk_display))
 
-        print("{:>32}: {}".format('IP Auto Approve',
-                                  (bcolors.OKGREEN + 'ON' + bcolors.ENDC) if ip_auto_approve else (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
+        ip_display = f"{Fore.GREEN}ON{Fore.RESET}" if ip_auto_approve else f"{Fore.RED}OFF{Fore.RESET}"
+        print(label_value('IP Auto Approve', ip_display))
 
-        print("{:>32}: {}".format('Persistent Login',
-                                  (bcolors.OKGREEN + 'ON' + bcolors.ENDC) if persistent_login else (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
+        pl_display = f"{Fore.GREEN}ON{Fore.RESET}" if persistent_login else f"{Fore.RED}OFF{Fore.RESET}"
+        print(label_value('Persistent Login', pl_display))
 
-        print("{:>32}: {}".format('Security Key No PIN',
-                                  (bcolors.OKGREEN + 'ON' + bcolors.ENDC) if security_key_no_pin else (bcolors.FAIL + 'OFF' + bcolors.ENDC)))
+        sk_display = f"{Fore.GREEN}ON{Fore.RESET}" if security_key_no_pin else f"{Fore.RED}OFF{Fore.RESET}"
+        print(label_value('Security Key No PIN', sk_display))
 
-        print("{:>32}: {}".format('Device Logout Timeout', device_timeout_str))
+        print(label_value('Logout Timeout', device_timeout_str))
 
         if enterprise_timeout_str:
-            print("{:>32}: {}".format('Enterprise Logout Timeout', enterprise_timeout_str))
-            print("{:>32}: {}".format('Effective Logout Timeout', effective_timeout_str))
+            print(label_value('Enterprise Timeout', enterprise_timeout_str))
+            print(label_value('Effective Timeout', effective_timeout_str))
 
-        print('{:>32}: {}'.format('Is SSO User', is_sso_user))
-
-        print('{:>32}: {}'.format('Config file', config_file))
-
-        print("\nAvailable sub-commands: ", bcolors.OKBLUE + (", ".join(this_device_available_command_verbs)) + bcolors.ENDC)
+        print(label_value('Is SSO User', str(is_sso_user)))
+        print(label_value('Config file', config_file))
+        print()
+        print(f"  For usage details, type {Fore.GREEN}this-device -h{Fore.RESET}")
 
 
 class RecordDeleteAllCommand(Command):
@@ -1349,52 +1415,69 @@ class WhoamiCommand(Command):
             import json
             print(json.dumps(data, indent=2))
         else:
-            # Original formatted output
+            # Clean formatted output
+            DIM = Fore.WHITE
+
+            def label_value(label, value):
+                return f"  {DIM}{label:>22}{Fore.RESET}: {value}"
+
+            def yes_no(val):
+                return f"{Fore.GREEN}Yes{Fore.RESET}" if val else f"{Fore.RED}No{Fore.RESET}"
+
             if params.session_token:
                 hostname = get_hostname(params.rest_context.server_base)
-                print('{0:>20s}: {1:<20s}'.format('User', params.user))
-                print('{0:>20s}: {1:<20s}'.format('Server', hostname))
-                print('{0:>20s}: {1:<20s}'.format('Data Center', get_data_center(hostname)))
+
+                print()
+                print(f"  {Style.BRIGHT}User Info{Style.RESET_ALL}")
+                print(f"  {DIM}{'─' * 50}{Fore.RESET}")
+                print(label_value('User', params.user))
+                print(label_value('Server', hostname))
+                print(label_value('Data Center', get_data_center(hostname)))
                 environment = get_environment(hostname)
                 if environment:
-                    print('{0:>20s}: {1:<20s}'.format('Environment', get_environment(hostname)))
+                    print(label_value('Environment', environment))
                 if params.license:
                     account_type = params.license['account_type'] if 'account_type' in params.license else None
                     if account_type == 2:
-                        display_admin = 'No' if params.enterprise is None else 'Yes'
-                        print('{0:>20s}: {1:<20s}'.format('Admin', display_admin))
+                        display_admin = yes_no(params.enterprise is not None)
+                        print(label_value('Admin', display_admin))
 
-                    print('')
+                    print()
+                    print(f"  {Style.BRIGHT}Account{Style.RESET_ALL}")
+                    print(f"  {DIM}{'─' * 50}{Fore.RESET}")
                     account_type_name = 'Enterprise' if account_type == 2 \
                         else 'Family Plan' if account_type == 1 \
                         else params.license['product_type_name']
-                    print('{0:>20s}: {1:<20s}'.format('Account Type', account_type_name))
-                    print('{0:>20s}: {1:<20s}'.format('Renewal Date', params.license['expiration_date']))
+                    print(label_value('Account Type', account_type_name))
+                    print(label_value('Renewal Date', params.license['expiration_date']))
                     if 'bytes_total' in params.license:
-                        storage_bytes = int(params.license['bytes_total'])  # note: int64 in protobuf in python produces string as opposed to an int or long.
+                        storage_bytes = int(params.license['bytes_total'])
                         storage_gb = storage_bytes >> 30
                         storage_bytes_used = params.license['bytes_used'] if 'bytes_used' in params.license else 0
-                        print('{0:>20s}: {1:<20s}'.format('Storage Capacity', f'{storage_gb}GB'))
-                        storage_usage = (int(storage_bytes_used) * 100 // storage_bytes) if storage_bytes != 0 else 0     # note: int64 in protobuf in python produces string  as opposed to an int or long.
-                        print('{0:>20s}: {1:<20s}'.format('Usage', f'{storage_usage}%'))
-                        print('{0:>20s}: {1:<20s}'.format('Storage Renewal Date', params.license['storage_expiration_date']))
-                    print('{0:>20s}: {1:<20s}'.format('BreachWatch', 'Yes' if params.license.get('breach_watch_enabled') else 'No'))
+                        print(label_value('Storage Capacity', f'{storage_gb}GB'))
+                        storage_usage = (int(storage_bytes_used) * 100 // storage_bytes) if storage_bytes != 0 else 0
+                        print(label_value('Usage', f'{storage_usage}%'))
+                        print(label_value('Storage Renewal Date', params.license['storage_expiration_date']))
+                    print(label_value('BreachWatch', yes_no(params.license.get('breach_watch_enabled'))))
                     if params.enterprise:
-                        print('{0:>20s}: {1:<20s}'.format('Reporting & Alerts', 'Yes' if params.license.get('audit_and_reporting_enabled') else 'No'))
+                        print(label_value('Reporting & Alerts', yes_no(params.license.get('audit_and_reporting_enabled'))))
 
                 if verbose:
-                    print('')
-                    print('{0:>20s}: {1}'.format('Records', len(params.record_cache)))
+                    print()
+                    print(f"  {Style.BRIGHT}Vault Stats{Style.RESET_ALL}")
+                    print(f"  {DIM}{'─' * 50}{Fore.RESET}")
+                    print(label_value('Records', str(len(params.record_cache))))
                     sf_count = len(params.shared_folder_cache)
                     if sf_count > 0:
-                        print('{0:>20s}: {1}'.format('Shared Folders', sf_count))
+                        print(label_value('Shared Folders', str(sf_count)))
                     team_count = len(params.team_cache)
                     if team_count > 0:
-                        print('{0:>20s}: {1}'.format('Teams', team_count))
+                        print(label_value('Teams', str(team_count)))
 
                 if params.enterprise:
-                    print('')
-                    print('{0:>20s}:'.format('Enterprise License'))
+                    print()
+                    print(f"  {Style.BRIGHT}Enterprise License{Style.RESET_ALL}")
+                    print(f"  {DIM}{'─' * 50}{Fore.RESET}")
                     for x in params.enterprise.get('licenses', []):
                         product_type_id = x.get('product_type_id', 0)
                         tier = x.get('tier', 0)
@@ -1411,7 +1494,7 @@ class WhoamiCommand(Command):
                             plan = 'Unknown'
                         if product_type_id in (5, 10, 12):
                             plan += ' Trial'
-                        print('{0:>20s}: {1}'.format('Base Plan', plan))
+                        print(label_value('Base Plan', plan))
                         paid = x.get('paid') is True
                         if paid:
                             exp = x.get('expiration')
@@ -1423,12 +1506,15 @@ class WhoamiCommand(Command):
                                 if td > 0:
                                     expires += f' (in {td} days)'
                                 else:
-                                    expires += ' (expired)'
-                                print('{0:>20s}: {1}'.format('Expires', expires))
-                        print('{0:>20s}: {1}'.format('User Licenses', f'Plan: {x.get("number_of_seats", "")}    Active: {x.get("seats_allocated", "")}    Invited: {x.get("seats_pending", "")}'))
+                                    expires += f' ({Fore.RED}expired{Fore.RESET})'
+                                print(label_value('Expires', expires))
+                        seats_plan = x.get("number_of_seats", "")
+                        seats_active = x.get("seats_allocated", "")
+                        seats_invited = x.get("seats_pending", "")
+                        print(label_value('User Licenses', f'Plan: {seats_plan}  Active: {seats_active}  Invited: {seats_invited}'))
                         file_plan = x.get('file_plan')
-                        file_plan_lookup = {x[0]: x[2] for x in constants.ENTERPRISE_FILE_PLANS}
-                        print('{0:>20s}: {1}'.format('Secure File Storage', file_plan_lookup.get(file_plan, '')))
+                        file_plan_lookup = {fp[0]: fp[2] for fp in constants.ENTERPRISE_FILE_PLANS}
+                        print(label_value('Secure File Storage', file_plan_lookup.get(file_plan, '')))
                         addons = []
                         addon_lookup = {a[0]: a[1] for a in constants.MSP_ADDONS}
                         for ao in x.get('add_ons'):
@@ -1447,9 +1533,10 @@ class WhoamiCommand(Command):
                                             addon_name += f' ({seats} licenses)'
                                     addons.append(addon_name)
                         for i, addon in enumerate(addons):
-                            print('{0:>20s}: {1}'.format('Secure Add Ons' if i == 0 else '', addon))
+                            print(label_value('Add-ons' if i == 0 else '', addon))
+                print()
             else:
-                print('{0:>20s}:'.format('Not logged in'))
+                print(f"\n  {Fore.YELLOW}Not logged in{Fore.RESET}\n")
     
 
 class VersionCommand(Command):
@@ -1593,12 +1680,13 @@ class LoginCommand(Command):
 
         params.password = password
         new_login = kwargs.get('new_login') is True
+        skip_sync = kwargs.get('skip_sync') is True
         try:
             api.login(params, new_login=new_login)
         except Exception as exc:
             logging.warning(str(exc))
 
-        if params.session_token:
+        if params.session_token and not skip_sync:
             params.enterprise = None
             params._pedm_plugin = None
             SyncDownCommand().execute(params, force=True)
@@ -1612,6 +1700,26 @@ class LoginCommand(Command):
             except Exception as e:
                 logging.warning(f'A problem was encountered while updating BreachWatch/security data: {e}')
                 logging.debug(e, exc_info=True)
+
+            # Auto-register device for persistent login (stores encrypted data key on server)
+            try:
+                loginv3.LoginV3API.register_encrypted_data_key_for_device(params)
+            except Exception as e:
+                logging.debug(f'Device registration: {e}')
+
+            # Show post-login message
+            if params.batch_mode:
+                # One-shot login from terminal - show simple success message
+                print()
+                print(f'{Fore.GREEN}Keeper login successful.{Fore.RESET}')
+                print(f'Type "{Fore.GREEN}keeper shell{Fore.RESET}" for the interactive shell, "{Fore.GREEN}keeper supershell{Fore.RESET}" for the vault UI,')
+                print(f'or "{Fore.GREEN}keeper help{Fore.RESET}" to see all available commands.')
+                print()
+            else:
+                # Interactive shell - show full summary with tips
+                record_count = getattr(params, '_sync_record_count', 0)
+                breachwatch_count = getattr(params, '_sync_breachwatch_count', 0)
+                post_login_summary(record_count=record_count, breachwatch_count=breachwatch_count)
 
 
 class CheckEnforcementsCommand(Command):
@@ -1682,7 +1790,10 @@ class LogoutCommand(Command):
         return logout_parser
 
     def is_authorised(self):
-        return False
+        return True
+
+    # Logout needs auth but not sync
+    skip_sync_on_auth = True
 
     def execute(self, params, **kwargs):
         if msp.current_mc_id:
@@ -1741,7 +1852,10 @@ class LogoutCommand(Command):
             sp_url = urllib.parse.urlunparse(sp_url_builder)
             logging.info('SSO Logout URL\n%s', sp_url)
 
+        # Preserve commands queue (clear_session() clears it, but we need 'q' to exit)
+        saved_commands = list(params.commands)
         params.clear_session()
+        params.commands.extend(saved_commands)
 
 
 class EchoCommand(Command):
@@ -1783,6 +1897,74 @@ class HelpCommand(Command):
     def get_parser(self):
         return help_parser
 
+    @staticmethod
+    def display_basics_help():
+        """Display help for the most common commands with detailed explanations"""
+        from colorama import Fore, Style
+
+        DIM = Fore.WHITE
+        GRN = Fore.GREEN
+
+        print()
+        print(f"  {Style.BRIGHT}Getting Started - Essential Commands{Style.RESET_ALL}")
+        print(f"  {DIM}{'─' * 60}{Fore.RESET}")
+        print()
+
+        # Each entry: (command, short_desc, details, examples)
+        # examples is a list of example strings, or None
+        basics = [
+            ('whoami', 'Display information about the current user',
+             'Shows your email, data center, account type, and license info', None),
+
+            ('this-device', 'Display and modify settings of the current device',
+             'View/change device name, logout timeout, and persistent login',
+             ['this-device rename "My Laptop"', 'this-device timeout 7d', 'this-device persistent_login on']),
+
+            ('tree', 'Display the folder structure',
+             'Shows a hierarchical view of all folders in your vault', None),
+
+            ('ls', 'List folder contents',
+             'Lists records and subfolders in the current folder',
+             ['ls', 'ls "My Folder"']),
+
+            ('cd', 'Change current folder',
+             'Navigate to a different folder in your vault',
+             ['cd "Business Accounts"', 'cd ..']),
+
+            ('get', 'Get the details of a record/folder/team',
+             'Display full details of a record by title or UID',
+             ['get "Amazon"', 'get AbCdEf123456']),
+
+            ('search', 'Search the vault using a regular expression',
+             'Find records matching a search pattern',
+             ['search amazon', 'search "bank.*account"']),
+
+            ('list-sf', 'List all shared folders',
+             'Shows all shared folders you have access to', None),
+
+            ('enterprise-info', 'Display enterprise tenant structure',
+             'Shows nodes, users, teams, and roles (Enterprise admins only)', None),
+
+            ('supershell (ss)', 'Launch full terminal vault UI',
+             'Opens the interactive TUI with vim-style navigation', None),
+        ]
+
+        max_cmd_width = max(len(cmd) for cmd, _, _, _ in basics)
+        indent = ' ' * (max_cmd_width + 4)
+
+        for cmd, short_desc, detail, examples in basics:
+            print(f"  {GRN}{cmd:<{max_cmd_width}}{Fore.RESET}  {short_desc}")
+            print(f"  {indent}{DIM}{detail}{Fore.RESET}")
+            if examples:
+                for i, ex in enumerate(examples):
+                    prefix = "Examples: " if i == 0 else "          "
+                    print(f"  {indent}{DIM}{prefix}{GRN}{ex}{Fore.RESET}")
+            print()
+
+        print(f"  {DIM}Type {GRN}help <command>{DIM} for detailed help on any command{Fore.RESET}")
+        print(f"  {DIM}Type {GRN}?{DIM} to see all available commands{Fore.RESET}")
+        print()
+
     def execute(self, params, **kwargs):
         help_commands = kwargs.get('command')
         show_legacy = kwargs.get('legacy', False)
@@ -1793,6 +1975,12 @@ class HelpCommand(Command):
 
         if isinstance(help_commands, list) and len(help_commands) > 0:
             cmd = help_commands[0]
+
+            # Handle "help basics" special case
+            if cmd.lower() == 'basics':
+                self.display_basics_help()
+                return
+
             help_commands = help_commands[1:]
             if cmd in aliases:
                 ali = aliases[cmd]
