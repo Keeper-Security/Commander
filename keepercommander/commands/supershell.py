@@ -2575,6 +2575,14 @@ class SuperShellApp(App):
                 elif key == 'Two Factor Code':
                     # Skip - we'll calculate and show TOTP from stored URL below
                     pass
+                elif key == 'Passkey':
+                    # Passkey section header
+                    mount_line("", None)  # Blank line before
+                    mount_line(f"[bold {t['secondary']}]Passkey:[/bold {t['secondary']}]", None)
+                    current_section = 'Passkey'
+                elif current_section == 'Passkey' and key in ('Created', 'Username', 'Relying Party'):
+                    # Passkey detail fields
+                    mount_line(f"  [{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]", value)
                 elif is_section_header(key, value):
                     # Display rotation BEFORE User Permissions section
                     if key == 'User Permissions' and not rotation_displayed:
@@ -2756,7 +2764,9 @@ class SuperShellApp(App):
         bracket_color = t['text_dim']
 
         if isinstance(display_obj, dict):
-            mount_line(f"{indent_str}[{bracket_color}]{{[/{bracket_color}]")
+            # Make the root opening brace copyable with the entire object
+            mount_line(f"{indent_str}[{bracket_color}]{{[/{bracket_color}]",
+                       copy_value=json.dumps(unmasked_obj, indent=2))
             items = list(display_obj.items())
             for i, (key, value) in enumerate(items):
                 comma = "," if i < len(items) - 1 else ""
@@ -2789,18 +2799,24 @@ class SuperShellApp(App):
                         f"{indent_str}  [{key_color}]\"{key}\"[/{key_color}]: [{null_color}]null[/{null_color}]{comma}"
                     )
                 elif isinstance(value, list):
-                    mount_line(f"{indent_str}  [{key_color}]\"{key}\"[/{key_color}]: [{bracket_color}]\\[[/{bracket_color}]")
                     unmasked_list = unmasked_value if isinstance(unmasked_value, list) else value
+                    # Make the opening line copyable with the entire array
+                    mount_line(f"{indent_str}  [{key_color}]\"{key}\"[/{key_color}]: [{bracket_color}]\\[[/{bracket_color}]",
+                               copy_value=json.dumps(unmasked_list, indent=2))
                     self._render_json_list_items(value, unmasked_list, mount_line, t, record_uid, indent + 2)
                     mount_line(f"{indent_str}  [{bracket_color}]][/{bracket_color}]{comma}")
                 elif isinstance(value, dict):
-                    mount_line(f"{indent_str}  [{key_color}]\"{key}\"[/{key_color}]: [{bracket_color}]{{[/{bracket_color}]")
                     unmasked_dict = unmasked_value if isinstance(unmasked_value, dict) else value
+                    # Make the opening line copyable with the entire object
+                    mount_line(f"{indent_str}  [{key_color}]\"{key}\"[/{key_color}]: [{bracket_color}]{{[/{bracket_color}]",
+                               copy_value=json.dumps(unmasked_dict, indent=2))
                     self._render_json_dict_items(value, unmasked_dict, mount_line, t, record_uid, indent + 2)
                     mount_line(f"{indent_str}  [{bracket_color}]}}[/{bracket_color}]{comma}")
             mount_line(f"{indent_str}[{bracket_color}]}}[/{bracket_color}]")
         elif isinstance(display_obj, list):
-            mount_line(f"{indent_str}[{bracket_color}]\\[[/{bracket_color}]")
+            # Make the root opening bracket copyable with the entire array
+            mount_line(f"{indent_str}[{bracket_color}]\\[[/{bracket_color}]",
+                       copy_value=json.dumps(unmasked_obj, indent=2))
             self._render_json_list_items(display_obj, unmasked_obj, mount_line, t, record_uid, indent + 1)
             mount_line(f"{indent_str}[{bracket_color}]][/{bracket_color}]")
 
@@ -2842,13 +2858,17 @@ class SuperShellApp(App):
             elif value is None:
                 mount_line(f"{indent_str}[{key_color}]\"{rich_escape(str(key))}\"[/{key_color}]: [{null_color}]null[/{null_color}]{comma}")
             elif isinstance(value, list):
-                mount_line(f"{indent_str}[{key_color}]\"{rich_escape(str(key))}\"[/{key_color}]: [{bracket_color}]\\[[/{bracket_color}]")
                 unmasked_list = unmasked_value if isinstance(unmasked_value, list) else value
+                # Make the opening line copyable with the entire array
+                mount_line(f"{indent_str}[{key_color}]\"{rich_escape(str(key))}\"[/{key_color}]: [{bracket_color}]\\[[/{bracket_color}]",
+                           copy_value=json.dumps(unmasked_list, indent=2))
                 self._render_json_list_items(value, unmasked_list, mount_line, t, record_uid, indent + 1)
                 mount_line(f"{indent_str}[{bracket_color}]][/{bracket_color}]{comma}")
             elif isinstance(value, dict):
-                mount_line(f"{indent_str}[{key_color}]\"{rich_escape(str(key))}\"[/{key_color}]: [{bracket_color}]{{[/{bracket_color}]")
                 unmasked_inner = unmasked_value if isinstance(unmasked_value, dict) else value
+                # Make the opening line copyable with the entire object
+                mount_line(f"{indent_str}[{key_color}]\"{rich_escape(str(key))}\"[/{key_color}]: [{bracket_color}]{{[/{bracket_color}]",
+                           copy_value=json.dumps(unmasked_inner, indent=2))
                 self._render_json_dict_items(value, unmasked_inner, mount_line, t, record_uid, indent + 1)
                 mount_line(f"{indent_str}[{bracket_color}]}}[/{bracket_color}]{comma}")
 
@@ -2882,13 +2902,17 @@ class SuperShellApp(App):
             elif value is None:
                 mount_line(f"{indent_str}[{null_color}]null[/{null_color}]{comma}")
             elif isinstance(value, dict):
-                mount_line(f"{indent_str}[{bracket_color}]{{[/{bracket_color}]")
                 unmasked_inner = unmasked_value if isinstance(unmasked_value, dict) else value
+                # Make the opening brace copyable with the entire object
+                mount_line(f"{indent_str}[{bracket_color}]{{[/{bracket_color}]",
+                           copy_value=json.dumps(unmasked_inner, indent=2))
                 self._render_json_dict_items(value, unmasked_inner, mount_line, t, record_uid, indent + 1)
                 mount_line(f"{indent_str}[{bracket_color}]}}[/{bracket_color}]{comma}")
             elif isinstance(value, list):
-                mount_line(f"{indent_str}[{bracket_color}]\\[[/{bracket_color}]")
                 unmasked_inner = unmasked_value if isinstance(unmasked_value, list) else value
+                # Make the opening bracket copyable with the entire array
+                mount_line(f"{indent_str}[{bracket_color}]\\[[/{bracket_color}]",
+                           copy_value=json.dumps(unmasked_inner, indent=2))
                 self._render_json_list_items(value, unmasked_inner, mount_line, t, record_uid, indent + 1)
                 mount_line(f"{indent_str}[{bracket_color}]][/{bracket_color}]{comma}")
 
@@ -3124,7 +3148,8 @@ class SuperShellApp(App):
             """Recursively render JSON with clickable string values"""
             prefix = "  " * indent
             if isinstance(obj, dict):
-                mount_json_line(f"{prefix}{{", None)
+                # Make the opening brace copyable with the entire object
+                mount_json_line(f"{prefix}{{", json.dumps(obj, indent=2))
                 items = list(obj.items())
                 for i, (key, value) in enumerate(items):
                     comma = "," if i < len(items) - 1 else ""
@@ -3151,27 +3176,80 @@ class SuperShellApp(App):
                             None
                         )
                     elif isinstance(value, dict):
-                        mount_json_line(f"{prefix}  [{t['secondary']}]\"{rich_escape(key)}\"[/{t['secondary']}]:", None)
-                        render_json(value, indent + 1)
-                        if comma:
-                            # Add comma after nested object
-                            pass
+                        # Make the key line copyable with the entire object
+                        mount_json_line(f"{prefix}  [{t['secondary']}]\"{rich_escape(key)}\"[/{t['secondary']}]: {{",
+                                        json.dumps(value, indent=2))
+                        render_json_items(value, indent + 2)
+                        mount_json_line(f"{prefix}  }}{comma}", None)
                     elif isinstance(value, list):
-                        mount_json_line(f"{prefix}  [{t['secondary']}]\"{rich_escape(key)}\"[/{t['secondary']}]:", None)
-                        render_json(value, indent + 1)
+                        # Make the key line copyable with the entire array
+                        mount_json_line(f"{prefix}  [{t['secondary']}]\"{rich_escape(key)}\"[/{t['secondary']}]: [",
+                                        json.dumps(value, indent=2))
+                        render_json_list_items(value, indent + 2)
+                        mount_json_line(f"{prefix}  ]{comma}", None)
                 mount_json_line(f"{prefix}}}", None)
             elif isinstance(obj, list):
-                mount_json_line(f"{prefix}[", None)
-                for i, item in enumerate(obj):
-                    comma = "," if i < len(obj) - 1 else ""
-                    if isinstance(item, str):
-                        escaped_item = rich_escape(item)
-                        mount_json_line(f"{prefix}  [{t['primary']}]\"{escaped_item}\"[/{t['primary']}]{comma}", item)
-                    elif isinstance(item, (dict, list)):
-                        render_json(item, indent + 1)
-                    else:
-                        mount_json_line(f"{prefix}  [{t['primary_bright']}]{item}[/{t['primary_bright']}]{comma}", str(item))
+                mount_json_line(f"{prefix}[", json.dumps(obj, indent=2))
+                render_json_list_items(obj, indent + 1)
                 mount_json_line(f"{prefix}]", None)
+
+        def render_json_items(obj, indent):
+            """Render dict items without outer braces"""
+            prefix = "  " * indent
+            items = list(obj.items())
+            for i, (key, value) in enumerate(items):
+                comma = "," if i < len(items) - 1 else ""
+                if isinstance(value, str):
+                    escaped_value = rich_escape(value)
+                    mount_json_line(
+                        f"{prefix}[{t['secondary']}]\"{rich_escape(key)}\"[/{t['secondary']}]: [{t['primary']}]\"{escaped_value}\"[/{t['primary']}]{comma}",
+                        value
+                    )
+                elif isinstance(value, bool):
+                    bool_str = "true" if value else "false"
+                    mount_json_line(
+                        f"{prefix}[{t['secondary']}]\"{rich_escape(key)}\"[/{t['secondary']}]: [{t['primary_bright']}]{bool_str}[/{t['primary_bright']}]{comma}",
+                        str(value)
+                    )
+                elif isinstance(value, (int, float)):
+                    mount_json_line(
+                        f"{prefix}[{t['secondary']}]\"{rich_escape(key)}\"[/{t['secondary']}]: [{t['primary_bright']}]{value}[/{t['primary_bright']}]{comma}",
+                        str(value)
+                    )
+                elif value is None:
+                    mount_json_line(
+                        f"{prefix}[{t['secondary']}]\"{rich_escape(key)}\"[/{t['secondary']}]: [{t['text_dim']}]null[/{t['text_dim']}]{comma}",
+                        None
+                    )
+                elif isinstance(value, dict):
+                    mount_json_line(f"{prefix}[{t['secondary']}]\"{rich_escape(key)}\"[/{t['secondary']}]: {{",
+                                    json.dumps(value, indent=2))
+                    render_json_items(value, indent + 1)
+                    mount_json_line(f"{prefix}}}{comma}", None)
+                elif isinstance(value, list):
+                    mount_json_line(f"{prefix}[{t['secondary']}]\"{rich_escape(key)}\"[/{t['secondary']}]: [",
+                                    json.dumps(value, indent=2))
+                    render_json_list_items(value, indent + 1)
+                    mount_json_line(f"{prefix}]{comma}", None)
+
+        def render_json_list_items(obj, indent):
+            """Render list items without outer brackets"""
+            prefix = "  " * indent
+            for i, item in enumerate(obj):
+                comma = "," if i < len(obj) - 1 else ""
+                if isinstance(item, str):
+                    escaped_item = rich_escape(item)
+                    mount_json_line(f"{prefix}[{t['primary']}]\"{escaped_item}\"[/{t['primary']}]{comma}", item)
+                elif isinstance(item, dict):
+                    mount_json_line(f"{prefix}{{", json.dumps(item, indent=2))
+                    render_json_items(item, indent + 1)
+                    mount_json_line(f"{prefix}}}{comma}", None)
+                elif isinstance(item, list):
+                    mount_json_line(f"{prefix}[", json.dumps(item, indent=2))
+                    render_json_list_items(item, indent + 1)
+                    mount_json_line(f"{prefix}]{comma}", None)
+                else:
+                    mount_json_line(f"{prefix}[{t['primary_bright']}]{item}[/{t['primary_bright']}]{comma}", str(item))
 
         render_json(json_obj)
 
