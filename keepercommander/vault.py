@@ -253,7 +253,7 @@ class PasswordRecord(KeeperRecord):
         return 2
 
     def get_record_type(self):
-        return ''
+        return 'general'
 
     def load_record_data(self, data, extra=None):
         self.title = sanitize_str_field_value(data.get('title')).strip()
