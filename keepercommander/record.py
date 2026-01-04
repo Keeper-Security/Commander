@@ -223,7 +223,9 @@ class Record:
         print('{0:>20s}: {1:<20s}'.format('Type', self.record_type if self.record_type else ''))
         if self.title: print('{0:>20s}: {1:<20s}'.format('Title', self.title))
         if self.login: print('{0:>20s}: {1:<20s}'.format('Login', self.login))
-        if self.password: print('{0:>20s}: {1:<20s}'.format('Password', self.password if unmask else '********'))
+        if self.password:
+            display_password = (self.unmasked_password or self.password) if unmask else '********'
+            print('{0:>20s}: {1:<20s}'.format('Password', display_password))
         if self.login_url: print('{0:>20s}: {1:<20s}'.format('URL', self.login_url))
         # print('{0:>20s}: https://keepersecurity.com/vault#detail/{1}'.format('Link',self.record_uid))
 
