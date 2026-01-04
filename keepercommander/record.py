@@ -138,7 +138,8 @@ class Record:
                             continue
 
                     if field_type:
-                        field_name = f'{field_type}:{field_label}'
+                        # Only include colon separator if there's a label
+                        field_name = f'{field_type}:{field_label}' if field_label else field_type
                     elif field_label:
                         field_name = field_label
                     else:
@@ -235,6 +236,27 @@ class Record:
                 # Check for both 'fileRef' and 'fileRef:' (with trailing colon when no label)
                 if field_name.rstrip(':') in ('fileRef', 'addressRef', 'cardRef'):
                     continue
+                # Special handling for passkey fields - display nicely instead of raw JSON
+                if field_name.rstrip(':').lower() == 'passkey':
+                    pk_value = c['value']
+                    # Handle both single passkey and list of passkeys
+                    if isinstance(pk_value, list):
+                        pk_value = pk_value[0] if pk_value else {}
+                    if isinstance(pk_value, dict):
+                        print('{0:>20s}:'.format('Passkey'))
+                        # Format created date
+                        created_ts = pk_value.get('createdDate', 0)
+                        if created_ts:
+                            created_dt = datetime.datetime.fromtimestamp(created_ts / 1000)
+                            created_str = created_dt.strftime('%m/%d/%Y, %I:%M %p')
+                            print('{0:>28s}: {1}'.format('Created', created_str))
+                        username = pk_value.get('username', '')
+                        if username:
+                            print('{0:>28s}: {1}'.format('Username', username))
+                        relying_party = pk_value.get('relyingParty', '')
+                        if relying_party:
+                            print('{0:>28s}: {1}'.format('Relying Party', relying_party))
+                        continue
                 # Strip type prefixes from field names (e.g., "text:Sign-In Address" -> "Sign-In Address")
                 field_type_prefixes = ('text:', 'multiline:', 'url:', 'phone:', 'email:', 'secret:', 'date:', 'name:', 'host:', 'address:')
                 display_name = field_name
