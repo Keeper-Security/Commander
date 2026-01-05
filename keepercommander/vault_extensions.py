@@ -90,6 +90,15 @@ def find_records(params,                   # type: KeeperParams
 
         if pattern:
             is_match = matches_record(record, pattern, search_fields)
+            if not is_match and isinstance(record, vault.TypedRecord):
+                field = record.get_typed_field('fileRef')
+                if field and isinstance(field.value, list):
+                    for file_uid in field.value:
+                        file_record = vault.KeeperRecord.load(params, file_uid)
+                        if isinstance(file_record, vault.FileRecord):
+                            is_match = matches_record(file_record, pattern, search_fields)
+                            if is_match:
+                                break
         else:
             is_match = True
         if is_match:

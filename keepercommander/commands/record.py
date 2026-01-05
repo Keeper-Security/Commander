@@ -542,16 +542,16 @@ class RecordGetUidCommand(Command):
                                     shareable = False
 
                                 # Handle both possible spellings of readable
-                                if 'readable' in user:
-                                    readable = user['readable']
+                                if 'editable' in user:
+                                    editable = user['editable']
                                 else:
-                                    readable = False
+                                    editable = False
 
-                                if readable is None:
-                                    readable = False
+                                if editable is None:
+                                    editable = False
 
                                 print('  Shareable: ' + ('Yes' if shareable else 'No'))
-                                print('  Read-Only: ' + ('Yes' if not shareable else 'No'))
+                                print('  Read-Only: ' + ('Yes' if not editable else 'No'))
                         if 'shared_folder_permissions' in rec['shares'] and rec['shares']['shared_folder_permissions']:
                             print('')
                             print('Shared Folder Permissions:')
@@ -1126,7 +1126,8 @@ class SearchCommand(Command):
         all_results = []
 
         if 'r' in categories:
-            records = list(vault_extensions.find_records(params, pattern))
+
+            records = list(vault_extensions.find_records(params, pattern, record_version=None if verbose else [2,3]))
             if records:
                 if fmt == 'json':
                     for record in records:
