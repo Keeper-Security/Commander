@@ -67,6 +67,23 @@ def keeper_colorize(text, color):
     return text
 
 
+def show_government_warning():
+    """Display U.S. Government Information System warning for GOV environments."""
+    print('')
+    print(f'{bcolors.WARNING}' + '=' * 80 + f'{bcolors.ENDC}')
+    print(f'{bcolors.WARNING}U.S. GOVERNMENT INFORMATION SYSTEM{bcolors.ENDC}')
+    print(f'{bcolors.WARNING}' + '=' * 80 + f'{bcolors.ENDC}')
+    print('')
+    print('You are about to access a U.S. Government Information System. Although the')
+    print('encrypted vault adheres to a zero-knowledge security architecture, system')
+    print('access logs are subject to monitoring, recording and audit. Unauthorized')
+    print('use of this system is prohibited and may result in civil and criminal')
+    print('penalties. Your use of this system indicates your acknowledgement and consent.')
+    print('')
+    print(f'{bcolors.WARNING}' + '=' * 80 + f'{bcolors.ENDC}')
+    print('')
+
+
 def welcome():
     lines = []    # type: List[Union[str, Tuple[str, str]]]
 
@@ -107,7 +124,8 @@ def welcome():
                     white_line = ''
             print('\033[2K' + Fore.LIGHTYELLOW_EX + yellow_line + Fore.LIGHTWHITE_EX + white_line)
 
-    print('\033[2K' + Fore.LIGHTBLACK_EX + f'{("v" + __version__):>93}\n' + Style.RESET_ALL)
+    print('\033[2K' + Fore.LIGHTBLACK_EX + f'{("v" + __version__):>93}' + Style.RESET_ALL)
+    print()
 
 
 def formatted_records(records, **kwargs):
@@ -227,3 +245,75 @@ def print_record(params, record_uid):
         raise Exception('Record not found: ' + record_uid)
     data = json.loads(cached_rec['data_unencrypted'].decode('utf-8'))
     print(data)
+
+
+import sys
+import time
+import threading
+
+
+class Spinner:
+    """Animated spinner for long-running operations."""
+
+    # Claude-style spinner frames
+    FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+
+    def __init__(self, message=""):
+        self.message = message
+        self.running = False
+        self.thread = None
+
+    def _animate(self):
+        idx = 0
+        while self.running:
+            frame = self.FRAMES[idx % len(self.FRAMES)]
+            sys.stdout.write(f'\r{Fore.CYAN}{frame}{Fore.RESET} {self.message}')
+            sys.stdout.flush()
+            idx += 1
+            time.sleep(0.08)
+        # Clear the line when done
+        sys.stdout.write('\r' + ' ' * (len(self.message) + 4) + '\r')
+        sys.stdout.flush()
+
+    def start(self):
+        self.running = True
+        self.thread = threading.Thread(target=self._animate, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=0.5)
+
+
+def post_login_summary(record_count=0, breachwatch_count=0, show_tips=True):
+    """Display a polished post-login summary."""
+
+    ACCENT = Fore.GREEN
+    DIM = Fore.WHITE
+    WARN = Fore.YELLOW
+
+    print()
+
+    # Vault summary
+    if record_count > 0:
+        print(f"  {ACCENT}✓{Fore.RESET} Decrypted {record_count} records")
+
+    # BreachWatch warning
+    if breachwatch_count > 0:
+        print(f"  {WARN}⚠ {breachwatch_count} high-risk passwords{Fore.RESET} - run {ACCENT}breachwatch list{Fore.RESET}")
+
+    if show_tips:
+        print()
+        print(f"  {DIM}Quick Start:{Fore.RESET}")
+        print(f"    {ACCENT}ls{Fore.RESET}            List records")
+        print(f"    {ACCENT}ls -l -f{Fore.RESET}      List folders")
+        print(f"    {ACCENT}cd <UID>{Fore.RESET}      Change folder")
+        print(f"    {ACCENT}get <UID>{Fore.RESET}     Get record or folder info")
+        print(f"    {ACCENT}supershell{Fore.RESET}    Launch vault TUI")
+        print(f"    {ACCENT}search{Fore.RESET} <text> Search your vault")
+        print(f"    {ACCENT}this-device{Fore.RESET}   Configure device settings")
+        print(f"    {ACCENT}whoami{Fore.RESET}        Display account info")
+        print(f"    {ACCENT}?{Fore.RESET}             List all commands")
+
+    print()

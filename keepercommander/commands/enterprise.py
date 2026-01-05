@@ -4351,8 +4351,7 @@ class ReserveDomainCommand(EnterpriseCommand):
         
         if output_format == 'json':
             return json.dumps({
-                'error': error_msg,
-                'error_code': error_code,
+                'message': error_msg,
                 'domain': domain,
                 'action': action,
             }, indent=2)

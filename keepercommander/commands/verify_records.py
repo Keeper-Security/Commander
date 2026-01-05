@@ -352,7 +352,7 @@ class VerifyRecordsCommand(Command):
 
         if len(records_v2_to_fix) > 0 or len(records_v3_to_fix) > 0:
             total_records = len(records_v2_to_fix) + len(records_v3_to_fix)
-            print(f'There are {total_records} record(s) to be corrected')
+            print(f'There {"is" if total_records == 1 else "are"} {total_records} {"record" if total_records == 1 else "records"} to be corrected')
             answer = user_choice('Do you want to proceed?', 'yn', 'n')
             if answer.lower() == 'y':
                 success = 0
@@ -415,9 +415,9 @@ class VerifyRecordsCommand(Command):
                                 failed.append(f'{record_uid}: {status.message}')
 
                 if success > 0:
-                    logging.info('Successfully corrected %d record(s)', success)
+                    logging.info('Successfully corrected %d %s', success, 'record' if success == 1 else 'records')
                 if len(failed) > 0:
-                    logging.warning('Failed to correct %d record(s)', len(failed))
+                    logging.warning('Failed to correct %d %s', len(failed), 'record' if len(failed) == 1 else 'records')
                     logging.info('\n'.join(failed))
 
                     params.sync_data = True

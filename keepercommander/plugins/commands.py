@@ -37,7 +37,7 @@ def register_command_info(aliases, command_info):
 
 
 rotate_parser = argparse.ArgumentParser(
-    prog='rotate', description='Rotate the password for a Keeper record from this Commander.'
+    prog='rotate', description='Rotate the password for a Keeper record.'
 )
 rotate_parser.add_argument(
     '--print', dest='print', action='store_true', help='display the record content after rotation'

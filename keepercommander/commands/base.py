@@ -132,6 +132,16 @@ def register_commands(commands, aliases, command_info):
     commands['email-config'] = EmailConfigCommand()
     command_info['email-config'] = 'Email provider configuration management'
 
+    # SuperShell requires textual library - only register if available
+    if sys.version_info.major > 3 or (sys.version_info.major == 3 and sys.version_info.minor >= 9):
+        try:
+            from .supershell import SuperShellCommand
+            commands['supershell'] = SuperShellCommand()
+            command_info['supershell'] = 'Launch full terminal vault UI with vim navigation'
+            aliases['ss'] = 'supershell'
+        except ImportError:
+            pass  # textual not installed, skip supershell
+
     from . import credential_provision
     credential_provision.register_commands(commands)
     credential_provision.register_command_info(aliases, command_info)
@@ -203,8 +213,9 @@ def register_enterprise_commands(commands, aliases, command_info):
     if sys.version_info.major > 3 or (sys.version_info.major == 3 and sys.version_info.minor >= 9):
         from.pedm import pedm_admin
         pedm_command = pedm_admin.PedmCommand()
-        commands['pedm'] = pedm_command
-        command_info['pedm'] = pedm_command.description
+        commands['epm'] = pedm_command
+        command_info['epm'] = pedm_command.description
+        aliases['pedm'] = 'epm'
 
 
 def register_msp_commands(commands, aliases, command_info):

@@ -48,7 +48,7 @@ class LoginV3Flow:
         logging.info("Falling back to default authentication...")
         return LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes, loginType=login_type)
 
-    def login(self, params, new_device=False, new_login=False):   # type: (KeeperParams, bool, bool) -> None
+    def login(self, params, new_device=False, new_login=False, new_password_if_reset_required=None):   # type: (KeeperParams, bool, bool, string) -> None
 
         logging.debug("Login v3 Start as '%s'", params.user)
 
@@ -351,13 +351,13 @@ class LoginV3Flow:
             elif resp.loginState == APIRequest_pb2.UPGRADE:
                 raise Exception('Application or device is out of date and requires an update.')
             elif resp.loginState == APIRequest_pb2.LOGGED_IN:
-                LoginV3Flow.post_login_processing(params, resp)
+                LoginV3Flow.post_login_processing(params, resp, new_password_if_reset_required)
                 return
             else:
                 raise Exception("UNKNOWN LOGIN STATE [%s]" % resp.loginState)
 
     @staticmethod
-    def post_login_processing(params: KeeperParams, resp: APIRequest_pb2.LoginResponse):
+    def post_login_processing(params: KeeperParams, resp: APIRequest_pb2.LoginResponse, new_password_if_reset_required=None):
         """Processing after login
 
         Returns True if authentication is successful and False otherwise.
@@ -384,12 +384,17 @@ class LoginV3Flow:
                 )
                 raise Exception(msg)
             elif resp.sessionTokenType == APIRequest_pb2.ACCOUNT_RECOVERY:
-                print('Your Master Password has expired, you are required to change it before you can login.\n')
-                if LoginV3Flow.change_master_password(params):
+                if new_password_if_reset_required:
+                    print('Resetting expired Master Password.\n')
+                    LoginV3API.change_master_password(params, new_password_if_reset_required) # always returns False
                     return False
-                else:
-                    params.clear_session()
-                    raise Exception('Change password failed')
+                elif new_password_if_reset_required is None:
+                    print('Your Master Password has expired, you are required to change it before you can login.\n')
+                    if LoginV3Flow.change_master_password(params):
+                        return False
+                # Return exception if password change fails
+                params.clear_session()
+                raise Exception('Change password failed')
             elif resp.sessionTokenType == APIRequest_pb2.SHARE_ACCOUNT:
                 logging.info('Account transfer required')
                 accepted = api.accept_account_transfer_consent(params)
@@ -442,7 +447,7 @@ class LoginV3Flow:
         elif resp.encryptedDataKeyType == APIRequest_pb2.BY_PASSWORD:
             decrypted_data_key = \
                 utils.decrypt_encryption_params(resp.encryptedDataKey, params.password)
-            login_type_message = bcolors.UNDERLINE + "Password"
+            login_type_message = bcolors.UNDERLINE + "Master Password"
 
         elif resp.encryptedDataKeyType == APIRequest_pb2.BY_ALTERNATE:
             decryption_key = crypto.derive_keyhash_v2('data_key', params.password, params.salt, params.iterations)

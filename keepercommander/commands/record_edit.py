@@ -71,7 +71,7 @@ record_update_parser.add_argument('fields', nargs='*', type=str,
                                   help='load record type data from strings with dot notation')
 
 
-append_parser = argparse.ArgumentParser(prog='append-notes', description='Append notes to an existing record.')
+append_parser = argparse.ArgumentParser(prog='append-notes', description='Append notes to an existing record')
 append_parser.add_argument('--notes', dest='notes', action='store', help='notes')
 append_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
 
@@ -604,9 +604,10 @@ class RecordEditMixin:
                         else:
                             if len(parsed_field.value) <= 10:
                                 dt = datetime.datetime.strptime(parsed_field.value, '%Y-%m-%d')
+                                dt += datetime.timedelta(hours=12)
                             else:
                                 dt = datetime.datetime.strptime(parsed_field.value, '%Y-%m-%dT%H:%M:%SZ')
-                            value = int(dt.timestamp() * 1000)
+                            value = utils.datetime_to_millis(dt)
                     elif isinstance(ft.value, dict):
                         if ft.name == 'name':
                             value = vault.TypedField.import_name_field(parsed_field.value)
@@ -811,9 +812,9 @@ class RecordAddCommand(Command, RecordEditMixin):
                 record_fields.append(parsed_field)
 
         if record_type in ('legacy', 'general'):
-            raise CommandError('record-add', 'Legacy record type is not supported anymore.')
-            # record = vault.PasswordRecord()
-            # self.assign_legacy_fields(record, record_fields)
+            # raise CommandError('record-add', 'Legacy record type is not supported anymore.')
+            record = vault.PasswordRecord()
+            self.assign_legacy_fields(record, record_fields)
         else:
             rt_fields = self.get_record_type_fields(params, record_type)
             if not rt_fields:

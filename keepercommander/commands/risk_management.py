@@ -20,8 +20,8 @@ class RiskManagementReportCommand(base.GroupCommand):
         self.register_command('security-benchmarks-get', RiskManagementSecurityBenchmarksGetCommand(), 'Get the list of security benchmark set for the calling enterprise', 'sbg')
         self.register_command('security-benchmarks-set', RiskManagementSecurityBenchmarksSetCommand(), 'Set a list of security benchmark. Corresponding audit events will be logged', 'sbs')
         #Backward compatibility
-        self.register_command('user', RiskManagementEnterpriseStatDetailsCommand(), 'Show Risk Management User report (absolete)', 'u')
-        self.register_command('alert', RiskManagementSecurityAlertsSummaryCommand(), 'Show Risk Management Alert report (absolete)', 'a')
+        self.register_command('user', RiskManagementEnterpriseStatDetailsCommand(), 'Show Risk Management User report (obsolete)', 'u')
+        self.register_command('alert', RiskManagementSecurityAlertsSummaryCommand(), 'Show Risk Management Alert report (obsolete)', 'a')
 
 
 rmd_enterprise_stat_parser = argparse.ArgumentParser(prog='risk-management enterprise-stat', description='Risk management enterprise stat', parents=[base.report_output_parser])
@@ -170,7 +170,7 @@ class RiskManagementSecurityAlertDetailCommand(enterprise_common.EnterpriseComma
         aet = kwargs.get('aet')
         aetid = event_lookup.get(aet, 0)
         if aetid < 1:
-            raise ValueError(f'Invalid aetid {aetid}: valid aetid > 0')
+            raise base.CommandError('Valid Audit Event code or name required')
         request.auditEventTypeId = aetid
         done = False
         header = [

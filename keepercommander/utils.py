@@ -10,6 +10,7 @@
 #
 
 import base64
+import datetime
 import json
 import logging
 import math
@@ -19,7 +20,7 @@ import re
 import stat
 import subprocess
 import time
-from typing import Dict, Union
+from typing import Dict, Union, Optional
 from urllib.parse import urlparse, parse_qs, unquote
 from pathlib import Path
 import sys
@@ -153,6 +154,23 @@ def ensure_config_permissions(file_path):     # type: (str) -> None
 
 def current_milli_time():       # type: () -> int
     return int(round(time.time() * 1000))
+
+
+def millis_to_datetime(millis, tz=None):       # type: (Union[int, float], datetime.timezone) -> Optional[datetime.datetime]
+    if isinstance(millis, (int, float)):
+        # epoch = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+        epoch = datetime.datetime.fromtimestamp(0, tz=datetime.timezone.utc)
+        seconds = int(millis // 1000)
+        if seconds != 0:
+            return epoch + datetime.timedelta(seconds=seconds)
+    return None
+
+
+def datetime_to_millis(dt):   # type: (datetime.datetime) -> int
+    epoch = datetime.datetime.fromtimestamp(0, tz=datetime.timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return int((dt - epoch).total_seconds()) * 1000
 
 
 def base64_url_decode(s):       # type: (str) -> bytes

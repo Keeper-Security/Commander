@@ -33,15 +33,23 @@ class CommandValidator:
                 # Skip empty lines
                 if not line:
                     continue
-                    
-                # Check if this is a category header (ends with colon)
-                if line.endswith(':') and not line.startswith(' '):
-                    # Remove the colon and use as category
-                    current_category = line[:-1].strip()
+                
+                # Skip separator lines (lines with only dashes or special characters)
+                if all(c in '─-=_' or c.isspace() for c in line):
                     continue
                 
-                # Check if this is an indented command line (starts with spaces in original)
-                if current_category and original_line.startswith('  ') and line:
+                # Check indentation level
+                indent_count = len(original_line) - len(original_line.lstrip())
+                if indent_count == 2 and line and not line.startswith('Type '):
+                    # Skip common non-category lines
+                    if line in ['Available Commands']:
+                        continue
+                    # This is likely a category header
+                    current_category = line.rstrip(':').strip()
+                    continue
+                
+                # Check if this is a command line (4+ spaces indent)
+                if current_category and indent_count >= 4 and line:
                     self._process_new_command_line(line, valid_commands, command_info, current_category)
                     
             return valid_commands, command_info
@@ -95,8 +103,10 @@ class CommandValidator:
         main_command = parts[0]
         alias = None
         
-        # Check if there's an alias in parentheses as the next token
-        if len(parts) > 1 and parts[1].startswith('(') and parts[1].endswith(')'):
+        if len(parts) >= 3 and parts[2].startswith('(') and parts[2].endswith(')'):
+            main_command = f"{parts[0]} {parts[1]}"
+            alias = parts[2][1:-1].strip()
+        elif len(parts) > 1 and parts[1].startswith('(') and parts[1].endswith(')'):
             # Extract alias: "(alias)" -> "alias"
             alias = parts[1][1:-1].strip()
         # Check if command and alias are combined: "command (alias)"

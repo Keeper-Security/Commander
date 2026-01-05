@@ -1682,7 +1682,27 @@ class RecordV3:
                 if isinstance(flds, list) and len(flds) == 1:
                     if not flds[0]: continue
                     if isinstance(flds[0], dict):
-                        if (ftyp not in record_types.RecordFields or ftyp in ('passkey')) and not unmask:
+                        # Special handling for passkey fields - show key info nicely
+                        if ftyp == 'passkey':
+                            pk = flds[0]
+                            # Format created date
+                            created_ts = pk.get('createdDate', 0)
+                            if created_ts:
+                                created_dt = datetime.datetime.fromtimestamp(created_ts / 1000, tz=datetime.timezone.utc)
+                                created_str = created_dt.strftime('%m/%d/%Y, %I:%M %p')
+                            else:
+                                created_str = 'Unknown'
+                            username = pk.get('username', '')
+                            relying_party = pk.get('relyingParty', '')
+                            # Display passkey info
+                            print('{0:>20s}:'.format('Passkey'))
+                            print('{0:>28s}: {1}'.format('Created', created_str))
+                            if username:
+                                print('{0:>28s}: {1}'.format('Username', username))
+                            if relying_party:
+                                print('{0:>28s}: {1}'.format('Relying Party', relying_party))
+                            continue
+                        elif ftyp not in record_types.RecordFields and not unmask:
                             fval = '********'
                         else:
                             fval = json.dumps(flds[0], indent=2)

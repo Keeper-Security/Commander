@@ -7,17 +7,22 @@ import os.path
 
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
-from ..pam.router_helper import router_get_connected_gateways, router_set_record_rotation_information
+from ..pam.router_helper import (router_get_connected_gateways, router_set_record_rotation_information,
+                                 router_configure_resource)
 from ... import api, subfolder, utils, crypto, vault, vault_extensions
 from ...display import bcolors
-from ...proto import router_pb2, record_pb2
-from ...discovery_common.jobs import Jobs
+from ...proto import router_pb2, record_pb2, pam_pb2
+from ...discovery_common.jobs import Jobs, JobItem
+from ...discovery_common.dag_sort import sort_infra_vertices
+from ...discovery_common.infrastructure import Infrastructure
 from ...discovery_common.process import Process, QuitException, NoDiscoveryDataException
 from ...discovery_common.types import (
     DiscoveryObject, UserAcl, PromptActionEnum, PromptResult, BulkRecordAdd, BulkRecordConvert, BulkProcessResults,
     BulkRecordSuccess, BulkRecordFail, DirectoryInfo, NormalizedRecord, RecordField)
+from ...discovery_common.constants import PAM_USER
+from ...discovery_common.constants import VERTICES_SORT_MAP
 from pydantic import BaseModel
-from typing import Optional, List, Any, TYPE_CHECKING
+from typing import Optional, List, Any, Tuple, Dict, TYPE_CHECKING
 
 from ...api import get_records_add_request
 
@@ -44,6 +49,10 @@ def _ok(value: str) -> str:
     return f"{bcolors.OKGREEN}{value}{bcolors.ENDC}"
 
 
+def _w(value: str) -> str:
+    return f"{bcolors.WARNING}{value}{bcolors.ENDC}"
+
+
 # This is used for the admin user search
 class AdminSearchResult(BaseModel):
     record: Any
@@ -61,13 +70,10 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
     parser = argparse.ArgumentParser(prog='pam-action-discover-process')
     parser.add_argument('--job-id', '-j', required=True, dest='job_id', action='store',
                         help='Discovery job to process.')
-
-    # This is not ready yet.
-    # parser.add_argument('--smart-add', required=False, dest='smart_add', action='store_true',
-    #                     help='Automatically add resources with credentials and their users.')
-
     parser.add_argument('--add-all', required=False, dest='add_all', action='store_true',
                         help='Respond with ADD for all prompts.')
+    parser.add_argument('--preview', required=False, dest='do_preview', action='store_true',
+                        help='Preview the results')
     parser.add_argument('--debug-gs-level', required=False, dest='debug_level', action='store',
                         help='GraphSync debug level. Default is 0', type=int, default=0)
 
@@ -106,7 +112,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 print(f"{pad}{_f('Input was not a number.')}")
 
     @staticmethod
-    def get_field_values(record: TypedRecord, field_type: str) -> List[str]:
+    def get_field_values(record: TypedRecord, field_type: str) -> List[Any]:
         return next(
             (f.value
              for f in record.fields
@@ -128,7 +134,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         key_field = Process.get_key_field(record.record_type)
         keys = []
         if key_field == "host_port":
-            values = self.get_field_values(record, "pamHostname")
+            values = self.get_field_values(record, "pamHostname")  # type: List[dict]
             if len(values) == 0:
                 return []
 
@@ -189,7 +195,6 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             record_uid=record.record_uid,
             record_type=record.record_type,
             title=record.title,
-            notes=record.notes
         )
         for field in record.fields:
             normalized_record.fields.append(
@@ -291,11 +296,11 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                             break
 
                         # If this is the first line, check if line is a path to a file.
-                        if first_line is True:
+                        if first_line:
                             try:
                                 test_file = line.strip()
                                 logging.debug(f"is first line, check for file path for '{test_file}'")
-                                if os.path.exists(test_file) is True:
+                                if os.path.exists(test_file):
                                     with open(test_file, "r") as fh:
                                         new_value = fh.read()
                                         fh.close()
@@ -320,7 +325,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
                 # Is the value a path to a file, i.e., a private key file.
                 try:
-                    if os.path.exists(new_value) is True:
+                    if os.path.exists(new_value):
                         with open(new_value, "r") as fh:
                             new_value = fh.read()
                             fh.close()
@@ -393,13 +398,13 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                         formatted_value.append(value)
                     value = ", ".join(formatted_value)
             else:
-                if has_editable is True:
+                if has_editable:
                     value = f"{bcolors.FAIL}MISSING{bcolors.ENDC}"
                 else:
                     value = f"{bcolors.OKBLUE}None{bcolors.ENDC}"
 
             color = bcolors.HEADER
-            if has_editable is True:
+            if has_editable:
                 color = bcolors.OKGREEN
 
             rows = str(value).split("\n")
@@ -482,7 +487,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         print(f"{pad}{_h(content.description)}")
 
         show_current_object = True
-        while show_current_object is True:
+        while show_current_object:
             print(f"{pad}{bcolors.HEADER}Record Title:{bcolors.ENDC} {content.title}")
 
             logging.debug(f"Fields: {content.fields}")
@@ -589,10 +594,16 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     raise QuitException()
             print()
 
+        return PromptResult(
+            action=PromptActionEnum.SKIP,
+            acl=acl,
+            content=content
+        )
+
     def _find_user_record(self,
                           params: KeeperParams,
                           bulk_convert_records: List[BulkRecordConvert],
-                          context: Optional[Any] = None) -> (Optional[TypedRecord], bool):
+                          context: Optional[Any] = None) -> Tuple[Optional[TypedRecord], bool]:
 
         gateway_context = context.get("gateway_context")  # type: GatewayContext
         record_link = context.get("record_link")  # type: RecordLink
@@ -672,7 +683,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                         parent_record = vault.TypedRecord.load(params, parent_record_uid)  # type: Optional[TypedRecord]
                         if parent_record is not None:
                             is_directory_user = self._is_directory_user(parent_record.record_type)
-                            if is_directory_user is False:
+                            if not is_directory_user:
                                 logging.debug(f"pamUser parent for {user_record.title}, "
                                               "{user_record.record_uid} is not a directory; BAD for search")
                                 continue
@@ -737,7 +748,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 b = bcolors.BOLD
                 tc = ""
                 index_str = user_index
-                if admin_search_result.being_used is True:
+                if admin_search_result.being_used:
                     hc = bcolors.WARNING
                     b = bcolors.WARNING
                     tc = bcolors.WARNING
@@ -750,7 +761,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                       f'{tc + "(Already taken)" + bcolors.ENDC if admin_search_result.being_used is True else ""}')
                 user_index += 1
 
-            if has_local_user is True:
+            if has_local_user:
                 print(f"{bcolors.BOLD}* Not a PAM User record. "
                       f"A PAM User would be generated from this record.{bcolors.ENDC}")
 
@@ -763,7 +774,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             else:
                 try:
                     selected = admin_search_results[int(select) - 1]
-                    if selected.being_used is True:
+                    if selected.being_used:
                         print(f"{bcolors.FAIL}Cannot select a record that has already been taken. "
                               f"Another record is using this local user as its administrator.{bcolors.ENDC}")
                         return None, False
@@ -772,6 +783,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 except IndexError:
                     print(f"{bcolors.FAIL}Entered row index does not exists.{bcolors.ENDC}")
                     continue
+
+        return None, False
 
     @staticmethod
     def _handle_admin_record_from_record(record: TypedRecord,
@@ -865,7 +878,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                       acl: UserAcl,
                       bulk_convert_records: List[BulkRecordConvert],
                       indent: int = 0,
-                      context: Optional[Any] = None) -> PromptResult:
+                      context: Optional[Any] = None) -> Optional[PromptResult]:
 
         if content is None:
             raise Exception("The admin content was not passed in to prompt the user.")
@@ -971,7 +984,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             print(f"{bcolors.FAIL}Did not get 'Y' or 'N'{bcolors.ENDC}")
 
     @staticmethod
-    def _prepare_record(content: DiscoveryObject, context: Optional[Any] = None) -> (Any, str):
+    def _prepare_record(content: DiscoveryObject, context: Optional[Any] = None) -> Tuple[Any, str]:
 
         """
         Prepare the Vault record side.
@@ -1051,6 +1064,10 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
     def _create_records(cls, bulk_add_records: List[BulkRecordAdd], context: Optional[Any] = None) -> (
             BulkProcessResults):
 
+        """
+        Create Vault records, setup rotation settings, and configure the resource (if resource).
+        """
+
         if len(bulk_add_records) == 1:
             print("Adding the record to the Vault ...")
         else:
@@ -1061,6 +1078,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
         build_process_results = BulkProcessResults()
 
+        ##############################################################################################################
+        #
         # STEP 1 - Batch add new records
 
         # Generate a list of RecordAdd instance.
@@ -1091,11 +1110,16 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             logging.debug(f"attempted to batch add {len(bulk_add_records)} record(s), "
                           f"only have {len(add_results)} results.")
 
-        # STEP 3 - Add rotation settings.
-        # Use the list we passed in, find the results, and add if the additions were successful.
+        ##############################################################################################################
+        #
+        # STEP 2 - Add rotation settings for user  and resource configuration for resources
+        #          At this point the all the records have been created.
 
         # Keep track of each record we create a rotation for to avoid version problems, if there was a dup.
         created_cache = []
+
+        # TODO: There is a bulk version of the following code, it's not live.
+        #       Wait until live, then switch code to use that.
 
         # For the records passed in to be created.
         print("add rotation settings: ", end="")
@@ -1136,7 +1160,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             success = (result.status == record_pb2.RecordModifyResult.DESCRIPTOR.values_by_name['RS_SUCCESS'].number)
             status = record_pb2.RecordModifyResult.DESCRIPTOR.values_by_number[result.status].name
 
-            if success is False:
+            if not success:
                 build_process_results.failure.append(
                     BulkRecordFail(
                         title=title,
@@ -1146,24 +1170,39 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 logging.debug(f"Had problem adding record for {title}: {status}")
                 continue
 
-            rq = router_pb2.RouterRecordRotationRequest()
-            rq.recordUid = url_safe_str_to_bytes(bulk_record.record_uid)
-            rq.revision = 0
+            # Only set the rotation setting if the record is a PAM User.
+            if bulk_record.record_type == PAM_USER:
 
-            # Set the gateway/configuration that this record should be connected.
-            rq.configurationUid = url_safe_str_to_bytes(gateway_context.configuration_uid)
+                rq = router_pb2.RouterRecordRotationRequest()
+                rq.recordUid = url_safe_str_to_bytes(bulk_record.record_uid)
+                rq.revision = 0
 
-            # Only set the resource if the record type is a PAM User.
-            # Machines, databases, and directories have a login/password in the record that indicates who the admin is.
-            if bulk_record.record_type == "pamUser" and bulk_record.parent_record_uid is not None:
-                rq.resourceUid = url_safe_str_to_bytes(bulk_record.parent_record_uid)
+                # Set the gateway/configuration that this record should be connected.
+                rq.configurationUid = url_safe_str_to_bytes(gateway_context.configuration_uid)
 
-            # Right now, the schedule and password complexity are not set. This would be part of a rule engine.
-            rq.schedule = ''
-            rq.pwdComplexity = b''
-            rq.disabled = rotation_disabled
+                if bulk_record.parent_record_uid is not None:
+                    rq.resourceUid = url_safe_str_to_bytes(bulk_record.parent_record_uid)
 
-            router_set_record_rotation_information(params, rq)
+                # Right now, the schedule and password complexity are not set. This would be part of a rule engine.
+                rq.schedule = ''
+                rq.pwdComplexity = b''
+                rq.disabled = rotation_disabled
+
+                router_set_record_rotation_information(params, rq)
+
+            # This will be a resource.
+            # A LINK edge will be created between the configuration and resource.
+            # If there is an admin user, it will be set on the resource.
+            else:
+
+                # This will create a LINK between the PAM Configuration and the resource.
+                rq = pam_pb2.PAMResourceConfig()
+                rq.recordUid = url_safe_str_to_bytes(bulk_record.record_uid)
+                rq.networkUid = url_safe_str_to_bytes(gateway_context.configuration_uid)
+                if bulk_record.admin_uid:
+                    rq.adminUid = url_safe_str_to_bytes(bulk_record.admin_uid)
+
+                router_configure_resource(params, rq)
 
             created_cache.append(bulk_record.record_uid)
 
@@ -1206,8 +1245,6 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             # Machines, databases, and directories have a login/password in the record that indicates who the admin is.
             if record.record_type == "pamUser" and bulk_convert_record.parent_record_uid is not None:
                 rq.resourceUid = url_safe_str_to_bytes(bulk_convert_record.parent_record_uid)
-            else:
-                rq.resourceUid = None
 
             # Right now, the schedule and password complexity are not set. This would be part of a rule engine.
             rq.schedule = ''
@@ -1281,17 +1318,155 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             logging.error(err)
             print(f"{bcolors.FAIL}No items left to process. Failed to remove discovery job.{bcolors.ENDC}")
 
+    def preview(self, job_item: JobItem, params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0):
+
+        context = {
+            "params": params,
+            "gateway_context": gateway_context,
+        }
+
+        sync_point = job_item.sync_point
+        infra = Infrastructure(record=gateway_context.configuration,
+                               params=params,
+                               logger=logging,
+                               debug_level=debug_level)
+        infra.load(sync_point)
+
+        configuration = None
+        try:
+            configuration = infra.get_root.has_vertices()[0]
+        except (Exception,):
+            print(f"{bcolors.FAIL}Could not find the configuration in the infrastructure graph. "
+                  f"Has discovery been run for this gateway?{bcolors.ENDC}")
+
+        record_type_to_vertices_map = sort_infra_vertices(configuration)
+
+        # ------------
+
+        def _print_resource(rt: str, rule_result: str):
+
+            printed_something = False
+
+            titles = {
+                "pamDirectory": "Directories",
+                "pamMachine": "Machines",
+                "pamDatabase": "Databases"
+            }  # type: Dict[str, Optional[str]]
+
+            for rv in record_type_to_vertices_map[rt]:  # type: DAGVertex
+                if not rv.active or not rv.has_data:
+                    continue
+                user_vertices = rv.has_vertices()
+
+                user_list = []
+                for user_vertex in user_vertices:
+                    if not user_vertex.active or not user_vertex.has_data:
+                        continue
+
+                    user_content = DiscoveryObject.get_discovery_object(user_vertex)
+                    if user_content.ignore_object or self._record_lookup(user_content.record_uid, context) is not None:
+                        continue
+
+                    user_list.append(f"      . {user_content.item.user} ({user_content.name})")
+
+                c = DiscoveryObject.get_discovery_object(rv)
+                if len(user_list) == 0 and c.action_rules_result != rule_result or c.ignore_object:
+                    continue
+
+                has_record = ""
+                record_uid = c.record_uid
+                if record_uid is not None:
+                    if self._record_lookup(record_uid, context):
+                        has_record = f" (record exists: {record_uid})"
+                        if len(user_list) == 0:
+                            continue
+                    else:
+                        record_uid = None
+
+                if c.action_rules_result != rule_result and not record_uid:
+                    continue
+
+                title = titles.get(c.record_type)
+                if title is not None:
+                    print(f"  {_b(title)}")
+                    titles[c.record_type] = None
+
+                ip = ""
+                if c.item.host != c.item.ip:
+                    ip = f" ({c.item.ip})"
+
+                with_admin = ""
+                if c.admin_uid is not None and not record_uid:
+                    with_admin = f" with Administrator UID {c.admin_uid}"
+
+                print(f"    * {c.description}{ip}{with_admin}{has_record}{bcolors.ENDC}")
+                printed_something = True
+
+                if record_uid:
+                    for user in user_list:
+                        print(user)
+
+            return printed_something
+
+        # ------------
+
+        def _print_cloud_user(rt: str, rule_result: str):
+
+            title = "Users"
+
+            for user_vertex in record_type_to_vertices_map[rt]:  # type: DAGVertex
+                if not user_vertex.active or not user_vertex.has_data:
+                    continue
+
+                uc = DiscoveryObject.get_discovery_object(user_vertex)
+
+                if (uc.action_rules_result != rule_result
+                        or uc.ignore_object
+                        or self._record_lookup(uc.record_uid, context) is not None):
+                    continue
+
+                if title is not None:
+                    print(f"  {_b(title)}")
+                    title = None
+
+                print(f"    * {uc.item.user} ({uc.name})")
+
+        # ------------
+
+        print("")
+        print(_h("Will Be Automatically Added"))
+        nothing_to_print = True
+        for record_type in sorted(record_type_to_vertices_map, key=lambda i: VERTICES_SORT_MAP[i]['order']):
+            if record_type == "pamUser":
+                _print_cloud_user("pamUser", rule_result="add")
+            else:
+                if _print_resource(record_type, rule_result="add"):
+                    nothing_to_print = False
+        if nothing_to_print:
+            print(f"  {_w('No records will be automatically added.')}")
+
+        print("")
+        print(_h("Will Be Prompted For"))
+        nothing_to_print = True
+        for record_type in sorted(record_type_to_vertices_map, key=lambda i: VERTICES_SORT_MAP[i]['order']):
+            if record_type == "pamUser":
+                _print_cloud_user("pamUser", rule_result="prompt")
+            else:
+                if _print_resource(record_type, rule_result="prompt"):
+                    nothing_to_print = False
+        if nothing_to_print:
+            print(f"  {_w('No items will be prompted.')}")
+
+        print("")
+
     def execute(self, params: KeeperParams, **kwargs):
 
         if not hasattr(params, 'pam_controllers'):
             router_get_connected_gateways(params)
 
+        do_preview = kwargs.get("do_preview", False)
         job_id = kwargs.get("job_id")
         add_all = kwargs.get("add_all", False)
-        smart_add = kwargs.get("smart_add", False)
-
-        # Right now, keep dry_run False. We might add it back in.
-        dry_run = kwargs.get("dry_run", False)
         debug_level = kwargs.get("debug_level", 0)
 
         all_gateways = GatewayContext.all_gateways(params)
@@ -1329,6 +1504,15 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 print(f'{bcolors.FAIL}Discovery job failed. Cannot process.{bcolors.ENDC}')
                 return
 
+            # Preview is a just a way to list which items will be added or prompted.
+            if do_preview:
+                self.preview(
+                    job_item=job_item,
+                    params=params,
+                    gateway_context=gateway_context,
+                )
+                return
+
             process = Process(
                 record=configuration_record,
                 job_id=job_item.job_id,
@@ -1337,16 +1521,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 debug_level=debug_level,
             )
 
-            if dry_run is True:
-                if add_all is True:
-                    logging.debug("dry run has been set, disable auto add.")
-                    add_all = False
-
-                print(f"{bcolors.HEADER}The DRY RUN flag has been set. The rule engine will not add any records. "
-                      f"You will not be prompted to edit or add records.{bcolors.ENDC}")
-                print("")
-
-            if add_all is True:
+            if add_all:
                 print(f"{bcolors.HEADER}The ADD ALL flag has been set. All found items will be added.{bcolors.ENDC}")
                 print("")
 
@@ -1358,9 +1533,6 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
                     # Prompt user the about adding records
                     prompt_func=self._prompt,
-
-                    # Flag to auto add resources with credential, and all it users.
-                    smart_add=smart_add,
 
                     # Prompt user for an admin for a resource
                     prompt_admin_func=self._prompt_admin,
@@ -1392,7 +1564,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     context={
                         "params": params,
                         "gateway_context": gateway_context,
-                        "dry_run": dry_run,
+                        "dry_run": False,
                         "add_all": add_all
                     }
                 )
@@ -1403,7 +1575,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 if results is not None and results.num_results > 0:
                     print(f"{bcolors.OKGREEN}Successfully added {results.success_count} "
                           f"record{'s' if results.success_count != 1 else ''}.{bcolors.ENDC}")
-                    if results.has_failures is True:
+                    if results.has_failures:
                         print(f"{bcolors.FAIL}There were {results.failure_count} "
                               f"failure{'s' if results.failure_count != 1 else ''}.{bcolors.ENDC}")
                         for fail in results.failure:

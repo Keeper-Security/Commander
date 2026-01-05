@@ -94,7 +94,8 @@ class Record:
         if 'notes' in data:
             self.notes = Record.xstr(data['notes'])
 
-        if self.version == 2:
+        if self.version in (1, 2):
+            self.record_type = 'general'
             if 'secret1' in data:
                 self.login = Record.xstr(data['secret1'])
             if 'secret2' in data:
@@ -110,7 +111,7 @@ class Record:
                     for field in extra['fields']:
                         if field['field_type'] == 'totp':
                             self.totp = field['data']
-        elif self.version == 3:
+        elif self.version in (3, 5, 6):
             self.record_type = data.get('type', 'login')
             for field in itertools.chain(data['fields'], data.get('custom') or []):
                 field_label = field.get('label', '')
@@ -137,7 +138,8 @@ class Record:
                             continue
 
                     if field_type:
-                        field_name = f'{field_type}:{field_label}'
+                        # Only include colon separator if there's a label
+                        field_name = f'{field_type}:{field_label}' if field_label else field_type
                     elif field_label:
                         field_name = field_label
                     else:
@@ -197,13 +199,33 @@ class Record:
             if len(idxs) == 1:
                 return self.custom_fields.pop(idxs[0])
 
+    def get_unmasked_field_params(self):
+        """Return unmasked field parameters (login, url, etc.)"""
+        if self.login:
+            yield 'login', self.login
+        if self.login_url:
+            yield 'login_url', self.login_url
+
+    def get_masked_field_params(self):
+        """Return masked field parameters (password, totp)"""
+        if self.password:
+            yield 'password', self.password
+        if self.totp:
+            yield 'totp', self.totp
+
+    def get_typed_fields(self):
+        """Return typed fields (for v3 records) - returns empty for legacy Record"""
+        return []
+
     def display(self, unmask=False):
         print('')
         print('{0:>20s}: {1:<20s}'.format('UID', self.record_uid))
-        print('{0:>20s}: {1:<20s}'.format('Type', ''))
+        print('{0:>20s}: {1:<20s}'.format('Type', self.record_type if self.record_type else ''))
         if self.title: print('{0:>20s}: {1:<20s}'.format('Title', self.title))
         if self.login: print('{0:>20s}: {1:<20s}'.format('Login', self.login))
-        if self.password: print('{0:>20s}: {1:<20s}'.format('Password', self.password if unmask else '********'))
+        if self.password:
+            display_password = (self.unmasked_password or self.password) if unmask else '********'
+            print('{0:>20s}: {1:<20s}'.format('Password', display_password))
         if self.login_url: print('{0:>20s}: {1:<20s}'.format('URL', self.login_url))
         # print('{0:>20s}: https://keepersecurity.com/vault#detail/{1}'.format('Link',self.record_uid))
 
@@ -211,7 +233,55 @@ class Record:
             for c in self.custom_fields:
                 if not 'value' in c: c['value'] = ''
                 if not 'name' in c: c['name'] = c['type'] if 'type' in c else ''
-                print('{0:>20s}: {1:<s}'.format(str(c['name']), str(c['value'])))
+                field_name = str(c['name'])
+                # Skip fileRef fields - they're shown in Attachments section
+                # Check for both 'fileRef' and 'fileRef:' (with trailing colon when no label)
+                if field_name.rstrip(':') in ('fileRef', 'addressRef', 'cardRef'):
+                    continue
+                # Special handling for passkey fields - display nicely instead of raw JSON
+                if field_name.rstrip(':').lower() == 'passkey':
+                    pk_value = c['value']
+                    # Handle both single passkey and list of passkeys
+                    if isinstance(pk_value, list):
+                        pk_value = pk_value[0] if pk_value else {}
+                    if isinstance(pk_value, dict):
+                        print('{0:>20s}:'.format('Passkey'))
+                        # Format created date
+                        created_ts = pk_value.get('createdDate', 0)
+                        if created_ts:
+                            created_dt = datetime.datetime.fromtimestamp(created_ts / 1000)
+                            created_str = created_dt.strftime('%m/%d/%Y, %I:%M %p')
+                            print('{0:>28s}: {1}'.format('Created', created_str))
+                        username = pk_value.get('username', '')
+                        if username:
+                            print('{0:>28s}: {1}'.format('Username', username))
+                        relying_party = pk_value.get('relyingParty', '')
+                        if relying_party:
+                            print('{0:>28s}: {1}'.format('Relying Party', relying_party))
+                        continue
+                # Strip type prefixes from field names (e.g., "text:Sign-In Address" -> "Sign-In Address")
+                field_type_prefixes = ('text:', 'multiline:', 'url:', 'phone:', 'email:', 'secret:', 'date:', 'name:', 'host:', 'address:')
+                display_name = field_name
+                for prefix in field_type_prefixes:
+                    if field_name.lower().startswith(prefix):
+                        display_name = field_name[len(prefix):]
+                        # If label was empty, use a friendly name based on type
+                        if not display_name:
+                            type_friendly_names = {
+                                'text:': 'Text',
+                                'multiline:': 'Note',
+                                'url:': 'URL',
+                                'phone:': 'Phone',
+                                'email:': 'Email',
+                                'secret:': 'Secret',
+                                'date:': 'Date',
+                                'name:': 'Name',
+                                'host:': 'Host',
+                                'address:': 'Address',
+                            }
+                            display_name = type_friendly_names.get(prefix, prefix.rstrip(':').title())
+                        break
+                print('{0:>20s}: {1:<s}'.format(display_name, str(c['value'])))
 
         if self.notes:
             lines = self.notes.split('\n')

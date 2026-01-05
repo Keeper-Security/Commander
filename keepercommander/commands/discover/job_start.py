@@ -41,10 +41,10 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
                         action='store_true', help='Skip discovering directories.')
     parser.add_argument('--skip-cloud-users', required=False, dest='skip_cloud_users',
                         action='store_true', help='Skip discovering cloud users.')
-    parser.add_argument('--cred', required=False, dest='credentials',
-                        action='append', help='List resource credentials.')
-    parser.add_argument('--cred-file', required=False, dest='credential_file',
-                        action='store', help='A JSON file containing list of credentials.')
+    # parser.add_argument('--cred', required=False, dest='credentials',
+    #                     action='append', help='List resource credentials.')
+    # parser.add_argument('--cred-file', required=False, dest='credential_file',
+    #                    action='store', help='A JSON file containing list of credentials.')
 
     def get_parser(self):
         return PAMGatewayActionDiscoverJobStartCommand.parser
@@ -145,7 +145,7 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
                     if len(kv) != 2:
                         print(f"{bcolors.FAIL}A '--cred' is invalid. It does not have a value.{bcolors.ENDC}")
                         return
-                    if hasattr(c, kv[0]) is False:
+                    if not hasattr(c, kv[0]):
                         print(f"{bcolors.FAIL}A '--cred' is invalid. The key '{kv[0]}' is invalid.{bcolors.ENDC}")
                         return
                     if hasattr(c, kv[1]) == "":
@@ -170,14 +170,14 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
                     print(f"{bcolors.FAIL}The JSON file {credential_files} could not be imported: {err}{bcolors.ENDC}")
                     return
 
-                if isinstance(creds, list) is False:
+                if not isinstance(creds, list):
                     print(f"{bcolors.FAIL}Credential file is invalid. Structure is not an array.{bcolors.ENDC}")
                     return
                 num = 1
                 for obj in creds:
                     c = CredentialBase()
                     for key in obj:
-                        if hasattr(c, key) is False:
+                        if not hasattr(c, key):
                             print(f"{bcolors.FAIL}Object {num} has the invalid key {key}.{bcolors.ENDC}")
                             return
                         setattr(c, key, obj[key])

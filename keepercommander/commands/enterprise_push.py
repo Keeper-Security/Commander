@@ -272,7 +272,7 @@ class EnterprisePushCommand(EnterpriseCommand):
                             record_no += 1
                         else:
                             logging.warning('User: %s Transfer Record Error: (%s) %s', email, trec.status, trec.message)
-                    logging.info('Pushed %d record(s) to \"%s\"', record_no, email)
+                    logging.info('Pushed %d %s to "%s"', record_no, 'record' if record_no == 1 else 'records', email)
 
                 if len(pre_delete_rq['objects']) > 0:
                     pre_delete_rs = api.communicate(params, pre_delete_rq)

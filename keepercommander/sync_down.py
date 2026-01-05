@@ -16,7 +16,7 @@ from typing import Any, List, Dict, Optional
 import google
 
 from . import api, utils, crypto, convert_keys
-from .display import bcolors
+from .display import bcolors, Spinner
 from .params import KeeperParams, RecordOwner
 from .proto import SyncDown_pb2, record_pb2, client_pb2, breachwatch_pb2
 from .subfolder import RootFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, BaseFolderNode
@@ -28,8 +28,12 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
 
     params.sync_data = False
     token = params.sync_down_token
-    if not token:
-        logging.info('Syncing...')
+
+    # Use spinner animation for full sync (only in interactive mode, not batch/automation)
+    spinner = None
+    if not token and not params.batch_mode:
+        spinner = Spinner('Syncing...')
+        spinner.start()
 
     for record in params.record_cache.values():
         if 'shares' in record:
@@ -1017,26 +1021,27 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
                 type_id += rt.scope * 1000000
                 params.record_type_cache[type_id] = rt.content
 
+    # Stop spinner if running
+    if spinner:
+        spinner.stop()
+
     if full_sync:
         convert_keys.change_key_types(params)
 
+        # Count breachwatch issues and store on params for summary display
+        breachwatch_count = 0
         if params.breach_watch:
-            weak_count = 0
             for _ in params.breach_watch.get_records_by_status(params, ['WEAK', 'BREACHED']):
-                weak_count += 1
-            if weak_count > 0:
-                logging.info(bcolors.WARNING +
-                             f'The number of records that are affected by breaches or contain high-risk passwords: {weak_count}' +
-                             '\nUse \"breachwatch list\" command to get more details' +
-                             bcolors.ENDC)
+                breachwatch_count += 1
+        params._sync_breachwatch_count = breachwatch_count
 
+        # Count records and store on params for summary display
         record_count = 0
         valid_versions = {2, 3}
         for r in params.record_cache.values():
             if r.get('version', 0) in valid_versions:
                 record_count += 1
-        if record_count:
-            logging.info('Decrypted [%d] record(s)', record_count)
+        params._sync_record_count = record_count
 
 
 def _sync_record_types(params):  # type: (KeeperParams) -> Any

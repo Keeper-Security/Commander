@@ -12,12 +12,12 @@ from ..commands.helpers.enterprise import is_addon_enabled
 
 
 def register_commands(commands):
-    commands['external-shares-report'] = ExternalSharesReportCommand()
+    commands['ext-shares-report'] = ExternalSharesReportCommand()
     commands['license-consumption-report'] = LicenseConsumptionReportCommand()
 
 
 def register_command_info(aliases, command_info):
-    aliases['esr'] = 'external-shares-report'
+    aliases['esr'] = 'ext-shares-report'
     aliases['lcr'] = 'license-consumption-report'
 
     for p in [external_share_report_parser, license_consumption_report_parser]:
@@ -63,7 +63,7 @@ def get_feature_enforcements_from_constants():
 
 
 ext_shares_report_desc = 'Run an external record sharing report'
-external_share_report_parser = argparse.ArgumentParser(prog='external-shares-report', description=ext_shares_report_desc,
+external_share_report_parser = argparse.ArgumentParser(prog='ext-shares-report', description=ext_shares_report_desc,
                                                        parents=[base.report_output_parser])
 external_share_report_parser.add_argument('-a', '--action', action='store', choices=['remove', 'none'], default='none',
                                           help='action to perform on external shares, \'none\' if omitted')

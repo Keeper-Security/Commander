@@ -22,11 +22,12 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Union
 
+from colorama import Fore, Style
 from prompt_toolkit import PromptSession
 from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.shortcuts import CompleteStyle
 
-from . import api, display, ttk
+from . import api, display, ttk, utils
 from . import versioning
 from .autocomplete import CommandCompleter
 from .commands import (
@@ -36,7 +37,7 @@ from .commands import (
 from .commands.base import CliCommand, GroupCommand
 from .commands.utils import LoginCommand
 from .commands import msp
-from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS
+from .constants import OS_WHICH_CMD, KEEPER_PUBLIC_HOSTS, KEEPER_SERVERS
 from .error import CommandError, Error
 from .params import KeeperParams
 from .subfolder import BaseFolderNode
@@ -55,161 +56,138 @@ not_msp_admin_error_msg = 'This command is restricted to Keeper MSP administrato
 
 command_info['server'] = 'Sets or displays current Keeper region'
 
+# Shell-specific commands (handled inline in the shell loop)
+command_info['clear'] = 'Clear the screen'
+command_info['history'] = 'Show command history'
+command_info['quit'] = 'Exit the shell'
+aliases['c'] = 'clear'
+aliases['h'] = 'history'
+aliases['q'] = 'quit'
+
 logging.getLogger('asyncio').setLevel(logging.WARNING)
 
 
 def display_command_help(show_enterprise=False, show_shell=False, show_legacy=False):
     from .command_categories import get_command_category, get_category_order
     from .display import bcolors
-    
+    from colorama import Fore, Style
+    import shutil
+
     alias_lookup = {x[1]: x[0] for x in aliases.items()}
-    
+    DIM = Fore.WHITE  # Use white for better readability (not too bright, not too dim)
+
+    # Get terminal width
+    try:
+        terminal_width = shutil.get_terminal_size(fallback=(80, 24)).columns
+    except:
+        terminal_width = 80
+
+    def clean_description(desc):
+        """Remove trailing period from description"""
+        if desc and desc.endswith('.'):
+            return desc[:-1]
+        return desc
+
     # Collect all commands from all sources
     all_commands = {}
     all_commands.update(command_info)
     if show_enterprise:
         all_commands.update(enterprise_command_info)
         all_commands.update(msp_command_info)
-    
-    # Group commands by category
+
+    # Group commands by category and build display info
     categorized_commands = {}
     for cmd, description in all_commands.items():
         category = get_command_category(cmd)
         if category not in categorized_commands:
             categorized_commands[category] = []
-        categorized_commands[category].append((cmd, description))
-    
-    # Define colors for different categories - more variety and visual appeal
-    category_colors = {
-        'Record Commands': bcolors.OKGREEN,           # Green - primary functionality
-        'Sharing Commands': bcolors.OKBLUE,           # Blue - collaboration
-        'Record Type Commands': bcolors.HEADER,       # Purple/Magenta - special types
-        'Import and Exporting Data': bcolors.WARNING, # Yellow - data operations
-        'Reporting Commands': '\033[96m',             # Cyan - analytics
-        'MSP Management Commands': bcolors.HIGHINTENSITYRED, # Bright Red - MSP admin
-        'Enterprise Management Commands': '\033[94m',  # Blue - enterprise admin
-        'Automation Commands': '\033[32m',            # Dark Green - automation workflows
-        'Secrets Manager Commands': '\033[95m',       # Magenta - KSM
-        'BreachWatch Commands': bcolors.FAIL,         # Red - security alerts
-        'Device Management Commands': '\033[93m',     # Bright Yellow - devices
-        'Domain Management Commands': '\033[92m',     # Bright Green - domains
-        'Service Mode REST API': '\033[36m',          # Dark Cyan - services
-        'Email Configuration Commands': '\033[38;5;214m',  # Orange - email services
-        'Miscellaneous Commands': '\033[37m',         # Light Gray - utilities
-        'KeeperPAM Commands': '\033[92m',            # Bright Green - PAM
-        'Legacy Commands': '\033[90m',               # Dark Gray - deprecated
-        'Other': bcolors.WHITE
-    }
+        categorized_commands[category].append((cmd, clean_description(description)))
 
-    print(f'\n{bcolors.BOLD}{bcolors.UNDERLINE}Commands:{bcolors.ENDC}')
-    print('=' * 80)
-    
-    # Display commands in category order with colors and separators
-    first_category = True
+    # Pre-compute all command display strings and find global max width
+    # This allows alignment across all categories when terminal is wide enough
+    all_cmd_displays = []  # List of (category, cmd_display, description)
+    global_max_width = 0
+
+    # Special subcommands for certain categories
+    pam_subcommands = [
+        ('pam action', 'Execute action on the Gateway'),
+        ('pam config', 'Manage PAM Configurations'),
+        ('pam connection', 'Manage Connections'),
+        ('pam gateway', 'Manage Gateways'),
+        ('pam legacy', 'Switch to legacy PAM commands'),
+        ('pam project', 'PAM Project Import/Export'),
+        ('pam rbi', 'Manage Remote Browser Isolation'),
+        ('pam rotation', 'Manage Rotations'),
+        ('pam split', 'Split credentials from legacy PAM Machine'),
+        ('pam tunnel', 'Manage Tunnels'),
+    ]
+    domain_subcommands = [
+        ('domain list (dl)', 'List all reserved domains for the enterprise'),
+        ('domain reserve (dr)', 'Reserve, delete, or generate token for a domain'),
+    ]
+
     for category in get_category_order():
         if category not in categorized_commands:
             continue
-            
-        # Skip Legacy Commands unless specifically requested
         if category == 'Legacy Commands' and not show_legacy:
             continue
-            
-        # Add separator between categories (except for first one)
-        if not first_category:
-            print()  # Empty line between categories
-        first_category = False
-            
-        # Sort commands within each category
-        commands_in_category = sorted(categorized_commands[category], key=lambda x: x[0])
-        
-        # Display category header with color
-        color = category_colors.get(category, bcolors.WHITE)
-        print(f'{color}{bcolors.BOLD}{category}:{bcolors.ENDC}')
-        print(f'{color}{"-" * len(category)}{bcolors.ENDC}')
-        
-        # Special handling for KeeperPAM Commands to show sub-commands
+
         if category == 'KeeperPAM Commands':
-            # Define PAM sub-commands with descriptions
-            pam_subcommands = [
-                ('pam action', 'Execute action on the Gateway'),
-                ('pam config', 'Manage PAM Configurations'),
-                ('pam connection', 'Manage Connections'),
-                ('pam gateway', 'Manage Gateways'),
-                ('pam legacy', 'Switch to legacy PAM commands'),
-                ('pam project', 'PAM Project Import/Export'),
-                ('pam rbi', 'Manage Remote Browser Isolation'),
-                ('pam rotation', 'Manage Rotations'),
-                ('pam split', 'Split credentials from legacy PAM Machine'),
-                ('pam tunnel', 'Manage Tunnels'),
-            ]
-            
-            # Calculate width for PAM commands
-            max_cmd_width = max(len(cmd) for cmd, _ in pam_subcommands)
-            
             for cmd_display, description in sorted(pam_subcommands):
-                # Bold only the "pam" part
-                pam_part = cmd_display.split(' ')[0]  # "pam"
-                sub_part = cmd_display.split(' ', 1)[1]  # "action", "config", etc.
-                formatted_cmd = f'{bcolors.BOLD}{pam_part}{bcolors.ENDC} {sub_part}'
-                # Adjust spacing to account for formatting codes
-                spacing = max_cmd_width - len(cmd_display) + len(bcolors.BOLD) + len(bcolors.ENDC)
-                print(f'  {formatted_cmd}{" " * spacing}   {description}')
+                all_cmd_displays.append((category, cmd_display, description))
+                global_max_width = max(global_max_width, len(cmd_display))
         elif category == 'Domain Management Commands':
-            # Define domain sub-commands with descriptions
-            domain_subcommands = [
-                ('domain list', 'List all reserved domains for the enterprise'),
-                ('domain reserve', 'Reserve, delete, or generate token for a domain'),
-            ]
-
-            # Calculate width for domain commands
-            max_cmd_width = max(len(cmd) for cmd, _ in domain_subcommands)
-
             for cmd_display, description in sorted(domain_subcommands):
-                # Bold only the "domain" part
-                domain_part = cmd_display.split(' ')[0]  # "domain"
-                sub_part = cmd_display.split(' ', 1)[1]  # "list", "reserve"
-                formatted_cmd = f'{bcolors.BOLD}{domain_part}{bcolors.ENDC} {sub_part}'
-                # Adjust spacing to account for formatting codes
-                spacing = max_cmd_width - len(cmd_display) + len(bcolors.BOLD) + len(bcolors.ENDC)
-                print(f'  {formatted_cmd}{" " * spacing}   {description}')
+                all_cmd_displays.append((category, cmd_display, description))
+                global_max_width = max(global_max_width, len(cmd_display))
         else:
-            # Regular command display for other categories
-            max_cmd_width = 0
-            cmd_display_list = []
+            commands_in_category = sorted(categorized_commands[category], key=lambda x: x[0])
             for cmd, description in commands_in_category:
                 alias = alias_lookup.get(cmd) or ''
                 alias_str = f' ({alias})' if alias else ''
                 cmd_display = f'{cmd}{alias_str}'
-                cmd_display_list.append((cmd, alias_str, description))
-                max_cmd_width = max(max_cmd_width, len(cmd_display))
-            
-            # Display commands in this category with proper table alignment
-            for cmd, alias_str, description in cmd_display_list:
-                cmd_display = f'{cmd}{alias_str}'
-                print(f'  {bcolors.BOLD}{cmd_display:<{max_cmd_width}}{bcolors.ENDC}   {description}')
+                all_cmd_displays.append((category, cmd_display, description))
+                global_max_width = max(global_max_width, len(cmd_display))
 
-    # Add shell commands if requested
-    if show_shell:
-        print()  # Separator
-        color = bcolors.WHITE
-        print(f'{color}{bcolors.BOLD}Shell Commands:{bcolors.ENDC}')
-        print(f'{color}{"-" * 14}{bcolors.ENDC}')
-        # Calculate max width for shell commands too
-        shell_commands = [
-            ('clear (c)', 'Clear the screen.'),
-            ('history (h)', 'Show command history.'),
-            ('shell', 'Use Keeper interactive shell.'),
-            ('quit (q)', 'Quit.')
-        ]
-        shell_max_width = max(len(cmd) for cmd, _ in shell_commands)
-        
-        for cmd, description in shell_commands:
-            print(f'  {bcolors.BOLD}{cmd:<{shell_max_width}}{bcolors.ENDC}   {description}')
+    # Determine if we should use global alignment
+    # Use global alignment if terminal is wide enough (command + padding + reasonable description)
+    min_desc_width = 40
+    use_global_alignment = terminal_width >= (4 + global_max_width + 2 + min_desc_width)
 
-    print(f'\n{bcolors.UNDERLINE}Usage:{bcolors.ENDC}')
-    print(f"Type '{bcolors.BOLD}help <command>{bcolors.ENDC}' to display help on a specific command")
-    if not show_legacy:
-        print(f"Type '{bcolors.BOLD}help --legacy{bcolors.ENDC}' to show legacy/deprecated commands")
+    print()
+    print(f"  {Style.BRIGHT}Available Commands{Style.RESET_ALL}")
+    print(f"  {DIM}{'─' * 70}{Fore.RESET}")
+
+    # Display commands grouped by category
+    current_category = None
+    category_cmd_widths = {}  # Cache per-category max widths for non-global alignment
+
+    # Pre-compute per-category max widths
+    if not use_global_alignment:
+        for category, cmd_display, _ in all_cmd_displays:
+            if category not in category_cmd_widths:
+                category_cmd_widths[category] = 0
+            category_cmd_widths[category] = max(category_cmd_widths[category], len(cmd_display))
+
+    for category, cmd_display, description in all_cmd_displays:
+        if category != current_category:
+            if current_category is not None:
+                print()
+            print(f"  {Style.BRIGHT}{category}{Style.RESET_ALL}")
+            current_category = category
+
+        # Use global or per-category width
+        width = global_max_width if use_global_alignment else category_cmd_widths[category]
+        print(f"    {Fore.GREEN}{cmd_display:<{width}}{Fore.RESET}  {DIM}{description}{Fore.RESET}")
+
+    print()
+    print(f"  {DIM}Type {Fore.GREEN}help <command>{DIM} to display help on command{Fore.RESET}")
+    # Only show these hints inside the shell (not from terminal)
+    if not show_shell:
+        print(f"  {DIM}Type {Fore.GREEN}help basics{DIM} for a quick start guide{Fore.RESET}")
+        if not show_legacy:
+            print(f"  {DIM}Type {Fore.GREEN}help --legacy{DIM} to show legacy/deprecated commands{Fore.RESET}")
+    print()
 
 
 def is_executing_as_msp_admin():
@@ -271,17 +249,36 @@ def do_command(params, command_line):
 
     if command_line.lower().startswith('server'):
         _, sp, server = command_line.partition(' ')
+        server = server.strip() if server else ''
+
+        # Handle help flag
+        if server in ('-h', '--help'):
+            print('Usage: server [REGION]')
+            print()
+            print('Set or display the current Keeper region.')
+            print()
+            print('Valid regions:')
+            print(f'  Production: US, EU, AU, CA, JP, GOV')
+            print(f'  Dev:        US_DEV, EU_DEV, AU_DEV, CA_DEV, JP_DEV, GOV_DEV')
+            print(f'  QA:         US_QA, EU_QA, AU_QA, CA_QA, JP_QA, GOV_QA')
+            return
+
         if server:
             if not params.session_token:
-                server = server.strip()
-                region = next((x for x in KEEPER_PUBLIC_HOSTS.items()
-                               if server.casefold() in [x[0].casefold(), x[1].casefold()]), None)
-                if region:
-                    params.server = region[1]
-                    logging.info('Keeper region is set to %s', region[0])
+                # Look up server in KEEPER_SERVERS (case insensitive)
+                server_upper = server.upper()
+                if server_upper in KEEPER_SERVERS:
+                    params.server = KEEPER_SERVERS[server_upper]
+                    logging.info('Keeper region is set to %s', server_upper)
                 else:
-                    params.server = server
-                    logging.info('Keeper server is set to %s',  params.server)
+                    # Check if it matches a valid hostname directly
+                    server_lower = server.lower()
+                    if server_lower in KEEPER_SERVERS.values():
+                        params.server = server_lower
+                        logging.info('Keeper server is set to %s', params.server)
+                    else:
+                        logging.error('Invalid region: %s', server)
+                        print(f'Valid regions: {", ".join(sorted(KEEPER_SERVERS.keys()))}')
             else:
                 logging.warning('Cannot change Keeper region while logged in')
         else:
@@ -381,7 +378,9 @@ def do_command(params, command_line):
                 if command.is_authorised():
                     if not params.session_token:
                         try:
-                            LoginCommand().execute(params, email=params.user, password=params.password, new_login=False)
+                            # Some commands (like logout) need auth but not sync
+                            skip_sync = getattr(command, 'skip_sync_on_auth', False)
+                            LoginCommand().execute(params, email=params.user, password=params.password, new_login=False, skip_sync=skip_sync)
                         except KeyboardInterrupt:
                             logging.info('Canceled')
                         if not params.session_token:
@@ -419,6 +418,8 @@ def do_command(params, command_line):
                         api.sync_down(params)
                 return result
             else:
+                if not params.session_token and utils.is_email(orig_cmd):
+                    return LoginCommand().execute(params, email=orig_cmd, new_login=False)
                 display_command_help(show_enterprise=(params.enterprise is not None))
 
 
@@ -690,7 +691,7 @@ def read_command_with_continuation(prompt_session, params):
     return result
 
 
-def loop(params):  # type: (KeeperParams) -> int
+def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # type: (KeeperParams, bool, bool, bool) -> int
     global prompt_session
     error_no = 0
     suppress_errno = False
@@ -707,13 +708,17 @@ def loop(params):  # type: (KeeperParams) -> int
                                            complete_style=CompleteStyle.MULTI_COLUMN,
                                            complete_while_typing=False)
 
-        display.welcome()
-        versioning.welcome_print_version(params)
+        if not skip_init:
+            display.welcome()
+            versioning.welcome_print_version(params)
+            # Show government warning for GOV environments when entering interactive shell
+            if params.server and 'govcloud' in params.server.lower():
+                display.show_government_warning()
 
-    if not params.batch_mode:
+    if not params.batch_mode and not skip_init:
         if params.user:
             try:
-                LoginCommand().execute(params, email=params.user, password=params.password, new_login=False)
+                LoginCommand().execute(params, email=params.user, password=params.password, new_login=new_login)
             except KeyboardInterrupt:
                 print('')
             except EOFError:
@@ -722,12 +727,14 @@ def loop(params):  # type: (KeeperParams) -> int
                 logging.error(e)
         else:
             if params.device_token:
-                logging.info('Current Keeper region: %s', params.server)
-            else:
-                logging.info('Use "server" command to change Keeper region > "server US"')
-                for region in KEEPER_PUBLIC_HOSTS:
-                    logging.info('\t%s: %s', region, KEEPER_PUBLIC_HOSTS[region])
-            logging.info('To login type: login <email>')
+                logging.info('Region: %s', params.server)
+            print()
+            logging.info("You are not logged in.")
+            print(f'Type {Fore.GREEN}login <email>{Fore.RESET} to authenticate or {Fore.GREEN}server <region>{Fore.RESET} to change data centers.')
+            print(f'Type {Fore.GREEN}?{Fore.RESET} for a list of all available commands.')
+
+    # Mark that we're in the shell loop (used by supershell to know if it should start a shell on exit)
+    params._in_shell_loop = True
 
     while True:
         if params.session_token:
@@ -800,7 +807,10 @@ def loop(params):  # type: (KeeperParams) -> int
         if params.batch_mode and error_no != 0 and not suppress_errno:
             break
 
-    if not params.batch_mode:
+    # Clear the shell loop flag
+    params._in_shell_loop = False
+
+    if not params.batch_mode and not suppress_goodbye:
         logging.info('\nGoodbye.\n')
 
     return error_no

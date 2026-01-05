@@ -1,4 +1,4 @@
-from ....commands.tunnel.port_forward.tunnel_helpers import generate_random_bytes, get_config_uid
+from .tunnel_helpers import generate_random_bytes, get_config_uid
 from ....keeper_dag import DAG, EdgeType
 from ....keeper_dag.connection.commander import Connection
 from ....keeper_dag.types import RefType, PamEndpoints
@@ -21,7 +21,8 @@ def get_vertex_content(vertex):
 
 
 class TunnelDAG:
-    def __init__(self, params, encrypted_session_token, encrypted_transmission_key, record_uid: str, is_config=False):
+    def __init__(self, params, encrypted_session_token, encrypted_transmission_key, record_uid: str,
+                 is_config=False, transmission_key=None):
         config_uid = None
         if not is_config:
             config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
@@ -32,8 +33,11 @@ class TunnelDAG:
         self.record.record_key = generate_random_bytes(32)
         self.encrypted_session_token = encrypted_session_token
         self.encrypted_transmission_key = encrypted_transmission_key
-        self.conn = Connection(params=params, encrypted_transmission_key=self.encrypted_transmission_key,
+        self.transmission_key = transmission_key
+        self.conn = Connection(params=params,
+                               encrypted_transmission_key=self.encrypted_transmission_key,
                                encrypted_session_token=self.encrypted_session_token,
+                               transmission_key=self.transmission_key,
                                use_write_protobuf=True
                                )
         self.linking_dag = DAG(conn=self.conn, record=self.record, graph_id=0, write_endpoint=PamEndpoints.PAM)

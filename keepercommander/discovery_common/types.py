@@ -179,10 +179,11 @@ class RuleActionEnum(BaseEnum):
 class Statement(BaseModel):
     field: str
     operator: str
-    value: Union[str, bool, float]
+    value: Any
 
 
 class RuleItem(BaseModel):
+    name: Optional[str] = None
     added_ts: Optional[int] = None
     rule_id: Optional[str] = None
     enabled: bool = True
@@ -209,10 +210,23 @@ class RuleItem(BaseModel):
 
         return False
 
+    def close(self):
+        try:
+            if self.engine_rule:
+                self.engine_rule.close()
+                self.engine_rule = None
+                del self.engine_rule
+        except (Exception,):
+            pass
+
+    def __del__(self):
+        self.close()
+
 
 class ActionRuleItem(RuleItem):
     action: RuleActionEnum = RuleActionEnum.PROMPT
     shared_folder_uid: Optional[str] = None
+    admin_uid: Optional[str] = None
 
 
 class ScheduleRuleItem(RuleItem):
@@ -224,7 +238,18 @@ class ComplexityRuleItem(RuleItem):
 
 
 class RuleSet(BaseModel):
-    pass
+    rules: List[RuleItem] = []
+
+    @property
+    def count(self) -> int:
+        return len(self.rules)
+
+    def __str__(self):
+        rule_set = []
+        for item in self.rules:
+            rule_set.append(item.model_dump_json())
+
+        return "[" + ",\n" .join(rule_set) + "]"
 
 
 class ActionRuleSet(RuleSet):
@@ -470,6 +495,7 @@ class DiscoveryObject(BaseModel):
     fields: List[RecordField]
     ignore_object: bool = False
     action_rules_result: Optional[str] = None
+    admin_uid: Optional[str] = None
     shared_folder_uid: Optional[str] = None
     name: str
     title: str
@@ -649,6 +675,9 @@ class BulkRecordAdd(BaseModel):
     # This could be a Commander KeeperRecord, Commander RecordAdd, NormalizedRecord, or KSM Record
     record: Any
     record_type: str
+
+    # If record_type is a PAM User, is this user the admin of the resource?
+    admin_uid: Optional[str] = None
 
     # Normal record UID strings
     record_uid: str

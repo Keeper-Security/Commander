@@ -159,7 +159,7 @@ record_permission_parser.add_argument('folder', nargs='?', type=str, action='sto
 record_permission_parser.error = raise_parse_exception
 record_permission_parser.exit = suppress_exit
 
-find_ownerless_desc = 'List (and, optionally, claim) records in the user\'s vault that currently do not have an owner'
+find_ownerless_desc = 'List (and, optionally, claim) ownerless records in the vault'
 find_ownerless_parser = argparse.ArgumentParser(prog='find-ownerless', description=find_ownerless_desc,
                                                 parents=[base.report_output_parser])
 find_ownerless_parser.add_argument('--claim', dest='claim', action='store_true', help='claim records found')
@@ -460,7 +460,7 @@ class ShareFolderCommand(Command):
                             logging.warning('Share invitation has been sent to \'%s\'', username)
                         logging.warning('Please repeat this command when invitation is accepted.')
                     keys = params.key_cache.get(email)
-                    if keys and keys.rsa or keys.ec:
+                    if keys and (keys.rsa or keys.ec):
                         uo.manageRecords = curr_sf.get('default_manage_records') is True if mr is None else folder_pb2.BOOLEAN_TRUE if mr == 'on' else folder_pb2.BOOLEAN_FALSE
                         uo.manageUsers = curr_sf.get('default_manage_users') is True if mu is None else folder_pb2.BOOLEAN_TRUE if mu == 'on' else folder_pb2.BOOLEAN_FALSE
                         sf_key = curr_sf.get('shared_folder_key_unencrypted')  # type: Optional[bytes]
@@ -1890,14 +1890,15 @@ class FindOwnerlessCommand(Command):
         verbose = kwargs.get('verbose') or not claim_records or out
         records_dump = None
         if ownerless_records:
-            logging.info(f'Found [{len(ownerless_records)}] ownerless record(s)')
+            count = len(ownerless_records)
+            logging.info(f'Found {count} ownerless {"record" if count == 1 else "records"}')
             if verbose:
                 records_dump = dump_record_details(ownerless_records, out, fmt)
             if claim_records:
                 claim_ownerless_records(ownerless_records)
                 SyncDownCommand().execute(params, force=True)
             else:
-                logging.info('To claim the record(s) found above, re-run this command with the --claim flag.')
+                logging.info('To claim the records found above, re-run this command with the --claim flag.')
         else:
             logging.info('No ownerless records found')
         return records_dump

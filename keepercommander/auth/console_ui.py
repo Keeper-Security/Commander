@@ -6,6 +6,7 @@ import re
 import webbrowser
 from typing import Optional, List
 
+from colorama import Fore, Style
 from . import login_steps
 from .. import utils
 from ..display import bcolors
@@ -23,48 +24,77 @@ class ConsoleLoginUi(login_steps.LoginUi):
 
     def on_device_approval(self, step):
         if self._show_device_approval_help:
-            print("\nDevice Approval Required\n")
-
-            print("Approve by selecting a method below:")
-            print("\t\"" + bcolors.OKGREEN + "email_send" + bcolors.ENDC + "\" to send email")
-            print("\t\"" + bcolors.OKGREEN + "email_code=<code>" + bcolors.ENDC + "\" to validate verification code sent via email")
-            print("\t\"" + bcolors.OKGREEN + "keeper_push" + bcolors.ENDC + "\" to send Keeper Push notification")
-            print("\t\"" + bcolors.OKGREEN + "2fa_send" + bcolors.ENDC + "\" to send 2FA code")
-            print("\t\"" + bcolors.OKGREEN + "2fa_code=<code>" + bcolors.ENDC + "\" to validate a code provided by 2FA application")
-            print("\t\"" + bcolors.OKGREEN + "<Enter>" + bcolors.ENDC + "\" to resume")
-
+            print(f"\n{Style.BRIGHT}Device Approval Required{Style.RESET_ALL}\n")
+            print("Select an approval method:")
+            print(f"  {Fore.GREEN}1{Fore.RESET}. Email - Send approval link to your email")
+            print(f"  {Fore.GREEN}2{Fore.RESET}. Keeper Push - Send notification to an approved device")
+            print(f"  {Fore.GREEN}3{Fore.RESET}. 2FA Push - Send code via your 2FA method")
+            print()
+            print(f"  {Fore.GREEN}c{Fore.RESET}. Enter code - Enter a verification code")
+            print(f"  {Fore.GREEN}q{Fore.RESET}. Cancel login")
+            print()
             self._show_device_approval_help = False
         else:
-            print(bcolors.BOLD + "\nWaiting for device approval." + bcolors.ENDC)
-            print("Check email, SMS message or push notification on the approved device.\n")
+            print(f"\n{Style.BRIGHT}Waiting for device approval.{Style.RESET_ALL}")
+            print(f"Check email, SMS, or push notification on the approved device.")
+            print(f"Enter {Fore.GREEN}c <code>{Fore.RESET} to submit a verification code.\n")
 
         try:
-            selection = input('Type your selection or <Enter> to resume: ')
+            selection = input('Selection (or Enter to check status): ').strip().lower()
 
-            if selection == "email_send" or selection == "es":
+            if selection == '1' or selection == 'email_send' or selection == 'es':
                 step.send_push(login_steps.DeviceApprovalChannel.Email)
-                print(bcolors.WARNING + "\nAn email with instructions has been sent to " + step.username + bcolors.WARNING + '\nPress <Enter> when approved.')
+                print(f"\n{Fore.GREEN}Email sent to {step.username}{Fore.RESET}")
+                print("Click the approval link in the email, then press Enter.\n")
+
+            elif selection == '2' or selection == 'keeper_push' or selection == 'kp':
+                step.send_push(login_steps.DeviceApprovalChannel.KeeperPush)
+                print(f"\n{Fore.GREEN}Push notification sent.{Fore.RESET}")
+                print("Approve on your device, then press Enter.\n")
+
+            elif selection == '3' or selection == '2fa_send' or selection == '2fs':
+                step.send_push(login_steps.DeviceApprovalChannel.TwoFactor)
+                print(f"\n{Fore.GREEN}2FA code sent.{Fore.RESET}")
+                print("Enter the code using option 'c'.\n")
+
+            elif selection == 'c' or selection.startswith('c '):
+                # Support both "c" (prompts for code) and "c <code>" (code inline)
+                if selection == 'c':
+                    code_input = input('Enter verification code: ').strip()
+                else:
+                    code_input = selection[2:].strip()  # Extract code after "c "
+
+                if code_input:
+                    # Try email code first, then 2FA
+                    try:
+                        step.send_code(login_steps.DeviceApprovalChannel.Email, code_input)
+                        print(f"{Fore.GREEN}Successfully verified email code.{Fore.RESET}")
+                    except KeeperApiError:
+                        try:
+                            step.send_code(login_steps.DeviceApprovalChannel.TwoFactor, code_input)
+                            print(f"{Fore.GREEN}Successfully verified 2FA code.{Fore.RESET}")
+                        except KeeperApiError as e:
+                            print(f"{Fore.YELLOW}Invalid code. Please try again.{Fore.RESET}")
 
             elif selection.startswith("email_code="):
                 code = selection.replace("email_code=", "")
                 step.send_code(login_steps.DeviceApprovalChannel.Email, code)
-                print("Successfully verified email code.")
-
-            elif selection == "2fa_send" or selection == "2fs":
-                step.send_push(login_steps.DeviceApprovalChannel.TwoFactor)
-                print(bcolors.WARNING + "\n2FA code was sent." + bcolors.ENDC)
+                print(f"{Fore.GREEN}Successfully verified email code.{Fore.RESET}")
 
             elif selection.startswith("2fa_code="):
                 code = selection.replace("2fa_code=", "")
                 step.send_code(login_steps.DeviceApprovalChannel.TwoFactor, code)
-                print("Successfully verified 2FA code.")
+                print(f"{Fore.GREEN}Successfully verified 2FA code.{Fore.RESET}")
 
-            elif selection == "keeper_push" or selection == "kp":
-                step.send_push(login_steps.DeviceApprovalChannel.KeeperPush)
-                logging.info('Successfully made a push notification to the approved device.\nPress <Enter> when approved.')
+            elif selection == 'q':
+                step.cancel()
 
-            elif selection == "":
+            elif selection == '':
                 step.resume()
+
+            else:
+                print(f"{Fore.YELLOW}Invalid selection. Enter 1, 2, 3, c, q, or press Enter.{Fore.RESET}")
+
         except KeyboardInterrupt:
             step.cancel()
         except KeeperApiError as kae:
@@ -240,7 +270,7 @@ class ConsoleLoginUi(login_steps.LoginUi):
 
     def on_password(self, step):
         if self._show_password_help:
-            print(f'Enter password for {step.username}')
+            print(f'Enter master password for {step.username}')
 
         if self._failed_password_attempt > 0:
             print('Forgot password? Type "recover"<Enter>')
