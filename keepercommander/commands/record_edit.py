@@ -598,9 +598,10 @@ class RecordEditMixin:
                         else:
                             if len(parsed_field.value) <= 10:
                                 dt = datetime.datetime.strptime(parsed_field.value, '%Y-%m-%d')
+                                dt += datetime.timedelta(hours=12)
                             else:
                                 dt = datetime.datetime.strptime(parsed_field.value, '%Y-%m-%dT%H:%M:%SZ')
-                            value = int(dt.timestamp() * 1000)
+                            value = utils.datetime_to_millis(dt)
                     elif isinstance(ft.value, dict):
                         if ft.name == 'name':
                             value = vault.TypedField.import_name_field(parsed_field.value)
