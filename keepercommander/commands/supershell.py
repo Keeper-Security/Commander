@@ -892,6 +892,9 @@ class SuperShellApp(App):
             
             restore_expanded(tree.root)
             
+            # Update header info (email/username colors)
+            self._update_header_info_display()
+            
             # Update CSS dynamically for tree selection/hover
             self._apply_theme_css()
 
@@ -4133,12 +4136,13 @@ class SuperShellApp(App):
         """Copy entire record contents to clipboard (formatted or JSON based on view mode)"""
         if self.selected_record:
             try:
+                import json  # Import json at the top of the method for both app and regular records
+                
                 # Check if it's a Secrets Manager app record
                 if self.selected_record in self.app_record_uids:
                     # For Secrets Manager apps, copy the app data in JSON format
                     from ..proto import APIRequest_pb2, enterprise_pb2
                     from .. import api, utils
-                    import json
                     
                     record = self.records[self.selected_record]
                     app_title = record.get('title', 'Untitled')
