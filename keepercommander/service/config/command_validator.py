@@ -33,15 +33,23 @@ class CommandValidator:
                 # Skip empty lines
                 if not line:
                     continue
-                    
-                # Check if this is a category header (ends with colon)
-                if line.endswith(':') and not line.startswith(' '):
-                    # Remove the colon and use as category
-                    current_category = line[:-1].strip()
+                
+                # Skip separator lines (lines with only dashes or special characters)
+                if all(c in '─-=_' or c.isspace() for c in line):
                     continue
                 
-                # Check if this is an indented command line (starts with spaces in original)
-                if current_category and original_line.startswith('  ') and line:
+                # Check indentation level
+                indent_count = len(original_line) - len(original_line.lstrip())
+                if indent_count == 2 and line and not line.startswith('Type '):
+                    # Skip common non-category lines
+                    if line in ['Available Commands']:
+                        continue
+                    # This is likely a category header
+                    current_category = line.rstrip(':').strip()
+                    continue
+                
+                # Check if this is a command line (4+ spaces indent)
+                if current_category and indent_count >= 4 and line:
                     self._process_new_command_line(line, valid_commands, command_info, current_category)
                     
             return valid_commands, command_info
