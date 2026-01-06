@@ -364,6 +364,12 @@ class GuacamoleHandler:
         # Get guacd parameters (hostname, port, username, password, etc.)
         guacd_params = settings.get('guacd_params', {})
 
+        # Debug: Log what credentials we have
+        logging.debug(f"DEBUG: guacd_params keys: {list(guacd_params.keys())}")
+        logging.debug(f"DEBUG: guacd_params['username']: {'(set)' if guacd_params.get('username') else '(empty)'}")
+        logging.debug(f"DEBUG: guacd_params['password']: {'(set)' if guacd_params.get('password') else '(empty)'}")
+        logging.debug(f"DEBUG: guacd_params['private-key']: {'(set)' if guacd_params.get('private-key') else '(empty)'}")
+
         # Build connect args: first arg is version (from guacd), rest are param values
         connect_args = []
 
@@ -394,6 +400,13 @@ class GuacamoleHandler:
         connect_instruction = self._format_instruction('connect', *connect_args)
         self._send_to_gateway(connect_instruction)
         logging.debug(f"Sent 'connect' with {len(connect_args)} args")
+        # Debug: Show which args were sent (without revealing secrets)
+        if args_list:
+            for i, param_name in enumerate(args_list[1:], start=1):
+                value = connect_args[i] if i < len(connect_args) else "(missing)"
+                is_secret = param_name.lower() in ['password', 'passphrase', 'private-key']
+                display_value = '(set)' if (is_secret and value) else ('(empty)' if is_secret else value[:20] if isinstance(value, str) else value)
+                logging.debug(f"DEBUG: connect arg '{param_name}' = {display_value}")
 
         # Send size instruction
         size_instruction = self._format_instruction('size', width, height, dpi)

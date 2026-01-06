@@ -33,6 +33,8 @@ from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes, 
 
 from ...error import CommandError
 from ... import vault
+from ...keeper_dag import EdgeType
+from ..ssh_agent import try_extract_private_key
 from ..tunnel.port_forward.tunnel_helpers import (
     get_or_create_tube_registry,
     start_websocket_listener,
@@ -45,9 +47,11 @@ from ..tunnel.port_forward.tunnel_helpers import (
     tunnel_encrypt,
     tunnel_decrypt,
     get_tunnel_session,
+    get_keeper_tokens,
     MAIN_NONCE_LENGTH,
     SYMMETRIC_KEY_LENGTH,
 )
+from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..pam.pam_dto import GatewayAction, GatewayActionWebRTCSession
 from ..pam.router_helper import (
     router_send_action_to_gateway,
@@ -295,7 +299,13 @@ def detect_protocol(params: KeeperParams, record_uid: str) -> Optional[str]:
                          f'Supported types: pamMachine, pamDirectory, pamDatabase')
 
 
-def extract_terminal_settings(params: KeeperParams, record_uid: str, protocol: str) -> Dict[str, Any]:
+def extract_terminal_settings(
+    params: KeeperParams,
+    record_uid: str,
+    protocol: str,
+    launch_credential_uid: Optional[str] = None,
+    custom_host: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Extract terminal connection settings from a PAM record.
 
@@ -303,6 +313,8 @@ def extract_terminal_settings(params: KeeperParams, record_uid: str, protocol: s
         params: KeeperParams instance
         record_uid: Record UID
         protocol: Protocol type (from detect_protocol)
+        launch_credential_uid: Optional override for userRecordUid (from --user CLI param)
+        custom_host: Optional override for hostname (from --host CLI param)
 
     Returns:
         Dictionary containing terminal settings:
@@ -312,6 +324,9 @@ def extract_terminal_settings(params: KeeperParams, record_uid: str, protocol: s
         - terminal: {colorScheme: str, fontSize: str}
         - recording: {includeKeys: bool}
         - protocol_specific: Protocol-specific settings dict
+        - allowSupplyUser: bool - User can supply credentials on-the-fly
+        - allowSupplyHost: bool - User can supply host on-the-fly (forces userSupplied credential type)
+        - userRecordUid: str or None - UID of linked pamUser record for credentials
 
     Raises:
         CommandError: If required fields are missing
@@ -326,7 +341,10 @@ def extract_terminal_settings(params: KeeperParams, record_uid: str, protocol: s
         'clipboard': {'disableCopy': False, 'disablePaste': False},
         'terminal': {'colorScheme': 'gray-black', 'fontSize': '12'},
         'recording': {'includeKeys': False},
-        'protocol_specific': {}
+        'protocol_specific': {},
+        'allowSupplyUser': False,
+        'allowSupplyHost': False,
+        'userRecordUid': None,
     }
 
     # Extract hostname and port
@@ -339,8 +357,14 @@ def extract_terminal_settings(params: KeeperParams, record_uid: str, protocol: s
         raise CommandError('pam launch', f'Invalid hostname configuration for record {record_uid}')
 
     settings['hostname'] = host_value.get('hostName')
-    if not settings['hostname']:
-        raise CommandError('pam launch', f'Hostname not found in record {record_uid}')
+
+    # Override hostname if custom_host provided (requires allowSupplyHost - validated in launch.py)
+    if custom_host:
+        settings['hostname'] = custom_host
+        logging.debug(f"Using custom host override: {custom_host}")
+
+    # Validate hostname is present (either from record or CLI override)
+    # Note: allowSupplyHost check happens later after pamSettings are parsed
 
     # Get port (use default if not specified)
     port_value = host_value.get('port')
@@ -372,6 +396,22 @@ def extract_terminal_settings(params: KeeperParams, record_uid: str, protocol: s
                 # Recording settings
                 settings['recording']['includeKeys'] = connection.get('recordingIncludeKeys', False)
 
+                # allowSupplyUser is inside connection
+                settings['allowSupplyUser'] = connection.get('allowSupplyUser', False)
+
+                # Extract linked pamUser record UID from pamSettings (may be overridden by CLI later)
+                # When both admin and launch credentials exist, we must use launch credential
+                dag_launch_uid = _get_launch_credential_uid(params, record_uid)
+                if dag_launch_uid:
+                    settings['userRecordUid'] = dag_launch_uid
+                    logging.debug(f"Using launch credential from DAG: {settings['userRecordUid']}")
+                else:
+                    # Fallback to userRecords from pamSettings if DAG lookup fails
+                    user_records = connection.get('userRecords', [])
+                    if user_records and len(user_records) > 0:
+                        settings['userRecordUid'] = user_records[0]
+                        logging.debug(f"Using userRecordUid from pamSettings: {settings['userRecordUid']}")
+
                 # Protocol-specific settings
                 if protocol == ProtocolType.SSH:
                     settings['protocol_specific'] = _extract_ssh_settings(connection)
@@ -381,6 +421,27 @@ def extract_terminal_settings(params: KeeperParams, record_uid: str, protocol: s
                     settings['protocol_specific'] = _extract_kubernetes_settings(connection)
                 elif protocol in ProtocolType.DATABASE:
                     settings['protocol_specific'] = _extract_database_settings(connection, protocol)
+
+            # allowSupplyHost is at top level of pamSettings value, not inside connection
+            settings['allowSupplyHost'] = pam_settings_value.get('allowSupplyHost', False)
+
+    # CLI overrides always take precedence (applied after pamSettings extraction)
+    # These are validated in launch.py before being passed here
+    logging.debug(f"DEBUG extract_terminal_settings: launch_credential_uid={launch_credential_uid}, current userRecordUid={settings.get('userRecordUid')}")
+    if launch_credential_uid:
+        settings['userRecordUid'] = launch_credential_uid
+        logging.debug(f"Using launch credential from CLI override: {settings['userRecordUid']}")
+
+    # Final validation: hostname must be present for connection to succeed
+    # Note: userRecordUid is optional - if not present, _build_guacamole_connection_settings()
+    # will fall back to credentials from the pamMachine record directly
+    if not settings['hostname']:
+        if settings['allowSupplyHost']:
+            raise CommandError('pam launch',
+                f'Hostname not found in record {record_uid}. Use --host to specify one.')
+        else:
+            raise CommandError('pam launch',
+                f'Hostname not found in record {record_uid} and allowSupplyHost is not enabled.')
 
     return settings
 
@@ -434,10 +495,10 @@ def _extract_database_settings(connection: Dict[str, Any], protocol: str) -> Dic
     return settings
 
 
-def create_connection_context(params: KeeperParams, 
-                             record_uid: str, 
-                             gateway_uid: str, 
-                             protocol: str, 
+def create_connection_context(params: KeeperParams,
+                             record_uid: str,
+                             gateway_uid: str,
+                             protocol: str,
                              settings: Dict[str, Any],
                              connect_as: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -467,7 +528,14 @@ def create_connection_context(params: KeeperParams,
         'recording': settings['recording'],
         'connectAs': connect_as,
         'conversationType': _get_conversation_type(protocol),
+        # Credential supply flags
+        'allowSupplyUser': settings.get('allowSupplyUser', False),
+        'allowSupplyHost': settings.get('allowSupplyHost', False),
+        # Linked pamUser record UID for credential extraction
+        'userRecordUid': settings.get('userRecordUid'),
     }
+
+    logging.debug(f"DEBUG create_connection_context: userRecordUid={context.get('userRecordUid')}")
 
     # Add protocol-specific settings
     if protocol == ProtocolType.SSH:
@@ -481,6 +549,84 @@ def create_connection_context(params: KeeperParams,
         context['database']['type'] = protocol
 
     return context
+
+
+def _get_launch_credential_uid(params: 'KeeperParams', record_uid: str) -> Optional[str]:
+    """
+    Find the launch credential UID for a PAM record using the DAG.
+
+    When a pamMachine record has both administrative credentials and launch credentials,
+    we need to use the launch credential (marked with is_launch_credential=True in DAG).
+    This function queries the DAG to find the correct credential.
+
+    Args:
+        params: KeeperParams instance
+        record_uid: UID of the pamMachine record
+
+    Returns:
+        UID of the launch credential pamUser record, or None if not found
+    """
+    try:
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record_uid,
+                         transmission_key=transmission_key)
+
+        if not tdag.linking_dag.has_graph:
+            logging.debug(f"No DAG graph loaded for record {record_uid}")
+            return None
+
+        record_vertex = tdag.linking_dag.get_vertex(record_uid)
+        if record_vertex is None:
+            logging.debug(f"Record vertex not found in DAG for {record_uid}")
+            return None
+
+        # Find all ACL links where Head is recordUID
+        # Look for the credential marked as is_launch_credential=True
+        launch_credential = None
+        admin_credential = None
+        all_linked = []
+
+        for user_vertex in record_vertex.has_vertices(EdgeType.ACL):
+            acl_edge = user_vertex.get_edge(record_vertex, EdgeType.ACL)
+            if acl_edge:
+                try:
+                    content = acl_edge.content_as_dict or {}
+                    is_admin = content.get('is_admin', False)
+                    is_launch = content.get('is_launch_credential', None)
+
+                    all_linked.append(user_vertex.uid)
+
+                    if is_launch and launch_credential is None:
+                        launch_credential = user_vertex.uid
+                        logging.debug(f"Found launch credential via DAG: {launch_credential}")
+
+                    if is_admin and admin_credential is None:
+                        admin_credential = user_vertex.uid
+                        logging.debug(f"Found admin credential via DAG: {admin_credential}")
+
+                except Exception as e:
+                    logging.debug(f"Error parsing ACL edge content: {e}")
+
+        # Prefer launch credential, fall back to first linked if no specific launch credential
+        if launch_credential:
+            logging.debug(f"Using launch credential from DAG: {launch_credential}")
+            return launch_credential
+        elif all_linked:
+            # If no explicit launch credential but we have linked users,
+            # prefer non-admin credential
+            for uid in all_linked:
+                if uid != admin_credential:
+                    logging.debug(f"Using non-admin linked credential: {uid}")
+                    return uid
+            # Fall back to first linked
+            logging.debug(f"Using first linked credential: {all_linked[0]}")
+            return all_linked[0]
+
+        return None
+
+    except Exception as e:
+        logging.debug(f"Error accessing DAG for launch credential: {e}")
+        return None
 
 
 def _get_conversation_type(protocol: str) -> str:
@@ -497,6 +643,74 @@ def _get_conversation_type(protocol: str) -> str:
     return mapping.get(protocol, protocol)
 
 
+def _extract_user_record_credentials(
+    params: 'KeeperParams',
+    user_record_uid: str
+) -> Dict[str, Any]:
+    """
+    Extract credentials from a linked pamUser record.
+
+    This function extracts username, password, private key, and passphrase from
+    a pamUser record. For SSH connections, the private key is extracted using
+    try_extract_private_key() which checks keyPair fields, notes, custom fields,
+    and attachments. The password field serves as the passphrase for encrypted
+    private keys.
+
+    Args:
+        params: KeeperParams instance
+        user_record_uid: UID of the linked pamUser record
+
+    Returns:
+        Dictionary containing:
+        - username: Login username (str)
+        - password: Password (str)
+        - private_key: PEM-encoded private key if found (str or None)
+        - passphrase: Passphrase for encrypted private key (str or None)
+    """
+    result = {
+        'username': '',
+        'password': '',
+        'private_key': None,
+        'passphrase': None,
+    }
+
+    # Load the pamUser record
+    user_record = vault.KeeperRecord.load(params, user_record_uid)
+    if not isinstance(user_record, vault.TypedRecord):
+        logging.warning(f"User record {user_record_uid} is not a TypedRecord")
+        return result
+
+    # Extract username from login field
+    login_field = user_record.get_typed_field('login')
+    if login_field:
+        result['username'] = login_field.get_default_value(str) or ''
+
+    # Extract password
+    password_field = user_record.get_typed_field('password')
+    if password_field:
+        result['password'] = password_field.get_default_value(str) or ''
+
+    # Extract private key using try_extract_private_key()
+    # This function checks: keyPair field, notes, custom fields (text, multiline, secret, note), and attachments
+    key_result = try_extract_private_key(params, user_record)
+    if key_result:
+        private_key, passphrase = key_result
+        result['private_key'] = private_key
+        # The password field serves as the passphrase for encrypted private keys
+        # If try_extract_private_key returned a passphrase (from password field), use it
+        # Otherwise, use the password we already extracted
+        result['passphrase'] = passphrase if passphrase else (result['password'] if result['password'] else None)
+
+    logging.debug(
+        f"Extracted credentials from pamUser {user_record_uid}: "
+        f"username={'(set)' if result['username'] else '(empty)'}, "
+        f"password={'(set)' if result['password'] else '(empty)'}, "
+        f"private_key={'(set)' if result['private_key'] else '(empty)'}"
+    )
+
+    return result
+
+
 def _build_guacamole_connection_settings(
     params: 'KeeperParams',
     record_uid: str,
@@ -504,6 +718,8 @@ def _build_guacamole_connection_settings(
     settings: Dict[str, Any],
     context: Dict[str, Any],
     screen_info: Dict[str, int],
+    user_record_uid: Optional[str] = None,
+    credential_type: str = 'linked',
 ) -> Dict[str, Any]:
     """
     Build connection settings for Guacamole handshake in PythonHandler mode.
@@ -511,32 +727,58 @@ def _build_guacamole_connection_settings(
     When guacd sends 'args' instruction requesting connection parameters,
     we respond with 'connect' containing these values.
 
+    Credential handling follows gateway behavior:
+    - If credential_type='linked' and user_record_uid is provided, extract credentials
+      from the linked pamUser record (username, password, private key)
+    - If credential_type='userSupplied', leave credentials empty (user provides on-the-fly)
+    - SSH authentication precedence: private key is tried first, then password
+      (standard SSH behavior handled by guacd)
+
     Args:
         params: KeeperParams instance
-        record_uid: Record UID
+        record_uid: Record UID (pamMachine record)
         protocol: Protocol type (ssh, telnet, mysql, etc.)
         settings: Terminal settings from extract_terminal_settings()
         context: Connection context from create_connection_context()
         screen_info: Screen dimensions dict
+        user_record_uid: Optional UID of linked pamUser record for credentials
+        credential_type: Credential type ('linked', 'userSupplied', 'ephemeral')
 
     Returns:
         Dictionary with connection settings for GuacamoleHandler
     """
-    # Get credentials from the record
-    record = vault.KeeperRecord.load(params, record_uid)
-    if not isinstance(record, vault.TypedRecord):
-        raise CommandError('pam launch', f'Record {record_uid} is not a TypedRecord')
-
-    # Extract login credentials
-    login_field = record.get_typed_field('login')
     username = ''
-    if login_field:
-        username = login_field.get_default_value(str) or ''
-
-    password_field = record.get_typed_field('password')
     password = ''
-    if password_field:
-        password = password_field.get_default_value(str) or ''
+    private_key = None
+    passphrase = None
+
+    logging.debug(f"DEBUG _build_guacamole_connection_settings: credential_type={credential_type}, user_record_uid={user_record_uid}")
+
+    # Determine how to get credentials based on credential_type
+    if credential_type == 'userSupplied':
+        # User-supplied credentials: leave empty, user will provide via guacamole prompt
+        logging.debug("Using userSupplied credential type - leaving credentials empty")
+    elif user_record_uid:
+        # Extract credentials from linked pamUser record
+        user_creds = _extract_user_record_credentials(params, user_record_uid)
+        username = user_creds['username']
+        password = user_creds['password']
+        private_key = user_creds['private_key']
+        passphrase = user_creds['passphrase']
+        logging.debug(f"Using credentials from linked pamUser record: {user_record_uid}")
+    else:
+        # Fallback: Get credentials from the pamMachine record directly
+        # (backward compatibility for records without linked pamUser)
+        record = vault.KeeperRecord.load(params, record_uid)
+        if isinstance(record, vault.TypedRecord):
+            login_field = record.get_typed_field('login')
+            if login_field:
+                username = login_field.get_default_value(str) or ''
+
+            password_field = record.get_typed_field('password')
+            if password_field:
+                password = password_field.get_default_value(str) or ''
+        logging.debug("Using credentials from pamMachine record (no linked pamUser)")
 
     # Build guacd parameters dictionary
     # These map to guacd's expected parameter names
@@ -549,6 +791,17 @@ def _build_guacamole_connection_settings(
         'username': username,
         'password': password,
     }
+
+    logging.debug(f"DEBUG guacd_params built: username={'(set)' if username else '(empty)'}, password={'(set)' if password else '(empty)'}")
+
+    # Add private key for SSH protocol if available
+    # SSH authentication precedence: guacd/SSH tries private key first, then password
+    # Both can be present simultaneously - this matches gateway behavior
+    if protocol == ProtocolType.SSH and private_key:
+        guacd_params['private-key'] = private_key
+        if passphrase:
+            guacd_params['passphrase'] = passphrase
+        logging.debug("Added private-key to guacd_params for SSH authentication")
 
     # Add protocol-specific parameters
     protocol_specific = settings.get('protocol_specific', {})
@@ -806,8 +1059,38 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
 
             # Set conversationType to "python_handler" to enable PythonHandler protocol mode in Rust
             # The actual protocol (ssh, telnet, etc.) is passed via guacd_params["protocol"]
+            # IMPORTANT: Only update webrtc_settings - gateway needs the actual protocol type (ssh, telnet, etc.)
+            # The gateway validates conversationType against valid protocol types, not "python_handler"
             webrtc_settings["conversationType"] = "python_handler"
-            logging.debug(f"Set conversationType to 'python_handler' (actual protocol: {protocol})")
+            # Keep context['conversationType'] as the actual protocol (ssh, telnet, etc.) for gateway
+            # Do NOT change context["conversationType"] - gateway needs the real protocol type
+            logging.debug(f"Set webrtc_settings conversationType to 'python_handler' (gateway will receive: {context['conversationType']})")
+
+            # Determine credential type based on allowSupplyHost, allowSupplyUser flags
+            # This matches gateway validation logic:
+            # - If allowSupplyHost=True: must be 'userSupplied'
+            # - If allowSupplyUser=True and no linked user: use 'userSupplied'
+            # - If linked user present: use 'linked'
+            allow_supply_host = context.get('allowSupplyHost', False)
+            allow_supply_user = context.get('allowSupplyUser', False)
+            user_record_uid = context.get('userRecordUid')
+
+            logging.debug(f"DEBUG credential determination: allow_supply_host={allow_supply_host}, allow_supply_user={allow_supply_user}, user_record_uid={user_record_uid}")
+
+            # credential_type is None when using pamMachine credentials directly (backward compatible)
+            # Priority: if user_record_uid is provided (from CLI or record), use 'linked' to send those credentials
+            credential_type = None
+            if user_record_uid:
+                # Linked user present (from CLI --user or record) - use linked credentials
+                credential_type = 'linked'
+                logging.debug(f"Using 'linked' credential type with userRecordUid: {user_record_uid}")
+            elif allow_supply_host or allow_supply_user:
+                # No credentials provided but supply flags enabled - user must provide interactively
+                credential_type = 'userSupplied'
+                logging.debug("No credentials provided, allowSupply enabled - using 'userSupplied' credential type")
+            else:
+                # No linked user, no supply flags - use pamMachine credentials directly
+                logging.debug("No linked user or supply flags - using pamMachine credentials directly")
 
             # Build connection settings for Guacamole handshake
             # These are used when guacd sends 'args' instruction
@@ -818,6 +1101,8 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 settings=settings,
                 context=context,
                 screen_info=screen_info,
+                user_record_uid=user_record_uid,
+                credential_type=credential_type,
             )
 
             # Create the handler and callback
@@ -964,21 +1249,27 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         bytes_data = string_to_bytes(string_data)
         encrypted_data = tunnel_encrypt(symmetric_key, bytes_data)
 
-        # Extract userRecordUid from pamSettings
-        user_record_uid = None
-        pam_settings_field = record.get_typed_field('pamSettings')
-        if pam_settings_field:
-            pam_settings_value = pam_settings_field.get_default_value(dict)
-            if pam_settings_value:
-                connection = pam_settings_value.get('connection', {})
-                if isinstance(connection, dict):
-                    user_records = connection.get('userRecords', [])
-                    if user_records and len(user_records) > 0:
-                        user_record_uid = user_records[0]
-                        logging.debug(f"Found userRecordUid: {user_record_uid}")
+        # Get userRecordUid and credential flags from context (extracted in extract_terminal_settings)
+        user_record_uid = context.get('userRecordUid')
+        allow_supply_host = context.get('allowSupplyHost', False)
+        allow_supply_user = context.get('allowSupplyUser', False)
 
-        if not user_record_uid:
-            logging.warning(f"No userRecordUid found in pamSettings for record {record_uid}")
+        # Determine credential type for gateway inputs
+        # IMPORTANT: Priority must match the guacd credentials logic above:
+        # 1. If user_record_uid is set (from CLI or record), use 'linked' - credentials come from that record
+        # 2. If allowSupply* but no user_record_uid, use 'userSupplied' - user will type at prompt
+        # 3. Otherwise, use pamMachine credentials directly (no credentialType)
+        credential_type_for_gateway = None
+        if user_record_uid:
+            # Credentials will come from linked pamUser record (via python_handler)
+            credential_type_for_gateway = 'linked'
+            logging.debug(f"Using 'linked' credential type for gateway with userRecordUid: {user_record_uid}")
+        elif allow_supply_host or allow_supply_user:
+            # No credentials provided, user must type at prompt
+            credential_type_for_gateway = 'userSupplied'
+            logging.debug("No credentials provided, allowSupply enabled - using 'userSupplied' for gateway")
+        else:
+            logging.debug(f"No linked pamUser for record {record_uid} - using pamMachine credentials directly")
 
         time.sleep(1)  # Allow time for WebSocket listener to start
 
@@ -994,10 +1285,17 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 "trickleICE": trickle_ice,  # Set trickle ICE flag
             }
 
-            # Add userRecordUid and credentialType if we have a linked user
-            if user_record_uid:
-                inputs['userRecordUid'] = user_record_uid
+            # Add credential type and userRecordUid based on mode
+            if credential_type_for_gateway == 'linked' and user_record_uid:
                 inputs['credentialType'] = 'linked'
+                inputs['userRecordUid'] = user_record_uid
+            elif credential_type_for_gateway == 'userSupplied':
+                inputs['credentialType'] = 'userSupplied'
+                # For userSupplied, set allow_supply_user flag in connect_as_settings
+                # This matches gateway behavior (line 1203 in tunnel_vault_record.py)
+                inputs['allowSupplyUser'] = True
+                logging.debug("Using userSupplied credential type - user will provide credentials")
+            # else: no credentialType - gateway uses pamMachine credentials directly (backward compatible)
 
             # Router token is no longer extracted from cookies (removed in commit 338a9fda)
             # Router affinity is now handled server-side
@@ -1225,8 +1523,14 @@ def launch_terminal_connection(params: KeeperParams,
 
         logging.debug(f"Detected protocol: {protocol}")
 
-        # Step 2: Extract settings
-        settings = extract_terminal_settings(params, record_uid, protocol)
+        # Step 2: Extract settings (with optional CLI overrides)
+        settings = extract_terminal_settings(
+            params,
+            record_uid,
+            protocol,
+            launch_credential_uid=kwargs.get('launch_credential_uid'),
+            custom_host=kwargs.get('custom_host'),
+        )
         logging.debug(f"Extracted settings: hostname={settings['hostname']}, port={settings['port']}")
 
         # Step 3: Build connection context
