@@ -18,3 +18,4 @@ dr-logs
 *.swp
 CLAUDE.md
 AGENTS.md
+keeper_db.sqlite
