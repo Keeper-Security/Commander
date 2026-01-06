@@ -78,8 +78,10 @@ class HelpScreen(ModalScreen):
 [green]Shell Pane:[/green]
   :cmd          Open shell + run cmd
   Ctrl+\\        Open/close shell
+  Up/Down       Command history
   quit/q        Close shell pane
   Ctrl+D        Close shell pane
+  Shift+drag    Select text (native)
 
 [green]General:[/green]
   ?             Help

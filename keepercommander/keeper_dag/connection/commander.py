@@ -63,17 +63,10 @@ class Connection(ConnectionBase):
 
     @property
     def hostname(self) -> str:
-        # The host is connect.keepersecurity.com, connect.dev.keepersecurity.com, etc. Append "connect" in front
-        # of host used for Commander.
+        # The host is connect.keepersecurity.com, connect.dev.keepersecurity.com, etc.
+        from ...constants import get_router_host
         server = self.params.config.get("server")
-
-        # Only PROD GovCloud strips the subdomain (workaround for prod infrastructure).
-        # DEV/QA GOV (govcloud.dev.keepersecurity.us, govcloud.qa.keepersecurity.us) keep govcloud.
-        if server == 'govcloud.keepersecurity.us':
-            configured_host = 'connect.keepersecurity.us'
-        else:
-            configured_host = f'connect.{server}'
-
+        configured_host = get_router_host(server)
         return os.environ.get("ROUTER_HOST", configured_host)
 
     @property

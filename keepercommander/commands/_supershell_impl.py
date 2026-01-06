@@ -1672,19 +1672,26 @@ class SuperShellApp(App):
                 folder = self.params.folder_cache.get(folder_uid)
                 if folder:
                     folder_type = folder.get_folder_type() if hasattr(folder, 'get_folder_type') else folder.type
+                    folder_type_str = str(folder_type) if folder_type else 'Folder'
+                    folder_icon = "👥" if 'shared' in folder_type_str.lower() else "📁"
                     return (
-                        f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]\n"
-                        f"[bold {t['primary']}]{rich_escape(str(folder.name))}[/bold {t['primary']}]\n"
-                        f"[{t['text_dim']}]UID:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(folder_uid))}[/{t['primary']}]\n"
-                        f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]\n\n"
-                        f"[{t['secondary']}]{'Type':>20}:[/{t['secondary']}]  [{t['primary']}]{rich_escape(str(folder_type))}[/{t['primary']}]\n\n"
+                        f"[bold {t['secondary']}]{folder_icon} {rich_escape(str(folder.name))}[/bold {t['secondary']}]\n\n"
+                        f"[{t['text_dim']}]Folder:[/{t['text_dim']}] [bold {t['primary']}]{rich_escape(str(folder.name))}[/bold {t['primary']}]\n"
+                        f"[{t['text_dim']}]UID:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(folder_uid))}[/{t['primary']}]\n\n"
                         f"[{t['primary_dim']}]Expand folder (press 'l' or →) to view records[/{t['primary_dim']}]"
                     )
                 return "[red]Folder not found[/red]"
 
             # Format the output with proper alignment and theme colors
             lines = []
-            lines.append(f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]")
+
+            # Determine folder header with icon and name
+            folder = self.params.folder_cache.get(folder_uid)
+            folder_name = folder.name if folder else "Folder"
+            is_shared = 'Shared Folder UID' in output
+            folder_icon = "👥" if is_shared else "📁"
+            lines.append(f"[bold {t['secondary']}]{folder_icon} {rich_escape(str(folder_name))}[/bold {t['secondary']}]")
+            lines.append("")
 
             for line in output.split('\n'):
                 line = line.strip()
@@ -1703,7 +1710,7 @@ class SuperShellApp(App):
                         if key in ['Shared Folder UID', 'Folder UID', 'Team UID']:
                             lines.append(f"[{t['text_dim']}]{key}:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(value))}[/{t['primary']}]")
                         elif key == 'Name':
-                            lines.append(f"[bold {t['primary']}]{rich_escape(str(value))}[/bold {t['primary']}]")
+                            lines.append(f"[{t['text_dim']}]Folder:[/{t['text_dim']}] [bold {t['primary']}]{rich_escape(str(value))}[/bold {t['primary']}]")
                         # Section headers (no value or short value)
                         elif key in ['Record Permissions', 'User Permissions', 'Team Permissions', 'Share Administrators']:
                             lines.append("")
@@ -1726,7 +1733,6 @@ class SuperShellApp(App):
                     if line:
                         lines.append(f"[{t['primary']}]  {rich_escape(str(line))}[/{t['primary']}]")
 
-            lines.append(f"\n[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]")
             return "\n".join(lines)
 
         except Exception as e:
@@ -1992,6 +1998,17 @@ class SuperShellApp(App):
         # Get the actual record data for password lookup
         record_data = self.records.get(record_uid, {})
         actual_password = record_data.get('password', '')
+
+        # Determine header with icon and title
+        record_title = record_data.get('title', 'Untitled')
+        if record_uid in self.app_record_uids:
+            type_header = f"🔐 {rich_escape(record_title)}"
+        else:
+            type_header = f"🔒 {rich_escape(record_title)}"
+
+        # Type header with icon and title
+        mount_line(f"[bold {t['secondary']}]{type_header}[/bold {t['secondary']}]", None)
+        mount_line("", None)
 
         # Parse and create clickable lines
         current_section = None
@@ -2320,8 +2337,14 @@ class SuperShellApp(App):
             widgets_to_mount.append(line)
             self.clickable_fields.append(line)
 
-        # Render JSON header
-        mount_line(f"[bold {t['primary']}]JSON View:[/bold {t['primary']}]")
+        # Render header with icon and title
+        record_data = self.records.get(record_uid, {})
+        record_title = record_data.get('title', 'Untitled')
+        if record_uid in self.app_record_uids:
+            type_header = f"🔐 {rich_escape(record_title)}"
+        else:
+            type_header = f"🔒 {rich_escape(record_title)}"
+        mount_line(f"[bold {t['secondary']}]{type_header}[/bold {t['secondary']}] [{t['text_dim']}](JSON)[/{t['text_dim']}]")
         mount_line("")
 
         # Render JSON with syntax highlighting
@@ -2580,16 +2603,26 @@ class SuperShellApp(App):
             line = ClickableDetailLine(content, copy_value)
             detail_scroll.mount(line, before=detail_widget)
 
-        # Header line
-        mount_line(f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]", None)
+        # Determine folder header with icon and name
+        folder_name = folder.name if folder else "Folder"
+        if folder:
+            ft = folder.get_folder_type() if hasattr(folder, 'get_folder_type') else str(folder.type)
+            if 'shared' in ft.lower():
+                folder_icon = "👥"
+            else:
+                folder_icon = "📁"
+        else:
+            folder_icon = "📁"
+
+        # Type header with icon and folder name
+        mount_line(f"[bold {t['secondary']}]{folder_icon} {rich_escape(str(folder_name))}[/bold {t['secondary']}]", None)
+        mount_line("", None)
 
         if not output or output.strip() == '':
             # Fallback to basic folder info
             if folder:
-                mount_line(f"[bold {t['primary']}]{rich_escape(str(folder.name))}[/bold {t['primary']}]", folder.name)
+                mount_line(f"[{t['text_dim']}]Folder:[/{t['text_dim']}] [bold {t['primary']}]{rich_escape(str(folder.name))}[/bold {t['primary']}]", folder.name)
                 mount_line(f"[{t['text_dim']}]UID:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(folder_uid))}[/{t['primary']}]", folder_uid)
-                mount_line(f"[{t['text_dim']}]Type:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(folder_type))}[/{t['primary']}]", folder_type)
-            mount_line(f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]", None)
             return
 
         # Parse the output and format with clickable lines
@@ -2629,9 +2662,9 @@ class SuperShellApp(App):
                 elif key == 'Folder Type':
                     display_type = value if value else folder_type
                     mount_line(f"[{t['text_dim']}]Type:[/{t['text_dim']}] [{t['primary']}]{rich_escape(str(display_type))}[/{t['primary']}]", display_type)
-                # Name - title
+                # Name - show with "Folder:" label for consistency
                 elif key == 'Name':
-                    mount_line(f"[bold {t['primary']}]{rich_escape(str(value))}[/bold {t['primary']}]", value)
+                    mount_line(f"[{t['text_dim']}]Folder:[/{t['text_dim']}] [bold {t['primary']}]{rich_escape(str(value))}[/bold {t['primary']}]", value)
                 # Section headers
                 elif key in section_headers:
                     current_section = key
@@ -2673,9 +2706,6 @@ class SuperShellApp(App):
                         continue
                     mount_line(f"{indent}[{t['primary']}]{rich_escape(str(stripped))}[/{t['primary']}]", stripped)
 
-        # Footer line
-        mount_line(f"\n[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]", None)
-
     def _display_folder_json(self, folder_uid: str):
         """Display folder/shared folder as JSON with clickable values"""
         t = self.theme_colors
@@ -2716,10 +2746,20 @@ class SuperShellApp(App):
             line = ClickableDetailLine(content, copy_value)
             container.mount(line, before=detail_widget)
 
+        # Determine folder header with icon and name
+        folder = self.params.folder_cache.get(folder_uid)
+        folder_name = folder.name if folder else "Folder"
+        if folder:
+            ft = folder.get_folder_type() if hasattr(folder, 'get_folder_type') else str(folder.type)
+            if 'shared' in ft.lower():
+                folder_icon = "👥"
+            else:
+                folder_icon = "📁"
+        else:
+            folder_icon = "📁"
+
         # Build formatted JSON output with clickable values
-        mount_json_line(f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]", None)
-        mount_json_line(f"[bold {t['primary']}]JSON View[/bold {t['primary']}] [{t['text_dim']}](press 't' for detail view)[/{t['text_dim']}]", None)
-        mount_json_line(f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]", None)
+        mount_json_line(f"[bold {t['secondary']}]{folder_icon} {rich_escape(str(folder_name))}[/bold {t['secondary']}] [{t['text_dim']}](JSON)[/{t['text_dim']}]", None)
         mount_json_line("", None)
 
         def render_json(obj, indent=0):
@@ -2830,9 +2870,6 @@ class SuperShellApp(App):
                     mount_json_line(f"{prefix}[{t['primary_bright']}]{item}[/{t['primary_bright']}]{comma}", str(item))
 
         render_json(json_obj)
-
-        mount_json_line("", None)
-        mount_json_line(f"[bold {t['secondary']}]{'━' * 60}[/bold {t['secondary']}]", None)
 
         # Add copy full JSON option
         full_json = json.dumps(json_obj, indent=2)
@@ -3082,6 +3119,21 @@ class SuperShellApp(App):
         self._display_device_info()
         event.stop()
 
+    @on(Click, "#shell_pane, #shell_output, #shell_output_content, #shell_input_line, #shell_header")
+    def on_shell_pane_click(self, event: Click) -> None:
+        """Handle clicks in shell pane - activate shell input and stop propagation.
+
+        This prevents clicks in the shell pane from bubbling up and triggering
+        expensive operations in other parts of the UI.
+        Note: Native terminal text selection requires Shift+click (terminal-dependent).
+        """
+        if self.shell_pane_visible:
+            # Activate shell input when clicking anywhere in shell pane
+            if not self.shell_input_active:
+                self.shell_input_active = True
+                self._update_shell_input_display()
+        event.stop()
+
     def on_paste(self, event: Paste) -> None:
         """Handle paste events (Cmd+V on Mac, Ctrl+V on Windows/Linux)"""
         if self.search_input_active and event.text:
@@ -3269,6 +3321,11 @@ class SuperShellApp(App):
         if not command:
             return
 
+        # Handle quit commands (vim-style :q and :quit)
+        if command.lower() in ('q', 'quit'):
+            self.exit()
+            return
+
         # Try to parse as line number first (vim navigation)
         try:
             line_num = int(command)
@@ -3356,6 +3413,7 @@ class SuperShellApp(App):
         """Execute a Keeper command in the shell pane and display output"""
         command = command.strip()
         if not command:
+            # Empty command - do nothing
             return
 
         # Handle quit commands
@@ -3414,12 +3472,14 @@ class SuperShellApp(App):
         # Update shell output display
         self._update_shell_output_display()
 
-        # Scroll to bottom
-        try:
-            shell_output = self.query_one("#shell_output", VerticalScroll)
-            shell_output.scroll_end(animate=False)
-        except Exception:
-            pass
+        # Scroll to bottom (defer to ensure content is rendered)
+        def scroll_to_bottom():
+            try:
+                shell_output = self.query_one("#shell_output", VerticalScroll)
+                shell_output.scroll_end(animate=False)
+            except Exception:
+                pass
+        self.call_after_refresh(scroll_to_bottom)
 
     def _update_shell_output_display(self):
         """Update the shell output area with command history"""
@@ -3435,10 +3495,10 @@ class SuperShellApp(App):
             # Show prompt and command
             prompt = self._get_shell_prompt()
             lines.append(f"[{t['primary']}]{prompt}[/{t['primary']}]{rich_escape(cmd)}")
-            # Show output
+            # Show output (with blank line separator only if there's output)
             if output.strip():
                 lines.append(output)
-            lines.append("")  # Blank line between commands
+                lines.append("")  # Blank line after output
 
         shell_output_content.update("\n".join(lines))
 
@@ -4062,24 +4122,23 @@ class SuperShellCommand(Command):
             from .utils import LoginCommand
             try:
                 # Run login (no spinner - login may prompt for 2FA, password, etc.)
-                LoginCommand().execute(params, email=params.user, password=params.password, new_login=False)
+                # show_help=False to suppress the batch mode help text
+                LoginCommand().execute(params, email=params.user, password=params.password, new_login=False, show_help=False)
 
                 if not params.session_token:
                     logging.error("\nLogin failed or was cancelled.")
                     return
 
-                # Sync vault data with spinner
+                # Sync vault data with spinner (no success message - TUI will load immediately)
                 sync_spinner = Spinner("Syncing vault data...")
                 sync_spinner.start()
                 try:
                     from .utils import SyncDownCommand
                     SyncDownCommand().execute(params)
-                    sync_spinner.stop("Vault synced!")
+                    sync_spinner.stop()  # No success message - TUI loads immediately
                 except Exception as e:
                     sync_spinner.stop()
                     raise
-
-                print()  # Blank line before TUI
 
             except KeyboardInterrupt:
                 print("\n\nLogin cancelled.")

@@ -144,6 +144,9 @@ class ShellInputHandler(KeyHandler):
     """Handles input when shell pane is visible and active."""
 
     def can_handle(self, event: 'Key', app: 'SuperShellApp') -> bool:
+        # Handle Enter key whenever shell pane is visible (even if not actively focused on input)
+        if app.shell_pane_visible and event.key == "enter":
+            return True
         return app.shell_pane_visible and app.shell_input_active
 
     def handle(self, event: 'Key', app: 'SuperShellApp') -> bool:
@@ -155,6 +158,11 @@ class ShellInputHandler(KeyHandler):
             return True
 
         if event.key == "enter":
+            # Ensure shell input is active when Enter is pressed
+            if not app.shell_input_active:
+                app.shell_input_active = True
+                app._update_shell_input_display()
+            # Execute command (even if empty, to show new prompt)
             app._execute_shell_command(app.shell_input_text)
             app.shell_input_text = ""
             app._update_shell_input_display()
@@ -168,11 +176,40 @@ class ShellInputHandler(KeyHandler):
             self._stop_event(event)
             return True
 
+        if event.key == "ctrl+u":
+            # Ctrl+U clears the input line (like bash)
+            app.shell_input_text = ""
+            app._update_shell_input_display()
+            self._stop_event(event)
+            return True
+
         if event.key == "escape":
             app.shell_input_active = False
             tree.focus()
             app._update_shell_input_display()
             app._update_status("Shell open | Tab to cycle | press Enter in shell to run commands")
+            self._stop_event(event)
+            return True
+
+        if event.key == "tab":
+            # Shell → Search input
+            app.shell_input_active = False
+            app._update_shell_input_display()
+            app.search_input_active = True
+            tree.add_class("search-input-active")
+            app._update_search_display(perform_search=False)
+            app._update_status("Type to search | Tab to tree | Ctrl+U to clear")
+            self._stop_event(event)
+            return True
+
+        if event.key == "shift+tab":
+            # Shell → Detail pane
+            from textual.containers import VerticalScroll
+            app.shell_input_active = False
+            app._update_shell_input_display()
+            detail_scroll = app.query_one("#record_detail", VerticalScroll)
+            detail_scroll.focus()
+            app._update_status("Detail pane | Tab to shell | Shift+Tab to tree")
             self._stop_event(event)
             return True
 
@@ -299,14 +336,26 @@ class DetailPaneHandler(KeyHandler):
             return True
 
         if event.key == "ctrl+y":
-            # Ctrl+Y scrolls viewport up (like vim)
+            # Ctrl+Y scrolls viewport up one line (like vim)
             detail_scroll.scroll_relative(y=-1)
             self._stop_event(event)
             return True
 
         if event.key == "ctrl+e":
-            # Ctrl+E scrolls viewport down (like vim)
+            # Ctrl+E scrolls viewport down one line (like vim)
             detail_scroll.scroll_relative(y=1)
+            self._stop_event(event)
+            return True
+
+        if event.key == "ctrl+u":
+            # Ctrl+U scrolls viewport up half page (like vim)
+            detail_scroll.scroll_relative(y=-10)
+            self._stop_event(event)
+            return True
+
+        if event.key == "ctrl+d":
+            # Ctrl+D scrolls viewport down half page (like vim)
+            detail_scroll.scroll_relative(y=10)
             self._stop_event(event)
             return True
 
@@ -397,7 +446,8 @@ class SearchInputHandler(KeyHandler):
 
         tree = app.query_one("#folder_tree", Tree)
 
-        # Ctrl+U clears the search input
+        # Ctrl+U clears the search input ONLY when actively typing in search
+        # Otherwise, let it pass through for page-up navigation
         if event.key == "ctrl+u" and app.search_input_active:
             app.search_input_text = ""
             app._update_search_display(perform_search=False)

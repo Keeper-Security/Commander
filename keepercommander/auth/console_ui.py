@@ -9,7 +9,6 @@ from typing import Optional, List
 from colorama import Fore, Style
 from . import login_steps
 from .. import utils
-from ..display import bcolors
 from ..error import KeeperApiError
 
 
@@ -24,8 +23,8 @@ class ConsoleLoginUi(login_steps.LoginUi):
 
     def on_device_approval(self, step):
         if self._show_device_approval_help:
-            print(f"\n{Style.BRIGHT}Device Approval Required{Style.RESET_ALL}\n")
-            print("Select an approval method:")
+            print(f"\n{Fore.YELLOW}Device Approval Required{Fore.RESET}\n")
+            print(f"{Fore.CYAN}Select an approval method:{Fore.RESET}")
             print(f"  {Fore.GREEN}1{Fore.RESET}. Email - Send approval link to your email")
             print(f"  {Fore.GREEN}2{Fore.RESET}. Keeper Push - Send notification to an approved device")
             print(f"  {Fore.GREEN}3{Fore.RESET}. 2FA Push - Send code via your 2FA method")
@@ -35,12 +34,12 @@ class ConsoleLoginUi(login_steps.LoginUi):
             print()
             self._show_device_approval_help = False
         else:
-            print(f"\n{Style.BRIGHT}Waiting for device approval.{Style.RESET_ALL}")
-            print(f"Check email, SMS, or push notification on the approved device.")
+            print(f"\n{Fore.YELLOW}Waiting for device approval.{Fore.RESET}")
+            print(f"{Fore.CYAN}Check email, SMS, or push notification on the approved device.{Fore.RESET}")
             print(f"Enter {Fore.GREEN}c <code>{Fore.RESET} to submit a verification code.\n")
 
         try:
-            selection = input('Selection (or Enter to check status): ').strip().lower()
+            selection = input(f'{Fore.GREEN}Selection{Fore.RESET} (or Enter to check status): ').strip().lower()
 
             if selection == '1' or selection == 'email_send' or selection == 'es':
                 step.send_push(login_steps.DeviceApprovalChannel.Email)
@@ -60,7 +59,7 @@ class ConsoleLoginUi(login_steps.LoginUi):
             elif selection == 'c' or selection.startswith('c '):
                 # Support both "c" (prompts for code) and "c <code>" (code inline)
                 if selection == 'c':
-                    code_input = input('Enter verification code: ').strip()
+                    code_input = input(f'{Fore.GREEN}Enter verification code: {Fore.RESET}').strip()
                 else:
                     code_input = selection[2:].strip()  # Extract code after "c "
 
@@ -99,7 +98,7 @@ class ConsoleLoginUi(login_steps.LoginUi):
             step.cancel()
         except KeeperApiError as kae:
             print()
-            print(bcolors.WARNING + kae.message + bcolors.ENDC)
+            print(f'{Fore.YELLOW}{kae.message}{Fore.RESET}')
             pass
 
     @staticmethod
@@ -123,16 +122,18 @@ class ConsoleLoginUi(login_steps.LoginUi):
         channels = step.get_channels()
 
         if self._show_two_factor_help:
-            print("\nThis account requires 2FA Authentication\n")
+            print(f"\n{Fore.YELLOW}Two-Factor Authentication Required{Fore.RESET}\n")
+            print(f"{Fore.CYAN}Select your 2FA method:{Fore.RESET}")
             for i in range(len(channels)):
                 channel = channels[i]
-                print(f"{i+1:>3}. {ConsoleLoginUi.two_factor_channel_to_desc(channel.channel_type)} {channel.channel_name} {channel.phone}")
-            print(f"{'q':>3}. Quit login attempt and return to Commander prompt")
+                print(f"  {Fore.GREEN}{i+1}{Fore.RESET}. {ConsoleLoginUi.two_factor_channel_to_desc(channel.channel_type)} {channel.channel_name} {channel.phone}")
+            print(f"  {Fore.GREEN}q{Fore.RESET}. Cancel login")
+            print()
             self._show_device_approval_help = False
 
         channel = None    # type: Optional[login_steps.TwoFactorChannelInfo]
         while channel is None:
-            selection = input('Selection: ')
+            selection = input(f'{Fore.GREEN}Selection: {Fore.RESET}')
             if selection == 'q':
                 raise KeyboardInterrupt()
 
@@ -154,7 +155,7 @@ class ConsoleLoginUi(login_steps.LoginUi):
             mfa_prompt = True
             try:
                 step.send_push(channel.channel_uid, login_steps.TwoFactorPushAction.TextMessage)
-                print(bcolors.OKGREEN + "\nSuccessfully sent SMS.\n" + bcolors.ENDC)
+                print(f'\n{Fore.GREEN}SMS sent successfully.{Fore.RESET}\n')
             except KeeperApiError:
                 print("Was unable to send SMS.")
         elif channel.channel_type == login_steps.TwoFactorChannel.SecurityKey:
@@ -177,14 +178,14 @@ class ConsoleLoginUi(login_steps.LoginUi):
                     }
                     step.duration = login_steps.TwoFactorDuration.EveryLogin
                     step.send_code(channel.channel_uid, json.dumps(signature))
-                    print(bcolors.OKGREEN + "Verified Security Key." + bcolors.ENDC)
+                    print(f'{Fore.GREEN}Security key verified.{Fore.RESET}')
 
             except ImportError as e:
                 from ..yubikey import display_fido2_warning
                 display_fido2_warning()
                 logging.warning(e)
             except KeeperApiError:
-                print(bcolors.FAIL + "Unable to verify code generated by security key" + bcolors.ENDC)
+                print(f'{Fore.RED}Unable to verify security key.{Fore.RESET}')
             except Exception as e:
                 logging.error(e)
 
@@ -230,7 +231,7 @@ class ConsoleLoginUi(login_steps.LoginUi):
                     print(prompt_exp)
 
                 try:
-                    answer = input('\nEnter 2FA Code or Duration: ')
+                    answer = input(f'\n{Fore.GREEN}Enter 2FA Code: {Fore.RESET}')
                 except KeyboardInterrupt:
                     step.cancel()
                     return
@@ -263,19 +264,18 @@ class ConsoleLoginUi(login_steps.LoginUi):
             step.duration = mfa_expiration
             try:
                 step.send_code(channel.channel_uid, otp_code)
-                print(bcolors.OKGREEN + "Successfully verified 2FA Code." + bcolors.ENDC)
+                print(f'{Fore.GREEN}2FA code verified.{Fore.RESET}')
             except KeeperApiError:
-                warning_msg = bcolors.WARNING + f"Unable to verify 2FA code. Regenerate the code and try again." + bcolors.ENDC
-                print(warning_msg)
+                print(f'{Fore.YELLOW}Invalid 2FA code. Please try again.{Fore.RESET}')
 
     def on_password(self, step):
         if self._show_password_help:
-            print(f'Enter master password for {step.username}')
+            print(f'{Fore.CYAN}Enter master password for {Fore.WHITE}{step.username}{Fore.RESET}')
 
         if self._failed_password_attempt > 0:
-            print('Forgot password? Type "recover"<Enter>')
+            print(f'{Fore.YELLOW}Forgot password? Type "recover"<Enter>{Fore.RESET}')
 
-        password = getpass.getpass(prompt='Password: ', stream=None)
+        password = getpass.getpass(prompt=f'{Fore.GREEN}Password: {Fore.RESET}', stream=None)
         if not password:
             step.cancel()
         elif password == 'recover':
@@ -300,24 +300,24 @@ class ConsoleLoginUi(login_steps.LoginUi):
             wb = None
 
         sp_url = step.sso_login_url
-        print(f'\nSSO Login URL:\n{sp_url}\n')
+        print(f'\n{Fore.CYAN}SSO Login URL:{Fore.RESET}\n{sp_url}\n')
         if self._show_sso_redirect_help:
-            print('Navigate to SSO Login URL with your browser and complete login.')
-            print('Copy a returned SSO Token into clipboard.')
-            print('Paste that token into Commander')
-            print('NOTE: To copy SSO Token please click "Copy login token" button on "SSO Connect" page.')
+            print(f'{Fore.CYAN}Navigate to SSO Login URL with your browser and complete login.{Fore.RESET}')
+            print(f'{Fore.CYAN}Copy the returned SSO Token and paste it here.{Fore.RESET}')
+            print(f'{Fore.YELLOW}TIP: Click "Copy login token" button on the SSO Connect page.{Fore.RESET}')
             print('')
-            print('  a. SSO User with a Master Password')
-            print('  c. Copy SSO Login URL to clipboard')
+            print(f'  {Fore.GREEN}a{Fore.RESET}. SSO User with a Master Password')
+            print(f'  {Fore.GREEN}c{Fore.RESET}. Copy SSO Login URL to clipboard')
             if wb:
-                print('  o. Navigate to SSO Login URL with the default web browser')
-            print('  p. Paste SSO Token from clipboard')
-            print('  q. Quit SSO login attempt and return to Commander prompt')
+                print(f'  {Fore.GREEN}o{Fore.RESET}. Open SSO Login URL in web browser')
+            print(f'  {Fore.GREEN}p{Fore.RESET}. Paste SSO Token from clipboard')
+            print(f'  {Fore.GREEN}q{Fore.RESET}. Cancel SSO login')
+            print()
             self._show_sso_redirect_help = False
 
         while True:
             try:
-                token = input('Selection: ')
+                token = input(f'{Fore.GREEN}Selection: {Fore.RESET}')
             except KeyboardInterrupt:
                 step.cancel()
                 return
@@ -357,17 +357,19 @@ class ConsoleLoginUi(login_steps.LoginUi):
 
     def on_sso_data_key(self, step):
         if self._show_sso_data_key_help:
-            print('\nApprove this device by selecting a method below:')
-            print('  1. Keeper Push. Send a push notification to your device.')
-            print('  2. Admin Approval. Request your admin to approve this device.')
+            print(f'\n{Fore.YELLOW}Device Approval Required for SSO{Fore.RESET}\n')
+            print(f'{Fore.CYAN}Select an approval method:{Fore.RESET}')
+            print(f'  {Fore.GREEN}1{Fore.RESET}. Keeper Push - Send a push notification to your device')
+            print(f'  {Fore.GREEN}2{Fore.RESET}. Admin Approval - Request your admin to approve this device')
             print('')
-            print('  r. Resume SSO login after device is approved.')
-            print('  q. Quit SSO login attempt and return to Commander prompt.')
+            print(f'  {Fore.GREEN}r{Fore.RESET}. Resume SSO login after device is approved')
+            print(f'  {Fore.GREEN}q{Fore.RESET}. Cancel SSO login')
+            print()
             self._show_sso_data_key_help = False
 
         while True:
             try:
-                answer = input('Selection: ')
+                answer = input(f'{Fore.GREEN}Selection: {Fore.RESET}')
             except KeyboardInterrupt:
                 answer = 'q'
 

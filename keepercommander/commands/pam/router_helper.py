@@ -28,16 +28,12 @@ def get_router_url(params: KeeperParams):
         krouter_server_url = os.getenv(krouter_env_var_name)
         logging.debug(f"Getting Krouter url from ENV Variable '{krouter_env_var_name}'='{krouter_server_url}'")
     else:
+        from ...constants import get_router_host
         base_server_url = params.rest_context.server_base
         base_server = urlparse(base_server_url).netloc
-        str_base_server = base_server
         if isinstance(base_server, bytes):
             base_server = base_server.decode('utf-8')
-        
-        # In GovCloud environments, the router service is not under the govcloud subdomain
-        krouter_server_url = 'https://connect.' + base_server
-        if '.govcloud.' in krouter_server_url:
-            krouter_server_url = krouter_server_url.replace('.govcloud.', '.')
+        krouter_server_url = 'https://' + get_router_host(base_server)
 
     return krouter_server_url
 

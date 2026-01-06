@@ -87,7 +87,7 @@ class BreachWatch(object):
                     status.breachDetected = True
                     results[password] = status
         if len(bw_hashes) > 0:
-            logging.info('Breachwatch: %d passwords to scan', len(bw_hashes))
+            logging.info('Breachwatch: %d %s to scan', len(bw_hashes), 'password' if len(bw_hashes) == 1 else 'passwords')
             hashes = []     # type: List[breachwatch_pb2.HashCheck]
             for bw_hash in bw_hashes:
                 check = breachwatch_pb2.HashCheck()

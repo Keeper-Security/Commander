@@ -295,6 +295,7 @@ proxy_parser.exit = suppress_exit
 login_parser = argparse.ArgumentParser(prog='login', description='Start a login session on Commander')
 login_parser.add_argument('-p', '--pass', dest='password', action='store', help='master password')
 login_parser.add_argument('--new-login', dest='new_login', action='store_true', help='Force full login flow')
+login_parser.add_argument('--server', dest='server', action='store', help='Data center region (US, EU, AU, CA, JP, GOV, etc.)')
 login_parser.add_argument('email', nargs='?', type=str, help='account email')
 login_parser.error = raise_parse_exception
 login_parser.exit = suppress_exit
@@ -1656,16 +1657,36 @@ class LoginCommand(Command):
         return False
 
     def execute(self, params, **kwargs):
+        from ..constants import KEEPER_SERVERS, get_abbrev_by_host
+
         if msp.current_mc_id:
             msp.current_mc_id = None
             msp.mc_params_dict.clear()
+
+        # Handle --server option to change data center
+        server = kwargs.get('server')
+        if server:
+            server_upper = server.upper().replace('-', '_')
+            if server_upper in KEEPER_SERVERS:
+                params.server = KEEPER_SERVERS[server_upper]
+                logging.info(f'Data center set to {server_upper}')
+            else:
+                logging.warning(f'Unknown server region: {server}. Using default.')
 
         user = kwargs.get('email') or ''
         password = kwargs.get('password') or ''
 
         try:
             if not user:
-                user = input('... {0:>16}: '.format('User(Email)')).strip()
+                # Show current data center before prompting for email
+                region = get_abbrev_by_host(params.server) if params.server else 'US'
+                if not region:
+                    # Check extended server list
+                    region = next((k for k, v in KEEPER_SERVERS.items() if v == params.server), params.server)
+                print(f'{Fore.CYAN}Data center: {Fore.WHITE}{region}{Fore.RESET}')
+                print(f'{Fore.CYAN}Use {Fore.GREEN}login --server <region>{Fore.CYAN} to change (US, EU, AU, CA, JP, GOV){Fore.RESET}')
+                print()
+                user = input(f'{Fore.GREEN}Email: {Fore.RESET}').strip()
             if not user:
                 return
         except KeyboardInterrupt as e:
@@ -1707,19 +1728,21 @@ class LoginCommand(Command):
             except Exception as e:
                 logging.debug(f'Device registration: {e}')
 
-            # Show post-login message
-            if params.batch_mode:
-                # One-shot login from terminal - show simple success message
-                print()
-                print(f'{Fore.GREEN}Keeper login successful.{Fore.RESET}')
-                print(f'Type "{Fore.GREEN}keeper shell{Fore.RESET}" for the interactive shell, "{Fore.GREEN}keeper supershell{Fore.RESET}" for the vault UI,')
-                print(f'or "{Fore.GREEN}keeper help{Fore.RESET}" to see all available commands.')
-                print()
-            else:
-                # Interactive shell - show full summary with tips
-                record_count = getattr(params, '_sync_record_count', 0)
-                breachwatch_count = getattr(params, '_sync_breachwatch_count', 0)
-                post_login_summary(record_count=record_count, breachwatch_count=breachwatch_count)
+            # Show post-login message (only for explicit login command, not auto-login)
+            show_help = kwargs.get('show_help', True)
+            if show_help:
+                if params.batch_mode:
+                    # One-shot login from terminal - show simple success message
+                    print()
+                    print(f'{Fore.GREEN}Keeper login successful.{Fore.RESET}')
+                    print(f'Type "{Fore.GREEN}keeper shell{Fore.RESET}" for the interactive shell, "{Fore.GREEN}keeper supershell{Fore.RESET}" for the vault UI,')
+                    print(f'or "{Fore.GREEN}keeper help{Fore.RESET}" to see all available commands.')
+                    print()
+                else:
+                    # Interactive shell - show full summary with tips
+                    record_count = getattr(params, '_sync_record_count', 0)
+                    breachwatch_count = getattr(params, '_sync_breachwatch_count', 0)
+                    post_login_summary(record_count=record_count, breachwatch_count=breachwatch_count)
 
 
 class CheckEnforcementsCommand(Command):

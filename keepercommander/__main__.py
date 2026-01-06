@@ -399,6 +399,7 @@ def main(from_package=False):
         print('Keeper Commander - CLI-based vault and admin interface to the Keeper platform')
         print('')
         print('To get started:')
+        print('  keeper login          Authenticate to Keeper')
         print('  keeper shell          Open interactive command shell')
         print('  keeper supershell     Open full-screen vault browser (TUI)')
         print('  keeper -h             Show help and available options')
@@ -417,9 +418,6 @@ def main(from_package=False):
             # Special handling for shell/- when NOT asking for help
             if opts.command == '-':
                 params.batch_mode = True
-        elif opts.command == 'login' and not original_args_after_command and not command_wants_help:
-            # 'keeper login' with no args - just open shell and let it handle login
-            pass
         elif opts.command and os.path.isfile(opts.command):
             with open(opts.command, 'r') as f:
                 lines = f.readlines()
