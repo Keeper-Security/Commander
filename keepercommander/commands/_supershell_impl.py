@@ -1,5 +1,8 @@
 """
 Keeper SuperShell - A full-screen terminal UI for Keeper vault
+
+This is the implementation file during refactoring. Code is being
+gradually migrated to the supershell/ package.
 """
 
 import logging
@@ -16,137 +19,23 @@ from typing import Optional, List, Dict, Any
 import pyperclip
 from rich.markup import escape as rich_escape
 
-
-# Color themes - each theme uses variations of a primary color
-COLOR_THEMES = {
-    'green': {
-        'primary': '#00ff00',        # Bright green
-        'primary_dim': '#00aa00',    # Dim green
-        'primary_bright': '#44ff44', # Light green
-        'secondary': '#88ff88',      # Light green accent
-        'selection_bg': '#004400',   # Selection background
-        'hover_bg': '#002200',       # Hover background (dimmer than selection)
-        'text': '#ffffff',           # White text
-        'text_dim': '#aaaaaa',       # Dim text
-        'folder': '#44ff44',         # Folder color (light green)
-        'folder_shared': '#00dd00',  # Shared folder (slightly different green)
-        'record': '#00aa00',         # Record color (dimmer than folders)
-        'record_num': '#888888',     # Record number
-        'attachment': '#00cc00',     # Attachment color
-        'virtual_folder': '#00ff88', # Virtual folder
-        'status': '#00ff00',         # Status bar
-        'border': '#00aa00',         # Borders
-        'root': '#00ff00',           # Root node
-        'header_user': '#00bbff',    # Header username (blue contrast)
-    },
-    'blue': {
-        'primary': '#0099ff',
-        'primary_dim': '#0066cc',
-        'primary_bright': '#66bbff',
-        'secondary': '#00ccff',
-        'selection_bg': '#002244',
-        'hover_bg': '#001122',
-        'text': '#ffffff',
-        'text_dim': '#aaaaaa',
-        'folder': '#66bbff',
-        'folder_shared': '#0099ff',
-        'record': '#0077cc',         # Record color (dimmer than folders)
-        'record_num': '#888888',
-        'attachment': '#0077cc',
-        'virtual_folder': '#00aaff',
-        'status': '#0099ff',
-        'border': '#0066cc',
-        'root': '#0099ff',
-        'header_user': '#ff9900',    # Header username (orange contrast)
-    },
-    'magenta': {
-        'primary': '#ff66ff',
-        'primary_dim': '#cc44cc',
-        'primary_bright': '#ff99ff',
-        'secondary': '#ffaaff',
-        'selection_bg': '#330033',
-        'hover_bg': '#220022',
-        'text': '#ffffff',
-        'text_dim': '#aaaaaa',
-        'folder': '#ff99ff',
-        'folder_shared': '#ff66ff',
-        'record': '#cc44cc',         # Record color (dimmer than folders)
-        'record_num': '#888888',
-        'attachment': '#cc44cc',
-        'virtual_folder': '#ffaaff',
-        'status': '#ff66ff',
-        'border': '#cc44cc',
-        'root': '#ff66ff',
-        'header_user': '#66ff66',    # Header username (green contrast)
-    },
-    'yellow': {
-        'primary': '#ffff00',
-        'primary_dim': '#cccc00',
-        'primary_bright': '#ffff66',
-        'secondary': '#ffcc00',
-        'selection_bg': '#333300',
-        'hover_bg': '#222200',
-        'text': '#ffffff',
-        'text_dim': '#aaaaaa',
-        'folder': '#ffff66',
-        'folder_shared': '#ffcc00',
-        'record': '#cccc00',         # Record color (dimmer than folders)
-        'record_num': '#888888',
-        'attachment': '#cccc00',
-        'virtual_folder': '#ffff88',
-        'status': '#ffff00',
-        'border': '#cccc00',
-        'root': '#ffff00',
-        'header_user': '#66ccff',    # Header username (blue contrast)
-    },
-    'white': {
-        'primary': '#ffffff',
-        'primary_dim': '#cccccc',
-        'primary_bright': '#ffffff',
-        'secondary': '#dddddd',
-        'selection_bg': '#444444',
-        'hover_bg': '#333333',
-        'text': '#ffffff',
-        'text_dim': '#999999',
-        'folder': '#eeeeee',
-        'folder_shared': '#dddddd',
-        'record': '#bbbbbb',         # Record color (dimmer than folders)
-        'record_num': '#888888',
-        'attachment': '#cccccc',
-        'virtual_folder': '#ffffff',
-        'status': '#ffffff',
-        'border': '#888888',
-        'root': '#ffffff',
-        'header_user': '#66ccff',    # Header username (blue contrast)
-    },
-}
-
-# Preferences file path
-PREFS_FILE = Path.home() / '.keeper' / 'supershell_prefs.json'
-
-
-def load_preferences() -> dict:
-    """Load preferences from file, return defaults if not found"""
-    defaults = {'color_theme': 'green'}
-    try:
-        if PREFS_FILE.exists():
-            with open(PREFS_FILE, 'r') as f:
-                prefs = json.load(f)
-                # Merge with defaults
-                return {**defaults, **prefs}
-    except Exception as e:
-        logging.debug(f"Error loading preferences: {e}")
-    return defaults
-
-
-def save_preferences(prefs: dict):
-    """Save preferences to file"""
-    try:
-        PREFS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(PREFS_FILE, 'w') as f:
-            json.dump(prefs, f, indent=2)
-    except Exception as e:
-        logging.error(f"Error saving preferences: {e}")
+# Import from refactored modules
+from .supershell.themes import COLOR_THEMES
+from .supershell.utils import load_preferences, save_preferences, strip_ansi_codes
+from .supershell.widgets import ClickableDetailLine, ClickableField, ClickableRecordUID
+from .supershell.state import VaultData, UIState, ThemeState, SelectionState
+from .supershell.data import load_vault_data, search_records
+from .supershell.renderers import (
+    is_sensitive_field as is_sensitive_field_name,
+    mask_passwords_in_json,
+    strip_field_type_prefix,
+    is_section_header as is_record_section_header,
+    RECORD_SECTION_HEADERS,
+    FIELD_TYPE_PREFIXES,
+    TYPE_FRIENDLY_NAMES,
+)
+from .supershell.handlers import keyboard_dispatcher
+from .supershell.screens import PreferencesScreen, HelpScreen
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll, Center, Middle
@@ -162,196 +51,7 @@ from textual.events import Click, MouseDown, Paste
 
 from ..commands.base import Command
 
-
-class ClickableDetailLine(Static):
-    """A single line in the detail view that highlights on hover and copies on click"""
-
-    DEFAULT_CSS = """
-    ClickableDetailLine {
-        width: 100%;
-        height: auto;
-        padding: 0 1;
-    }
-
-    ClickableDetailLine:hover {
-        background: #1a1a2e;
-    }
-
-    ClickableDetailLine.has-value {
-        /* Clickable lines get a subtle left border indicator */
-    }
-
-    ClickableDetailLine.has-value:hover {
-        background: #16213e;
-        text-style: bold;
-        border-left: thick #00ff00;
-    }
-    """
-
-    def __init__(self, content: str, copy_value: str = None, record_uid: str = None, is_password: bool = False, *args, **kwargs):
-        """
-        Create a clickable detail line.
-
-        Args:
-            content: Rich markup content to display
-            copy_value: Value to copy on click (None = not copyable)
-            record_uid: Record UID for password audit events
-            is_password: If True, use ClipboardCommand for audit event
-        """
-        self.copy_value = copy_value
-        self.record_uid = record_uid
-        self.is_password = is_password
-        classes = "has-value" if copy_value else ""
-        super().__init__(content, classes=classes, *args, **kwargs)
-
-    def on_mouse_down(self, event: MouseDown) -> None:
-        """Handle mouse down to copy value - fires immediately without waiting for focus"""
-        if self.copy_value:
-            try:
-                if self.is_password and self.record_uid:
-                    # Use ClipboardCommand to generate audit event for password copy
-                    cc = ClipboardCommand()
-                    cc.execute(self.app.params, record=self.record_uid, output='clipboard',
-                               username=None, copy_uid=False, login=False, totp=False, field=None, revision=None)
-                    self.app.notify("🔑 Password copied to clipboard!", severity="information")
-                else:
-                    # Regular copy for non-password fields
-                    pyperclip.copy(self.copy_value)
-                    self.app.notify(f"Copied: {self.copy_value[:50]}{'...' if len(self.copy_value) > 50 else ''}", severity="information")
-            except Exception as e:
-                self.app.notify(f"Copy failed: {e}", severity="error")
-
-
-class ClickableField(Static):
-    """A clickable field that copies value to clipboard on click"""
-
-    DEFAULT_CSS = """
-    ClickableField {
-        width: 100%;
-        height: auto;
-        padding: 0 1;
-    }
-
-    ClickableField:hover {
-        background: #333333;
-    }
-
-    ClickableField.clickable-value:hover {
-        background: #444444;
-        text-style: bold;
-    }
-    """
-
-    def __init__(self, label: str, value: str, copy_value: str = None,
-                 label_color: str = "#aaaaaa", value_color: str = "#00ff00",
-                 is_header: bool = False, indent: int = 0, *args, **kwargs):
-        """
-        Create a clickable field.
-
-        Args:
-            label: The field label (e.g., "Username:")
-            value: The display value
-            copy_value: The value to copy (defaults to value)
-            label_color: Color for label
-            value_color: Color for value
-            is_header: If True, style as section header
-            indent: Indentation level (spaces)
-        """
-        self.copy_value = copy_value if copy_value is not None else value
-
-        # Build content before calling super().__init__
-        indent_str = "  " * indent
-        # Escape brackets for Rich markup
-        safe_value = value.replace('[', '\\[').replace(']', '\\]') if value else ''
-        safe_label = label.replace('[', '\\[').replace(']', '\\]') if label else ''
-
-        if is_header:
-            content = f"[bold {value_color}]{indent_str}{safe_label}[/bold {value_color}]"
-        elif label:
-            content = f"{indent_str}[{label_color}]{safe_label}[/{label_color}] [{value_color}]{safe_value}[/{value_color}]"
-        else:
-            content = f"{indent_str}[{value_color}]{safe_value}[/{value_color}]"
-
-        # Set classes for hover effect
-        classes = "clickable-value" if self.copy_value else ""
-
-        super().__init__(content, classes=classes, *args, **kwargs)
-
-    def on_mouse_down(self, event: MouseDown) -> None:
-        """Handle mouse down to copy value - fires immediately without waiting for focus"""
-        if self.copy_value:
-            try:
-                pyperclip.copy(self.copy_value)
-                self.app.notify(f"Copied to clipboard", severity="information")
-            except Exception as e:
-                self.app.notify(f"Copy failed: {e}", severity="error")
-
-
-class ClickableRecordUID(Static):
-    """A clickable record UID that navigates to the record when clicked"""
-
-    DEFAULT_CSS = """
-    ClickableRecordUID {
-        width: 100%;
-        height: auto;
-        padding: 0 1;
-    }
-
-    ClickableRecordUID:hover {
-        background: #333344;
-        text-style: bold underline;
-    }
-    """
-
-    def __init__(self, label: str, record_uid: str, record_title: str = None,
-                 label_color: str = "#aaaaaa", value_color: str = "#ffff00",
-                 indent: int = 0, *args, **kwargs):
-        """
-        Create a clickable record UID that navigates to the record.
-
-        Args:
-            label: The field label (e.g., "Record UID:")
-            record_uid: The UID of the record to navigate to
-            record_title: Optional title to display instead of UID
-            label_color: Color for label
-            value_color: Color for value
-            indent: Indentation level
-        """
-        self.record_uid = record_uid
-
-        # Build content before calling super().__init__
-        indent_str = "  " * indent
-        display_value = record_title or record_uid
-        safe_value = display_value.replace('[', '\\[').replace(']', '\\]')
-        safe_label = label.replace('[', '\\[').replace(']', '\\]') if label else ''
-
-        if label:
-            content = f"{indent_str}[{label_color}]{safe_label}[/{label_color}] [{value_color}]{safe_value} ↗[/{value_color}]"
-        else:
-            content = f"{indent_str}[{value_color}]{safe_value} ↗[/{value_color}]"
-
-        super().__init__(content, *args, **kwargs)
-
-    def on_mouse_down(self, event: MouseDown) -> None:
-        """Handle mouse down to navigate to record - fires immediately without waiting for focus"""
-        # Find the app and trigger record selection
-        app = self.app
-        if hasattr(app, 'records') and self.record_uid in app.records:
-            # Navigate to the record in the tree
-            app.selected_record = self.record_uid
-            app.selected_folder = None
-            app._display_record_detail(self.record_uid)
-
-            # Try to select the node in the tree
-            tree = app.query_one("#folder_tree", Tree)
-            app._select_record_in_tree(tree, self.record_uid)
-
-            app.notify(f"Navigated to record", severity="information")
-        else:
-            # Just copy the UID if record not found
-            pyperclip.copy(self.record_uid)
-            app.notify(f"Record not in vault. UID copied.", severity="warning")
-
+# Widget classes are now imported from .supershell.widgets at the top of this file
 
 from ..commands.record import RecordGetUidCommand, ClipboardCommand
 from ..display import bcolors
@@ -359,201 +59,7 @@ from .. import vault
 from .. import utils
 
 
-class PreferencesScreen(ModalScreen):
-    """Modal screen for user preferences"""
-
-    DEFAULT_CSS = """
-    PreferencesScreen {
-        align: center middle;
-    }
-
-    #prefs_container {
-        width: 40;
-        height: auto;
-        max-height: 90%;
-        background: #111111;
-        border: solid #444444;
-        padding: 1 2;
-    }
-
-    #prefs_title {
-        text-align: center;
-        text-style: bold;
-        padding-bottom: 1;
-    }
-
-    #prefs_content {
-        height: auto;
-        padding: 0 1;
-    }
-
-    #prefs_footer {
-        text-align: center;
-        padding-top: 1;
-        color: #666666;
-    }
-    """
-
-    BINDINGS = [
-        Binding("escape", "dismiss", "Close", show=False),
-        Binding("q", "dismiss", "Close", show=False),
-        Binding("1", "select_green", "Green", show=False),
-        Binding("2", "select_blue", "Blue", show=False),
-        Binding("3", "select_magenta", "Magenta", show=False),
-        Binding("4", "select_yellow", "Yellow", show=False),
-        Binding("5", "select_white", "White", show=False),
-    ]
-
-    def __init__(self, app_instance):
-        super().__init__()
-        self.app_instance = app_instance
-
-    def compose(self) -> ComposeResult:
-        current = self.app_instance.color_theme
-        with Vertical(id="prefs_container"):
-            yield Static("[bold cyan]⚙ Preferences[/bold cyan]", id="prefs_title")
-            yield Static(f"""[green]Color Theme:[/green]
-  [#00ff00]1[/#00ff00]  {'●' if current == 'green' else '○'} Green
-  [#0099ff]2[/#0099ff]  {'●' if current == 'blue' else '○'} Blue
-  [#ff66ff]3[/#ff66ff]  {'●' if current == 'magenta' else '○'} Magenta
-  [#ffff00]4[/#ffff00]  {'●' if current == 'yellow' else '○'} Yellow
-  [#ffffff]5[/#ffffff]  {'●' if current == 'white' else '○'} White""", id="prefs_content")
-            yield Static("[dim]Press 1-5 to select, Esc or q to close[/dim]", id="prefs_footer")
-
-    def action_dismiss(self):
-        """Close the preferences screen"""
-        self.dismiss()
-
-    def key_escape(self):
-        """Handle escape key directly"""
-        self.dismiss()
-
-    def key_q(self):
-        """Handle q key directly"""
-        self.dismiss()
-
-    def action_select_green(self):
-        self._apply_theme('green')
-
-    def action_select_blue(self):
-        self._apply_theme('blue')
-
-    def action_select_magenta(self):
-        self._apply_theme('magenta')
-
-    def action_select_yellow(self):
-        self._apply_theme('yellow')
-
-    def action_select_white(self):
-        self._apply_theme('white')
-
-    def _apply_theme(self, theme_name: str):
-        """Apply the selected theme and save preferences"""
-        self.app_instance.set_color_theme(theme_name)
-        # Save to preferences file
-        prefs = load_preferences()
-        prefs['color_theme'] = theme_name
-        save_preferences(prefs)
-        self.app_instance.notify(f"Theme changed to {theme_name}")
-        self.dismiss()
-
-
-class HelpScreen(ModalScreen):
-    """Modal screen for help/keyboard shortcuts"""
-
-    DEFAULT_CSS = """
-    HelpScreen {
-        align: center middle;
-    }
-
-    #help_container {
-        width: 90;
-        height: auto;
-        max-height: 90%;
-        background: #111111;
-        border: solid #444444;
-        padding: 1 2;
-    }
-
-    #help_title {
-        text-align: center;
-        text-style: bold;
-        padding-bottom: 1;
-    }
-
-    #help_columns {
-        height: auto;
-    }
-
-    .help_column {
-        width: 1fr;
-        height: auto;
-        padding: 0 1;
-    }
-
-    #help_footer {
-        text-align: center;
-        padding-top: 1;
-        color: #666666;
-    }
-    """
-
-    BINDINGS = [
-        Binding("escape", "dismiss", "Close", show=False),
-        Binding("q", "dismiss", "Close", show=False),
-    ]
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="help_container"):
-            yield Static("[bold cyan]⌨ Keyboard Shortcuts[/bold cyan]", id="help_title")
-            with Horizontal(id="help_columns"):
-                yield Static("""[green]Navigation:[/green]
-  j/k ↑/↓       Move up/down
-  h/l ←/→       Collapse/expand
-  g / G         Top / bottom
-  Ctrl+d/u      Half page
-  Ctrl+e/y      Scroll line
-  Esc           Clear/collapse
-
-[green]Focus Cycling:[/green]
-  Tab           Tree→Detail→Search
-  Shift+Tab     Cycle backwards
-  /             Focus search
-  Ctrl+U        Clear search
-  Esc           Focus tree
-
-[green]General:[/green]
-  ?             Help
-  !             Keeper shell
-  Ctrl+q        Quit""", classes="help_column")
-                yield Static("""[green]Copy to Clipboard:[/green]
-  p             Password
-  u             Username
-  c             Copy all
-  w             URL
-  i             Record UID
-
-[green]Actions:[/green]
-  t             Toggle JSON view
-  m             Mask/Unmask
-  d             Sync vault
-  W             User info
-  D             Device info
-  P             Preferences""", classes="help_column")
-            yield Static("[dim]Press Esc or q to close[/dim]", id="help_footer")
-
-    def action_dismiss(self):
-        """Close the help screen"""
-        self.dismiss()
-
-    def key_escape(self):
-        """Handle escape key directly"""
-        self.dismiss()
-
-    def key_q(self):
-        """Handle q key directly"""
-        self.dismiss()
-
+# Screen classes imported from .supershell.screens
 
 class SuperShellApp(App):
     """The Keeper SuperShell TUI application"""
@@ -565,11 +71,7 @@ class SuperShellApp(App):
     PAGE_DOWN_NODES = 10         # Number of nodes to move for half-page down
     PAGE_DOWN_FULL_NODES = 20    # Number of nodes to move for full-page down
 
-    @staticmethod
-    def _strip_ansi_codes(text: str) -> str:
-        """Remove ANSI color codes from text"""
-        ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
-        return ansi_escape.sub('', text)
+    # _strip_ansi_codes is now imported from .supershell.utils
 
     CSS = """
     Screen {
@@ -773,6 +275,62 @@ class SuperShellApp(App):
         padding: 0 1;
         border-top: solid #333333;
     }
+
+    /* Content area wrapper for shell pane visibility control */
+    #content_area {
+        height: 100%;
+        width: 100%;
+    }
+
+    /* When shell is visible, compress main container to top half */
+    #content_area.shell-visible #main_container {
+        height: 50%;
+    }
+
+    /* Shell pane - hidden by default */
+    #shell_pane {
+        display: none;
+        height: 50%;
+        width: 100%;
+        border-top: thick #666666;
+        background: #000000;
+    }
+
+    /* Show shell pane when class is added */
+    #content_area.shell-visible #shell_pane {
+        display: block;
+    }
+
+    #shell_header {
+        height: 1;
+        background: #222222;
+        color: #00ff00;
+        padding: 0 1;
+        border-bottom: solid #333333;
+    }
+
+    #shell_output {
+        height: 1fr;
+        overflow-y: auto;
+        padding: 0 1;
+        background: #000000;
+    }
+
+    #shell_output_content {
+        background: #000000;
+        color: #ffffff;
+    }
+
+    #shell_input_line {
+        height: 1;
+        background: #111111;
+        color: #00ff00;
+        padding: 0 1;
+    }
+
+    #shell_pane:focus-within #shell_input_line {
+        background: #1a1a2e;
+    }
     """
 
     BINDINGS = [
@@ -835,6 +393,13 @@ class SuperShellApp(App):
         # Vim-style command mode (e.g., :20 to go to line 20)
         self.command_mode = False
         self.command_buffer = ""
+        # Shell pane state
+        self.shell_pane_visible = False
+        self.shell_input_text = ""
+        self.shell_history = []  # List of (command, output) tuples
+        self.shell_input_active = False
+        self.shell_command_history = []  # For up/down arrow navigation
+        self.shell_history_index = -1
         # Load color theme from preferences
         prefs = load_preferences()
         self.color_theme = prefs.get('color_theme', 'green')
@@ -968,14 +533,24 @@ class SuperShellApp(App):
             yield Static("", id="user_info", classes="clickable-info")
             yield Static("", id="device_status_info", classes="clickable-info")
 
-        with Horizontal(id="main_container"):
-            with Vertical(id="folder_panel"):
-                yield Tree("[#00ff00]● My Vault[/#00ff00]", id="folder_tree")
-            with Vertical(id="record_panel"):
-                with VerticalScroll(id="record_detail"):
-                    yield Static("", id="detail_content")
-                # Fixed footer for shortcuts
-                yield Static("", id="shortcuts_bar")
+        # Content area wrapper - allows shell pane visibility control
+        with Vertical(id="content_area"):
+            with Horizontal(id="main_container"):
+                with Vertical(id="folder_panel"):
+                    yield Tree("[#00ff00]● My Vault[/#00ff00]", id="folder_tree")
+                with Vertical(id="record_panel"):
+                    with VerticalScroll(id="record_detail"):
+                        yield Static("", id="detail_content")
+                    # Fixed footer for shortcuts
+                    yield Static("", id="shortcuts_bar")
+
+            # Shell pane - hidden by default, shown when :command or Ctrl+\ pressed
+            with Vertical(id="shell_pane"):
+                yield Static("", id="shell_header")
+                with VerticalScroll(id="shell_output"):
+                    yield Static("", id="shell_output_content")
+                yield Static("", id="shell_input_line")
+
         # Status bar at very bottom
         yield Static("", id="status_bar")
 
@@ -1969,7 +1544,7 @@ class SuperShellApp(App):
             # Use the get command (same as shell) to fetch record details
             output = self._get_record_output(record_uid, format_type='detail')
             # Strip ANSI codes from command output
-            output = self._strip_ansi_codes(output)
+            output = strip_ansi_codes(output)
 
             if not output or output.strip() == '':
                 return "[red]Failed to get record details[/red]"
@@ -2090,7 +1665,7 @@ class SuperShellApp(App):
             # Get the captured output
             output = stdout_buffer.getvalue()
             # Strip ANSI codes
-            output = self._strip_ansi_codes(output)
+            output = strip_ansi_codes(output)
 
             if not output or output.strip() == '':
                 # Fallback to basic folder info if get command didn't work
@@ -2397,7 +1972,7 @@ class SuperShellApp(App):
 
         # Get and parse record output
         output = self._get_record_output(record_uid, format_type='detail')
-        output = self._strip_ansi_codes(output)
+        output = strip_ansi_codes(output)
 
         if not output or output.strip() == '':
             detail_widget.update("[red]Failed to get record details[/red]")
@@ -2712,7 +2287,7 @@ class SuperShellApp(App):
 
         # Get JSON output (include DAG data for PAM records)
         output = self._get_record_output(record_uid, format_type='json', include_dag=True)
-        output = self._strip_ansi_codes(output)
+        output = strip_ansi_codes(output)
 
         try:
             json_obj = json.loads(output)
@@ -2991,7 +2566,7 @@ class SuperShellApp(App):
             get_cmd.execute(self.params, uid=folder_uid, format='detail')
             sys.stdout = old_stdout
             output = stdout_buffer.getvalue()
-            output = self._strip_ansi_codes(output)
+            output = strip_ansi_codes(output)
         except Exception as e:
             sys.stdout = old_stdout
             logging.error(f"Error getting folder output: {e}")
@@ -3119,7 +2694,7 @@ class SuperShellApp(App):
             get_cmd.execute(self.params, uid=folder_uid, format='json')
             sys.stdout = old_stdout
             output = stdout_buffer.getvalue()
-            output = self._strip_ansi_codes(output)
+            output = strip_ansi_codes(output)
         except Exception as e:
             sys.stdout = old_stdout
             logging.error(f"Error getting folder JSON output: {e}")
@@ -3654,292 +3229,19 @@ class SuperShellApp(App):
             self._update_status(f"ERROR: {str(e)}")
 
     def on_key(self, event):
-        """Handle keyboard events"""
-        search_bar = self.query_one("#search_bar")
-        tree = self.query_one("#folder_tree", Tree)
+        """Handle keyboard events using the dispatcher pattern.
 
-        # Global key handlers that work regardless of focus
-        # ! exits to regular shell (works from any widget)
-        if event.character == "!" and not self.search_input_active:
-            self.exit("Exited to Keeper shell. Type 'supershell' or 'ss' to return.")
-            event.prevent_default()
-            event.stop()
+        Keyboard handling is delegated to specialized handlers in
+        supershell/handlers/keyboard.py for better organization and testing.
+        """
+        # Dispatch to the keyboard handler chain
+        if keyboard_dispatcher.dispatch(event, self):
             return
 
-        # Handle Tab/Shift+Tab cycling: Tree → Detail → Search (counterclockwise)
-        detail_scroll = self.query_one("#record_detail", VerticalScroll)
+        # Event was not handled by any handler - let it propagate
+        pass
 
-        # Handle search input mode Tab/Shift+Tab first (search_input_active takes priority)
-        if self.search_input_active:
-            if event.key == "tab":
-                # Search input → Tree (forward in cycle)
-                self.search_input_active = False
-                tree.remove_class("search-input-active")
-                search_display = self.query_one("#search_display", Static)
-                if self.search_input_text:
-                    search_display.update(rich_escape(self.search_input_text))
-                else:
-                    search_display.update("[dim]Search...[/dim]")
-                tree.focus()
-                self._update_status("Navigate with j/k | Tab to detail | ? for help")
-                event.prevent_default()
-                event.stop()
-                return
-            elif event.key == "shift+tab":
-                # Search input → Detail pane (backwards in cycle)
-                self.search_input_active = False
-                tree.remove_class("search-input-active")
-                search_display = self.query_one("#search_display", Static)
-                if self.search_input_text:
-                    search_display.update(rich_escape(self.search_input_text))
-                else:
-                    search_display.update("[dim]Search...[/dim]")
-                detail_scroll.focus()
-                self._update_status("Detail pane | Tab to search | Shift+Tab to tree")
-                event.prevent_default()
-                event.stop()
-                return
-
-        if detail_scroll.has_focus:
-            if event.key == "tab":
-                # Detail pane → Search input
-                self.search_input_active = True
-                tree.add_class("search-input-active")
-                self._update_search_display(perform_search=False)  # Don't change tree when entering search
-                self._update_status("Type to search | Tab to tree | Ctrl+U to clear")
-                event.prevent_default()
-                event.stop()
-                return
-            elif event.key == "shift+tab":
-                # Detail pane → Tree
-                tree.focus()
-                self._update_status("Navigate with j/k | Tab to detail | ? for help")
-                event.prevent_default()
-                event.stop()
-                return
-            elif event.key == "escape":
-                tree.focus()
-                event.prevent_default()
-                event.stop()
-                return
-            elif event.key == "ctrl+y":
-                # Ctrl+Y scrolls viewport up (like vim)
-                detail_scroll.scroll_relative(y=-1)
-                event.prevent_default()
-                event.stop()
-                return
-            elif event.key == "ctrl+e":
-                # Ctrl+E scrolls viewport down (like vim)
-                detail_scroll.scroll_relative(y=1)
-                event.prevent_default()
-                event.stop()
-                return
-
-        if search_bar.styles.display != "none":
-            # Search bar is active
-
-            # If we're navigating results (not typing), let tree/app handle its keys
-            if not self.search_input_active and tree.has_focus:
-                # Handle left/right arrow keys for expand/collapse
-                if event.key == "left":
-                    if tree.cursor_node and tree.cursor_node.allow_expand:
-                        tree.cursor_node.collapse()
-                    event.prevent_default()
-                    event.stop()
-                    return
-                elif event.key == "right":
-                    if tree.cursor_node and tree.cursor_node.allow_expand:
-                        tree.cursor_node.expand()
-                    event.prevent_default()
-                    event.stop()
-                    return
-                # Navigation keys for tree
-                if event.key in ("j", "k", "h", "l", "up", "down", "enter", "space"):
-                    return
-                # Action keys (copy, toggle view, etc.) - let them pass through
-                if event.key in ("t", "c", "u", "w", "i", "y", "d", "g", "p", "question_mark"):
-                    return
-                # Shift+G for go to bottom
-                if event.character == "G":
-                    return
-                # Tab switches to detail pane
-                if event.key == "tab":
-                    detail_scroll.focus()
-                    self._update_status("Detail pane | Tab to search | Shift+Tab to tree")
-                    event.prevent_default()
-                    event.stop()
-                    return
-                # Shift+Tab switches to search input
-                elif event.key == "shift+tab":
-                    self.search_input_active = True
-                    tree.add_class("search-input-active")
-                    self._update_search_display(perform_search=False)  # Don't change tree when entering search
-                    self._update_status("Type to search | Tab to tree | Ctrl+U to clear")
-                    event.prevent_default()
-                    event.stop()
-                    return
-                elif event.key == "slash":
-                    # Switch back to search input mode
-                    self.search_input_active = True
-                    tree.add_class("search-input-active")
-                    self._update_search_display(perform_search=False)  # Don't change tree when entering search
-                    event.prevent_default()
-                    event.stop()
-                    return
-
-            # Ctrl+U clears the search input (like bash)
-            # Reset tree to show all items when clearing search
-            if event.key == "ctrl+u" and self.search_input_active:
-                self.search_input_text = ""
-                self._update_search_display(perform_search=False)  # Just update display
-                self._perform_live_search("")  # Reset tree to show all
-                event.prevent_default()
-                event.stop()
-                return
-
-            # "/" to switch to search input mode (works from anywhere when search bar visible)
-            if event.key == "slash" and not self.search_input_active:
-                self.search_input_active = True
-                tree.add_class("search-input-active")
-                self._update_search_display(perform_search=False)  # Don't change tree when entering search
-                event.prevent_default()
-                event.stop()
-                return
-
-            if event.key == "escape":
-                # Clear search and move focus to tree (don't hide search bar)
-                self.search_input_text = ""
-                self.search_input_active = False
-                tree.remove_class("search-input-active")
-                self._perform_live_search("")  # Reset to show all
-
-                # Update search display to show placeholder
-                search_display = self.query_one("#search_display", Static)
-                search_display.update("[dim]Search... (Tab or /)[/dim]")
-                results_label = self.query_one("#search_results_label", Static)
-                results_label.update("")
-
-                # Restore previous selection
-                self.selected_record = self.pre_search_selected_record
-                self.selected_folder = self.pre_search_selected_folder
-                self._restore_tree_selection(tree)
-
-                tree.focus()
-                self._update_status("Navigate with j/k | Tab to detail | ? for help")
-                event.prevent_default()
-                event.stop()
-            elif event.key in ("enter", "down"):
-                # Move focus to tree to navigate results
-                # Switch to navigation mode
-                self.search_input_active = False
-
-                # Show tree selection - remove the class that hides it
-                tree.remove_class("search-input-active")
-
-                # Remove cursor from search display
-                search_display = self.query_one("#search_display", Static)
-                if self.search_input_text:
-                    search_display.update(rich_escape(self.search_input_text))  # No cursor
-                else:
-                    search_display.update("[dim]Search...[/dim]")
-
-                # Force focus to tree
-                self.set_focus(tree)
-                tree.focus()
-
-                self._update_status("Navigate results with j/k | / to edit search | ESC to close")
-                event.prevent_default()
-                event.stop()
-                return  # Return immediately to avoid further processing
-            elif event.key == "backspace":
-                # Delete last character
-                if self.search_input_text:
-                    self.search_input_text = self.search_input_text[:-1]
-                    self._update_search_display()
-                event.prevent_default()
-                event.stop()
-            elif self.search_input_active and event.character and event.character.isprintable():
-                # Only add characters when search input is active (not when navigating results)
-                self.search_input_text += event.character
-                self._update_search_display()
-                event.prevent_default()
-                event.stop()
-        else:
-            # Search bar is NOT active - handle escape and command mode
-
-            # Handle command mode (vim :N navigation)
-            if self.command_mode:
-                if event.key == "escape":
-                    # Cancel command mode
-                    self.command_mode = False
-                    self.command_buffer = ""
-                    self._update_status("Command cancelled")
-                    event.prevent_default()
-                    event.stop()
-                    return
-                elif event.key == "enter":
-                    # Execute command
-                    self._execute_command(self.command_buffer)
-                    self.command_mode = False
-                    self.command_buffer = ""
-                    event.prevent_default()
-                    event.stop()
-                    return
-                elif event.key == "backspace":
-                    # Delete last character
-                    if self.command_buffer:
-                        self.command_buffer = self.command_buffer[:-1]
-                        self._update_status(f":{self.command_buffer}")
-                    else:
-                        # Exit command mode if buffer is empty
-                        self.command_mode = False
-                        self._update_status("Navigate with j/k | / to search | ? for help")
-                    event.prevent_default()
-                    event.stop()
-                    return
-                elif event.character and event.character.isdigit():
-                    # Accept digits for line number navigation
-                    self.command_buffer += event.character
-                    self._update_status(f":{self.command_buffer}")
-                    event.prevent_default()
-                    event.stop()
-                    return
-                else:
-                    # Invalid character for command mode
-                    event.prevent_default()
-                    event.stop()
-                    return
-
-            # Enter command mode with :
-            if event.character == ":":
-                self.command_mode = True
-                self.command_buffer = ""
-                self._update_status(":")
-                event.prevent_default()
-                event.stop()
-                return
-
-            # Handle arrow keys for expand/collapse when search is not active
-            if tree.has_focus:
-                if event.key == "left":
-                    if tree.cursor_node and tree.cursor_node.allow_expand:
-                        tree.cursor_node.collapse()
-                    event.prevent_default()
-                    event.stop()
-                    return
-                elif event.key == "right":
-                    if tree.cursor_node and tree.cursor_node.allow_expand:
-                        tree.cursor_node.expand()
-                    event.prevent_default()
-                    event.stop()
-                    return
-
-            if event.key == "escape":
-                # Escape: collapse current folder or go to parent, stop at root
-                self._collapse_current_or_parent(tree)
-                event.prevent_default()
-                event.stop()
-                return
+    # Old keyboard handling code has been moved to supershell/handlers/keyboard.py
 
     def _collapse_current_or_parent(self, tree: Tree):
         """Collapse current node if expanded, or go to parent. Stop at root."""
@@ -3962,15 +3264,21 @@ class SuperShellApp(App):
             self._update_status("Moved to parent")
 
     def _execute_command(self, command: str):
-        """Execute vim-style command (e.g., :20 to go to line 20)"""
+        """Execute vim-style command (e.g., :20 to go to line 20) or open shell with command"""
         command = command.strip()
+        if not command:
+            return
 
-        # Try to parse as line number
+        # Try to parse as line number first (vim navigation)
         try:
             line_num = int(command)
             self._goto_line(line_num)
+            return
         except ValueError:
-            self._update_status(f"Unknown command: {command}")
+            pass
+
+        # Not a number - open shell pane and run the command
+        self._open_shell_pane(command)
 
     def _goto_line(self, line_num: int):
         """Go to specified line number in the tree (1-indexed like vim)"""
@@ -4004,6 +3312,182 @@ class SuperShellApp(App):
             self._update_status(f"Line {target_index + 1} of {len(visible_nodes)}")
         else:
             self._update_status("No visible nodes")
+
+    # ========== Shell Pane Methods ==========
+
+    def _open_shell_pane(self, command: str = None):
+        """Open the shell pane, optionally running a command immediately"""
+        content_area = self.query_one("#content_area", Vertical)
+        content_area.add_class("shell-visible")
+
+        self.shell_pane_visible = True
+        self.shell_input_active = True
+        self.shell_input_text = ""
+
+        # Update shell header with theme colors
+        self._update_shell_header()
+
+        # Initialize the input display
+        self._update_shell_input_display()
+
+        # If a command was provided, execute it immediately
+        if command:
+            self._execute_shell_command(command)
+
+        self._update_status("Shell open | Enter to run | quit/q/Ctrl+D to close")
+
+    def _close_shell_pane(self):
+        """Close the shell pane and return to normal view"""
+        content_area = self.query_one("#content_area", Vertical)
+        content_area.remove_class("shell-visible")
+
+        self.shell_pane_visible = False
+        self.shell_input_active = False
+        self.shell_input_text = ""
+        self.shell_history_index = -1
+
+        # Focus tree
+        tree = self.query_one("#folder_tree", Tree)
+        tree.focus()
+
+        self._update_status("Navigate with j/k | / to search | ? for help")
+
+    def _execute_shell_command(self, command: str):
+        """Execute a Keeper command in the shell pane and display output"""
+        command = command.strip()
+        if not command:
+            return
+
+        # Handle quit commands
+        if command.lower() in ('quit', 'q', 'exit'):
+            self._close_shell_pane()
+            return
+
+        # Handle clear command
+        if command.lower() == 'clear':
+            self.shell_history = []
+            self._update_shell_output_display()
+            return
+
+        # Add to command history for up/down navigation
+        if command and (not self.shell_command_history or
+                        self.shell_command_history[-1] != command):
+            self.shell_command_history.append(command)
+        self.shell_history_index = -1
+
+        # Capture stdout/stderr for command execution
+        stdout_buffer = io.StringIO()
+        stderr_buffer = io.StringIO()
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+
+        try:
+            sys.stdout = stdout_buffer
+            sys.stderr = stderr_buffer
+
+            # Execute via cli.do_command
+            from ..cli import do_command
+            do_command(self.params, command)
+
+        except Exception as e:
+            stderr_buffer.write(f"Error: {str(e)}\n")
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+
+        # Get output
+        output = stdout_buffer.getvalue()
+        errors = stderr_buffer.getvalue()
+
+        # Strip ANSI codes
+        output = strip_ansi_codes(output)
+        errors = strip_ansi_codes(errors)
+
+        # Combine output
+        full_output = output.rstrip()
+        if errors:
+            full_output += f"\n[red]{rich_escape(errors.rstrip())}[/red]"
+
+        # Add to history
+        self.shell_history.append((command, full_output))
+
+        # Update shell output display
+        self._update_shell_output_display()
+
+        # Scroll to bottom
+        try:
+            shell_output = self.query_one("#shell_output", VerticalScroll)
+            shell_output.scroll_end(animate=False)
+        except Exception:
+            pass
+
+    def _update_shell_output_display(self):
+        """Update the shell output area with command history"""
+        try:
+            shell_output_content = self.query_one("#shell_output_content", Static)
+        except Exception:
+            return
+
+        t = self.theme_colors
+        lines = []
+
+        for cmd, output in self.shell_history:
+            # Show prompt and command
+            prompt = self._get_shell_prompt()
+            lines.append(f"[{t['primary']}]{prompt}[/{t['primary']}]{rich_escape(cmd)}")
+            # Show output
+            if output.strip():
+                lines.append(output)
+            lines.append("")  # Blank line between commands
+
+        shell_output_content.update("\n".join(lines))
+
+    def _update_shell_input_display(self):
+        """Update the shell input line with prompt and current input text"""
+        try:
+            shell_input = self.query_one("#shell_input_line", Static)
+        except Exception:
+            return
+
+        t = self.theme_colors
+        prompt = self._get_shell_prompt()
+
+        if self.shell_input_active:
+            cursor = "[reverse] [/reverse]"
+        else:
+            cursor = ""
+
+        shell_input.update(
+            f"[{t['primary']}]{prompt}[/{t['primary']}]"
+            f"{rich_escape(self.shell_input_text)}{cursor}"
+        )
+
+    def _get_shell_prompt(self) -> str:
+        """Get the shell prompt based on current folder context"""
+        # Use the currently selected folder in the tree as context
+        if self.selected_folder and self.params.folder_cache:
+            folder = self.params.folder_cache.get(self.selected_folder)
+            if folder and hasattr(folder, 'name'):
+                name = folder.name
+                if len(name) > 30:
+                    name = "..." + name[-27:]
+                return f"{name}> "
+
+        # Default to "My Vault" if at root
+        return "My Vault> "
+
+    def _update_shell_header(self):
+        """Update shell header bar with theme colors"""
+        try:
+            shell_header = self.query_one("#shell_header", Static)
+        except Exception:
+            return
+
+        t = self.theme_colors
+        shell_header.update(
+            f"[bold {t['primary']}]Keeper Shell[/bold {t['primary']}]  "
+            f"[{t['text_dim']}](quit/q/Ctrl+D to close)[/{t['text_dim']}]"
+        )
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         """Control whether actions are enabled based on search state"""
@@ -4249,7 +3733,7 @@ class SuperShellApp(App):
                     if self.view_mode == 'json':
                         # Copy JSON format (with actual password, not masked)
                         output = self._get_record_output(self.selected_record, format_type='json')
-                        output = self._strip_ansi_codes(output)
+                        output = strip_ansi_codes(output)
                         json_obj = json.loads(output)
                         formatted = json.dumps(json_obj, indent=2)
                         pyperclip.copy(formatted)
