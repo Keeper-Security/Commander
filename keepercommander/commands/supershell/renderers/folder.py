@@ -160,20 +160,6 @@ def format_record_permission_line(
     return title_line, uid_line
 
 
-def format_separator_line(theme_colors: dict, width: int = 60) -> str:
-    """Format a separator line.
-
-    Args:
-        theme_colors: Theme color dict
-        width: Width of the separator
-
-    Returns:
-        Rich markup formatted separator
-    """
-    t = theme_colors
-    return f"[bold {t['secondary']}]{'━' * width}[/bold {t['secondary']}]"
-
-
 def count_share_admins(output: str) -> int:
     """Count share admins in folder output.
 

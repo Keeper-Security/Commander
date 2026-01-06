@@ -402,6 +402,30 @@ def get_abbrev_by_host(host):
     return None
 
 
+def get_router_host(server_hostname):
+    """
+    Get the router hostname for a given Keeper server hostname.
+
+    GovCloud environments use a different URL pattern where 'govcloud.' is
+    replaced with 'connect.' rather than prepended.
+
+    Args:
+        server_hostname: The Keeper server hostname (e.g., 'keepersecurity.com',
+                        'govcloud.keepersecurity.us', 'govcloud.dev.keepersecurity.us')
+
+    Returns:
+        The router hostname:
+          - 'keepersecurity.com' -> 'connect.keepersecurity.com'
+          - 'govcloud.keepersecurity.us' -> 'connect.keepersecurity.us'
+          - 'govcloud.dev.keepersecurity.us' -> 'connect.dev.keepersecurity.us'
+          - 'govcloud.qa.keepersecurity.us' -> 'connect.qa.keepersecurity.us'
+    """
+    # GovCloud environments (.keepersecurity.us) replace 'govcloud.' with 'connect.'
+    if server_hostname and server_hostname.startswith('govcloud.'):
+        return 'connect.' + server_hostname[len('govcloud.'):]
+    return f'connect.{server_hostname}'
+
+
 # Messages
 # Account Transfer
 ACCOUNT_TRANSFER_MSG = """

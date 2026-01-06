@@ -200,7 +200,8 @@ class BreachWatchScanCommand(Command):
             if euid_to_delete:
                 params.breach_watch.delete_euids(params, euid_to_delete)
         if not kwargs.get('suppress_no_op') or record_passwords:
-            logging.info(f'Reported security audit data for {len(record_passwords)} records.')
+            count = len(record_passwords)
+            logging.info(f'Reported security audit data for {count} {"record" if count == 1 else "records"}.')
             if record_passwords:
                 api.sync_down(params)
 

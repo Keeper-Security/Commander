@@ -248,18 +248,21 @@ VerticalScroll {
     overflow-y: auto;
     padding: 0 1;
     background: #000000;
+    align: left bottom;
 }
 
 #shell_output_content {
     background: #000000;
     color: #ffffff;
+    width: 100%;
 }
 
 #shell_input_line {
-    height: 1;
+    height: 2;
     background: #111111;
     color: #00ff00;
-    padding: 0 1;
+    padding: 1 1 0 1;
+    border-top: solid #333333;
 }
 
 #shell_pane:focus-within #shell_input_line {
