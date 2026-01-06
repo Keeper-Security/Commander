@@ -139,8 +139,10 @@ def register_commands(commands, aliases, command_info):
             commands['supershell'] = SuperShellCommand()
             command_info['supershell'] = 'Launch full terminal vault UI with vim navigation'
             aliases['ss'] = 'supershell'
-        except ImportError:
-            pass  # textual not installed, skip supershell
+        except ImportError as e:
+            logging.debug(f"SuperShell not available: {e}")
+        except Exception as e:
+            logging.error(f"SuperShell import error: {e}")
 
     from . import credential_provision
     credential_provision.register_commands(commands)
