@@ -270,7 +270,7 @@ class ConsoleLoginUi(login_steps.LoginUi):
 
     def on_password(self, step):
         if self._show_password_help:
-            print(f'{Fore.CYAN}Enter master password for {Fore.WHITE}{step.username}{Fore.RESET}')
+            logging.info(f'{Fore.CYAN}Enter master password for {Fore.WHITE}{step.username}{Fore.RESET}')
 
         if self._failed_password_attempt > 0:
             print(f'{Fore.YELLOW}Forgot password? Type "recover"<Enter>{Fore.RESET}')
