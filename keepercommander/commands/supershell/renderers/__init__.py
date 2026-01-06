@@ -46,7 +46,6 @@ from .folder import (
     format_folder_boolean_field,
     format_folder_field_line,
     format_record_permission_line,
-    format_separator_line,
     count_share_admins,
     FolderJsonRenderer,
 )
@@ -89,7 +88,6 @@ __all__ = [
     'format_folder_boolean_field',
     'format_folder_field_line',
     'format_record_permission_line',
-    'format_separator_line',
     'count_share_admins',
     'FolderJsonRenderer',
 ]

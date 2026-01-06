@@ -26,6 +26,7 @@ from colorama import Fore, Style
 from prompt_toolkit import PromptSession
 from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.shortcuts import CompleteStyle
+from prompt_toolkit.key_binding import KeyBindings
 
 from . import api, display, ttk, utils
 from . import versioning
@@ -380,7 +381,8 @@ def do_command(params, command_line):
                         try:
                             # Some commands (like logout) need auth but not sync
                             skip_sync = getattr(command, 'skip_sync_on_auth', False)
-                            LoginCommand().execute(params, email=params.user, password=params.password, new_login=False, skip_sync=skip_sync)
+                            # Auto-login for commands - don't show help text (show_help=False)
+                            LoginCommand().execute(params, email=params.user, password=params.password, new_login=False, skip_sync=skip_sync, show_help=False)
                         except KeyboardInterrupt:
                             logging.info('Canceled')
                         if not params.session_token:
@@ -691,7 +693,7 @@ def read_command_with_continuation(prompt_session, params):
     return result
 
 
-def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # type: (KeeperParams, bool, bool, bool) -> int
+def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # type: (KeeperParams, bool, bool, bool) -> int  # suppress_goodbye kept for API compat
     global prompt_session
     error_no = 0
     suppress_errno = False
@@ -702,11 +704,18 @@ def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # t
     if not params.batch_mode:
         if os.isatty(0) and os.isatty(1):
             completer = CommandCompleter(params, aliases)
+            # Create key bindings with Ctrl+Q to exit (consistent with supershell)
+            bindings = KeyBindings()
+            @bindings.add('c-q')
+            def _(event):
+                """Exit shell on Ctrl+Q"""
+                event.app.exit(exception=EOFError)
             prompt_session = PromptSession(multiline=False,
                                            editing_mode=EditingMode.VI,
                                            completer=completer,
                                            complete_style=CompleteStyle.MULTI_COLUMN,
-                                           complete_while_typing=False)
+                                           complete_while_typing=False,
+                                           key_bindings=bindings)
 
         if not skip_init:
             display.welcome()
@@ -809,9 +818,6 @@ def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # t
 
     # Clear the shell loop flag
     params._in_shell_loop = False
-
-    if not params.batch_mode and not suppress_goodbye:
-        logging.info('\nGoodbye.\n')
 
     return error_no
 

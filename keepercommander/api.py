@@ -75,7 +75,8 @@ def login(params, new_login=False, login_ui=None):
     try:
         flow.login(params, new_login=new_login)
     except loginv3.InvalidDeviceToken:
-        logging.warning('Registering new device')
+        from colorama import Fore
+        print(f'{Fore.CYAN}Registering new device...{Fore.RESET}')
         flow.login(params, new_device=True)
 
 
@@ -706,8 +707,10 @@ def execute_router_rest(params: KeeperParams, endpoint: str, payload: Optional[b
         up = urlparse(os.environ['ROUTER_URL'])
         url_comp = (up.scheme, up.netloc, f'api/user/{endpoint}', None, None, None)
     else:
+        from .constants import get_router_host
         up = urlparse(params.rest_context.server_base)
-        url_comp = ('https', f'connect.{up.hostname}', f'api/user/{endpoint}', None, None, None)
+        router_host = get_router_host(up.hostname)
+        url_comp = ('https', router_host, f'api/user/{endpoint}', None, None, None)
     url = urlunparse(url_comp)
 
     if payload is not None:

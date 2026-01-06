@@ -115,12 +115,8 @@ class Connection(ConnectionBase):
         return self.get_config_value(ConfigKeys.KEY_APP_KEY)
 
     def router_url_from_ksm_config(self) -> str:
-        hostname = self.hostname
-        # Only PROD GovCloud strips the subdomain (workaround for prod infrastructure).
-        # DEV/QA GOV (govcloud.dev.keepersecurity.us, govcloud.qa.keepersecurity.us) keep govcloud.
-        if hostname == 'govcloud.keepersecurity.us':
-            hostname = 'keepersecurity.us'
-        return f'connect.{hostname}'
+        from ...constants import get_router_host
+        return get_router_host(self.hostname)
 
     def ws_router_url_from_ksm_config(self, is_ws: bool = False) -> str:
 
