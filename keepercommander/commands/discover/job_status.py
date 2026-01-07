@@ -182,13 +182,13 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
             color = bcolors.OKBLUE
             status = "RUNNING"
             if job.end_ts is not None:
-                if job.success is None:
+                if job.success is None and job.end_ts:
                     color = bcolors.WHITE
                     status = "CANCELLED"
                 else:
                     color = bcolors.OKGREEN
                     status = "COMPLETE"
-            elif job.error:
+            elif job.success is False:
                 color = bcolors.FAIL
                 status = "FAILED"
 
@@ -352,9 +352,9 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
                     job["gateway_context"] = gateway_context
                     job["job_item"] = job_item
 
-                    if job_item.success is None:
+                    if job_item.success is None and job_item.end_ts:
                         job["status"] = "CANCELLED"
-                    elif not job_item.success:
+                    elif job_item.success is False:
                         job["status"] = "FAILED"
 
                     selected_jobs.append(job)
