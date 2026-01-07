@@ -409,7 +409,7 @@ class RecordLink:
 
     def save(self):
 
-        self.logger.info("DISCOVERY COMMON RECORD LINKING GRAPH SAVE CALLED")
+        # self.logger.info("DISCOVERY COMMON RECORD LINKING GRAPH SAVE CALLED")
         if self.dag.has_graph:
             self.logger.debug("saving the record linking.")
             self.dag.save(delta_graph=False)
