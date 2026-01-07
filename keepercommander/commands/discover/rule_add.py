@@ -1,23 +1,26 @@
 from __future__ import annotations
 import argparse
 import logging
-from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
+from . import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from ..pam.pam_dto import GatewayActionDiscoverRuleValidateInputs, GatewayActionDiscoverRuleValidate, GatewayAction
 from ..pam.router_helper import router_send_action_to_gateway, router_get_connected_gateways
 from ...display import bcolors
 from ...proto import pam_pb2
 from ...discovery_common.rule import Rules
-from ...discovery_common.types import ActionRuleItem
-from typing import TYPE_CHECKING
+from ...discovery_common.types import ActionRuleItem, Statement
+from typing import List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ...params import KeeperParams
 
 
 class PAMGatewayActionDiscoverRuleAddCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam-action-discover-rule-add')
+    parser = argparse.ArgumentParser(prog='pam action discover rule add')
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID.')
+    parser.add_argument('--configuration-uid', '-c', required=False, dest='configuration_uid',
+                        action='store', help='PAM configuration UID, if gateway has multiple.')
+
     parser.add_argument('--action', '-a', required=True, choices=['add', 'ignore', 'prompt'],
                         dest='rule_action', action='store', help='Action to take if rule matches')
     parser.add_argument('--priority', '-p', required=True, dest='priority', action='store', type=int,
@@ -37,7 +40,8 @@ class PAMGatewayActionDiscoverRuleAddCommand(PAMGatewayActionDiscoverCommandBase
         return PAMGatewayActionDiscoverRuleAddCommand.parser
 
     @staticmethod
-    def validate_rule_statement(params: KeeperParams, gateway_context: GatewayContext, statement: str):
+    def validate_rule_statement(params: KeeperParams, gateway_context: GatewayContext, statement: str) \
+            -> List[Statement]:
 
         # Send rule the gateway to be validated. The rule is encrypted. It might contain sensitive information.
         action_inputs = GatewayActionDiscoverRuleValidateInputs(
@@ -67,6 +71,15 @@ class PAMGatewayActionDiscoverRuleAddCommand(PAMGatewayActionDiscoverCommandBase
         logging.debug(f"Rule Structure = {statement_struct}")
         if not isinstance(statement_struct, list):
             raise Exception(f"The structured rule statement is not a list.")
+        ret = []
+        for item in statement_struct:
+            ret.append(
+                Statement(
+                    field=item.get("field"),
+                    operator=item.get("operator"),
+                    value=item.get("value")
+                )
+            )
 
         return statement_struct
 
@@ -77,9 +90,16 @@ class PAMGatewayActionDiscoverRuleAddCommand(PAMGatewayActionDiscoverCommandBase
 
         try:
             gateway = kwargs.get("gateway")
-            gateway_context = GatewayContext.from_gateway(params, gateway)
-            if gateway_context is None:
-                print(f'{bcolors.FAIL}Discovery job gateway [{gateway}] was not found.{bcolors.ENDC}')
+
+            try:
+                gateway_context = GatewayContext.from_gateway(params=params,
+                                                              gateway=gateway,
+                                                              configuration_uid=kwargs.get('configuration_uid'))
+                if gateway_context is None:
+                    print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.{bcolors.ENDC}")
+                    return
+            except MultiConfigurationException as err:
+                multi_conf_msg(gateway, err)
                 return
 
             # If we are setting the shared_folder_uid, make sure it exists.

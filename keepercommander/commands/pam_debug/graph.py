@@ -2,7 +2,7 @@ from __future__ import annotations
 from . import get_connection
 import argparse
 import logging
-from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
+from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from ...display import bcolors
 from ... import vault
 from ...discovery_common.infrastructure import Infrastructure
@@ -33,11 +33,14 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
     NO_RECORD = "NO RECORD"
     OTHER = "OTHER"
 
-    parser = argparse.ArgumentParser(prog='pam-action-debug-graph')
+    parser = argparse.ArgumentParser(prog='pam action debug graph')
 
     # The record to base everything on.
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name or UID.')
+    parser.add_argument('--configuration-uid', "-c", required=False, dest='configuration_uid',
+                        action='store', help='PAM configuration UID, if gateway has multiple.')
+
     parser.add_argument('--type', '-t', required=True, choices=['infra', 'rl', 'service', 'jobs'],
                         dest='graph_type', action='store', help='Graph type', default='infra')
     parser.add_argument('--raw', required=False, dest='raw', action='store_true',
@@ -102,7 +105,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
 
         def _handle(current_vertex: DAGVertex, indent: int = 0, last_record_type: Optional[str] = None):
 
-            if current_vertex.active is False:
+            if not current_vertex.active:
                 return
 
             pad = ""
@@ -113,9 +116,9 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
             ls = line_start.get(indent, "  ")
             cf = color_func.get(indent, self._p)
 
-            if current_vertex.active is False:
+            if not current_vertex.active:
                 text += f"{pad}{current_vertex.uid} " + self._f("(Inactive)")
-            elif current_vertex.corrupt is False:
+            elif not current_vertex.corrupt:
                 current_content = DiscoveryObject.get_discovery_object(current_vertex)
                 if current_content.record_uid is None:
                     text += f"{pad}{ls}{current_vertex.uid}; {current_content.title} does not have a record."
@@ -172,7 +175,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         
         print(self._h(f"{pad}{record.record_type}, {record.title}, {record.record_uid}"))
 
-        if configuration.has_data is True:
+        if configuration.has_data:
             try:
                 data = configuration.content_as_dict
                 print(f"{pad}  . data")
@@ -218,7 +221,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                     vertex = item.get("v")  # type: DAGVertex
                     record = item.get("r")  # type: TypedRecord
                     text = self._gr(f"{record.title}; {record.record_uid}")
-                    if vertex.active is False:
+                    if not vertex.active:
                         text += " " + self._f("Inactive")
                     print(f"{pad}    * {text}")
 
@@ -228,19 +231,19 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                         if acl is None:
                             print(f"{pad}      {self._f('missing ACL')}")
                         else:
-                            if acl.is_iam_user is True:
+                            if acl.is_iam_user:
                                 print(f"{pad}      . is IAM user")
-                            if acl.is_admin is True:
+                            if acl.is_admin:
                                 print(f"{pad}        . is the {self._b('Admin')}")
-                            if acl.belongs_to is True:
+                            if acl.belongs_to:
                                 print(f"{pad}      . belongs to this resource")
                             else:
                                 print(f"{pad}      . looks like directory user")
 
                             if acl.rotation_settings:
-                                if acl.rotation_settings.noop is True:
+                                if acl.rotation_settings.noop:
                                     print(f"{pad}      . is a NOOP")
-                                if acl.rotation_settings.disabled is True:
+                                if acl.rotation_settings.disabled:
                                     print(f"{pad}      . rotation is disabled")
 
                                 if (acl.rotation_settings.saas_record_uid_list is not None
@@ -250,7 +253,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
 
                         continue
 
-                    if vertex.has_data is True:
+                    if vertex.has_data:
                         try:
                             data = vertex.content_as_dict
                             print(f"{pad}      . data")
@@ -265,7 +268,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                         for child in children:
                             child_record = vault.KeeperRecord.load(params, child.uid)  # type: Optional[TypedRecord]
                             if child_record is None:
-                                if child.active is True:
+                                if child.active:
                                     bad.append(self._f(f"- Record UID {child.uid} does not exists."))
                                 continue
                             else:
@@ -274,14 +277,14 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                                 if acl is None:
                                     print(f"{pad}        {self._f('missing ACL')}")
                                 else:
-                                    if acl.is_admin is True:
+                                    if acl.is_admin:
                                         print(f"{pad}        . is the {self._b('Admin')}")
-                                    if acl.belongs_to is True:
+                                    if acl.belongs_to:
                                         print(f"{pad}        . belongs to this resource")
                                     else:
                                         print(f"{pad}        . looks like directory user")
 
-                                if child.has_data is True:
+                                if child.has_data:
                                     try:
                                         data = child.content_as_dict
                                         print(f"{pad}        . data")
@@ -298,7 +301,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                 vertex = item.get("v")  # type: DAGVertex
                 record = item.get("r")  # type: TypedRecord
                 text = self._gr(f"{record.record_type}; {record.title}; {record.record_uid}")
-                if vertex.active is False:
+                if not vertex.active:
                     text += " " + self._f("Inactive")
                 print(f"{pad}    * {text}")
 
@@ -325,12 +328,12 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
 
             record = vault.KeeperRecord.load(params, current_vertex.uid)  # type: Optional[TypedRecord]
             if record is None:
-                if current_vertex.active is False:
+                if not current_vertex.active:
                     print(f"{pad}Record {current_vertex.uid} does not exists, inactive in the graph.")
                 else:
                     print(f"{pad}Record {current_vertex.uid} does not exists, active in the graph.")
                 return
-            elif current_vertex.active is False:
+            elif not current_vertex.active:
                 print(f"{pad}{record.record_type}, {record.title}, {record.record_uid} exists, "
                       "inactive in the graph.")
                 return
@@ -340,9 +343,9 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
             if acl is not None:
                 acl_text = self._f("None")
                 acl_parts = []
-                if acl.is_service is True:
+                if acl.is_service:
                     acl_parts.append(self._bl("Service"))
-                if acl.is_task is True:
+                if acl.is_task:
                     acl_parts.append(self._bl("Task"))
                 if len(acl_parts) > 0:
                     acl_text = ", ".join(acl_parts)
@@ -377,7 +380,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
             return
 
         vertex = vertices[0]
-        if vertex.has_data is False:
+        if not vertex.has_data:
             print(self._f(f"The job vertex does not contain any data"))
             return
 
@@ -398,7 +401,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
             print(f"{pad}  Ended: {job.end_ts_str}")
             print(f"{pad}  Duration: {job.duration_sec_str}")
             print(f"{pad}  Infra Sync Point: {job.sync_point}")
-            if job.success is True:
+            if job.success:
                 print(f"{pad}  Status: {self._gr('Success')}")
             else:
                 print(f"{pad}  Status: {self._f('Fail')}")
@@ -417,9 +420,9 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                         if vertex is None:
                             print(f"{pad}  * Vertex {added.uid} does not exists.")
                         else:
-                            if vertex.active is False:
+                            if not vertex.active:
                                 print(f"{pad}  * Vertex {added.uid} is inactive.")
-                            elif vertex.corrupt is True:
+                            elif vertex.corrupt:
                                 print(f"{pad}  * Vertex {added.uid} is corrupt.")
                             else:
                                 content = DiscoveryObject.get_discovery_object(vertex)
@@ -433,9 +436,9 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                         if vertex is None:
                             print(f"{pad}  * Vertex {changed.uid} does not exists.")
                         else:
-                            if vertex.active is False:
+                            if not vertex.active:
                                 print(f"{pad}  * Vertex {changed.uid} is inactive.")
-                            elif vertex.corrupt is True:
+                            elif vertex.corrupt:
                                 print(f"{pad}  * Vertex {changed.uid} is corrupt.")
                             else:
                                 content = DiscoveryObject.get_discovery_object(vertex)
@@ -586,21 +589,21 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
             edge_types = []
             if last_vertex is not None:
                 for edge in current_vertex.edges:  # type: DAGEdge
-                    if edge.active is False:
+                    if not edge.active:
                         continue
                     if edge.head_uid == last_vertex.uid:
                         edge_types.append(edge.edge_type.value)
             if len(edge_types) > 0:
                 text += f"; edges: {', '.join(edge_types)}"
 
-            if current_vertex.active is False:
+            if not current_vertex.active:
                 text += " " + self._f("Inactive")
-            if current_vertex.corrupt is True:
+            if current_vertex.corrupt:
                 text += " " + self._f("Corrupt")
 
             print(text)
 
-            if current_vertex.active is False:
+            if not current_vertex.active:
                 logging.debug(f"vertex {current_vertex.uid} is not active, will not get children.")
                 return
 
@@ -653,18 +656,25 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         do_render = kwargs.get("do_render")
         debug_level = int(kwargs.get("debug_level", 0))
 
-        gateway_context = GatewayContext.from_gateway(params, gateway)
-        if gateway_context is None:
-            print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.")
+        configuration_uid = kwargs.get('configuration_uid')
+        try:
+            gateway_context = GatewayContext.from_gateway(params=params,
+                                                          gateway=gateway,
+                                                          configuration_uid=configuration_uid)
+            if gateway_context is None:
+                print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.{bcolors.ENDC}")
+                return
+        except MultiConfigurationException as err:
+            multi_conf_msg(gateway, err)
             return
 
-        if raw is True:
-            if do_text_list is True:
+        if raw:
+            if do_text_list:
                 self._do_raw_text_list(params=params,
                                        gateway_context=gateway_context,
                                        graph_id=PAMDebugGraphCommand.graph_id_map.get(graph_type),
                                        debug_level=debug_level)
-            if do_render is True:
+            if do_render:
                 filepath = kwargs.get("filepath")
                 graph_format = kwargs.get("format")
                 self._do_raw_render_graph(params=params,
@@ -674,14 +684,14 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                                           graph_id=PAMDebugGraphCommand.graph_id_map.get(graph_type),
                                           debug_level=debug_level)
         else:
-            if do_text_list is True:
+            if do_text_list:
                 self.do_list(
                     params=params,
                     gateway_context=gateway_context,
                     graph_type=graph_type,
                     debug_level=debug_level
                 )
-            if do_render is True:
+            if do_render:
                 filepath = kwargs.get("filepath")
                 graph_format = kwargs.get("format")
                 render_func = getattr(self, f"_do_render_{graph_type}")

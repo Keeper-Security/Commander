@@ -224,7 +224,7 @@ class RuleItem(BaseModel):
 
 
 class ActionRuleItem(RuleItem):
-    action: RuleActionEnum = RuleActionEnum.PROMPT
+    action: Optional[RuleActionEnum] = RuleActionEnum.PROMPT
     shared_folder_uid: Optional[str] = None
     admin_uid: Optional[str] = None
 

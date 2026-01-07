@@ -13,8 +13,8 @@ if TYPE_CHECKING:
     from ...params import KeeperParams
 
 
-class PAMActionSaasAddCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action saas add')
+class PAMActionSaasSetCommand(PAMGatewayActionDiscoverCommandBase):
+    parser = argparse.ArgumentParser(prog='pam action saas set')
 
     parser.add_argument('--user-uid', '-u', required=True, dest='user_uid', action='store',
                         help='The UID of the User record')
@@ -24,7 +24,7 @@ class PAMActionSaasAddCommand(PAMGatewayActionDiscoverCommandBase):
                         help='The UID of the Resource record, if needed.')
 
     def get_parser(self):
-        return PAMActionSaasAddCommand.parser
+        return PAMActionSaasSetCommand.parser
 
     def execute(self, params: KeeperParams, **kwargs):
 
@@ -152,19 +152,15 @@ class PAMActionSaasAddCommand(PAMGatewayActionDiscoverCommandBase):
         if acl.is_iam_user is False:
             acl.rotation_settings.noop = resource_uid is None
 
-        # PyCharm didn't like appending directly, so do this stupid thing.
-        record_uid_list = acl.rotation_settings.saas_record_uid_list
-
         # Make sure we are not re-adding the same SaaS config.
-        if config_record_uid in record_uid_list:
+        if config_record_uid in acl.rotation_settings.saas_record_uid_list:
             print(self._f("The SaaS configuration record is already being used for this user."))
             return
 
-        record_uid_list.append(config_record_uid)
-        acl.rotation_settings.saas_record_uid_list = record_uid_list
+        acl.rotation_settings.saas_record_uid_list = [config_record_uid]
 
         record_link.belongs_to(user_uid, parent_uid, acl=acl)
         record_link.save()
 
-        print(self._gr(f"Added {plugin_name} rotation to the user record."))
+        print(self._gr(f"Setting {plugin_name} rotation for the user record."))
         print("")
