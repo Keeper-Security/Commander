@@ -1,16 +1,19 @@
 from __future__ import annotations
 import argparse
-from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
+from . import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from .rule_add import PAMGatewayActionDiscoverRuleAddCommand
 from ..pam.router_helper import router_get_connected_gateways
 from ...display import bcolors
-from ...discovery_common.rule import Rules, RuleTypeEnum
+from ...discovery_common.rule import Rules, RuleActionEnum, RuleTypeEnum
 
 
 class PAMGatewayActionDiscoverRuleUpdateCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam-action-discover-rule-update')
+    parser = argparse.ArgumentParser(prog='pam action discover rule update')
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID.')
+    parser.add_argument('--configuration-uid', '-c', required=False, dest='configuration_uid',
+                        action='store', help='PAM configuration UID, if gateway has multiple.')
+
     parser.add_argument('--rule-id', '-i', required=True, dest='rule_id', action='store',
                         help='Identifier for the rule')
     parser.add_argument('--action', '-a', required=False, choices=['add', 'ignore', 'prompt'],
@@ -48,9 +51,15 @@ class PAMGatewayActionDiscoverRuleUpdateCommand(PAMGatewayActionDiscoverCommandB
             router_get_connected_gateways(params)
 
         gateway = kwargs.get("gateway")
-        gateway_context = GatewayContext.from_gateway(params, gateway)
-        if gateway_context is None:
-            print(f'{bcolors.FAIL}Discovery job gateway [{gateway}] was not found.{bcolors.ENDC}')
+        try:
+            gateway_context = GatewayContext.from_gateway(params=params,
+                                                          gateway=gateway,
+                                                          configuration_uid=kwargs.get('configuration_uid'))
+            if gateway_context is None:
+                print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.{bcolors.ENDC}")
+                return
+        except MultiConfigurationException as err:
+            multi_conf_msg(gateway, err)
             return
 
         try:
@@ -62,7 +71,10 @@ class PAMGatewayActionDiscoverRuleUpdateCommand(PAMGatewayActionDiscoverCommandB
 
             rule_action = kwargs.get("rule_action")
             if rule_action is not None:
-                rule_item.action = RuleTypeEnum.find_enum(rule_action)
+                action = RuleActionEnum.find_enum(rule_action)
+                if action is None:
+                    raise ValueError(f"The action does not look correct: {rule_action}")
+                rule_item.action = action
 
             priority = kwargs.get("priority")
             if priority is not None:
@@ -106,11 +118,12 @@ class PAMGatewayActionDiscoverRuleUpdateCommand(PAMGatewayActionDiscoverCommandB
             statement = kwargs.get("statement")
             if statement is not None:
                 # validate_rule_statement will throw exceptions.
-                rule_item.statement = PAMGatewayActionDiscoverRuleAddCommand.validate_rule_statement(
+                statement_struct = PAMGatewayActionDiscoverRuleAddCommand.validate_rule_statement(
                     params=params,
                     gateway_context=gateway_context,
                     statement=statement
                 )
+
                 print("  * Changing the rule statement.")
 
             name = kwargs.get("name")

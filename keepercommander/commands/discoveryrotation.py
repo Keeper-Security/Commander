@@ -78,7 +78,7 @@ from .pam_launch.launch import PAMLaunchCommand
 from .pam_service.list import PAMActionServiceListCommand
 from .pam_service.add import PAMActionServiceAddCommand
 from .pam_service.remove import PAMActionServiceRemoveCommand
-from .pam_saas.add import PAMActionSaasAddCommand
+from .pam_saas.set import PAMActionSaasSetCommand
 from .pam_saas.user import PAMActionSaasUserCommand
 from .pam_saas.remove import PAMActionSaasRemoveCommand
 from .pam_saas.config import PAMActionSaasConfigCommand
@@ -266,8 +266,8 @@ class PAMActionSaasCommand(GroupCommand):
         super(PAMActionSaasCommand, self).__init__()
         self.register_command('config', PAMActionSaasConfigCommand(),
                               'Create a configuration for a SaaS rotation.', 'c')
-        self.register_command('add', PAMActionSaasAddCommand(),
-                              'Add a SaaS rotation to a PAM User record.', 'a')
+        self.register_command('set', PAMActionSaasSetCommand(),
+                              'Set a SaaS rotation on a PAM User record.', 's')
         self.register_command('remove', PAMActionSaasRemoveCommand(),
                               'Remove a SaaS rotation from a PAM User record', 'r')
         self.register_command('user', PAMActionSaasUserCommand(),

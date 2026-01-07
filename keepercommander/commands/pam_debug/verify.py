@@ -1,8 +1,7 @@
 from __future__ import annotations
-from . import get_connection
 import logging
 import argparse
-from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
+from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from ...display import bcolors
 from ...vault import TypedRecord
 from ...discovery_common.verify import Verify
@@ -15,11 +14,14 @@ if TYPE_CHECKING:
 
 
 class PAMDebugVerifyCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam-action-debug-verify')
+    parser = argparse.ArgumentParser(prog='pam action debug verify')
 
     # The record to base everything on.
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name or UID.')
+    parser.add_argument('--configuration-uid', "-c", required=False, dest='configuration_uid',
+                        action='store', help='PAM configuration UID, if gateway has multiple.')
+
     parser.add_argument('--fix', required=False, dest='fix', action='store_true',
                         help='Fix all problems.')
     parser.add_argument('--debug-gs-level', required=False, dest='debug_level', action='store',
@@ -33,6 +35,17 @@ class PAMDebugVerifyCommand(PAMGatewayActionDiscoverCommandBase):
         gateway = kwargs.get("gateway")
         fix = kwargs.get("fix", False)
         debug_level = kwargs.get("debug_level", False)
+        configuration_uid = kwargs.get('configuration_uid')
+        try:
+            gateway_context = GatewayContext.from_gateway(params=params,
+                                                          gateway=gateway,
+                                                          configuration_uid=configuration_uid)
+            if gateway_context is None:
+                print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.{bcolors.ENDC}")
+                return
+        except MultiConfigurationException as err:
+            multi_conf_msg(gateway, err)
+            return
 
         gateway_context = GatewayContext.from_gateway(params, gateway)
         if gateway_context is None:

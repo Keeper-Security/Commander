@@ -18,8 +18,6 @@ class PAMActionSaasRemoveCommand(PAMGatewayActionDiscoverCommandBase):
 
     parser.add_argument('--user-uid', '-u', required=True, dest='user_uid', action='store',
                         help='The UID of the User record')
-    parser.add_argument('--config-record-uid', '-c', required=True, dest='config_record_uid',
-                        action='store', help='The UID of the record that has SaaS configuration')
     parser.add_argument('--resource-uid', '-r', required=False, dest='resource_uid', action='store',
                         help='The UID of the Resource record, if needed.')
 
@@ -30,7 +28,6 @@ class PAMActionSaasRemoveCommand(PAMGatewayActionDiscoverCommandBase):
 
         user_uid = kwargs.get("user_uid")  # type: str
         resource_uid = kwargs.get("resource_uid")  # type: str
-        config_record_uid = kwargs.get("config_record_uid")   # type: str
 
         print("")
 
@@ -100,23 +97,10 @@ class PAMActionSaasRemoveCommand(PAMGatewayActionDiscoverCommandBase):
                           "This combination is not allowed."))
             return
 
-        # If there is a resource record, it not NOOP.
-        # If there is NO resource record, it is NOOP.
-        acl.rotation_settings.noop = resource_uid is None
-
-        # PyCharm didn't like appending directly, so do this stupid thing.
-        record_uid_list = acl.rotation_settings.saas_record_uid_list
-
-        # Check if the SaaS config is being used by this user.
-        if config_record_uid not in record_uid_list:
-            print(f"{bcolors.WARNING}The SaaS configuration record is not being used by "
-                  f"this user record.{bcolors.ENDC}")
-            return
-
-        record_uid_list.remove(config_record_uid)
-        acl.rotation_settings.saas_record_uid_list = record_uid_list
+        # An empty array removes the SaaS config.
+        acl.rotation_settings.saas_record_uid_list = []
 
         record_link.belongs_to(user_uid, parent_uid, acl)
         record_link.save()
 
-        print(self._gr("Remove the SaaS service rotation from the user record."))
+        print(self._gr("Removing SaaS service rotation from the user record."))

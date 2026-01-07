@@ -1,26 +1,20 @@
-
 from __future__ import annotations
 import argparse
-from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
+from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from ...display import bcolors
-from ... import vault, vault_extensions
 from ...discovery_common.infrastructure import Infrastructure
-from ...discovery_common.record_link import RecordLink
-from ...discovery_common.user_service import UserService
-from ...discovery_common.types import UserAcl, DiscoveryObject
+from ...discovery_common.types import DiscoveryObject
 from ...discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
 from ...keeper_dag import EdgeType
 import time
-import re
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ...vault import TypedRecord
     from ...params import KeeperParams
 
 
 class PAMDebugVertexCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam-action-debug-info')
+    parser = argparse.ArgumentParser(prog='pam action debug info')
 
     type_name_map = {
         PAM_USER: "PAM User",
@@ -32,6 +26,9 @@ class PAMDebugVertexCommand(PAMGatewayActionDiscoverCommandBase):
     # The record to base everything on.
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name or UID')
+    parser.add_argument('--configuration-uid', '-c', required=False, dest='configuration_uid',
+                        action='store', help='PAM configuration UID, if gateway has multiple.')
+
     parser.add_argument('--vertex', '-i', required=True, dest='vertex_uid', action='store',
                         help='Vertex in infrastructure graph')
 
@@ -43,9 +40,16 @@ class PAMDebugVertexCommand(PAMGatewayActionDiscoverCommandBase):
         gateway = kwargs.get("gateway")
         debug_level = kwargs.get("debug_level", False)
 
-        gateway_context = GatewayContext.from_gateway(params, gateway)
-        if gateway_context is None:
-            print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.")
+        configuration_uid = kwargs.get('configuration_uid')
+        try:
+            gateway_context = GatewayContext.from_gateway(params=params,
+                                                          gateway=gateway,
+                                                          configuration_uid=configuration_uid)
+            if gateway_context is None:
+                print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.{bcolors.ENDC}")
+                return
+        except MultiConfigurationException as err:
+            multi_conf_msg(gateway, err)
             return
 
         infra = Infrastructure(record=gateway_context.configuration, params=params, fail_on_corrupt=False,

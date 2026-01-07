@@ -1,6 +1,6 @@
 from __future__ import annotations
 import argparse
-from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
+from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from .graph import PAMDebugGraphCommand
 from ...display import bcolors
 from ...discovery_common.infrastructure import Infrastructure
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 class PAMDebugGatewayCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam-action-debug-gateway')
+    parser = argparse.ArgumentParser(prog='pam action debug gateway')
 
     type_name_map = {
         PAM_USER: "PAM User",
@@ -26,6 +26,8 @@ class PAMDebugGatewayCommand(PAMGatewayActionDiscoverCommandBase):
     # The record to base everything on.
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name or UID')
+    parser.add_argument('--configuration-uid', "-c", required=False, dest='configuration_uid',
+                        action='store', help='PAM configuration UID, if gateway has multiple.')
 
     def get_parser(self):
         return PAMDebugGatewayCommand.parser
@@ -35,9 +37,16 @@ class PAMDebugGatewayCommand(PAMGatewayActionDiscoverCommandBase):
         gateway = kwargs.get("gateway")
         debug_level = kwargs.get("debug_level", False)
 
-        gateway_context = GatewayContext.from_gateway(params, gateway)
-        if gateway_context is None:
-            print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.")
+        configuration_uid = kwargs.get('configuration_uid')
+        try:
+            gateway_context = GatewayContext.from_gateway(params=params,
+                                                          gateway=gateway,
+                                                          configuration_uid=configuration_uid)
+            if gateway_context is None:
+                print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.{bcolors.ENDC}")
+                return
+        except MultiConfigurationException as err:
+            multi_conf_msg(gateway, err)
             return
 
         infra = Infrastructure(record=gateway_context.configuration, params=params, fail_on_corrupt=False)
