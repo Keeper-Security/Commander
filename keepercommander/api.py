@@ -838,6 +838,8 @@ def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version
             return rs
     elif isinstance(rs, dict):
         kae = KeeperApiError(rs['error'], rs['message'])
+        kae.additional_info = rs.get('additional_info')
+
         if kae.result_code == 'session_token_expired':
             params.session_token = None
         raise kae
@@ -1507,7 +1509,20 @@ def login_and_get_mc_params_login_v3(params: KeeperParams, mc_id):
 
     mc_params.session_token = loginv3.CommonHelperMethods.bytes_to_url_safe_str(resp.encryptedSessionToken)
     mc_params.msp_tree_key = params.enterprise['unencrypted_tree_key']
-    tree_key = crypto.decrypt_aes_v2(utils.base64_url_decode(resp.encryptedTreeKey), mc_params.msp_tree_key)
+    encrypted_tree_key = utils.base64_url_decode(resp.encryptedTreeKey)
+    key_type = resp.keyTypeId
+    if key_type == 1 or  len(encrypted_tree_key) > 200:    # RSA
+        private_key_bytes = utils.base64_url_decode(params.enterprise['keys']['rsa_encrypted_private_key'])
+        private_key_bytes = crypto.decrypt_aes_v2(private_key_bytes, mc_params.msp_tree_key)
+        private_key = crypto.load_rsa_private_key(private_key_bytes)
+        tree_key = crypto.decrypt_rsa(encrypted_tree_key, private_key)
+    elif key_type == 4 or len(encrypted_tree_key) == 125:    # EC
+        private_key_bytes = utils.base64_url_decode(params.enterprise['keys']['ecc_encrypted_private_key'])
+        private_key_bytes = crypto.decrypt_aes_v2(private_key_bytes, mc_params.msp_tree_key)
+        private_key = crypto.load_ec_private_key(private_key_bytes)
+        tree_key = crypto.decrypt_ec(encrypted_tree_key, private_key)
+    else:
+        tree_key = crypto.decrypt_aes_v2(encrypted_tree_key, mc_params.msp_tree_key)
 
     sync_down(mc_params)
     query_enterprise(mc_params, True, tree_key=tree_key)
