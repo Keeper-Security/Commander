@@ -24,6 +24,7 @@ class KeeperApiError(Error):
     def __init__(self, result_code, message):
         super().__init__(message)
         self.result_code = result_code
+        self.additional_info = None
 
     def __str__(self):
         return f'{self.result_code or ""}: {self.message or ""}'

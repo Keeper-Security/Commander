@@ -207,10 +207,11 @@ def register_enterprise_commands(commands, aliases, command_info):
     commands['risk-management'] = RiskManagementReportCommand()
     command_info['risk-management'] = 'Risk Management Reports'
     aliases['rmd'] = 'risk-management'
-    
     from . import device_management
     device_management.register_enterprise_commands(commands)
     device_management.register_enterprise_command_info(aliases, command_info)
+    from . import mc_transfer
+    mc_transfer.register_commands(commands)
 
     if sys.version_info.major > 3 or (sys.version_info.major == 3 and sys.version_info.minor >= 9):
         from.pedm import pedm_admin
