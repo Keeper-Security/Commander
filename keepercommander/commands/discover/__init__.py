@@ -317,7 +317,7 @@ class PAMGatewayActionDiscoverCommandBase(Command):
         },
         "operatingSystem": {
             "type": "choice",
-            "values": ["linux", "macos", "windows"]
+            "values": ["linux", "macos", "windows", "cisco_ios_xe"]
         }
     }
 

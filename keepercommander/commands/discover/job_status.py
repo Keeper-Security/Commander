@@ -181,18 +181,18 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
 
             color = bcolors.OKBLUE
             status = "RUNNING"
-            if job.end_ts is not None:
-                if job.success is None and job.end_ts:
+            if job.end_ts is not None and not job.error:
+                if job.success is None:
                     color = bcolors.WHITE
                     status = "CANCELLED"
                 else:
                     color = bcolors.OKGREEN
                     status = "COMPLETE"
-            elif job.success is False:
+            elif job.error:
                 color = bcolors.FAIL
                 status = "FAILED"
 
-            status = f"{color}{status}{bcolors.ENDC}"
+            color_status = f"{color}{status}{bcolors.ENDC}"
 
             print("")
             print(f"{_h('Job ID')}: {job.job_id}")
@@ -200,7 +200,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
             print(f"{_h('Gateway Name')}: {gateway_context.gateway_name}")
             print(f"{_h('Gateway UID')}: {gateway_context.gateway_uid}")
             print(f"{_h('Configuration UID')}: {gateway_context.configuration_uid}")
-            print(f"{_h('Status')}: {status}")
+            print(f"{_h('Status')}: {color_status}")
             print(f"{_h('Resource UID')}: {job.resource_uid or 'NA'}")
             print(f"{_h('Started')}: {job.start_ts_str}")
             print(f"{_h('Completed')}: {job.end_ts_str}")
@@ -210,10 +210,10 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
             if status == "FAILED":
                 print("")
                 print(f"{_h('Gateway Error')}:")
-                print(f"{color}{job['error']}{bcolors.ENDC}")
+                print(f"{color}{job.error}{bcolors.ENDC}")
                 print("")
                 print(f"{_h('Gateway Stacktrace')}:")
-                print(f"{color}{job['stacktrace']}{bcolors.ENDC}")
+                print(f"{color}{job.stacktrace}{bcolors.ENDC}")
             # If it finished, show information about what was discovered.
             elif job.end_ts is not None:
 
