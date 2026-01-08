@@ -467,6 +467,40 @@ class GetCollectionLinkResponse(_message.Message):
     collectionLinkData: _containers.RepeatedCompositeFieldContainer[CollectionLinkData]
     def __init__(self, collectionLinkData: _Optional[_Iterable[_Union[CollectionLinkData, _Mapping]]] = ...) -> None: ...
 
+class OfflineAgentRegisterRequest(_message.Message):
+    __slots__ = ["agentUid", "deploymentUid", "publicKey", "machineId", "collection", "agentData"]
+    AGENTUID_FIELD_NUMBER: _ClassVar[int]
+    DEPLOYMENTUID_FIELD_NUMBER: _ClassVar[int]
+    PUBLICKEY_FIELD_NUMBER: _ClassVar[int]
+    MACHINEID_FIELD_NUMBER: _ClassVar[int]
+    COLLECTION_FIELD_NUMBER: _ClassVar[int]
+    AGENTDATA_FIELD_NUMBER: _ClassVar[int]
+    agentUid: bytes
+    deploymentUid: bytes
+    publicKey: bytes
+    machineId: str
+    collection: _containers.RepeatedCompositeFieldContainer[CollectionValue]
+    agentData: bytes
+    def __init__(self, agentUid: _Optional[bytes] = ..., deploymentUid: _Optional[bytes] = ..., publicKey: _Optional[bytes] = ..., machineId: _Optional[str] = ..., collection: _Optional[_Iterable[_Union[CollectionValue, _Mapping]]] = ..., agentData: _Optional[bytes] = ...) -> None: ...
+
+class OfflineAgentRegisterResponse(_message.Message):
+    __slots__ = ["agentUid"]
+    AGENTUID_FIELD_NUMBER: _ClassVar[int]
+    agentUid: bytes
+    def __init__(self, agentUid: _Optional[bytes] = ...) -> None: ...
+
+class OfflineAgentSyncDownRequest(_message.Message):
+    __slots__ = ["agentUid"]
+    AGENTUID_FIELD_NUMBER: _ClassVar[int]
+    agentUid: bytes
+    def __init__(self, agentUid: _Optional[bytes] = ...) -> None: ...
+
+class OfflineAgentSyncDownResponse(_message.Message):
+    __slots__ = ["encryptedSyncData"]
+    ENCRYPTEDSYNCDATA_FIELD_NUMBER: _ClassVar[int]
+    encryptedSyncData: bytes
+    def __init__(self, encryptedSyncData: _Optional[bytes] = ...) -> None: ...
+
 class GetAgentLastSeenRequest(_message.Message):
     __slots__ = ["activeOnly", "agentUid"]
     ACTIVEONLY_FIELD_NUMBER: _ClassVar[int]

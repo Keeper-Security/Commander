@@ -4,7 +4,7 @@ import abc
 import datetime
 import json
 import logging
-from typing import List, Optional, Set, Iterable, Tuple, Dict, Any, cast
+from typing import List, Optional, Set, Iterable, Tuple, Dict, Any, cast, Union
 
 from ..params import KeeperParams
 from . import admin_storage, admin_types
@@ -756,16 +756,27 @@ class PedmPlugin(IPedmAdmin):
             yield admin_types.CollectionLinkData(collection_link=collection_link, link_data=ld.linkData)
 
     def set_collection_links(
-            self, *, set_links: Optional[Iterable[admin_types.CollectionLink]] = None,
+            self, *,
+            set_links: Optional[Iterable[Union[admin_types.CollectionLink, admin_types.CollectionLinkData]]] = None,
             unset_links: Optional[Iterable[admin_types.CollectionLink]] = None
     ) -> admin_types.ModifyStatus:
         clrq = pedm_pb2.SetCollectionLinkRequest()
         if set_links is not None:
             for coll in set_links:
+                link: admin_types.CollectionLink
+                link_data: Optional[bytes]
+                if isinstance(coll, admin_types.CollectionLinkData):
+                    link = coll.collection_link
+                    link_data = coll.link_data
+                else:
+                    link = coll
+                    link_data = None
                 cln = pedm_pb2.CollectionLinkData()
-                cln.collectionUid = utils.base64_url_decode(coll.collection_uid)
-                cln.linkUid = utils.base64_url_decode(coll.link_uid)
-                cln.linkType = coll.link_type     # type: ignore
+                cln.collectionUid = utils.base64_url_decode(link.collection_uid)
+                cln.linkUid = utils.base64_url_decode(link.link_uid)
+                cln.linkType = link.link_type     # type: ignore
+                if link_data:
+                    cln.linkData = link_data
                 clrq.addCollection.append(cln)
 
         if unset_links is not None:

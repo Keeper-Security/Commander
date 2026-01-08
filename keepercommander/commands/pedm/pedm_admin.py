@@ -194,6 +194,7 @@ class PedmCommand(base.GroupCommandNew):
         self.register_command_new(PedmPolicyCommand(), 'policy', 'p')
         self.register_command_new(PedmCollectionCommand(), 'collection', 'c')
         self.register_command_new(PedmApprovalCommand(), 'approval')
+        self.register_command_new(PedmOfflineCommand(), 'offline')
         self.register_command_new(PedmScimCommand(), 'scim')
         self.register_command_new(pedm_aram.PedmReportCommand(), 'report')
         #self.register_command_new(PedmBICommand(), 'bi')
@@ -1607,7 +1608,7 @@ class PedmPolicyAssignCommand(base.ArgparseCommand):
 
 class PedmCollectionCommand(base.GroupCommandNew):
     def __init__(self):
-        super().__init__('Manage PEDM collections')
+        super().__init__('Manage EPM collections')
         self.register_command_new(PedmCollectionListCommand(), 'list', 'l')
         self.register_command_new(PedmCollectionViewCommand(), 'view', 'v')
         self.register_command_new(PedmCollectionAddCommand(), 'add', 'a')
@@ -2264,3 +2265,165 @@ class PedmApprovalExtendCommand(base.ArgparseCommand, PedmUtils):
                 if not status.success:
                     if isinstance(status, admin_types.EntityStatus):
                         logging.warning(f'Failed to extend  approval "{status.entity_uid}": {status.message}')
+
+
+class PedmOfflineCommand(base.GroupCommandNew):
+    def __init__(self):
+        super().__init__('Offline agent communication')
+        self.register_command_new(PedmOfflineRegisterCommand(), 'register')
+        self.register_command_new(PedmOfflineSyncDownCommand(), 'sync')
+
+
+class PedmOfflineSyncDownCommand(base.ArgparseCommand, PedmUtils):
+    def __init__(self):
+        parser = argparse.ArgumentParser(prog='offline sync', description='Offline agent sync')
+        parser.add_argument('--agent-uid', dest='agent_uid', action='store', required=True,
+                            help='Agent UID')
+        parser.add_argument('output', help='Sync down response filename')
+        super().__init__(parser)
+
+    def execute(self, context: KeeperParams, **kwargs) -> Any:
+        plugin = admin_plugin.get_pedm_plugin(context)
+
+        agent = self.resolve_single_agent(plugin, kwargs.get('agent_uid'))
+        rq = pedm_pb2.OfflineAgentSyncDownRequest()
+        rq.agentUid = utils.base64_url_decode(agent.agent_uid)
+
+        rs = api.execute_router(context, 'pedm/sync_down_offline_agent', rq, rs_type=pedm_pb2.OfflineAgentSyncDownResponse)   # type: pedm_pb2.OfflineAgentSyncDownResponse
+        output = kwargs.get("output")
+        if output:
+            with open(output, 'wb') as f:
+                f.write(rs.encryptedSyncData)
+            return None
+        else:
+            return utils.base64_url_encode(rs.encryptedSyncData)
+
+
+class PedmOfflineRegisterCommand(base.ArgparseCommand, PedmUtils):
+    def __init__(self):
+        parser = argparse.ArgumentParser(prog='offline register', description='Register offline agent')
+        parser.add_argument('--deployment', dest='deployment', action='store', required=True,
+                            help='Agent\'s deployment')
+        parser.add_argument('--output', dest='output', action='store',
+                            help='Registration response filename')
+        parser.add_argument('file', help='Registration request filename')
+        super().__init__(parser)
+
+    def execute(self, context: KeeperParams, **kwargs) -> Any:
+        plugin = admin_plugin.get_pedm_plugin(context)
+
+        deployment = self.resolve_single_deployment(plugin, kwargs.get('deployment'))
+
+        filename = kwargs.get('file')
+        if not filename:
+            raise base.CommandError('Offline registration file is not found')
+        if not os.path.isfile(filename):
+            raise base.CommandError('Offline registration file is not found')
+
+        with open(filename, 'rt', encoding='utf-8') as f:
+            offline_request = json.load(f)
+
+        v = offline_request.get('AgentUID')
+        if not v:
+            raise base.CommandError('"AgentUID" parameter is missing')
+        agent_uid = utils.base64_url_decode(v)
+        v = offline_request.get('PublicKey')
+        if not v:
+            raise base.CommandError('"PublicKey" parameter is missing')
+        public_key = utils.base64_url_decode(v)
+        agent_public_key = crypto.load_ec_public_key(public_key)
+        machine_id = offline_request.get('MachineID')
+
+        type1_collection: Optional[pedm_pb2.CollectionValue] = None
+        type202_collection: Optional[pedm_pb2.CollectionValue] = None
+        agent_description: Optional[bytes] = None
+
+        os_collection = offline_request.get('OsCollection')
+        if isinstance(os_collection, dict):
+            try:
+                collection_fields = pedm_shared.get_collection_required_fields(pedm_shared.CollectionType.OsBuild)
+                if collection_fields:
+                    os_release = {}
+                    key_parts: List[str] = []
+                    key_fields = collection_fields.primary_key_fields or collection_fields.all_fields
+                    for k in key_fields:
+                        s = os_collection.get(k)
+                        if not isinstance(s, str) or len(s) == 0:
+                            raise base.CommandError(f'Missing required field "{k}" for agent description')
+                        os_release[k] = s
+                        key_parts.append(s)
+                    key = ''.join(key_parts)
+                    collection_uid = pedm_shared.get_collection_uid(plugin.agent_key, pedm_shared.CollectionType.OsBuild, key)
+                    collection_data = crypto.encrypt_aes_v2(json.dumps(os_release).encode('utf-8'), plugin.agent_key)
+                    type1_collection = pedm_pb2.CollectionValue(
+                        collectionUid=utils.base64_url_decode(collection_uid),
+                        collectionType=pedm_shared.CollectionType.OsBuild,
+                        encryptedData=collection_data
+                    )
+
+                    collection_fields = pedm_shared.get_collection_required_fields(pedm_shared.CollectionType.OsVersion)
+                    if collection_fields:
+                        os_version = {}
+                        key_parts.clear()
+                        key_fields = collection_fields.primary_key_fields or collection_fields.all_fields
+                        for k in key_fields:
+                            s = os_release.get(k)
+                            if not isinstance(s, str) or len(s) == 0:
+                                raise base.CommandError(f'Missing required field "{k}" for agent description')
+                            os_version[k] = s
+                            key_parts.append(s)
+                        key = ''.join(key_parts)
+                        collection_uid = pedm_shared.get_collection_uid(plugin.agent_key, pedm_shared.CollectionType.OsVersion, key)
+                        collection_data = crypto.encrypt_aes_v2(json.dumps(os_version).encode('utf-8'), plugin.agent_key)
+                        type202_collection = pedm_pb2.CollectionValue(
+                            collectionUid=utils.base64_url_decode(collection_uid),
+                            collectionType=pedm_shared.CollectionType.OsVersion,
+                            encryptedData=collection_data
+                        )
+
+                agent_description = json.dumps(os_collection).encode('utf-8')
+                agent_description = crypto.encrypt_aes_v2(agent_description, plugin.agent_key)
+            except Exception as e:
+                logging.warning('Update agent collection error: %s', e)
+
+        rq = pedm_pb2.OfflineAgentRegisterRequest()
+        rq.agentUid = agent_uid
+        rq.publicKey = public_key
+        rq.deploymentUid = utils.base64_url_decode(deployment.deployment_uid)
+        if machine_id:
+            rq.machineId = machine_id
+        if type1_collection:
+            rq.collection.append(type1_collection)
+        if type202_collection:
+            rq.collection.append(type202_collection)
+        rq.agentData = agent_description
+
+        rs = api.execute_router(context, 'pedm/register_offline_agent', rq, rs_type=pedm_pb2.OfflineAgentRegisterResponse)   # type: pedm_pb2.OfflineAgentRegisterResponse
+        agent_uid = rs.agentUid
+
+        enterprise_data = context.enterprise
+        enterprise_keys = enterprise_data['keys']
+        ec_public = enterprise_keys['ecc_public_key']
+        ec_public_key = utils.base64_url_decode(ec_public)
+        agent_info = pedm_shared.DeploymentAgentInformation(hash_key=plugin.agent_key, peer_public_key=ec_public_key)
+
+        agent_data =  json.dumps(agent_info.to_dict()).encode('utf-8')
+        agent_data = crypto.encrypt_ec(agent_data, agent_public_key)
+
+        host = next((host for host, server in constants.KEEPER_PUBLIC_HOSTS.items() if server == context.server), context.server)
+
+        registration_info = {
+            'AgentUID': utils.base64_url_encode(agent_uid),
+            'DeploymentUID': deployment.deployment_uid,
+            'Host': host,
+            'AgentData': utils.base64_url_encode(agent_data)
+        }
+
+        response = json.dumps(registration_info, indent=2)
+        output = kwargs.get("output")
+        if output:
+            with open(output, 'wt', encoding='utf-8') as f:
+                f.write(response)
+            return None
+        else:
+            return response
