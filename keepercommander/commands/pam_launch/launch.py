@@ -559,6 +559,10 @@ class PAMLaunchCommand(Command):
                 logging.warning(f"Guacamole did not report ready within {guac_ready_timeout}s")
                 logging.warning("Terminal may still work if data is flowing.")
 
+            # Check for STDOUT pipe support (feature detection)
+            # This warns the user if CLI pipe mode is not supported by the gateway
+            python_handler.check_stdout_pipe_support(timeout=10.0)
+
             # Create stdin handler for pipe/blob/end input pattern
             # StdinHandler reads raw stdin and sends via send_stdin (base64-encoded)
             # This matches kcm-cli's implementation for plaintext SSH/TTY streams
