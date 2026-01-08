@@ -567,7 +567,7 @@ class PAMTunnelStartCommand(Command):
                 print(f"{bcolors.FAIL}Hostname not found for record {record_uid}.{bcolors.ENDC}")
                 return
             target_host = target.get_default_value().get('hostName', None)
-            target_port = target.get_default_value().get('port', None)
+            target_port = pam_settings_value.get("portForward", {}).get("port", target.get_default_value().get('port', None))
             if not target_host:
                 print(f"{bcolors.FAIL}Host not found for record {record_uid}.{bcolors.ENDC}")
                 return
