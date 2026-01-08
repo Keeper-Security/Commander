@@ -4005,7 +4005,7 @@ class SuperShellApp(App):
         else:
             self._update_status("No visible nodes")
 
-    def check_action(self, action: str, parameters: tuple) -> Optional[bool]:
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
         """Control whether actions are enabled based on search state"""
         # When search input is active, disable all bindings except escape and search
         # This allows keys to be captured as text input instead of triggering actions
