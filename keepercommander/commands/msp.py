@@ -69,6 +69,7 @@ msp_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_tr
 msp_update_parser = argparse.ArgumentParser(prog='msp-update', usage='msp-update',
                                             description='Modify a Managed Company license')
 msp_update_parser.add_argument('--node', dest='node', action='store', help='node name or node ID')
+msp_update_parser.add_argument('-n', '--name', dest='name', action='store', help='update managed company name')
 msp_update_parser.add_argument('-p', '--plan', dest='plan', action='store',
                                choices=[x[1] for x in constants.MSP_PLANS],
                                help=f'License plan: {", ".join((x[1] for x in constants.MSP_PLANS))}')
@@ -425,6 +426,10 @@ class MSPUpdateCommand(EnterpriseCommand):
                 raise CommandError('msp-update', f'More than one nodes \"{node_name}\" are found')
             rq['node_id'] = nodes[0]['node_id']
 
+        new_name = kwargs.get('name')
+        if new_name:
+            rq['enterprise_name'] = new_name
+            
         permits = next((x['msp_permits'] for x in params.enterprise.get('licenses', []) if 'msp_permits' in x), None)
 
         plan_name = kwargs.get('plan')
