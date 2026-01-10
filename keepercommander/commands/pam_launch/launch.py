@@ -52,6 +52,12 @@ class PAMLaunchCommand(Command):
     parser.add_argument('--no-trickle-ice', '-nti', required=False, dest='no_trickle_ice', action='store_true',
                         help='Disable trickle ICE for WebRTC connections. By default, trickle ICE is enabled '
                              'for real-time candidate exchange.')
+    # parser.add_argument('--user', '-u', required=False, dest='launch_credential_uid', type=str,
+    #                     help='UID of pamUser record to use as launch credentials when allowSupplyUser is enabled. '
+    #                          'Fails if allowSupplyUser is not enabled or the specified record is not found.')
+    # parser.add_argument('--host', '-H', required=False, dest='custom_host', type=str,
+    #                     help='Hostname or IP address to connect to when allowSupplyHost is enabled. '
+    #                          'Fails if allowSupplyHost is not enabled.')
 
     def get_parser(self):
         return PAMLaunchCommand.parser
@@ -277,6 +283,95 @@ class PAMLaunchCommand(Command):
 
             logging.debug(f"Found record: {record_uid}")
 
+            # Validate --user and --host parameters against allowSupply flags
+            # Note: cmdline options override record data when provided
+            # launch_credential_uid = kwargs.get('launch_credential_uid')
+            # custom_host = kwargs.get('custom_host')
+
+            # Load record to check allowSupply flags and existing values
+            # record = vault.KeeperRecord.load(params, record_uid)
+            # if not isinstance(record, vault.TypedRecord):
+            #     raise CommandError('pam launch', f'Record {record_uid} is not a TypedRecord')
+
+            # pam_settings_field = record.get_typed_field('pamSettings')
+            # allow_supply_user = False
+            # allow_supply_host = False
+            # user_records_on_record = []
+            # hostname_on_record = None
+
+            # Get hostname from record
+            # hostname_field = record.get_typed_field('pamHostname')
+            # if hostname_field:
+            #     host_value = hostname_field.get_default_value(dict)
+            #     if host_value:
+            #         hostname_on_record = host_value.get('hostName')
+
+            # if pam_settings_field:
+            #     pam_settings_value = pam_settings_field.get_default_value(dict)
+            #     if pam_settings_value:
+            #         # allowSupplyHost is at top level of pamSettings value
+            #         allow_supply_host = pam_settings_value.get('allowSupplyHost', False)
+            #         # allowSupplyUser is inside connection
+            #         connection = pam_settings_value.get('connection', {})
+            #         if isinstance(connection, dict):
+            #             allow_supply_user = connection.get('allowSupplyUser', False)
+            #             user_records_on_record = connection.get('userRecords', [])
+
+            # Validation based on allowSupply flags
+            # if allow_supply_host and allow_supply_user:
+            #     # Both flags true: --user is required (no fallback to userRecords)
+            #     if not launch_credential_uid:
+            #         raise CommandError('pam launch',
+            #             f'Both allowSupplyUser and allowSupplyHost are enabled. '
+            #             f'You must provide --user to specify launch credentials.')
+            #     # --host required if no hostname on record
+            #     if not custom_host and not hostname_on_record:
+            #         raise CommandError('pam launch',
+            #             f'Both allowSupplyUser and allowSupplyHost are enabled and no hostname on record. '
+            #             f'You must provide --host to specify the target host.')
+
+            # elif allow_supply_user and not allow_supply_host:
+            #     # Only allowSupplyUser: use --user if provided, else userRecords, else error
+            #     if not launch_credential_uid and not user_records_on_record:
+            #         raise CommandError('pam launch',
+            #             f'allowSupplyUser is enabled but no credentials available. '
+            #             f'Use --user to specify a pamUser record or configure userRecords on the record.')
+
+            # elif allow_supply_host and not allow_supply_user:
+            #     # Only allowSupplyHost: --host required if no hostname on record
+            #     if not custom_host and not hostname_on_record:
+            #         raise CommandError('pam launch',
+            #             f'allowSupplyHost is enabled but no hostname available. '
+            #             f'Use --host to specify the target host or configure hostname on the record.')
+
+            # Validate --user parameter if provided
+            # if launch_credential_uid:
+            #     if not allow_supply_user:
+            #         raise CommandError('pam launch',
+            #             f'--user parameter requires allowSupplyUser to be enabled on the record. '
+            #             f'allowSupplyUser is currently disabled for record {record_uid}.')
+
+            #     # Validate the launch credential record exists and is a pamUser
+            #     cred_record = vault.KeeperRecord.load(params, launch_credential_uid)
+            #     if not cred_record:
+            #         raise CommandError('pam launch',
+            #             f'Launch credential record not found: {launch_credential_uid}')
+            #     if not isinstance(cred_record, vault.TypedRecord) or cred_record.record_type != 'pamUser':
+            #         raise CommandError('pam launch',
+            #             f'Launch credential record {launch_credential_uid} must be a pamUser record. '
+            #             f'Found: {cred_record.record_type if isinstance(cred_record, vault.TypedRecord) else "non-typed"}')
+
+            #     logging.debug(f"Using custom launch credential: {launch_credential_uid}")
+
+            # Validate --host parameter if provided
+            # if custom_host:
+            #     if not allow_supply_host:
+            #         raise CommandError('pam launch',
+            #             f'--host parameter requires allowSupplyHost to be enabled on the record. '
+            #             f'allowSupplyHost is currently disabled for record {record_uid}.')
+
+            #     logging.debug(f"Using custom host: {custom_host}")
+
             # Find the gateway for this record
             gateway_info = self.find_gateway(params, record_uid)
 
@@ -407,15 +502,40 @@ class PAMLaunchCommand(Command):
             if not connected:
                 raise CommandError('pam launch', "WebRTC connection not established within timeout")
 
+            # Wait a brief moment for DataChannel to be ready after connection state becomes "connected"
+            # The connection state can be "connected" before the DataChannel is actually ready to send data
+            time.sleep(0.2)
+
             # Send OpenConnection to Gateway to initiate guacd session
             # This is critical - without it, Gateway doesn't start guacd and no Guacamole traffic flows
+            # Retry with exponential backoff if DataChannel isn't ready yet
             logging.debug(f"Sending OpenConnection to Gateway (conn_no=1, conversation_id={conversation_id})")
-            try:
-                tube_registry.open_handler_connection(conversation_id, 1)
-                logging.debug("✓ OpenConnection sent successfully")
-            except Exception as e:
-                logging.error(f"Failed to send OpenConnection: {e}")
-                raise CommandError('pam launch', f"Failed to send OpenConnection: {e}")
+            max_retries = 5
+            retry_delay = 0.1
+            last_error = None
+
+            for attempt in range(max_retries):
+                try:
+                    tube_registry.open_handler_connection(conversation_id, 1)
+                    logging.debug("✓ OpenConnection sent successfully")
+                    break
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e).lower()
+                    # Check if error is DataChannel-related
+                    if "datachannel" in error_str or "not opened" in error_str:
+                        if attempt < max_retries - 1:
+                            wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                            logging.debug(f"DataChannel not ready, retrying in {wait_time:.2f}s (attempt {attempt + 1}/{max_retries})")
+                            time.sleep(wait_time)
+                            continue
+                    # For other errors or final attempt, raise immediately
+                    logging.error(f"Failed to send OpenConnection: {e}")
+                    raise CommandError('pam launch', f"Failed to send OpenConnection: {e}")
+            else:
+                # All retries exhausted
+                logging.error(f"Failed to send OpenConnection after {max_retries} attempts: {last_error}")
+                raise CommandError('pam launch', f"Failed to send OpenConnection after {max_retries} attempts: {last_error}")
 
             # Wait for Guacamole ready
             print("Waiting for Guacamole connection...")
@@ -438,6 +558,10 @@ class PAMLaunchCommand(Command):
             else:
                 logging.warning(f"Guacamole did not report ready within {guac_ready_timeout}s")
                 logging.warning("Terminal may still work if data is flowing.")
+
+            # Check for STDOUT pipe support (feature detection)
+            # This warns the user if CLI pipe mode is not supported by the gateway
+            python_handler.check_stdout_pipe_support(timeout=10.0)
 
             # Create stdin handler for pipe/blob/end input pattern
             # StdinHandler reads raw stdin and sends via send_stdin (base64-encoded)
