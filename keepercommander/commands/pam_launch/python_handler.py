@@ -133,6 +133,14 @@ class GuacamoleHandler:
         # Server sends pipe with name "STDOUT", then blobs with base64 terminal output
         self.stdout_stream_index: int = -1
 
+        # Feature detection for CLI pipe mode
+        # STDOUT pipe: if the server supports plaintext SSH/TTY mode, it sends a STDOUT pipe
+        # STDIN pipe: when we try to send input, the server should ack successfully
+        self.stdout_pipe_opened = threading.Event()  # Set when STDOUT pipe is received
+        self.stdin_pipe_failed = False  # Set if STDIN pipe ack fails
+        self.stdin_stream_index: int = 0  # Stream index we use for STDIN
+        self.pending_stdin_ack = False  # True when waiting for STDIN ack
+
         # Create instruction router with custom handlers for our needs
         # Pass self as stdout_stream_tracker so router can decode STDOUT blobs
         self.parser.oninstruction = create_instruction_router(
@@ -142,6 +150,8 @@ class GuacamoleHandler:
                 'ready': self._on_ready,
                 'disconnect': self._on_guac_disconnect,
                 'error': self._on_error,
+                'ack': self._on_ack,  # Custom ack handler for STDIN failure detection
+                'pipe': self._on_pipe,  # Custom pipe handler for STDOUT detection
             },
             send_ack_callback=self._send_ack,
             stdout_stream_tracker=self,
@@ -364,6 +374,12 @@ class GuacamoleHandler:
         # Get guacd parameters (hostname, port, username, password, etc.)
         guacd_params = settings.get('guacd_params', {})
 
+        # Debug: Log what credentials we have
+        logging.debug(f"DEBUG: guacd_params keys: {list(guacd_params.keys())}")
+        logging.debug(f"DEBUG: guacd_params['username']: {'(set)' if guacd_params.get('username') else '(empty)'}")
+        logging.debug(f"DEBUG: guacd_params['password']: {'(set)' if guacd_params.get('password') else '(empty)'}")
+        logging.debug(f"DEBUG: guacd_params['private-key']: {'(set)' if guacd_params.get('private-key') else '(empty)'}")
+
         # Build connect args: first arg is version (from guacd), rest are param values
         connect_args = []
 
@@ -394,6 +410,13 @@ class GuacamoleHandler:
         connect_instruction = self._format_instruction('connect', *connect_args)
         self._send_to_gateway(connect_instruction)
         logging.debug(f"Sent 'connect' with {len(connect_args)} args")
+        # Debug: Show which args were sent (without revealing secrets)
+        if args_list:
+            for i, param_name in enumerate(args_list[1:], start=1):
+                value = connect_args[i] if i < len(connect_args) else "(missing)"
+                is_secret = param_name.lower() in ['password', 'passphrase', 'private-key']
+                display_value = '(set)' if (is_secret and value) else ('(empty)' if is_secret else value[:20] if isinstance(value, str) else value)
+                logging.debug(f"DEBUG: connect arg '{param_name}' = {display_value}")
 
         # Send size instruction
         size_instruction = self._format_instruction('size', width, height, dpi)
@@ -507,6 +530,58 @@ class GuacamoleHandler:
 
         logging.error(f"Guacamole error {code}: {message}")
 
+    def _on_pipe(self, args: List[str]) -> None:
+        """
+        Handle pipe instruction - track STDOUT pipe opening for feature detection.
+
+        When the server supports plaintext SSH/TTY mode, it sends a pipe with name "STDOUT".
+        If this pipe never opens, the feature is not supported by the gateway/connection.
+
+        Note: The instruction router handles STDOUT ack and blob decode before calling this.
+        This handler just sets the event to signal that STDOUT pipe was opened.
+
+        Args:
+            args: [stream_index, mimetype, name]
+        """
+        if len(args) >= 3:
+            stream_index, mimetype, name = args[0], args[1], args[2]
+            logging.debug(f"[PIPE] stream={stream_index}, type={mimetype}, name={name}")
+
+            if name == 'STDOUT':
+                # Signal that STDOUT pipe was opened - CLI pipe mode is supported
+                # Note: stream_index and ack are already handled by instruction router
+                self.stdout_pipe_opened.set()
+                logging.debug(f"STDOUT pipe opened on stream {stream_index} - CLI pipe mode supported")
+        else:
+            logging.debug(f"[PIPE] {args}")
+
+    def _on_ack(self, args: List[str]) -> None:
+        """
+        Handle ack instruction - detect STDIN pipe failures.
+
+        When we try to send input via STDIN pipe, the server should ack successfully.
+        If the ack has a non-zero code, the STDIN pipe feature is not supported.
+
+        Args:
+            args: [stream_index, message, code]
+        """
+        if len(args) >= 3:
+            stream_index, message, code = args[0], args[1], args[2]
+            logging.debug(f"[ACK] stream={stream_index}, message='{message}', code={code}")
+
+            # Check if this is an ack for our STDIN stream
+            if self.pending_stdin_ack and int(stream_index) == self.stdin_stream_index:
+                self.pending_stdin_ack = False
+                if code != '0':
+                    # Non-zero code means STDIN pipe failed
+                    self.stdin_pipe_failed = True
+                    logging.warning(
+                        f"STDIN pipe failed (stream={stream_index}, code={code}, message='{message}'). "
+                        f"CLI input mode may not be supported by this connection."
+                    )
+        else:
+            logging.debug(f"[ACK] {args}")
+
     def _format_instruction(self, *elements) -> bytes:
         """Format elements into a Guacamole instruction."""
         # Use the new guacamole module's to_instruction function
@@ -577,9 +652,18 @@ class GuacamoleHandler:
             logging.debug("Ignoring stdin - connection not ready")
             return
 
+        # Check if STDIN pipe previously failed
+        if self.stdin_pipe_failed:
+            logging.debug("Ignoring stdin - STDIN pipe not supported")
+            return
+
         try:
             # Use stream index 0 for STDIN (matching kcm-cli)
             stream_index = '0'
+            self.stdin_stream_index = int(stream_index)
+
+            # Track that we're waiting for ack (for failure detection)
+            self.pending_stdin_ack = True
 
             # Send pipe instruction to open STDIN stream
             pipe_instruction = self._format_instruction('pipe', stream_index, 'text/plain', 'STDIN')
@@ -601,6 +685,44 @@ class GuacamoleHandler:
 
         except Exception as e:
             logging.error(f"Error sending stdin: {e}")
+
+    def check_stdout_pipe_support(self, timeout: float = 10.0) -> bool:
+        """
+        Check if STDOUT pipe is supported with a timeout.
+
+        This should be called after connection is established (after first sync).
+        If the STDOUT pipe doesn't open within the timeout, warns the user that
+        CLI pipe mode may not be supported.
+
+        Args:
+            timeout: Seconds to wait for STDOUT pipe (default 10.0)
+
+        Returns:
+            True if STDOUT pipe opened, False if timeout expired
+        """
+        if self.stdout_pipe_opened.wait(timeout):
+            logging.debug("STDOUT pipe support confirmed")
+            return True
+        else:
+            logging.warning(
+                f"STDOUT pipe did not open within {timeout}s. "
+                f"CLI pipe mode may not be supported by this gateway/connection."
+            )
+            print(
+                "\nNo STDOUT stream has been received since the connection was opened. "
+                "This may indicate the gateway/guacd does not support CLI mode. "
+                "You can continue waiting, or press Ctrl+C to cancel."
+            )
+            return False
+
+    def is_stdin_supported(self) -> bool:
+        """
+        Check if STDIN pipe is supported.
+
+        Returns:
+            True if STDIN pipe has not failed, False if it failed
+        """
+        return not self.stdin_pipe_failed
 
     def send_key(self, keysym: int, pressed: bool):
         """
