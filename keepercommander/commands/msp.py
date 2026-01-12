@@ -495,11 +495,21 @@ class MSPUpdateCommand(EnterpriseCommand):
                         raise CommandError('msp-update',f'Addon \"{addon_name}\" is not found')
                     addon_seats = 0
                     if sep == ':' and addon[2] and action == 'add_addon':
-                        try:
-                            addon_seats = int(seats)
-                        except:
-                            raise CommandError('msp-update',
-                                               f'Addon \"{addon_name}\". Number of seats \"{seats}\" is not integer')
+                        if addon_name == 'keeper_endpoint_privilege_manager' and seats.lower() == 'unlimited':
+                            addon_seats = 2147483647  
+                            seats = '2147483647'  
+                        else:
+                            try:
+                                addon_seats = int(seats)
+                            except:
+                                raise CommandError('msp-update',
+                                                   f'Addon \"{addon_name}\". Number of seats \"{seats}\" is not integer')
+                        if addon_name == 'keeper_endpoint_privilege_manager':
+                            valid_int_seats = {x for x in constants.KEPM_VALID_SEATS if isinstance(x, int)}
+                            if addon_seats not in valid_int_seats and addon_seats != 2147483647:
+                                valid_values = ', '.join(str(x) for x in sorted(valid_int_seats) + ['unlimited'])
+                                raise CommandError('msp-update',
+                                                   f'Addon \"{addon_name}\". Invalid seat value \"{seats}\". Valid values are: {valid_values}')
                     if action == 'add_addon':
                         if permits:
                             if addon_name not in (x.lower() for x in permits['allowed_add_ons']):
@@ -945,11 +955,20 @@ class MSPAddCommand(EnterpriseCommand):
                         return
                 addon_seats = 0
                 if sep == ':' and addon[2]:
-                    try:
-                        addon_seats = int(seats)
-                    except:
-                        logging.warning('Addon \"%s\". Number of seats \"%s\" is not integer', addon_name, seats)
-                        return
+                    if addon_name == 'keeper_endpoint_privilege_manager' and seats.lower() == 'unlimited':
+                        addon_seats = 2147483647  # Use max int for unlimited, similar to seats handling
+                    else:
+                        try:
+                            addon_seats = int(seats)
+                        except:
+                            logging.warning('Addon \"%s\". Number of seats \"%s\" is not integer', addon_name, seats)
+                            return
+                    if addon_name == 'keeper_endpoint_privilege_manager':
+                        valid_int_seats = {x for x in constants.KEPM_VALID_SEATS if isinstance(x, int)}
+                        if addon_seats not in valid_int_seats and addon_seats != 2147483647:
+                            valid_values = ', '.join(str(x) for x in sorted(valid_int_seats) + ['unlimited'])
+                            logging.warning('Addon \"%s\". Invalid seat value \"%s\". Valid values are: %s', addon_name, seats, valid_values)
+                            return
                 rqa = {
                     'add_on': addon[0]
                 }
