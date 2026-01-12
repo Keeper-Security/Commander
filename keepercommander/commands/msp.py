@@ -468,6 +468,17 @@ class MSPUpdateCommand(EnterpriseCommand):
             product_plan = next((x for x in constants.MSP_PLANS if product_id == x[1].lower()), None)
             if product_plan and product_plan[3] < file_plan[0]:
                 rq['file_plan_type'] = file_plan[1]
+        else:
+            existing_file_plan = current_mc.get('file_plan_type')
+            if existing_file_plan:
+                product_id = rq['product_id'].lower()
+                product_plan = next((x for x in constants.MSP_PLANS if product_id == x[1].lower()), None)
+                if product_plan:
+                    file_plan = next((x for x in constants.MSP_FILE_PLANS if x[1] == existing_file_plan), None)
+                    if file_plan:
+                        base_file_plan_id = product_plan[3]
+                        if file_plan[0] != base_file_plan_id:
+                            rq['file_plan_type'] = existing_file_plan
 
         addons = {}
         for ao in current_mc.get('add_ons', []):
@@ -495,7 +506,7 @@ class MSPUpdateCommand(EnterpriseCommand):
                         raise CommandError('msp-update',f'Addon \"{addon_name}\" is not found')
                     addon_seats = 0
                     if sep == ':' and addon[2] and action == 'add_addon':
-                        if addon_name == 'keeper_endpoint_privilege_manager' and seats.lower() == 'unlimited':
+                        if addon_name == 'keeper_endpoint_privilege_manager' and seats.strip() == '-1':
                             addon_seats = 2147483647  
                             seats = '2147483647'  
                         else:
@@ -507,7 +518,7 @@ class MSPUpdateCommand(EnterpriseCommand):
                         if addon_name == 'keeper_endpoint_privilege_manager':
                             valid_int_seats = {x for x in constants.KEPM_VALID_SEATS if isinstance(x, int)}
                             if addon_seats not in valid_int_seats and addon_seats != 2147483647:
-                                valid_values = ', '.join(str(x) for x in sorted(valid_int_seats) + ['unlimited'])
+                                valid_values = ', '.join(str(x) for x in sorted(valid_int_seats) + ['-1 (for unlimited)'])
                                 raise CommandError('msp-update',
                                                    f'Addon \"{addon_name}\". Invalid seat value \"{seats}\". Valid values are: {valid_values}')
                     if action == 'add_addon':
@@ -969,7 +980,7 @@ class MSPAddCommand(EnterpriseCommand):
                         return
                 addon_seats = 0
                 if sep == ':' and addon[2]:
-                    if addon_name == 'keeper_endpoint_privilege_manager' and seats.lower() == 'unlimited':
+                    if addon_name == 'keeper_endpoint_privilege_manager' and seats.strip() == '-1':
                         addon_seats = 2147483647  # Use max int for unlimited, similar to seats handling
                     else:
                         try:
@@ -980,7 +991,7 @@ class MSPAddCommand(EnterpriseCommand):
                     if addon_name == 'keeper_endpoint_privilege_manager':
                         valid_int_seats = {x for x in constants.KEPM_VALID_SEATS if isinstance(x, int)}
                         if addon_seats not in valid_int_seats and addon_seats != 2147483647:
-                            valid_values = ', '.join(str(x) for x in sorted(valid_int_seats) + ['unlimited'])
+                            valid_values = ', '.join(str(x) for x in sorted(valid_int_seats) + ['-1 (for unlimited)'])
                             logging.warning('Addon \"%s\". Invalid seat value \"%s\". Valid values are: %s', addon_name, seats, valid_values)
                             return
                 rqa = {
