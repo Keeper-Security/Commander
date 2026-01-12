@@ -475,9 +475,9 @@ class MSPUpdateCommand(EnterpriseCommand):
                 continue
             if ao.get('included_in_product') is True:
                 continue
-            addon_name = ao['name']
+            addon_name = ao['name'].lower()  # Normalize to lowercase for consistency
             keep_addon = {
-                'add_on': addon_name
+                'add_on': ao['name']  
             }
             seats = ao.get('seats')
             if seats > 0:
@@ -524,6 +524,19 @@ class MSPUpdateCommand(EnterpriseCommand):
                     else:
                         if addon_name in addons:
                             del addons[addon_name]
+        
+        addon_names = {name.lower() for name in addons.keys()}
+        if 'remote_browser_isolation' in addon_names:
+            if 'connection_manager' not in addon_names:
+                raise CommandError('msp-update',
+                                   'Addon \"remote_browser_isolation\" requires \"connection_manager\" to be selected')
+            cm_addon = addons.get('connection_manager')
+            if cm_addon:
+                cm_seats = cm_addon.get('seats', 0)
+                if not cm_seats or cm_seats == 0:
+                    raise CommandError('msp-update',
+                                       'Addon \"remote_browser_isolation\" requires \"connection_manager\" to have seats specified (e.g., connection_manager:N)')
+        
         rq['add_ons'] = list(addons.values())
         rs = api.communicate(params, rq)
         if rs['result'] == 'success':
@@ -942,6 +955,7 @@ class MSPAddCommand(EnterpriseCommand):
         addons = kwargs.get('addon')
         if isinstance(addons, list):
             rq['add_ons'] = []
+            addon_data = {}  # Track addon name -> seat count for validation
             for v in addons:
                 addon_name, sep, seats = v.partition(':')
                 addon_name = addon_name.lower()
@@ -974,7 +988,19 @@ class MSPAddCommand(EnterpriseCommand):
                 }
                 if addon_seats > 0:
                     rqa['seats'] = addon_seats
+                    addon_data[addon_name] = addon_seats
+                else:
+                    addon_data[addon_name] = 0
                 rq['add_ons'].append(rqa)
+
+            # Validate that Remote Browser Isolation requires Keeper Connection Manager with seats
+            if 'remote_browser_isolation' in addon_data:
+                if 'connection_manager' not in addon_data:
+                    logging.warning('Addon \"remote_browser_isolation\" requires \"connection_manager\" to be selected')
+                    return
+                if addon_data['connection_manager'] == 0:
+                    logging.warning('Addon \"remote_browser_isolation\" requires \"connection_manager\" to have seats specified (e.g., connection_manager:N)')
+                    return
 
         company_id = -1
         rs = api.communicate(params, rq)
