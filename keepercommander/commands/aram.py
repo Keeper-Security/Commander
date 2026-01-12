@@ -150,7 +150,7 @@ action_report_parser.add_argument('--target', '-t', dest='target_user_status', a
 action_report_parser.add_argument('--days-since', '-d', dest='days_since', action='store', type=int,
                                   help='number of days since event of interest (e.g., login, record add/update, lock)')
 action_report_columns = {'name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count', 'roles',
-                         'alias', '2fa_enabled'}
+                         'alias', '2fa_enabled', 'lock_time'}
 columns_help = f'comma-separated list of columns to show on report. Supported columns: {action_report_columns}'
 columns_help = re.sub('\'', '', columns_help)
 action_report_parser.add_argument('--columns',  dest='columns', action='store', type=str,
@@ -2100,6 +2100,33 @@ class ActionReportCommand(EnterpriseCommand):
             excluded = get_excluded(included, query_filter, name_key)
             return [user for user in candidate_users if user.get('username') not in excluded]
 
+        def chunk_list(items, chunk_size):
+            for i in range(0, len(items), chunk_size):
+                yield items[i:i + chunk_size]
+
+        def get_latest_lock_times(usernames):
+            # type: (Set[str]) -> Dict[str, int]
+            if not usernames:
+                return {}
+            lock_times = {}
+            username_list = sorted({u.lower() for u in usernames if u})
+            now_ts = int(datetime.datetime.now().timestamp())
+            for chunk in chunk_list(username_list, API_EVENT_SUMMARY_ROW_LIMIT):
+                query_filter = {
+                    'audit_event_type': ['lock_user'],
+                    'to_username': chunk,
+                    'created': {'min': 0, 'max': now_ts}
+                }
+                rq = report_rq(query_filter, API_EVENT_SUMMARY_ROW_LIMIT, cols=['to_username'], report_type='span')
+                rs = api.communicate(params, rq)
+                events = rs.get('audit_event_overview_report_rows', [])
+                for event in events:
+                    username = (event.get('to_username') or '').lower()
+                    ts = int(event.get('last_created') or 0)
+                    if username and ts:
+                        lock_times[username] = max(lock_times.get(username, 0), ts)
+            return lock_times
+
         def get_action_results_text(cmd, cmd_status, server_msg, affected):
             return f'\tCOMMAND: {cmd}\n\tSTATUS: {cmd_status}\n\tSERVER MESSAGE: {server_msg}\n\tAFFECTED: {affected}'
 
@@ -2183,10 +2210,10 @@ class ActionReportCommand(EnterpriseCommand):
                 'none': partial(run_cmd, targets, None, None, dryrun),
                 'lock': partial(run_cmd, targets,
                                 lambda: exec_fn(params, email=emails, lock=True, force=True, return_results=True),
-                                'lock', dry_run),
+                                'lock', dryrun),
                 'delete': partial(run_cmd, targets,
                                   lambda: exec_fn(params, email=emails, delete=True, force=True, return_results=True),
-                                  'delete', dry_run),
+                                  'delete', dryrun),
                 'transfer': partial(transfer_accounts, targets, kwargs.get('target_user'), dryrun)
             }
 
@@ -2202,13 +2229,21 @@ class ActionReportCommand(EnterpriseCommand):
 
             return action_handlers.get(action, lambda: invalid_action_msg)() if is_valid_action else invalid_action_msg
 
-        def get_report_data_and_headers(targets, output_fmt):
-            # type: (Set[str], str) -> Tuple[List[List[Any]], List[str]]
+        def get_report_data_and_headers(targets, output_fmt, columns=None, lock_times=None):
+            # type: (Set[str], str, Optional[str], Optional[Dict[str, int]]) -> Tuple[List[List[Any]], List[str]]
             cmd = EnterpriseInfoCommand()
-            output = cmd.execute(params, users=True, quiet=True, format='json', columns=kwargs.get('columns'))
+            output = cmd.execute(params, users=True, quiet=True, format='json', columns=columns)
             data = json.loads(output)
-            data = [u for u in data if u.get('email') in targets]
-            fields = next(iter(data)).keys() if data else []
+            targets_lower = {t.lower() for t in targets if t}
+            data = [u for u in data if (u.get('email') or '').lower() in targets_lower]
+            if lock_times is not None:
+                for user in data:
+                    email = (user.get('email') or '').lower()
+                    lock_ts = lock_times.get(email)
+                    user['lock_time'] = datetime.datetime.fromtimestamp(lock_ts) if lock_ts else None
+            fields = list(next(iter(data)).keys()) if data else []
+            if lock_times is not None and 'lock_time' not in fields:
+                fields.append('lock_time')
             headers = [field_to_title(f) for f in fields] if output_fmt != 'json' else list(fields)
             data = [[user.get(f) for f in fields] for user in data]
             return data, headers
@@ -2305,10 +2340,20 @@ class ActionReportCommand(EnterpriseCommand):
         target_users = get_no_action_users(*args)
         usernames = {user['username'] for user in target_users}
 
+        columns_arg = kwargs.get('columns')
+        columns = {c.strip().lower() for c in columns_arg.split(',') if c.strip()} if columns_arg else set()
+        include_lock_time = ('lock_time' in columns) if columns_arg else target_status == 'locked'
+        columns_param = None
+        if columns_arg:
+            columns_without_lock = [c for c in columns if c != 'lock_time']
+            if columns_without_lock:
+                columns_param = ','.join(columns_without_lock)
+
         admin_action = kwargs.get('apply_action', 'none')
         dry_run = kwargs.get('dry_run')
         fmt = kwargs.get('format', 'table')
-        report_data, report_headers = get_report_data_and_headers(usernames, fmt)
+        lock_times = get_latest_lock_times(usernames) if include_lock_time else None
+        report_data, report_headers = get_report_data_and_headers(usernames, fmt, columns=columns_param, lock_times=lock_times)
         action_msg = apply_admin_action(target_users, target_status, admin_action, dry_run)
 
         # Sync local enterprise data if changes were made

@@ -262,18 +262,25 @@ class Spinner:
         self.message = message
         self.running = False
         self.thread = None
+        self._last_visible_len = 0
 
     def _animate(self):
         idx = 0
         while self.running:
             frame = self.FRAMES[idx % len(self.FRAMES)]
-            sys.stdout.write(f'\r{Fore.CYAN}{frame}{Fore.RESET} {self.message}')
+            message = self.message or ''
+            visible_len = len(message) + 2  # frame + space + message
+            pad = max(0, self._last_visible_len - visible_len)
+            sys.stdout.write(f'\r{Fore.CYAN}{frame}{Fore.RESET} {message}' + (' ' * pad))
             sys.stdout.flush()
+            self._last_visible_len = visible_len + pad
             idx += 1
             time.sleep(0.08)
         # Clear the line when done
-        sys.stdout.write('\r' + ' ' * (len(self.message) + 4) + '\r')
+        clear_len = max(self._last_visible_len, len(self.message or '') + 2)
+        sys.stdout.write('\r' + ' ' * clear_len + '\r')
         sys.stdout.flush()
+        self._last_visible_len = 0
 
     def start(self):
         self.running = True

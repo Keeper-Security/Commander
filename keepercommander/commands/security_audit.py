@@ -40,6 +40,8 @@ report_parser.add_argument('-s', '--save', action='store_true', help=save_help)
 report_parser.add_argument('-su', '--show-updated', action='store_true', help='show updated data')
 report_parser.add_argument('-st', '--score-type', action='store', choices=['strong_passwords', 'default'],
                            default='default', help='define how score is calculated')
+record_detail_help = 'output per-record password strength details (requires incremental security data)'
+report_parser.add_argument('--record-details', dest='record_details', action='store_true', help=record_detail_help)
 attempt_fix_help = ('do a "hard" sync for vaults with invalid security-data. Associated security scores are reset and '
                     'will be inaccurate until affected vaults can re-calculate and update their security-data')
 report_parser.add_argument('--attempt-fix', action='store_true', help=attempt_fix_help)
@@ -87,10 +89,21 @@ Column Name       Description
   securityScore     security score
   twoFactorChannel  2FA - ON/OFF
 
+Record Detail Report (--record-details)
+  email             vault owner email
+  name              vault owner name
+  record_uid        record UID
+  strength          password strength score
+  strength_category weak|fair|medium|strong
+  node              node path
+
 --report-type:
             csv     CSV format
             json    JSON format
             table   Table format (default)
+
+Examples:
+  security-audit report --record-details --format csv --output security_audit_records.csv
 '''
 
 
@@ -194,6 +207,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             return
 
         self.enterprise_private_rsa_key = None
+        self._node_map = None  # Reset node cache for correct MC context
         self.params = params
 
         show_breachwatch = kwargs.get('breachwatch')
@@ -218,13 +232,77 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         score_type = kwargs.get('score_type', 'default')
         save_report = kwargs.get('save') or attempt_fix
         show_updated = save_report or kwargs.get('show_updated')
+        record_details = kwargs.get('record_details')
         updated_security_reports = []
         tree_key = params.enterprise['unencrypted_tree_key']
         from_page = 0
         complete = False
         rows = []
+        record_detail_rows = []
+        record_detail_fields = ('email', 'name', 'record_uid', 'strength', 'strength_category', 'node')
+        has_incremental_data = False
+        user_lookup = {}  # {enterprise_user_id: {email, name, node_path}} for record_details
+
+        # Build fresh user lookup from params.enterprise (reflects current MC context after switch-to-mc)
+        enterprise_user_lookup = {}
+        for u in params.enterprise.get('users', []):
+            enterprise_user_lookup[u['enterprise_user_id']] = u
+
         rsa_key = get_enterprise_key(params, is_rsa=True)      # type: Optional[rsa.RSAPrivateKey]
         ec_key = get_enterprise_key(params, is_rsa=False)       # type: Optional[ec.EllipticCurvePrivateKey]
+
+        def get_strength_category(score):
+            if score is None:
+                return None
+            if utils.is_pw_strong(score):
+                return 'strong'
+            if utils.is_pw_fair(score):
+                return 'fair'
+            if utils.is_pw_weak(score):
+                return 'weak'
+            return 'medium'
+
+        def decrypt_security_data(sec_data, key_type):
+            if not sec_data:
+                return None
+            try:
+                if key_type == enterprise_pb2.KT_ENCRYPTED_BY_PUBLIC_KEY_ECC:
+                    if ec_key is None:
+                        return None
+                    decrypted_bytes = crypto.decrypt_ec(sec_data, ec_key)
+                else:
+                    if rsa_key is None:
+                        return None
+                    decrypted_bytes = crypto.decrypt_rsa(sec_data, rsa_key)
+            except Exception as e:
+                decrypted_bytes = try_enterprise_decrypt(self.params, sec_data)
+                if not decrypted_bytes:
+                    error = f'Decrypt fail (incremental data): {e}'
+                    self.get_error_report_builder().update_report_data(error)
+                    return None
+
+            try:
+                decoded = decrypted_bytes.decode()
+            except UnicodeDecodeError:
+                error = f'Decode fail, incremental data (base 64):'
+                self.get_error_report_builder().update_report_data(error)
+                decoded_b64 = base64.b64encode(decrypted_bytes).decode('ascii')
+                self.get_error_report_builder().update_report_data(decoded_b64)
+                return None
+            except Exception as e:
+                error = f'Decode fail: {e}'
+                self.get_error_report_builder().update_report_data(error)
+                return None
+
+            try:
+                return json.loads(decoded)
+            except JSONDecodeError:
+                error = f'Invalid JSON: {decoded}'
+                self.get_error_report_builder().update_report_data(error)
+            except Exception as e:
+                error = f'Load fail (incremental data). {e}'
+                self.get_error_report_builder().update_report_data(error)
+            return None
 
         while not complete:
             rq = APIRequest_pb2.SecurityReportRequest()
@@ -247,13 +325,17 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 continue
 
             for sr in security_report_data_rs.securityReport:
-                user_info = self.resolve_user_info(params, sr.enterpriseUserId)
-                node_id = user_info.get('node_id', 0)
+                # Use fresh enterprise_user_lookup (not cached resolve_user_info) for correct MC context
+                eu = enterprise_user_lookup.get(sr.enterpriseUserId, {})
+                node_id = eu.get('node_id', 0)
                 if node_ids and node_id not in node_ids:
                     continue
-                user = user_info['username'] if 'username' in user_info else str(sr.enterpriseUserId)
-                email = user_info['email'] if 'email' in user_info else str(sr.enterpriseUserId)
-                node_path = self.get_node_path(params, node_id) if node_id > 0 else ''
+                email = eu.get('username', str(sr.enterpriseUserId))
+                user_data = eu.get('data') if isinstance(eu.get('data'), dict) else {}
+                user = user_data.get('displayname') or email
+                node_path = self.get_node_path(params, node_id, omit_root=True)
+                if record_details:
+                    user_lookup[sr.enterpriseUserId] = {'email': email, 'name': user, 'node_path': node_path}
                 twofa_on = False if sr.twoFactor == 'two_factor_disabled' else True
                 row = {
                     'name': user,
@@ -334,6 +416,48 @@ class SecurityAuditReportCommand(EnterpriseCommand):
 
                 rows.append(row)
 
+        # Fetch per-record security data via get_incremental_security_data (has recordUid)
+        if record_details and user_lookup:
+            continuation_token = b''
+            while True:
+                inc_rq = APIRequest_pb2.IncrementalSecurityDataRequest()
+                if continuation_token:
+                    inc_rq.continuationToken = continuation_token
+                try:
+                    inc_rs = api.communicate_rest(
+                        params, inc_rq, 'enterprise/get_incremental_security_data',
+                        rs_type=APIRequest_pb2.IncrementalSecurityDataResponse)
+                except Exception as e:
+                    logging.debug(f'get_incremental_security_data failed: {e}')
+                    break
+
+                for inc_data in inc_rs.securityReportIncrementalData:
+                    record_uid = utils.base64_url_encode(inc_data.recordUid) if inc_data.recordUid else ''
+                    if not record_uid:
+                        continue
+                    has_incremental_data = True
+                    user_info = user_lookup.get(inc_data.enterpriseUserId)
+                    if not user_info:
+                        continue
+                    curr_data = decrypt_security_data(inc_data.currentSecurityData, inc_data.currentDataEncryptionType)
+                    if not curr_data:
+                        continue
+                    strength = curr_data.get('strength')
+                    if strength is None:
+                        continue
+                    record_detail_rows.append([
+                        user_info['email'],
+                        user_info['name'],
+                        record_uid,
+                        strength,
+                        get_strength_category(strength),
+                        user_info['node_path']
+                    ])
+
+                if not inc_rs.continuationToken:
+                    break
+                continuation_token = inc_rs.continuationToken
+
         fmt = kwargs.get('format', 'table')
         out = kwargs.get('output')
 
@@ -355,6 +479,15 @@ class SecurityAuditReportCommand(EnterpriseCommand):
 
         if save_report:
             self.save_updated_security_reports(params, updated_security_reports)
+
+        if record_details:
+            if not has_incremental_data:
+                logging.warning('No incremental security data available for record detail output.')
+            field_descriptions = record_detail_fields
+            if fmt == 'table':
+                field_descriptions = [field_to_title(x) for x in record_detail_fields]
+            report_title = 'Security Audit Report (Record Details)'
+            return dump_report_data(record_detail_rows, field_descriptions, fmt=fmt, filename=out, title=report_title)
 
         fields = ('email', 'name', 'sync_pending', 'at_risk', 'passed', 'ignored') if show_breachwatch else \
             ('email', 'name', 'sync_pending', 'weak', 'fair', 'medium', 'strong', 'reused', 'unique', 'securityScore',

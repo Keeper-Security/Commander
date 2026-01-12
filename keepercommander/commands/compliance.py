@@ -10,6 +10,7 @@ from typing import Optional, Dict, Tuple, List, Any, Iterable, Union
 from .base import GroupCommand, dump_report_data, field_to_title, report_output_parser
 from .enterprise_common import EnterpriseCommand
 from ..sox.sox_types import RecordPermissions
+from ..display import Spinner
 from .helpers.reporting import filter_rows
 from .. import sox, api
 from ..error import CommandError
@@ -375,6 +376,8 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
 
     def generate_report_data(self, params, kwargs, sox_data, report_fmt, node, root_node):
         # type: (KeeperParams, Dict[str, Any], sox.sox_data.SoxData, str, int, int) -> List[List[str]]
+        use_spinner = not params.batch_mode
+
         def get_records_accessed_rq(email, filter_recs=None, created_max=None):
             # type: (str, Optional[List[str]], Optional[int]) -> Union[None, Dict[str, Any]]
             # Empty record filter list -> no records to search for
@@ -456,14 +459,23 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
         def get_aging_data(rec_ids):
             if not rec_ids:
                 return {}
-            aging_data = {r: {'created': None, 'last_modified': None, 'last_rotation': None} for r in rec_ids if r}
+            aging_data = {r: {'created': None, 'last_modified': None, 'last_rotation': None, 'last_pw_change': None}
+                          for r in rec_ids if r}
             now = datetime.datetime.now()
             max_stored_age_dt = now - datetime.timedelta(days=1)
             max_stored_age_ts = int(max_stored_age_dt.timestamp())
             stored_aging_data = {}
             if not kwargs.get('no_cache'):
                 stored_entities = sox_data.storage.get_record_aging().get_all()
-                stored_aging_data = {e.record_uid: {'created': from_ts(e.created), 'last_modified': from_ts(e.last_modified), 'last_rotation': from_ts(e.last_rotation)} for e in stored_entities if e.record_uid}
+                stored_aging_data = {
+                    e.record_uid: {
+                        'created': from_ts(e.created),
+                        'last_modified': from_ts(e.last_modified),
+                        'last_rotation': from_ts(e.last_rotation),
+                        'last_pw_change': from_ts(e.last_pw_change),
+                    }
+                    for e in stored_entities if e.record_uid
+                }
             aging_data.update(stored_aging_data)
 
             def get_requests(filter_recs, filter_type, order='descending', aggregate='last_created'):
@@ -494,7 +506,8 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
                 types_by_aging_event = dict(
                     created         = [],
                     last_modified   = ['record_update'],
-                    last_rotation   = ['record_rotation_scheduled_ok', 'record_rotation_on_demand_ok']
+                    last_rotation   = ['record_rotation_scheduled_ok', 'record_rotation_on_demand_ok'],
+                    last_pw_change  = ['record_password_change']
                 )
                 filter_types = types_by_aging_event.get(record_aging_event)
                 order, aggregate = ('ascending', 'first_created') if record_aging_event == 'created' \
@@ -522,12 +535,30 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
                 record_timestamps = {event.get('record_uid'): event.get(aggregate) for event in events if event.get('record_uid')}
                 return {rec: from_ts(ts) for rec, ts in record_timestamps.items()}
 
-            aging_stats = ['created', 'last_modified', 'last_rotation']
-            record_events_by_stat = {stat: get_aging_event_dts(stat) for stat in aging_stats}
+            aging_stats = ['created', 'last_modified', 'last_rotation', 'last_pw_change']
+            spinner = None
+            try:
+                if use_spinner:
+                    should_fetch_events = any(get_request_params(stat)[0] for stat in aging_stats)
+                    if should_fetch_events:
+                        spinner = Spinner('Loading record aging events...')
+                        spinner.start()
+                record_events_by_stat = {}
+                for stat in aging_stats:
+                    if spinner:
+                        spinner.message = f'Loading record aging events - {stat}'
+                    record_events_by_stat[stat] = get_aging_event_dts(stat)
+            finally:
+                if spinner:
+                    spinner.stop()
             for stat, record_event_dts in record_events_by_stat.items():
                 for record, dt in record_event_dts.items():
                     aging_data.get(record, {}).update({stat: dt})
                     stat == 'created' and aging_data.get(record, {}).setdefault('last_modified', dt)
+
+            for record, events in aging_data.items():
+                if events.get('last_pw_change') is None:
+                    events['last_pw_change'] = events.get('created')
 
             if not kwargs.get('no_cache'):
                 save_aging_data(aging_data)
@@ -542,12 +573,15 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
                 entity = existing_entities.get_entity(r) or StorageRecordAging(r)
                 created_dt = events.get('created')
                 created_ts = int(created_dt.timestamp()) if created_dt else 0
+                pw_change_dt = events.get('last_pw_change')
+                pw_change_ts = int(pw_change_dt.timestamp()) if pw_change_dt else 0
                 modified_dt = events.get('last_modified')
                 modified_ts = int(modified_dt.timestamp()) if modified_dt else 0
                 rotation_dt = events.get('last_rotation')
                 rotation_ts = int(rotation_dt.timestamp()) if rotation_dt else 0
 
                 entity.created = created_ts
+                entity.last_pw_change = pw_change_ts
                 entity.last_modified = modified_ts
                 entity.last_rotation = rotation_ts
                 updated_entities.append(entity)
@@ -571,22 +605,33 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
             records_accessed_by_user = {e: dict() for e in emails}
             filters_by_user = {e: dict(filter_recs=get_rec_filter(e)) for e in emails}
             should_query = lambda rq_filter: rq_filter and (rq_filter.get('filter_recs') or not limit_to_vault)
+            spinner = None
+            total_users = len(emails)
             # Make requests in batches, walking backwards in time (w/ query filters) for all users in parallel (1 user per sub-request)
-            while True:
-                users_to_query = [user for user, user_filter in filters_by_user.items() if should_query(user_filter)]
-                if not users_to_query:
-                    break
-                requests = [get_records_accessed_rq(email, **filters_by_user.get(email)) for email in users_to_query]
-                responses = api.execute_batch(params, requests)
-                responses_by_user = zip(users_to_query, responses)
-                for user, response in responses_by_user:
-                    access_events = response.get('audit_event_overview_report_rows', [])
-                    records_accessed = records_accessed_by_user.get(user, {})
-                    records_accessed_new, filters = process_access_events(access_events, filter_recs=filters_by_user.get(user, {}).get('filter_recs'))
-                    for rec_uid, event in records_accessed_new.items():
-                        records_accessed.setdefault(rec_uid, event)
-                    records_accessed_by_user.update({user: records_accessed})
-                    filters_by_user.update({user: filters})
+            try:
+                while True:
+                    users_to_query = [user for user, user_filter in filters_by_user.items() if should_query(user_filter)]
+                    if not users_to_query:
+                        break
+                    if use_spinner and not spinner:
+                        spinner = Spinner('Loading record access events...')
+                        spinner.start()
+                    if spinner:
+                        spinner.message = f'Loading record access events - Users remaining: {len(users_to_query)}/{total_users}'
+                    requests = [get_records_accessed_rq(email, **filters_by_user.get(email)) for email in users_to_query]
+                    responses = api.execute_batch(params, requests)
+                    responses_by_user = zip(users_to_query, responses)
+                    for user, response in responses_by_user:
+                        access_events = response.get('audit_event_overview_report_rows', [])
+                        records_accessed = records_accessed_by_user.get(user, {})
+                        records_accessed_new, filters = process_access_events(access_events, filter_recs=filters_by_user.get(user, {}).get('filter_recs'))
+                        for rec_uid, event in records_accessed_new.items():
+                            records_accessed.setdefault(rec_uid, event)
+                        records_accessed_by_user.update({user: records_accessed})
+                        filters_by_user.update({user: filters})
+            finally:
+                if spinner:
+                    spinner.stop()
             return records_accessed_by_user
 
         from ..sox.storage_types import StorageRecordAging
@@ -612,7 +657,7 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
         default_columns = ['vault_owner', 'record_uid', 'record_title', 'record_type', 'record_url', 'has_attachments',
                            'in_trash', 'record_owner', 'ip_address', 'device', 'last_access']
 
-        aging_columns = ['created', 'last_modified', 'last_rotation'] if aging else []
+        aging_columns = ['created', 'last_pw_change', 'last_modified', 'last_rotation'] if aging else []
         self.report_headers = default_columns + aging_columns
 
         record_access_events = get_records_accessed(usernames, report_type != report_type_default)
