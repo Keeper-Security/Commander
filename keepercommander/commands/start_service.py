@@ -12,6 +12,8 @@
 from ..service.commands.create_service import CreateService
 from ..service.commands.config_operation import AddConfigService
 from ..service.commands.handle_service import StartService, StopService, ServiceStatus
+from ..service.commands.service_docker_setup import ServiceDockerSetupCommand
+from ..service.commands.slack_app_setup import SlackAppSetupCommand
 
 def register_commands(commands):
     commands['service-create'] = CreateService()
@@ -19,6 +21,8 @@ def register_commands(commands):
     commands['service-start'] = StartService()
     commands['service-stop'] = StopService()
     commands['service-status'] = ServiceStatus()
+    commands['service-docker-setup'] = ServiceDockerSetupCommand()
+    commands['slack-app-setup'] = SlackAppSetupCommand()
 
 def register_command_info(aliases, command_info):
     service_classes = [
@@ -26,7 +30,9 @@ def register_command_info(aliases, command_info):
         AddConfigService,
         StartService,
         StopService,
-        ServiceStatus
+        ServiceStatus,
+        ServiceDockerSetupCommand,
+        SlackAppSetupCommand
     ]
     
     for service_class in service_classes:

@@ -33,6 +33,7 @@ class StreamlineArgs:
     fileformat : Optional[str]
     run_mode: Optional[str]
     queue_enabled: Optional[str]
+    update_vault_record: Optional[str]
     
 class CreateService(Command):
     """Command to create a new service configuration."""
@@ -72,6 +73,7 @@ class CreateService(Command):
         parser.add_argument('-f', '--fileformat', type=str, help='file format')
         parser.add_argument('-rm', '--run_mode', type=str, help='run mode')
         parser.add_argument('-q', '--queue_enabled', type=str, help='enable request queue (y/n)')
+        parser.add_argument('--update-vault-record', dest='update_vault_record', type=str, help='CSMD Config record UID to update with service metadata (Docker mode)')
         return parser
     
     def execute(self, params: KeeperParams, **kwargs) -> None:
@@ -86,10 +88,15 @@ class CreateService(Command):
 
             config_data = self.service_config.create_default_config()
 
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'cloudflare', 'cloudflare_custom_domain', 'certfile', 'certpassword', 'fileformat', 'run_mode', 'queue_enabled']}
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'cloudflare', 'cloudflare_custom_domain', 'certfile', 'certpassword', 'fileformat', 'run_mode', 'queue_enabled', 'update_vault_record']}
             args = StreamlineArgs(**filtered_kwargs)
             self._handle_configuration(config_data, params, args)
-            self._create_and_save_record(config_data, params, args)
+            api_key = self._create_and_save_record(config_data, params, args)
+            
+            if args.update_vault_record and api_key:
+                actual_service_url = self._get_service_url(config_data)
+                self._update_vault_record_with_metadata(params, args.update_vault_record, actual_service_url, api_key)
+            
             self._upload_and_start_service(params)
 
         except ValidationError as e:
@@ -107,7 +114,7 @@ class CreateService(Command):
             self.config_handler.handle_interactive_config(config_data, params)
             self.security_handler.configure_security(config_data)
     
-    def _create_and_save_record(self, config_data: Dict[str, Any], params: KeeperParams, args: StreamlineArgs) -> None:
+    def _create_and_save_record(self, config_data: Dict[str, Any], params: KeeperParams, args: StreamlineArgs) -> Optional[str]:
         if args.port is None:
             self.config_handler._configure_run_mode(config_data)
         
@@ -122,7 +129,60 @@ class CreateService(Command):
         if config_data.get("tls_certificate") == "y":
             self.service_config.save_cert_data(config_data, 'create')
         
+        # Return the API key for Docker mode
+        return record.get('api-key')
+        
     def _upload_and_start_service(self, params: KeeperParams) -> None:
         self.service_config.update_or_add_record(params)
         from ..core.service_manager import ServiceManager
         ServiceManager.start_service()
+    
+    def _get_service_url(self, config_data: Dict[str, Any]) -> str:
+        """Determine the actual service URL (ngrok, cloudflare, or localhost)"""
+        # Priority: ngrok > cloudflare > localhost
+        if config_data.get("ngrok_public_url"):
+            return config_data["ngrok_public_url"]
+        elif config_data.get("cloudflare_public_url"):
+            return config_data["cloudflare_public_url"]
+        else:
+            # Fallback to localhost with correct protocol
+            port = config_data.get("port", 8080)
+            protocol = "https" if config_data.get("tls_certificate") == "y" else "http"
+            return f"{protocol}://localhost:{port}"
+    
+    def _update_vault_record_with_metadata(self, params: KeeperParams, record_uid: str, service_url: str, api_key: str) -> None:
+        """Update CSMD Config vault record with service URL and API key as custom fields (Docker mode only)"""
+        try:
+            from ... import vault, record_management, api
+            
+            logger.debug(f"Updating vault record {record_uid} with service metadata...")
+            
+            # Load the CSMD Config record
+            record = vault.KeeperRecord.load(params, record_uid)
+            
+            # Add custom fields for service URL and API key
+            # service_url as URL field, api_key as secret field (hidden)
+            custom_fields = [
+                vault.TypedField.new_field('url', service_url, 'service_url'),
+                vault.TypedField.new_field('secret', api_key, 'api_key'),
+            ]
+            
+            # Preserve existing custom fields if any
+            if hasattr(record, 'custom') and record.custom:
+                # Remove old service_url and api_key fields if they exist
+                existing_fields = [f for f in record.custom if f.label not in ['service_url', 'api_key']]
+                record.custom = existing_fields + custom_fields
+            else:
+                record.custom = custom_fields
+            
+            # Update the record
+            record_management.update_record(params, record)
+            params.sync_data = True
+            api.sync_down(params)
+            
+            logger.debug(f"Successfully updated vault record with service metadata")
+            
+        except Exception as e:
+            logger.error(f"Failed to update vault record with service metadata: {e}")
+            # Don't fail the whole service-create if vault update fails
+            logger.warning(f"Could not update vault record with service metadata: {e}")

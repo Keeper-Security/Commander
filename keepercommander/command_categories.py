@@ -83,7 +83,7 @@ COMMAND_CATEGORIES = {
     # Service Mode REST API
     'Service Mode REST API': {
         'service-create', 'service-add-config', 'service-start', 'service-stop', 'service-status',
-        'service-config-add'
+        'service-config-add', 'service-docker-setup', 'slack-app-setup'
     },
 
     # Email Configuration Commands
