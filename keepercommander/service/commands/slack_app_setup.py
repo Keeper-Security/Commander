@@ -120,7 +120,7 @@ class SlackAppSetupCommand(Command):
         DockerSetupPrinter.print_completion("Docker Setup Complete!")
         
         # Get service configuration
-        service_config = docker_cmd.get_service_configuration()
+        service_config = docker_cmd.get_service_configuration(params)
         
         # Generate initial docker-compose.yml
         docker_cmd.generate_and_save_docker_compose(setup_result, service_config)

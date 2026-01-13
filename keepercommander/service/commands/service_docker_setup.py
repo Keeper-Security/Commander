@@ -88,7 +88,7 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
         
         # Get service configuration
         DockerSetupPrinter.print_completion("Docker Setup Complete!")
-        service_config = self.get_service_configuration()
+        service_config = self.get_service_configuration(params)
         
         # Generate docker-compose.yml
         self.generate_and_save_docker_compose(setup_result, service_config)
@@ -99,7 +99,7 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
         
         return
 
-    def get_service_configuration(self) -> ServiceConfig:
+    def get_service_configuration(self, params) -> ServiceConfig:
         """Interactively get service configuration from user"""
         DockerSetupPrinter.print_header("Service Mode Configuration")
         
@@ -107,7 +107,7 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
         port = self._get_port_config()
         
         # Commands
-        commands = self._get_commands_config()
+        commands = self._get_commands_config(params)
         
         # Queue mode
         queue_enabled = self._get_queue_config()
@@ -189,15 +189,23 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
             except ValidationError as e:
                 print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
 
-    def _get_commands_config(self) -> str:
+    def _get_commands_config(self, params) -> str:
         """Get and validate commands configuration"""
+        from ..config.service_config import ServiceConfig
+        
+        service_config = ServiceConfig()
+        
         print(f"\n{bcolors.BOLD}Allowed Commands:{bcolors.ENDC}")
         print(f"  Enter comma-separated commands (e.g., search,share-record,record-add)")
+        
         while True:
             commands = input(f"{bcolors.OKBLUE}Commands [Press Enter for '{DockerSetupConstants.DEFAULT_COMMANDS}']:{bcolors.ENDC} ").strip() or DockerSetupConstants.DEFAULT_COMMANDS
-            if commands:
-                return commands
-            print(f"{bcolors.FAIL}Error: Commands cannot be empty{bcolors.ENDC}")
+            
+            try:
+                return service_config.validate_command_list(commands, params)
+            except ValidationError as e:
+                print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+                print(f"{bcolors.WARNING}Please try again with valid commands.{bcolors.ENDC}")
 
     def _get_queue_config(self) -> bool:
         """Get queue mode configuration"""
@@ -222,7 +230,19 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
                     break
                 except ValidationError as e:
                     print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
-            config['ngrok_custom_domain'] = input(f"{bcolors.OKBLUE}Ngrok custom domain [Press Enter to skip]:{bcolors.ENDC} ").strip()
+            
+            # Validate custom domain if provided (ngrok allows subdomain prefixes)
+            domain = input(f"{bcolors.OKBLUE}Ngrok custom domain [Press Enter to skip]:{bcolors.ENDC} ").strip()
+            if domain:
+                while True:
+                    try:
+                        config['ngrok_custom_domain'] = ConfigValidator.validate_domain(domain, require_tld=False)
+                        break
+                    except ValidationError as e:
+                        print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+                        domain = input(f"{bcolors.OKBLUE}Ngrok custom domain [Press Enter to skip]:{bcolors.ENDC} ").strip()
+                        if not domain:
+                            break
         
         return config
 
@@ -272,7 +292,18 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
                 except ValidationError as e:
                     print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
             
-            config['cert_password'] = input(f"{bcolors.OKBLUE}Certificate password:{bcolors.ENDC} ").strip()
+            # Certificate password validation (optional)
+            cert_password = input(f"{bcolors.OKBLUE}Certificate password:{bcolors.ENDC} ").strip()
+            if cert_password:
+                while True:
+                    try:
+                        config['cert_password'] = ConfigValidator.validate_certpassword(cert_password)
+                        break
+                    except ValidationError as e:
+                        print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+                        cert_password = input(f"{bcolors.OKBLUE}Certificate password:{bcolors.ENDC} ").strip()
+                        if not cert_password:
+                            break
         
         return config
 
