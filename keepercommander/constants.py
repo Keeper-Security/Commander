@@ -49,6 +49,8 @@ MSP_ADDONS = [
     ('keeper_endpoint_privilege_manager', 'Keeper Endpoint Privilege Manager (KEPM)', True, 'KEPM'),
 ]
 
+KEPM_VALID_SEATS = {1, 25, 50, 100, 500, 1000, 5000, 10000}
+
 
 class PrivilegeScope(enum.IntEnum):
     All = 1,
