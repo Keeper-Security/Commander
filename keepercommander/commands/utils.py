@@ -1499,16 +1499,29 @@ class WhoamiCommand(Command):
                         paid = x.get('paid') is True
                         if paid:
                             exp = x.get('expiration')
-                            if exp > 0:
-                                dt = datetime.datetime.fromtimestamp(exp // 1000) + datetime.timedelta(days=1)
-                                n = datetime.datetime.now()
-                                td = (dt - n).days
-                                expires = str(dt.date())
-                                if td > 0:
-                                    expires += f' (in {td} days)'
-                                else:
-                                    expires += f' ({Fore.RED}expired{Fore.RESET})'
-                                print(label_value('Expires', expires))
+                            try:
+                                exp_seconds = int(exp) // 1000
+                            except (TypeError, ValueError):
+                                exp_seconds = 0
+                            if exp_seconds > 0:
+                                try:
+                                    dt = datetime.datetime.fromtimestamp(exp_seconds)
+                                except (OSError, OverflowError, ValueError):
+                                    # Avoid platform timestamp limits for far-future licenses.
+                                    try:
+                                        dt = datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=exp_seconds)
+                                    except (OverflowError, ValueError):
+                                        dt = None
+                                if dt:
+                                    dt = dt + datetime.timedelta(days=1)
+                                    n = datetime.datetime.now()
+                                    td = (dt - n).days
+                                    expires = str(dt.date())
+                                    if td > 0:
+                                        expires += f' (in {td} days)'
+                                    else:
+                                        expires += f' ({Fore.RED}expired{Fore.RESET})'
+                                    print(label_value('Expires', expires))
                         seats_plan = x.get("number_of_seats", "")
                         seats_active = x.get("seats_allocated", "")
                         seats_invited = x.get("seats_pending", "")

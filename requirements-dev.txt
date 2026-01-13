@@ -1,2 +1,3 @@
 radon
 pylint
+pytest
