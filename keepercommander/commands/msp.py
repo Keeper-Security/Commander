@@ -27,6 +27,11 @@ from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import enterprise_pb2, BI_pb2, APIRequest_pb2
 
+# Addon name constants
+KEPM_ADDON = 'keeper_endpoint_privilege_manager'
+REMOTE_BROWSER_ISOLATION_ADDON = 'remote_browser_isolation'
+CONNECTION_MANAGER_ADDON = 'connection_manager'
+
 
 def register_commands(commands):
     commands['msp-down'] = GetMSPDataCommand()
@@ -506,7 +511,7 @@ class MSPUpdateCommand(EnterpriseCommand):
                         raise CommandError('msp-update',f'Addon \"{addon_name}\" is not found')
                     addon_seats = 0
                     if sep == ':' and addon[2] and action == 'add_addon':
-                        if addon_name == 'keeper_endpoint_privilege_manager' and seats.strip() == '-1':
+                        if addon_name == KEPM_ADDON and seats.strip() == '-1':
                             addon_seats = 2147483647  
                             seats = '2147483647'  
                         else:
@@ -515,7 +520,7 @@ class MSPUpdateCommand(EnterpriseCommand):
                             except:
                                 raise CommandError('msp-update',
                                                    f'Addon \"{addon_name}\". Number of seats \"{seats}\" is not integer')
-                        if addon_name == 'keeper_endpoint_privilege_manager':
+                        if addon_name == KEPM_ADDON:
                             valid_int_seats = {x for x in constants.KEPM_VALID_SEATS if isinstance(x, int)}
                             if addon_seats not in valid_int_seats and addon_seats != 2147483647:
                                 valid_values = ', '.join(str(x) for x in sorted(valid_int_seats) + ['-1 (for unlimited)'])
@@ -537,16 +542,16 @@ class MSPUpdateCommand(EnterpriseCommand):
                             del addons[addon_name]
         
         addon_names = {name.lower() for name in addons.keys()}
-        if 'remote_browser_isolation' in addon_names:
-            if 'connection_manager' not in addon_names:
+        if REMOTE_BROWSER_ISOLATION_ADDON in addon_names:
+            if CONNECTION_MANAGER_ADDON not in addon_names:
                 raise CommandError('msp-update',
-                                   'Addon \"remote_browser_isolation\" requires \"connection_manager\" to be selected')
-            cm_addon = addons.get('connection_manager')
+                                   f'Addon \"{REMOTE_BROWSER_ISOLATION_ADDON}\" requires \"{CONNECTION_MANAGER_ADDON}\" to be selected')
+            cm_addon = addons.get(CONNECTION_MANAGER_ADDON)
             if cm_addon:
                 cm_seats = cm_addon.get('seats', 0)
                 if not cm_seats or cm_seats == 0:
                     raise CommandError('msp-update',
-                                       'Addon \"remote_browser_isolation\" requires \"connection_manager\" to have seats specified (e.g., connection_manager:N)')
+                                       f'Addon \"{REMOTE_BROWSER_ISOLATION_ADDON}\" requires \"{CONNECTION_MANAGER_ADDON}\" to have seats specified (e.g., {CONNECTION_MANAGER_ADDON}:N)')
         
         rq['add_ons'] = list(addons.values())
         rs = api.communicate(params, rq)
@@ -980,7 +985,7 @@ class MSPAddCommand(EnterpriseCommand):
                         return
                 addon_seats = 0
                 if sep == ':' and addon[2]:
-                    if addon_name == 'keeper_endpoint_privilege_manager' and seats.strip() == '-1':
+                    if addon_name == KEPM_ADDON and seats.strip() == '-1':
                         addon_seats = 2147483647  # Use max int for unlimited, similar to seats handling
                     else:
                         try:
@@ -988,7 +993,7 @@ class MSPAddCommand(EnterpriseCommand):
                         except:
                             logging.warning('Addon \"%s\". Number of seats \"%s\" is not integer', addon_name, seats)
                             return
-                    if addon_name == 'keeper_endpoint_privilege_manager':
+                    if addon_name == KEPM_ADDON:
                         valid_int_seats = {x for x in constants.KEPM_VALID_SEATS if isinstance(x, int)}
                         if addon_seats not in valid_int_seats and addon_seats != 2147483647:
                             valid_values = ', '.join(str(x) for x in sorted(valid_int_seats) + ['-1 (for unlimited)'])
@@ -1005,12 +1010,12 @@ class MSPAddCommand(EnterpriseCommand):
                 rq['add_ons'].append(rqa)
 
             # Validate that Remote Browser Isolation requires Keeper Connection Manager with seats
-            if 'remote_browser_isolation' in addon_data:
-                if 'connection_manager' not in addon_data:
-                    logging.warning('Addon \"remote_browser_isolation\" requires \"connection_manager\" to be selected')
+            if REMOTE_BROWSER_ISOLATION_ADDON in addon_data:
+                if CONNECTION_MANAGER_ADDON not in addon_data:
+                    logging.warning('Addon \"%s\" requires \"%s\" to be selected', REMOTE_BROWSER_ISOLATION_ADDON, CONNECTION_MANAGER_ADDON)
                     return
-                if addon_data['connection_manager'] == 0:
-                    logging.warning('Addon \"remote_browser_isolation\" requires \"connection_manager\" to have seats specified (e.g., connection_manager:N)')
+                if addon_data[CONNECTION_MANAGER_ADDON] == 0:
+                    logging.warning('Addon \"%s\" requires \"%s\" to have seats specified (e.g., %s:N)', REMOTE_BROWSER_ISOLATION_ADDON, CONNECTION_MANAGER_ADDON, CONNECTION_MANAGER_ADDON)
                     return
 
         company_id = -1
