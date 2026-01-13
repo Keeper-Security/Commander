@@ -68,11 +68,15 @@ if sys.version_info >= (3, 8):
             
             with mock.patch('sys.platform', 'linux'), \
                 mock.patch('os.getpid', return_value=9999), \
-                mock.patch('psutil.Process') as mock_process:
+                mock.patch('psutil.Process') as mock_process, \
+                mock.patch('keepercommander.service.core.service_manager.ServiceManager.kill_process_by_pid', return_value=True) as mock_kill, \
+                mock.patch('keepercommander.service.core.service_manager.ServiceManager.kill_ngrok_processes', return_value=False), \
+                mock.patch('keepercommander.service.core.service_manager.ServiceManager.kill_cloudflare_processes', return_value=False):
                 
                 stop_cmd = StopService()
                 stop_cmd.execute(self.params)
                 
+                mock_kill.assert_called_once_with(12345)
                 mock_process.return_value.terminate.assert_called_once()
                 self.assertFalse(ProcessInfo._env_file.exists())
 

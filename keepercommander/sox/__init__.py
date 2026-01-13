@@ -6,6 +6,7 @@ import sys
 from typing import Dict, Tuple
 
 from .. import api, crypto, utils
+from ..display import Spinner
 
 # Module-level connection cache to ensure single connection per database
 _connection_cache = {}  # type: Dict[str, sqlite3.Connection]
@@ -75,6 +76,19 @@ def get_sox_database_name(params, enterprise_id):  # type: (KeeperParams, int) -
 def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache_only=False, no_cache=False, shared_only=False):
     # type: (KeeperParams, int, bool, int, bool, bool, bool) -> sox_data.SoxData
     def sync_down(name_by_id, store):  # type: (Dict[int, str], sqlite_storage.SqliteSoxStorage) ->  None
+        spinner = None
+        use_spinner = not params.batch_mode
+
+        def start_spinner():
+            nonlocal spinner
+            if use_spinner and not spinner:
+                spinner = Spinner('Loading record information...')
+                spinner.start()
+
+        def stop_spinner():
+            if spinner:
+                spinner.stop()
+
         def to_storage_types(user_data, username_lookup):
             def to_record_entity(record):
                 record_uid_bytes = record.recordUid
@@ -108,10 +122,16 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
             return user_ent, record_ents, user_rec_links
 
         def print_status(users_loaded, users_total, records_loaded, records_total):
+            message = (f'Loading record information - Users: {users_loaded}/{users_total}, '
+                       f'Current Batch: {records_loaded}/{records_total}')
+            if spinner:
+                spinner.message = message
+                return
             print('\r' + (100 * ' '), file=sys.stderr, end='', flush=True)
-            print(f'\rLoading record information - Users: {users_loaded}/{users_total}, Current Batch: {records_loaded}/{records_total}', file=sys.stderr, end='', flush=True)
+            print(f'\r{message}', file=sys.stderr, end='', flush=True)
 
         def sync_all():
+            start_spinner()
             user_ids = list(user_lookup.keys())
             users_total = len(user_ids)
             records_total = 0
@@ -170,8 +190,16 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
                 logging.error(f'Data could not fetched for the following users: \n{problem_emails}')
 
             store.rebuild_prelim_data(users, records, links)
-        sync_all()
-        print('', file=sys.stderr, flush=True)
+        success = False
+        try:
+            sync_all()
+            success = True
+        finally:
+            stop_spinner()
+        if spinner and success:
+            print('Preliminary compliance data loaded.', flush=True)
+        elif not spinner:
+            print('', file=sys.stderr, flush=True)
 
     validate_data_access(params)
     enterprise_id = enterprise_id or next(((x['node_id'] >> 32) for x in params.enterprise['nodes']), 0)
@@ -200,12 +228,30 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
 def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_updated=0, no_cache=False, shared_only=False):
     def sync_down(sdata, node_uid, user_node_id_lookup):
         recs_processed = 0
+        spinner = None
+        use_spinner = not params.batch_mode
+
         def print_status(pct_done):
+            message = f'Loading compliance data - {pct_done * 100:.2f}%'
+            if spinner:
+                spinner.message = message
+                return
             print('\r' + (100 * ' '), file=sys.stderr, end='', flush=True)
-            print(f'\rLoading compliance data - {pct_done * 100:.2f}%', file=sys.stderr, end='', flush=True)
+            print(f'\r{message}', file=sys.stderr, end='', flush=True)
+
+        def start_spinner():
+            nonlocal spinner
+            if use_spinner and not spinner:
+                spinner = Spinner('Loading compliance data...')
+                spinner.start()
+
+        def stop_spinner():
+            if spinner:
+                spinner.stop()
 
         def run_sync_tasks():
             def do_tasks():
+                start_spinner()
                 print_status(0)
                 users_uids = [int(uid) for uid in sdata.get_users()]
                 record_uids_raw = [rec.record_uid_bytes for rec in sdata.get_records().values()]
@@ -215,9 +261,17 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                 for chunk in ruid_chunks:
                     sync_chunk(chunk, users_uids)
                 sdata.storage.set_compliance_data_updated()
-                print('', file=sys.stderr, flush=True)
+                if not spinner:
+                    print('', file=sys.stderr, flush=True)
 
-            do_tasks()
+            success = False
+            try:
+                do_tasks()
+                success = True
+            finally:
+                stop_spinner()
+            if spinner and success:
+                print('Compliance data loaded.', flush=True)
 
         def sync_chunk(chunk, uuids):
             rs = fetch_response(raw_ruids=chunk, user_uids=uuids)
