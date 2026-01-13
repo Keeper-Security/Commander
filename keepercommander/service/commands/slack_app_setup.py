@@ -6,18 +6,23 @@
 #
 # Keeper Commander
 # Copyright 2026 Keeper Security Inc.
-# Contact: ops@keepersecurity.com
+# Contact: commander@keepersecurity.com
 #
 
 import argparse
 import os
-from typing import Dict, Any
+from dataclasses import asdict
+from typing import Dict, Any, Tuple, Optional
 
 from ...commands.base import Command, raise_parse_exception, suppress_exit
 from ...display import bcolors
 from ...error import CommandError
 from ... import api, vault, record_management
-from .service_docker_setup import ServiceDockerSetupCommand, SetupResult, DockerSetupPrinter
+from .service_docker_setup import ServiceDockerSetupCommand
+from ..docker import (
+    SetupResult, DockerSetupPrinter, DockerSetupConstants,
+    ServiceConfig, DockerComposeBuilder
+)
 
 slack_app_setup_parser = argparse.ArgumentParser(
     prog='slack-app-setup',
@@ -25,36 +30,32 @@ slack_app_setup_parser = argparse.ArgumentParser(
     formatter_class=argparse.RawDescriptionHelpFormatter
 )
 slack_app_setup_parser.add_argument(
-    '--folder-name', dest='folder_name', type=str, default='CSMD Folder',
-    help='Name for the shared folder (default: "CSMD Folder")'
+    '--folder-name', dest='folder_name', type=str, default=DockerSetupConstants.DEFAULT_FOLDER_NAME,
+    help=f'Name for the shared folder (default: "{DockerSetupConstants.DEFAULT_FOLDER_NAME}")'
 )
 slack_app_setup_parser.add_argument(
-    '--app-name', dest='app_name', type=str, default='CSMD KSM App',
-    help='Name for the secrets manager app (default: "CSMD KSM App")'
+    '--app-name', dest='app_name', type=str, default=DockerSetupConstants.DEFAULT_APP_NAME,
+    help=f'Name for the secrets manager app (default: "{DockerSetupConstants.DEFAULT_APP_NAME}")'
 )
 slack_app_setup_parser.add_argument(
-    '--config-record-name', dest='config_record_name', type=str, default='CSMD Config',
-    help='Name for the config record (default: "CSMD Config")'
+    '--config-record-name', dest='config_record_name', type=str, default=DockerSetupConstants.DEFAULT_RECORD_NAME,
+    help=f'Name for the config record (default: "{DockerSetupConstants.DEFAULT_RECORD_NAME}")'
 )
 slack_app_setup_parser.add_argument(
-    '--slack-record-name', dest='slack_record_name', type=str, default='CSMD Slack Config',
-    help='Name for the Slack config record (default: "CSMD Slack Config")'
+    '--slack-record-name', dest='slack_record_name', type=str, default=DockerSetupConstants.DEFAULT_SLACK_RECORD_NAME,
+    help=f'Name for the Slack config record (default: "{DockerSetupConstants.DEFAULT_SLACK_RECORD_NAME}")'
 )
 slack_app_setup_parser.add_argument(
     '--config-path', dest='config_path', type=str,
     help='Path to config.json file (default: ~/.keeper/config.json)'
 )
 slack_app_setup_parser.add_argument(
-    '--timeout', dest='timeout', type=str, default='30d',
-    help='Device timeout setting (default: 30d)'
+    '--timeout', dest='timeout', type=str, default=DockerSetupConstants.DEFAULT_TIMEOUT,
+    help=f'Device timeout setting (default: {DockerSetupConstants.DEFAULT_TIMEOUT})'
 )
 slack_app_setup_parser.add_argument(
     '--skip-device-setup', dest='skip_device_setup', action='store_true',
     help='Skip device registration and setup if already configured'
-)
-slack_app_setup_parser.add_argument(
-    '--force', dest='force', action='store_true',
-    help='Force recreation even if resources already exist'
 )
 slack_app_setup_parser.error = raise_parse_exception
 slack_app_setup_parser.exit = suppress_exit
@@ -71,7 +72,7 @@ class SlackAppSetupCommand(Command):
         # Phase 1: Run base Docker setup
         print(f"\n{bcolors.BOLD}Phase 1: Running Docker Service Mode Setup{bcolors.ENDC}")
         
-        setup_result, service_config = self._run_base_docker_setup(params, kwargs)
+        setup_result, service_config, config_path = self._run_base_docker_setup(params, kwargs)
         
         DockerSetupPrinter.print_completion("Service Mode Configuration Complete!")
         
@@ -81,19 +82,19 @@ class SlackAppSetupCommand(Command):
         slack_record_uid, slack_config = self._run_slack_setup(
             params,
             setup_result,
-            kwargs.get('slack_record_name', 'CSMD Slack Config'),
-            kwargs.get('force', False)
+            service_config,
+            kwargs.get('slack_record_name', DockerSetupConstants.DEFAULT_SLACK_RECORD_NAME)
         )
         
         # Print consolidated success message
-        self._print_success_message(setup_result, service_config, slack_record_uid, slack_config)
+        self._print_success_message(setup_result, service_config, slack_record_uid, slack_config, config_path)
         
-        return ''
+        return
 
-    def _run_base_docker_setup(self, params, kwargs: Dict[str, Any]) -> tuple:
+    def _run_base_docker_setup(self, params, kwargs: Dict[str, Any]) -> Tuple[SetupResult, Dict[str, Any], str]:
         """
         Run the base Docker setup using ServiceDockerSetupCommand.
-        Returns (SetupResult, service_config)
+        Returns (SetupResult, service_config, config_path)
         """
         docker_cmd = ServiceDockerSetupCommand()
         
@@ -108,13 +109,12 @@ class SlackAppSetupCommand(Command):
         # Run core setup steps (Steps 1-7)
         setup_result = docker_cmd.run_setup_steps(
             params=params,
-            folder_name=kwargs.get('folder_name', 'CSMD Folder'),
-            app_name=kwargs.get('app_name', 'CSMD KSM App'),
-            record_name=kwargs.get('config_record_name', 'CSMD Config'),
+            folder_name=kwargs.get('folder_name', DockerSetupConstants.DEFAULT_FOLDER_NAME),
+            app_name=kwargs.get('app_name', DockerSetupConstants.DEFAULT_APP_NAME),
+            record_name=kwargs.get('config_record_name', DockerSetupConstants.DEFAULT_RECORD_NAME),
             config_path=config_path,
-            timeout=kwargs.get('timeout', '30d'),
-            skip_device_setup=kwargs.get('skip_device_setup', False),
-            force=kwargs.get('force', False)
+            timeout=kwargs.get('timeout', DockerSetupConstants.DEFAULT_TIMEOUT),
+            skip_device_setup=kwargs.get('skip_device_setup', False)
         )
         
         DockerSetupPrinter.print_completion("Docker Setup Complete!")
@@ -125,10 +125,10 @@ class SlackAppSetupCommand(Command):
         # Generate initial docker-compose.yml
         docker_cmd.generate_and_save_docker_compose(setup_result, service_config)
         
-        return setup_result, service_config
+        return setup_result, service_config, config_path
 
-    def _run_slack_setup(self, params, setup_result: SetupResult, 
-                        slack_record_name: str, force: bool) -> tuple:
+    def _run_slack_setup(self, params, setup_result: SetupResult, service_config: ServiceConfig,
+                        slack_record_name: str) -> Tuple[str, Dict[str, Any]]:
         """
         Run Slack-specific setup steps.
         Returns (slack_record_uid, slack_config)
@@ -143,13 +143,12 @@ class SlackAppSetupCommand(Command):
             params,
             slack_record_name,
             setup_result.folder_uid,
-            slack_config,
-            force
+            slack_config
         )
         
         # Update docker-compose.yml
         DockerSetupPrinter.print_step(2, 2, "Updating docker-compose.yml with Slack App service...")
-        self._update_docker_compose_yaml(setup_result, slack_record_uid)
+        self._update_docker_compose_yaml(setup_result, service_config, slack_record_uid)
         
         return slack_record_uid, slack_config
 
@@ -160,8 +159,8 @@ class SlackAppSetupCommand(Command):
         print(f"  App-level token for Slack App")
         slack_app_token = self._prompt_with_validation(
             "Token (starts with xapp-):",
-            lambda t: t and t.startswith('xapp-'),
-            "Invalid Slack App Token (must start with 'xapp-')"
+            lambda t: t and t.startswith('xapp-') and len(t) >= 90,
+            "Invalid Slack App Token (must start with 'xapp-' and be at least 90 chars)"
         )
         
         # Slack Bot Token
@@ -169,8 +168,8 @@ class SlackAppSetupCommand(Command):
         print(f"  Bot token for Slack workspace")
         slack_bot_token = self._prompt_with_validation(
             "Token (starts with xoxb-):",
-            lambda t: t and t.startswith('xoxb-'),
-            "Invalid Slack Bot Token (must start with 'xoxb-')"
+            lambda t: t and t.startswith('xoxb-') and len(t) >= 50,
+            "Invalid Slack Bot Token (must start with 'xoxb-' and be at least 50 chars)"
         )
         
         # Slack Signing Secret
@@ -178,8 +177,8 @@ class SlackAppSetupCommand(Command):
         print(f"  Signing secret for verifying Slack requests")
         slack_signing_secret = self._prompt_with_validation(
             "Secret:",
-            lambda s: bool(s),
-            "Slack Signing Secret cannot be empty"
+            lambda s: s and len(s) == 32,
+            "Invalid Slack Signing Secret (must be exactly 32 characters)"
         )
         
         # Approvals Channel ID
@@ -229,7 +228,7 @@ class SlackAppSetupCommand(Command):
             print(f"{bcolors.FAIL}Error: {error_msg}{bcolors.ENDC}")
 
     def _create_slack_record(self, params, record_name: str, folder_uid: str,
-                            slack_config: Dict[str, Any], force: bool) -> str:
+                            slack_config: Dict[str, Any]) -> str:
         """Create or update Slack configuration record"""
         # Check if record exists
         record_uid = self._find_existing_record(params, folder_uid, record_name)
@@ -246,7 +245,7 @@ class SlackAppSetupCommand(Command):
         DockerSetupPrinter.print_success(f"Slack config record ready (UID: {record_uid})")
         return record_uid
 
-    def _find_existing_record(self, params, folder_uid: str, record_name: str) -> str:
+    def _find_existing_record(self, params, folder_uid: str, record_name: str) -> Optional[str]:
         """Find existing record by name in folder"""
         if folder_uid in params.subfolder_record_cache:
             for rec_uid in params.subfolder_record_cache[folder_uid]:
@@ -299,54 +298,37 @@ class SlackAppSetupCommand(Command):
         except Exception as e:
             raise CommandError('slack-app-setup', f'Failed to update Slack record fields: {str(e)}')
 
-    def _update_docker_compose_yaml(self, setup_result: SetupResult, slack_record_uid: str) -> None:
-        """Update the existing docker-compose.yml to add Slack app service"""
+    def _update_docker_compose_yaml(self, setup_result: SetupResult, service_config: ServiceConfig, 
+                                     slack_record_uid: str) -> None:
+        """Regenerate docker-compose.yml with Slack app service"""
         compose_file = os.path.join(os.getcwd(), 'docker-compose.yml')
         
         if not os.path.exists(compose_file):
             raise CommandError('slack-app-setup', f'docker-compose.yml not found at {compose_file}')
         
         try:
+            # Check if slack-app already exists
             with open(compose_file, 'r') as f:
                 content = f.read()
             
-            # Check if slack-app already exists
             if 'slack-app:' in content:
                 DockerSetupPrinter.print_warning("slack-app service already exists in docker-compose.yml")
                 return
             
-            # Generate Slack app service section
-            slack_app_service = self._generate_slack_service_yaml(setup_result, slack_record_uid)
-            
-            # Append to existing content
-            updated_content = content.rstrip() + slack_app_service
+            # Regenerate docker-compose.yml with both Commander and Slack App
+            builder = DockerComposeBuilder(setup_result, asdict(service_config))
+            yaml_content = builder.add_slack_service(slack_record_uid).build()
             
             with open(compose_file, 'w') as f:
-                f.write(updated_content)
+                f.write(yaml_content)
             
             DockerSetupPrinter.print_success("docker-compose.yml updated successfully")
             
         except Exception as e:
             raise CommandError('slack-app-setup', f'Failed to update docker-compose.yml: {str(e)}')
 
-    def _generate_slack_service_yaml(self, setup_result: SetupResult, slack_record_uid: str) -> str:
-        """Generate YAML section for Slack app service"""
-        return f"""    
-    slack-app:
-        container_name: keeper-slack-app
-        image: keeper/slack-app:latest
-        config:
-            ksm-config: {setup_result.b64_config}
-            commander-record: {setup_result.record_uid}
-            slack-record: {slack_record_uid}
-        depends_on:
-            commander:
-                condition: service_healthy
-        restart: unless-stopped
-"""
-
-    def _print_success_message(self, setup_result: SetupResult, service_config: Dict[str, Any],
-                               slack_record_uid: str, slack_config: Dict[str, Any]) -> None:
+    def _print_success_message(self, setup_result: SetupResult, service_config: ServiceConfig,
+                               slack_record_uid: str, slack_config: Dict[str, Any], config_path: str) -> None:
         """Print consolidated success message for both phases"""
         print(f"\n{bcolors.OKGREEN}{bcolors.BOLD}✓ Slack App Integration Setup Complete!{bcolors.ENDC}\n")
 
@@ -361,11 +343,11 @@ class SlackAppSetupCommand(Command):
         print(f"    • Device Approval: {bcolors.OKBLUE}{slack_config['device_approval_enabled']}{bcolors.ENDC}")
         
         # Next steps
-        self._print_next_steps(service_config)
+        self._print_next_steps(service_config, config_path)
 
-    def _print_next_steps(self, service_config: Dict[str, Any]) -> None:
+    def _print_next_steps(self, service_config: ServiceConfig, config_path: str) -> None:
         """Print deployment next steps for Slack integration"""
-        DockerSetupPrinter.print_common_deployment_steps(service_config['port'])
+        DockerSetupPrinter.print_common_deployment_steps(str(service_config.port), config_path)
         
         # Slack-specific logs
         print(f"  {bcolors.OKGREEN}docker logs keeper-slack-app{bcolors.ENDC} - View Slack App logs")

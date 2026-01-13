@@ -73,7 +73,7 @@ class CreateService(Command):
         parser.add_argument('-f', '--fileformat', type=str, help='file format')
         parser.add_argument('-rm', '--run_mode', type=str, help='run mode')
         parser.add_argument('-q', '--queue_enabled', type=str, help='enable request queue (y/n)')
-        parser.add_argument('--update-vault-record', dest='update_vault_record', type=str, help='CSMD Config record UID to update with service metadata (Docker mode)')
+        parser.add_argument('-ur', '--update-vault-record', dest='update_vault_record', type=str, help='CSMD Config record UID to update with service metadata (Docker mode)')
         return parser
     
     def execute(self, params: KeeperParams, **kwargs) -> None:
