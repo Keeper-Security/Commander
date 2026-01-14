@@ -413,7 +413,8 @@ class MSPInfoCommand(EnterpriseCommand, MSPMixin):
                         if seats > 0:
                             addon_def = next((x for x in constants.MSP_ADDONS if x[0] == addon_name), None)
                             if addon_def and addon_def[2]:  # addon_def[2] indicates if seats are supported
-                                addon_list.append(f"{addon_name}:{seats}")
+                                display_seats = -1 if seats == 2147483647 else seats
+                                addon_list.append(f"{addon_name}:{display_seats}")
                             else:
                                 addon_list.append(addon_name)
                         else:
