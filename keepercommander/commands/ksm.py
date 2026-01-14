@@ -331,7 +331,7 @@ class KSMCommand(Command):
                 if len(client_names_or_ids) == 1 and client_names_or_ids[0] in ['*', 'all']:
                     KSMCommand.remove_all_clients(params, app_name_or_uid, force)
                 else:
-                    KSMCommand.remove_client(params, app_name_or_uid, client_names_or_ids)
+                    KSMCommand.remove_client(params, app_name_or_uid, client_names_or_ids, force)
 
                 return
 
@@ -954,10 +954,10 @@ class KSMCommand(Command):
         client_ids_to_rem = [utils.base64_url_encode(c.clientId) for ai in app_info
                              for c in ai.clients if c.appClientType == enterprise_pb2.GENERAL]
         if len(client_ids_to_rem) > 0:
-            KSMCommand.remove_client(params, app_name_or_uid, client_ids_to_rem)
+            KSMCommand.remove_client(params, app_name_or_uid, client_ids_to_rem, force=True)
 
     @staticmethod
-    def remove_client(params, app_name_or_uid, client_names_and_hashes):
+    def remove_client(params, app_name_or_uid, client_names_and_hashes, force=False):
 
         def convert_ids_and_hashes_to_hashes(cnahs, app_uid):
 
@@ -996,7 +996,8 @@ class KSMCommand(Command):
         if found_clients_count == 0:
             print(bcolors.WARNING + "No Client Devices found with given name or ID\n" + bcolors.ENDC)
             return
-        else:
+        
+        if not force:
             uc = user_choice(f'\tAre you sure you want to delete {found_clients_count} matching clients from this application?',
                              'yn', default='n')
             if uc.lower() != 'y':
