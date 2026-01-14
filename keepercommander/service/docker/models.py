@@ -86,3 +86,16 @@ class ServiceConfig:
     cert_file: str
     cert_password: str
 
+
+@dataclass
+class SlackConfig:
+    """Slack App configuration for Docker deployment"""
+    slack_app_token: str
+    slack_bot_token: str
+    slack_signing_secret: str
+    approvals_channel_id: str
+    pedm_enabled: bool = False
+    pedm_polling_interval: int = 120
+    device_approval_enabled: bool = False
+    device_approval_polling_interval: int = 120
+

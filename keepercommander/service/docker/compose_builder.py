@@ -95,10 +95,10 @@ class DockerComposeBuilder:
         return {
             'container_name': 'keeper-slack-app',
             'image': 'keeper/slack-app:latest',
-            'config': {
-                'ksm-config': self.setup_result.b64_config,
-                'commander-record': self.setup_result.record_uid,
-                'slack-record': slack_record_uid
+            'environment': {
+                'KSM_CONFIG': self.setup_result.b64_config,
+                'COMMANDER_RECORD': self.setup_result.record_uid,
+                'SLACK_RECORD': slack_record_uid
             },
             'depends_on': {
                 'commander': {

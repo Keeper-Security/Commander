@@ -19,9 +19,10 @@ from ...display import bcolors
 from ...error import CommandError
 from ... import api, vault, record_management
 from .service_docker_setup import ServiceDockerSetupCommand
+from ..config.config_validation import ConfigValidator, ValidationError
 from ..docker import (
     SetupResult, DockerSetupPrinter, DockerSetupConstants,
-    ServiceConfig, DockerComposeBuilder
+    ServiceConfig, SlackConfig, DockerComposeBuilder
 )
 
 slack_app_setup_parser = argparse.ArgumentParser(
@@ -119,16 +120,47 @@ class SlackAppSetupCommand(Command):
         
         DockerSetupPrinter.print_completion("Docker Setup Complete!")
         
-        # Get service configuration
-        service_config = docker_cmd.get_service_configuration(params)
+        # Get simplified service configuration for Slack App
+        service_config = self._get_slack_service_configuration()
         
         # Generate initial docker-compose.yml
         docker_cmd.generate_and_save_docker_compose(setup_result, service_config)
         
         return setup_result, service_config, config_path
 
+    def _get_slack_service_configuration(self) -> ServiceConfig:
+        """Get simplified service configuration for Slack App (only port needed)"""
+        DockerSetupPrinter.print_header("Service Mode Configuration")
+        
+        # Only ask for port with validation
+        print(f"{bcolors.BOLD}Port:{bcolors.ENDC}")
+        print(f"  The port on which Commander Service will listen")
+        while True:
+            port_input = input(f"{bcolors.OKBLUE}Port [Press Enter for {DockerSetupConstants.DEFAULT_PORT}]:{bcolors.ENDC} ").strip() or str(DockerSetupConstants.DEFAULT_PORT)
+            try:
+                port = ConfigValidator.validate_port(port_input)
+                break
+            except ValidationError as e:
+                print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+        
+        # Fixed configuration for Slack App
+        return ServiceConfig(
+            port=port,
+            commands='search,share-record,share-folder,record-add,one-time-share,pedm,device-approve,get',
+            queue_enabled=True,  # Always enable queue mode (v2 API)
+            ngrok_enabled=False,
+            ngrok_auth_token='',
+            ngrok_custom_domain='',
+            cloudflare_enabled=False,
+            cloudflare_tunnel_token='',
+            cloudflare_custom_domain='',
+            tls_enabled=False,
+            cert_file='',
+            cert_password=''
+        )
+
     def _run_slack_setup(self, params, setup_result: SetupResult, service_config: ServiceConfig,
-                        slack_record_name: str) -> Tuple[str, Dict[str, Any]]:
+                        slack_record_name: str) -> Tuple[str, SlackConfig]:
         """
         Run Slack-specific setup steps.
         Returns (slack_record_uid, slack_config)
@@ -152,7 +184,7 @@ class SlackAppSetupCommand(Command):
         
         return slack_record_uid, slack_config
 
-    def _get_slack_configuration(self) -> Dict[str, Any]:
+    def _get_slack_configuration(self) -> SlackConfig:
         """Interactively get Slack configuration from user"""
         # Slack App Token
         print(f"\n{bcolors.BOLD}SLACK_APP_TOKEN:{bcolors.ENDC}")
@@ -194,30 +226,32 @@ class SlackAppSetupCommand(Command):
         print(f"\n{bcolors.BOLD}PEDM (Endpoint Privilege Manager) Integration (optional):{bcolors.ENDC}")
         print(f"  Integrate with Keeper PEDM for privilege elevation")
         pedm_enabled = input(f"{bcolors.OKBLUE}Enable PEDM? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
-        pedm_polling_interval = "120"
+        pedm_polling_interval = 120
         if pedm_enabled:
-            pedm_polling_interval = input(f"{bcolors.OKBLUE}PEDM polling interval in seconds [Press Enter for 120]:{bcolors.ENDC} ").strip() or "120"
+            interval_input = input(f"{bcolors.OKBLUE}PEDM polling interval in seconds [Press Enter for 120]:{bcolors.ENDC} ").strip()
+            pedm_polling_interval = int(interval_input) if interval_input else 120
         
         # Device Approval Integration (optional)
         print(f"\n{bcolors.BOLD}SSO Cloud Device Approval Integration (optional):{bcolors.ENDC}")
         print(f"  Approve SSO Cloud device registrations via Slack")
         device_approval_enabled = input(f"{bcolors.OKBLUE}Enable Device Approval? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
-        device_approval_polling_interval = "120"
+        device_approval_polling_interval = 120
         if device_approval_enabled:
-            device_approval_polling_interval = input(f"{bcolors.OKBLUE}Device approval polling interval in seconds [Press Enter for 120]:{bcolors.ENDC} ").strip() or "120"
+            interval_input = input(f"{bcolors.OKBLUE}Device approval polling interval in seconds [Press Enter for 120]:{bcolors.ENDC} ").strip()
+            device_approval_polling_interval = int(interval_input) if interval_input else 120
         
         print(f"\n{bcolors.OKGREEN}{bcolors.BOLD}✓ Slack Configuration Complete!{bcolors.ENDC}")
         
-        return {
-            'slack_app_token': slack_app_token,
-            'slack_bot_token': slack_bot_token,
-            'slack_signing_secret': slack_signing_secret,
-            'approvals_channel_id': approvals_channel_id,
-            'pedm_enabled': 'true' if pedm_enabled else 'false',
-            'pedm_polling_interval': pedm_polling_interval,
-            'device_approval_enabled': 'true' if device_approval_enabled else 'false',
-            'device_approval_polling_interval': device_approval_polling_interval
-        }
+        return SlackConfig(
+            slack_app_token=slack_app_token,
+            slack_bot_token=slack_bot_token,
+            slack_signing_secret=slack_signing_secret,
+            approvals_channel_id=approvals_channel_id,
+            pedm_enabled=pedm_enabled,
+            pedm_polling_interval=pedm_polling_interval,
+            device_approval_enabled=device_approval_enabled,
+            device_approval_polling_interval=device_approval_polling_interval
+        )
 
     def _prompt_with_validation(self, prompt: str, validator, error_msg: str) -> str:
         """Helper method to prompt user input with validation"""
@@ -228,7 +262,7 @@ class SlackAppSetupCommand(Command):
             print(f"{bcolors.FAIL}Error: {error_msg}{bcolors.ENDC}")
 
     def _create_slack_record(self, params, record_name: str, folder_uid: str,
-                            slack_config: Dict[str, Any]) -> str:
+                            slack_config: SlackConfig) -> str:
         """Create or update Slack configuration record"""
         # Check if record exists
         record_uid = self._find_existing_record(params, folder_uid, record_name)
@@ -274,21 +308,21 @@ class SlackAppSetupCommand(Command):
         except Exception as e:
             raise CommandError('slack-app-setup', f'Failed to create Slack record: {str(e)}')
 
-    def _update_slack_record_fields(self, params, record_uid: str, slack_config: Dict[str, Any]) -> None:
+    def _update_slack_record_fields(self, params, record_uid: str, slack_config: SlackConfig) -> None:
         """Update record with Slack configuration custom fields"""
         try:
             record = vault.KeeperRecord.load(params, record_uid)
             
             # Add custom fields (secret fields are masked, text fields are visible)
             record.custom = [
-                vault.TypedField.new_field('secret', slack_config['slack_app_token'], 'slack_app_token'),
-                vault.TypedField.new_field('secret', slack_config['slack_bot_token'], 'slack_bot_token'),
-                vault.TypedField.new_field('secret', slack_config['slack_signing_secret'], 'slack_signing_secret'),
-                vault.TypedField.new_field('text', slack_config['approvals_channel_id'], 'approvals_channel_id'),
-                vault.TypedField.new_field('text', slack_config['pedm_enabled'], 'pedm_enabled'),
-                vault.TypedField.new_field('text', slack_config['pedm_polling_interval'], 'pedm_polling_interval'),
-                vault.TypedField.new_field('text', slack_config['device_approval_enabled'], 'device_approval_enabled'),
-                vault.TypedField.new_field('text', slack_config['device_approval_polling_interval'], 'device_approval_polling_interval'),
+                vault.TypedField.new_field('secret', slack_config.slack_app_token, 'slack_app_token'),
+                vault.TypedField.new_field('secret', slack_config.slack_bot_token, 'slack_bot_token'),
+                vault.TypedField.new_field('secret', slack_config.slack_signing_secret, 'slack_signing_secret'),
+                vault.TypedField.new_field('text', slack_config.approvals_channel_id, 'approvals_channel_id'),
+                vault.TypedField.new_field('text', 'true' if slack_config.pedm_enabled else 'false', 'pedm_enabled'),
+                vault.TypedField.new_field('text', str(slack_config.pedm_polling_interval), 'pedm_polling_interval'),
+                vault.TypedField.new_field('text', 'true' if slack_config.device_approval_enabled else 'false', 'device_approval_enabled'),
+                vault.TypedField.new_field('text', str(slack_config.device_approval_polling_interval), 'device_approval_polling_interval'),
             ]
             
             record_management.update_record(params, record)
@@ -328,7 +362,7 @@ class SlackAppSetupCommand(Command):
             raise CommandError('slack-app-setup', f'Failed to update docker-compose.yml: {str(e)}')
 
     def _print_success_message(self, setup_result: SetupResult, service_config: ServiceConfig,
-                               slack_record_uid: str, slack_config: Dict[str, Any], config_path: str) -> None:
+                               slack_record_uid: str, slack_config: SlackConfig, config_path: str) -> None:
         """Print consolidated success message for both phases"""
         print(f"\n{bcolors.OKGREEN}{bcolors.BOLD}✓ Slack App Integration Setup Complete!{bcolors.ENDC}\n")
 
@@ -338,9 +372,9 @@ class SlackAppSetupCommand(Command):
         DockerSetupPrinter.print_phase1_resources(setup_result, indent="    ")
         print(f"  {bcolors.BOLD}Phase 2 - Slack App:{bcolors.ENDC}")
         print(f"    • Slack Config Record: {bcolors.OKBLUE}{slack_record_uid}{bcolors.ENDC}")
-        print(f"    • Approvals Channel: {bcolors.OKBLUE}{slack_config['approvals_channel_id']}{bcolors.ENDC}")
-        print(f"    • PEDM Integration: {bcolors.OKBLUE}{slack_config['pedm_enabled']}{bcolors.ENDC}")
-        print(f"    • Device Approval: {bcolors.OKBLUE}{slack_config['device_approval_enabled']}{bcolors.ENDC}")
+        print(f"    • Approvals Channel: {bcolors.OKBLUE}{slack_config.approvals_channel_id}{bcolors.ENDC}")
+        print(f"    • PEDM Integration: {bcolors.OKBLUE}{'true' if slack_config.pedm_enabled else 'false'}{bcolors.ENDC}")
+        print(f"    • Device Approval: {bcolors.OKBLUE}{'true' if slack_config.device_approval_enabled else 'false'}{bcolors.ENDC}")
         
         # Next steps
         self._print_next_steps(service_config, config_path)
