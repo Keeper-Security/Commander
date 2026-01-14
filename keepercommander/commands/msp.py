@@ -69,6 +69,8 @@ msp_info_parser.add_argument('-p', '--pricing', dest='pricing', action='store_tr
 msp_info_parser.add_argument('-r', '--restriction', dest='restriction', action='store_true',
                              help='Display MSP restriction information')
 msp_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='Print details')
+msp_info_parser.add_argument('-mc', '--managed-company', dest='managed_company', action='store',
+                             help='Filter by specific managed company (name or id)')
 # msp_info_parser.add_argument('-u', '--users', dest='users', action='store_true', help='print user list')
 
 msp_update_parser = argparse.ArgumentParser(prog='msp-update', usage='msp-update',
@@ -371,30 +373,76 @@ class MSPInfoCommand(EnterpriseCommand, MSPMixin):
         if 'managed_companies' in params.enterprise:
             sort_dict = {x[0]: i for i, x in enumerate(constants.MSP_ADDONS)}
             verbose = kwargs.get('verbose')
+            company_filter = kwargs.get('managed_company')
+            
+            # Filter by company if specified
+            managed_companies = params.enterprise['managed_companies']
+            if company_filter:
+                filtered_mc = get_mc_by_name_or_id(managed_companies, company_filter)
+                if not filtered_mc:
+                    raise CommandError('msp-info', f'Managed Company "{company_filter}" not found')
+                managed_companies = [filtered_mc]
+            
             header = ['company_id', 'company_name', 'node', 'plan', 'storage', 'addons', 'allocated', 'active']
+            if verbose:
+                # Add node_name field for verbose mode
+                header.insert(3, 'node_name')
+            
             table = []
             plan_map = {x[1]: x[2] for x in constants.MSP_PLANS}
             file_plan_map = {x[1]: x[2] for x in constants.MSP_FILE_PLANS}
-            for mc in params.enterprise['managed_companies']:
+            
+            for mc in managed_companies:
                 node_id = mc['msp_node_id']
                 if verbose:
                     node_path = str(node_id)
+                    node_name = self.get_node_path(params, node_id, False)
                 else:
                     node_path = self.get_node_path(params, node_id, False)
+                    node_name = None
+                
                 file_plan = mc['file_plan_type']
                 file_plan = file_plan_map.get(file_plan, file_plan)
-                addons = [x['name'] for x in mc.get('add_ons', [])]
-                addons.sort(key=lambda x: sort_dict.get(x, -1))
+                
+                # Process addons
+                addon_list = []
+                for addon_obj in mc.get('add_ons', []):
+                    addon_name = addon_obj['name']
+                    if verbose:
+                        seats = addon_obj.get('seats', 0)
+                        if seats > 0:
+                            addon_def = next((x for x in constants.MSP_ADDONS if x[0] == addon_name), None)
+                            if addon_def and addon_def[2]:  # addon_def[2] indicates if seats are supported
+                                addon_list.append(f"{addon_name}:{seats}")
+                            else:
+                                addon_list.append(addon_name)
+                        else:
+                            addon_list.append(addon_name)
+                    else:
+                        addon_list.append(addon_name)
+                
+                addon_list.sort(key=lambda x: sort_dict.get(x.split(':')[0], -1))
+                
                 if not verbose:
-                    addons = len(addons)
+                    addons = len(addon_list)
+                else:
+                    addons = addon_list
+                
                 plan = mc['product_id']
                 if not verbose:
                     plan = plan_map.get(plan, plan)
+                
                 seats = mc['number_of_seats']
                 if seats > 2000000:
                     seats = None
-                table.append([mc['mc_enterprise_id'], mc['mc_enterprise_name'], node_path,
-                              plan, file_plan, addons, seats, mc['number_of_users']])
+                
+                if verbose:
+                    table.append([mc['mc_enterprise_id'], mc['mc_enterprise_name'], node_path,
+                                  node_name, plan, file_plan, addons, seats, mc['number_of_users']])
+                else:
+                    table.append([mc['mc_enterprise_id'], mc['mc_enterprise_name'], node_path,
+                                  plan, file_plan, addons, seats, mc['number_of_users']])
+            
             table.sort(key=lambda x: x[1].lower())
             if report_format != 'json':
                 header = [field_to_title(x) for x in header]
