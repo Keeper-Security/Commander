@@ -178,10 +178,10 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
                         if kae.message.lower() == 'gateway_timeout':
                             # Break up the request if the number of corresponding records exceeds the backend's limit
                             if chunk_size > 1:
-                                chunk_size = max(1, chunk_size // 4)  # Back off more aggressively
+                                chunk_size = max(1, chunk_size // 4)  # Back off gradually
                                 user_ids = [*chunk, *user_ids]
                             else:
-                                problem_ids.update(*chunk)
+                                problem_ids.update(chunk)
                             break
                         else:
                             raise kae
