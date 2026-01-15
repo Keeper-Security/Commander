@@ -1397,8 +1397,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                 if command == 'node_add':
                     if rs['result'] == 'success':
                         node_id = rq.get('node_id')
-                        logging.info('Node is created')
-                        logging.info(node_id)
+                        logging.info('Node is created with Node ID: %s', node_id)
                     else:
                         logging.warning('Failed to create node: %s', rs['message'])
                 elif command in {'node_delete', 'node_update'}:
