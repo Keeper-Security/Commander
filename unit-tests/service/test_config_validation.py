@@ -13,7 +13,7 @@ if sys.version_info >= (3, 8):
 
         def test_validate_port_valid(self):
             """Test port validation with valid port numbers"""
-            test_ports = [80, 443, 8080, 1024, 65535]
+            test_ports = [1024, 8080, 8900, 9000, 65535]
             for port in test_ports:
                 with self.subTest(port=port):
                     with patch('socket.socket') as mock_socket:
@@ -23,7 +23,7 @@ if sys.version_info >= (3, 8):
 
         def test_validate_port_invalid_number(self):
             """Test port validation with invalid port numbers"""
-            invalid_ports = [-1, 65536, 'abc', '']
+            invalid_ports = [-1, 0, 80, 443, 1023, 65536, 'abc', '']
             for port in invalid_ports:
                 with self.subTest(port=port):
                     with self.assertRaises(ValidationError):
