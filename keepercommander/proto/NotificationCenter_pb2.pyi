@@ -33,6 +33,14 @@ class NotificationType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     NT_APPROVED_RESPONSE: _ClassVar[NotificationType]
     NT_DENIED_RESPONSE: _ClassVar[NotificationType]
     NT_2FA_CONFIGURED: _ClassVar[NotificationType]
+    NT_SHARE_APPROVAL_DENIED: _ClassVar[NotificationType]
+    NT_DEVICE_APPROVAL_APPROVED: _ClassVar[NotificationType]
+    NT_DEVICE_APPROVAL_DENIED: _ClassVar[NotificationType]
+    NT_ACCOUNT_CREATED: _ClassVar[NotificationType]
+    NT_2FA_ENABLED: _ClassVar[NotificationType]
+    NT_2FA_DISABLED: _ClassVar[NotificationType]
+    NT_SECURITY_KEYS_ENABLED: _ClassVar[NotificationType]
+    NT_SECURITY_KEYS_DISABLED: _ClassVar[NotificationType]
 
 class NotificationReadStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = []
@@ -48,6 +56,7 @@ class NotificationApprovalStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapp
     NAS_DENIED: _ClassVar[NotificationApprovalStatus]
     NAS_LOST_APPROVAL_RIGHTS: _ClassVar[NotificationApprovalStatus]
     NAS_LOST_ACCESS: _ClassVar[NotificationApprovalStatus]
+    NAS_ESCALATED: _ClassVar[NotificationApprovalStatus]
 NC_UNSPECIFIED: NotificationCategory
 NC_ACCOUNT: NotificationCategory
 NC_SHARING: NotificationCategory
@@ -69,6 +78,14 @@ NT_APPROVAL_REQUEST: NotificationType
 NT_APPROVED_RESPONSE: NotificationType
 NT_DENIED_RESPONSE: NotificationType
 NT_2FA_CONFIGURED: NotificationType
+NT_SHARE_APPROVAL_DENIED: NotificationType
+NT_DEVICE_APPROVAL_APPROVED: NotificationType
+NT_DEVICE_APPROVAL_DENIED: NotificationType
+NT_ACCOUNT_CREATED: NotificationType
+NT_2FA_ENABLED: NotificationType
+NT_2FA_DISABLED: NotificationType
+NT_SECURITY_KEYS_ENABLED: NotificationType
+NT_SECURITY_KEYS_DISABLED: NotificationType
 NRS_UNSPECIFIED: NotificationReadStatus
 NRS_LAST: NotificationReadStatus
 NRS_READ: NotificationReadStatus
@@ -78,6 +95,7 @@ NAS_APPROVED: NotificationApprovalStatus
 NAS_DENIED: NotificationApprovalStatus
 NAS_LOST_APPROVAL_RIGHTS: NotificationApprovalStatus
 NAS_LOST_ACCESS: NotificationApprovalStatus
+NAS_ESCALATED: NotificationApprovalStatus
 
 class EncryptedData(_message.Message):
     __slots__ = ["version", "data"]
@@ -118,18 +136,20 @@ class NotificationReadMark(_message.Message):
     def __init__(self, uid: _Optional[bytes] = ..., notification_edge_id: _Optional[int] = ..., mark_edge_id: _Optional[int] = ..., readStatus: _Optional[_Union[NotificationReadStatus, str]] = ...) -> None: ...
 
 class NotificationContent(_message.Message):
-    __slots__ = ["notification", "readStatus", "approvalStatus", "clientTypeIDs", "deviceIDs"]
+    __slots__ = ["notification", "readStatus", "approvalStatus", "trimmingPoint", "clientTypeIDs", "deviceIDs"]
     NOTIFICATION_FIELD_NUMBER: _ClassVar[int]
     READSTATUS_FIELD_NUMBER: _ClassVar[int]
     APPROVALSTATUS_FIELD_NUMBER: _ClassVar[int]
+    TRIMMINGPOINT_FIELD_NUMBER: _ClassVar[int]
     CLIENTTYPEIDS_FIELD_NUMBER: _ClassVar[int]
     DEVICEIDS_FIELD_NUMBER: _ClassVar[int]
     notification: Notification
     readStatus: NotificationReadStatus
     approvalStatus: NotificationApprovalStatus
+    trimmingPoint: bool
     clientTypeIDs: _containers.RepeatedScalarFieldContainer[int]
     deviceIDs: _containers.RepeatedScalarFieldContainer[int]
-    def __init__(self, notification: _Optional[_Union[Notification, _Mapping]] = ..., readStatus: _Optional[_Union[NotificationReadStatus, str]] = ..., approvalStatus: _Optional[_Union[NotificationApprovalStatus, str]] = ..., clientTypeIDs: _Optional[_Iterable[int]] = ..., deviceIDs: _Optional[_Iterable[int]] = ...) -> None: ...
+    def __init__(self, notification: _Optional[_Union[Notification, _Mapping]] = ..., readStatus: _Optional[_Union[NotificationReadStatus, str]] = ..., approvalStatus: _Optional[_Union[NotificationApprovalStatus, str]] = ..., trimmingPoint: bool = ..., clientTypeIDs: _Optional[_Iterable[int]] = ..., deviceIDs: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class NotificationWrapper(_message.Message):
     __slots__ = ["uid", "content", "timestamp"]
@@ -196,3 +216,9 @@ class NotificationSyncRequest(_message.Message):
     SYNCPOINT_FIELD_NUMBER: _ClassVar[int]
     syncPoint: int
     def __init__(self, syncPoint: _Optional[int] = ...) -> None: ...
+
+class NotificationsApprovalStatusUpdateRequest(_message.Message):
+    __slots__ = ["updates"]
+    UPDATES_FIELD_NUMBER: _ClassVar[int]
+    updates: _containers.RepeatedCompositeFieldContainer[ApprovalStatusUpdate]
+    def __init__(self, updates: _Optional[_Iterable[_Union[ApprovalStatusUpdate, _Mapping]]] = ...) -> None: ...
