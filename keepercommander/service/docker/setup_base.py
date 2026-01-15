@@ -155,11 +155,11 @@ class DockerSetupBase:
 
         # Create new record
         try:
-            record = vault.KeeperRecord.create(params, 'serverCredentials')
+            record = vault.KeeperRecord.create(params, 'login')
             record.record_uid = utils.generate_uid()
             record.record_key = utils.generate_aes_key()
             record.title = record_name
-            record.type_name = 'serverCredentials'
+            record.type_name = 'login'
             
             record_management.add_record_to_folder(params, record, folder_uid)
             api.sync_down(params)
