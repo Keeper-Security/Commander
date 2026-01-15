@@ -37,6 +37,7 @@ from .storage_types import StorageRecord, StorageUser, StorageUserRecordLink, St
     StorageSharedFolderTeamLink
 
 API_SOX_REQUEST_USER_LIMIT = 1000
+API_SOX_MAX_USERS_PER_REQUEST = 5000  # Server limit: MAX_CHOSEN_ENTERPRISE_USERS
 
 
 def validate_data_access(params, cmd=''):
@@ -137,7 +138,8 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
             records_total = 0
             print_status(0, users_total, 0, records_total)
             users, records, links = [], [], []
-            chunk_size = 1
+            # Start with reasonable chunk size, back off on timeout
+            chunk_size = min(100, API_SOX_REQUEST_USER_LIMIT)
             problem_ids = set()
             while user_ids:
                 token = b''
@@ -159,9 +161,9 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
                         if rs.totalMatchingRecords:
                             current_batch_loaded = 0
                             records_total = rs.totalMatchingRecords
-                            if records_total < 20 * API_SOX_REQUEST_USER_LIMIT:
-                               # Adjust chunk size to optimize queries
-                               chunk_size = min(chunk_size * 2, API_SOX_REQUEST_USER_LIMIT)
+                        # Ramp up on success (regardless of record count)
+                        if chunk_size < API_SOX_REQUEST_USER_LIMIT:
+                            chunk_size = min(chunk_size * 2, API_SOX_REQUEST_USER_LIMIT)
                         token = rs.continuationToken
                         for user_data in rs.auditUserData:
                             t_user, t_recs, t_links = to_storage_types(user_data, name_by_id)
@@ -176,7 +178,7 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
                         if kae.message.lower() == 'gateway_timeout':
                             # Break up the request if the number of corresponding records exceeds the backend's limit
                             if chunk_size > 1:
-                                chunk_size = 1
+                                chunk_size = max(1, chunk_size // 4)  # Back off more aggressively
                                 user_ids = [*chunk, *user_ids]
                             else:
                                 problem_ids.update(*chunk)
@@ -254,12 +256,22 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
                 start_spinner()
                 print_status(0)
                 users_uids = [int(uid) for uid in sdata.get_users()]
-                record_uids_raw = [rec.record_uid_bytes for rec in sdata.get_records().values()]
-                max_len = API_SOX_REQUEST_USER_LIMIT
-                total_ruids = len(record_uids_raw)
-                ruid_chunks = [record_uids_raw[x:x + max_len] for x in range(0, total_ruids, max_len)]
-                for chunk in ruid_chunks:
-                    sync_chunk(chunk, users_uids)
+                records_by_uid = {rec.record_uid: rec.record_uid_bytes for rec in sdata.get_records().values()}
+                max_records = API_SOX_REQUEST_USER_LIMIT
+                max_users = API_SOX_MAX_USERS_PER_REQUEST
+                user_chunks = [users_uids[x:x + max_users] for x in range(0, len(users_uids), max_users)] or [users_uids]
+                for user_chunk in user_chunks:
+                    # Get records owned by users in this chunk
+                    chunk_record_uids = set()
+                    for uid in user_chunk:
+                        user = sdata.get_user(uid)
+                        if user:
+                            chunk_record_uids.update(user.records)
+                    chunk_records_raw = [records_by_uid[r] for r in chunk_record_uids if r in records_by_uid]
+                    # Chunk records by API limit
+                    ruid_chunks = [chunk_records_raw[x:x + max_records] for x in range(0, len(chunk_records_raw), max_records)]
+                    for ruid_chunk in (ruid_chunks or [[]]):
+                        sync_chunk(ruid_chunk, user_chunk)
                 sdata.storage.set_compliance_data_updated()
                 if not spinner:
                     print('', file=sys.stderr, flush=True)
