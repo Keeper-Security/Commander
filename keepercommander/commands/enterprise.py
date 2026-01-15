@@ -2868,7 +2868,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                 ret['managed_nodes'] = [{
                     'node_id': x,
                     'node_name': nodes.get(x, None),
-                    'cascade': [x['cascade_node_management'] for x in params.enterprise['managed_nodes'] if x['role_id'] == role_id][0],
+                    'cascade': [y['cascade_node_management'] for y in params.enterprise['managed_nodes'] if y['role_id'] == role_id and y['managed_node_id'] == x][0],
                     'privileges': privileges.get(x, None)
                 } for x in node_ids if x in nodes]
 
