@@ -196,7 +196,7 @@ enterprise_role_parser.add_argument('-au', '--add-user', action='append', metava
 enterprise_role_parser.add_argument('-ru', '--remove-user', action='append', metavar='EMAIL', help='remove user from role')
 enterprise_role_parser.add_argument('-at', '--add-team', action='append', metavar='TEAM', help='add team to role')
 enterprise_role_parser.add_argument('-rt', '--remove-team', action='append', metavar='TEAM', help='remove team from role')
-enterprise_role_parser.add_argument('-aa', '--add-admin',dest='add_admin', action='append', metavar='NODE', help='add managed node to role')
+enterprise_role_parser.add_argument('-aa', '--add-admin', action='append', metavar='NODE', help='add managed node to role')
 enterprise_role_parser.add_argument('-ra', '--remove-admin', action='append', metavar='NODE', help='remove managed node from role')
 enterprise_role_parser.add_argument('-ap', '--add-privilege', dest='add_privilege', action='append',
                                     metavar='PRIVILEGE', help='add privilege to managed node')
