@@ -250,6 +250,9 @@ class ServiceConfig:
             logger.debug("Validating ngrok configuration")
             self.validator.validate_ngrok_token(config_data.ngrok_auth_token)
 
+            if config_data.ngrok_custom_domain:
+                self.validator.validate_domain(config_data.ngrok_custom_domain, require_tld=False)
+
         if config_data.cloudflare == 'y':
             logger.debug("Validating cloudflare configuration")
             self.validator.validate_cloudflare_token(config_data.cloudflare_tunnel_token)
