@@ -243,7 +243,21 @@ def execute_rest(context, endpoint, payload):
                         run_request = True
                         continue
                 elif rs.status_code in (400, 500) and context.qrc_key_id is not None:
-                    logging.warning(f"QRC request failed with {rs.status_code} error, falling back to EC encryption")
+                    # Only fall back to EC if the error is QRC-specific
+                    # Don't fall back for business logic errors (duplicate, access denied, etc.)
+                    error_type = failure.get('error', '')
+                    error_msg = failure.get('message', '').lower()
+                    
+                    # QRC-specific error indicators
+                    qrc_errors = ['qrc', 'quantum', 'ml-kem', 'encryption', 'decryption', 'key']
+                    is_qrc_error = any(keyword in error_msg for keyword in qrc_errors) or error_type == 'crypto_error'
+                    
+                    # Business logic errors that shouldn't trigger fallback
+                    business_errors = ['duplicate', 'already', 'permission', 'access', 'not found', 'invalid uid']
+                    is_business_error = any(keyword in error_msg for keyword in business_errors)
+                    
+                    if is_qrc_error and not is_business_error:
+                        logging.warning(f"QRC encryption error ({error_msg}), falling back to EC encryption")
                     context.disable_qrc()
                     run_request = True
                     continue
