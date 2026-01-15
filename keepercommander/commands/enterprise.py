@@ -2844,11 +2844,29 @@ class EnterpriseRoleCommand(EnterpriseCommand):
 
         if 'managed_nodes' in params.enterprise:
             node_ids = [x['managed_node_id'] for x in params.enterprise['managed_nodes'] if x['role_id'] == role_id]
+            is_msp = EnterpriseCommand.is_msp(params)
             if len(node_ids) > 0:
                 nodes = {x['node_id']: x['data'].get('displayname') or params.enterprise['enterprise_name'] for x in params.enterprise['nodes']}
+                privileges = {}
+                supported_privileges = {x[1].lower(): x[2] for x in constants.ROLE_PRIVILEGES}
+                for rp in params.enterprise.get('role_privileges', []):
+                    privilege = rp['privilege'].lower()
+                    if rp['role_id'] != role_id:
+                        continue
+                    elif privilege not in supported_privileges:
+                        continue
+                    elif supported_privileges[privilege] == constants.PrivilegeScope.Hidden or (supported_privileges[privilege] == constants.PrivilegeScope.MSP and not is_msp):
+                        continue
+
+                    if rp['managed_node_id'] not in privileges:
+                        privileges[rp['managed_node_id']] = []
+                    privileges[rp['managed_node_id']].append(privilege)
+                
                 ret['managed_nodes'] = [{
                     'node_id': x,
-                    'node_name': nodes[x]
+                    'node_name': nodes.get(x, None),
+                    'cascade': [x['cascade_node_management'] for x in params.enterprise['managed_nodes'] if x['role_id'] == role_id][0],
+                    'privileges': privileges.get(x, None)
                 } for x in node_ids if x in nodes]
 
         if 'role_enforcements' in params.enterprise:
