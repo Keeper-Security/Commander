@@ -99,7 +99,7 @@ def register_command_info(aliases, command_info):
     security_audit.register_command_info(aliases, command_info)
 
 
-SUPPORTED_NODE_COLUMNS = ['parent_node', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles',
+SUPPORTED_NODE_COLUMNS = ['parent_node', 'parent_id', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles',
                           'provisioning']
 SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count',
                           'roles', 'alias', '2fa_enabled']
@@ -666,7 +666,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             if show_nodes:
                 supported_columns = SUPPORTED_NODE_COLUMNS
                 if len(columns) == 0:
-                    columns.update(('parent_node', 'user_count', 'team_count', 'role_count'))
+                    columns.update(('parent_node', 'parent_id', 'user_count', 'team_count', 'role_count'))
                 else:
                     wc = columns.difference(supported_columns)
                     if len(wc) > 0:
@@ -714,6 +714,9 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         if column == 'parent_node':
                             parent_id = n.get('parent_id', 0)
                             row.append(self.get_node_path(params, parent_id) if parent_id > 0 else '')
+                        elif column == 'parent_id':
+                            parent_id = n.get('parent_id', 0)
+                            row.append(parent_id if parent_id > 0 else None)
                         elif column == 'user_count':
                             us = n.get('users', [])
                             row.append(len(us))
@@ -1384,8 +1387,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                             'node_id': node['node_id'],
                             'encrypted_data': encrypted_data
                         }
-                        if parent_id:
-                            rq['parent_id'] = parent_id
+                        rq['parent_id'] = parent_id if parent_id else node.get('parent_id')
                         request_batch.append(rq)
 
         if request_batch:
@@ -1394,7 +1396,8 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                 command = rq.get('command')
                 if command == 'node_add':
                     if rs['result'] == 'success':
-                        logging.info('Node is created')
+                        node_id = rq.get('node_id')
+                        logging.info('Node is created with Node ID: %s', node_id)
                     else:
                         logging.warning('Failed to create node: %s', rs['message'])
                 elif command in {'node_delete', 'node_update'}:
@@ -3089,6 +3092,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
         matched_teams = list(matched.values())
         request_batch = []
         non_batch_update_msgs = []
+        has_warnings = False  
 
         if kwargs.get('add') or kwargs.get('approve'):
             queue = []
@@ -3184,6 +3188,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                                 users[user_id] = is_add, user_node
                             else:
                                 logging.warning('User %s could not be resolved', u)
+                                has_warnings = True
 
                 if len(users) > 0:
                     for team in matched_teams:
@@ -3203,6 +3208,10 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                                                 if t['team_uid'] == team_uid and t['enterprise_user_id'] == user_id)
                                     if is_added:
                                         if not hsf:
+                                            username = user['username']
+                                            team_name = team['name']
+                                            logging.warning('User %s is already a member of team \'%s\'', username, team_name)
+                                            has_warnings = True
                                             continue
                                         rq = {
                                             'command': 'team_enterprise_user_update',
@@ -3311,7 +3320,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
             for update_msg in non_batch_update_msgs:
                 logging.info(update_msg)
             api.query_enterprise(params)
-        else:
+        elif not has_warnings:
             for team in matched_teams:
                 print('\n')
                 self.display_team(params, team, kwargs.get('verbose'))
