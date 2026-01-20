@@ -153,12 +153,6 @@ class SlackAppSetupCommand(Command, DockerSetupBase):
             cloudflare_config = {'cloudflare_enabled': False, 'cloudflare_tunnel_token': '', 
                                 'cloudflare_custom_domain': '', 'cloudflare_public_url': ''}
         
-        # Only ask for TLS if no tunneling is enabled
-        if not ngrok_config['ngrok_enabled'] and not cloudflare_config['cloudflare_enabled']:
-            tls_config = self._get_tls_config()
-        else:
-            tls_config = {'tls_enabled': False, 'cert_file': '', 'cert_password': ''}
-        
         return ServiceConfig(
             port=port,
             commands='search,share-record,share-folder,record-add,one-time-share,pedm,device-approve,get',
@@ -170,10 +164,7 @@ class SlackAppSetupCommand(Command, DockerSetupBase):
             cloudflare_enabled=cloudflare_config['cloudflare_enabled'],
             cloudflare_tunnel_token=cloudflare_config['cloudflare_tunnel_token'],
             cloudflare_custom_domain=cloudflare_config['cloudflare_custom_domain'],
-            cloudflare_public_url=cloudflare_config.get('cloudflare_public_url', ''),
-            tls_enabled=tls_config['tls_enabled'],
-            cert_file=tls_config['cert_file'],
-            cert_password=tls_config['cert_password']
+            cloudflare_public_url=cloudflare_config.get('cloudflare_public_url', '')
         )
 
     def _run_slack_setup(self, params, setup_result: SetupResult, service_config: ServiceConfig,

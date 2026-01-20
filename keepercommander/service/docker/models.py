@@ -86,9 +86,6 @@ class ServiceConfig:
     cloudflare_enabled: bool
     cloudflare_tunnel_token: str
     cloudflare_custom_domain: str
-    tls_enabled: bool
-    cert_file: str
-    cert_password: str
     allowed_ip: str = '0.0.0.0/0,::/0'
     denied_ip: str = ''
     rate_limit: str = ''

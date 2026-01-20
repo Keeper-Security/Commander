@@ -78,7 +78,7 @@ class DockerComposeBuilder:
         
         service = {
             'container_name': 'keeper-service',
-            'ports': [f"{self.config['port']}:{self.config['port']}"],
+            'ports': [f"127.0.0.1:{self.config['port']}:{self.config['port']}"],
             'image': 'keeper/commander:latest',
             'command': ' '.join(self._service_cmd_parts),
             'healthcheck': self._build_healthcheck(),
@@ -123,7 +123,6 @@ class DockerComposeBuilder:
         
         self._add_security_options()
         self._add_tunneling_options()
-        self._add_tls_options()
         self._add_docker_options()
     
     def _add_security_options(self) -> None:
@@ -166,19 +165,6 @@ class DockerComposeBuilder:
             self._service_cmd_parts.append(f"-cf {self.config['cloudflare_tunnel_token']}")
             if self.config.get('cloudflare_custom_domain'):
                 self._service_cmd_parts.append(f"-cfd {self.config['cloudflare_custom_domain']}")
-    
-    def _add_tls_options(self) -> None:
-        """Add TLS certificate options and volumes"""
-        if self.config.get('tls_enabled') and self.config.get('cert_file'):
-            cert_file = self.config['cert_file']
-            cert_basename = os.path.basename(cert_file)
-            
-            self._service_cmd_parts.append(f"-crtf /certs/{cert_basename}")
-            if self.config.get('cert_password'):
-                self._service_cmd_parts.append(f"-crtp {self.config['cert_password']}")
-            
-            # Add volume mount for certificate
-            self._volumes.append(f"{cert_file}:/certs/{cert_basename}:ro")
     
     def _add_docker_options(self) -> None:
         """Add Docker-specific parameters (KSM config, record UIDs)"""

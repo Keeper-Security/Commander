@@ -26,7 +26,7 @@ class RecordHandler:
         self.cli_handler = CommandHandler()
 
     @debug_decorator
-    def create_record(self, is_advanced_security_enabled: str, commands: str, token_expiration: str = None) -> Dict[str, Any]:
+    def create_record(self, is_advanced_security_enabled: str, commands: str, token_expiration: str = None, record_uid: str = None) -> Dict[str, Any]:
         """Create a new configuration record."""
         api_key = generate_api_key()
         record = self._create_base_record(api_key, commands)
@@ -40,7 +40,12 @@ class RecordHandler:
             logger.debug("Adding expiration to record (advanced security enabled)")
             self._add_expiration_to_record(record)
             
-        print(f'Generated API key: {api_key}')
+        # Docker mode: redact API key and show vault record UID
+        if record_uid:
+            redacted_key = f"****{api_key[-4:]}" if len(api_key) >= 4 else "****"
+            print(f'Generated API key: {redacted_key} (stored in vault record: {record_uid})')
+        else:
+            print(f'Generated API key: {api_key}')
         return record
 
     def update_or_add_record(self, params: KeeperParams, title: str, config_path: Path) -> None:

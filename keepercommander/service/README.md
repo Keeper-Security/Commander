@@ -445,7 +445,6 @@ If you have Keeper Secrets Manager (KSM) activated in your account, you can use 
    - **Queue Mode**: Enable async API v2 (default: yes)
    - **Ngrok Tunneling** (optional): Public URL via ngrok
    - **Cloudflare Tunneling** (optional): Public URL via Cloudflare
-   - **TLS Certificate** (optional): HTTPS with custom certificate
    - **Advanced Security** (optional):
      - IP filtering (allowed/denied lists)
      - Rate limiting
@@ -489,7 +488,6 @@ This automates the complete setup for Slack App integration:
 **Configuration Options:**
 - Port selection (default: 8900)
 - Ngrok/Cloudflare tunneling for public URL exposure
-- TLS certificate for HTTPS
 - Slack App credentials
 - Approvals channel ID
 - Optional PEDM integration
@@ -760,11 +758,16 @@ docker run -d -p <port>:<port> \
    docker logs <container-name-or-id>
    ```
 
-3. **Get API key from logs:**
-   Look for the API key in the container logs:
-   ```
-   Generated API key: <API-KEY>
-   ```
+3. **Get API key from logs or vault:**
+   - **Docker mode**: The API key is redacted in logs for security (only last 4 characters shown) with the vault record UID displayed:
+     ```
+     Generated API key: ****nQ= (stored in vault record: I2eqTs5efnJ_iqbtSuEagQ)
+     ```
+     Retrieve the full key from your Keeper vault using the record UID.
+   - **Direct service-create**: The full API key is displayed in the output for immediate use:
+     ```
+     Generated API key: H4uyn0L-_QJL-o_UBMbs7DESA13ZgdJ_ea2bnQ=
+     ```
 
 4. **Follow logs in real-time:**
    ```bash

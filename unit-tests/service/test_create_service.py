@@ -73,7 +73,8 @@ if sys.version_info >= (3, 8):
                     config_data["is_advanced_security_enabled"],
                     self.params,
                     args.commands,
-                    args.token_expiration
+                    args.token_expiration,
+                    None  # record_uid (update_vault_record is None)
                 )
                 if(args.fileformat):
                     config_data["fileformat"]= args.fileformat

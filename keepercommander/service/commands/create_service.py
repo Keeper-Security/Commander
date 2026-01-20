@@ -124,7 +124,7 @@ class CreateService(Command):
         if args.port is None:
             self.config_handler._configure_run_mode(config_data)
         
-        record = self.service_config.create_record(config_data["is_advanced_security_enabled"], params, args.commands, args.token_expiration)
+        record = self.service_config.create_record(config_data["is_advanced_security_enabled"], params, args.commands, args.token_expiration, args.update_vault_record)
         config_data["records"] = [record]
         if config_data.get("fileformat"):
             format_type = config_data["fileformat"]
@@ -144,17 +144,24 @@ class CreateService(Command):
         ServiceManager.start_service()
     
     def _get_service_url(self, config_data: Dict[str, Any]) -> str:
-        """Determine the actual service URL (ngrok, cloudflare, or localhost)"""
+        """Determine the actual service URL (ngrok, cloudflare, or localhost) with API version path"""
+        # Determine API version based on queue_enabled
+        queue_enabled = config_data.get("queue_enabled", "y")
+        api_path = "/api/v2" if queue_enabled == "y" else "/api/v1"
+        
         # Priority: ngrok > cloudflare > localhost
+        base_url = ""
         if config_data.get("ngrok_public_url"):
-            return config_data["ngrok_public_url"]
+            base_url = config_data["ngrok_public_url"]
         elif config_data.get("cloudflare_public_url"):
-            return config_data["cloudflare_public_url"]
+            base_url = config_data["cloudflare_public_url"]
         else:
             # Fallback to localhost with correct protocol
             port = config_data.get("port", 8080)
             protocol = "https" if config_data.get("tls_certificate") == "y" else "http"
-            return f"{protocol}://localhost:{port}"
+            base_url = f"{protocol}://localhost:{port}"
+        
+        return f"{base_url}{api_path}"
     
     def _update_vault_record_with_metadata(self, params: KeeperParams, record_uid: str, service_url: str, api_key: str) -> None:
         """Update CSMD Config vault record with service URL and API key as custom fields (Docker mode only)"""

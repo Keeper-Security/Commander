@@ -117,18 +117,11 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
         
         if not ngrok_config['ngrok_enabled']:
             cloudflare_config = self._get_cloudflare_config()
-            
-            # TLS only if no tunneling
-            if not cloudflare_config['cloudflare_enabled']:
-                tls_config = self._get_tls_config()
-            else:
-                tls_config = {'tls_enabled': False, 'cert_file': '', 'cert_password': ''}
         else:
             cloudflare_config = {
                 'cloudflare_enabled': False, 'cloudflare_tunnel_token': '', 
                 'cloudflare_custom_domain': '', 'cloudflare_public_url': ''
             }
-            tls_config = {'tls_enabled': False, 'cert_file': '', 'cert_password': ''}
         
         # Advanced security options
         security_config = self._get_advanced_security_config()
@@ -145,9 +138,6 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
             cloudflare_tunnel_token=cloudflare_config['cloudflare_tunnel_token'],
             cloudflare_custom_domain=cloudflare_config['cloudflare_custom_domain'],
             cloudflare_public_url=cloudflare_config.get('cloudflare_public_url', ''),
-            tls_enabled=tls_config['tls_enabled'],
-            cert_file=tls_config['cert_file'],
-            cert_password=tls_config['cert_password'],
             allowed_ip=security_config['allowed_ip'],
             denied_ip=security_config['denied_ip'],
             rate_limit=security_config['rate_limit'],

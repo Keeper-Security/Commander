@@ -18,6 +18,7 @@ Commander Service Mode with Docker and KSM.
 
 import io
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -115,7 +116,13 @@ class DockerSetupBase:
 
             # Timeout
             DockerSetupPrinter.print_success(f"Setting logout timeout to {timeout}...")
-            ThisDeviceCommand().execute(params, ops=['timeout', timeout])
+            # Suppress command output
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            try:
+                ThisDeviceCommand().execute(params, ops=['timeout', timeout])
+            finally:
+                sys.stdout = old_stdout
 
         except Exception as e:
             raise CommandError('docker-setup', f'Device setup failed: {str(e)}')
@@ -275,9 +282,12 @@ class DockerSetupBase:
             if not app_rec:
                 raise CommandError('docker-setup', 'App not found')
 
-            # Suppress output
+            # Suppress all output (stdout and logging)
             old_stdout = sys.stdout
+            old_log_level = logging.root.level
+            
             sys.stdout = io.StringIO()
+            logging.root.setLevel(logging.CRITICAL + 1)  # Disable all logging
             try:
                 KSMCommand.add_app_share(
                     params,
@@ -287,8 +297,8 @@ class DockerSetupBase:
                 )
             finally:
                 sys.stdout = old_stdout
-            
-            DockerSetupPrinter.print_success("Folder shared with app successfully")
+                logging.root.setLevel(old_log_level)     
+            DockerSetupPrinter.print_success("Folder shared with app")
         except Exception as e:
             raise CommandError('docker-setup', f'Failed to share folder with app: {str(e)}')
 
@@ -387,39 +397,5 @@ class DockerSetupBase:
                     break
                 except ValidationError as e:
                     print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
-        
-        return config
-
-    def _get_tls_config(self) -> Dict[str, Any]:
-        """Get TLS configuration"""
-        print(f"\n{bcolors.BOLD}TLS Certificate (optional):{bcolors.ENDC}")
-        print(f"  Use custom TLS certificate for HTTPS")
-        use_tls = input(f"{bcolors.OKBLUE}Enable TLS? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
-        
-        config = {'tls_enabled': use_tls, 'cert_file': '', 'cert_password': ''}
-        
-        if use_tls:
-            while True:
-                cert_file = input(f"{bcolors.OKBLUE}Certificate file path:{bcolors.ENDC} ").strip()
-                try:
-                    if cert_file and os.path.exists(cert_file):
-                        config['cert_file'] = ConfigValidator.validate_cert_file(cert_file)
-                        break
-                    print(f"{bcolors.FAIL}Error: Certificate file not found{bcolors.ENDC}")
-                except ValidationError as e:
-                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
-            
-            # Certificate password validation (optional)
-            cert_password = input(f"{bcolors.OKBLUE}Certificate password [Press Enter if none]:{bcolors.ENDC} ").strip()
-            if cert_password:
-                while True:
-                    try:
-                        config['cert_password'] = ConfigValidator.validate_certpassword(cert_password)
-                        break
-                    except ValidationError as e:
-                        print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
-                        cert_password = input(f"{bcolors.OKBLUE}Certificate password [Press Enter if none]:{bcolors.ENDC} ").strip()
-                        if not cert_password:
-                            break
         
         return config
