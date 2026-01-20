@@ -1,6 +1,6 @@
 from __future__ import annotations
 import argparse
-from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
+from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from ...display import bcolors
 from ... import vault
 from ...discovery_common.user_service import UserService
@@ -22,6 +22,8 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
     # The record to base everything on.
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name or UID')
+    parser.add_argument('--configuration-uid', '-c', required=False, dest='configuration_uid',
+                        action='store', help='PAM configuration UID, if gateway has multiple.')
 
     parser.add_argument('--machine-uid', '-m', required=True, dest='machine_uid', action='store',
                         help='The UID of the Windows Machine record')
@@ -42,9 +44,15 @@ class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
 
         print("")
 
-        gateway_context = GatewayContext.from_gateway(params, gateway)
-        if gateway_context is None:
-            print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.")
+        try:
+            gateway_context = GatewayContext.from_gateway(params=params,
+                                                          gateway=gateway,
+                                                          configuration_uid=kwargs.get('configuration_uid'))
+            if gateway_context is None:
+                print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.{bcolors.ENDC}")
+                return
+        except MultiConfigurationException as err:
+            multi_conf_msg(gateway, err)
             return
 
         if gateway_context is None:
