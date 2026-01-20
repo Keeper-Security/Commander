@@ -1000,7 +1000,7 @@ class KeeperResponseParser:
         elif any(pattern in response_lower for pattern in not_found_patterns):
             return {
                 "status": "error",
-                "status_code": 404,
+                "status_code": 204,
                 "command": command.split()[0] if command.split() else command,
                 "error": response_str
             }
