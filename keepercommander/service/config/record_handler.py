@@ -26,12 +26,17 @@ class RecordHandler:
         self.cli_handler = CommandHandler()
 
     @debug_decorator
-    def create_record(self, is_advanced_security_enabled: str, commands: str) -> Dict[str, Any]:
+    def create_record(self, is_advanced_security_enabled: str, commands: str, token_expiration: str = None) -> Dict[str, Any]:
         """Create a new configuration record."""
         api_key = generate_api_key()
         record = self._create_base_record(api_key, commands)
         
-        if is_advanced_security_enabled == "y":
+        # Handle token expiration - either from CLI arg (streamlined) or interactive prompt
+        if token_expiration:
+            # Streamlined mode - use provided expiration
+            self._set_expiration_from_string(record, token_expiration)
+        elif is_advanced_security_enabled == "y":
+            # Interactive mode - prompt for expiration
             logger.debug("Adding expiration to record (advanced security enabled)")
             self._add_expiration_to_record(record)
             
@@ -113,23 +118,27 @@ class RecordHandler:
 
     @debug_decorator
     def _add_expiration_to_record(self, record: Dict[str, Any]) -> None:
-        """Add expiration details to the record."""
+        """Add expiration details to the record via interactive prompt."""
         expiration_str = input(
             "Token Expiration Time (Xm, Xh, Xd) or empty for no expiration: "
         ).strip()
 
         if not expiration_str:
-            #record["expiration_of_token"] = ""
             record["expiration_timestamp"] = datetime(9999, 12, 31, 23, 59, 59).isoformat()
             print("API key set to never expire")
             return
 
+        if not self._set_expiration_from_string(record, expiration_str):
+            self._add_expiration_to_record(record)
+    
+    def _set_expiration_from_string(self, record: Dict[str, Any], expiration_str: str) -> bool:
+        """Set expiration timestamp from expiration string (e.g., 5m, 24h, 7d). Returns True on success."""
         try:
             expiration_delta = self.validator.parse_expiration_time(expiration_str)
             expiration_time = datetime.now() + expiration_delta
-            #record["expiration_of_token"] = expiration_str
             record["expiration_timestamp"] = expiration_time.isoformat()
             print(f"API key will expire at: {record['expiration_timestamp']}")
+            return True
         except ValidationError as e:
             print(f"Error: {str(e)}")
-            self._add_expiration_to_record(record)
+            return False

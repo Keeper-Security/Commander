@@ -29,11 +29,15 @@ class StreamlineArgs:
     cloudflare: Optional[str]
     cloudflare_custom_domain: Optional[str]
     certfile: Optional[str]
-    certpassword : Optional[str]
-    fileformat : Optional[str]
+    certpassword: Optional[str]
+    fileformat: Optional[str]
     run_mode: Optional[str]
     queue_enabled: Optional[str]
     update_vault_record: Optional[str]
+    ratelimit: Optional[str]
+    encryption: Optional[str]
+    encryption_key: Optional[str]
+    token_expiration: Optional[str]
     
 class CreateService(Command):
     """Command to create a new service configuration."""
@@ -74,6 +78,10 @@ class CreateService(Command):
         parser.add_argument('-rm', '--run_mode', type=str, help='run mode')
         parser.add_argument('-q', '--queue_enabled', type=str, help='enable request queue (y/n)')
         parser.add_argument('-ur', '--update-vault-record', dest='update_vault_record', type=str, help='CSMD Config record UID to update with service metadata (Docker mode)')
+        parser.add_argument('-rl', '--ratelimit', type=str, help='rate limit (e.g., 10/minute, 100/hour)')
+        parser.add_argument('-enc', '--encryption', type=str, help='enable response encryption (y/n)')
+        parser.add_argument('-ek', '--encryption_key', type=str, help='encryption key (32 alphanumeric characters)')
+        parser.add_argument('-te', '--token_expiration', type=str, help='API token expiration (e.g., 30m, 24h, 7d)')
         return parser
     
     def execute(self, params: KeeperParams, **kwargs) -> None:
@@ -88,7 +96,7 @@ class CreateService(Command):
 
             config_data = self.service_config.create_default_config()
 
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'cloudflare', 'cloudflare_custom_domain', 'certfile', 'certpassword', 'fileformat', 'run_mode', 'queue_enabled', 'update_vault_record']}
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'cloudflare', 'cloudflare_custom_domain', 'certfile', 'certpassword', 'fileformat', 'run_mode', 'queue_enabled', 'update_vault_record', 'ratelimit', 'encryption', 'encryption_key', 'token_expiration']}
             args = StreamlineArgs(**filtered_kwargs)
             self._handle_configuration(config_data, params, args)
             api_key = self._create_and_save_record(config_data, params, args)
@@ -118,7 +126,7 @@ class CreateService(Command):
         if args.port is None:
             self.config_handler._configure_run_mode(config_data)
         
-        record = self.service_config.create_record(config_data["is_advanced_security_enabled"], params, args.commands)
+        record = self.service_config.create_record(config_data["is_advanced_security_enabled"], params, args.commands, args.token_expiration)
         config_data["records"] = [record]
         if config_data.get("fileformat"):
             format_type = config_data["fileformat"]

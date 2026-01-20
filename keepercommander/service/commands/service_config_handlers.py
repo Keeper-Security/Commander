@@ -65,6 +65,9 @@ class ServiceConfigHandler:
         cloudflare_enabled = "y" if args.cloudflare else "n"
         
         # Implement the same logic as interactive mode
+        ngrok_public_url = ""
+        cloudflare_public_url = ""
+        
         if ngrok_enabled == "y":
             # ngrok enabled → disable cloudflare and TLS
             cloudflare_enabled = "n"
@@ -73,6 +76,14 @@ class ServiceConfigHandler:
             tls_enabled = "n"
             certfile = ""
             certpassword = ""
+            # Construct ngrok public URL from custom domain
+            if args.ngrok_custom_domain:
+                ngrok_domain = args.ngrok_custom_domain.strip()
+                # If it's just a subdomain (no dots), append .ngrok.io
+                if '.' not in ngrok_domain:
+                    ngrok_public_url = f"https://{ngrok_domain}.ngrok.io"
+                else:
+                    ngrok_public_url = f"https://{ngrok_domain}"
             logger.debug("Ngrok enabled - disabling cloudflare and TLS")
         elif cloudflare_enabled == "y":
             # cloudflare enabled → disable TLS, but validate required fields
@@ -86,6 +97,8 @@ class ServiceConfigHandler:
             certpassword = ""
             cloudflare_token = self.service_config.validator.validate_cloudflare_token(args.cloudflare)
             cloudflare_domain = self.service_config.validator.validate_domain(args.cloudflare_custom_domain)
+            # Construct cloudflare public URL from custom domain
+            cloudflare_public_url = f"https://{cloudflare_domain}"
             logger.debug("Cloudflare enabled - disabling TLS")
         else:
             # Both ngrok and cloudflare disabled → allow TLS
@@ -95,6 +108,24 @@ class ServiceConfigHandler:
             cloudflare_token = ""
             cloudflare_domain = ""
             logger.debug("No tunnels enabled - TLS configuration allowed")
+
+        # Handle advanced security options
+        rate_limiting = ""
+        if args.ratelimit:
+            rate_limiting = self.service_config.validator.validate_rate_limit(args.ratelimit)
+        
+        encryption_enabled = "n"
+        encryption_key = ""
+        if args.encryption and args.encryption.lower() == 'y':
+            encryption_enabled = "y"
+            if args.encryption_key:
+                encryption_key = self.service_config.validator.validate_encryption_key(args.encryption_key)
+            else:
+                raise ValidationError("Encryption key is required when encryption is enabled.")
+        
+        # Validate token expiration format if provided (actual usage is in record creation)
+        if args.token_expiration:
+            self.service_config.validator.parse_expiration_time(args.token_expiration)
 
         config_data.update({
             "port": self.service_config.validator.validate_port(args.port),
@@ -106,15 +137,20 @@ class ServiceConfigHandler:
                 if ngrok_enabled == "y" else ""
             ),
             "ngrok_custom_domain": args.ngrok_custom_domain if ngrok_enabled == "y" else "",
+            "ngrok_public_url": ngrok_public_url,
             "cloudflare": cloudflare_enabled,
             "cloudflare_tunnel_token": cloudflare_token,
             "cloudflare_custom_domain": cloudflare_domain,
+            "cloudflare_public_url": cloudflare_public_url,
             "tls_certificate": tls_enabled,
             "certfile": certfile,
             "certpassword": certpassword,
             "fileformat": args.fileformat,  # Keep original logic - can be None
             "run_mode": run_mode,
-            "queue_enabled": queue_enabled
+            "queue_enabled": queue_enabled,
+            "rate_limiting": rate_limiting,
+            "encryption": encryption_enabled,
+            "encryption_private_key": encryption_key
         })
 
     @debug_decorator
@@ -150,6 +186,7 @@ class ServiceConfigHandler:
             config_data["cloudflare"] = "n"
             config_data["cloudflare_tunnel_token"] = ""
             config_data["cloudflare_custom_domain"] = ""
+            config_data["cloudflare_public_url"] = ""
             config_data["tls_certificate"] = "n"
             config_data["certfile"] = ""
             config_data["certpassword"] = ""
@@ -174,13 +211,23 @@ class ServiceConfigHandler:
                 try:
                     token = input(self.messages['ngrok_token_prompt'])
                     config_data["ngrok_auth_token"] = self.service_config.validator.validate_ngrok_token(token)
-                    config_data["ngrok_custom_domain"]  = input(self.messages['ngrok_custom_domain_prompt'])
-                    # print(f"ngrok custom domain >> "+{config_data["ngrok_custom_domain"]})
+                    config_data["ngrok_custom_domain"] = input(self.messages['ngrok_custom_domain_prompt'])
+                    # Construct ngrok public URL from custom domain
+                    if config_data["ngrok_custom_domain"]:
+                        ngrok_domain = config_data["ngrok_custom_domain"].strip()
+                        # If it's just a subdomain (no dots), append .ngrok.io
+                        if '.' not in ngrok_domain:
+                            config_data["ngrok_public_url"] = f"https://{ngrok_domain}.ngrok.io"
+                        else:
+                            config_data["ngrok_public_url"] = f"https://{ngrok_domain}"
+                    else:
+                        config_data["ngrok_public_url"] = ""
                     break
                 except ValidationError as e:
                     print(f"{self.validation_messages['invalid_ngrok_token']} {str(e)}")
         else:
             config_data["ngrok_auth_token"] = ""
+            config_data["ngrok_public_url"] = ""
 
     def _configure_cloudflare(self, config_data: Dict[str, Any]) -> None:
         config_data["cloudflare"] = self.service_config._get_yes_no_input(
@@ -201,9 +248,15 @@ class ServiceConfigHandler:
                 error_key='invalid_cloudflare_domain',
                 required=True
             )
+            # Construct cloudflare public URL from custom domain
+            if config_data["cloudflare_custom_domain"]:
+                config_data["cloudflare_public_url"] = f"https://{config_data['cloudflare_custom_domain']}"
+            else:
+                config_data["cloudflare_public_url"] = ""
         else:
             config_data["cloudflare_tunnel_token"] = ""
             config_data["cloudflare_custom_domain"] = ""
+            config_data["cloudflare_public_url"] = ""
         
     def _configure_tls(self, config_data: Dict[str, Any]) -> None:
         config_data["tls_certificate"] = self.service_config._get_yes_no_input(self.messages['tls_certificate'])

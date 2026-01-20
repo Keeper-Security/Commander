@@ -125,9 +125,13 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
                 tls_config = {'tls_enabled': False, 'cert_file': '', 'cert_password': ''}
         else:
             cloudflare_config = {
-                'cloudflare_enabled': False, 'cloudflare_tunnel_token': '', 'cloudflare_custom_domain': ''
+                'cloudflare_enabled': False, 'cloudflare_tunnel_token': '', 
+                'cloudflare_custom_domain': '', 'cloudflare_public_url': ''
             }
             tls_config = {'tls_enabled': False, 'cert_file': '', 'cert_password': ''}
+        
+        # Advanced security options
+        security_config = self._get_advanced_security_config()
         
         return ServiceConfig(
             port=port,
@@ -136,12 +140,20 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
             ngrok_enabled=ngrok_config['ngrok_enabled'],
             ngrok_auth_token=ngrok_config['ngrok_auth_token'],
             ngrok_custom_domain=ngrok_config['ngrok_custom_domain'],
+            ngrok_public_url=ngrok_config.get('ngrok_public_url', ''),
             cloudflare_enabled=cloudflare_config['cloudflare_enabled'],
             cloudflare_tunnel_token=cloudflare_config['cloudflare_tunnel_token'],
             cloudflare_custom_domain=cloudflare_config['cloudflare_custom_domain'],
+            cloudflare_public_url=cloudflare_config.get('cloudflare_public_url', ''),
             tls_enabled=tls_config['tls_enabled'],
             cert_file=tls_config['cert_file'],
-            cert_password=tls_config['cert_password']
+            cert_password=tls_config['cert_password'],
+            allowed_ip=security_config['allowed_ip'],
+            denied_ip=security_config['denied_ip'],
+            rate_limit=security_config['rate_limit'],
+            encryption_enabled=security_config['encryption_enabled'],
+            encryption_key=security_config['encryption_key'],
+            token_expiration=security_config['token_expiration']
         )
 
     def generate_docker_compose_yaml(self, setup_result: SetupResult, config: ServiceConfig) -> str:
@@ -214,98 +226,136 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
         queue_input = input(f"{bcolors.OKBLUE}Enable queue mode? [Press Enter for Yes] (y/n):{bcolors.ENDC} ").strip().lower()
         return queue_input != 'n'
 
-    def _get_ngrok_config(self) -> Dict[str, Any]:
-        """Get ngrok configuration"""
-        print(f"\n{bcolors.BOLD}Ngrok Tunneling (optional):{bcolors.ENDC}")
-        print(f"  Generate a public URL for your service using ngrok")
-        use_ngrok = input(f"{bcolors.OKBLUE}Enable ngrok? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
+
+    def _get_advanced_security_config(self) -> Dict[str, Any]:
+        """Get advanced security configuration"""
+        print(f"\n{bcolors.BOLD}Advanced Security (optional):{bcolors.ENDC}")
+        print(f"  Configure IP filtering, rate limiting, and response encryption")
+        enable_advanced = input(f"{bcolors.OKBLUE}Enable advanced security? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
         
-        config = {'ngrok_enabled': use_ngrok, 'ngrok_auth_token': '', 'ngrok_custom_domain': ''}
+        config = {
+            'allowed_ip': '0.0.0.0/0,::/0',
+            'denied_ip': '',
+            'rate_limit': '',
+            'encryption_enabled': False,
+            'encryption_key': '',
+            'token_expiration': ''
+        }
         
-        if use_ngrok:
-            while True:
-                token = input(f"{bcolors.OKBLUE}Ngrok auth token:{bcolors.ENDC} ").strip()
-                try:
-                    config['ngrok_auth_token'] = ConfigValidator.validate_ngrok_token(token)
-                    break
-                except ValidationError as e:
-                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+        if enable_advanced:
+            # IP Allowed List
+            config.update(self._get_ip_allowed_config())
             
-            # Validate custom domain if provided (ngrok allows subdomain prefixes)
-            domain = input(f"{bcolors.OKBLUE}Ngrok custom domain [Press Enter to skip]:{bcolors.ENDC} ").strip()
-            if domain:
-                while True:
-                    try:
-                        config['ngrok_custom_domain'] = ConfigValidator.validate_domain(domain, require_tld=False)
-                        break
-                    except ValidationError as e:
-                        print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
-                        domain = input(f"{bcolors.OKBLUE}Ngrok custom domain [Press Enter to skip]:{bcolors.ENDC} ").strip()
-                        if not domain:
-                            break
+            # IP Denied List
+            config.update(self._get_ip_denied_config())
+            
+            # Rate Limiting
+            config.update(self._get_rate_limit_config())
+            
+            # Encryption
+            config.update(self._get_encryption_config())
+            
+            # Token Expiration
+            config.update(self._get_token_expiration_config())
         
         return config
 
-    def _get_cloudflare_config(self) -> Dict[str, Any]:
-        """Get Cloudflare configuration"""
-        print(f"\n{bcolors.BOLD}Cloudflare Tunneling (optional):{bcolors.ENDC}")
-        print(f"  Generate a public URL for your service using Cloudflare")
-        use_cloudflare = input(f"{bcolors.OKBLUE}Enable Cloudflare? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
+    def _get_ip_allowed_config(self) -> Dict[str, str]:
+        """Get allowed IP configuration"""
+        print(f"\n{bcolors.BOLD}IP Allowed List:{bcolors.ENDC}")
+        print(f"  Comma-separated IPs or CIDR ranges (e.g., 192.168.1.0/24,10.0.0.1)")
         
-        config = {'cloudflare_enabled': use_cloudflare, 'cloudflare_tunnel_token': '', 'cloudflare_custom_domain': ''}
+        ip_list = input(f"{bcolors.OKBLUE}Allowed IPs [Press Enter for all]:{bcolors.ENDC} ").strip()
         
-        if use_cloudflare:
+        if ip_list:
             while True:
-                token = input(f"{bcolors.OKBLUE}Cloudflare tunnel token:{bcolors.ENDC} ").strip()
                 try:
-                    config['cloudflare_tunnel_token'] = ConfigValidator.validate_cloudflare_token(token)
-                    break
+                    return {'allowed_ip': ConfigValidator.validate_ip_list(ip_list)}
                 except ValidationError as e:
                     print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
-            
+                    ip_list = input(f"{bcolors.OKBLUE}Allowed IPs [Press Enter for all]:{bcolors.ENDC} ").strip()
+                    if not ip_list:
+                        break
+        
+        return {'allowed_ip': '0.0.0.0/0,::/0'}
+
+    def _get_ip_denied_config(self) -> Dict[str, str]:
+        """Get denied IP configuration"""
+        print(f"\n{bcolors.BOLD}IP Denied List:{bcolors.ENDC}")
+        print(f"  Comma-separated IPs or CIDR ranges to block")
+        
+        ip_list = input(f"{bcolors.OKBLUE}Denied IPs [Press Enter to skip]:{bcolors.ENDC} ").strip()
+        
+        if ip_list:
             while True:
-                domain = input(f"{bcolors.OKBLUE}Cloudflare custom domain:{bcolors.ENDC} ").strip()
                 try:
-                    config['cloudflare_custom_domain'] = ConfigValidator.validate_domain(domain)
+                    return {'denied_ip': ConfigValidator.validate_ip_list(ip_list)}
+                except ValidationError as e:
+                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+                    ip_list = input(f"{bcolors.OKBLUE}Denied IPs [Press Enter to skip]:{bcolors.ENDC} ").strip()
+                    if not ip_list:
+                        break
+        
+        return {'denied_ip': ''}
+
+    def _get_rate_limit_config(self) -> Dict[str, str]:
+        """Get rate limiting configuration"""
+        print(f"\n{bcolors.BOLD}Rate Limiting:{bcolors.ENDC}")
+        print(f"  Format: <number>/<period> (e.g., 10/minute, 100/hour, 1000/day)")
+        
+        rate_limit = input(f"{bcolors.OKBLUE}Rate limit [Press Enter to skip]:{bcolors.ENDC} ").strip()
+        
+        if rate_limit:
+            while True:
+                try:
+                    return {'rate_limit': ConfigValidator.validate_rate_limit(rate_limit)}
+                except ValidationError as e:
+                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+                    rate_limit = input(f"{bcolors.OKBLUE}Rate limit [Press Enter to skip]:{bcolors.ENDC} ").strip()
+                    if not rate_limit:
+                        break
+        
+        return {'rate_limit': ''}
+
+    def _get_encryption_config(self) -> Dict[str, Any]:
+        """Get encryption configuration"""
+        print(f"\n{bcolors.BOLD}Response Encryption:{bcolors.ENDC}")
+        print(f"  Enable AES-256 encryption for API responses")
+        enable_encryption = input(f"{bcolors.OKBLUE}Enable encryption? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
+        
+        config = {'encryption_enabled': enable_encryption, 'encryption_key': ''}
+        
+        if enable_encryption:
+            print(f"  Encryption key must be exactly 32 alphanumeric characters")
+            while True:
+                key = input(f"{bcolors.OKBLUE}Encryption key (32 chars):{bcolors.ENDC} ").strip()
+                try:
+                    config['encryption_key'] = ConfigValidator.validate_encryption_key(key)
                     break
                 except ValidationError as e:
                     print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
         
         return config
 
-    def _get_tls_config(self) -> Dict[str, Any]:
-        """Get TLS configuration"""
-        print(f"\n{bcolors.BOLD}TLS Certificate (optional):{bcolors.ENDC}")
-        print(f"  Use custom TLS certificate for HTTPS")
-        use_tls = input(f"{bcolors.OKBLUE}Enable TLS? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
+    def _get_token_expiration_config(self) -> Dict[str, str]:
+        """Get token expiration configuration"""
+        print(f"\n{bcolors.BOLD}API Token Expiration:{bcolors.ENDC}")
+        print(f"  Format: Xm (minutes), Xh (hours), Xd (days) - e.g., 30m, 24h, 7d")
         
-        config = {'tls_enabled': use_tls, 'cert_file': '', 'cert_password': ''}
+        expiration = input(f"{bcolors.OKBLUE}Token expiration [Press Enter for never]:{bcolors.ENDC} ").strip()
         
-        if use_tls:
+        if expiration:
             while True:
-                cert_file = input(f"{bcolors.OKBLUE}Certificate file path:{bcolors.ENDC} ").strip()
                 try:
-                    if cert_file and os.path.exists(cert_file):
-                        config['cert_file'] = ConfigValidator.validate_cert_file(cert_file)
-                        break
-                    print(f"{bcolors.FAIL}Error: Certificate file not found{bcolors.ENDC}")
+                    ConfigValidator.parse_expiration_time(expiration)
+                    return {'token_expiration': expiration}
                 except ValidationError as e:
                     print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
-            
-            # Certificate password validation (optional)
-            cert_password = input(f"{bcolors.OKBLUE}Certificate password:{bcolors.ENDC} ").strip()
-            if cert_password:
-                while True:
-                    try:
-                        config['cert_password'] = ConfigValidator.validate_certpassword(cert_password)
+                    expiration = input(f"{bcolors.OKBLUE}Token expiration [Press Enter for never]:{bcolors.ENDC} ").strip()
+                    if not expiration:
                         break
-                    except ValidationError as e:
-                        print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
-                        cert_password = input(f"{bcolors.OKBLUE}Certificate password:{bcolors.ENDC} ").strip()
-                        if not cert_password:
-                            break
         
-        return config
+        return {'token_expiration': ''}
 
     def _get_config_path(self, config_path: str = None) -> str:
         """Get and validate config file path"""
