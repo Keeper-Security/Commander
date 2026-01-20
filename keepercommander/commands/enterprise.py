@@ -3245,7 +3245,8 @@ class EnterpriseTeamCommand(EnterpriseCommand):
         matched_teams = list(matched.values())
         request_batch = []
         non_batch_update_msgs = []
-        has_warnings = False  
+        has_warnings = False
+        new_team_roles = None  
 
         if kwargs.get('add') or kwargs.get('approve'):
             queue = []
