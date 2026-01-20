@@ -143,13 +143,10 @@ class DockerComposeBuilder:
         if rate_limit:
             self._service_cmd_parts.append(f"-rl '{rate_limit}'")
         
-        # Encryption
-        encryption_enabled = self.config.get('encryption_enabled', False)
-        if encryption_enabled:
-            self._service_cmd_parts.append("-enc y")
-            encryption_key = self.config.get('encryption_key', '')
-            if encryption_key:
-                self._service_cmd_parts.append(f"-ek '{encryption_key}'")
+        # Encryption (automatically enabled if encryption_key is provided)
+        encryption_key = self.config.get('encryption_key', '')
+        if encryption_key:
+            self._service_cmd_parts.append(f"-ek '{encryption_key}'")
         
         # Token expiration
         token_expiration = self.config.get('token_expiration', '')

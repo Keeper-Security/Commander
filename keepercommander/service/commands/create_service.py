@@ -35,7 +35,6 @@ class StreamlineArgs:
     queue_enabled: Optional[str]
     update_vault_record: Optional[str]
     ratelimit: Optional[str]
-    encryption: Optional[str]
     encryption_key: Optional[str]
     token_expiration: Optional[str]
     
@@ -79,8 +78,7 @@ class CreateService(Command):
         parser.add_argument('-q', '--queue_enabled', type=str, help='enable request queue (y/n)')
         parser.add_argument('-ur', '--update-vault-record', dest='update_vault_record', type=str, help='CSMD Config record UID to update with service metadata (Docker mode)')
         parser.add_argument('-rl', '--ratelimit', type=str, help='rate limit (e.g., 10/minute, 100/hour)')
-        parser.add_argument('-enc', '--encryption', type=str, help='enable response encryption (y/n)')
-        parser.add_argument('-ek', '--encryption_key', type=str, help='encryption key (32 alphanumeric characters)')
+        parser.add_argument('-ek', '--encryption_key', type=str, help='encryption key for response encryption (32 alphanumeric characters)')
         parser.add_argument('-te', '--token_expiration', type=str, help='API token expiration (e.g., 30m, 24h, 7d)')
         return parser
     

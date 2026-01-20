@@ -93,8 +93,7 @@ Parameters:
 - `-dip, --deniedip`: Denied IP list to access service
 - `-aip, --allowedip`: Allowed IP list to access service
 - `-rl, --ratelimit`: Rate limit (e.g., "10/minute")
-- `-enc, --encryption`: Enable response encryption (y/n)
-- `-ek, --encryption_key`: Encryption key for response encryption
+- `-ek, --encryption_key`: Encryption key for response encryption (automatically enables encryption)
 - `-te, --token_expiration`: Token expiration time (e.g., "30m", "24h", "7d")
 
 ### Service Management
@@ -464,7 +463,7 @@ If you have Keeper Secrets Manager (KSM) activated in your account, you can use 
 ```
 Resources Created:
   • Shared Folder: Commander Service Mode - Docker
-  • KSM App: Commander Service Mode - Docker KSM App
+  • KSM App: Commander Service Mode - KSM App
   • Config Record: <UID>
   • KSM Base64 Config: ✓ Generated
 ```

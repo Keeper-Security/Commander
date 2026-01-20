@@ -25,9 +25,9 @@ class DockerSetupConstants:
     """Constants for Docker setup command"""
     # Default resource names for service-docker-setup
     DEFAULT_FOLDER_NAME = 'Commander Service Mode - Docker'
-    DEFAULT_APP_NAME = 'Commander Service Mode - Docker KSM App'
+    DEFAULT_APP_NAME = 'Commander Service Mode - KSM App'
     DEFAULT_RECORD_NAME = 'Commander Service Mode Docker Config'
-    DEFAULT_CLIENT_NAME = 'Commander Service Mode - Docker KSM App Client'
+    DEFAULT_CLIENT_NAME = 'Commander Service Mode - KSM App Client'
     
     # Default resource names for slack-app-setup
     DEFAULT_SLACK_FOLDER_NAME = 'Commander Service Mode - Slack App'

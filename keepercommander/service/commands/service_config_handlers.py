@@ -116,12 +116,9 @@ class ServiceConfigHandler:
         
         encryption_enabled = "n"
         encryption_key = ""
-        if args.encryption and args.encryption.lower() == 'y':
+        if args.encryption_key:
             encryption_enabled = "y"
-            if args.encryption_key:
-                encryption_key = self.service_config.validator.validate_encryption_key(args.encryption_key)
-            else:
-                raise ValidationError("Encryption key is required when encryption is enabled.")
+            encryption_key = self.service_config.validator.validate_encryption_key(args.encryption_key)
         
         # Validate token expiration format if provided (actual usage is in record creation)
         if args.token_expiration:
