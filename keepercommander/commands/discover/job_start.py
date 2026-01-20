@@ -101,7 +101,6 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
 
         # Load the configuration record and get the gateway_uid from the facade.
         gateway = kwargs.get('gateway')
-        gateway_context = None
         try:
             gateway_context = GatewayContext.from_gateway(params=params,
                                                           gateway=gateway,
