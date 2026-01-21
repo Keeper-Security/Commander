@@ -936,7 +936,13 @@ class KeeperResponseParser:
         
         response_lower = response_str.lower()
         
-       
+        success_indicators = [
+            "created", "added", "removed", "updated", "deleted", 
+            "successfully", "completed", "done"
+        ]
+        
+        has_success_indicator = any(indicator in response_lower for indicator in success_indicators)
+        
         forbidden_patterns = [
             "not an msp administrator",
             "permission denied",
@@ -992,21 +998,37 @@ class KeeperResponseParser:
         
         warning_patterns = ["warning:", "skipping"]
         
-        if any(pattern in response_lower for pattern in forbidden_patterns):
+        has_forbidden = any(pattern in response_lower for pattern in forbidden_patterns)
+        has_not_found = any(pattern in response_lower for pattern in not_found_patterns)
+        has_conflict = any(pattern in response_lower for pattern in conflict_patterns)
+        has_bad_request = any(pattern in response_lower for pattern in bad_request_patterns)
+        has_error = any(pattern in response_lower for pattern in error_patterns)
+        has_warning = any(pattern in response_lower for pattern in warning_patterns)
+        
+        if has_success_indicator and (has_not_found or has_bad_request or has_error):
+            return {
+                "status": "partial_success",
+                "status_code": 207,
+                "command": command.split()[0] if command.split() else command,
+                "message": response_str,
+                "data": None
+            }
+        
+        if has_forbidden:
             return {
                 "status": "error",
                 "status_code": 403,
                 "command": command.split()[0] if command.split() else command,
                 "error": response_str
             }
-        elif any(pattern in response_lower for pattern in not_found_patterns):
+        elif has_not_found:
             return {
                 "status": "error",
                 "status_code": 500,
                 "command": command.split()[0] if command.split() else command,
                 "error": response_str
             }
-        elif any(pattern in response_lower for pattern in conflict_patterns):
+        elif has_conflict:
             return {
                 "status": "warning",
                 "status_code": 409,
@@ -1014,21 +1036,21 @@ class KeeperResponseParser:
                 "message": response_str,
                 "data": None
             }
-        elif any(pattern in response_lower for pattern in bad_request_patterns):
+        elif has_bad_request:
             return {
                 "status": "error",
                 "status_code": 400,
                 "command": command.split()[0] if command.split() else command,
                 "error": response_str
             }
-        elif any(pattern in response_lower for pattern in error_patterns):
+        elif has_error:
             return {
                 "status": "error",
                 "status_code": 500,
                 "command": command.split()[0] if command.split() else command,
                 "error": response_str
             }
-        elif any(pattern in response_lower for pattern in warning_patterns):
+        elif has_warning:
             status = "warning"
             status_code = 400  
         
