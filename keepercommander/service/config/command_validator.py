@@ -139,7 +139,7 @@ class CommandValidator:
             else:
                 invalid_commands.append(cmd)
                 
-        return ", ".join(validated_commands), invalid_commands
+        return ",".join(validated_commands), invalid_commands
 
     def generate_command_error_message(self, invalid_commands: List[str], command_info: Dict[str, Any]) -> str:
         """Generate helpful error message for invalid commands."""
