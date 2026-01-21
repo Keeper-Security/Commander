@@ -174,6 +174,11 @@ class ConfigValidator:
             msg = ("Invalid rate limit format. Use formats like 'X/minute', 'X/hour', 'X/day', "
                   "'X per minute', 'X per hour', or 'X per day'.")
             raise ValidationError(msg)
+        
+        # Extract the numeric value and check if it's 0
+        numeric_value = int(re.match(r'^\d+', rate_limit).group())
+        if numeric_value == 0:
+            raise ValidationError("Rate limit value cannot be 0. Please specify a positive number.")
             
         logger.debug("Rate limit validation successful")
         return rate_limit

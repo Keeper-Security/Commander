@@ -22,7 +22,7 @@ from .service_docker_setup import ServiceDockerSetupCommand
 from ..config.config_validation import ConfigValidator, ValidationError
 from ..docker import (
     SetupResult, DockerSetupPrinter, DockerSetupConstants,
-    ServiceConfig, SlackConfig, DockerComposeBuilder
+    ServiceConfig, SlackConfig, DockerComposeBuilder, DockerSetupBase
 )
 
 slack_app_setup_parser = argparse.ArgumentParser(
@@ -31,8 +31,8 @@ slack_app_setup_parser = argparse.ArgumentParser(
     formatter_class=argparse.RawDescriptionHelpFormatter
 )
 slack_app_setup_parser.add_argument(
-    '--folder-name', dest='folder_name', type=str, default=DockerSetupConstants.DEFAULT_FOLDER_NAME,
-    help=f'Name for the shared folder (default: "{DockerSetupConstants.DEFAULT_FOLDER_NAME}")'
+    '--folder-name', dest='folder_name', type=str, default=DockerSetupConstants.DEFAULT_SLACK_FOLDER_NAME,
+    help=f'Name for the shared folder (default: "{DockerSetupConstants.DEFAULT_SLACK_FOLDER_NAME}")'
 )
 slack_app_setup_parser.add_argument(
     '--app-name', dest='app_name', type=str, default=DockerSetupConstants.DEFAULT_APP_NAME,
@@ -62,7 +62,7 @@ slack_app_setup_parser.error = raise_parse_exception
 slack_app_setup_parser.exit = suppress_exit
 
 
-class SlackAppSetupCommand(Command):
+class SlackAppSetupCommand(Command, DockerSetupBase):
     """Automated Slack App integration setup command"""
 
     def get_parser(self):
@@ -76,7 +76,7 @@ class SlackAppSetupCommand(Command):
         setup_result, service_config, config_path = self._run_base_docker_setup(params, kwargs)
         
         DockerSetupPrinter.print_completion("Service Mode Configuration Complete!")
-        
+
         # Phase 2: Slack-specific setup
         print(f"\n{bcolors.BOLD}Phase 2: Slack App Integration Setup{bcolors.ENDC}")
         
@@ -86,10 +86,10 @@ class SlackAppSetupCommand(Command):
             service_config,
             kwargs.get('slack_record_name', DockerSetupConstants.DEFAULT_SLACK_RECORD_NAME)
         )
-        
+
         # Print consolidated success message
         self._print_success_message(setup_result, service_config, slack_record_uid, slack_config, config_path)
-        
+
         return
 
     def _run_base_docker_setup(self, params, kwargs: Dict[str, Any]) -> Tuple[SetupResult, Dict[str, Any], str]:
@@ -103,14 +103,14 @@ class SlackAppSetupCommand(Command):
         config_path = kwargs.get('config_path') or os.path.expanduser('~/.keeper/config.json')
         if not os.path.isfile(config_path):
             raise CommandError('slack-app-setup', f'Config file not found: {config_path}')
-        
+
         # Print header
         DockerSetupPrinter.print_header("Docker Setup")
-        
+
         # Run core setup steps (Steps 1-7)
         setup_result = docker_cmd.run_setup_steps(
             params=params,
-            folder_name=kwargs.get('folder_name', DockerSetupConstants.DEFAULT_FOLDER_NAME),
+            folder_name=kwargs.get('folder_name', DockerSetupConstants.DEFAULT_SLACK_FOLDER_NAME),
             app_name=kwargs.get('app_name', DockerSetupConstants.DEFAULT_APP_NAME),
             record_name=kwargs.get('config_record_name', DockerSetupConstants.DEFAULT_RECORD_NAME),
             config_path=config_path,
@@ -129,10 +129,10 @@ class SlackAppSetupCommand(Command):
         return setup_result, service_config, config_path
 
     def _get_slack_service_configuration(self) -> ServiceConfig:
-        """Get simplified service configuration for Slack App (only port needed)"""
+        """Get service configuration for Slack App (port + tunneling options)"""
         DockerSetupPrinter.print_header("Service Mode Configuration")
-        
-        # Only ask for port with validation
+
+        # Port configuration
         print(f"{bcolors.BOLD}Port:{bcolors.ENDC}")
         print(f"  The port on which Commander Service will listen")
         while True:
@@ -143,20 +143,28 @@ class SlackAppSetupCommand(Command):
             except ValidationError as e:
                 print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
         
-        # Fixed configuration for Slack App
+        # Get tunneling configuration
+        ngrok_config = self._get_ngrok_config()
+        
+        # Only ask for Cloudflare if ngrok is not enabled
+        if not ngrok_config['ngrok_enabled']:
+            cloudflare_config = self._get_cloudflare_config()
+        else:
+            cloudflare_config = {'cloudflare_enabled': False, 'cloudflare_tunnel_token': '', 
+                                'cloudflare_custom_domain': '', 'cloudflare_public_url': ''}
+        
         return ServiceConfig(
             port=port,
             commands='search,share-record,share-folder,record-add,one-time-share,pedm,device-approve,get',
             queue_enabled=True,  # Always enable queue mode (v2 API)
-            ngrok_enabled=False,
-            ngrok_auth_token='',
-            ngrok_custom_domain='',
-            cloudflare_enabled=False,
-            cloudflare_tunnel_token='',
-            cloudflare_custom_domain='',
-            tls_enabled=False,
-            cert_file='',
-            cert_password=''
+            ngrok_enabled=ngrok_config['ngrok_enabled'],
+            ngrok_auth_token=ngrok_config['ngrok_auth_token'],
+            ngrok_custom_domain=ngrok_config['ngrok_custom_domain'],
+            ngrok_public_url=ngrok_config.get('ngrok_public_url', ''),
+            cloudflare_enabled=cloudflare_config['cloudflare_enabled'],
+            cloudflare_tunnel_token=cloudflare_config['cloudflare_tunnel_token'],
+            cloudflare_custom_domain=cloudflare_config['cloudflare_custom_domain'],
+            cloudflare_public_url=cloudflare_config.get('cloudflare_public_url', '')
         )
 
     def _run_slack_setup(self, params, setup_result: SetupResult, service_config: ServiceConfig,

@@ -78,7 +78,7 @@ class DockerComposeBuilder:
         
         service = {
             'container_name': 'keeper-service',
-            'ports': [f"{self.config['port']}:{self.config['port']}"],
+            'ports': [f"127.0.0.1:{self.config['port']}:{self.config['port']}"],
             'image': 'keeper/commander:latest',
             'command': ' '.join(self._service_cmd_parts),
             'healthcheck': self._build_healthcheck(),
@@ -121,36 +121,50 @@ class DockerComposeBuilder:
             f"-q {'y' if queue_enabled else 'n'}"
         ]
         
+        self._add_security_options()
         self._add_tunneling_options()
-        self._add_tls_options()
         self._add_docker_options()
+    
+    def _add_security_options(self) -> None:
+        """Add advanced security options (IP filtering, rate limiting, encryption)"""
+        # IP allowed list (only add if not default)
+        allowed_ip = self.config.get('allowed_ip', '0.0.0.0/0,::/0')
+        if allowed_ip and allowed_ip != '0.0.0.0/0,::/0':
+            self._service_cmd_parts.append(f"-aip '{allowed_ip}'")
+        
+        # IP denied list
+        denied_ip = self.config.get('denied_ip', '')
+        if denied_ip:
+            self._service_cmd_parts.append(f"-dip '{denied_ip}'")
+        
+        # Rate limiting
+        rate_limit = self.config.get('rate_limit', '')
+        if rate_limit:
+            self._service_cmd_parts.append(f"-rl '{rate_limit}'")
+        
+        # Encryption (automatically enabled if encryption_key is provided)
+        encryption_key = self.config.get('encryption_key', '')
+        if encryption_key:
+            self._service_cmd_parts.append(f"-ek '{encryption_key}'")
+        
+        # Token expiration
+        token_expiration = self.config.get('token_expiration', '')
+        if token_expiration:
+            self._service_cmd_parts.append(f"-te '{token_expiration}'")
     
     def _add_tunneling_options(self) -> None:
         """Add ngrok and Cloudflare tunneling options"""
         # Ngrok configuration
-        if self.config.get('ngrok_enabled') and self.config.get('ngrok_token'):
-            self._service_cmd_parts.append(f"-ng {self.config['ngrok_token']}")
-            if self.config.get('ngrok_domain'):
-                self._service_cmd_parts.append(f"-cd {self.config['ngrok_domain']}")
+        if self.config.get('ngrok_enabled') and self.config.get('ngrok_auth_token'):
+            self._service_cmd_parts.append(f"-ng {self.config['ngrok_auth_token']}")
+            if self.config.get('ngrok_custom_domain'):
+                self._service_cmd_parts.append(f"-cd {self.config['ngrok_custom_domain']}")
         
         # Cloudflare configuration
-        if self.config.get('cloudflare_enabled') and self.config.get('cloudflare_token'):
-            self._service_cmd_parts.append(f"-cf {self.config['cloudflare_token']}")
-            if self.config.get('cloudflare_domain'):
-                self._service_cmd_parts.append(f"-cfd {self.config['cloudflare_domain']}")
-    
-    def _add_tls_options(self) -> None:
-        """Add TLS certificate options and volumes"""
-        if self.config.get('tls_enabled') and self.config.get('cert_file'):
-            cert_file = self.config['cert_file']
-            cert_basename = os.path.basename(cert_file)
-            
-            self._service_cmd_parts.append(f"-crtf /certs/{cert_basename}")
-            if self.config.get('cert_password'):
-                self._service_cmd_parts.append(f"-crtp {self.config['cert_password']}")
-            
-            # Add volume mount for certificate
-            self._volumes.append(f"{cert_file}:/certs/{cert_basename}:ro")
+        if self.config.get('cloudflare_enabled') and self.config.get('cloudflare_tunnel_token'):
+            self._service_cmd_parts.append(f"-cf {self.config['cloudflare_tunnel_token']}")
+            if self.config.get('cloudflare_custom_domain'):
+                self._service_cmd_parts.append(f"-cfd {self.config['cloudflare_custom_domain']}")
     
     def _add_docker_options(self) -> None:
         """Add Docker-specific parameters (KSM config, record UIDs)"""

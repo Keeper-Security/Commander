@@ -83,6 +83,10 @@ if sys.version_info >= (3, 8):
                 'abc',
                 '10/second',
                 '100 by hour',
+                '0/minute',
+                '0/hour',
+                '0/day',
+                '0 per minute',
             ]
             for limit in invalid_limits:
                 with self.subTest(limit=limit):
