@@ -23,11 +23,15 @@ from enum import Enum
 
 class DockerSetupConstants:
     """Constants for Docker setup command"""
-    # Default resource names
-    DEFAULT_FOLDER_NAME = 'CSMD Folder'
-    DEFAULT_APP_NAME = 'CSMD KSM App'
-    DEFAULT_RECORD_NAME = 'CSMD Config'
-    DEFAULT_SLACK_RECORD_NAME = 'CSMD Slack Config'
+    # Default resource names for service-docker-setup
+    DEFAULT_FOLDER_NAME = 'Commander Service Mode - Docker'
+    DEFAULT_APP_NAME = 'Commander Service Mode - KSM App'
+    DEFAULT_RECORD_NAME = 'Commander Service Mode Docker Config'
+    DEFAULT_CLIENT_NAME = 'Commander Service Mode - KSM App Client'
+    
+    # Default resource names for slack-app-setup
+    DEFAULT_SLACK_FOLDER_NAME = 'Commander Service Mode - Slack App'
+    DEFAULT_SLACK_RECORD_NAME = 'Commander Service Mode Slack App Config'
     
     # Default service configuration
     DEFAULT_PORT = 8900
@@ -82,9 +86,14 @@ class ServiceConfig:
     cloudflare_enabled: bool
     cloudflare_tunnel_token: str
     cloudflare_custom_domain: str
-    tls_enabled: bool
-    cert_file: str
-    cert_password: str
+    allowed_ip: str = '0.0.0.0/0,::/0'
+    denied_ip: str = ''
+    rate_limit: str = ''
+    encryption_enabled: bool = False
+    encryption_key: str = ''
+    token_expiration: str = ''
+    ngrok_public_url: str = ''
+    cloudflare_public_url: str = ''
 
 
 @dataclass

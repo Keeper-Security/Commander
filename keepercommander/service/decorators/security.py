@@ -79,23 +79,17 @@ def is_ip_in_range(ip, ip_range):
     except ValueError:
         return False
     
+def get_rate_limit():
+    """Get configured rate limit"""
+    return ConfigReader.read_config("rate_limiting") or "60/minute"
+
+def get_rate_limit_key():
+    """Generate rate limit key per IP + endpoint for separate limits per endpoint"""
+    return f"{get_remote_address()}:{request.endpoint}"
+
 def security_check(fn):
     @wraps(fn)
-    def get_multiplied_rate_limit():
-        """Get rate limit with appropriate multiplier based on API version"""
-        from flask import request
-        base_limit = ConfigReader.read_config("rate_limiting")
-        if base_limit:
-            import re
-            match = re.match(r'(\d+)(/\w+)', base_limit)
-            if match:
-                number, unit = match.groups()
-                # v2 API has 4 endpoints sharing the limit, v1 API has only 1
-                multiplier = 1 if request.path.startswith('/api/v1') else 4
-                return f"{int(number) * multiplier}{unit}"
-        return base_limit
-    
-    @limiter.limit(get_multiplied_rate_limit)
+    @limiter.limit(get_rate_limit, key_func=get_rate_limit_key)
     def wrapper(*args, **kwargs):
         client_ip = request.remote_addr
         try:

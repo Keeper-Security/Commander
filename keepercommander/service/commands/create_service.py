@@ -29,11 +29,14 @@ class StreamlineArgs:
     cloudflare: Optional[str]
     cloudflare_custom_domain: Optional[str]
     certfile: Optional[str]
-    certpassword : Optional[str]
-    fileformat : Optional[str]
+    certpassword: Optional[str]
+    fileformat: Optional[str]
     run_mode: Optional[str]
     queue_enabled: Optional[str]
     update_vault_record: Optional[str]
+    ratelimit: Optional[str]
+    encryption_key: Optional[str]
+    token_expiration: Optional[str]
     
 class CreateService(Command):
     """Command to create a new service configuration."""
@@ -74,6 +77,9 @@ class CreateService(Command):
         parser.add_argument('-rm', '--run_mode', type=str, help='run mode')
         parser.add_argument('-q', '--queue_enabled', type=str, help='enable request queue (y/n)')
         parser.add_argument('-ur', '--update-vault-record', dest='update_vault_record', type=str, help='CSMD Config record UID to update with service metadata (Docker mode)')
+        parser.add_argument('-rl', '--ratelimit', type=str, help='rate limit (e.g., 10/minute, 100/hour)')
+        parser.add_argument('-ek', '--encryption_key', type=str, help='encryption key for response encryption (32 alphanumeric characters)')
+        parser.add_argument('-te', '--token_expiration', type=str, help='API token expiration (e.g., 30m, 24h, 7d)')
         return parser
     
     def execute(self, params: KeeperParams, **kwargs) -> None:
@@ -88,7 +94,7 @@ class CreateService(Command):
 
             config_data = self.service_config.create_default_config()
 
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'cloudflare', 'cloudflare_custom_domain', 'certfile', 'certpassword', 'fileformat', 'run_mode', 'queue_enabled', 'update_vault_record']}
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k in ['port', 'allowedip', 'deniedip', 'commands', 'ngrok', 'ngrok_custom_domain', 'cloudflare', 'cloudflare_custom_domain', 'certfile', 'certpassword', 'fileformat', 'run_mode', 'queue_enabled', 'update_vault_record', 'ratelimit', 'encryption', 'encryption_key', 'token_expiration']}
             args = StreamlineArgs(**filtered_kwargs)
             self._handle_configuration(config_data, params, args)
             api_key = self._create_and_save_record(config_data, params, args)
@@ -118,7 +124,7 @@ class CreateService(Command):
         if args.port is None:
             self.config_handler._configure_run_mode(config_data)
         
-        record = self.service_config.create_record(config_data["is_advanced_security_enabled"], params, args.commands)
+        record = self.service_config.create_record(config_data["is_advanced_security_enabled"], params, args.commands, args.token_expiration, args.update_vault_record)
         config_data["records"] = [record]
         if config_data.get("fileformat"):
             format_type = config_data["fileformat"]
@@ -138,17 +144,24 @@ class CreateService(Command):
         ServiceManager.start_service()
     
     def _get_service_url(self, config_data: Dict[str, Any]) -> str:
-        """Determine the actual service URL (ngrok, cloudflare, or localhost)"""
+        """Determine the actual service URL (ngrok, cloudflare, or localhost) with API version path"""
+        # Determine API version based on queue_enabled
+        queue_enabled = config_data.get("queue_enabled", "y")
+        api_path = "/api/v2" if queue_enabled == "y" else "/api/v1"
+        
         # Priority: ngrok > cloudflare > localhost
+        base_url = ""
         if config_data.get("ngrok_public_url"):
-            return config_data["ngrok_public_url"]
+            base_url = config_data["ngrok_public_url"]
         elif config_data.get("cloudflare_public_url"):
-            return config_data["cloudflare_public_url"]
+            base_url = config_data["cloudflare_public_url"]
         else:
             # Fallback to localhost with correct protocol
             port = config_data.get("port", 8080)
             protocol = "https" if config_data.get("tls_certificate") == "y" else "http"
-            return f"{protocol}://localhost:{port}"
+            base_url = f"{protocol}://localhost:{port}"
+        
+        return f"{base_url}{api_path}"
     
     def _update_vault_record_with_metadata(self, params: KeeperParams, record_uid: str, service_url: str, api_key: str) -> None:
         """Update CSMD Config vault record with service URL and API key as custom fields (Docker mode only)"""

@@ -27,7 +27,7 @@ from ...params import KeeperParams
 
 VALID_CERT_EXTENSIONS = {".pem", ".crt", ".cer", ".key"}
 class ServiceConfig:
-    def __init__(self, title: str = 'Commander Service Mode'):
+    def __init__(self, title: str = 'Commander Service Mode Config'):
         self.title = title
         
         self.config = ConfigParser()
@@ -300,10 +300,10 @@ class ServiceConfig:
                 print(f"\nError: {str(e)}")
                 print("\nPlease try again with valid commands.")
 
-    def create_record(self, is_advanced_security_enabled: str, params: KeeperParams, commands: Optional[str] = None) -> Dict[str, Any]:
+    def create_record(self, is_advanced_security_enabled: str, params: KeeperParams, commands: Optional[str] = None, token_expiration: str = None, record_uid: Optional[str] = None) -> Dict[str, Any]:
         """Create a new configuration record."""
         commands = self.validate_command_list(commands, params) if commands else self._get_validated_commands(params)
-        return self.record_handler.create_record(is_advanced_security_enabled, commands)
+        return self.record_handler.create_record(is_advanced_security_enabled, commands, token_expiration, record_uid)
 
     def update_or_add_record(self, params: KeeperParams) -> None:
         """Update existing record or add new one."""

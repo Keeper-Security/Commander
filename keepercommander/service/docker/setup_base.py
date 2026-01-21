@@ -18,17 +18,21 @@ Commander Service Mode with Docker and KSM.
 
 import io
 import json
+import logging
 import os
 import sys
 import tempfile
+from typing import Dict, Any
 
 from ...commands.folder import FolderMakeCommand
 from ...commands.ksm import KSMCommand
 from ... import api, vault, utils, attachment, record_management, loginv3
+from ...display import bcolors
 from ...error import CommandError
 
-from .models import SetupResult, SetupStep
+from .models import SetupResult, SetupStep, DockerSetupConstants
 from .printer import DockerSetupPrinter
+from ..config.config_validation import ConfigValidator, ValidationError
 
 
 class DockerSetupBase:
@@ -112,7 +116,13 @@ class DockerSetupBase:
 
             # Timeout
             DockerSetupPrinter.print_success(f"Setting logout timeout to {timeout}...")
-            ThisDeviceCommand().execute(params, ops=['timeout', timeout])
+            # Suppress command output
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            try:
+                ThisDeviceCommand().execute(params, ops=['timeout', timeout])
+            finally:
+                sys.stdout = old_stdout
 
         except Exception as e:
             raise CommandError('docker-setup', f'Device setup failed: {str(e)}')
@@ -272,9 +282,12 @@ class DockerSetupBase:
             if not app_rec:
                 raise CommandError('docker-setup', 'App not found')
 
-            # Suppress output
+            # Suppress all output (stdout and logging)
             old_stdout = sys.stdout
+            old_log_level = logging.root.level
+            
             sys.stdout = io.StringIO()
+            logging.root.setLevel(logging.CRITICAL + 1)  # Disable all logging
             try:
                 KSMCommand.add_app_share(
                     params,
@@ -284,15 +297,15 @@ class DockerSetupBase:
                 )
             finally:
                 sys.stdout = old_stdout
-            
-            DockerSetupPrinter.print_success("Folder shared with app successfully")
+                logging.root.setLevel(old_log_level)     
+            DockerSetupPrinter.print_success("Folder shared with app")
         except Exception as e:
             raise CommandError('docker-setup', f'Failed to share folder with app: {str(e)}')
 
     def _create_client_device(self, params, app_uid: str, app_name: str) -> str:
         """Create client device and return b64 config"""
         try:
-            client_name = f"{app_name} Docker Client"
+            client_name = DockerSetupConstants.DEFAULT_CLIENT_NAME
             
             tokens_and_devices = KSMCommand.add_client(
                 params=params,
@@ -316,3 +329,73 @@ class DockerSetupBase:
         except Exception as e:
             raise CommandError('docker-setup', f'Failed to create client device: {str(e)}')
 
+    # ========================
+    # Shared Configuration Methods
+    # ========================
+
+    def _get_ngrok_config(self) -> Dict[str, Any]:
+        """Get ngrok configuration"""
+        print(f"\n{bcolors.BOLD}Ngrok Tunneling (optional):{bcolors.ENDC}")
+        print(f"  Generate a public URL for your service using ngrok")
+        use_ngrok = input(f"{bcolors.OKBLUE}Enable ngrok? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
+        
+        config = {'ngrok_enabled': use_ngrok, 'ngrok_auth_token': '', 'ngrok_custom_domain': '', 'ngrok_public_url': ''}
+        
+        if use_ngrok:
+            while True:
+                token = input(f"{bcolors.OKBLUE}Ngrok auth token:{bcolors.ENDC} ").strip()
+                try:
+                    config['ngrok_auth_token'] = ConfigValidator.validate_ngrok_token(token)
+                    break
+                except ValidationError as e:
+                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+            
+            # Validate custom domain if provided (ngrok allows subdomain prefixes)
+            domain = input(f"{bcolors.OKBLUE}Ngrok custom domain [Press Enter to skip]:{bcolors.ENDC} ").strip()
+            if domain:
+                while True:
+                    try:
+                        config['ngrok_custom_domain'] = ConfigValidator.validate_domain(domain, require_tld=False)
+                        # Construct ngrok public URL
+                        if '.' not in config['ngrok_custom_domain']:
+                            config['ngrok_public_url'] = f"https://{config['ngrok_custom_domain']}.ngrok.io"
+                        else:
+                            config['ngrok_public_url'] = f"https://{config['ngrok_custom_domain']}"
+                        break
+                    except ValidationError as e:
+                        print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+                        domain = input(f"{bcolors.OKBLUE}Ngrok custom domain [Press Enter to skip]:{bcolors.ENDC} ").strip()
+                        if not domain:
+                            break
+        
+        return config
+
+    def _get_cloudflare_config(self) -> Dict[str, Any]:
+        """Get Cloudflare configuration"""
+        print(f"\n{bcolors.BOLD}Cloudflare Tunneling (optional):{bcolors.ENDC}")
+        print(f"  Generate a public URL for your service using Cloudflare")
+        use_cloudflare = input(f"{bcolors.OKBLUE}Enable Cloudflare? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
+        
+        config = {'cloudflare_enabled': use_cloudflare, 'cloudflare_tunnel_token': '', 
+                  'cloudflare_custom_domain': '', 'cloudflare_public_url': ''}
+        
+        if use_cloudflare:
+            while True:
+                token = input(f"{bcolors.OKBLUE}Cloudflare tunnel token:{bcolors.ENDC} ").strip()
+                try:
+                    config['cloudflare_tunnel_token'] = ConfigValidator.validate_cloudflare_token(token)
+                    break
+                except ValidationError as e:
+                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+            
+            while True:
+                domain = input(f"{bcolors.OKBLUE}Cloudflare custom domain:{bcolors.ENDC} ").strip()
+                try:
+                    config['cloudflare_custom_domain'] = ConfigValidator.validate_domain(domain)
+                    # Construct cloudflare public URL
+                    config['cloudflare_public_url'] = f"https://{config['cloudflare_custom_domain']}"
+                    break
+                except ValidationError as e:
+                    print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+        
+        return config
