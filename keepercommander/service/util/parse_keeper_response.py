@@ -930,38 +930,118 @@ class KeeperResponseParser:
         # Filter out biometric and persistent login messages for cleaner API responses
         response_str = KeeperResponseParser._filter_login_messages(response_str)
         
-        # Determine status based on common patterns
+        # Determine status and status_code based on patterns
         status = "success"
-        
-        # Check for error patterns (case insensitive)
-        error_patterns = [
-            "error", "failed", "invalid", "not found", "does not exist", 
-            "permission denied", "unauthorized", "cannot be", "character", "reserved", "unrecognized"
-        ]
-        
-        # Check for warning patterns
-        warning_patterns = ["warning:", "already exists"]
+        status_code = None  
         
         response_lower = response_str.lower()
         
-        if any(pattern in response_lower for pattern in error_patterns):
+       
+        forbidden_patterns = [
+            "not an msp administrator",
+            "permission denied",
+            "access denied",
+            "unauthorized access",
+            "forbidden",
+            "must be a root admin",
+            "admin privileges required",
+            "admin account required",
+            "insufficient privileges",
+            "not authorized"
+        ]
+        
+        conflict_patterns = [
+            "already a member",
+            "already exists",
+            "already in",
+            "already accepted",
+            "duplicate"
+        ]
+        
+        not_found_patterns = [
+            "could not be resolved",
+            "is not found",
+            "not found",
+            "does not exist",
+            "not a member of",
+            "cannot be found",
+            "cannot find"
+        ]
+        
+        bad_request_patterns = [
+            "invalid",
+            "not valid",
+            "not allowed",
+            "not unique",
+            "unrecognized",
+            "reserved",
+            "character",
+            "empty",
+            "cannot be",
+            "cannot assign",
+            "cannot move",
+            "cannot get",
+            "not integer"
+        ]
+        
+        error_patterns = [
+            "error", "failed", "failure"
+        ]
+        
+        warning_patterns = ["warning:", "skipping"]
+        
+        if any(pattern in response_lower for pattern in forbidden_patterns):
             return {
                 "status": "error",
+                "status_code": 403,
+                "command": command.split()[0] if command.split() else command,
+                "error": response_str
+            }
+        elif any(pattern in response_lower for pattern in not_found_patterns):
+            return {
+                "status": "error",
+                "status_code": 204,
+                "command": command.split()[0] if command.split() else command,
+                "error": response_str
+            }
+        elif any(pattern in response_lower for pattern in conflict_patterns):
+            return {
+                "status": "warning",
+                "status_code": 409,
+                "command": command.split()[0] if command.split() else command,
+                "message": response_str,
+                "data": None
+            }
+        elif any(pattern in response_lower for pattern in bad_request_patterns):
+            return {
+                "status": "error",
+                "status_code": 400,
+                "command": command.split()[0] if command.split() else command,
+                "error": response_str
+            }
+        elif any(pattern in response_lower for pattern in error_patterns):
+            return {
+                "status": "error",
+                "status_code": 500,
                 "command": command.split()[0] if command.split() else command,
                 "error": response_str
             }
         elif any(pattern in response_lower for pattern in warning_patterns):
             status = "warning"
+            status_code = 400  
         
         # Return the actual log message with proper formatting
         if response_str:
             formatted_message = KeeperResponseParser._format_multiline_message(response_str)
-            return {
+            result = {
                 "status": status,
                 "command": command.split()[0] if command.split() else command,
                 "message": formatted_message,
                 "data": None
             }
+            if status_code:
+                result["status_code"] = status_code
+            return result
         else:
             # No output after cleaning - use existing empty response handler
             return KeeperResponseParser._handle_empty_response(command)
