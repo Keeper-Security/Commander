@@ -149,8 +149,9 @@ class CommandExecutor:
             response = parse_keeper_response(command, response, log_output)
             
             if isinstance(response, dict):
+                # Extract status_code and remove it from response body
                 if 'status_code' in response:
-                    status_code = response['status_code']
+                    status_code = response.pop('status_code')
                 elif response.get("status") == "error":
                     status_code = 400
                 elif response.get("status") == "warning":

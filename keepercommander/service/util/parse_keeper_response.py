@@ -947,7 +947,9 @@ class KeeperResponseParser:
             "admin privileges required",
             "admin account required",
             "insufficient privileges",
-            "not authorized"
+            "not authorized",
+            "is restricted to",
+            "command is restricted"
         ]
         
         conflict_patterns = [
@@ -1000,7 +1002,7 @@ class KeeperResponseParser:
         elif any(pattern in response_lower for pattern in not_found_patterns):
             return {
                 "status": "error",
-                "status_code": 204,
+                "status_code": 500,
                 "command": command.split()[0] if command.split() else command,
                 "error": response_str
             }
