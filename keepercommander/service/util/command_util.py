@@ -148,9 +148,18 @@ class CommandExecutor:
             # Always let the parser handle the response (including empty responses and logs)
             response = parse_keeper_response(command, response, log_output)
             
-            status_code = 200
-            if isinstance(response, dict) and response.get("status") == "error":
-                status_code = 400
+            if isinstance(response, dict):
+                # Extract status_code and remove it from response body
+                if 'status_code' in response:
+                    status_code = response.pop('status_code')
+                elif response.get("status") == "error":
+                    status_code = 400
+                elif response.get("status") == "warning":
+                    status_code = 400
+                else:
+                    status_code = 200
+            else:
+                status_code = 200
             
             response = CommandExecutor.encrypt_response(response)
             logger.debug(f"Command executed successfully")
