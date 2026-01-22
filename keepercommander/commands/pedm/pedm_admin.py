@@ -2099,7 +2099,7 @@ class PedmApprovalListCommand(base.ArgparseCommand):
     def __init__(self):
         parser = argparse.ArgumentParser(prog='list', description='List EPM approval requests',
                                          parents=[base.report_output_parser])
-        parser.add_argument('--type', dest='type', action='store', choices=['approved', 'denied', 'pending', 'expired'],
+        parser.add_argument('--type', dest='type', action='store', choices=['approved', 'denied', 'pending', 'expired', 'escalated'],
                             help='approval type filter')
 
         super().__init__(parser)
@@ -2146,7 +2146,7 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
         parser.add_argument('--deny', dest='deny', action='append',
                             help='Request UIDs for denial')
         parser.add_argument('--remove', dest='remove', action='append',
-                            help='Request UIDs for removal. UID, @approved, @denied, @expired, @pending')
+                            help='Request UIDs for removal. UID, @approved, @denied, @expired, @escalated, @pending')
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
@@ -2186,10 +2186,13 @@ class PedmApprovalStatusCommand(base.ArgparseCommand):
                         (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_DENIED))
                 elif uid == '@pending':
                     to_remove_set.update(
-                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED and x.modified >= expire_ts))
+                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED))
                 elif uid == '@expired':
                     to_remove_set.update(
-                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED and x.modified < expire_ts))
+                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_LOST_APPROVAL_RIGHTS))
+                elif uid == '@escalated':
+                    to_remove_set.update(
+                        (utils.base64_url_decode(x.approval_uid) for x in plugin.storage.approval_status.get_all_entities() if x.approval_status == NotificationCenter_pb2.NAS_ESCALATED))
                 else:
                     to_resolve.append(uid)
             if len(to_resolve) > 0:
