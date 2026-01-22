@@ -27,6 +27,7 @@ class EnterpriseCommand(Command):
         self.public_keys = {}
         self.team_keys = {}
         self._node_map = None
+        self._node_map_enterprise_name = None
 
     def execute_args(self, params, args, **kwargs):
         if params.enterprise:
@@ -291,7 +292,9 @@ class EnterpriseCommand(Command):
         return enterprise_ids
 
     def get_node_path(self, params, node_id, omit_root=False):
-        if self._node_map is None:
+        current_enterprise_name = params.enterprise.get('enterprise_name')
+        if self._node_map is None or self._node_map_enterprise_name != current_enterprise_name:
+            self._node_map_enterprise_name = current_enterprise_name
             self._node_map = {
                 x['node_id']: (x['data'].get('displayname') or x.get('name') or str(x['node_id']) if x.get('parent_id', 0) > 0 else params.enterprise['enterprise_name'], x.get('parent_id', 0))
                 for x in params.enterprise['nodes']}

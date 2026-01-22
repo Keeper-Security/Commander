@@ -426,7 +426,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             nodes[node_id] = {
                 'node_id': node_id,
                 'parent_id': node.get('parent_id') or 0,
-                'name': node['data'].get('displayname') or '',
+                'name': (node['data'].get('displayname') or '') if node.get('parent_id') else params.enterprise['enterprise_name'],
                 'isolated': node.get('restrict_visibility') or False,
                 'users': [],
                 'teams': [],
@@ -3507,7 +3507,10 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                 if command in { 'team_add', 'team_delete', 'team_update' }:
                     verb = 'created' if command == 'team_add' else 'deleted' if command == 'team_delete' else 'updated'
                     if rs['result'] == 'success':
-                        logging.info('\'%s\' team is %s', team_name, verb)
+                        if command == 'team_add':
+                            logging.info('\'%s\' team is %s with Team ID: %s', team_name, verb, rq.get('team_uid'))
+                        else:
+                            logging.info('\'%s\' team is %s', team_name, verb)
                     else:
                         logging.warning('\'%s\' team is not %s: %s', team_name, verb, rs['message'])
                 elif command in {'team_enterprise_user_add', 'team_queue_user', 'team_enterprise_user_remove'}:
