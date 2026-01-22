@@ -311,7 +311,10 @@ class PedmPlugin(IPedmAdmin):
         collections: List[admin_types.PedmCollection] = []
         for collection_dto in get_collections():
             try:
-                collection_value = crypto.decrypt_aes_v2(collection_dto.data, self.agent_key).decode('utf-8')
+                if collection_dto.collection_type in (1000, 1001, 1002):
+                    collection_value = collection_dto.data.decode('utf-8')
+                else:
+                    collection_value = crypto.decrypt_aes_v2(collection_dto.data, self.agent_key).decode('utf-8')
                 collection_data = json.loads(collection_value)
                 collection = admin_types.PedmCollection(
                     collection_uid=collection_dto.collection_uid, collection_type=collection_dto.collection_type,
