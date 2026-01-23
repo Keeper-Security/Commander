@@ -50,7 +50,7 @@ class ConfigFormatHandler:
             
         from ..core.globals import get_current_params
         if params := get_current_params():
-            if self.cli_handler.download_config_from_vault(params, 'Commander Service Mode', self.config_dir):
+            if self.cli_handler.download_config_from_vault(params, 'Commander Service Mode Config', self.config_dir):
                 if json_path.exists():
                     self.encrypt_config_file(json_path, self.config_dir)
                     return 'json'
