@@ -511,7 +511,7 @@ class KeeperResponseParser:
 
     @staticmethod
     def _parse_record_add_command(response: str) -> Dict[str, Any]:
-        """Parse 'record-add' command output to extract record UID or handle errors."""
+        """Parse 'record-add' command output to extract record UID, share URL, or handle errors."""
         response_str = response.strip()
         
         # Check for error messages first
@@ -533,14 +533,19 @@ class KeeperResponseParser:
                 "data": None
             }
         
-        # Success case - try to extract UID
+        # Success case - check if it's a share URL (from --self-destruct)
         result = {
             "status": "success",
             "command": "record-add",
             "data": None
         }
         
-        if re.match(r'^[a-zA-Z0-9_-]+$', response_str):
+        # Check if response is a share URL (starts with https:// and contains /vault/share)
+        if response_str.startswith('https://') and '/vault/share' in response_str:
+            result["data"] = {
+                "share_url": response_str
+            }
+        elif re.match(r'^[a-zA-Z0-9_-]+$', response_str):
             result["data"] = {
                 "record_uid": response_str
             }
