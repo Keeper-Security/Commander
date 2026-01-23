@@ -17,7 +17,24 @@ import os
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 import pyperclip
+from pyperclip import PyperclipException
 from rich.markup import escape as rich_escape
+
+
+def safe_copy_to_clipboard(text: str) -> tuple[bool, str]:
+    """Safely copy text to clipboard, handling missing clipboard on remote/headless systems.
+
+    Returns:
+        (True, "") on success
+        (False, error_message) on failure
+    """
+    try:
+        pyperclip.copy(text)
+        return True, ""
+    except PyperclipException:
+        return False, "Clipboard not available (no X11/Wayland)"
+    except Exception as e:
+        return False, str(e)
 
 # Import from refactored modules
 from .supershell.themes import COLOR_THEMES
@@ -228,10 +245,12 @@ class AutoCopyTextArea(TextArea):
                         from textual.widgets.text_area import Selection
                         self.selection = Selection((row, start), (row, end))
                         # Copy immediately
-                        import pyperclip
-                        pyperclip.copy(word)
-                        preview = word[:40] + ('...' if len(word) > 40 else '')
-                        self.app.notify(f"Copied: {preview}", severity="information")
+                        success, err = safe_copy_to_clipboard(word)
+                        if success:
+                            preview = word[:40] + ('...' if len(word) > 40 else '')
+                            self.app.notify(f"Copied: {preview}", severity="information")
+                        else:
+                            self.app.notify(f"⚠️  {err}", severity="warning")
             except Exception:
                 pass
             event.stop()
@@ -245,13 +264,15 @@ class AutoCopyTextArea(TextArea):
             selected = self.selected_text
             _debug_log(f"AutoCopyTextArea: selected_text={selected!r}")
             if selected and selected.strip():
-                import pyperclip
-                pyperclip.copy(selected)
-                preview = selected[:40] + ('...' if len(selected) > 40 else '')
-                preview = preview.replace('\n', ' ')
-                # Use app.notify() instead of widget's notify()
-                self.app.notify(f"Copied: {preview}", severity="information")
-                _debug_log(f"AutoCopyTextArea: Copied to clipboard")
+                success, err = safe_copy_to_clipboard(selected)
+                if success:
+                    preview = selected[:40] + ('...' if len(selected) > 40 else '')
+                    preview = preview.replace('\n', ' ')
+                    # Use app.notify() instead of widget's notify()
+                    self.app.notify(f"Copied: {preview}", severity="information")
+                    _debug_log(f"AutoCopyTextArea: Copied to clipboard")
+                else:
+                    self.app.notify(f"⚠️  {err}", severity="warning")
         except Exception as e:
             _debug_log(f"AutoCopyTextArea: Error: {e}")
 
@@ -4248,8 +4269,11 @@ class SuperShellApp(App):
         if self.selected_record and self.selected_record in self.records:
             record = self.records[self.selected_record]
             if 'login' in record:
-                pyperclip.copy(record['login'])
-                self.notify("👤 Username copied to clipboard!", severity="information")
+                success, err = safe_copy_to_clipboard(record['login'])
+                if success:
+                    self.notify("👤 Username copied to clipboard!", severity="information")
+                else:
+                    self.notify(f"⚠️  {err}", severity="warning")
             else:
                 self.notify("⚠️  No username found for this record", severity="warning")
         else:
@@ -4260,8 +4284,11 @@ class SuperShellApp(App):
         if self.selected_record and self.selected_record in self.records:
             record = self.records[self.selected_record]
             if 'login_url' in record:
-                pyperclip.copy(record['login_url'])
-                self.notify("🔗 URL copied to clipboard!", severity="information")
+                success, err = safe_copy_to_clipboard(record['login_url'])
+                if success:
+                    self.notify("🔗 URL copied to clipboard!", severity="information")
+                else:
+                    self.notify(f"⚠️  {err}", severity="warning")
             else:
                 self.notify("⚠️  No URL found for this record", severity="warning")
         else:
@@ -4270,11 +4297,17 @@ class SuperShellApp(App):
     def action_copy_uid(self):
         """Copy UID of selected record or folder to clipboard"""
         if self.selected_record:
-            pyperclip.copy(self.selected_record)
-            self.notify("📋 Record UID copied to clipboard!", severity="information")
+            success, err = safe_copy_to_clipboard(self.selected_record)
+            if success:
+                self.notify("📋 Record UID copied to clipboard!", severity="information")
+            else:
+                self.notify(f"⚠️  {err}", severity="warning")
         elif self.selected_folder:
-            pyperclip.copy(self.selected_folder)
-            self.notify("📋 Folder UID copied to clipboard!", severity="information")
+            success, err = safe_copy_to_clipboard(self.selected_folder)
+            if success:
+                self.notify("📋 Folder UID copied to clipboard!", severity="information")
+            else:
+                self.notify(f"⚠️  {err}", severity="warning")
         else:
             self.notify("⚠️  No record or folder selected", severity="warning")
 
@@ -4349,8 +4382,11 @@ class SuperShellApp(App):
                     if self.view_mode == 'json':
                         # Copy as JSON
                         formatted = json.dumps(app_data, indent=2)
-                        pyperclip.copy(formatted)
-                        self.notify("📋 Secrets Manager app JSON copied to clipboard!", severity="information")
+                        success, err = safe_copy_to_clipboard(formatted)
+                        if success:
+                            self.notify("📋 Secrets Manager app JSON copied to clipboard!", severity="information")
+                        else:
+                            self.notify(f"⚠️  {err}", severity="warning")
                     else:
                         # Copy as formatted text (detail view)
                         lines = []
@@ -4385,8 +4421,11 @@ class SuperShellApp(App):
                             lines.append("")
                         
                         formatted = "\n".join(lines)
-                        pyperclip.copy(formatted)
-                        self.notify("📋 Secrets Manager app details copied to clipboard!", severity="information")
+                        success, err = safe_copy_to_clipboard(formatted)
+                        if success:
+                            self.notify("📋 Secrets Manager app details copied to clipboard!", severity="information")
+                        else:
+                            self.notify(f"⚠️  {err}", severity="warning")
                 else:
                     # Regular record handling
                     record_data = self.records.get(self.selected_record, {})
@@ -4398,22 +4437,28 @@ class SuperShellApp(App):
                         output = strip_ansi_codes(output)
                         json_obj = json.loads(output)
                         formatted = json.dumps(json_obj, indent=2)
-                        pyperclip.copy(formatted)
-                        # Generate audit event since JSON contains the password
-                        if has_password:
-                            self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
-                        self.notify("📋 JSON copied to clipboard!", severity="information")
+                        success, err = safe_copy_to_clipboard(formatted)
+                        if success:
+                            # Generate audit event since JSON contains the password
+                            if has_password:
+                                self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
+                            self.notify("📋 JSON copied to clipboard!", severity="information")
+                        else:
+                            self.notify(f"⚠️  {err}", severity="warning")
                     else:
                         # Copy formatted text (without Rich markup)
                         content = self._format_record_for_tui(self.selected_record)
                         # Strip Rich markup for plain text clipboard
                         import re
                         plain = re.sub(r'\[/?[^\]]+\]', '', content)
-                        pyperclip.copy(plain)
-                        # Generate audit event if record has password (detail view includes password)
-                        if has_password:
-                            self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
-                        self.notify("📋 Record contents copied to clipboard!", severity="information")
+                        success, err = safe_copy_to_clipboard(plain)
+                        if success:
+                            # Generate audit event if record has password (detail view includes password)
+                            if has_password:
+                                self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
+                            self.notify("📋 Record contents copied to clipboard!", severity="information")
+                        else:
+                            self.notify(f"⚠️  {err}", severity="warning")
             except Exception as e:
                 logging.error(f"Error copying record: {e}", exc_info=True)
                 self.notify("⚠️  Failed to copy record contents", severity="error")
