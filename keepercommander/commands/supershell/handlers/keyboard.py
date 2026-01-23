@@ -10,6 +10,25 @@ from typing import TYPE_CHECKING, Optional, List
 
 from rich.markup import escape as rich_escape
 
+# Debug logging - writes to /tmp/supershell_debug.log when enabled
+DEBUG_EVENTS = False
+_debug_log_file = None
+
+def _debug_log(msg: str):
+    """Log debug message to /tmp/supershell_debug.log if DEBUG_EVENTS is True."""
+    if not DEBUG_EVENTS:
+        return
+    global _debug_log_file
+    try:
+        if _debug_log_file is None:
+            _debug_log_file = open('/tmp/supershell_debug.log', 'a')
+        import datetime
+        timestamp = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
+        _debug_log_file.write(f"[{timestamp}] {msg}\n")
+        _debug_log_file.flush()
+    except Exception:
+        pass
+
 if TYPE_CHECKING:
     from textual.events import Key
     from textual.widgets import Tree
@@ -144,9 +163,7 @@ class ShellInputHandler(KeyHandler):
     """Handles input when shell pane is visible and active."""
 
     def can_handle(self, event: 'Key', app: 'SuperShellApp') -> bool:
-        # Handle Enter key whenever shell pane is visible (even if not actively focused on input)
-        if app.shell_pane_visible and event.key == "enter":
-            return True
+        # Only handle keys when shell input is actually active (focused)
         return app.shell_pane_visible and app.shell_input_active
 
     def handle(self, event: 'Key', app: 'SuperShellApp') -> bool:
@@ -158,10 +175,6 @@ class ShellInputHandler(KeyHandler):
             return True
 
         if event.key == "enter":
-            # Ensure shell input is active when Enter is pressed
-            if not app.shell_input_active:
-                app.shell_input_active = True
-                app._update_shell_input_display()
             # Execute command (even if empty, to show new prompt)
             app._execute_shell_command(app.shell_input_text)
             app.shell_input_text = ""
@@ -180,6 +193,21 @@ class ShellInputHandler(KeyHandler):
             # Ctrl+U clears the input line (like bash)
             app.shell_input_text = ""
             app._update_shell_input_display()
+            self._stop_event(event)
+            return True
+
+        if event.key == "ctrl+v":
+            # Ctrl+V pastes from clipboard
+            try:
+                import pyperclip
+                clipboard_text = pyperclip.paste()
+                if clipboard_text:
+                    # Only take first line if multiline, strip whitespace
+                    first_line = clipboard_text.split('\n')[0].strip()
+                    app.shell_input_text += first_line
+                    app._update_shell_input_display()
+            except Exception:
+                pass  # Silently fail if clipboard unavailable
             self._stop_event(event)
             return True
 
@@ -252,6 +280,80 @@ class ShellPaneCloseHandler(KeyHandler):
         app._close_shell_pane()
         self._stop_event(event)
         return True
+
+
+class ShellCopyHandler(KeyHandler):
+    """Handles Ctrl+C/Cmd+C to copy selected text, Ctrl+Shift+C/Cmd+Shift+C to copy all shell output."""
+
+    # Keys that trigger copy selected text
+    COPY_KEYS = ("ctrl+c", "cmd+c")
+    # Keys that trigger copy all output
+    COPY_ALL_KEYS = ("ctrl+shift+c", "cmd+shift+c")
+
+    def can_handle(self, event: 'Key', app: 'SuperShellApp') -> bool:
+        all_copy_keys = self.COPY_KEYS + self.COPY_ALL_KEYS
+        result = app.shell_pane_visible and event.key in all_copy_keys
+        _debug_log(f"ShellCopyHandler.can_handle: shell_visible={app.shell_pane_visible} "
+                   f"key={event.key!r} result={result}")
+        return result
+
+    def handle(self, event: 'Key', app: 'SuperShellApp') -> bool:
+        _debug_log(f"ShellCopyHandler.handle: key={event.key!r}")
+        import pyperclip
+
+        # Ctrl+C or Cmd+C: Copy selected text from TextArea
+        if event.key in self.COPY_KEYS:
+            try:
+                from textual.widgets import TextArea
+                shell_output = app.query_one("#shell_output_content", TextArea)
+                selected = shell_output.selected_text
+                _debug_log(f"ShellCopyHandler.handle: selected_text={selected!r}")
+
+                if selected and selected.strip():
+                    pyperclip.copy(selected)
+                    preview = selected[:40] + ('...' if len(selected) > 40 else '')
+                    preview = preview.replace('\n', ' ')
+                    app.notify(f"Copied: {preview}", severity="information")
+                    _debug_log(f"ShellCopyHandler.handle: Copied selected text")
+                    self._stop_event(event)
+                    return True
+                else:
+                    _debug_log(f"ShellCopyHandler.handle: No text selected, not handling")
+                    return False  # Let event propagate if nothing selected
+            except Exception as e:
+                _debug_log(f"ShellCopyHandler.handle: Error getting selection: {e}")
+                return False
+
+        # Ctrl+Shift+C or Cmd+Shift+C: Copy all shell output
+        if event.key in self.COPY_ALL_KEYS:
+            import re
+            lines = []
+            _debug_log(f"ShellCopyHandler.handle: shell_history has {len(app.shell_history)} entries")
+            for cmd, output in app.shell_history:
+                lines.append(f"> {cmd}")
+                if output.strip():
+                    lines.append(output)
+                    lines.append("")
+
+            raw_text = '\n'.join(lines)
+            clean_text = re.sub(r'\x1b\[[0-9;]*m', '', raw_text)
+            clean_text = re.sub(r'\[[^\]]*\]', '', clean_text)
+
+            if clean_text.strip():
+                try:
+                    pyperclip.copy(clean_text.strip())
+                    app.notify("All shell output copied", severity="information")
+                    _debug_log(f"ShellCopyHandler.handle: Copied all output")
+                except Exception as e:
+                    _debug_log(f"ShellCopyHandler.handle: Copy failed: {e}")
+                    app.notify("Copy failed", severity="warning")
+            else:
+                app.notify("No output to copy", severity="information")
+
+            self._stop_event(event)
+            return True
+
+        return False
 
 
 class SearchInputTabHandler(KeyHandler):
@@ -410,7 +512,10 @@ class SearchBarTreeNavigationHandler(KeyHandler):
         # Tab switches to detail pane
         if event.key == "tab":
             detail_scroll.focus()
-            app._update_status("Detail pane | Tab to search | Shift+Tab to tree")
+            if app.shell_pane_visible:
+                app._update_status("Detail pane | Tab to shell | Shift+Tab to tree")
+            else:
+                app._update_status("Detail pane | Tab to search | Shift+Tab to tree")
             self._stop_event(event)
             return True
 
@@ -585,6 +690,7 @@ class KeyboardDispatcher:
             CommandModeHandler(),
             ShellInputHandler(),
             ShellPaneCloseHandler(),
+            ShellCopyHandler(),
 
             # Tab cycling handlers
             SearchInputTabHandler(),
@@ -610,9 +716,14 @@ class KeyboardDispatcher:
             True if the event was handled
         """
         for handler in self.handlers:
-            if handler.can_handle(event, app):
-                if handler.handle(event, app):
+            can_handle = handler.can_handle(event, app)
+            if can_handle:
+                _debug_log(f"DISPATCH: {handler.__class__.__name__} can_handle=True for key={event.key!r}")
+                result = handler.handle(event, app)
+                _debug_log(f"DISPATCH: {handler.__class__.__name__} handle returned {result}")
+                if result:
                     return True
+        _debug_log(f"DISPATCH: No handler for key={event.key!r}")
         return False
 
 
