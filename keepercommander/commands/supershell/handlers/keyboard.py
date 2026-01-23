@@ -160,113 +160,18 @@ class CommandModeHandler(KeyHandler):
 
 
 class ShellInputHandler(KeyHandler):
-    """Handles input when shell pane is visible and active."""
+    """Placeholder for shell input key handling.
+
+    Note: All key handling is now done by ShellInputTextArea itself,
+    including Tab/Shift+Tab focus cycling. This handler is kept for
+    potential future use but currently does not handle any keys.
+    """
 
     def can_handle(self, event: 'Key', app: 'SuperShellApp') -> bool:
-        # Only handle keys when shell input is actually active (focused)
-        return app.shell_pane_visible and app.shell_input_active
+        # ShellInputTextArea handles all keys directly
+        return False
 
     def handle(self, event: 'Key', app: 'SuperShellApp') -> bool:
-        tree = app.query_one("#folder_tree")
-
-        if event.key == "ctrl+d":
-            app._close_shell_pane()
-            self._stop_event(event)
-            return True
-
-        if event.key == "enter":
-            # Execute command (even if empty, to show new prompt)
-            app._execute_shell_command(app.shell_input_text)
-            app.shell_input_text = ""
-            app._update_shell_input_display()
-            self._stop_event(event)
-            return True
-
-        if event.key == "backspace":
-            if app.shell_input_text:
-                app.shell_input_text = app.shell_input_text[:-1]
-                app._update_shell_input_display()
-            self._stop_event(event)
-            return True
-
-        if event.key == "ctrl+u":
-            # Ctrl+U clears the input line (like bash)
-            app.shell_input_text = ""
-            app._update_shell_input_display()
-            self._stop_event(event)
-            return True
-
-        if event.key == "ctrl+v":
-            # Ctrl+V pastes from clipboard
-            try:
-                import pyperclip
-                clipboard_text = pyperclip.paste()
-                if clipboard_text:
-                    # Only take first line if multiline, strip whitespace
-                    first_line = clipboard_text.split('\n')[0].strip()
-                    app.shell_input_text += first_line
-                    app._update_shell_input_display()
-            except Exception:
-                pass  # Silently fail if clipboard unavailable
-            self._stop_event(event)
-            return True
-
-        if event.key == "escape":
-            app.shell_input_active = False
-            tree.focus()
-            app._update_shell_input_display()
-            app._update_status("Shell open | Tab to cycle | press Enter in shell to run commands")
-            self._stop_event(event)
-            return True
-
-        if event.key == "tab":
-            # Shell → Search input
-            app.shell_input_active = False
-            app._update_shell_input_display()
-            app.search_input_active = True
-            tree.add_class("search-input-active")
-            app._update_search_display(perform_search=False)
-            app._update_status("Type to search | Tab to tree | Ctrl+U to clear")
-            self._stop_event(event)
-            return True
-
-        if event.key == "shift+tab":
-            # Shell → Detail pane
-            from textual.containers import VerticalScroll
-            app.shell_input_active = False
-            app._update_shell_input_display()
-            detail_scroll = app.query_one("#record_detail", VerticalScroll)
-            detail_scroll.focus()
-            app._update_status("Detail pane | Tab to shell | Shift+Tab to tree")
-            self._stop_event(event)
-            return True
-
-        if event.key == "up":
-            if app.shell_command_history:
-                if app.shell_history_index < len(app.shell_command_history) - 1:
-                    app.shell_history_index += 1
-                    app.shell_input_text = app.shell_command_history[-(app.shell_history_index + 1)]
-                    app._update_shell_input_display()
-            self._stop_event(event)
-            return True
-
-        if event.key == "down":
-            if app.shell_history_index > 0:
-                app.shell_history_index -= 1
-                app.shell_input_text = app.shell_command_history[-(app.shell_history_index + 1)]
-            elif app.shell_history_index == 0:
-                app.shell_history_index = -1
-                app.shell_input_text = ""
-            app._update_shell_input_display()
-            self._stop_event(event)
-            return True
-
-        if event.character and event.character.isprintable():
-            app.shell_input_text += event.character
-            app._update_shell_input_display()
-            self._stop_event(event)
-            return True
-
         return False
 
 
@@ -386,7 +291,11 @@ class SearchInputTabHandler(KeyHandler):
             # Shift+Tab: Search input → Shell (if visible) or Detail pane
             if app.shell_pane_visible:
                 app.shell_input_active = True
-                app._update_shell_input_display()
+                try:
+                    shell_input = app.query_one("#shell_input_area")
+                    shell_input.focus()
+                except Exception:
+                    pass
                 app._update_status("Shell | Shift+Tab to detail | Tab to search")
             else:
                 detail_scroll.focus()
@@ -415,7 +324,11 @@ class DetailPaneHandler(KeyHandler):
             # Detail pane → Shell (if visible) or Search input
             if app.shell_pane_visible:
                 app.shell_input_active = True
-                app._update_shell_input_display()
+                try:
+                    shell_input = app.query_one("#shell_input_area")
+                    shell_input.focus()
+                except Exception:
+                    pass
                 app._update_status("Shell | Tab to search | Shift+Tab to detail")
             else:
                 app.search_input_active = True
@@ -608,7 +521,7 @@ class SearchInputHandler(KeyHandler):
             self._stop_event(event)
             return True
 
-        if event.key == "backspace":
+        if event.key == "backspace" and app.search_input_active:
             if app.search_input_text:
                 app.search_input_text = app.search_input_text[:-1]
                 app._update_search_display()
