@@ -73,15 +73,171 @@ def _debug_log(msg: str):
 
 
 class AutoCopyTextArea(TextArea):
-    """TextArea that auto-copies selected text to clipboard on mouse release."""
+    """TextArea that auto-copies selected text to clipboard on mouse release.
 
-    def _on_mouse_up(self, event: MouseUp) -> None:
-        """Handle mouse up - auto-copy any selected text."""
-        _debug_log(f"AutoCopyTextArea._on_mouse_up: x={event.x} y={event.y}")
-        # Let parent handle the event first
-        super()._on_mouse_up(event)
-        # Then check for selection and copy
+    Behavior matches standard Linux terminal:
+    - Click and drag to select text
+    - Double-click to select word, drag to extend from word boundaries
+    - On mouse up, automatically copy selection to clipboard
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        import time
+        self._last_click_time = 0.0
+        self._last_click_pos = (0, 0)
+        self._word_select_mode = False
+        self._word_anchor_start = None  # (row, col)
+        self._word_anchor_end = None    # (row, col)
+
+    async def _on_mouse_down(self, event: MouseDown) -> None:
+        """Handle mouse down - detect double-click for word selection."""
+        import time
+        current_time = time.time()
+        current_pos = (event.x, event.y)
+
+        # Check for double-click (within 500ms and reasonably close position)
+        time_ok = (current_time - self._last_click_time) < 0.5
+        pos_ok = (abs(current_pos[0] - self._last_click_pos[0]) <= 10 and
+                  abs(current_pos[1] - self._last_click_pos[1]) <= 5)
+        is_double_click = time_ok and pos_ok
+
+        # Update click tracking
+        self._last_click_time = current_time
+        self._last_click_pos = current_pos
+
+        if is_double_click:
+            # Double-click: select word and prepare for drag
+            self._select_word_at_position(event)
+        else:
+            # Single click: reset word mode and do normal selection
+            self._word_select_mode = False
+            self._word_anchor_start = None
+            self._word_anchor_end = None
+            await super()._on_mouse_down(event)
+
+    def _select_word_at_position(self, event: MouseDown) -> None:
+        """Select the word at the mouse position."""
+        try:
+            location = self.get_target_document_location(event)
+            row, col = location
+
+            lines = self.text.split('\n')
+            if row >= len(lines):
+                return
+            line = lines[row]
+            if col > len(line):
+                col = len(line)
+
+            # Find word boundaries (whitespace-delimited)
+            start = col
+            while start > 0 and not line[start - 1].isspace():
+                start -= 1
+
+            end = col
+            while end < len(line) and not line[end].isspace():
+                end += 1
+
+            if start == end:
+                # No word at this position
+                return
+
+            # Store anchors for potential drag extension
+            self._word_anchor_start = (row, start)
+            self._word_anchor_end = (row, end)
+            self._word_select_mode = True
+
+            # Select the word
+            from textual.widgets.text_area import Selection
+            self.selection = Selection((row, start), (row, end))
+
+            # Set up for potential drag (like parent's _on_mouse_down)
+            self._selecting = True
+            self.capture_mouse()
+            self._pause_blink(visible=False)
+            self.history.checkpoint()
+
+        except Exception as e:
+            _debug_log(f"AutoCopyTextArea._select_word_at_position error: {e}")
+            # On error, fall back to normal behavior
+            self._word_select_mode = False
+
+    async def _on_mouse_move(self, event: MouseMove) -> None:
+        """Handle mouse move - extend selection if dragging."""
+        if not self._selecting:
+            return
+
+        try:
+            target = self.get_target_document_location(event)
+            from textual.widgets.text_area import Selection
+
+            if self._word_select_mode and self._word_anchor_start:
+                # Word-select mode: anchor to original word boundaries
+                anchor_start = self._word_anchor_start
+                anchor_end = self._word_anchor_end
+
+                if target < anchor_start:
+                    self.selection = Selection(target, anchor_end)
+                elif target > anchor_end:
+                    self.selection = Selection(anchor_start, target)
+                else:
+                    self.selection = Selection(anchor_start, anchor_end)
+            else:
+                # Normal drag: extend from original click position
+                selection_start, _ = self.selection
+                self.selection = Selection(selection_start, target)
+        except Exception:
+            pass
+
+    async def _on_mouse_up(self, event: MouseUp) -> None:
+        """Handle mouse up - finalize selection and copy."""
+        # Clean up word select state
+        self._word_select_mode = False
+
+        # Let parent finalize selection mode
+        self._end_mouse_selection()
+
+        # Always try to copy - _auto_copy_if_selected checks if there's actual selection
         self._auto_copy_if_selected()
+
+    def _on_click(self, event: Click) -> None:
+        """Handle click events - double-click selects and copies word."""
+        # Double-click: select word and copy (backup for mouse_down detection)
+        if event.chain >= 2:
+            try:
+                location = self.get_target_document_location(event)
+                row, col = location
+
+                lines = self.text.split('\n')
+                if row < len(lines):
+                    line = lines[row]
+                    if col > len(line):
+                        col = len(line)
+
+                    # Find word boundaries
+                    start = col
+                    while start > 0 and not line[start - 1].isspace():
+                        start -= 1
+                    end = col
+                    while end < len(line) and not line[end].isspace():
+                        end += 1
+
+                    if start < end:
+                        word = line[start:end]
+                        # Select and copy the word
+                        from textual.widgets.text_area import Selection
+                        self.selection = Selection((row, start), (row, end))
+                        # Copy immediately
+                        import pyperclip
+                        pyperclip.copy(word)
+                        preview = word[:40] + ('...' if len(word) > 40 else '')
+                        self.app.notify(f"Copied: {preview}", severity="information")
+            except Exception:
+                pass
+            event.stop()
+            return
+        # Let parent handle single clicks
+        super()._on_click(event)
 
     def _auto_copy_if_selected(self) -> None:
         """Copy selected text to clipboard if any."""
@@ -368,6 +524,27 @@ class SuperShellApp(App):
         padding: 0 1;
     }
 
+    /* Theme-specific selection colors for shell output */
+    #shell_output_content.theme-green .text-area--selection {
+        background: #004400;
+    }
+    #shell_output_content.theme-blue .text-area--selection {
+        background: #002244;
+    }
+    #shell_output_content.theme-magenta .text-area--selection {
+        background: #330033;
+    }
+    #shell_output_content.theme-yellow .text-area--selection {
+        background: #333300;
+    }
+    #shell_output_content.theme-white .text-area--selection {
+        background: #444444;
+    }
+    /* Default fallback */
+    #shell_output_content .text-area--selection {
+        background: #004400;
+    }
+
     #shell_input_line {
         height: 1;
         background: #111111;
@@ -507,9 +684,19 @@ class SuperShellApp(App):
             
             # Update header info (email/username colors)
             self._update_header_info_display()
-            
+
             # Update CSS dynamically for tree selection/hover
             self._apply_theme_css()
+
+            # Update shell output selection color theme
+            try:
+                shell_output = self.query_one("#shell_output_content")
+                # Remove old theme classes and add new one
+                for old_theme in COLOR_THEMES.keys():
+                    shell_output.remove_class(f"theme-{old_theme}")
+                shell_output.add_class(f"theme-{theme_name}")
+            except Exception:
+                pass  # Shell pane might not exist yet
 
     def notify(self, message, *, title="", severity="information", timeout=1.5):
         """Override notify to use faster timeout (default 1.5s instead of 5s)"""
@@ -596,7 +783,7 @@ class SuperShellApp(App):
             with Vertical(id="shell_pane"):
                 yield Static("", id="shell_header")
                 # AutoCopyTextArea auto-copies selected text on mouse release
-                yield AutoCopyTextArea("", id="shell_output_content", read_only=True)
+                yield AutoCopyTextArea("", id="shell_output_content", read_only=True, classes=f"theme-{self.color_theme}")
                 yield Static("", id="shell_input_line")
 
         # Status bar at very bottom
