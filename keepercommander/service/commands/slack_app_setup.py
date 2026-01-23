@@ -155,7 +155,7 @@ class SlackAppSetupCommand(Command, DockerSetupBase):
         
         return ServiceConfig(
             port=port,
-            commands='search,share-record,share-folder,record-add,one-time-share,pedm,device-approve,get',
+            commands='search,share-record,share-folder,record-add,one-time-share,pedm,device-approve,get,server',
             queue_enabled=True,  # Always enable queue mode (v2 API)
             ngrok_enabled=ngrok_config['ngrok_enabled'],
             ngrok_auth_token=ngrok_config['ngrok_auth_token'],
