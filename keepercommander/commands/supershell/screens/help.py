@@ -81,7 +81,7 @@ class HelpScreen(ModalScreen):
   Up/Down       Command history
   quit/q        Close shell pane
   Ctrl+D        Close shell pane
-  Shift+drag    Select text (native)
+  Select text   Auto-copies to clipboard
 
 [green]General:[/green]
   ?             Help

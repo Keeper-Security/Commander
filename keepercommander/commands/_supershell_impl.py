@@ -39,7 +39,7 @@ from .supershell.screens import PreferencesScreen, HelpScreen
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll, Center, Middle
-from textual.widgets import Tree, DataTable, Footer, Header, Static, Input, Label, Button
+from textual.widgets import Tree, DataTable, Footer, Header, Static, Input, Label, Button, TextArea
 from textual.binding import Binding
 from textual.screen import Screen, ModalScreen
 from textual.reactive import reactive
@@ -47,7 +47,58 @@ from textual import on, work
 from textual.message import Message
 from textual.timer import Timer
 from rich.text import Text
-from textual.events import Click, MouseDown, Paste
+from textual.events import Click, MouseDown, MouseUp, MouseMove, Paste
+
+# === DEBUG EVENT LOGGING ===
+# Set to True to log all mouse/keyboard events to /tmp/supershell_debug.log
+# tail -f /tmp/supershell_debug.log to watch events in real-time
+DEBUG_EVENTS = False
+_debug_log_file = None
+
+def _debug_log(msg: str):
+    """Log debug message to /tmp/supershell_debug.log if DEBUG_EVENTS is True."""
+    if not DEBUG_EVENTS:
+        return
+    global _debug_log_file
+    try:
+        if _debug_log_file is None:
+            _debug_log_file = open('/tmp/supershell_debug.log', 'a')
+        import datetime
+        timestamp = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
+        _debug_log_file.write(f"[{timestamp}] {msg}\n")
+        _debug_log_file.flush()
+    except Exception as e:
+        pass  # Silently fail if logging fails
+# === END DEBUG EVENT LOGGING ===
+
+
+class AutoCopyTextArea(TextArea):
+    """TextArea that auto-copies selected text to clipboard on mouse release."""
+
+    def _on_mouse_up(self, event: MouseUp) -> None:
+        """Handle mouse up - auto-copy any selected text."""
+        _debug_log(f"AutoCopyTextArea._on_mouse_up: x={event.x} y={event.y}")
+        # Let parent handle the event first
+        super()._on_mouse_up(event)
+        # Then check for selection and copy
+        self._auto_copy_if_selected()
+
+    def _auto_copy_if_selected(self) -> None:
+        """Copy selected text to clipboard if any."""
+        try:
+            selected = self.selected_text
+            _debug_log(f"AutoCopyTextArea: selected_text={selected!r}")
+            if selected and selected.strip():
+                import pyperclip
+                pyperclip.copy(selected)
+                preview = selected[:40] + ('...' if len(selected) > 40 else '')
+                preview = preview.replace('\n', ' ')
+                # Use app.notify() instead of widget's notify()
+                self.app.notify(f"Copied: {preview}", severity="information")
+                _debug_log(f"AutoCopyTextArea: Copied to clipboard")
+        except Exception as e:
+            _debug_log(f"AutoCopyTextArea: Error: {e}")
+
 
 from ..commands.base import Command
 
@@ -309,16 +360,12 @@ class SuperShellApp(App):
         border-bottom: solid #333333;
     }
 
-    #shell_output {
-        height: 1fr;
-        overflow-y: auto;
-        padding: 0 1;
-        background: #000000;
-    }
-
     #shell_output_content {
+        height: 1fr;
         background: #000000;
         color: #ffffff;
+        border: none;
+        padding: 0 1;
     }
 
     #shell_input_line {
@@ -400,6 +447,7 @@ class SuperShellApp(App):
         self.shell_input_active = False
         self.shell_command_history = []  # For up/down arrow navigation
         self.shell_history_index = -1
+        # Shell output uses TextArea widget with built-in selection support
         # Load color theme from preferences
         prefs = load_preferences()
         self.color_theme = prefs.get('color_theme', 'green')
@@ -547,8 +595,8 @@ class SuperShellApp(App):
             # Shell pane - hidden by default, shown when :command or Ctrl+\ pressed
             with Vertical(id="shell_pane"):
                 yield Static("", id="shell_header")
-                with VerticalScroll(id="shell_output"):
-                    yield Static("", id="shell_output_content")
+                # AutoCopyTextArea auto-copies selected text on mouse release
+                yield AutoCopyTextArea("", id="shell_output_content", read_only=True)
                 yield Static("", id="shell_input_line")
 
         # Status bar at very bottom
@@ -3100,43 +3148,55 @@ class SuperShellApp(App):
     @on(Click, "#search_bar, #search_display")
     def on_search_bar_click(self, event: Click) -> None:
         """Activate search mode when search bar is clicked"""
+        _debug_log(f"CLICK: search_bar x={event.x} y={event.y} button={event.button} "
+                   f"shift={event.shift} ctrl={event.ctrl} meta={event.meta}")
         tree = self.query_one("#folder_tree", Tree)
         self.search_input_active = True
         tree.add_class("search-input-active")
         self._update_search_display(perform_search=False)  # Don't change tree when entering search
         self._update_status("Type to search | Tab to navigate | Ctrl+U to clear")
         event.stop()
+        _debug_log(f"CLICK: search_bar -> stopped")
 
     @on(Click, "#user_info")
     def on_user_info_click(self, event: Click) -> None:
         """Show whoami info when user info is clicked"""
+        _debug_log(f"CLICK: user_info x={event.x} y={event.y}")
         self._display_whoami_info()
         event.stop()
+        _debug_log(f"CLICK: user_info -> stopped")
 
     @on(Click, "#device_status_info")
     def on_device_status_click(self, event: Click) -> None:
         """Show device info when Stay Logged In / Logout section is clicked"""
+        _debug_log(f"CLICK: device_status_info x={event.x} y={event.y}")
         self._display_device_info()
         event.stop()
+        _debug_log(f"CLICK: device_status_info -> stopped")
 
-    @on(Click, "#shell_pane, #shell_output, #shell_output_content, #shell_input_line, #shell_header")
+    @on(Click, "#shell_pane, #shell_input_line, #shell_header")
     def on_shell_pane_click(self, event: Click) -> None:
-        """Handle clicks in shell pane - activate shell input and stop propagation.
+        """Handle clicks in shell pane (not output area) - activate shell input."""
+        _debug_log(f"CLICK: shell_pane x={event.x} y={event.y} button={event.button}")
 
-        This prevents clicks in the shell pane from bubbling up and triggering
-        expensive operations in other parts of the UI.
-        Note: Native terminal text selection requires Shift+click (terminal-dependent).
-        """
+        # Normal click - activate shell input
         if self.shell_pane_visible:
-            # Activate shell input when clicking anywhere in shell pane
             if not self.shell_input_active:
                 self.shell_input_active = True
                 self._update_shell_input_display()
         event.stop()
+        _debug_log(f"CLICK: shell_pane -> stopped")
 
     def on_paste(self, event: Paste) -> None:
         """Handle paste events (Cmd+V on Mac, Ctrl+V on Windows/Linux)"""
-        if self.search_input_active and event.text:
+        _debug_log(f"PASTE: text={event.text!r} shell_input_active={self.shell_input_active}")
+        if self.shell_input_active and event.text:
+            # Append pasted text to shell input (only first line, strip whitespace)
+            first_line = event.text.split('\n')[0].strip()
+            self.shell_input_text += first_line
+            self._update_shell_input_display()
+            event.stop()
+        elif self.search_input_active and event.text:
             # Append pasted text to search input (strip newlines)
             pasted_text = event.text.replace('\n', ' ').replace('\r', '')
             self.search_input_text += pasted_text
@@ -3286,8 +3346,14 @@ class SuperShellApp(App):
         Keyboard handling is delegated to specialized handlers in
         supershell/handlers/keyboard.py for better organization and testing.
         """
+        _debug_log(f"KEY: key={event.key!r} char={event.character!r} "
+                   f"shell_visible={self.shell_pane_visible} shell_input_active={self.shell_input_active} "
+                   f"search_active={self.search_input_active}")
+
         # Dispatch to the keyboard handler chain
-        if keyboard_dispatcher.dispatch(event, self):
+        handled = keyboard_dispatcher.dispatch(event, self)
+        _debug_log(f"KEY: handled={handled}")
+        if handled:
             return
 
         # Event was not handled by any handler - let it propagate
@@ -3391,7 +3457,7 @@ class SuperShellApp(App):
         if command:
             self._execute_shell_command(command)
 
-        self._update_status("Shell open | Enter to run | quit/q/Ctrl+D to close")
+        self._update_status("Shell open | Enter to run | Select+Ctrl+C to copy | quit/q/Ctrl+D to close")
 
     def _close_shell_pane(self):
         """Close the shell pane and return to normal view"""
@@ -3475,32 +3541,37 @@ class SuperShellApp(App):
         # Scroll to bottom (defer to ensure content is rendered)
         def scroll_to_bottom():
             try:
-                shell_output = self.query_one("#shell_output", VerticalScroll)
+                shell_output = self.query_one("#shell_output_content", TextArea)
+                # Move cursor to end to scroll to bottom
+                shell_output.action_cursor_line_end()
                 shell_output.scroll_end(animate=False)
             except Exception:
                 pass
         self.call_after_refresh(scroll_to_bottom)
 
     def _update_shell_output_display(self):
-        """Update the shell output area with command history"""
+        """Update the shell output area with command history (using TextArea for selection support)"""
         try:
-            shell_output_content = self.query_one("#shell_output_content", Static)
+            shell_output_content = self.query_one("#shell_output_content", TextArea)
         except Exception:
             return
 
-        t = self.theme_colors
         lines = []
 
         for cmd, output in self.shell_history:
-            # Show prompt and command
+            # Show prompt and command (plain text - TextArea doesn't support Rich markup)
             prompt = self._get_shell_prompt()
-            lines.append(f"[{t['primary']}]{prompt}[/{t['primary']}]{rich_escape(cmd)}")
+            lines.append(f"{prompt}{cmd}")
             # Show output (with blank line separator only if there's output)
             if output.strip():
-                lines.append(output)
+                # Strip Rich markup from output
+                plain_output = re.sub(r'\[[^\]]*\]', '', output)
+                lines.append(plain_output)
                 lines.append("")  # Blank line after output
 
-        shell_output_content.update("\n".join(lines))
+        # TextArea uses .text property, not .update()
+        shell_output_content.text = "\n".join(lines)
+        _debug_log(f"_update_shell_output_display: updated TextArea with {len(lines)} lines")
 
     def _update_shell_input_display(self):
         """Update the shell input line with prompt and current input text"""

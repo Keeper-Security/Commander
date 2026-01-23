@@ -185,6 +185,13 @@ def generate_ngrok_url(port, auth_token, ngrok_custom_domain, run_mode):
     if not port or not auth_token:
         raise ValueError("Both 'port' and 'ngrok_auth_token' must be provided.")
 
+    # Strip .ngrok.io suffix if user provided full domain (e.g., "mycompany.ngrok.io" -> "mycompany")
+    if ngrok_custom_domain:
+        for suffix in ['.ngrok.io', '.ngrok.app', '.ngrok-free.app']:
+            if ngrok_custom_domain.lower().endswith(suffix):
+                ngrok_custom_domain = ngrok_custom_domain[:-len(suffix)]
+                break
+
     logging.getLogger("ngrok").setLevel(logging.CRITICAL)
     logging.getLogger("pyngrok").setLevel(logging.CRITICAL)
     
