@@ -205,8 +205,8 @@ class PedmScimCommand(base.ArgparseCommand):
         ad_parser.add_argument('--ad-user', dest='ad_user', required=True, help='AD bind user (DOMAIN\\username or DN)')
         ad_parser.add_argument('--ad-password', dest='ad_password', help='AD password')
         ad_parser.add_argument('--group', dest='groups', action='append', help='AD group name or DN (repeatable)')
-        ad_parser.add_argument('--netbios-domain', dest='use_netbios_domain', action='store_true',
-                              help='Use NetBIOS domain names (e.g., TEST) instead of DNS names (e.g., test.local)')
+        ad_parser.add_argument('--ad-domain', dest='ad_domain', action='store', choices=['netbios', 'dns'],
+                              help='Use NetBIOS domain names (e.g., TEST) or DNS names (e.g., test.local)')
 
         for subparser in subparsers.choices.values():
             subparser.exit = base.suppress_exit
@@ -311,18 +311,14 @@ class PedmScimCommand(base.ArgparseCommand):
                             if groups:
                                 kwargs['groups'] = groups
 
-                    custom_field = config_record.get_typed_field(field_type=None, label='NetBIOS Domain')
+                    custom_field = config_record.get_typed_field(field_type=None, label='AD Domain')
                     if custom_field:
-                        netbios_domain = custom_field.get_default_value(bool)
-                        if netbios_domain is None:
-                            custom_value = custom_field.get_default_value(str)
-                            if custom_value:
-                                try:
-                                    netbios_domain = bool(custom_value)
-                                except:
-                                    pass
+                        netbios_domain = custom_field.get_default_value(str)
+                        if netbios_domain:
+                            if netbios_domain not in ('netbios', 'dns'):
+                                netbios_domain = None
                         if netbios_domain is True:
-                            kwargs['use_netbios_domain'] = netbios_domain
+                            kwargs['ad_domain'] = netbios_domain
 
                 else:
                     raise base.CommandError(f'Record "{config_record.title}" does not contain either "Azure Tenant ID" or "AD URL" value')
@@ -332,10 +328,11 @@ class PedmScimCommand(base.ArgparseCommand):
             ad_user = kwargs.get('ad_user')
             ad_password = kwargs.get('ad_password')
             scim_groups = kwargs.get('groups')
-            use_netbios_domain = kwargs.get('use_netbios_domain', False)
+            ad_domain = kwargs.get('ad_domain') or 'netbios'
             if scim_groups and not isinstance(scim_groups, list):
                 scim_groups = None
 
+            use_netbios_domain = ad_domain != 'dns'
             if not ad_url or not ad_user:
                 raise base.CommandError('AD source requires AD URL and AD User')
             try:

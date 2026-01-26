@@ -218,6 +218,7 @@ def register_enterprise_commands(commands, aliases, command_info):
         commands['epm'] = pedm_command
         command_info['epm'] = pedm_command.description
         aliases['pedm'] = 'epm'
+        aliases['kepm'] = 'epm'
 
 
 def register_msp_commands(commands, aliases, command_info):
