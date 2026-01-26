@@ -18,6 +18,8 @@ The Service Mode module for Keeper Commander enables REST API integration by pro
 | `service-stop` | Gracefully stop the running service |
 | `service-status` | Display current service status |
 | `service-config-add` | Add new API configuration and command access settings |
+| `service-docker-setup` | Automated Docker service mode setup with KSM configuration |
+| `slack-app-setup` | Automated Slack App integration setup with Commander Service Mode |
 
 ### Security Features
 - API key authentication
@@ -90,6 +92,9 @@ Parameters:
 - `-q, --queue_enabled`: Enable request queue (y/n)
 - `-dip, --deniedip`: Denied IP list to access service
 - `-aip, --allowedip`: Allowed IP list to access service
+- `-rl, --ratelimit`: Rate limit (e.g., "10/minute")
+- `-ek, --encryption_key`: Encryption key for response encryption (automatically enables encryption)
+- `-te, --token_expiration`: Token expiration time (e.g., "30m", "24h", "7d")
 
 ### Service Management
 
@@ -208,7 +213,8 @@ result_retention: 3600       # Result retention (1 hour)
 
 #### Rate Limiting
 - **Default limits**: 60/minute, 600/hour, 6000/day
-- **Example**: Setting `"20/minute"` effectively provides ~20 requests per minute across all endpoints
+- **Per-endpoint tracking**: Each API endpoint has independent rate limit counters
+- **Example**: Setting `"20/minute"` provides 20 requests per minute per endpoint per IP address
 
 #### Error Responses
 
@@ -294,7 +300,7 @@ curl -X POST 'http://localhost:<port>/api/v2/executecommand-async' \
 
 The service configuration is stored as an attachment to a vault record in JSON/YAML format and includes:
 
-- **Service Title**: Identifier for the service configuration
+- **Service Title**: Identifier for the service configuration (default: "Commander Service Mode Config")
 - **Port Number**: Port for the API server
 - **Run Mode**: Service execution mode (foreground/background)
 - **Ngrok Configuration** (optional):
@@ -401,9 +407,99 @@ Verify the image was pulled:
 docker images | grep keeper/commander
 ```
 
-### Authentication Methods
+### Quick Setup with service-docker-setup (Recommended)
 
-The Docker container supports four authentication methods:
+If you have Keeper Secrets Manager (KSM) activated in your account, you can use the `service-docker-setup` command for automated Docker deployment setup:
+
+**Prerequisites:**
+- Active Keeper vault with KSM enabled
+- Docker installed and image pulled
+
+**Setup Steps:**
+
+1. **Login to Keeper:**
+   ```bash
+   keeper shell
+   My Vault> login user@example.com
+   ```
+
+2. **Run automated setup:**
+   ```bash
+   My Vault> service-docker-setup
+   ```
+   
+   This command will automatically:
+   - Register your device and enable persistent login
+   - Create a shared folder ("Commander Service Mode - Docker")
+   - Create a config record with `config.json` attachment
+   - Create a KSM application
+   - Share the folder with the KSM app
+   - Generate a KSM client device with base64 config
+   - Generate `docker-compose.yml` with the complete configuration
+
+3. **Interactive Configuration:**
+   
+   You'll be prompted to configure:
+   - **Port**: Service port (default: 8900)
+   - **Commands**: Allowed commands (default: tree,ls)
+   - **Queue Mode**: Enable async API v2 (default: yes)
+   - **Ngrok Tunneling** (optional): Public URL via ngrok
+   - **Cloudflare Tunneling** (optional): Public URL via Cloudflare
+   - **Advanced Security** (optional):
+     - IP filtering (allowed/denied lists)
+     - Rate limiting
+     - Response encryption
+     - Token expiration
+
+4. **Deploy:**
+   ```bash
+   My Vault> quit
+   $ rm ~/.keeper/config.json  # Prevent device token conflicts
+   $ docker compose up -d
+   ```
+
+**Example Output:**
+```
+Resources Created:
+  • Shared Folder: Commander Service Mode - Docker
+  • KSM App: Commander Service Mode - KSM App
+  • Config Record: <UID>
+  • KSM Base64 Config: ✓ Generated
+```
+
+The generated `docker-compose.yml` includes all your configuration and can be customized before deployment.
+
+### Slack App Integration Setup
+
+For integrating Commander Service Mode with Slack, use the `slack-app-setup` command:
+
+```bash
+My Vault> slack-app-setup
+```
+
+This automates the complete setup for Slack App integration:
+- **Phase 1**: Runs Docker setup (same as `service-docker-setup`)
+- **Phase 2**: Configures Slack App integration
+  - Collects Slack tokens (App Token, Bot Token, Signing Secret)
+  - Creates Slack configuration record
+  - Updates `docker-compose.yml` with Slack App service
+  - Supports optional PEDM and Device Approval integrations
+
+**Configuration Options:**
+- Port selection (default: 8900)
+- Ngrok/Cloudflare tunneling for public URL exposure
+- Slack App credentials
+- Approvals channel ID
+- Optional PEDM integration
+- Optional SSO Cloud Device Approval
+
+The command generates a complete `docker-compose.yml` with both Commander service and Slack App service configured.
+
+---
+
+### Manual Authentication Methods (Alternative)
+
+If you prefer manual setup or don't have KSM activated, the Docker container supports four authentication methods:
 
 #### Method 1: Using KSM Config File
 Use Keeper Secrets Manager (KSM) config file to download the `config.json` configuration from a Keeper record. The container will:
@@ -662,11 +758,16 @@ docker run -d -p <port>:<port> \
    docker logs <container-name-or-id>
    ```
 
-3. **Get API key from logs:**
-   Look for the API key in the container logs:
-   ```
-   Generated API key: <API-KEY>
-   ```
+3. **Get API key from logs or vault:**
+   - **Docker mode**: The API key is redacted in logs for security (only last 4 characters shown) with the vault record UID displayed:
+     ```
+     Generated API key: ****nQ= (stored in vault record: I2eqTs5efnJ_iqbtSuEagQ)
+     ```
+     Retrieve the full key from your Keeper vault using the record UID.
+   - **Direct service-create**: The full API key is displayed in the output for immediate use:
+     ```
+     Generated API key: H4uyn0L-_QJL-o_UBMbs7DESA13ZgdJ_ea2bnQ=
+     ```
 
 4. **Follow logs in real-time:**
    ```bash

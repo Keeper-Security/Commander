@@ -19,8 +19,8 @@ ENTERPRISE_FILE_PLANS = [
 
 MSP_FILE_PLANS = [
     (4, 'STORAGE_100GB', '100GB'),
-    (7, 'STORAGE_1000GB', '1TB'),
-    (8, 'STORAGE_10000GB', '10TB'),
+    (7, 'STORAGE_1TB', '1TB'),
+    (8, 'STORAGE_10TB', '10TB'),
 ]
 
 MSP_PLANS = [
@@ -48,6 +48,8 @@ MSP_ADDONS = [
     ('privileged_access_manager', 'Privileged Access Manager (PAM)', True, 'PAM'),
     ('keeper_endpoint_privilege_manager', 'Keeper Endpoint Privilege Manager (KEPM)', True, 'KEPM'),
 ]
+
+KEPM_VALID_SEATS = {1, 25, 50, 100, 500, 1000, 5000, 10000}
 
 
 class PrivilegeScope(enum.IntEnum):

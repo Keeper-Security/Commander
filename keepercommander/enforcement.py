@@ -51,7 +51,7 @@ class MasterPasswordReentryEnforcer:
         operation = operation.strip()[:100]  # Limit length and strip whitespace
         # Bypass enforcement when running in service mode
         if params and hasattr(params, 'service_mode') and params.service_mode:
-            logging.info(f"Bypassing master password enforcement for operation '{operation}' - running in service mode")
+            logging.debug(f"Bypassing master password enforcement for operation '{operation}' - running in service mode")
             return False
 
         if not params or not params.enforcements:

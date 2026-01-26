@@ -4,7 +4,7 @@ import argparse
 import json
 import sys
 import os.path
-
+import re
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ..pam.router_helper import (router_get_connected_gateways, router_set_record_rotation_information,
@@ -23,7 +23,6 @@ from ...discovery_common.constants import PAM_USER
 from ...discovery_common.constants import VERTICES_SORT_MAP
 from pydantic import BaseModel
 from typing import Optional, List, Any, Tuple, Dict, TYPE_CHECKING
-
 from ...api import get_records_add_request
 
 if TYPE_CHECKING:
@@ -67,7 +66,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
     Process the discovery data
     """
 
-    parser = argparse.ArgumentParser(prog='pam-action-discover-process')
+    parser = argparse.ArgumentParser(prog='pam action discover process')
     parser.add_argument('--job-id', '-j', required=True, dest='job_id', action='store',
                         help='Discovery job to process.')
     parser.add_argument('--add-all', required=False, dest='add_all', action='store_true',
@@ -1471,7 +1470,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
         all_gateways = GatewayContext.all_gateways(params)
 
-        configuration_records = list(vault_extensions.find_records(params, "pam.*Configuration"))
+        configuration_records = GatewayContext.get_configuration_records(params=params)
         for configuration_record in configuration_records:
 
             gateway_context = GatewayContext.from_configuration_uid(params=params,

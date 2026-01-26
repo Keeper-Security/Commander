@@ -2,7 +2,7 @@ from __future__ import annotations
 import argparse
 import logging
 import traceback
-from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
+from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from ...display import bcolors
 from ... import api, vault, vault_extensions, attachment, record_management, utils
 from . import (get_plugins_map, make_script_signature, SaasCatalog, get_field_input, get_record_field_value,
@@ -25,6 +25,9 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
 
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID.')
+    parser.add_argument('--configuration-uid', required=False, dest='configuration_uid',
+                        action='store', help='PAM configuration UID, if gateway has multiple.')
+
     parser.add_argument('--all', '-a', required=False, dest='do_all', action='store_true',
                         help='Update all configurations.')
     parser.add_argument('--config-record-uid', '-c', required=False, dest='config_uid', action='store',
@@ -252,10 +255,17 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
         config_record_uid = kwargs.get("config_uid")  # type: str
         do_dry_run = kwargs.get("do_dry_run", False)  # type: bool
 
-        gateway_context = GatewayContext.from_gateway(params, gateway)
-        if gateway_context is None:
-            print("")
-            print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.")
+        configuration_uid = kwargs.get('configuration_uid')  # type Optional[str]
+
+        try:
+            gateway_context = GatewayContext.from_gateway(params=params,
+                                                          gateway=gateway,
+                                                          configuration_uid=configuration_uid)
+            if gateway_context is None:
+                print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.{bcolors.ENDC}")
+                return
+        except MultiConfigurationException as err:
+            multi_conf_msg(gateway, err)
             return
 
         print("")
@@ -268,7 +278,6 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
             params=params,
             gateway_context=gateway_context
         )
-
 
         if do_all:
             logging.debug("search vault for login record types")

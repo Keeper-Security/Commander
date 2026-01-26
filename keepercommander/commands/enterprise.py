@@ -99,7 +99,7 @@ def register_command_info(aliases, command_info):
     security_audit.register_command_info(aliases, command_info)
 
 
-SUPPORTED_NODE_COLUMNS = ['parent_node', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles',
+SUPPORTED_NODE_COLUMNS = ['parent_node', 'parent_id', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles',
                           'provisioning']
 SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count',
                           'roles', 'alias', '2fa_enabled']
@@ -132,6 +132,7 @@ enterprise_info_parser.add_argument('pattern', nargs='?', type=str,
 
 
 enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node', description='Manage an enterprise node')
+enterprise_node_parser.add_argument('-f', '--force', dest='force', action='store_true', help='do not prompt for confirmation')
 enterprise_node_parser.add_argument('--wipe-out', dest='wipe_out', action='store_true', help='wipe out node content')
 enterprise_node_parser.add_argument('--add', dest='add', action='store_true', help='create node')
 enterprise_node_parser.add_argument('--parent', dest='parent', action='store', help='Parent Node Name or ID')
@@ -666,7 +667,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             if show_nodes:
                 supported_columns = SUPPORTED_NODE_COLUMNS
                 if len(columns) == 0:
-                    columns.update(('parent_node', 'user_count', 'team_count', 'role_count'))
+                    columns.update(('parent_node', 'parent_id', 'user_count', 'team_count', 'role_count'))
                 else:
                     wc = columns.difference(supported_columns)
                     if len(wc) > 0:
@@ -714,6 +715,9 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         if column == 'parent_node':
                             parent_id = n.get('parent_id', 0)
                             row.append(self.get_node_path(params, parent_id) if parent_id > 0 else '')
+                        elif column == 'parent_id':
+                            parent_id = n.get('parent_id', 0)
+                            row.append(parent_id if parent_id > 0 else None)
                         elif column == 'user_count':
                             us = n.get('users', [])
                             row.append(len(us))
@@ -1282,7 +1286,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                 if not node.get('parent_id'):
                     raise CommandError('enterprise-node', 'Cannot wipe out root node')
 
-                answer = user_choice(
+                answer = 'y' if kwargs.get('force') else user_choice(
                     bcolors.FAIL + bcolors.BOLD + '\nALERT!\n' + bcolors.ENDC +
                     'This action cannot be undone.\n\n' +
                     'Do you want to proceed with deletion?', 'yn', 'n')
@@ -1306,14 +1310,15 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                 roles = [x for x in params.enterprise['roles'] if x['node_id'] in nodes]
                 role_set = set([x['role_id'] for x in managed_nodes])
                 role_set = role_set.union([x['role_id'] for x in roles])
-                for ru in params.enterprise['role_users']:
-                    if ru['role_id'] in role_set:
-                        rq = {
-                            'command': 'role_user_remove',
-                            'role_id': ru['role_id'],
-                            'enterprise_user_id': ru['enterprise_user_id']
-                        }
-                        request_batch.append(rq)
+                if 'role_users' in params.enterprise:
+                    for ru in params.enterprise['role_users']:
+                        if ru['role_id'] in role_set:
+                            rq = {
+                                'command': 'role_user_remove',
+                                'role_id': ru['role_id'],
+                                'enterprise_user_id': ru['enterprise_user_id']
+                            }
+                            request_batch.append(rq)
                 for mn in managed_nodes:
                     rq = {
                         'command': 'role_managed_node_remove',
@@ -1353,6 +1358,12 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         'node_id': node_id
                     }
                     request_batch.append(rq)
+                
+                # Check if there's anything to wipe out
+                if not request_batch:
+                    node_name = node.get('data', {}).get('displayname') or str(node['node_id'])
+                    logging.info('Node \'%s\' is empty. Nothing to wipe out.', node_name)
+                    return
             elif parent_id or kwargs.get('displayname'):
                 display_name = kwargs.get('displayname')
                 def is_in_chain(node_id, parent_id):
@@ -1384,8 +1395,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                             'node_id': node['node_id'],
                             'encrypted_data': encrypted_data
                         }
-                        if parent_id:
-                            rq['parent_id'] = parent_id
+                        rq['parent_id'] = parent_id if parent_id else node.get('parent_id')
                         request_batch.append(rq)
 
         if request_batch:
@@ -1394,7 +1404,8 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                 command = rq.get('command')
                 if command == 'node_add':
                     if rs['result'] == 'success':
-                        logging.info('Node is created')
+                        node_id = rq.get('node_id')
+                        logging.info('Node is created with Node ID: %s', node_id)
                     else:
                         logging.warning('Failed to create node: %s', rs['message'])
                 elif command in {'node_delete', 'node_update'}:
@@ -2154,17 +2165,62 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     raise CommandError('enterprise-user', 'No root nodes were detected. Specify --node parameter')
                 node_id = root_nodes[0]
 
+            # Collect role_ids for newly created roles
+            new_role_ids = []
             for role_name in role_names:
                 data = json.dumps({ "displayname": role_name }).encode('utf-8')
+                role_id = self.get_enterprise_id(params)
+                new_role_ids.append(role_id)
                 rq = {
                     "command": "role_add",
-                    "role_id": self.get_enterprise_id(params),
+                    "role_id": role_id,
                     "node_id": node_id,
                     "encrypted_data": utils.base64_url_encode(crypto.encrypt_aes_v1(data, tree_key)),
                     "visible_below": (kwargs.get('visible_below') == 'on') or False,
                     "new_user_inherit": (kwargs.get('new_user') == 'on') or False
                 }
                 request_batch.append(rq)
+            
+            if kwargs.get('add_admin') and new_role_ids:
+                skip_display = True
+                node_lookup = {}
+                if 'nodes' in params.enterprise:
+                    for node in params.enterprise['nodes']:
+                        node_lookup[str(node['node_id'])] = node
+                        if node.get('parent_id'):
+                            node_name = node['data'].get('displayname')
+                        else:
+                            node_name = params.enterprise['enterprise_name']
+                        node_name = node_name.lower()
+                        value = node_lookup.get(node_name)
+                        if value is None:
+                             value = node
+                        elif type(value) == list:
+                            value.append(node)
+                        else:
+                            value = [value, node]
+                        node_lookup[node_name] = value
+
+                admin_nodes = {}
+                for admin_node_name in kwargs.get('add_admin'):
+                    value = node_lookup.get(admin_node_name.lower())
+                    if value is None:
+                        logging.warning('Node %s could not be resolved', admin_node_name)
+                    elif isinstance(value, dict):
+                        admin_nodes[value['node_id']] = value['data'].get('displayname') or params.enterprise['enterprise_name']
+                    elif isinstance(value, list):
+                        logging.warning('Node name \'%s\' is not unique. Use Node ID. Skipping', admin_node_name)
+
+                for role_id in new_role_ids:
+                    for admin_node_id, admin_node_display_name in admin_nodes.items():
+                        rq = {
+                            "command": "role_managed_node_add",
+                            "role_id": role_id,
+                            "managed_node_id": admin_node_id,
+                            "cascade_node_management": (kwargs.get('cascade') == 'on') or False,
+                            "tree_keys": []
+                        }
+                        request_batch.append(rq)
         else:
             for role_name in role_names:
                 logging.warning('Role %s is not found: Skipping', role_name)
@@ -2844,11 +2900,29 @@ class EnterpriseRoleCommand(EnterpriseCommand):
 
         if 'managed_nodes' in params.enterprise:
             node_ids = [x['managed_node_id'] for x in params.enterprise['managed_nodes'] if x['role_id'] == role_id]
+            is_msp = EnterpriseCommand.is_msp(params)
             if len(node_ids) > 0:
                 nodes = {x['node_id']: x['data'].get('displayname') or params.enterprise['enterprise_name'] for x in params.enterprise['nodes']}
+                privileges = {}
+                supported_privileges = {x[1].lower(): x[2] for x in constants.ROLE_PRIVILEGES}
+                for rp in params.enterprise.get('role_privileges', []):
+                    privilege = rp['privilege'].lower()
+                    if rp['role_id'] != role_id:
+                        continue
+                    elif privilege not in supported_privileges:
+                        continue
+                    elif supported_privileges[privilege] == constants.PrivilegeScope.Hidden or (supported_privileges[privilege] == constants.PrivilegeScope.MSP and not is_msp):
+                        continue
+
+                    if rp['managed_node_id'] not in privileges:
+                        privileges[rp['managed_node_id']] = []
+                    privileges[rp['managed_node_id']].append(privilege)
+                
                 ret['managed_nodes'] = [{
                     'node_id': x,
-                    'node_name': nodes[x]
+                    'node_name': nodes.get(x, None),
+                    'cascade': [y['cascade_node_management'] for y in params.enterprise['managed_nodes'] if y['role_id'] == role_id and y['managed_node_id'] == x][0],
+                    'privileges': privileges.get(x, None)
                 } for x in node_ids if x in nodes]
 
         if 'role_enforcements' in params.enterprise:
@@ -3036,6 +3110,88 @@ class EnterpriseTeamCommand(EnterpriseCommand):
     def get_parser(self):
         return enterprise_team_parser
 
+    @staticmethod
+    def _resolve_users(params, user_list):
+        """Resolve user names/IDs to user objects. Returns dict {user_id: user_node}"""
+        users = {}
+        for u in user_list:
+            uname = u.lower()
+            user_node = None
+            if 'users' in params.enterprise:
+                for user in params.enterprise['users']:
+                    if uname in {str(user['enterprise_user_id']), user['username'].lower()}:
+                        user_node = user
+                        break
+            if user_node:
+                users[user_node['enterprise_user_id']] = user_node
+            else:
+                logging.warning('User %s could not be resolved', u)
+        return users
+
+    @staticmethod
+    def _create_add_user_request(params, team_uid, team_key, user, hsf_flag):
+        """Create a request to add a user to a team with proper encryption"""
+        user_id = user['enterprise_user_id']
+        username = user['username']
+        
+        api.load_user_public_keys(params, [username], False)
+        user_keys = params.key_cache.get(username)
+        
+        if not user_keys:
+            logging.warning('Cannot get user %s public key', username)
+            return None
+        
+        rq = {
+            'command': 'team_enterprise_user_add',
+            'team_uid': team_uid,
+            'enterprise_user_id': user_id,
+            'user_type': 2 if hsf_flag == 'on' else 1 if hsf_flag else 0,
+        }
+        
+        if params.forbid_rsa:
+            if user_keys.ec:
+                ec_key = crypto.load_ec_public_key(user_keys.ec)
+                encrypted_team_key = crypto.encrypt_ec(team_key, ec_key)
+                rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
+                rq['team_key_type'] = 'encrypted_by_public_key_ecc'
+            else:
+                logging.warning('User %s does not have EC key', username)
+                return None
+        else:
+            if user_keys.rsa:
+                rsa_key = crypto.load_rsa_public_key(user_keys.rsa)
+                encrypted_team_key = crypto.encrypt_rsa(team_key, rsa_key)
+                rq['team_key'] = utils.base64_url_encode(encrypted_team_key)
+                rq['team_key_type'] = 'encrypted_by_public_key'
+            else:
+                logging.warning('User %s does not have RSA key', username)
+                return None
+        
+        return rq
+
+    @staticmethod
+    def _resolve_roles(params, role_list):
+        """Resolve role names/IDs to role objects. Returns dict {role_id: role_name} excluding admin roles"""
+        role_changes = {}
+        for role in role_list:
+            role_node = next((
+                r for r in params.enterprise['roles']
+                if role in (str(r['role_id']), r['data'].get('displayname'))
+            ), None)
+            if role_node:
+                # Check if role has administrative permissions
+                is_managed_role = any(
+                    mn['role_id'] == role_node['role_id']
+                    for mn in params.enterprise.get('managed_nodes', [])
+                )
+                if is_managed_role:
+                    logging.warning('Teams cannot be assigned to roles with administrative permissions.')
+                else:
+                    role_changes[role_node['role_id']] = role_node['data'].get('displayname')
+            else:
+                logging.warning('Role %s cannot be resolved', role)
+        return role_changes
+
     def execute(self, params, **kwargs):
         if (kwargs.get('add') or kwargs.get('approve')) and kwargs.get('remove'):
             raise CommandError('enterprise-team', "'add'/'approve' and 'delete' commands are mutually exclusive.")
@@ -3089,6 +3245,8 @@ class EnterpriseTeamCommand(EnterpriseCommand):
         matched_teams = list(matched.values())
         request_batch = []
         non_batch_update_msgs = []
+        has_warnings = False
+        new_team_roles = None  
 
         if kwargs.get('add') or kwargs.get('approve'):
             queue = []
@@ -3111,6 +3269,8 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                     raise CommandError('enterprise-user', 'No root nodes were detected. Specify --node parameter')
                 node_id = root_nodes[0]
 
+            new_teams = {}  # {team_uid: (team_name, team_key, is_new)}
+            
             for item in queue:
                 is_new_team = type(item) == str
                 team_name = item if is_new_team else item['name']
@@ -3142,6 +3302,35 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                     rq['private_key'] = utils.base64_url_encode(encrypted_rsa_private_key)
 
                 request_batch.append(rq)
+                
+                if is_new_team:
+                    new_teams[team_uid] = (team_name, team_key, True)
+            
+            if kwargs.get('add_user') and new_teams:
+                skip_display = True
+                users = self._resolve_users(params, kwargs.get('add_user'))
+                if not users:
+                    has_warnings = True
+                
+                hsf = kwargs.get('hide_shared_folders') or ''
+                for team_uid, (team_name, team_key, is_new) in new_teams.items():
+                    for user_id, user in users.items():
+                        if user['status'] == 'active':
+                            rq = self._create_add_user_request(params, team_uid, team_key, user, hsf)
+                            if rq:
+                                request_batch.append(rq)
+                        else:
+                            request_batch.append({
+                                'command': 'team_queue_user',
+                                'team_uid': team_uid,
+                                'enterprise_user_id': user_id
+                            })
+            
+            # Role additions for new teams will be handled after team creation
+            new_team_roles = None
+            if kwargs.get('add_role') and new_teams:
+                skip_display = True
+                new_team_roles = (new_teams, kwargs.get('add_role'))
         else:
             for team_name in team_names:
                 logging.warning('\'%s\' team is not found: Skipping', team_name)
@@ -3184,6 +3373,7 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                                 users[user_id] = is_add, user_node
                             else:
                                 logging.warning('User %s could not be resolved', u)
+                                has_warnings = True
 
                 if len(users) > 0:
                     for team in matched_teams:
@@ -3203,6 +3393,10 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                                                 if t['team_uid'] == team_uid and t['enterprise_user_id'] == user_id)
                                     if is_added:
                                         if not hsf:
+                                            username = user['username']
+                                            team_name = team['name']
+                                            logging.warning('User %s is already a member of team \'%s\'', username, team_name)
+                                            has_warnings = True
                                             continue
                                         rq = {
                                             'command': 'team_enterprise_user_update',
@@ -3253,11 +3447,31 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                                         'enterprise_user_id': user_id
                                     }
                             else:
-                                rq = {
-                                    'command': 'team_enterprise_user_remove',
-                                    'team_uid': team['team_uid'],
-                                    'enterprise_user_id': user_id
-                                }
+                                is_member = False
+                                username = user['username']
+                                team_name = team['name']
+                                
+                                # Check in active team members
+                                if 'team_users' in params.enterprise:
+                                    is_member = any(1 for t in params.enterprise['team_users']
+                                                   if t['team_uid'] == team_uid and t['enterprise_user_id'] == user_id)
+                                
+                                # Check in queued team members
+                                if not is_member and 'queued_team_users' in params.enterprise:
+                                    for qtu in params.enterprise['queued_team_users']:
+                                        if qtu['team_uid'] == team_uid and user_id in qtu.get('users', []):
+                                            is_member = True
+                                            break
+                                
+                                if is_member:
+                                    rq = {
+                                        'command': 'team_enterprise_user_remove',
+                                        'team_uid': team['team_uid'],
+                                        'enterprise_user_id': user_id
+                                    }
+                                else:
+                                    logging.warning('User %s is not a member of team \'%s\'', username, team_name)
+                                    has_warnings = True
                             if rq:
                                 request_batch.append(rq)
             elif node_id or kwargs.get('name') or kwargs.get('restrict_edit') or kwargs.get('restrict_share') or kwargs.get('restrict_view'):
@@ -3306,12 +3520,36 @@ class EnterpriseTeamCommand(EnterpriseCommand):
                     else:
                         logging.warning('\'%s\' %s team failed to %s user %s: %s', team_name, 'queued' if command == 'team_queue_user' else '',
                                         'delete' if command == 'team_enterprise_user_remove' else 'add', user_name, rs['message'])
+                elif command in {'role_team_add', 'role_team_remove'}:
+                    role_id = rq.get('role_id')
+                    role_name = next((r['data'].get('displayname') for r in params.enterprise.get('roles', []) 
+                                    if r['role_id'] == role_id), str(role_id))
+                    action = 'assign' if command == 'role_team_add' else 'remove'
+                    if rs['result'] == 'success':
+                        logging.info('\'%s\' role %sed to team \'%s\'', role_name, action, team_name)
+                    else:
+                        logging.warning('Failed to %s role \'%s\' to/from team \'%s\': %s', action, role_name, team_name, rs['message'])
 
         if request_batch or len(non_batch_update_msgs) > 0:
             for update_msg in non_batch_update_msgs:
                 logging.info(update_msg)
             api.query_enterprise(params)
-        else:
+            
+            # Handle role additions for newly created teams (must be done after team exists)
+            if new_team_roles:
+                new_teams_dict, role_list = new_team_roles
+                # Fetch updated team data to get proper team objects
+                created_teams = []
+                for team_uid in new_teams_dict.keys():
+                    team_data = next((t for t in params.enterprise.get('teams', []) if t['team_uid'] == team_uid), None)
+                    if team_data:
+                        created_teams.append(team_data)
+                
+                if created_teams:
+                    role_msgs = self.change_team_roles(params, created_teams, role_list, None)
+                    for msg in role_msgs:
+                        logging.info(msg)
+        elif not has_warnings:
             for team in matched_teams:
                 print('\n')
                 self.display_team(params, team, kwargs.get('verbose'))

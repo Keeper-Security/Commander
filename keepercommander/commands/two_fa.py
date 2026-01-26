@@ -202,7 +202,7 @@ class TfaAddCommand(Command):
                     },
                     'type': 'public-key',
                     # 'transports': ['usb'],
-                    'clientExtensionResults': response.client_extension_results or {}
+                    'clientExtensionResults': dict(response.client_extension_results) if response.client_extension_results else {}
                 }
                 rq_yubikey = APIRequest_pb2.TwoFactorValidateRequest()
                 rq_yubikey.valueType = APIRequest_pb2.TWO_FA_RESP_WEBAUTHN

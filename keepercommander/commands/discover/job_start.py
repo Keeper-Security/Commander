@@ -2,7 +2,7 @@ from __future__ import annotations
 import argparse
 import logging
 import json
-from . import PAMGatewayActionDiscoverCommandBase, GatewayContext
+from . import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from .job_status import PAMGatewayActionDiscoverJobStatusCommand
 from ..pam.router_helper import router_send_action_to_gateway, print_router_response, router_get_connected_gateways
 from ..pam.user_facade import PamUserRecordFacade
@@ -20,11 +20,14 @@ if TYPE_CHECKING:
 
 
 class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam-action-discover-start')
+    parser = argparse.ArgumentParser(prog='pam action discover start')
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID.')
+    parser.add_argument('--configuration-uid', '-c', required=False, dest='configuration_uid',
+                        action='store', help='PAM configuration UID, if gateway has multiple.')
     parser.add_argument('--resource', '-r', required=False, dest='resource_uid', action='store',
                         help='UID of the resource record. Set to discover specific resource.')
+
     parser.add_argument('--lang', required=False, dest='language', action='store', default="en_US",
                         help='Language')
     parser.add_argument('--include-machine-dir-users', required=False, dest='include_machine_dir_users',
@@ -41,6 +44,7 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
                         action='store_true', help='Skip discovering directories.')
     parser.add_argument('--skip-cloud-users', required=False, dest='skip_cloud_users',
                         action='store_true', help='Skip discovering cloud users.')
+
     # parser.add_argument('--cred', required=False, dest='credentials',
     #                     action='append', help='List resource credentials.')
     # parser.add_argument('--cred-file', required=False, dest='credential_file',
@@ -97,10 +101,15 @@ class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBas
 
         # Load the configuration record and get the gateway_uid from the facade.
         gateway = kwargs.get('gateway')
-
-        gateway_context = GatewayContext.from_gateway(params, gateway)
-        if gateway_context is None:
-            print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.")
+        try:
+            gateway_context = GatewayContext.from_gateway(params=params,
+                                                          gateway=gateway,
+                                                          configuration_uid=kwargs.get('configuration_uid'))
+            if gateway_context is None:
+                print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.{bcolors.ENDC}")
+                return
+        except MultiConfigurationException as err:
+            multi_conf_msg(gateway, err)
             return
 
         jobs = Jobs(record=gateway_context.configuration, params=params)

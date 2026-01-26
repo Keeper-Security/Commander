@@ -212,7 +212,7 @@ class RuleItem(BaseModel):
 
     def close(self):
         try:
-            if self.engine_rule:
+            if self.engine_rule and hasattr(self.rule_engine, "close"):
                 self.engine_rule.close()
                 self.engine_rule = None
                 del self.engine_rule
@@ -224,7 +224,7 @@ class RuleItem(BaseModel):
 
 
 class ActionRuleItem(RuleItem):
-    action: RuleActionEnum = RuleActionEnum.PROMPT
+    action: Optional[RuleActionEnum] = RuleActionEnum.PROMPT
     shared_folder_uid: Optional[str] = None
     admin_uid: Optional[str] = None
 
@@ -423,6 +423,11 @@ class FactsNameUser(BaseModel):
 
 class Facts(BaseModel):
     name: Optional[str] = None
+
+    # For devices
+    make: Optional[str] = None
+    model: Optional[str] = None
+
     directories: List[FactsDirectory] = []
     id: Optional[FactsId] = None
     services: List[FactsNameUser] = []

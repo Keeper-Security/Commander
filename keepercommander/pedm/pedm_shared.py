@@ -111,12 +111,12 @@ def approval_status_to_name(approval_status: int, created: datetime.datetime, ex
         return 'Approved'
     elif approval_status == NotificationCenter_pb2.NAS_DENIED:
         return 'Denied'
+    elif approval_status == NotificationCenter_pb2.NAS_ESCALATED:
+        return 'Escalated'
+    elif approval_status == NotificationCenter_pb2.NAS_LOST_APPROVAL_RIGHTS:
+        return 'Expired'
     elif approval_status == NotificationCenter_pb2.NAS_UNSPECIFIED:
-        status = 'Pending'
-        expire_time = created + datetime.timedelta(minutes=expire_in)
-        if expire_time < datetime.datetime.now():
-            status = 'Expired'
-        return status
+        return 'Pending'
     else:
         return 'Unsupported'
 

@@ -27,6 +27,11 @@ from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import enterprise_pb2, BI_pb2, APIRequest_pb2
 
+# Addon name constants
+KEPM_ADDON = 'keeper_endpoint_privilege_manager'
+REMOTE_BROWSER_ISOLATION_ADDON = 'remote_browser_isolation'
+CONNECTION_MANAGER_ADDON = 'connection_manager'
+
 
 def register_commands(commands):
     commands['msp-down'] = GetMSPDataCommand()
@@ -64,11 +69,14 @@ msp_info_parser.add_argument('-p', '--pricing', dest='pricing', action='store_tr
 msp_info_parser.add_argument('-r', '--restriction', dest='restriction', action='store_true',
                              help='Display MSP restriction information')
 msp_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='Print details')
+msp_info_parser.add_argument('-mc', '--managed-company', dest='managed_company', action='store',
+                             help='Filter by specific managed company (name or id)')
 # msp_info_parser.add_argument('-u', '--users', dest='users', action='store_true', help='print user list')
 
 msp_update_parser = argparse.ArgumentParser(prog='msp-update', usage='msp-update',
                                             description='Modify a Managed Company license')
 msp_update_parser.add_argument('--node', dest='node', action='store', help='node name or node ID')
+msp_update_parser.add_argument('-n', '--name', dest='name', action='store', help='update managed company name')
 msp_update_parser.add_argument('-p', '--plan', dest='plan', action='store',
                                choices=[x[1] for x in constants.MSP_PLANS],
                                help=f'License plan: {", ".join((x[1] for x in constants.MSP_PLANS))}')
@@ -365,30 +373,77 @@ class MSPInfoCommand(EnterpriseCommand, MSPMixin):
         if 'managed_companies' in params.enterprise:
             sort_dict = {x[0]: i for i, x in enumerate(constants.MSP_ADDONS)}
             verbose = kwargs.get('verbose')
+            company_filter = kwargs.get('managed_company')
+            
+            # Filter by company if specified
+            managed_companies = params.enterprise['managed_companies']
+            if company_filter:
+                filtered_mc = get_mc_by_name_or_id(managed_companies, company_filter)
+                if not filtered_mc:
+                    raise CommandError('msp-info', f'Managed Company "{company_filter}" not found')
+                managed_companies = [filtered_mc]
+            
             header = ['company_id', 'company_name', 'node', 'plan', 'storage', 'addons', 'allocated', 'active']
+            if verbose:
+                # Add node_name field for verbose mode
+                header.insert(3, 'node_name')
+            
             table = []
             plan_map = {x[1]: x[2] for x in constants.MSP_PLANS}
             file_plan_map = {x[1]: x[2] for x in constants.MSP_FILE_PLANS}
-            for mc in params.enterprise['managed_companies']:
+            
+            for mc in managed_companies:
                 node_id = mc['msp_node_id']
                 if verbose:
                     node_path = str(node_id)
+                    node_name = self.get_node_path(params, node_id, False)
                 else:
                     node_path = self.get_node_path(params, node_id, False)
+                    node_name = None
+                
                 file_plan = mc['file_plan_type']
                 file_plan = file_plan_map.get(file_plan, file_plan)
-                addons = [x['name'] for x in mc.get('add_ons', [])]
-                addons.sort(key=lambda x: sort_dict.get(x, -1))
+                
+                # Process addons
+                addon_list = []
+                for addon_obj in mc.get('add_ons', []):
+                    addon_name = addon_obj['name']
+                    if verbose:
+                        seats = addon_obj.get('seats', 0)
+                        if seats > 0:
+                            addon_def = next((x for x in constants.MSP_ADDONS if x[0] == addon_name), None)
+                            if addon_def and addon_def[2]:  # addon_def[2] indicates if seats are supported
+                                display_seats = -1 if seats == 2147483647 else seats
+                                addon_list.append(f"{addon_name}:{display_seats}")
+                            else:
+                                addon_list.append(addon_name)
+                        else:
+                            addon_list.append(addon_name)
+                    else:
+                        addon_list.append(addon_name)
+                
+                addon_list.sort(key=lambda x: sort_dict.get(x.split(':')[0], -1))
+                
                 if not verbose:
-                    addons = len(addons)
+                    addons = len(addon_list)
+                else:
+                    addons = addon_list
+                
                 plan = mc['product_id']
                 if not verbose:
                     plan = plan_map.get(plan, plan)
+                
                 seats = mc['number_of_seats']
                 if seats > 2000000:
                     seats = None
-                table.append([mc['mc_enterprise_id'], mc['mc_enterprise_name'], node_path,
-                              plan, file_plan, addons, seats, mc['number_of_users']])
+                
+                if verbose:
+                    table.append([mc['mc_enterprise_id'], mc['mc_enterprise_name'], node_path,
+                                  node_name, plan, file_plan, addons, seats, mc['number_of_users']])
+                else:
+                    table.append([mc['mc_enterprise_id'], mc['mc_enterprise_name'], node_path,
+                                  plan, file_plan, addons, seats, mc['number_of_users']])
+            
             table.sort(key=lambda x: x[1].lower())
             if report_format != 'json':
                 header = [field_to_title(x) for x in header]
@@ -425,6 +480,10 @@ class MSPUpdateCommand(EnterpriseCommand):
                 raise CommandError('msp-update', f'More than one nodes \"{node_name}\" are found')
             rq['node_id'] = nodes[0]['node_id']
 
+        new_name = kwargs.get('name')
+        if new_name:
+            rq['enterprise_name'] = new_name
+            
         permits = next((x['msp_permits'] for x in params.enterprise.get('licenses', []) if 'msp_permits' in x), None)
 
         plan_name = kwargs.get('plan')
@@ -463,6 +522,17 @@ class MSPUpdateCommand(EnterpriseCommand):
             product_plan = next((x for x in constants.MSP_PLANS if product_id == x[1].lower()), None)
             if product_plan and product_plan[3] < file_plan[0]:
                 rq['file_plan_type'] = file_plan[1]
+        else:
+            existing_file_plan = current_mc.get('file_plan_type')
+            if existing_file_plan:
+                product_id = rq['product_id'].lower()
+                product_plan = next((x for x in constants.MSP_PLANS if product_id == x[1].lower()), None)
+                if product_plan:
+                    file_plan = next((x for x in constants.MSP_FILE_PLANS if x[1] == existing_file_plan), None)
+                    if file_plan:
+                        base_file_plan_id = product_plan[3]
+                        if file_plan[0] != base_file_plan_id:
+                            rq['file_plan_type'] = existing_file_plan
 
         addons = {}
         for ao in current_mc.get('add_ons', []):
@@ -470,9 +540,9 @@ class MSPUpdateCommand(EnterpriseCommand):
                 continue
             if ao.get('included_in_product') is True:
                 continue
-            addon_name = ao['name']
+            addon_name = ao['name'].lower()  # Normalize to lowercase for consistency
             keep_addon = {
-                'add_on': addon_name
+                'add_on': ao['name']  
             }
             seats = ao.get('seats')
             if seats > 0:
@@ -490,11 +560,21 @@ class MSPUpdateCommand(EnterpriseCommand):
                         raise CommandError('msp-update',f'Addon \"{addon_name}\" is not found')
                     addon_seats = 0
                     if sep == ':' and addon[2] and action == 'add_addon':
-                        try:
-                            addon_seats = int(seats)
-                        except:
-                            raise CommandError('msp-update',
-                                               f'Addon \"{addon_name}\". Number of seats \"{seats}\" is not integer')
+                        if addon_name == KEPM_ADDON and seats.strip() == '-1':
+                            addon_seats = 2147483647  
+                            seats = '2147483647'  
+                        else:
+                            try:
+                                addon_seats = int(seats)
+                            except:
+                                raise CommandError('msp-update',
+                                                   f'Addon \"{addon_name}\". Number of seats \"{seats}\" is not integer')
+                        if addon_name == KEPM_ADDON:
+                            valid_int_seats = {x for x in constants.KEPM_VALID_SEATS if isinstance(x, int)}
+                            if addon_seats not in valid_int_seats and addon_seats != 2147483647:
+                                valid_values = ', '.join(str(x) for x in sorted(valid_int_seats) + ['-1 (for unlimited)'])
+                                raise CommandError('msp-update',
+                                                   f'Addon \"{addon_name}\". Invalid seat value \"{seats}\". Valid values are: {valid_values}')
                     if action == 'add_addon':
                         if permits:
                             if addon_name not in (x.lower() for x in permits['allowed_add_ons']):
@@ -509,6 +589,19 @@ class MSPUpdateCommand(EnterpriseCommand):
                     else:
                         if addon_name in addons:
                             del addons[addon_name]
+        
+        addon_names = {name.lower() for name in addons.keys()}
+        if REMOTE_BROWSER_ISOLATION_ADDON in addon_names:
+            if CONNECTION_MANAGER_ADDON not in addon_names:
+                raise CommandError('msp-update',
+                                   f'Addon \"{REMOTE_BROWSER_ISOLATION_ADDON}\" requires \"{CONNECTION_MANAGER_ADDON}\" to be selected')
+            cm_addon = addons.get(CONNECTION_MANAGER_ADDON)
+            if cm_addon:
+                cm_seats = cm_addon.get('seats', 0)
+                if not cm_seats or cm_seats == 0:
+                    raise CommandError('msp-update',
+                                       f'Addon \"{REMOTE_BROWSER_ISOLATION_ADDON}\" requires \"{CONNECTION_MANAGER_ADDON}\" to have seats specified (e.g., {CONNECTION_MANAGER_ADDON}:N)')
+        
         rq['add_ons'] = list(addons.values())
         rs = api.communicate(params, rq)
         if rs['result'] == 'success':
@@ -927,6 +1020,7 @@ class MSPAddCommand(EnterpriseCommand):
         addons = kwargs.get('addon')
         if isinstance(addons, list):
             rq['add_ons'] = []
+            addon_data = {}  # Track addon name -> seat count for validation
             for v in addons:
                 addon_name, sep, seats = v.partition(':')
                 addon_name = addon_name.lower()
@@ -940,17 +1034,38 @@ class MSPAddCommand(EnterpriseCommand):
                         return
                 addon_seats = 0
                 if sep == ':' and addon[2]:
-                    try:
-                        addon_seats = int(seats)
-                    except:
-                        logging.warning('Addon \"%s\". Number of seats \"%s\" is not integer', addon_name, seats)
-                        return
+                    if addon_name == KEPM_ADDON and seats.strip() == '-1':
+                        addon_seats = 2147483647  # Use max int for unlimited, similar to seats handling
+                    else:
+                        try:
+                            addon_seats = int(seats)
+                        except:
+                            logging.warning('Addon \"%s\". Number of seats \"%s\" is not integer', addon_name, seats)
+                            return
+                    if addon_name == KEPM_ADDON:
+                        valid_int_seats = {x for x in constants.KEPM_VALID_SEATS if isinstance(x, int)}
+                        if addon_seats not in valid_int_seats and addon_seats != 2147483647:
+                            valid_values = ', '.join(str(x) for x in sorted(valid_int_seats) + ['-1 (for unlimited)'])
+                            logging.warning('Addon \"%s\". Invalid seat value \"%s\". Valid values are: %s', addon_name, seats, valid_values)
+                            return
                 rqa = {
                     'add_on': addon[0]
                 }
                 if addon_seats > 0:
                     rqa['seats'] = addon_seats
+                    addon_data[addon_name] = addon_seats
+                else:
+                    addon_data[addon_name] = 0
                 rq['add_ons'].append(rqa)
+
+            # Validate that Remote Browser Isolation requires Keeper Connection Manager with seats
+            if REMOTE_BROWSER_ISOLATION_ADDON in addon_data:
+                if CONNECTION_MANAGER_ADDON not in addon_data:
+                    logging.warning('Addon \"%s\" requires \"%s\" to be selected', REMOTE_BROWSER_ISOLATION_ADDON, CONNECTION_MANAGER_ADDON)
+                    return
+                if addon_data[CONNECTION_MANAGER_ADDON] == 0:
+                    logging.warning('Addon \"%s\" requires \"%s\" to have seats specified (e.g., %s:N)', REMOTE_BROWSER_ISOLATION_ADDON, CONNECTION_MANAGER_ADDON, CONNECTION_MANAGER_ADDON)
+                    return
 
         company_id = -1
         rs = api.communicate(params, rq)

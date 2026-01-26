@@ -1,7 +1,7 @@
 from __future__ import annotations
 import argparse
 from ..pam.pam_dto import GatewayAction
-from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
+from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from ...display import bcolors
 from . import get_plugins_map, make_script_signature, SaasCatalog, get_field_input
 from ... import api, subfolder, utils, crypto, vault, vault_extensions, attachment, record_management
@@ -49,10 +49,13 @@ class GatewayActionSaasListCommand(GatewayAction):
 
 class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
 
-    parser = argparse.ArgumentParser(prog='pam action saas install')
+    parser = argparse.ArgumentParser(prog='pam action saas config')
 
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID.')
+    parser.add_argument('--configuration-uid', '-c', required=False, dest='configuration_uid',
+                        action='store', help='PAM configuration UID, if gateway has multiple.')
+
     parser.add_argument('--list', '-l', required=False, dest='do_list', action='store_true',
                         help='List available SaaS rotations.')
 
@@ -64,7 +67,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
 
     parser.add_argument('--info', required=False, dest='do_info', action='store_true',
                         help='Get information about a plugin or plugins being used.')
-    parser.add_argument('--create', '-c', required=False, dest='do_create', action='store_true',
+    parser.add_argument('--create', required=False, dest='do_create', action='store_true',
                         help='Create a SaaS Plugin config record.')
     parser.add_argument('--update-config-uid', '-u', required=False, dest='do_update', action='store',
                         help='Update an existing SaaS configuration.')
@@ -281,8 +284,8 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
         print(f"{bcolors.OKGREEN}Created SaaS configuration record with UID of {record.record_uid}{bcolors.ENDC}")
         print("")
         print("Assign this configuration to a user using the following command.")
-        print(f"  {bcolors.OKGREEN}pam action saas add -c {record.record_uid} -u <PAM User Record UID>{bcolors.ENDC}")
-        print(f"  See {bcolors.OKGREEN}pam action saas add --help{bcolors.ENDC} for more information.")
+        print(f"  {bcolors.OKGREEN}pam action saas set -c {record.record_uid} -u <PAM User Record UID>{bcolors.ENDC}")
+        print(f"  See {bcolors.OKGREEN}pam action saas set --help{bcolors.ENDC} for more information.")
 
     def execute(self, params: KeeperParams, **kwargs):
 
@@ -294,11 +297,17 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
 
         use_plugin = kwargs.get("plugin")  # type: Optional[str]
         gateway = kwargs.get("gateway")  # type: str
+        configuration_uid = kwargs.get('configuration_uid')  # type Optional[str]
 
-        gateway_context = GatewayContext.from_gateway(params, gateway)
-        if gateway_context is None:
-            print("")
-            print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.")
+        try:
+            gateway_context = GatewayContext.from_gateway(params=params,
+                                                          gateway=gateway,
+                                                          configuration_uid=configuration_uid)
+            if gateway_context is None:
+                print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.{bcolors.ENDC}")
+                return
+        except MultiConfigurationException as err:
+            multi_conf_msg(gateway, err)
             return
 
         plugins = get_plugins_map(

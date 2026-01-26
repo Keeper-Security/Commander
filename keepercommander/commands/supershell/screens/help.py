@@ -17,13 +17,26 @@ class HelpScreen(ModalScreen):
     DEFAULT_CSS = """
     HelpScreen {
         align: center middle;
+        background: rgba(0, 0, 0, 0.8);
+    }
+
+    HelpScreen > Vertical {
+        background: #000000;
+    }
+
+    HelpScreen > Vertical > Horizontal {
+        background: #000000;
+    }
+
+    HelpScreen Static {
+        background: #000000;
     }
 
     #help_container {
         width: 90;
         height: auto;
         max-height: 90%;
-        background: #111111;
+        background: #000000;
         border: solid #444444;
         padding: 1 2;
     }
@@ -81,7 +94,7 @@ class HelpScreen(ModalScreen):
   Up/Down       Command history
   quit/q        Close shell pane
   Ctrl+D        Close shell pane
-  Shift+drag    Select text (native)
+  Select text   Auto-copies to clipboard
 
 [green]General:[/green]
   ?             Help

@@ -35,7 +35,7 @@ if sys.version_info >= (3, 8):
         def test_create_default_config(self):
             """Test creation of default configuration."""
             config = self.service_config.create_default_config()
-            self.assertEqual(config["title"], "Commander Service Mode")
+            self.assertEqual(config["title"], "Commander Service Mode Config")
             self.assertIsNone(config["port"])
             self.assertEqual(config["ngrok"], "n")
             self.assertEqual(config["ngrok_auth_token"], "")
@@ -111,7 +111,7 @@ if sys.version_info >= (3, 8):
             """
             params = MagicMock(spec=KeeperParams)
             result = self.service_config.validate_command_list("ls, get", params)
-            self.assertEqual(result, "ls, get")
+            self.assertEqual(result, "ls,get")
 
         @patch.object(ServiceConfig, 'cli_handler')
         def test_validate_command_list_invalid(self, mock_cli_handler):

@@ -205,6 +205,20 @@ class SetCollectionLinkRequest(_message.Message):
     removeCollection: _containers.RepeatedCompositeFieldContainer[CollectionLink]
     def __init__(self, addCollection: _Optional[_Iterable[_Union[CollectionLinkData, _Mapping]]] = ..., removeCollection: _Optional[_Iterable[_Union[CollectionLink, _Mapping]]] = ...) -> None: ...
 
+class ApprovalExtendData(_message.Message):
+    __slots__ = ["approvalUid", "expireIn"]
+    APPROVALUID_FIELD_NUMBER: _ClassVar[int]
+    EXPIREIN_FIELD_NUMBER: _ClassVar[int]
+    approvalUid: bytes
+    expireIn: int
+    def __init__(self, approvalUid: _Optional[bytes] = ..., expireIn: _Optional[int] = ...) -> None: ...
+
+class ModifyApprovalRequest(_message.Message):
+    __slots__ = ["extendApproval"]
+    EXTENDAPPROVAL_FIELD_NUMBER: _ClassVar[int]
+    extendApproval: _containers.RepeatedCompositeFieldContainer[ApprovalExtendData]
+    def __init__(self, extendApproval: _Optional[_Iterable[_Union[ApprovalExtendData, _Mapping]]] = ...) -> None: ...
+
 class ApprovalActionRequest(_message.Message):
     __slots__ = ["approve", "deny", "remove"]
     APPROVE_FIELD_NUMBER: _ClassVar[int]
@@ -452,6 +466,62 @@ class GetCollectionLinkResponse(_message.Message):
     COLLECTIONLINKDATA_FIELD_NUMBER: _ClassVar[int]
     collectionLinkData: _containers.RepeatedCompositeFieldContainer[CollectionLinkData]
     def __init__(self, collectionLinkData: _Optional[_Iterable[_Union[CollectionLinkData, _Mapping]]] = ...) -> None: ...
+
+class OfflineAgentRegisterRequest(_message.Message):
+    __slots__ = ["agentUid", "deploymentUid", "publicKey", "machineId", "collection", "agentData"]
+    AGENTUID_FIELD_NUMBER: _ClassVar[int]
+    DEPLOYMENTUID_FIELD_NUMBER: _ClassVar[int]
+    PUBLICKEY_FIELD_NUMBER: _ClassVar[int]
+    MACHINEID_FIELD_NUMBER: _ClassVar[int]
+    COLLECTION_FIELD_NUMBER: _ClassVar[int]
+    AGENTDATA_FIELD_NUMBER: _ClassVar[int]
+    agentUid: bytes
+    deploymentUid: bytes
+    publicKey: bytes
+    machineId: str
+    collection: _containers.RepeatedCompositeFieldContainer[CollectionValue]
+    agentData: bytes
+    def __init__(self, agentUid: _Optional[bytes] = ..., deploymentUid: _Optional[bytes] = ..., publicKey: _Optional[bytes] = ..., machineId: _Optional[str] = ..., collection: _Optional[_Iterable[_Union[CollectionValue, _Mapping]]] = ..., agentData: _Optional[bytes] = ...) -> None: ...
+
+class OfflineAgentRegisterResponse(_message.Message):
+    __slots__ = ["agentUid"]
+    AGENTUID_FIELD_NUMBER: _ClassVar[int]
+    agentUid: bytes
+    def __init__(self, agentUid: _Optional[bytes] = ...) -> None: ...
+
+class OfflineAgentSyncDownRequest(_message.Message):
+    __slots__ = ["agentUid"]
+    AGENTUID_FIELD_NUMBER: _ClassVar[int]
+    agentUid: bytes
+    def __init__(self, agentUid: _Optional[bytes] = ...) -> None: ...
+
+class OfflineAgentSyncDownResponse(_message.Message):
+    __slots__ = ["encryptedSyncData"]
+    ENCRYPTEDSYNCDATA_FIELD_NUMBER: _ClassVar[int]
+    encryptedSyncData: bytes
+    def __init__(self, encryptedSyncData: _Optional[bytes] = ...) -> None: ...
+
+class GetAgentLastSeenRequest(_message.Message):
+    __slots__ = ["activeOnly", "agentUid"]
+    ACTIVEONLY_FIELD_NUMBER: _ClassVar[int]
+    AGENTUID_FIELD_NUMBER: _ClassVar[int]
+    activeOnly: bool
+    agentUid: _containers.RepeatedScalarFieldContainer[bytes]
+    def __init__(self, activeOnly: bool = ..., agentUid: _Optional[_Iterable[bytes]] = ...) -> None: ...
+
+class AgentLastSeen(_message.Message):
+    __slots__ = ["agentUid", "lastSeen"]
+    AGENTUID_FIELD_NUMBER: _ClassVar[int]
+    LASTSEEN_FIELD_NUMBER: _ClassVar[int]
+    agentUid: bytes
+    lastSeen: int
+    def __init__(self, agentUid: _Optional[bytes] = ..., lastSeen: _Optional[int] = ...) -> None: ...
+
+class GetAgentLastSeenResponse(_message.Message):
+    __slots__ = ["lastSeen"]
+    LASTSEEN_FIELD_NUMBER: _ClassVar[int]
+    lastSeen: _containers.RepeatedCompositeFieldContainer[AgentLastSeen]
+    def __init__(self, lastSeen: _Optional[_Iterable[_Union[AgentLastSeen, _Mapping]]] = ...) -> None: ...
 
 class GetActiveAgentCountRequest(_message.Message):
     __slots__ = ["enterpriseId"]

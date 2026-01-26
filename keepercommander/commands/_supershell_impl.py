@@ -17,7 +17,24 @@ import os
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 import pyperclip
+from pyperclip import PyperclipException
 from rich.markup import escape as rich_escape
+
+
+def safe_copy_to_clipboard(text: str) -> tuple[bool, str]:
+    """Safely copy text to clipboard, handling missing clipboard on remote/headless systems.
+
+    Returns:
+        (True, "") on success
+        (False, error_message) on failure
+    """
+    try:
+        pyperclip.copy(text)
+        return True, ""
+    except PyperclipException:
+        return False, "Clipboard not available (no X11/Wayland)"
+    except Exception as e:
+        return False, str(e)
 
 # Import from refactored modules
 from .supershell.themes import COLOR_THEMES
@@ -39,7 +56,7 @@ from .supershell.screens import PreferencesScreen, HelpScreen
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll, Center, Middle
-from textual.widgets import Tree, DataTable, Footer, Header, Static, Input, Label, Button
+from textual.widgets import Tree, DataTable, Footer, Header, Static, Input, Label, Button, TextArea
 from textual.binding import Binding
 from textual.screen import Screen, ModalScreen
 from textual.reactive import reactive
@@ -47,7 +64,329 @@ from textual import on, work
 from textual.message import Message
 from textual.timer import Timer
 from rich.text import Text
-from textual.events import Click, MouseDown, Paste
+from textual.events import Click, MouseDown, MouseUp, MouseMove, Paste
+
+# === DEBUG EVENT LOGGING ===
+# Set to True to log all mouse/keyboard events to /tmp/supershell_debug.log
+# tail -f /tmp/supershell_debug.log to watch events in real-time
+DEBUG_EVENTS = False
+_debug_log_file = None
+
+def _debug_log(msg: str):
+    """Log debug message to /tmp/supershell_debug.log if DEBUG_EVENTS is True."""
+    if not DEBUG_EVENTS:
+        return
+    global _debug_log_file
+    try:
+        if _debug_log_file is None:
+            _debug_log_file = open('/tmp/supershell_debug.log', 'a')
+        import datetime
+        timestamp = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
+        _debug_log_file.write(f"[{timestamp}] {msg}\n")
+        _debug_log_file.flush()
+    except Exception as e:
+        pass  # Silently fail if logging fails
+# === END DEBUG EVENT LOGGING ===
+
+
+class AutoCopyTextArea(TextArea):
+    """TextArea that auto-copies selected text to clipboard on mouse release.
+
+    Behavior matches standard Linux terminal:
+    - Click and drag to select text
+    - Double-click to select word, drag to extend from word boundaries
+    - On mouse up, automatically copy selection to clipboard
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        import time
+        self._last_click_time = 0.0
+        self._last_click_pos = (0, 0)
+        self._word_select_mode = False
+        self._word_anchor_start = None  # (row, col)
+        self._word_anchor_end = None    # (row, col)
+
+    async def _on_mouse_down(self, event: MouseDown) -> None:
+        """Handle mouse down - detect double-click for word selection."""
+        import time
+        current_time = time.time()
+        current_pos = (event.x, event.y)
+
+        # Check for double-click (within 500ms and reasonably close position)
+        time_ok = (current_time - self._last_click_time) < 0.5
+        pos_ok = (abs(current_pos[0] - self._last_click_pos[0]) <= 10 and
+                  abs(current_pos[1] - self._last_click_pos[1]) <= 5)
+        is_double_click = time_ok and pos_ok
+
+        # Update click tracking
+        self._last_click_time = current_time
+        self._last_click_pos = current_pos
+
+        if is_double_click:
+            # Double-click: select word and prepare for drag
+            self._select_word_at_position(event)
+        else:
+            # Single click: reset word mode and do normal selection
+            self._word_select_mode = False
+            self._word_anchor_start = None
+            self._word_anchor_end = None
+            await super()._on_mouse_down(event)
+
+    def _select_word_at_position(self, event: MouseDown) -> None:
+        """Select the word at the mouse position."""
+        try:
+            location = self.get_target_document_location(event)
+            row, col = location
+
+            lines = self.text.split('\n')
+            if row >= len(lines):
+                return
+            line = lines[row]
+            if col > len(line):
+                col = len(line)
+
+            # Find word boundaries (whitespace-delimited)
+            start = col
+            while start > 0 and not line[start - 1].isspace():
+                start -= 1
+
+            end = col
+            while end < len(line) and not line[end].isspace():
+                end += 1
+
+            if start == end:
+                # No word at this position
+                return
+
+            # Store anchors for potential drag extension
+            self._word_anchor_start = (row, start)
+            self._word_anchor_end = (row, end)
+            self._word_select_mode = True
+
+            # Select the word
+            from textual.widgets.text_area import Selection
+            self.selection = Selection((row, start), (row, end))
+
+            # Set up for potential drag (like parent's _on_mouse_down)
+            self._selecting = True
+            self.capture_mouse()
+            self._pause_blink(visible=False)
+            self.history.checkpoint()
+
+        except Exception as e:
+            _debug_log(f"AutoCopyTextArea._select_word_at_position error: {e}")
+            # On error, fall back to normal behavior
+            self._word_select_mode = False
+
+    async def _on_mouse_move(self, event: MouseMove) -> None:
+        """Handle mouse move - extend selection if dragging."""
+        if not self._selecting:
+            return
+
+        try:
+            target = self.get_target_document_location(event)
+            from textual.widgets.text_area import Selection
+
+            if self._word_select_mode and self._word_anchor_start:
+                # Word-select mode: anchor to original word boundaries
+                anchor_start = self._word_anchor_start
+                anchor_end = self._word_anchor_end
+
+                if target < anchor_start:
+                    self.selection = Selection(target, anchor_end)
+                elif target > anchor_end:
+                    self.selection = Selection(anchor_start, target)
+                else:
+                    self.selection = Selection(anchor_start, anchor_end)
+            else:
+                # Normal drag: extend from original click position
+                selection_start, _ = self.selection
+                self.selection = Selection(selection_start, target)
+        except Exception:
+            pass
+
+    async def _on_mouse_up(self, event: MouseUp) -> None:
+        """Handle mouse up - finalize selection and copy."""
+        # Clean up word select state
+        self._word_select_mode = False
+
+        # Let parent finalize selection mode
+        self._end_mouse_selection()
+
+        # Always try to copy - _auto_copy_if_selected checks if there's actual selection
+        self._auto_copy_if_selected()
+
+    def _on_click(self, event: Click) -> None:
+        """Handle click events - double-click selects and copies word."""
+        # Double-click: select word and copy (backup for mouse_down detection)
+        if event.chain >= 2:
+            try:
+                location = self.get_target_document_location(event)
+                row, col = location
+
+                lines = self.text.split('\n')
+                if row < len(lines):
+                    line = lines[row]
+                    if col > len(line):
+                        col = len(line)
+
+                    # Find word boundaries
+                    start = col
+                    while start > 0 and not line[start - 1].isspace():
+                        start -= 1
+                    end = col
+                    while end < len(line) and not line[end].isspace():
+                        end += 1
+
+                    if start < end:
+                        word = line[start:end]
+                        # Select and copy the word
+                        from textual.widgets.text_area import Selection
+                        self.selection = Selection((row, start), (row, end))
+                        # Copy immediately
+                        success, err = safe_copy_to_clipboard(word)
+                        if success:
+                            preview = word[:40] + ('...' if len(word) > 40 else '')
+                            self.app.notify(f"Copied: {preview}", severity="information")
+                        else:
+                            self.app.notify(f"⚠️  {err}", severity="warning")
+            except Exception:
+                pass
+            event.stop()
+            return
+        # Let parent handle single clicks
+        super()._on_click(event)
+
+    def _auto_copy_if_selected(self) -> None:
+        """Copy selected text to clipboard if any."""
+        try:
+            selected = self.selected_text
+            _debug_log(f"AutoCopyTextArea: selected_text={selected!r}")
+            if selected and selected.strip():
+                success, err = safe_copy_to_clipboard(selected)
+                if success:
+                    preview = selected[:40] + ('...' if len(selected) > 40 else '')
+                    preview = preview.replace('\n', ' ')
+                    # Use app.notify() instead of widget's notify()
+                    self.app.notify(f"Copied: {preview}", severity="information")
+                    _debug_log(f"AutoCopyTextArea: Copied to clipboard")
+                else:
+                    self.app.notify(f"⚠️  {err}", severity="warning")
+        except Exception as e:
+            _debug_log(f"AutoCopyTextArea: Error: {e}")
+
+
+class ShellInputTextArea(TextArea):
+    """TextArea for shell command input with Enter-to-execute behavior.
+
+    Features:
+    - Enter executes command instead of inserting newline
+    - Soft wrapping for long commands
+    - Multi-line display
+    - Integrates with shell history navigation
+    """
+
+    def __init__(self, app_ref: 'SuperShellApp', *args, **kwargs):
+        # Set defaults for shell input behavior
+        kwargs.setdefault('soft_wrap', True)
+        kwargs.setdefault('show_line_numbers', False)
+        kwargs.setdefault('tab_behavior', 'focus')  # Tab cycles focus, not inserts tab
+        super().__init__(*args, **kwargs)
+        self._app_ref = app_ref
+
+    async def _on_key(self, event) -> None:
+        """Intercept keys for shell-specific behavior."""
+        # Enter executes command instead of inserting newline
+        if event.key == "enter":
+            command = self.text.strip()
+            self.clear()  # Clear immediately for responsiveness
+            if command:
+                # Execute asynchronously with loading indicator
+                self._app_ref._execute_shell_command_async(command)
+            event.prevent_default()
+            event.stop()
+            return
+
+        # Up arrow navigates history
+        if event.key == "up":
+            if self._app_ref.shell_command_history:
+                if self._app_ref.shell_history_index < len(self._app_ref.shell_command_history) - 1:
+                    self._app_ref.shell_history_index += 1
+                    history_cmd = self._app_ref.shell_command_history[-(self._app_ref.shell_history_index + 1)]
+                    self.clear()
+                    self.insert(history_cmd)
+            event.prevent_default()
+            event.stop()
+            return
+
+        # Down arrow navigates history
+        if event.key == "down":
+            if self._app_ref.shell_history_index > 0:
+                self._app_ref.shell_history_index -= 1
+                history_cmd = self._app_ref.shell_command_history[-(self._app_ref.shell_history_index + 1)]
+                self.clear()
+                self.insert(history_cmd)
+            elif self._app_ref.shell_history_index == 0:
+                self._app_ref.shell_history_index = -1
+                self.clear()
+            event.prevent_default()
+            event.stop()
+            return
+
+        # Ctrl+U clears the input (bash-like)
+        if event.key == "ctrl+u":
+            self.clear()
+            self._app_ref.shell_history_index = -1
+            event.prevent_default()
+            event.stop()
+            return
+
+        # Ctrl+D closes shell pane
+        if event.key == "ctrl+d":
+            self._app_ref._close_shell_pane()
+            event.prevent_default()
+            event.stop()
+            return
+
+        # Escape unfocuses the input
+        if event.key == "escape":
+            self._app_ref.shell_input_active = False
+            tree = self._app_ref.query_one("#folder_tree")
+            tree.focus()
+            self._app_ref._update_status("Shell open | Tab to cycle | press Enter in shell to run commands")
+            event.prevent_default()
+            event.stop()
+            return
+
+        # Tab cycles to search mode
+        if event.key == "tab":
+            from textual.widgets import Tree
+            self._app_ref.shell_input_active = False
+            self._app_ref.search_input_active = True
+            tree = self._app_ref.query_one("#folder_tree", Tree)
+            tree.add_class("search-input-active")
+            tree.focus()  # Search mode works with tree focused
+            self._app_ref._update_search_display(perform_search=False)
+            self._app_ref._update_status("Type to search | Tab to tree | Ctrl+U to clear")
+            event.prevent_default()
+            event.stop()
+            return
+
+        # Shift+Tab cycles to detail pane
+        if event.key == "shift+tab":
+            from textual.containers import VerticalScroll
+            self._app_ref.shell_input_active = False
+            detail_scroll = self._app_ref.query_one("#record_detail", VerticalScroll)
+            detail_scroll.focus()
+            self._app_ref._update_status("Detail pane | Tab to shell | Shift+Tab to tree")
+            event.prevent_default()
+            event.stop()
+            return
+
+        # Let parent TextArea handle all other keys (typing, backspace, cursor movement, etc.)
+        await super()._on_key(event)
+
 
 from ..commands.base import Command
 
@@ -309,27 +648,73 @@ class SuperShellApp(App):
         border-bottom: solid #333333;
     }
 
-    #shell_output {
-        height: 1fr;
-        overflow-y: auto;
-        padding: 0 1;
-        background: #000000;
-    }
-
     #shell_output_content {
+        height: 1fr;
         background: #000000;
         color: #ffffff;
-    }
-
-    #shell_input_line {
-        height: 1;
-        background: #111111;
-        color: #00ff00;
+        border: none;
         padding: 0 1;
     }
 
-    #shell_pane:focus-within #shell_input_line {
-        background: #1a1a2e;
+    /* Theme-specific selection colors for shell output */
+    #shell_output_content.theme-green .text-area--selection {
+        background: #004400;
+    }
+    #shell_output_content.theme-blue .text-area--selection {
+        background: #002244;
+    }
+    #shell_output_content.theme-magenta .text-area--selection {
+        background: #330033;
+    }
+    #shell_output_content.theme-yellow .text-area--selection {
+        background: #333300;
+    }
+    #shell_output_content.theme-white .text-area--selection {
+        background: #444444;
+    }
+    /* Default fallback */
+    #shell_output_content .text-area--selection {
+        background: #004400;
+    }
+
+    /* Shell input container with prompt and TextArea */
+    #shell_input_container {
+        height: auto;
+        min-height: 3;
+        max-height: 6;
+        background: #000000;
+        border-top: solid #333333;
+        border-bottom: solid #333333;
+        padding: 0 1;
+    }
+
+    #shell_prompt {
+        width: 2;
+        height: 100%;
+        background: #000000;
+        color: #00ff00;
+        padding: 0;
+    }
+
+    /* Shell input area - multi-line TextArea for command entry */
+    #shell_input_area {
+        width: 1fr;
+        height: auto;
+        min-height: 1;
+        max-height: 5;
+        background: #000000;
+        color: #00ff00;
+        border: none;
+        padding: 0;
+    }
+
+    #shell_input_area:focus {
+        background: #000000;
+    }
+
+    #shell_input_area .text-area--cursor {
+        color: #00ff00;
+        background: #00ff00;
     }
     """
 
@@ -400,6 +785,7 @@ class SuperShellApp(App):
         self.shell_input_active = False
         self.shell_command_history = []  # For up/down arrow navigation
         self.shell_history_index = -1
+        # Shell output uses TextArea widget with built-in selection support
         # Load color theme from preferences
         prefs = load_preferences()
         self.color_theme = prefs.get('color_theme', 'green')
@@ -459,9 +845,19 @@ class SuperShellApp(App):
             
             # Update header info (email/username colors)
             self._update_header_info_display()
-            
+
             # Update CSS dynamically for tree selection/hover
             self._apply_theme_css()
+
+            # Update shell output selection color theme
+            try:
+                shell_output = self.query_one("#shell_output_content")
+                # Remove old theme classes and add new one
+                for old_theme in COLOR_THEMES.keys():
+                    shell_output.remove_class(f"theme-{old_theme}")
+                shell_output.add_class(f"theme-{theme_name}")
+            except Exception:
+                pass  # Shell pane might not exist yet
 
     def notify(self, message, *, title="", severity="information", timeout=1.5):
         """Override notify to use faster timeout (default 1.5s instead of 5s)"""
@@ -547,9 +943,12 @@ class SuperShellApp(App):
             # Shell pane - hidden by default, shown when :command or Ctrl+\ pressed
             with Vertical(id="shell_pane"):
                 yield Static("", id="shell_header")
-                with VerticalScroll(id="shell_output"):
-                    yield Static("", id="shell_output_content")
-                yield Static("", id="shell_input_line")
+                # AutoCopyTextArea auto-copies selected text on mouse release
+                yield AutoCopyTextArea("", id="shell_output_content", read_only=True, classes=f"theme-{self.color_theme}")
+                # Shell input line with prompt and TextArea
+                with Horizontal(id="shell_input_container"):
+                    yield Static("❯ ", id="shell_prompt")
+                    yield ShellInputTextArea(self, "", id="shell_input_area")
 
         # Status bar at very bottom
         yield Static("", id="status_bar")
@@ -3100,42 +3499,63 @@ class SuperShellApp(App):
     @on(Click, "#search_bar, #search_display")
     def on_search_bar_click(self, event: Click) -> None:
         """Activate search mode when search bar is clicked"""
+        _debug_log(f"CLICK: search_bar x={event.x} y={event.y} button={event.button} "
+                   f"shift={event.shift} ctrl={event.ctrl} meta={event.meta}")
         tree = self.query_one("#folder_tree", Tree)
+
+        # Deactivate shell input if it was active
+        if self.shell_input_active:
+            self.shell_input_active = False
+            try:
+                shell_input = self.query_one("#shell_input_area", ShellInputTextArea)
+                shell_input.blur()  # Remove focus from shell input
+            except Exception:
+                pass
+
         self.search_input_active = True
         tree.add_class("search-input-active")
+        tree.focus()  # Focus tree so keyboard events go to search handler
         self._update_search_display(perform_search=False)  # Don't change tree when entering search
         self._update_status("Type to search | Tab to navigate | Ctrl+U to clear")
         event.stop()
+        _debug_log(f"CLICK: search_bar -> stopped")
 
     @on(Click, "#user_info")
     def on_user_info_click(self, event: Click) -> None:
         """Show whoami info when user info is clicked"""
+        _debug_log(f"CLICK: user_info x={event.x} y={event.y}")
         self._display_whoami_info()
         event.stop()
+        _debug_log(f"CLICK: user_info -> stopped")
 
     @on(Click, "#device_status_info")
     def on_device_status_click(self, event: Click) -> None:
         """Show device info when Stay Logged In / Logout section is clicked"""
+        _debug_log(f"CLICK: device_status_info x={event.x} y={event.y}")
         self._display_device_info()
         event.stop()
+        _debug_log(f"CLICK: device_status_info -> stopped")
 
-    @on(Click, "#shell_pane, #shell_output, #shell_output_content, #shell_input_line, #shell_header")
+    @on(Click, "#shell_pane, #shell_input_area, #shell_header")
     def on_shell_pane_click(self, event: Click) -> None:
-        """Handle clicks in shell pane - activate shell input and stop propagation.
+        """Handle clicks in shell pane (not output area) - activate shell input."""
+        _debug_log(f"CLICK: shell_pane x={event.x} y={event.y} button={event.button}")
 
-        This prevents clicks in the shell pane from bubbling up and triggering
-        expensive operations in other parts of the UI.
-        Note: Native terminal text selection requires Shift+click (terminal-dependent).
-        """
+        # Normal click - activate and focus shell input
         if self.shell_pane_visible:
-            # Activate shell input when clicking anywhere in shell pane
-            if not self.shell_input_active:
-                self.shell_input_active = True
-                self._update_shell_input_display()
+            self.shell_input_active = True
+            try:
+                shell_input = self.query_one("#shell_input_area", ShellInputTextArea)
+                shell_input.focus()
+            except Exception:
+                pass
         event.stop()
+        _debug_log(f"CLICK: shell_pane -> stopped")
 
     def on_paste(self, event: Paste) -> None:
         """Handle paste events (Cmd+V on Mac, Ctrl+V on Windows/Linux)"""
+        _debug_log(f"PASTE: text={event.text!r} shell_input_active={self.shell_input_active}")
+        # Shell input TextArea handles its own paste - don't interfere
         if self.search_input_active and event.text:
             # Append pasted text to search input (strip newlines)
             pasted_text = event.text.replace('\n', ' ').replace('\r', '')
@@ -3247,7 +3667,11 @@ class SuperShellApp(App):
             # Update display with blinking cursor at end
             if self.search_input_text:
                 # Show text with blinking cursor (escape special chars for Rich markup)
-                display_text = f"> {rich_escape(self.search_input_text)}[blink]▎[/blink]"
+                escaped_text = rich_escape(self.search_input_text)
+                # Double trailing backslash so it doesn't escape the [blink] tag
+                if escaped_text.endswith('\\'):
+                    escaped_text += '\\'
+                display_text = f"> {escaped_text}[blink]▎[/blink]"
             else:
                 # Show prompt with blinking cursor (ready to type)
                 display_text = "> [blink]▎[/blink]"
@@ -3286,8 +3710,14 @@ class SuperShellApp(App):
         Keyboard handling is delegated to specialized handlers in
         supershell/handlers/keyboard.py for better organization and testing.
         """
+        _debug_log(f"KEY: key={event.key!r} char={event.character!r} "
+                   f"shell_visible={self.shell_pane_visible} shell_input_active={self.shell_input_active} "
+                   f"search_active={self.search_input_active}")
+
         # Dispatch to the keyboard handler chain
-        if keyboard_dispatcher.dispatch(event, self):
+        handled = keyboard_dispatcher.dispatch(event, self)
+        _debug_log(f"KEY: handled={handled}")
+        if handled:
             return
 
         # Event was not handled by any handler - let it propagate
@@ -3379,19 +3809,32 @@ class SuperShellApp(App):
 
         self.shell_pane_visible = True
         self.shell_input_active = True
-        self.shell_input_text = ""
+        self.shell_input_text = ""  # Keep for compatibility
+        self._shell_executing = False  # Track if command is executing
 
-        # Update shell header with theme colors
+        # Update shell header with theme colors and prompt
         self._update_shell_header()
 
-        # Initialize the input display
-        self._update_shell_input_display()
+        # Initialize the prompt with green ❯
+        try:
+            prompt = self.query_one("#shell_prompt", Static)
+            prompt.update("[green]❯[/green] ")
+        except Exception:
+            pass
+
+        # Focus the input TextArea
+        try:
+            shell_input = self.query_one("#shell_input_area", ShellInputTextArea)
+            shell_input.focus()
+            shell_input.clear()
+        except Exception:
+            pass
 
         # If a command was provided, execute it immediately
         if command:
-            self._execute_shell_command(command)
+            self._execute_shell_command_async(command)
 
-        self._update_status("Shell open | Enter to run | quit/q/Ctrl+D to close")
+        self._update_status("Shell open | Enter to run | Up/Down for history | Ctrl+D to close")
 
     def _close_shell_pane(self):
         """Close the shell pane and return to normal view"""
@@ -3403,11 +3846,175 @@ class SuperShellApp(App):
         self.shell_input_text = ""
         self.shell_history_index = -1
 
+        # Clear the input TextArea
+        try:
+            shell_input = self.query_one("#shell_input_area", ShellInputTextArea)
+            shell_input.clear()
+        except Exception:
+            pass
+
         # Focus tree
         tree = self.query_one("#folder_tree", Tree)
         tree.focus()
 
         self._update_status("Navigate with j/k | / to search | ? for help")
+
+    def _execute_shell_command_async(self, command: str):
+        """Execute a command asynchronously with loading indicator."""
+        # Show spinner in prompt
+        self._start_shell_spinner()
+
+        # Run the command in a worker thread
+        self.run_worker(
+            lambda: self._execute_shell_command_worker(command),
+            name="shell_command",
+            exclusive=True,
+            thread=True
+        )
+
+    def _start_shell_spinner(self):
+        """Start the spinner animation in the shell prompt."""
+        self._shell_spinner_frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        self._shell_spinner_index = 0
+        self._shell_executing = True
+
+        # Update prompt to show first spinner frame
+        try:
+            prompt = self.query_one("#shell_prompt", Static)
+            prompt.update(f"[yellow]{self._shell_spinner_frames[0]}[/yellow] ")
+        except Exception:
+            pass
+
+        # Start timer for animation
+        self._shell_spinner_timer = self.set_interval(0.1, self._animate_shell_spinner)
+
+    def _animate_shell_spinner(self):
+        """Animate the shell spinner."""
+        if not self._shell_executing:
+            return
+
+        self._shell_spinner_index = (self._shell_spinner_index + 1) % len(self._shell_spinner_frames)
+        try:
+            prompt = self.query_one("#shell_prompt", Static)
+            prompt.update(f"[yellow]{self._shell_spinner_frames[self._shell_spinner_index]}[/yellow] ")
+        except Exception:
+            pass
+
+    def _stop_shell_spinner(self):
+        """Stop the spinner and restore the prompt."""
+        self._shell_executing = False
+        if hasattr(self, '_shell_spinner_timer') and self._shell_spinner_timer:
+            self._shell_spinner_timer.stop()
+            self._shell_spinner_timer = None
+
+        # Restore normal prompt
+        try:
+            prompt = self.query_one("#shell_prompt", Static)
+            prompt.update("[green]❯[/green] ")
+        except Exception:
+            pass
+
+    def _execute_shell_command_worker(self, command: str):
+        """Worker function that executes the command and returns the result."""
+        command = command.strip()
+
+        # Handle quit commands
+        if command.lower() in ('quit', 'q', 'exit'):
+            self.call_from_thread(self._stop_shell_spinner)
+            self.call_from_thread(self._close_shell_pane)
+            return
+
+        # Block supershell inside supershell
+        cmd_name = command.split()[0].lower() if command.split() else ''
+        if cmd_name in ('supershell', 'ss'):
+            self.shell_history.append((command, "[yellow]Cannot run supershell inside supershell[/yellow]"))
+            self.call_from_thread(self._stop_shell_spinner)
+            self.call_from_thread(self._update_shell_output_display)
+            self.call_from_thread(self._scroll_shell_to_bottom)
+            return
+
+        # Handle clear command
+        if command.lower() == 'clear':
+            self.shell_history = []
+            self.call_from_thread(self._stop_shell_spinner)
+            self.call_from_thread(self._update_shell_output_display)
+            return
+
+        # Add to command history for up/down navigation
+        if command and (not self.shell_command_history or
+                        self.shell_command_history[-1] != command):
+            self.shell_command_history.append(command)
+        self.shell_history_index = -1
+
+        # Capture stdout/stderr for command execution
+        stdout_buffer = io.StringIO()
+        stderr_buffer = io.StringIO()
+        log_buffer = io.StringIO()
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+
+        # Create a temporary logging handler to capture log output
+        log_handler = logging.StreamHandler(log_buffer)
+        log_handler.setLevel(logging.INFO)
+        log_handler.setFormatter(logging.Formatter('%(message)s'))
+        root_logger = logging.getLogger()
+        root_logger.addHandler(log_handler)
+
+        try:
+            sys.stdout = stdout_buffer
+            sys.stderr = stderr_buffer
+
+            # Execute via cli.do_command
+            from ..cli import do_command
+            result = do_command(self.params, command)
+            # Some commands return output (e.g., JSON format) instead of printing
+            if result is not None:
+                print(result)
+
+        except Exception as e:
+            stderr_buffer.write(f"Error: {str(e)}\n")
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+            root_logger.removeHandler(log_handler)
+
+        # Get output
+        output = stdout_buffer.getvalue()
+        errors = stderr_buffer.getvalue()
+        log_output = log_buffer.getvalue()
+
+        # Strip ANSI codes
+        output = strip_ansi_codes(output)
+        errors = strip_ansi_codes(errors)
+        log_output = strip_ansi_codes(log_output)
+
+        # Combine output (stdout first, then log output, then errors)
+        full_output = output.rstrip()
+        if log_output.strip():
+            if full_output:
+                full_output += "\n"
+            full_output += log_output.rstrip()
+        if errors:
+            if full_output:
+                full_output += "\n"
+            full_output += f"[red]{rich_escape(errors.rstrip())}[/red]"
+
+        # Add to history
+        self.shell_history.append((command, full_output))
+
+        # Stop spinner and update display on the main thread
+        self.call_from_thread(self._stop_shell_spinner)
+        self.call_from_thread(self._update_shell_output_display)
+        self.call_from_thread(self._scroll_shell_to_bottom)
+
+    def _scroll_shell_to_bottom(self):
+        """Scroll shell output to bottom."""
+        try:
+            shell_output = self.query_one("#shell_output_content", TextArea)
+            shell_output.action_cursor_line_end()
+            shell_output.scroll_end(animate=False)
+        except Exception:
+            pass
 
     def _execute_shell_command(self, command: str):
         """Execute a Keeper command in the shell pane and display output"""
@@ -3436,8 +4043,16 @@ class SuperShellApp(App):
         # Capture stdout/stderr for command execution
         stdout_buffer = io.StringIO()
         stderr_buffer = io.StringIO()
+        log_buffer = io.StringIO()
         old_stdout = sys.stdout
         old_stderr = sys.stderr
+
+        # Create a temporary logging handler to capture log output
+        log_handler = logging.StreamHandler(log_buffer)
+        log_handler.setLevel(logging.INFO)
+        log_handler.setFormatter(logging.Formatter('%(message)s'))
+        root_logger = logging.getLogger()
+        root_logger.addHandler(log_handler)
 
         try:
             sys.stdout = stdout_buffer
@@ -3445,26 +4060,38 @@ class SuperShellApp(App):
 
             # Execute via cli.do_command
             from ..cli import do_command
-            do_command(self.params, command)
+            result = do_command(self.params, command)
+            # Some commands return output (e.g., JSON format) instead of printing
+            if result is not None:
+                print(result)
 
         except Exception as e:
             stderr_buffer.write(f"Error: {str(e)}\n")
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
+            root_logger.removeHandler(log_handler)
 
         # Get output
         output = stdout_buffer.getvalue()
         errors = stderr_buffer.getvalue()
+        log_output = log_buffer.getvalue()
 
         # Strip ANSI codes
         output = strip_ansi_codes(output)
         errors = strip_ansi_codes(errors)
+        log_output = strip_ansi_codes(log_output)
 
-        # Combine output
+        # Combine output (stdout first, then log output, then errors)
         full_output = output.rstrip()
+        if log_output.strip():
+            if full_output:
+                full_output += "\n"
+            full_output += log_output.rstrip()
         if errors:
-            full_output += f"\n[red]{rich_escape(errors.rstrip())}[/red]"
+            if full_output:
+                full_output += "\n"
+            full_output += f"[red]{rich_escape(errors.rstrip())}[/red]"
 
         # Add to history
         self.shell_history.append((command, full_output))
@@ -3475,52 +4102,47 @@ class SuperShellApp(App):
         # Scroll to bottom (defer to ensure content is rendered)
         def scroll_to_bottom():
             try:
-                shell_output = self.query_one("#shell_output", VerticalScroll)
+                shell_output = self.query_one("#shell_output_content", TextArea)
+                # Move cursor to end to scroll to bottom
+                shell_output.action_cursor_line_end()
                 shell_output.scroll_end(animate=False)
             except Exception:
                 pass
         self.call_after_refresh(scroll_to_bottom)
 
     def _update_shell_output_display(self):
-        """Update the shell output area with command history"""
+        """Update the shell output area with command history (using TextArea for selection support)"""
         try:
-            shell_output_content = self.query_one("#shell_output_content", Static)
+            shell_output_content = self.query_one("#shell_output_content", TextArea)
         except Exception:
             return
 
-        t = self.theme_colors
         lines = []
 
         for cmd, output in self.shell_history:
-            # Show prompt and command
+            # Show prompt and command (plain text - TextArea doesn't support Rich markup)
             prompt = self._get_shell_prompt()
-            lines.append(f"[{t['primary']}]{prompt}[/{t['primary']}]{rich_escape(cmd)}")
+            lines.append(f"{prompt}{cmd}")
             # Show output (with blank line separator only if there's output)
             if output.strip():
-                lines.append(output)
+                # Strip Rich markup tags from output, but preserve JSON arrays
+                # Rich tags look like [red], [/bold], [#ffffff], [bold red] - start with letter, /, or #
+                # JSON arrays contain quotes, braces, colons, etc.
+                plain_output = re.sub(r'\[/?[a-zA-Z#][a-zA-Z0-9_ #]*\]', '', output)
+                lines.append(plain_output)
                 lines.append("")  # Blank line after output
 
-        shell_output_content.update("\n".join(lines))
+        # TextArea uses .text property, not .update()
+        shell_output_content.text = "\n".join(lines)
+        _debug_log(f"_update_shell_output_display: updated TextArea with {len(lines)} lines")
 
     def _update_shell_input_display(self):
-        """Update the shell input line with prompt and current input text"""
-        try:
-            shell_input = self.query_one("#shell_input_line", Static)
-        except Exception:
-            return
+        """Legacy method - now a no-op since ShellInputTextArea handles its own display.
 
-        t = self.theme_colors
-        prompt = self._get_shell_prompt()
-
-        if self.shell_input_active:
-            cursor = "[reverse] [/reverse]"
-        else:
-            cursor = ""
-
-        shell_input.update(
-            f"[{t['primary']}]{prompt}[/{t['primary']}]"
-            f"{rich_escape(self.shell_input_text)}{cursor}"
-        )
+        Kept for compatibility with any code that might still call it.
+        The prompt is now shown in the shell header via _update_shell_header().
+        """
+        pass
 
     def _get_shell_prompt(self) -> str:
         """Get the shell prompt based on current folder context"""
@@ -3537,16 +4159,17 @@ class SuperShellApp(App):
         return "My Vault> "
 
     def _update_shell_header(self):
-        """Update shell header bar with theme colors"""
+        """Update shell header bar with theme colors and current prompt context"""
         try:
             shell_header = self.query_one("#shell_header", Static)
         except Exception:
             return
 
         t = self.theme_colors
+        prompt = self._get_shell_prompt()
         shell_header.update(
-            f"[bold {t['primary']}]Keeper Shell[/bold {t['primary']}]  "
-            f"[{t['text_dim']}](quit/q/Ctrl+D to close)[/{t['text_dim']}]"
+            f"[bold {t['primary']}]{prompt}[/bold {t['primary']}]"
+            f"[{t['text_dim']}]  (Enter to run | Up/Down for history | Ctrl+D to close)[/{t['text_dim']}]"
         )
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
@@ -3646,8 +4269,11 @@ class SuperShellApp(App):
         if self.selected_record and self.selected_record in self.records:
             record = self.records[self.selected_record]
             if 'login' in record:
-                pyperclip.copy(record['login'])
-                self.notify("👤 Username copied to clipboard!", severity="information")
+                success, err = safe_copy_to_clipboard(record['login'])
+                if success:
+                    self.notify("👤 Username copied to clipboard!", severity="information")
+                else:
+                    self.notify(f"⚠️  {err}", severity="warning")
             else:
                 self.notify("⚠️  No username found for this record", severity="warning")
         else:
@@ -3658,8 +4284,11 @@ class SuperShellApp(App):
         if self.selected_record and self.selected_record in self.records:
             record = self.records[self.selected_record]
             if 'login_url' in record:
-                pyperclip.copy(record['login_url'])
-                self.notify("🔗 URL copied to clipboard!", severity="information")
+                success, err = safe_copy_to_clipboard(record['login_url'])
+                if success:
+                    self.notify("🔗 URL copied to clipboard!", severity="information")
+                else:
+                    self.notify(f"⚠️  {err}", severity="warning")
             else:
                 self.notify("⚠️  No URL found for this record", severity="warning")
         else:
@@ -3668,11 +4297,17 @@ class SuperShellApp(App):
     def action_copy_uid(self):
         """Copy UID of selected record or folder to clipboard"""
         if self.selected_record:
-            pyperclip.copy(self.selected_record)
-            self.notify("📋 Record UID copied to clipboard!", severity="information")
+            success, err = safe_copy_to_clipboard(self.selected_record)
+            if success:
+                self.notify("📋 Record UID copied to clipboard!", severity="information")
+            else:
+                self.notify(f"⚠️  {err}", severity="warning")
         elif self.selected_folder:
-            pyperclip.copy(self.selected_folder)
-            self.notify("📋 Folder UID copied to clipboard!", severity="information")
+            success, err = safe_copy_to_clipboard(self.selected_folder)
+            if success:
+                self.notify("📋 Folder UID copied to clipboard!", severity="information")
+            else:
+                self.notify(f"⚠️  {err}", severity="warning")
         else:
             self.notify("⚠️  No record or folder selected", severity="warning")
 
@@ -3747,8 +4382,11 @@ class SuperShellApp(App):
                     if self.view_mode == 'json':
                         # Copy as JSON
                         formatted = json.dumps(app_data, indent=2)
-                        pyperclip.copy(formatted)
-                        self.notify("📋 Secrets Manager app JSON copied to clipboard!", severity="information")
+                        success, err = safe_copy_to_clipboard(formatted)
+                        if success:
+                            self.notify("📋 Secrets Manager app JSON copied to clipboard!", severity="information")
+                        else:
+                            self.notify(f"⚠️  {err}", severity="warning")
                     else:
                         # Copy as formatted text (detail view)
                         lines = []
@@ -3783,8 +4421,11 @@ class SuperShellApp(App):
                             lines.append("")
                         
                         formatted = "\n".join(lines)
-                        pyperclip.copy(formatted)
-                        self.notify("📋 Secrets Manager app details copied to clipboard!", severity="information")
+                        success, err = safe_copy_to_clipboard(formatted)
+                        if success:
+                            self.notify("📋 Secrets Manager app details copied to clipboard!", severity="information")
+                        else:
+                            self.notify(f"⚠️  {err}", severity="warning")
                 else:
                     # Regular record handling
                     record_data = self.records.get(self.selected_record, {})
@@ -3796,22 +4437,28 @@ class SuperShellApp(App):
                         output = strip_ansi_codes(output)
                         json_obj = json.loads(output)
                         formatted = json.dumps(json_obj, indent=2)
-                        pyperclip.copy(formatted)
-                        # Generate audit event since JSON contains the password
-                        if has_password:
-                            self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
-                        self.notify("📋 JSON copied to clipboard!", severity="information")
+                        success, err = safe_copy_to_clipboard(formatted)
+                        if success:
+                            # Generate audit event since JSON contains the password
+                            if has_password:
+                                self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
+                            self.notify("📋 JSON copied to clipboard!", severity="information")
+                        else:
+                            self.notify(f"⚠️  {err}", severity="warning")
                     else:
                         # Copy formatted text (without Rich markup)
                         content = self._format_record_for_tui(self.selected_record)
                         # Strip Rich markup for plain text clipboard
                         import re
                         plain = re.sub(r'\[/?[^\]]+\]', '', content)
-                        pyperclip.copy(plain)
-                        # Generate audit event if record has password (detail view includes password)
-                        if has_password:
-                            self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
-                        self.notify("📋 Record contents copied to clipboard!", severity="information")
+                        success, err = safe_copy_to_clipboard(plain)
+                        if success:
+                            # Generate audit event if record has password (detail view includes password)
+                            if has_password:
+                                self.params.queue_audit_event('copy_password', record_uid=self.selected_record)
+                            self.notify("📋 Record contents copied to clipboard!", severity="information")
+                        else:
+                            self.notify(f"⚠️  {err}", severity="warning")
             except Exception as e:
                 logging.error(f"Error copying record: {e}", exc_info=True)
                 self.notify("⚠️  Failed to copy record contents", severity="error")
