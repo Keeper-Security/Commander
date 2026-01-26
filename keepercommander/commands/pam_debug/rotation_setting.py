@@ -74,7 +74,7 @@ class PAMDebugRotationSettingsCommand(PAMGatewayActionDiscoverCommandBase):
                 print(f"{bcolors.FAIL}Configuration record does not exists.{bcolors.ENDC}")
                 return
 
-            if re.search(r'^pam.*Configuration$', configuration_record.record_type) is None:
+            if re.search(r'^pam.+Configuration$', configuration_record.record_type) is None:
                 print(
                     f"{bcolors.FAIL}The configuration record is not a configuration record. "
                     f"It's {configuration_record.record_type} record.{bcolors.ENDC}")

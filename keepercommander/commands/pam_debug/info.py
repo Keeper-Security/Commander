@@ -44,7 +44,7 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
             return
 
         if record.record_type not in ["pamUser", "pamMachine", "pamDatabase", "pamDirectory"]:
-            if re.search(r'^pam.*Configuration$', record.record_type) is None:
+            if re.search(r'^pam.+Configuration$', record.record_type) is None:
                 print(f"{bcolors.FAIL}The record is a {record.record_type}. This is not a PAM record.{bcolors.ENDC}")
                 return
 
@@ -58,11 +58,13 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
             print(f"{bcolors.WARNING}PAM record does not have protobuf rotation settings, "
                   f"checking all configurations.{bcolors.ENDC}")
 
-            configuration_records = list(vault_extensions.find_records(params, "pam.*Configuration"))
+            # Get all the PAM configuration records in the Vault; configurations are version 6
+            configuration_records = GatewayContext.get_configuration_records(params=params)
             if len(configuration_records) == 0:
                 print(f"{bcolors.FAIL}Cannot find any PAM configuration records in the Vault{bcolors.ENDC}")
 
             for configuration_record in configuration_records:
+
                 record_link = RecordLink(record=configuration_record, params=params)
                 record_vertex = record_link.dag.get_vertex(record.record_uid)
                 if record_vertex is not None and record_vertex.active is True:

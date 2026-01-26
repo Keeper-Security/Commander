@@ -306,7 +306,7 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
             # For each configuration/ gateway, we are going to get all jobs.
             # We are going to query the gateway for any updated status.
 
-            configuration_records = list(vault_extensions.find_records(params, "pam.*Configuration"))
+            configuration_records = GatewayContext.get_configuration_records(params=params)
             for configuration_record in configuration_records:
 
                 gateway_context = GatewayContext.from_configuration_uid(

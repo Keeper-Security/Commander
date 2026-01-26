@@ -1,5 +1,7 @@
 from __future__ import annotations
 import logging
+import os
+
 from ..base import Command
 from ..pam.config_facades import PamConfigurationRecordFacade
 from ..pam.router_helper import get_response_payload
@@ -11,8 +13,11 @@ from ...proto import APIRequest_pb2
 from ...crypto import encrypt_aes_v2, decrypt_aes_v2
 from ...display import bcolors
 from ...discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
+from ...utils import value_to_boolean
 import json
 import base64
+import re
+
 from typing import List, Optional, Union, Callable, Tuple, Any, Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -64,7 +69,27 @@ class GatewayContext:
         return get_all_gateways(params)
 
     @staticmethod
-    def find_gateway(params: KeeperParams, find_func: Callable, gateways: Optional[List] = None) \
+    def get_configuration_records(params) -> List[KeeperRecord]:
+
+        """
+        Get PAM configuration records.
+
+        The default it to find all the record version 6 records.
+        If the environment variable `PAM_RECORD_TYPE_MATCH` is set to a true value, the search will use both record
+          versions 3 and 6, and then check the record type.
+        """
+
+        configuration_list = []
+        if value_to_boolean(os.environ.get("PAM_RECORD_TYPE_MATCH")):
+            for record in list(vault_extensions.find_records(params, record_version=iter([3, 6]))):
+                if re.search(r"pam.+Configuration", record.record_type):
+                    configuration_list.append(record)
+        else:
+            configuration_list = list(vault_extensions.find_records(params, record_version=6))
+        return configuration_list
+
+    @classmethod
+    def find_gateway(cls, params: KeeperParams, find_func: Callable, gateways: Optional[List] = None) \
             -> Tuple[Optional[GatewayContext], Any]:
 
         """
@@ -76,8 +101,9 @@ class GatewayContext:
         if gateways is None:
             gateways = GatewayContext.all_gateways(params)
 
-        configuration_records = list(vault_extensions.find_records(params, "pam.*Configuration"))
+        configuration_records = cls.get_configuration_records(params)
         for configuration_record in configuration_records:
+
             payload = find_func(
                 configuration_record=configuration_record
             )
@@ -142,8 +168,8 @@ class GatewayContext:
         If there is only one gateway, then that gateway is used.
 
         """
-        # Get all the PAM configuration records in the Vault; not Application
-        configuration_records = list(vault_extensions.find_records(params, "pam.*Configuration"))
+        # Get all the PAM configuration records in the Vault; configurations are version 6
+        configuration_records = GatewayContext.get_configuration_records(params=params)
 
         if configuration_uid:
             logging.debug(f"find the gateway with configuration record {configuration_uid}")
