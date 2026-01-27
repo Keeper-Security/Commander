@@ -2177,7 +2177,8 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     "node_id": node_id,
                     "encrypted_data": utils.base64_url_encode(crypto.encrypt_aes_v1(data, tree_key)),
                     "visible_below": (kwargs.get('visible_below') == 'on') or False,
-                    "new_user_inherit": (kwargs.get('new_user') == 'on') or False
+                    "new_user_inherit": (kwargs.get('new_user') == 'on') or False,
+                    "role_name": role_name
                 }
                 request_batch.append(rq)
             
@@ -2775,7 +2776,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                 command = rq.get('command')
                 if command == 'role_add':
                     if rs['result'] == 'success':
-                        logging.info('Role created')
+                        logging.info('%s Role created with Role ID : %s', rq['role_name'], rq['role_id'])
                     else:
                         logging.warning('Failed to create role: %s', rs['message'])
                 else:
