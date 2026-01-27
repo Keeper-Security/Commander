@@ -486,12 +486,28 @@ def search_records(params, searchstring):
     return search_results
 
 
-def search_shared_folders(params, searchstring):
-    """Search shared folders """
+def search_shared_folders(params, searchstring, use_regex=False):
+    """Search shared folders.
 
-    p = re.compile(searchstring.lower())
+    Args:
+        params: KeeperParams
+        searchstring: Search string (tokens or regex depending on use_regex)
+        use_regex: If True, treat as regex. If False (default), token-based search.
+    """
+    search_results = []
 
-    search_results = [] 
+    if not searchstring:
+        return search_results
+
+    if use_regex:
+        p = re.compile(searchstring.lower())
+        match_func = lambda target: p.search(target)
+    else:
+        # Token-based search: all tokens must match
+        tokens = [t.lower() for t in searchstring.split() if t.strip()]
+        if not tokens:
+            return search_results
+        match_func = lambda target: all(token in target for token in tokens)
 
     for shared_folder_uid in params.shared_folder_cache:
 
@@ -499,29 +515,45 @@ def search_shared_folders(params, searchstring):
         sf = get_shared_folder(params, shared_folder_uid)
         target = sf.to_lowerstring()
 
-        if p.search(target):
+        if match_func(target):
             logging.debug('Search success')
             search_results.append(sf)
-     
+
     return search_results
 
 
-def search_teams(params, searchstring):
-    """Search teams """
+def search_teams(params, searchstring, use_regex=False):
+    """Search teams.
 
-    p = re.compile(searchstring.lower())
+    Args:
+        params: KeeperParams
+        searchstring: Search string (tokens or regex depending on use_regex)
+        use_regex: If True, treat as regex. If False (default), token-based search.
+    """
+    search_results = []
 
-    search_results = [] 
+    if not searchstring:
+        return search_results
+
+    if use_regex:
+        p = re.compile(searchstring.lower())
+        match_func = lambda target: p.search(target)
+    else:
+        # Token-based search: all tokens must match
+        tokens = [t.lower() for t in searchstring.split() if t.strip()]
+        if not tokens:
+            return search_results
+        match_func = lambda target: all(token in target for token in tokens)
 
     for team_uid in params.team_cache:
         team = get_team(params, team_uid)
 
         target = team.to_lowerstring()
 
-        if p.search(target):
+        if match_func(target):
             logging.debug('Search success')
             search_results.append(team)
-     
+
     return search_results
 
 
