@@ -23,8 +23,10 @@ Usage:
   - For production, leverage the get_user_vault function to create and log into vaults, along with any KeeperCommander method to add content.
 '''
 
-USER_A = 'infra@disposable-domain.work.gd'
-USER_B = 'devops@disposable-domain.work.gd'
+USER_A = 'infra@email.com'
+USER_B = 'devops@email.com'
+CSV_FILE = 'csv_file.csv'
+JSON_FILE = 'json_file.json'
 
 from keepercommander.params import KeeperParams
 from keepercommander import api
@@ -162,10 +164,10 @@ cli.do_command(user_a_params,'record-add -rt login -t "Sample record" --folder "
 
 from keepercommander.importer.imp_exp import _import as run_import
 # Run CSV import for User A
-run_import(user_a_params, 'csv', 'csv_file.csv')
+run_import(user_a_params, 'csv', CSV_FILE)
 
 # Run JSON import for User B
-run_import(user_b_params, 'json', 'json_file.json')
+run_import(user_b_params, 'json', JSON_FILE)
 
 # Re-expire Master Passwords
 eu.execute(admin_params, email=[USER_A,USER_B], expire=True, force=True)
