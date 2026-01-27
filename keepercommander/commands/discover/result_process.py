@@ -234,7 +234,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         }
 
         # Set all the PAM Records
-        records = list(vault_extensions.find_records(params, "pam*"))
+        records = list(vault_extensions.find_records(params, "pam*", use_regex=True))
         for record in records:
             # If the record type is not part of the cache, skip the record
             if record.record_type not in cache:

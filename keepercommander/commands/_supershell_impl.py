@@ -366,6 +366,8 @@ class ShellInputTextArea(TextArea):
             self._app_ref.search_input_active = True
             tree = self._app_ref.query_one("#folder_tree", Tree)
             tree.add_class("search-input-active")
+            search_bar = self._app_ref.query_one("#search_bar")
+            search_bar.add_class("search-active")
             tree.focus()  # Search mode works with tree focused
             self._app_ref._update_search_display(perform_search=False)
             self._app_ref._update_status("Type to search | Tab to tree | Ctrl+U to clear")
@@ -373,13 +375,16 @@ class ShellInputTextArea(TextArea):
             event.stop()
             return
 
-        # Shift+Tab cycles to detail pane
+        # Shift+Tab cycles to shell output pane
         if event.key == "shift+tab":
-            from textual.containers import VerticalScroll
+            from textual.widgets import TextArea
             self._app_ref.shell_input_active = False
-            detail_scroll = self._app_ref.query_one("#record_detail", VerticalScroll)
-            detail_scroll.focus()
-            self._app_ref._update_status("Detail pane | Tab to shell | Shift+Tab to tree")
+            try:
+                shell_output = self._app_ref.query_one("#shell_output_content", TextArea)
+                shell_output.focus()
+            except Exception:
+                pass
+            self._app_ref._update_status("Shell output | j/k to scroll | Tab to input | Shift+Tab to detail")
             event.prevent_default()
             event.stop()
             return
@@ -591,11 +596,31 @@ class SuperShellApp(App):
 
     #record_detail:focus {
         background: #0a0a0a;
-        border: solid #333333;
     }
 
     #record_detail:focus-within {
         background: #0a0a0a;
+    }
+
+    /* Focus indicators - green left border shows which pane is active */
+    #folder_panel:focus-within {
+        border-left: solid #00cc00;
+    }
+
+    #record_panel:focus-within {
+        border-left: solid #00cc00;
+    }
+
+    #shell_output_content:focus {
+        border-left: solid #00cc00;
+    }
+
+    #shell_input_container:focus-within {
+        border-left: solid #00cc00;
+    }
+
+    #search_bar.search-active {
+        border-left: solid #00cc00;
     }
 
     #status_bar {
@@ -3514,6 +3539,8 @@ class SuperShellApp(App):
 
         self.search_input_active = True
         tree.add_class("search-input-active")
+        search_bar = self.query_one("#search_bar")
+        search_bar.add_class("search-active")
         tree.focus()  # Focus tree so keyboard events go to search handler
         self._update_search_display(perform_search=False)  # Don't change tree when entering search
         self._update_status("Type to search | Tab to navigate | Ctrl+U to clear")
@@ -3571,6 +3598,8 @@ class SuperShellApp(App):
             self.search_input_active = False
             tree = self.query_one("#folder_tree", Tree)
             tree.remove_class("search-input-active")
+            search_bar = self.query_one("#search_bar")
+            search_bar.remove_class("search-active")
             # Update search display to remove cursor
             search_display = self.query_one("#search_display", Static)
             if self.search_input_text:
@@ -4252,6 +4281,16 @@ class SuperShellApp(App):
     def action_copy_password(self):
         """Copy password of selected record to clipboard using clipboard-copy command (generates audit event)"""
         if self.selected_record and self.selected_record in self.records:
+            # First check if clipboard is available (to distinguish from "no password" errors)
+            try:
+                pyperclip.copy("")  # Test clipboard availability
+            except PyperclipException:
+                self.notify("⚠️  Clipboard not available (no X11/Wayland)", severity="warning")
+                return
+            except Exception as e:
+                self.notify(f"⚠️  {e}", severity="warning")
+                return
+
             try:
                 # Use ClipboardCommand to copy password - this generates the audit event
                 cc = ClipboardCommand()
