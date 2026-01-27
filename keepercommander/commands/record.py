@@ -122,12 +122,14 @@ get_info_parser.add_argument(
 get_info_parser.add_argument('uid', type=str, action='store', help='UID or title to search for')
 
 
-search_parser = argparse.ArgumentParser(prog='search', description='Search the vault using a regular expression')
-search_parser.add_argument('pattern', nargs='?', type=str, action='store', help='search pattern')
+search_parser = argparse.ArgumentParser(prog='search', description='Search the vault. Words can be in any order.')
+search_parser.add_argument('pattern', nargs='*', type=str, action='store', help='search terms (space-separated, order independent)')
 search_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
 search_parser.add_argument('-c', '--categories', dest='categories', action='store',
                            help='One or more of these letters for categories to search: "r" = records, '
                                 '"s" = shared folders, "t" = teams')
+search_parser.add_argument('--regex', dest='regex', action='store_true',
+                           help='treat pattern as a regular expression instead of space-separated search terms')
 search_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
                            default='table', help='output format')
 
@@ -1114,9 +1116,17 @@ class SearchCommand(Command):
         return search_parser
 
     def execute(self, params, **kwargs):
-        pattern = kwargs.get('pattern') or ''
+        pattern_args = kwargs.get('pattern') or []
+        # Join multiple words into a single pattern string
+        pattern = ' '.join(pattern_args) if isinstance(pattern_args, list) else (pattern_args or '')
+        use_regex = kwargs.get('regex', False)
+
+        # Handle wildcard: '*' means match all
         if pattern == '*':
-            pattern = '.*'
+            if use_regex:
+                pattern = '.*'
+            else:
+                pattern = ''  # Empty pattern matches all in token mode
 
         categories = (kwargs.get('categories') or 'rst').lower()
         verbose = kwargs.get('verbose') is True
@@ -1127,7 +1137,7 @@ class SearchCommand(Command):
 
         if 'r' in categories:
 
-            records = list(vault_extensions.find_records(params, pattern, record_version=None if verbose else [2,3]))
+            records = list(vault_extensions.find_records(params, pattern, record_version=None if verbose else [2,3], use_regex=use_regex))
             if records:
                 if fmt == 'json':
                     for record in records:
@@ -1157,7 +1167,7 @@ class SearchCommand(Command):
 
         # Search shared folders
         if 's' in categories:
-            results = api.search_shared_folders(params, pattern)
+            results = api.search_shared_folders(params, pattern, use_regex=use_regex)
             if results:
                 if fmt == 'json':
                     for sf in results:
@@ -1175,7 +1185,7 @@ class SearchCommand(Command):
 
         # Search teams
         if 't' in categories:
-            results = api.search_teams(params, pattern)
+            results = api.search_teams(params, pattern, use_regex=use_regex)
             if results:
                 if fmt == 'json':
                     for team in results:

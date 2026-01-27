@@ -32,6 +32,73 @@ def _match_value(pattern, value):  # type: (Callable[[str], Any], Any) -> bool
     return False
 
 
+def _collect_searchable_text(value):  # type: (Any) -> str
+    """Recursively collect all string values from a value (str, list, or dict)."""
+    if isinstance(value, str):
+        return value
+    elif isinstance(value, list):
+        parts = []
+        for v in value:
+            parts.append(_collect_searchable_text(v))
+        return ' '.join(parts)
+    elif isinstance(value, dict):
+        parts = []
+        for v in value.values():
+            parts.append(_collect_searchable_text(v))
+        return ' '.join(parts)
+    return ''
+
+
+def matches_record_tokens(record, tokens, params=None):
+    # type: (vault.KeeperRecord, list, Optional[KeeperParams]) -> bool
+    """
+    Token-based search matching (SuperShell-style).
+
+    All tokens must match somewhere in the record's searchable text.
+    Order doesn't matter: "aws prod" matches "production aws server".
+
+    Searches: record UID, title, all field keys and values, and folder name.
+    """
+    if not tokens:
+        return True
+
+    # Build searchable text from all record fields
+    parts = []
+
+    # Record UID
+    parts.append(record.record_uid)
+
+    # Title
+    if record.title:
+        parts.append(record.title)
+
+    # All fields (keys and values)
+    for key, value in record.enumerate_fields():
+        # Strip field type prefix like "(login)."
+        m = re.match(r'^\((\w+)\)\.?', key)
+        if m:
+            key = m.group(1)
+        if key:
+            parts.append(key)
+        if value:
+            parts.append(_collect_searchable_text(value))
+
+    # Get folder name if params provided
+    if params and hasattr(params, 'record_cache') and hasattr(params, 'folder_cache'):
+        # Find folder containing this record
+        for folder_uid, folder in params.folder_cache.items():
+            if hasattr(folder, 'records') and record.record_uid in folder.records:
+                if hasattr(folder, 'name') and folder.name:
+                    parts.append(folder.name)
+                break
+
+    # Combine and lowercase for matching
+    combined_text = ' '.join(parts).lower()
+
+    # All tokens must match somewhere
+    return all(token in combined_text for token in tokens)
+
+
 def matches_record(record, pattern, search_fields=None):    # type: (vault.KeeperRecord, Union[str, Callable[[str], Any]], Optional[Iterable[str]]) -> bool
     if isinstance(pattern, str):
         pattern = re.compile(pattern, re.IGNORECASE).search
@@ -56,9 +123,33 @@ def find_records(params,                   # type: KeeperParams
                  search_str=None,          # type: Optional[str]
                  record_type=None,         # type: Union[str, Iterable[str], None]
                  record_version=None,      # type: Union[int, Iterable[int], None]
-                 search_fields=None        # type: Optional[Iterable[str]]
+                 search_fields=None,       # type: Optional[Iterable[str]]
+                 use_regex=False           # type: bool
                  ):                       # type: (...) -> Iterator[vault.KeeperRecord]
-    pattern = re.compile(search_str, re.IGNORECASE).search if search_str else None
+    """
+    Search records in the vault.
+
+    Args:
+        params: KeeperParams with record_cache
+        search_str: Search string (tokens or regex depending on use_regex)
+        record_type: Filter by record type(s)
+        record_version: Filter by record version(s)
+        search_fields: Limit search to specific fields (regex mode only)
+        use_regex: If True, treat search_str as regex. If False (default),
+                   treat as space-separated tokens where all must match (any order).
+    """
+    # Token-based search (default): split by whitespace, all tokens must match
+    search_tokens = None
+    pattern = None
+
+    if search_str:
+        if use_regex:
+            pattern = re.compile(search_str, re.IGNORECASE).search
+        else:
+            # Token-based: split and lowercase
+            search_tokens = [t.lower() for t in search_str.split() if t.strip()]
+            if not search_tokens:
+                search_tokens = None
 
     type_filter = None       # type: Optional[Set[str]]
     version_filter = None    # type: Optional[Set[int]]
@@ -88,7 +179,21 @@ def find_records(params,                   # type: KeeperParams
         if type_filter and record.record_type not in type_filter:
             continue
 
-        if pattern:
+        if search_tokens:
+            # Token-based search (default)
+            is_match = matches_record_tokens(record, search_tokens, params)
+            # Also check file attachments
+            if not is_match and isinstance(record, vault.TypedRecord):
+                field = record.get_typed_field('fileRef')
+                if field and isinstance(field.value, list):
+                    for file_uid in field.value:
+                        file_record = vault.KeeperRecord.load(params, file_uid)
+                        if isinstance(file_record, vault.FileRecord):
+                            is_match = matches_record_tokens(file_record, search_tokens, params)
+                            if is_match:
+                                break
+        elif pattern:
+            # Regex-based search (legacy, use --regex flag)
             is_match = matches_record(record, pattern, search_fields)
             if not is_match and isinstance(record, vault.TypedRecord):
                 field = record.get_typed_field('fileRef')
