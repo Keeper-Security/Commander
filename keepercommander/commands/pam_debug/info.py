@@ -505,31 +505,42 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
                     print(f"  {self._b('Provider Group')}: {content.item.provider_group}")
                     print(f"  {self._b('Allows Admin')}: {content.item.allows_admin}")
                     print(f"  {self._b('Admin Reason')}: {content.item.admin_reason}")
+                else:
+                    for k, v in content.item:
+                        print(f"  {self._b(k)}: {v}")
 
-                print("")
-                print(self._h("Belongs To Vertices (Parents)"))
-                vertices = discovery_vertex.belongs_to_vertices()
-                for vertex in vertices:
-                    content = DiscoveryObject.get_discovery_object(vertex)
-                    print(f"  * {content.description} ({vertex.uid})")
-                    for edge_type in [EdgeType.LINK, EdgeType.ACL, EdgeType.KEY, EdgeType.DELETION]:
-                        edge = discovery_vertex.get_edge(vertex, edge_type=edge_type)
-                        if edge is not None:
-                            print(f"    . {edge_type}, active: {edge.active}")
+                # Configuration records do not belong to other record; don't show.
+                if record.version != 6:
+                    print("")
+                    print(self._h("Belongs To Vertices (Parents)"))
+                    vertices = discovery_vertex.belongs_to_vertices()
+                    for vertex in vertices:
+                        try:
+                            content = DiscoveryObject.get_discovery_object(vertex)
+                            print(f"  * {content.description} ({vertex.uid})")
+                            for edge_type in [EdgeType.LINK, EdgeType.ACL, EdgeType.KEY, EdgeType.DELETION]:
+                                edge = discovery_vertex.get_edge(vertex, edge_type=edge_type)
+                                if edge is not None:
+                                    print(f"    . {edge_type}, active: {edge.active}")
+                        except Exception as err:
+                            print(f"{bcolors.FAIL}Could not get belongs to information: {err}{bcolors.ENDC}")
 
-                if len(vertices) == 0:
-                    print(f"{bcolors.FAIL}  Does not belong to anyone{bcolors.ENDC}")
+                    if len(vertices) == 0:
+                        print(f"{bcolors.FAIL}  Does not belong to anyone{bcolors.ENDC}")
 
                 print("")
                 print(f"{bcolors.HEADER}Vertices Belonging To (Children){bcolors.ENDC}")
                 vertices = discovery_vertex.has_vertices()
                 for vertex in vertices:
-                    content = DiscoveryObject.get_discovery_object(vertex)
-                    print(f"  * {content.description} ({vertex.uid})")
-                    for edge_type in [EdgeType.LINK, EdgeType.ACL, EdgeType.KEY, EdgeType.DELETION]:
-                        edge = vertex.get_edge(discovery_vertex, edge_type=edge_type)
-                        if edge is not None:
-                            print(f"    . {edge_type}, active: {edge.active}")
+                    try:
+                        content = DiscoveryObject.get_discovery_object(vertex)
+                        print(f"  * {content.description} ({vertex.uid})")
+                        for edge_type in [EdgeType.LINK, EdgeType.ACL, EdgeType.KEY, EdgeType.DELETION]:
+                            edge = vertex.get_edge(discovery_vertex, edge_type=edge_type)
+                            if edge is not None:
+                                print(f"    . {edge_type}, active: {edge.active}")
+                    except Exception as err:
+                        print(f"{bcolors.FAIL}Could not get belonging to information: {err}{bcolors.ENDC}")
                 if len(vertices) == 0:
                     print(f"  Does not have any children.")
 
