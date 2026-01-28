@@ -95,6 +95,7 @@ Parameters:
 - `-rl, --ratelimit`: Rate limit (e.g., "10/minute")
 - `-ek, --encryption_key`: Encryption key for response encryption (automatically enables encryption)
 - `-te, --token_expiration`: Token expiration time (e.g., "30m", "24h", "7d")
+- `-ur, --update-vault-record`: Config record UID to update with service metadata (Docker mode - stores API key and service URL)
 
 ### Service Management
 

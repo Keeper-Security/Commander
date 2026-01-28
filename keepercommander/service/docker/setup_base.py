@@ -189,8 +189,10 @@ class DockerSetupBase:
                 temp_config_path = cleaned_config_path
             
             record = vault.KeeperRecord.load(params, record_uid)
-            if not isinstance(record, (vault.PasswordRecord, vault.TypedRecord)):
+            if not isinstance(record, vault.TypedRecord):
                 raise CommandError('docker-setup', 'Invalid record type for attachments')
+            # Delete existing config.json attachments to prevent duplicates
+            self._delete_existing_config_attachments(record, params)
 
             # Upload attachment
             upload_task = attachment.FileUploadTask(cleaned_config_path)
@@ -213,6 +215,27 @@ class DockerSetupBase:
                     print(f"Warning: Could not delete temporary config file: {e}")
                     pass
 
+    def _delete_existing_config_attachments(self, record, params) -> None:
+        """Delete any existing config.json attachments to prevent duplicates"""
+        # Modern records use TypedRecord with fileRef system
+        from ...record_facades import FileRefRecordFacade
+        facade = FileRefRecordFacade()
+        facade.record = record
+        
+        file_uids_to_remove = []
+        for file_uid in facade.file_ref:
+            if file_uid in params.record_cache:
+                file_record = vault.KeeperRecord.load(params, file_uid)
+                if isinstance(file_record, vault.FileRecord):
+                    if file_record.name.lower() == 'config.json' or file_record.title.lower() == 'config.json':
+                        file_uids_to_remove.append(file_uid)
+        
+        if file_uids_to_remove:
+            for file_uid in file_uids_to_remove:
+                facade.file_ref.remove(file_uid)
+            DockerSetupPrinter.print_success(f"Removed {len(file_uids_to_remove)} existing config.json attachment(s)")
+
+    
     def _clean_config_json(self, config_path: str) -> str:
         """Clean config.json by keeping only essential authentication keys"""
         try:
