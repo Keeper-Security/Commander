@@ -74,7 +74,7 @@ class CommandHandler:
             params.service_mode = True
             
             from ... import cli
-            cli.do_command(params, 'help')
+            cli.display_command_help(show_enterprise=True, show_shell=False, show_legacy=False)
             return output.getvalue()
         finally:
             sys.stdout = sys.__stdout__
