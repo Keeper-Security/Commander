@@ -2187,6 +2187,10 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
                         help='Set recording connections permissions for the resource')
     parser.add_argument('--typescript-recording', '-tr', dest='typescriptrecording', choices=choices,
                         help='Set TypeScript recording permissions for the resource')
+    parser.add_argument('--ai-threat-detection', dest='ai_threat_detection', choices=choices,
+                        help='Set AI threat detection permissions')
+    parser.add_argument('--ai-terminate-session-on-detection', dest='ai_terminate_session_on_detection', choices=choices,
+                        help='Set AI session termination on threat detection permissions')
 
     def __init__(self):
         super().__init__()
@@ -2274,7 +2278,9 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
             kwargs.get('rotation'),
             kwargs.get('recording'),
             kwargs.get('typescriptrecording'),
-            kwargs.get('remotebrowserisolation')
+            kwargs.get('remotebrowserisolation'),
+            kwargs.get('ai_threat_detection'),
+            kwargs.get('ai_terminate_session_on_detection')
         )
         if admin_cred_ref:
             tmp_dag.link_user_to_config_with_options(admin_cred_ref, is_admin='on')
