@@ -74,7 +74,12 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
     from colorama import Fore, Style
     import shutil
 
-    alias_lookup = {x[1]: x[0] for x in aliases.items()}
+    # Build a lookup of command -> list of aliases
+    alias_lookup = {}
+    for alias, command in aliases.items():
+        if command not in alias_lookup:
+            alias_lookup[command] = []
+        alias_lookup[command].append(alias)
     DIM = Fore.WHITE  # Use white for better readability (not too bright, not too dim)
 
     # Get terminal width
@@ -144,8 +149,8 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
         else:
             commands_in_category = sorted(categorized_commands[category], key=lambda x: x[0])
             for cmd, description in commands_in_category:
-                alias = alias_lookup.get(cmd) or ''
-                alias_str = f' ({alias})' if alias else ''
+                aliases_list = alias_lookup.get(cmd) or []
+                alias_str = f' ({", ".join(sorted(aliases_list))})' if aliases_list else ''
                 cmd_display = f'{cmd}{alias_str}'
                 all_cmd_displays.append((category, cmd_display, description))
                 global_max_width = max(global_max_width, len(cmd_display))
