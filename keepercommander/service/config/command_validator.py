@@ -92,40 +92,58 @@ class CommandValidator:
                                  command_info: Dict, category: str) -> None:
         """Process a command line from new categorized help output."""
         # Extract command and alias from patterns like:
+        # "command (alias1, alias2)   description"
         # "command (alias)   description"
         # "command   description"
         
-        # Split on whitespace to separate command from description
-        parts = line.split()
+        main_command = None
+        aliases_str = None
+        
+        # Split line to get just the command part (before description)
+        # Aliases should appear immediately after the command, before multiple spaces
+        parts = line.split(None, 1)  # Split on first whitespace
         if not parts:
             return
-            
-        main_command = parts[0]
-        alias = None
         
-        if len(parts) >= 3 and parts[2].startswith('(') and parts[2].endswith(')'):
-            main_command = f"{parts[0]} {parts[1]}"
-            alias = parts[2][1:-1].strip()
-        elif len(parts) > 1 and parts[1].startswith('(') and parts[1].endswith(')'):
-            # Extract alias: "(alias)" -> "alias"
-            alias = parts[1][1:-1].strip()
-        # Check if command and alias are combined: "command (alias)"
-        elif '(' in main_command and ')' in main_command:
-            # Extract main command and alias: "command (alias)"
-            command_alias_part = main_command
-            main_command = command_alias_part.split('(')[0].strip()
-            alias_with_paren = command_alias_part.split('(')[1]
-            alias = alias_with_paren.split(')')[0].strip()
+        command_part = parts[0]
+        
+        # Check if the command part contains parentheses for aliases
+        # Pattern: "command" or "command(alias)" or "command (alias)"
+        if '(' in command_part and ')' in command_part:
+            # Extract command and aliases from the first token
+            paren_start = command_part.index('(')
+            paren_end = command_part.index(')', paren_start)
+            
+            main_command = command_part[:paren_start].strip()
+            aliases_str = command_part[paren_start+1:paren_end].strip()
+        else:
+            # No parentheses in first token, check if second token is aliases
+            # Pattern: "command (alias1, alias2) description"
+            if len(parts) > 1:
+                rest = parts[1].lstrip()
+                if rest.startswith('(') and ')' in rest:
+                    # Find the closing parenthesis
+                    paren_end = rest.index(')')
+                    aliases_str = rest[1:paren_end].strip()
+                    main_command = command_part
+                else:
+                    main_command = command_part
+            else:
+                main_command = command_part
         
         # Add main command
         if main_command:
             valid_commands.add(main_command)
             command_info[main_command] = {'category': category}
         
-        # Add alias if found
-        if alias:
-            valid_commands.add(alias)
-            command_info[alias] = {'category': category, 'main_command': main_command}
+        # Add alias(es) if found - handle multiple comma-separated aliases
+        if aliases_str:
+            # Split on commas to handle multiple aliases like "pedm, kepm"
+            aliases_list = [a.strip() for a in aliases_str.split(',')]
+            for single_alias in aliases_list:
+                if single_alias:  # Skip empty strings
+                    valid_commands.add(single_alias)
+                    command_info[single_alias] = {'category': category, 'main_command': main_command}
 
     def validate_command_list(self, commands: str, valid_commands: Set) -> str:
         """Validate input commands against valid commands."""
@@ -148,7 +166,16 @@ class CommandValidator:
             "Available commands:"
         ]
         
-        # Group commands by category, handling the new category names
+        # Build a map of main commands to their aliases
+        command_aliases = {}
+        for cmd, info in command_info.items():
+            if 'main_command' in info:
+                main_cmd = info['main_command']
+                if main_cmd not in command_aliases:
+                    command_aliases[main_cmd] = []
+                command_aliases[main_cmd].append(cmd)
+        
+        # Group commands by category
         category_commands = {}
         
         for cmd, info in command_info.items():
@@ -157,22 +184,21 @@ class CommandValidator:
                 category = info.get('category', 'Other')
                 if category not in category_commands:
                     category_commands[category] = []
-                category_commands[category].append(cmd)
+                
+                # Format command with aliases if they exist
+                aliases = command_aliases.get(cmd, [])
+                if aliases:
+                    cmd_display = f"{cmd} ({', '.join(sorted(aliases))})"
+                else:
+                    cmd_display = cmd
+                category_commands[category].append(cmd_display)
 
         # Sort categories and display commands
         for category in sorted(category_commands.keys()):
-            commands = category_commands[category]
+            commands = sorted(category_commands[category])
             if commands:
                 error_msg.append(f"\n{category}:")
-                sorted_commands = sorted(commands)
-                command_lines = []
-                for i in range(0, len(sorted_commands), 12):
-                    command_lines.append(", ".join(sorted_commands[i:i+12]))
-                    try:
-                        _ = sorted_commands[i+13]
-                        command_lines[-1] += (", ")
-                    except IndexError:
-                        pass
-                error_msg.extend(command_lines)
+                # Join all commands with comma-space, no artificial line breaks
+                error_msg.append("  " + ", ".join(commands))
 
         return "\n".join(error_msg)
