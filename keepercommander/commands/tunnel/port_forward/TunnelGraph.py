@@ -102,7 +102,8 @@ class TunnelDAG:
     def edit_tunneling_config(self, connections=None, tunneling=None,
                               rotation=None, session_recording=None,
                               typescript_recording=None,
-                              remote_browser_isolation=None):
+                              remote_browser_isolation=None,
+                              ai_enabled=None, ai_session_terminate=None):
         config_vertex = self.linking_dag.get_vertex(self.record.record_uid)
         if config_vertex is None:
             config_vertex = self.linking_dag.add_vertex(uid=self.record.record_uid, vertex_type=RefType.PAM_NETWORK)
@@ -181,6 +182,24 @@ class TunnelDAG:
                     allowed_settings.pop("remoteBrowserIsolation", None)
                 else:
                     allowed_settings["remoteBrowserIsolation"] = remote_browser_isolation
+
+        if ai_enabled is not None:
+            ai_enabled = self._convert_allowed_setting(ai_enabled)
+            if ai_enabled != allowed_settings.get("aiEnabled", None):
+                dirty = True
+                if ai_enabled is None:
+                    allowed_settings.pop("aiEnabled", None)
+                else:
+                    allowed_settings["aiEnabled"] = ai_enabled
+
+        if ai_session_terminate is not None:
+            ai_session_terminate = self._convert_allowed_setting(ai_session_terminate)
+            if ai_session_terminate != allowed_settings.get("aiSessionTerminate", None):
+                dirty = True
+                if ai_session_terminate is None:
+                    allowed_settings.pop("aiSessionTerminate", None)
+                else:
+                    allowed_settings["aiSessionTerminate"] = ai_session_terminate
 
         if dirty:
             config_vertex.add_data(content=content, path='meta', needs_encryption=False)
@@ -405,6 +424,7 @@ class TunnelDAG:
 
     def set_resource_allowed(self, resource_uid, tunneling=None, connections=None, rotation=None,
                              session_recording=None, typescript_recording=None, remote_browser_isolation=None,
+                             ai_enabled=None, ai_session_terminate=None,
                              allowed_settings_name='allowedSettings', is_config=False,
                              v_type: RefType=str(RefType.PAM_MACHINE)):
         v_type = RefType(v_type)
@@ -490,6 +510,24 @@ class TunnelDAG:
                     settings.pop("remoteBrowserIsolation", None)
                 else:
                     settings["remoteBrowserIsolation"] = remote_browser_isolation
+
+        if ai_enabled is not None:
+            ai_enabled = self._convert_allowed_setting(ai_enabled)
+            if ai_enabled != settings.get("aiEnabled", None):
+                dirty = True
+                if ai_enabled is None:
+                    settings.pop("aiEnabled", None)
+                else:
+                    settings["aiEnabled"] = ai_enabled
+
+        if ai_session_terminate is not None:
+            ai_session_terminate = self._convert_allowed_setting(ai_session_terminate)
+            if ai_session_terminate != settings.get("aiSessionTerminate", None):
+                dirty = True
+                if ai_session_terminate is None:
+                    settings.pop("aiSessionTerminate", None)
+                else:
+                    settings["aiSessionTerminate"] = ai_session_terminate
 
         if dirty:
             resource_vertex.add_data(content=content, path='meta', needs_encryption=False)
