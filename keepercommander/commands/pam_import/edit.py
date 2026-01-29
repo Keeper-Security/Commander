@@ -21,6 +21,7 @@ from itertools import chain
 from pathlib import Path
 from typing import Any, Dict, Optional, List, Union
 
+from .keeper_ai_settings import set_resource_jit_settings, set_resource_keeper_ai_settings, refresh_meta_to_latest, refresh_link_to_config_to_latest
 from ..base import Command, GroupCommand
 from ..ksm import KSMCommand
 from ..pam import gateway_helper
@@ -36,6 +37,7 @@ from ...display import bcolors
 from ...error import CommandError
 from ...importer import imp_exp
 from ...importer.importer import SharedFolder, Permission
+from ...keeper_dag import EdgeType
 from ...params import KeeperParams, LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ...proto import record_pb2, APIRequest_pb2, enterprise_pb2
 from ...recordv3 import RecordV3
@@ -82,7 +84,12 @@ PROJECT_IMPORT_JSON_TEMPLATE = """
     "pam_data": {
         "resources": [
             { "type": "pamMachine", "title": "RDP Machine",
-                "pam_settings": {"options" : {}, "connection" : {}},
+                "pam_settings": {
+                    "options" : {
+                        "jit_settings": {},
+                        "ai_settings": {}
+                    },
+                    "connection" : {}},
                 "users": [
                     {"type": "pamUser", "login": "admin1", "password": "xyz"},
                     {"type": "pamUser", "login": "user1", "password": "abc"}
@@ -471,7 +478,9 @@ class PAMProjectImportCommand(Command):
                 "rotation": "on",
                 "remotebrowserisolation": "on",
                 "recording": "on",
-                "typescriptrecording": "on"
+                "typescriptrecording": "on",
+                "ai_threat_detection": "off",
+                "ai_terminate_session_on_detection": "off"
             })
         else:
             if pce.port_mapping: args["port_mapping"] = pce.port_mapping
@@ -484,7 +493,9 @@ class PAMProjectImportCommand(Command):
                 "rotation": pce.rotation,
                 "remotebrowserisolation": pce.remote_browser_isolation,
                 "recording": pce.graphical_session_recording,
-                "typescriptrecording": pce.text_session_recording
+                "typescriptrecording": pce.text_session_recording,
+                "ai_threat_detection": pce.ai_threat_detection,
+                "ai_terminate_session_on_detection": pce.ai_terminate_session_on_detection
             })
 
             if pce.environment == "local":
@@ -1484,6 +1495,7 @@ class PAMProjectImportCommand(Command):
         # pam_settings.connection.administrative_credentials must reference
         # one of its own users[] -> userRecords["admin_user_record_UID"]
         machines = [x for x in resources if not isinstance(x, PamRemoteBrowserObject)]
+        pam_directories = [x for x in machines if (getattr(x, "type", "") or "").lower() == "pamdirectory"]
         for mach in resources:
             if not mach: continue
             admin_cred = get_admin_credential(mach)
@@ -1522,6 +1534,20 @@ class PAMProjectImportCommand(Command):
                 ruid = getattr(ruids[0], "uid", "") if ruids else ""
                 if ruid:
                     set_user_record_uid(mach, ruid, is_external)
+
+            # jit_settings.pam_directory_record -> pam_directory_uid (pamDirectory in pam_data.resources by title)
+            if (mach.pam_settings and mach.pam_settings.jit_settings and
+                    getattr(mach.pam_settings.jit_settings, "pam_directory_record", None)):
+                jit = mach.pam_settings.jit_settings
+                ref = (jit.pam_directory_record or "").strip()
+                if ref:
+                    matches = [x for x in pam_directories if getattr(x, "title", None) == ref]
+                    if len(matches) > 1:
+                        logging.warning(f"{bcolors.WARNING}Multiple pamDirectory matches for jit_settings.pam_directory_record '{ref}' in {getattr(mach, 'title', mach)}; using first.{bcolors.ENDC}")
+                    if len(matches) == 0:
+                        logging.error(f"jit_settings.pam_directory_record '{ref}' for '{getattr(mach, 'title', mach)}': no pamDirectory record found in pam_data.resources. Match by title.")
+                    else:
+                        jit.pam_directory_uid = matches[0].uid
 
             # resolve machine PRS creds: additional_credentials[] -> recordRef[]
             resolve_script_creds(mach, users, resources)
@@ -1656,6 +1682,34 @@ class PAMProjectImportCommand(Command):
                 args = parse_command_options(mach, False)
                 tdag.set_resource_allowed(**args)
 
+                # After setting allowedSettings, save JIT settings if present
+                # JIT settings don't apply to RBI records (only machine/db/directory)
+                if mach.pam_settings and mach.pam_settings.jit_settings:
+                    jit_dag_dict = mach.pam_settings.jit_settings.to_dag_dict()
+                    if jit_dag_dict:  # Only save if not empty
+                        set_resource_jit_settings(params, mach.uid, jit_dag_dict, pam_cfg_uid)
+
+                # After setting allowedSettings, save AI settings if present
+                # AI settings don't apply to RBI records (only machine/db/directory)
+                if mach.pam_settings and mach.pam_settings.ai_settings:
+                    user_id = ""
+                    if getattr(params, "account_uid_bytes", None):
+                        user_id = utils.base64_url_encode(params.account_uid_bytes)
+                    elif getattr(params, "user", ""):
+                        user_id = params.user
+                    ai_dag_dict = mach.pam_settings.ai_settings.to_dag_dict(user_id=user_id)
+                    if ai_dag_dict:  # Only save if not empty
+                        set_resource_keeper_ai_settings(params, mach.uid, ai_dag_dict, pam_cfg_uid)
+
+                # Web vault UI visualizer shows only latest and meta is most wanted path.
+                # Note: DAG may take a while to sync in web vault
+                # Dummy update to meta so it is latest among DATA (after jit/ai).
+                if mach.pam_settings and (mach.pam_settings.jit_settings or mach.pam_settings.ai_settings):
+                    refresh_meta_to_latest(params, mach.uid, pam_cfg_uid)
+                # Bump LINK to config only when AI is present (AI adds the encryption KEY).
+                if mach.pam_settings and mach.pam_settings.ai_settings:
+                    refresh_link_to_config_to_latest(params, mach.uid, pam_cfg_uid)
+
             # Machine - create its users (if any)
             users = getattr(mach, "users", [])
             users = users if isinstance(users, list) else []
@@ -1684,6 +1738,24 @@ class PAMProjectImportCommand(Command):
                             args["pwd_complexity"]=user.rotation_settings.password_complexity
                         prc.execute(params, silent=True, **args)
         if resources: print(f"{len(resources)}/{len(resources)}\n")
+
+        # link machine -> pamDirectory (LINK, path=domain) for jit_settings.pam_directory_uid
+        jit_domain_links_added = False
+        for mach in resources:
+            if not (mach and mach.pam_settings and mach.pam_settings.jit_settings):
+                continue
+            jit = mach.pam_settings.jit_settings
+            dir_uid = getattr(jit, "pam_directory_uid", None)
+            if not dir_uid:
+                continue
+            dag = tdag.linking_dag
+            machine_vertex = dag.get_vertex(mach.uid)
+            dir_vertex = dag.get_vertex(dir_uid)
+            if machine_vertex and dir_vertex:
+                machine_vertex.belongs_to(dir_vertex, EdgeType.LINK, path="domain", content={})
+                jit_domain_links_added = True
+        if jit_domain_links_added:
+            tdag.linking_dag.save()
 
         # add scripts with resolved additional credentials - owner records must exist
         if pce and pce.scripts and pce.scripts.scripts:
@@ -1729,6 +1801,8 @@ class PamConfigEnvironment():
         self.remote_browser_isolation: str = "on"
         self.graphical_session_recording: str = "on"
         self.text_session_recording: str = "on"
+        self.ai_threat_detection: str = "off"
+        self.ai_terminate_session_on_detection: str = "off"
 
         self.port_mapping: List[str] = []  # ex. ["2222=ssh", "33306=mysql"] for discovery, rotation etc.
         self.default_rotation_schedule: dict = {}  # "type": "On-Demand|CRON"
@@ -1821,6 +1895,10 @@ class PamConfigEnvironment():
         if isinstance(val, str) and val in choices: self.graphical_session_recording = val
         val = settings.get("text_session_recording", None)
         if isinstance(val, str) and val in choices: self.text_session_recording = val
+        val = settings.get("ai_threat_detection", None)
+        if isinstance(val, str) and val in choices: self.ai_threat_detection = val
+        val = settings.get("ai_terminate_session_on_detection", None)
+        if isinstance(val, str) and val in choices: self.ai_terminate_session_on_detection = val
 
         val = settings.get("port_mapping", None) # multiline
         if isinstance(val, str): val = [val]
@@ -2186,6 +2264,8 @@ class DagSettingsObject():
         self.remote_browser_isolation: Optional[DagOptionValue] = None
         self.graphical_session_recording: Optional[DagOptionValue] = None
         self.text_session_recording: Optional[DagOptionValue] = None
+        self.ai_threat_detection: Optional[DagOptionValue] = None
+        self.ai_terminate_session_on_detection: Optional[DagOptionValue] = None
         # NB! PAM User has its own rotation_settings: {}, cannot enable con/tun on user anyways
         # remote_browser_isolation uses rbi, pam_resource, graphical_session_recording
         # rotation uses only pam_resource, rotation
@@ -2206,8 +2286,235 @@ class DagSettingsObject():
         obj.remote_browser_isolation = DagOptionValue.map(data.get("remote_browser_isolation", None) or "")
         obj.graphical_session_recording = DagOptionValue.map(data.get("graphical_session_recording", None) or "")
         obj.text_session_recording = DagOptionValue.map(data.get("text_session_recording", None) or "")
+        obj.ai_threat_detection = DagOptionValue.map(data.get("ai_threat_detection", None) or "")
+        obj.ai_terminate_session_on_detection = DagOptionValue.map(data.get("ai_terminate_session_on_detection", None) or "")
 
         return obj
+
+
+class DagJitSettingsObject():
+    def __init__(self):
+        self.create_ephemeral: bool = False
+        self.elevate: bool = False
+        self.elevation_method: str = "group"
+        self.elevation_string: str = ""
+        self.base_distinguished_name: str = ""
+        self.ephemeral_account_type: Optional[str] = None  # Omit if missing
+        self.pam_directory_record: Optional[str] = None  # Title of pamDirectory from pam_data.resources[], resolved to UID
+        self.pam_directory_uid: Optional[str] = None  # Resolved pamDirectory record UID (set in process_data)
+
+    @classmethod
+    def validate_enum_value(cls, value: str, allowed_values: List[str], field_name: str) -> Optional[str]:
+        """Validate value against predefined list. Returns validated value or None if invalid."""
+        if not value or value == "":
+            return None  # Empty string not allowed for enum fields
+        value_lower = value.lower()
+        allowed_lower = [v.lower() for v in allowed_values]
+        if value_lower in allowed_lower:
+            # Return original case from allowed_values
+            idx = allowed_lower.index(value_lower)
+            return allowed_values[idx]
+        logging.warning(f"Invalid {field_name} value '{value}'. Allowed: {allowed_values}. Skipping.")
+        return None
+
+    @classmethod
+    def load(cls, data: Union[str, dict]) -> Optional['DagJitSettingsObject']:
+        """Load JIT settings from JSON. Returns None if data is missing/empty."""
+        obj = cls()
+        try:
+            data = json.loads(data) if isinstance(data, str) else data
+        except:
+            logging.error(f"JIT settings failed to load from: {str(data)[:80]}")
+            return None
+
+        if not isinstance(data, dict):
+            return None
+
+        # Check if object is empty (no valid fields)
+        has_valid_fields = False
+
+        # Parse boolean fields with defaults
+        create_ephemeral = utils.value_to_boolean(data.get("create_ephemeral", None))
+        if create_ephemeral is not None:
+            obj.create_ephemeral = create_ephemeral
+            has_valid_fields = True
+
+        elevate = utils.value_to_boolean(data.get("elevate", None))
+        if elevate is not None:
+            obj.elevate = elevate
+            has_valid_fields = True
+
+        # Parse elevation_method with validation (defaults to "group" if missing or invalid)
+        elevation_method = data.get("elevation_method", None)
+        if elevation_method is not None:
+            validated = cls.validate_enum_value(str(elevation_method), ["group", "role"], "elevation_method")
+            if validated:
+                obj.elevation_method = validated
+                has_valid_fields = True
+            # If validation fails, keep default "group" from __init__() - still include in DAG JSON
+        # If missing, keep default "group" from __init__() - still include in DAG JSON
+
+        # Parse string fields
+        elevation_string = data.get("elevation_string", None)
+        if elevation_string is not None and str(elevation_string).strip():
+            obj.elevation_string = str(elevation_string).strip()
+            has_valid_fields = True
+
+        base_distinguished_name = data.get("base_distinguished_name", None)
+        if base_distinguished_name is not None and str(base_distinguished_name).strip():
+            obj.base_distinguished_name = str(base_distinguished_name).strip()
+            has_valid_fields = True
+
+        # Parse ephemeral_account_type with validation (omit if missing)
+        ephemeral_account_type = data.get("ephemeral_account_type", None)
+        if ephemeral_account_type is not None:
+            validated = cls.validate_enum_value(
+                str(ephemeral_account_type),
+                ["linux", "mac", "windows", "domain"],
+                "ephemeral_account_type"
+            )
+            if validated:
+                obj.ephemeral_account_type = validated
+                has_valid_fields = True
+
+        # Parse pam_directory_record (title of pamDirectory from pam_data.resources[]; resolved to pam_directory_uid later)
+        pam_directory_record = data.get("pam_directory_record", None)
+        if pam_directory_record is not None and str(pam_directory_record).strip():
+            obj.pam_directory_record = str(pam_directory_record).strip()
+            has_valid_fields = True
+
+        # Silently ignore any other unknown fields (permissive parsing)
+
+        # Return None if no valid fields were found (empty object)
+        return obj if has_valid_fields else None
+
+    def to_dag_dict(self) -> Dict[str, Any]:
+        """Convert to DAG JSON format (camelCase)."""
+        result = {
+            "createEphemeral": self.create_ephemeral,
+            "elevate": self.elevate,
+            "elevationMethod": self.elevation_method,  # Always included (defaults to "group" if missing/invalid)
+            "elevationString": self.elevation_string,
+            "baseDistinguishedName": self.base_distinguished_name
+        }
+        # Only include ephemeralAccountType if it was set (omit if missing/invalid)
+        if self.ephemeral_account_type:
+            result["ephemeralAccountType"] = self.ephemeral_account_type
+        return result
+
+
+class DagAiSettingsObject():
+    def __init__(self):
+        self.version: str = "v1.0.0"
+        self.risk_levels: Dict[str, Dict[str, Any]] = {}
+
+    @classmethod
+    def _parse_tag_list(cls, items: Any) -> List[str]:
+        tags: List[str] = []
+        if not isinstance(items, list):
+            return tags
+        for item in items:
+            tag = ""
+            if isinstance(item, str):
+                tag = item.strip()
+            elif isinstance(item, dict):
+                tag = str(item.get("tag", "")).strip()
+            if tag:
+                tags.append(tag)
+        return tags
+
+    @classmethod
+    def load(cls, data: Union[str, dict]) -> Optional['DagAiSettingsObject']:
+        """Load AI settings from JSON. Returns None if data is missing/empty."""
+        obj = cls()
+        try:
+            data = json.loads(data) if isinstance(data, str) else data
+        except:
+            logging.error(f"AI settings failed to load from: {str(data)[:80]}")
+            return None
+
+        if not isinstance(data, dict):
+            return None
+
+        risk_levels = data.get("risk_levels", None)
+        if not isinstance(risk_levels, dict):
+            return None
+
+        for level in ["critical", "high", "medium", "low"]:
+            level_data = risk_levels.get(level, None)
+            if not isinstance(level_data, dict):
+                continue
+
+            ai_session_terminate = utils.value_to_boolean(level_data.get("ai_session_terminate", None))
+            activities = level_data.get("activities", None) or {}
+            if not isinstance(activities, dict):
+                activities = {}
+
+            allow_tags = cls._parse_tag_list(activities.get("allow", []))
+            deny_tags = cls._parse_tag_list(activities.get("deny", []))
+
+            if ai_session_terminate is None and not allow_tags and not deny_tags:
+                continue
+
+            obj.risk_levels[level] = {
+                "ai_session_terminate": ai_session_terminate,
+                "allow": allow_tags,
+                "deny": deny_tags
+            }
+
+        return obj if obj.risk_levels else None
+
+    def _build_tag_entries(self, tags: List[str], action: str, user_id: str) -> List[Dict[str, Any]]:
+        entries: List[Dict[str, Any]] = []
+        for tag in tags:
+            if not tag:
+                continue
+            entries.append({
+                "tag": tag,
+                "auditLog": [{
+                    "date": utils.current_milli_time(),
+                    "userId": user_id,
+                    "action": action
+                }]
+            })
+        return entries
+
+    def to_dag_dict(self, user_id: str) -> Optional[Dict[str, Any]]:
+        if not self.risk_levels:
+            return None
+
+        if not user_id:
+            logging.warning("AI settings auditLog userId is missing; auditLog will have empty userId.")
+            user_id = ""
+
+        risk_levels: Dict[str, Any] = {}
+        for level, data in self.risk_levels.items():
+            level_out: Dict[str, Any] = {}
+
+            if data.get("ai_session_terminate") is not None:
+                level_out["aiSessionTerminate"] = data["ai_session_terminate"]
+
+            tags_out: Dict[str, Any] = {}
+            allow_entries = self._build_tag_entries(data.get("allow", []), "added_to_allow", user_id)
+            if allow_entries:
+                tags_out["allow"] = allow_entries
+            deny_entries = self._build_tag_entries(data.get("deny", []), "added_to_deny", user_id)
+            if deny_entries:
+                tags_out["deny"] = deny_entries
+
+            if tags_out:
+                level_out["tags"] = tags_out
+
+            if level_out:
+                risk_levels[level] = level_out
+
+        if not risk_levels:
+            return None
+
+        return {
+            "version": self.version,
+            "riskLevels": risk_levels
+        }
 
 
 class PamUserObject():
@@ -4234,11 +4541,15 @@ class PamSettingsFieldData:
         connection: PamConnectionSettings = None,  # Optional[PamConnectionSettings]
         portForward: Optional[PamPortForwardSettings] = None,
         options: Optional[DagSettingsObject] = None,
+        jit_settings: Optional[DagJitSettingsObject] = None,
+        ai_settings: Optional[DagAiSettingsObject] = None,
     ):
         self.allowSupplyHost = allowSupplyHost
         self.connection = connection
         self.portForward = portForward
         self.options = options
+        self.jit_settings = jit_settings
+        self.ai_settings = ai_settings
 
     # PamConnectionSettings excludes ConnectionSettingsHTTP
     pam_connection_classes = [
@@ -4282,6 +4593,24 @@ class PamSettingsFieldData:
         options = DagSettingsObject.load(data.get("options", {}))
         if not is_empty_instance(options):
             obj.options = options
+
+        # Parse jit_settings from options dict (nested inside options)
+        options_dict = data.get("options", {})
+        if isinstance(options_dict, dict):
+            jit_value = options_dict.get("jit_settings", None)
+            if jit_value is not None:
+                jit_settings = DagJitSettingsObject.load(jit_value)
+                if jit_settings:
+                    obj.jit_settings = jit_settings
+
+        # Parse ai_settings from options dict (nested inside options)
+        options_dict = data.get("options", {})
+        if isinstance(options_dict, dict):
+            ai_value = options_dict.get("ai_settings", None)
+            if ai_value is not None:
+                ai_settings = DagAiSettingsObject.load(ai_value)
+                if ai_settings:
+                    obj.ai_settings = ai_settings
 
         portForward = PamPortForwardSettings.load(data.get("port_forward", {}))
         if not is_empty_instance(portForward):
@@ -4465,6 +4794,14 @@ def parse_command_options(obj, enable:bool) -> dict:
             val = opts.remote_browser_isolation.value if opts.remote_browser_isolation else ""
             key = "enable_remote_browser_isolation" if val == "on" else "disable_remote_browser_isolation" if val == "off" else None
             if key is not None: args[key] = True
+            # AI and JIT settings don't apply to RBI records
+            if not isinstance(obj, PamRemoteBrowserObject):
+                val = opts.ai_threat_detection.value if opts.ai_threat_detection else ""
+                key = "enable_ai_threat_detection" if val == "on" else "disable_ai_threat_detection" if val == "off" else None
+                if key is not None: args[key] = True
+                val = opts.ai_terminate_session_on_detection.value if opts.ai_terminate_session_on_detection else ""
+                key = "enable_ai_terminate_session_on_detection" if val == "on" else "disable_ai_terminate_session_on_detection" if val == "off" else None
+                if key is not None: args[key] = True
         else:  # TunnelDAG.set_resource_allowed format rotation=True/False
             if opts.rotation and opts.rotation.value in ("on", "off"):
                 args["rotation"] = choices[opts.rotation.value]
@@ -4480,6 +4817,12 @@ def parse_command_options(obj, enable:bool) -> dict:
                 args["session_recording"] = choices[opts.graphical_session_recording.value]
             if opts.remote_browser_isolation and opts.remote_browser_isolation.value in ("on", "off"):
                 args["remote_browser_isolation"] = choices[opts.remote_browser_isolation.value]
+            # AI and JIT settings don't apply to RBI records
+            if not isinstance(obj, PamRemoteBrowserObject):
+                if opts.ai_threat_detection and opts.ai_threat_detection.value in ("on", "off"):
+                    args["ai_enabled"] = choices[opts.ai_threat_detection.value]
+                if opts.ai_terminate_session_on_detection and opts.ai_terminate_session_on_detection.value in ("on", "off"):
+                    args["ai_session_terminate"] = choices[opts.ai_terminate_session_on_detection.value]
 
     return args
 
