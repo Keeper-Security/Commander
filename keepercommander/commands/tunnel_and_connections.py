@@ -783,6 +783,8 @@ class PAMConnectionEditCommand(Command):
                         'the port from the record will be used.')
     parser.add_argument('--key-events', '-k', dest='key_events', choices=choices,
                         help='Toggle Key Events settings')
+    parser.add_argument('--keeper-db-proxy', '-kdbp', dest='keeper_db_proxy', choices=choices,
+                        help='Enable/disable Keeper Database Proxy for pamDatabase records (on/off/default)')
     parser.add_argument('--silent', '-s', required=False, dest='silent', action='store_true',
 					help='Silent mode - don\'t print PAM User, PAM Config etc.')
 
@@ -913,6 +915,37 @@ class PAMConnectionEditCommand(Command):
                         logging.debug(f'recordingIncludeKeys is already disabled on record={record_uid}')
                 else:
                     logging.debug(f'Unexpected value for --key-events {key_events} (ignored)')
+
+            # Handle --keeper-db-proxy option for database proxy routing (pamDatabase records only)
+            keeper_db_proxy = kwargs.get('keeper_db_proxy')  # on/off/default
+            if keeper_db_proxy:
+                if record_type != 'pamDatabase':
+                    raise CommandError('pam connection edit',
+                        f'{bcolors.FAIL}--keeper-db-proxy is only supported for pamDatabase records. '
+                        f'Record "{record_name}" is of type "{record_type}".{bcolors.ENDC}')
+                psv = pam_settings.value[0] if pam_settings and pam_settings.value else {}
+                vcon = psv.get('connection', {}) if isinstance(psv, dict) else {}
+                current_value = vcon.get('allowKeeperDBProxy') if isinstance(vcon, dict) else None
+                if keeper_db_proxy == 'default':
+                    if current_value is not None:
+                        pam_settings.value[0]["connection"].pop('allowKeeperDBProxy', None)
+                        dirty = True
+                    else:
+                        logging.debug(f'allowKeeperDBProxy is already set to "default" on record={record_uid}')
+                elif keeper_db_proxy == 'on':
+                    if current_value is not True:
+                        pam_settings.value[0]["connection"]["allowKeeperDBProxy"] = True
+                        dirty = True
+                    else:
+                        logging.debug(f'allowKeeperDBProxy is already enabled on record={record_uid}')
+                elif keeper_db_proxy == 'off':
+                    if current_value is not False:
+                        pam_settings.value[0]["connection"]["allowKeeperDBProxy"] = False
+                        dirty = True
+                    else:
+                        logging.debug(f'allowKeeperDBProxy is already disabled on record={record_uid}')
+                else:
+                    logging.debug(f'Unexpected value for --keeper-db-proxy {keeper_db_proxy} (ignored)')
 
             if dirty:
                 record_management.update_record(params, record)
