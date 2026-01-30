@@ -876,8 +876,8 @@ class TypedRecord(KeeperRecord):
         self.type_name = sanitize_str_field_value(data.get('type')).strip()
         self.title = sanitize_str_field_value(data.get('title')).strip()
         self.notes = sanitize_str_field_value(data.get('notes'))
-        self.fields.extend((TypedField(x) for x in data.get('fields', [])))
-        self.custom.extend((TypedField(x) for x in data.get('custom', [])))
+        self.fields.extend((TypedField(x) for x in (data.get('fields') or [])))
+        self.custom.extend((TypedField(x) for x in (data.get('custom') or [])))
 
     def enumerate_fields(self):
         # type: () -> Iterable[Tuple[str, Union[None, str, List[str]]]]
