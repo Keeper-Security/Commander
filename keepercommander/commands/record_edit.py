@@ -188,6 +188,9 @@ $GEN:[alg],[n]          password           Generates a random password      $GEN
 $GEN                    oneTimeCode        Generates TOTP URL
 $GEN:[alg,][enc]        keyPair            Generates a key pair and         $GEN:ec,enc
                                            optional passcode                alg: [rsa | ec | ed25519], enc
+$BASE64:<BASE64>        any string field   Decodes base64 value             password=$BASE64:ZmpzemRmaGtkZg==
+                                           Useful for passwords with        Decodes to: fjzskfhkdf
+                                           special characters
 $JSON:<JSON TEXT>       any object         Sets a field value as JSON
                                            phone.Cell=$JSON:'{"number": "(555) 555-1234", "type": "Mobile"}'
 
@@ -281,13 +284,20 @@ class RecordEditMixin:
             if parsed_field.type == 'login':
                 record.login = parsed_field.value
             elif parsed_field.type == 'password':
+                action_params.clear()
                 if self.is_generate_value(parsed_field.value, action_params):
                     record.password = self.generate_password(action_params)
+                elif self.is_base64_value(parsed_field.value, action_params):
+                    if action_params:
+                        record.password = action_params[0]
+                    else:
+                        logging.warning('Base64 decoding failed for password field')
                 else:
                     record.password = parsed_field.value
             elif parsed_field.type == 'url':
                 record.link = parsed_field.value
             elif parsed_field.type == 'oneTimeCode':
+                action_params.clear()
                 if self.is_generate_value(parsed_field.value, action_params):
                     record.totp = self.generate_totp_url()
                 else:
@@ -328,6 +338,22 @@ class RecordEditMixin:
                 if gen_parameters and isinstance(parameters, list):
                     parameters.extend((x.strip() for x in gen_parameters.split(',')))
             return True
+
+    @staticmethod
+    def is_base64_value(value, parameters):    # type: (str, List[str]) -> Optional[bool]
+        """Check if value is base64-encoded and decode it."""
+        if value.startswith("$BASE64:"):
+            encoded_value = value[8:]  # Skip "$BASE64:"
+            if encoded_value and isinstance(parameters, list):
+                try:
+                    decoded_bytes = base64.b64decode(encoded_value)
+                    decoded_str = decoded_bytes.decode('utf-8')
+                    parameters.append(decoded_str)
+                    return True
+                except Exception as e:
+                    logging.warning(f'Failed to decode base64 value: {e}')
+            return True
+        return False
 
     @staticmethod
     def generate_key_pair(key_type, passphrase):  # type: (str, str) -> dict
@@ -572,6 +598,11 @@ class RecordEditMixin:
                             parsed_fields.append(ParsedFieldValue('', 'password', 'passphrase', passphrase))
                     else:
                         self.on_warning(f'Cannot generate a value for a \"{record_field.type}\" field.')
+                elif self.is_base64_value(parsed_field.value, action_params):
+                    if len(action_params) > 0:
+                        value = action_params[0]
+                    else:
+                        self.on_warning(f'Base64 decoding failed for field \"{record_field.type}\".')
                 elif self.is_json_value(parsed_field.value, action_params):
                     if len(action_params) > 0:
                         value = self.validate_json_value(record_field.type, action_params[0])
