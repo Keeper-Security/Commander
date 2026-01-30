@@ -381,27 +381,23 @@ class PAMLaunchCommand(Command):
             logging.debug(f"Found gateway: {gateway_info['gateway_name']} ({gateway_info['gateway_uid']})")
             logging.debug(f"Configuration: {gateway_info['config_uid']}")
 
-            # Check if Gateway is online before attempting WebRTC connection
+            # Optionally check if Gateway appears online; if not, log warning and try anyway.
             try:
                 connected_gateways = router_get_connected_gateways(params)
-                connected_gateway_uids = [x.controllerUid for x in connected_gateways.controllers]
-                gateway_uid_bytes = url_safe_str_to_bytes(gateway_info['gateway_uid'])
-
-                if gateway_uid_bytes not in connected_gateway_uids:
-                    raise CommandError(
-                        'pam launch',
-                        f'Gateway "{gateway_info["gateway_name"]}" ({gateway_info["gateway_uid"]}) is currently offline. '
-                        f'Please start the Gateway before attempting to connect. '
-                        f'Use "pam gateway list" to check Gateway status.'
-                    )
-
-                logging.debug(f"✓ Gateway is online and connected")
+                if connected_gateways and connected_gateways.controllers:
+                    connected_gateway_uids = [x.controllerUid for x in connected_gateways.controllers]
+                    gateway_uid_bytes = url_safe_str_to_bytes(gateway_info['gateway_uid'])
+                    if gateway_uid_bytes not in connected_gateway_uids:
+                        logging.warning(
+                            'Gateway "%s" (%s) seems offline - trying to connect anyway.',
+                            gateway_info['gateway_name'], gateway_info['gateway_uid']
+                        )
+                    else:
+                        logging.debug(f"✓ Gateway is online and connected")
+                else:
+                    logging.warning('Gateway seems offline - trying to connect anyway.')
             except Exception as e:
-                # If router is down or there's an error checking status, still try to connect
-                # (the connection attempt will fail later with a more specific error)
-                if isinstance(e, CommandError):
-                    raise
-                logging.warning(f"Could not verify Gateway online status: {e}. Continuing anyway...")
+                logging.debug('Could not verify gateway status: %s. Continuing...', e)
 
             # Launch terminal connection
             result = launch_terminal_connection(params, record_uid, gateway_info, **kwargs)

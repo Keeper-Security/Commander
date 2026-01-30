@@ -20,6 +20,7 @@ from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes
 from ....proto import pam_pb2
 
 from ....commands.base import FolderMixin
+from ....commands.pam.config_helper import configuration_controller_get
 from ....commands.pam.pam_dto import GatewayAction, GatewayActionWebRTCSession
 from ....commands.pam.router_helper import router_get_relay_access_creds, get_dag_leafs, \
     get_router_ws_url, router_send_action_to_gateway
@@ -623,6 +624,12 @@ def get_config_uid_from_record(params, vault, record_uid):
 
 
 def get_gateway_uid_from_record(params, vault, record_uid):
+    """Resolve gateway UID for a PAM resource record (pamMachine, etc.).
+
+    Lookup flow: record_uid -> PAM_LINK DAG -> config_uid -> gateway (controller)
+    Gateway is read from config record's pamResources.controllerUid; if missing,
+    falls back to pam/get_configuration_controller API
+    """
     gateway_uid = ''
     pam_config_uid = get_config_uid_from_record(params, vault, record_uid)
     if pam_config_uid:
@@ -632,6 +639,16 @@ def get_gateway_uid_from_record(params, vault, record_uid):
             value = field.get_default_value(dict)
             if value:
                 gateway_uid = value.get('controllerUid', '') or ''
+
+        # Fallback: ask server for controller when config record has no local controllerUid
+        if not gateway_uid:
+            try:
+                config_uid_bytes = url_safe_str_to_bytes(pam_config_uid)
+                controller = configuration_controller_get(params, config_uid_bytes)
+                if controller and controller.controllerUid:
+                    gateway_uid = utils.base64_url_encode(controller.controllerUid)
+            except Exception as e:
+                logging.debug('get_gateway_uid_from_record: get_configuration_controller fallback failed: %s', e)
 
     return gateway_uid
 
