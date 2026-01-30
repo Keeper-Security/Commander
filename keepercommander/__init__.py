@@ -6,8 +6,8 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2023 Keeper Security Inc.
-# Contact: ops@keepersecurity.com
+# Copyright 2009-2026 Keeper Security Inc.
+# Contact: commander@keepersecurity.com
 #
 
-__version__ = '17.2.6'
+__version__ = '17.2.7'
