@@ -2150,7 +2150,7 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                 # DEDICATED WebSocket: No mutex needed! Each tunnel has its own connection.
                 # Backend registration is independent - no contention, no delays needed.
                 # Just a small delay to ensure backend is ready (much shorter than before)
-                backend_registration_delay = float(os.getenv('WEBSOCKET_BACKEND_DELAY', '0.5'))
+                backend_registration_delay = float(os.getenv('WEBSOCKET_BACKEND_DELAY', '2.0'))
                 logging.debug(f"Dedicated WebSocket: Waiting {backend_registration_delay}s for backend to register conversation {conversation_id_original}...")
                 time.sleep(backend_registration_delay)
                 logging.debug("Backend conversation registration delay complete")
