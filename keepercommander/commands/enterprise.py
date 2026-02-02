@@ -664,8 +664,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
             columns = set()
             if kwargs.get('columns'):
                 raw_columns = kwargs.get('columns')
-                # Handle role(...) syntax by stripping the prefix and suffix
-                for prefix in ['role(', 'team(', 'user(', 'node(']:
+                # Handle role(...) or roles(...) syntax by stripping the prefix and suffix
+                for prefix in ['roles(', 'role(', 'teams(', 'team(', 'users(', 'user(', 'nodes(', 'node(']:
                     if raw_columns.startswith(prefix):
                         raw_columns = raw_columns[len(prefix):]
                         if raw_columns.endswith(')'):
@@ -983,6 +983,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 for r in roles.values():
                     row = [r['id'], r['name']]
                     role_id = r['id']
+                    managed_nodes_list = role_managed_nodes.get(role_id, [])
+                    
                     for column in displayed_columns:
                         if column == 'visible_below':
                             row.append(r['visible_below'])
@@ -1008,45 +1010,38 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                             enforcements = role_enforcements.get(role_id, {})
                             row.append(list(enforcements.keys()))
                         elif column == 'managed_node_count':
-                            managed_nodes_list = role_managed_nodes.get(role_id, [])
                             row.append(len(managed_nodes_list))
                         elif column == 'managed_nodes':
-                            managed_nodes_list = role_managed_nodes.get(role_id, [])
                             managed_node_info = []
                             for mn in managed_nodes_list:
-                                node_name = mn['node_name']
-                                cascade = mn['cascade']
-                                info = f"{node_name} (cascade: {cascade})"
-                                managed_node_info.append(info)
+                                node_name = mn.get('node_name', '')
+                                managed_node_info.append(node_name)
                             row.append(managed_node_info)
                         elif column == 'managed_nodes_permissions':
-                            managed_nodes_list = role_managed_nodes.get(role_id, [])
                             privileges_for_role = role_privileges.get(role_id, {})
                             is_json = kwargs.get('format') == 'json'
+                            permissions_info = []
                             
-                            if is_json:
-                                permissions_info = []
-                                for mn in managed_nodes_list:
-                                    node_id = mn['node_id']
-                                    node_name = mn['node_name']
-                                    privs = privileges_for_role.get(node_id, [])
+                            for mn in managed_nodes_list:
+                                node_id = mn.get('node_id')
+                                node_name = mn.get('node_name', '')
+                                cascade = mn.get('cascade', False)
+                                privs = privileges_for_role.get(node_id, [])
+                                
+                                if is_json:
                                     permissions_info.append({
                                         'node_name': node_name,
                                         'node_id': node_id,
-                                        'privileges': privs if privs else []
+                                        'cascade': cascade,
+                                        'privileges': privs
                                     })
-                            else:
-                                permissions_info = []
-                                for mn in managed_nodes_list:
-                                    node_id = mn['node_id']
-                                    node_name = mn['node_name']
-                                    privs = privileges_for_role.get(node_id, [])
+                                else:
                                     if privs:
-                                        permissions_info.append(f"{node_name}:")
+                                        permissions_info.append(f"{node_name} (cascade: {cascade}):")
                                         for priv in privs:
                                             permissions_info.append(f"  {priv}")
                                     else:
-                                        permissions_info.append(f"{node_name}: none")
+                                        permissions_info.append(f"{node_name} (cascade: {cascade}): none")
                             row.append(permissions_info)
                     if pattern:
                         if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
