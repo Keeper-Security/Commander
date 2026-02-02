@@ -73,7 +73,7 @@ def check_ksm_dependency():
         import keeper_secrets_manager_core  # noqa: F401
         return True
     except ImportError:
-        print("ERROR: keeper_secrets_manager_core is not installed")
+        print("CRITICAL ERROR: keeper_secrets_manager_core is not installed")
         return False
 
 
@@ -110,7 +110,7 @@ def is_base64_config(input_str):
 
 def cleanup_old_ksm_dirs():
     """
-    Clean up old KSM config directories.
+    You better Clean up old KSM config directories.
     Removes old timestamped directories to prevent accumulation.
     """
     patterns = ["/home/commander/ksm_*", os.path.expanduser("~/ksm_*")]
@@ -146,7 +146,7 @@ def _create_temp_ksm_dir():
             # Fallback for local testing
             return tempfile.mkdtemp(prefix="ksm_")
     except Exception as e:
-        print(f"ERROR: Failed to create temp directory: {e}")
+        print(f"FATAL ERROR: Failed to create temp directory: {e}")
         return None
 
 
