@@ -7,13 +7,16 @@ SuperShell is a full-screen terminal UI (TUI) for browsing and managing Keeper v
 ```
 supershell/
 ├── __init__.py              # Main exports and package interface
+├── app.py                   # SuperShellApp - main Textual application
+├── command.py               # SuperShellCommand - CLI entry point
 ├── constants.py             # Configuration constants
+├── debug.py                 # Debug logging utilities
 ├── utils.py                 # Utility functions (preferences, ANSI stripping)
 │
 ├── themes/                  # Visual theming
 │   ├── __init__.py
 │   ├── colors.py            # COLOR_THEMES dict with 5 color schemes
-│   └── css.py               # Textual CSS stylesheet
+│   └── css.py               # Textual CSS stylesheet (BASE_CSS)
 │
 ├── screens/                 # Modal screens
 │   ├── __init__.py
@@ -24,7 +27,9 @@ supershell/
 │   ├── __init__.py
 │   ├── clickable_line.py    # ClickableDetailLine - copy-on-click text
 │   ├── clickable_field.py   # ClickableField - labeled copy-on-click
-│   └── clickable_uid.py     # ClickableRecordUID - UID with navigation
+│   ├── clickable_uid.py     # ClickableRecordUID - UID with navigation
+│   ├── auto_copy_textarea.py    # AutoCopyTextArea - auto-copy on select
+│   └── shell_input_textarea.py  # ShellInputTextArea - shell command input
 │
 ├── state/                   # State management dataclasses
 │   ├── __init__.py
@@ -50,9 +55,9 @@ supershell/
 
 ## Key Components
 
-### Main Application (`_supershell_impl.py`)
+### Main Application (`app.py`)
 
-The `SuperShellApp` class (in the parent directory) is the main Textual application. It:
+The `SuperShellApp` class is the main Textual application. It:
 - Composes the UI layout (tree, detail pane, search bar, shell pane)
 - Manages application state
 - Handles tree node selection events
