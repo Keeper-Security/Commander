@@ -186,11 +186,31 @@ VerticalScroll {
 
 #record_detail:focus {
     background: #0a0a0a;
-    border: solid #333333;
 }
 
 #record_detail:focus-within {
     background: #0a0a0a;
+}
+
+/* Focus indicators - green left border shows which pane is active */
+#folder_panel:focus-within {
+    border-left: solid #00cc00;
+}
+
+#record_panel:focus-within {
+    border-left: solid #00cc00;
+}
+
+#shell_output_content:focus {
+    border-left: solid #00cc00;
+}
+
+#shell_input_container:focus-within {
+    border-left: solid #00cc00;
+}
+
+#search_bar.search-active {
+    border-left: solid #00cc00;
 }
 
 #status_bar {
@@ -252,21 +272,72 @@ VerticalScroll {
 }
 
 #shell_output_content {
+    height: 1fr;
     background: #000000;
     color: #ffffff;
-    width: 100%;
+    border: none;
+    padding: 0 1;
 }
 
-#shell_input_line {
-    height: 2;
-    background: #111111;
-    color: #00ff00;
-    padding: 1 1 0 1;
+/* Theme-specific selection colors for shell output */
+#shell_output_content.theme-green .text-area--selection {
+    background: #004400;
+}
+#shell_output_content.theme-blue .text-area--selection {
+    background: #002244;
+}
+#shell_output_content.theme-magenta .text-area--selection {
+    background: #330033;
+}
+#shell_output_content.theme-yellow .text-area--selection {
+    background: #333300;
+}
+#shell_output_content.theme-white .text-area--selection {
+    background: #444444;
+}
+/* Default fallback */
+#shell_output_content .text-area--selection {
+    background: #004400;
+}
+
+/* Shell input container with prompt and TextArea */
+#shell_input_container {
+    height: auto;
+    min-height: 3;
+    max-height: 6;
+    background: #000000;
     border-top: solid #333333;
+    border-bottom: solid #333333;
+    padding: 0 1;
 }
 
-#shell_pane:focus-within #shell_input_line {
-    background: #1a1a2e;
+#shell_prompt {
+    width: 2;
+    height: 100%;
+    background: #000000;
+    color: #00ff00;
+    padding: 0;
+}
+
+/* Shell input area - multi-line TextArea for command entry */
+#shell_input_area {
+    width: 1fr;
+    height: auto;
+    min-height: 1;
+    max-height: 5;
+    background: #000000;
+    color: #00ff00;
+    border: none;
+    padding: 0;
+}
+
+#shell_input_area:focus {
+    background: #000000;
+}
+
+#shell_input_area .text-area--cursor {
+    color: #00ff00;
+    background: #00ff00;
 }
 """
 

@@ -3,19 +3,25 @@ Keeper SuperShell - A full-screen terminal UI for Keeper vault
 
 This package provides a modern TUI interface with vim-style navigation
 for browsing and managing Keeper vault records.
-
-During refactoring, the main implementation is in _supershell_impl.py.
-This will be gradually migrated into this package structure.
 """
 
-# Re-export from implementation file for backward compatibility
-from .._supershell_impl import SuperShellCommand, SuperShellApp
+# Re-export main classes
+from .command import SuperShellCommand
+from .app import SuperShellApp
 
 # Export theme and utility modules
+from .debug import debug_log, DEBUG_EVENTS, close_debug_log
 from .themes import COLOR_THEMES
 from .screens import PreferencesScreen, HelpScreen
 from .utils import load_preferences, save_preferences, strip_ansi_codes
-from .widgets import ClickableDetailLine, ClickableField, ClickableRecordUID
+from .widgets import (
+    ClickableDetailLine,
+    ClickableField,
+    ClickableRecordUID,
+    AutoCopyTextArea,
+    safe_copy_to_clipboard,
+    ShellInputTextArea,
+)
 from .state import VaultData, UIState, ThemeState, SelectionState
 from .renderers import (
     is_sensitive_field,
@@ -35,6 +41,10 @@ __all__ = [
     # Main classes
     'SuperShellCommand',
     'SuperShellApp',
+    # Debug
+    'debug_log',
+    'DEBUG_EVENTS',
+    'close_debug_log',
     # Themes
     'COLOR_THEMES',
     # Screens
@@ -48,6 +58,9 @@ __all__ = [
     'ClickableDetailLine',
     'ClickableField',
     'ClickableRecordUID',
+    'AutoCopyTextArea',
+    'safe_copy_to_clipboard',
+    'ShellInputTextArea',
     # State
     'VaultData',
     'UIState',

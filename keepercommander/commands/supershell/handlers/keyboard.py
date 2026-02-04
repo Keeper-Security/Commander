@@ -10,29 +10,12 @@ from typing import TYPE_CHECKING, Optional, List
 
 from rich.markup import escape as rich_escape
 
-# Debug logging - writes to /tmp/supershell_debug.log when enabled
-DEBUG_EVENTS = False
-_debug_log_file = None
-
-def _debug_log(msg: str):
-    """Log debug message to /tmp/supershell_debug.log if DEBUG_EVENTS is True."""
-    if not DEBUG_EVENTS:
-        return
-    global _debug_log_file
-    try:
-        if _debug_log_file is None:
-            _debug_log_file = open('/tmp/supershell_debug.log', 'a')
-        import datetime
-        timestamp = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
-        _debug_log_file.write(f"[{timestamp}] {msg}\n")
-        _debug_log_file.flush()
-    except Exception:
-        pass
+from ..debug import debug_log as _debug_log
 
 if TYPE_CHECKING:
     from textual.events import Key
     from textual.widgets import Tree
-    from .._supershell_impl import SuperShellApp
+    from ..app import SuperShellApp
 
 
 class KeyHandler(ABC):
@@ -406,7 +389,9 @@ class SearchInputTabHandler(KeyHandler):
         search_bar.remove_class("search-active")
 
         if app.search_input_text:
-            search_display.update(rich_escape(app.search_input_text))
+            # Escape all brackets (rich_escape only escapes matched pairs)
+            escaped = app.search_input_text.replace('\\', '\\\\').replace('[', '\\[').replace(']', '\\]')
+            search_display.update(escaped)
         else:
             search_display.update("[dim]Search...[/dim]")
 
@@ -649,7 +634,9 @@ class SearchInputHandler(KeyHandler):
 
             search_display = app.query_one("#search_display")
             if app.search_input_text:
-                search_display.update(rich_escape(app.search_input_text))
+                # Escape all brackets (rich_escape only escapes matched pairs)
+                escaped = app.search_input_text.replace('\\', '\\\\').replace('[', '\\[').replace(']', '\\]')
+                search_display.update(escaped)
             else:
                 search_display.update("[dim]Search...[/dim]")
 

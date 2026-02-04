@@ -1263,7 +1263,8 @@ class RecordListCommand(Command):
             pattern,
             record_type=record_type,
             record_version=record_version,
-            search_fields=search_fields)]
+            search_fields=search_fields,
+            use_regex=True)]
         if any(records):
             headers = ['record_uid', 'type', 'title', 'description', 'shared']
             if fmt == 'table':
@@ -2386,7 +2387,7 @@ class ClipboardCommand(Command, RecordMixin):
 
         if record_uid is None:
             records = []    # type: List[vault.KeeperRecord]
-            for r in vault_extensions.find_records(params, record_name):
+            for r in vault_extensions.find_records(params, record_name, use_regex=True):
                 if isinstance(r, (vault.PasswordRecord, vault.TypedRecord)):
                     if user_pattern:
                         login = ''

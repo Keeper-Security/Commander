@@ -493,21 +493,24 @@ def search_shared_folders(params, searchstring, use_regex=False):
         params: KeeperParams
         searchstring: Search string (tokens or regex depending on use_regex)
         use_regex: If True, treat as regex. If False (default), token-based search.
+                   If searchstring is empty, returns all shared folders.
     """
     search_results = []
 
     if not searchstring:
-        return search_results
-
-    if use_regex:
+        # No search string - return all shared folders
+        match_func = lambda target: True
+    elif use_regex:
         p = re.compile(searchstring.lower())
         match_func = lambda target: p.search(target)
     else:
         # Token-based search: all tokens must match
         tokens = [t.lower() for t in searchstring.split() if t.strip()]
         if not tokens:
-            return search_results
-        match_func = lambda target: all(token in target for token in tokens)
+            # No valid tokens - return all shared folders
+            match_func = lambda target: True
+        else:
+            match_func = lambda target: all(token in target for token in tokens)
 
     for shared_folder_uid in params.shared_folder_cache:
 
@@ -529,21 +532,24 @@ def search_teams(params, searchstring, use_regex=False):
         params: KeeperParams
         searchstring: Search string (tokens or regex depending on use_regex)
         use_regex: If True, treat as regex. If False (default), token-based search.
+                   If searchstring is empty, returns all teams.
     """
     search_results = []
 
     if not searchstring:
-        return search_results
-
-    if use_regex:
+        # No search string - return all teams
+        match_func = lambda target: True
+    elif use_regex:
         p = re.compile(searchstring.lower())
         match_func = lambda target: p.search(target)
     else:
         # Token-based search: all tokens must match
         tokens = [t.lower() for t in searchstring.split() if t.strip()]
         if not tokens:
-            return search_results
-        match_func = lambda target: all(token in target for token in tokens)
+            # No valid tokens - return all teams
+            match_func = lambda target: True
+        else:
+            match_func = lambda target: all(token in target for token in tokens)
 
     for team_uid in params.team_cache:
         team = get_team(params, team_uid)
