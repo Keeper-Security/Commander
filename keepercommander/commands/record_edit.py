@@ -290,8 +290,6 @@ class RecordEditMixin:
                 elif self.is_base64_value(parsed_field.value, action_params):
                     if action_params:
                         record.password = action_params[0]
-                    else:
-                        logging.warning('Base64 decoding failed for password field')
                 else:
                     record.password = parsed_field.value
             elif parsed_field.type == 'url':
@@ -322,11 +320,13 @@ class RecordEditMixin:
             value = value[5:]
             if value.startswith(':'):
                 j_str = value[1:]
-                if j_str and isinstance(parameters, list):
+                if not j_str:
+                    self.on_warning('JSON value cannot be empty. Format: $JSON:<json_object>')
+                elif isinstance(parameters, list):
                     try:
                         parameters.append(json.loads(j_str))
                     except Exception as e:
-                        self.on_warning(f'Invalid JSON value: {j_str}: {e}')
+                        self.on_warning(f'Invalid JSON value: {e}')
             return True
 
     @staticmethod
@@ -339,19 +339,27 @@ class RecordEditMixin:
                     parameters.extend((x.strip() for x in gen_parameters.split(',')))
             return True
 
-    @staticmethod
-    def is_base64_value(value, parameters):    # type: (str, List[str]) -> Optional[bool]
+    def is_base64_value(self, value, parameters):    # type: (str, List[str]) -> Optional[bool]
         """Check if value is base64-encoded and decode it."""
         if value.startswith("$BASE64:"):
             encoded_value = value[8:]  # Skip "$BASE64:"
-            if encoded_value and isinstance(parameters, list):
+            
+            # Validate and provide helpful error messages
+            if not encoded_value:
+                self.on_warning('Base64 value cannot be empty. Format: $BASE64:<base64_string>')
+            elif isinstance(parameters, list):
                 try:
-                    decoded_bytes = base64.b64decode(encoded_value)
-                    decoded_str = decoded_bytes.decode('utf-8')
-                    parameters.append(decoded_str)
-                    return True
+                    decoded_bytes = base64.b64decode(encoded_value, validate=True)
+                    if not decoded_bytes:
+                        self.on_warning('Base64 decoded to empty value')
+                    else:
+                        decoded_str = decoded_bytes.decode('utf-8')
+                        if not decoded_str:
+                            self.on_warning('Base64 decoded to empty string')
+                        else:
+                            parameters.append(decoded_str)
                 except Exception as e:
-                    logging.warning(f'Failed to decode base64 value: {e}')
+                    self.on_warning(f'Invalid base64 value: {e}')
             return True
         return False
 
@@ -599,10 +607,8 @@ class RecordEditMixin:
                     else:
                         self.on_warning(f'Cannot generate a value for a \"{record_field.type}\" field.')
                 elif self.is_base64_value(parsed_field.value, action_params):
-                    if len(action_params) > 0:
+                    if action_params:
                         value = action_params[0]
-                    else:
-                        self.on_warning(f'Base64 decoding failed for field \"{record_field.type}\".')
                 elif self.is_json_value(parsed_field.value, action_params):
                     if len(action_params) > 0:
                         value = self.validate_json_value(record_field.type, action_params[0])

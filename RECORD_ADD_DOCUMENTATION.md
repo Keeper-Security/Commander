@@ -36,6 +36,7 @@ record-add --title "Record Title" --record-type "RECORD_TYPE" [OPTIONS] [FIELDS.
 **Special Value Syntax:**
 - `$JSON:{"key": "value"}` - For complex object fields
 - `$GEN` - Generate passwords, TOTP codes, or key pairs
+- `$BASE64:<base64_string>` - Decode base64-encoded values for any string field
 - `file=@filename` - File attachments
 
 ## Record Types
@@ -511,10 +512,11 @@ echo "Emergency database access: $URL" | secure-send user@company.com
 1. **Use single-line commands for copy-paste** to avoid trailing space issues
 2. **Quote JSON values** to prevent shell interpretation
 3. **Use $GEN for passwords** instead of hardcoding them
-4. **Test with simple records first** before creating complex ones
-5. **Use custom fields (c.) for non-standard data**
-6. **Organize records in folders** using the `--folder` parameter
-7. **Add meaningful notes** with `--notes` for context
+4. **Use $BASE64: for complex passwords** with special characters to avoid shell escaping issues
+5. **Test with simple records first** before creating complex ones
+6. **Use custom fields (c.) for non-standard data**
+7. **Organize records in folders** using the `--folder` parameter
+8. **Add meaningful notes** with `--notes` for context
 
 ## Troubleshooting
 
@@ -537,6 +539,12 @@ echo "Emergency database access: $URL" | secure-send user@company.com
 - Use `@` prefix: `file=@/path/to/file.txt`
 - Ensure file path is accessible
 - Use absolute paths to avoid confusion
+
+**Base64 decoding errors**
+- Ensure the base64 string is valid (test with `echo <string> | base64 -d`)
+- Use the `$BASE64:` prefix: `password='$BASE64:UEBzc3cwcmQh'`
+- Remove any newlines or spaces from the base64 string
+- Check that the decoded value is valid UTF-8 text
 
 ## Record-Update vs Record-Add
 
