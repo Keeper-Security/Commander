@@ -339,17 +339,20 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                 return
 
             acl_text = ""
-            acl = user_service.get_acl(parent_vertex, current_vertex)
-            if acl is not None:
-                acl_text = self._f("None")
-                acl_parts = []
-                if acl.is_service:
-                    acl_parts.append(self._bl("Service"))
-                if acl.is_task:
-                    acl_parts.append(self._bl("Task"))
-                if len(acl_parts) > 0:
-                    acl_text = ", ".join(acl_parts)
-                acl_text = f"- {acl_text}"
+            if parent_vertex is not None:
+                acl = user_service.get_acl(resource_uid=parent_vertex.uid, user_uid=current_vertex.uid)
+                if acl is not None:
+                    acl_text = self._f("No Services")
+                    acl_parts = []
+                    if acl.is_service:
+                        acl_parts.append(self._bl("Service"))
+                    if acl.is_task:
+                        acl_parts.append(self._bl("Task"))
+                    if acl.is_iis_pool:
+                        acl_parts.append(self._bl("Task"))
+                    if len(acl_parts) > 0:
+                        acl_text = ", ".join(acl_parts)
+                    acl_text = f" -> {acl_text}"
 
             print(f"{pad}{record.record_type}, {record.title}, {record.record_uid}{acl_text}")
 
