@@ -48,8 +48,9 @@ class TestSearch(TestCase):
     def test_search_shared_folders(self):
         params = get_synced_params()
 
+        # Empty search returns all shared folders
         sfs = api.search_shared_folders(params, '')
-        self.assertEqual(len(sfs), 0)
+        self.assertEqual(len(sfs), len(params.shared_folder_cache))
 
         sfs = api.search_shared_folders(params, 'folder')
         self.assertEqual(len(sfs), len(params.shared_folder_cache))
@@ -63,8 +64,9 @@ class TestSearch(TestCase):
     def test_search_teams(self):
         params = get_synced_params()
 
+        # Empty search returns all teams
         teams = api.search_teams(params, '')
-        self.assertEqual(len(teams), 0)
+        self.assertEqual(len(teams), len(params.team_cache))
 
         teams = api.search_shared_folders(params, 'team')
         self.assertEqual(len(teams), len(params.shared_folder_cache))
