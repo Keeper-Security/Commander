@@ -2398,6 +2398,13 @@ class OneTimeShareCreateCommand(Command):
         urls = {}    # type: Dict[str, str]
         for record_name in record_names:
             record_uid = OneTimeShareCommand.resolve_record(params, record_name)
+            
+            record = api.get_record(params, record_uid)
+            if record and hasattr(record, 'record_type'):
+                pam_record_types = {'pamDatabase', 'pamDirectory', 'pamMachine', 'pamUser', 'pamRemoteBrowser'}
+                if record.record_type in pam_record_types:
+                    raise CommandError('one-time-share', 'One-Time Shares are currently not available for PAM records.')
+
             record_key = params.record_cache[record_uid]['record_key_unencrypted']
 
             client_key = utils.generate_aes_key()
