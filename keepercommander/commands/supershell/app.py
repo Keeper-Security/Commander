@@ -1553,7 +1553,7 @@ class SuperShellApp(App):
             if not is_pam_user and not has_rotation_data:
                 return None
 
-            from .. import vault
+            from ... import vault
 
             rotation_info = {}
             rotation_profile = None
@@ -2642,7 +2642,7 @@ class SuperShellApp(App):
         
         try:
             from ...proto import APIRequest_pb2, enterprise_pb2
-            from .. import api, utils
+            from ... import api, utils
             import json
             
             record = self.records[app_uid]
@@ -3692,7 +3692,7 @@ class SuperShellApp(App):
                 if self.selected_record in self.app_record_uids:
                     # For Secrets Manager apps, copy the app data in JSON format
                     from ...proto import APIRequest_pb2, enterprise_pb2
-                    from .. import api, utils
+                    from ... import api, utils
                     
                     record = self.records[self.selected_record]
                     app_title = record.get('title', 'Untitled')
