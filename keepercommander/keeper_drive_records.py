@@ -730,13 +730,42 @@ def get_record_details_v3(
             # Determine decryption method based on key type (handle both string and enum values)
             decrypted_record_key = None
             if record_key_type == record_pb2.ENCRYPTED_BY_DATA_KEY or record_key_type == 'ENCRYPTED_BY_DATA_KEY':
-                decrypted_record_key = crypto.decrypt_aes_v1(encrypted_record_key, params.data_key)
+                try:
+                    decrypted_record_key = crypto.decrypt_aes_v1(encrypted_record_key, params.data_key)
+                except Exception as e:
+                    logger.debug(f"Data key decrypt failed for {record_uid}, will try folder key: {e}")
             elif record_key_type == record_pb2.ENCRYPTED_BY_DATA_KEY_GCM or record_key_type == 'ENCRYPTED_BY_DATA_KEY_GCM' or not record_key_type:
-                decrypted_record_key = crypto.decrypt_aes_v2(encrypted_record_key, params.data_key)
+                try:
+                    decrypted_record_key = crypto.decrypt_aes_v2(encrypted_record_key, params.data_key)
+                except Exception as e:
+                    logger.debug(f"Data key decrypt failed for {record_uid}, will try folder key: {e}")
             elif record_key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY or record_key_type == 'ENCRYPTED_BY_PUBLIC_KEY':
                 decrypted_record_key = crypto.decrypt_rsa(encrypted_record_key, params.rsa_key2)
             elif record_key_type == record_pb2.ENCRYPTED_BY_PUBLIC_KEY_ECC or record_key_type == 'ENCRYPTED_BY_PUBLIC_KEY_ECC':
                 decrypted_record_key = crypto.decrypt_ec(encrypted_record_key, params.ecc_key)
+            
+            # If data key decryption failed, try folder key for records in folders
+            if not decrypted_record_key and record_uid in params.keeper_drive_record_keys:
+                logger.debug(f"Trying folder key decryption for {record_uid}")
+                for rk in params.keeper_drive_record_keys[record_uid]:
+                    if 'folder_uid' in rk:
+                        folder_uid = rk['folder_uid']
+                        if folder_uid in params.keeper_drive_folders:
+                            folder_obj = params.keeper_drive_folders[folder_uid]
+                            if 'folder_key_unencrypted' in folder_obj:
+                                folder_key = folder_obj['folder_key_unencrypted']
+                                try:
+                                    # Try to decrypt with folder key
+                                    decrypted_record_key = crypto.decrypt_aes_v2(encrypted_record_key, folder_key)
+                                    logger.debug(f"Successfully decrypted {record_uid} with folder key")
+                                    break
+                                except:
+                                    try:
+                                        decrypted_record_key = crypto.decrypt_aes_v1(encrypted_record_key, folder_key)
+                                        logger.debug(f"Successfully decrypted {record_uid} with folder key (CBC)")
+                                        break
+                                    except Exception as e:
+                                        logger.debug(f"Folder key decrypt failed: {e}")
             
             logger.debug(f"Decrypted record key length: {len(decrypted_record_key) if decrypted_record_key else 0}")
             
@@ -960,19 +989,13 @@ def _get_user_public_key(params, recipient_email, require_uid=True):
     if not recipient_uid_bytes and hasattr(params, 'enterprise') and params.enterprise:
         for user in params.enterprise.get('users', []):
             if user.get('username', '').lower() == recipient_email.lower():
-                # Try to get userAccountUid first (base64 encoded bytes)
+                # Try to get userAccountUid first (base64 encoded bytes) - this is the correct one!
                 if 'user_account_uid' in user:
                     recipient_uid_bytes = utils.base64_url_decode(user['user_account_uid'])
                     logger.debug(f"Found userAccountUid for {recipient_email} in enterprise: {user['user_account_uid']}")
-                # Fallback to enterprise_user_id (integer)
-                elif 'enterprise_user_id' in user:
-                    enterprise_user_id = user['enterprise_user_id']
-                    if isinstance(enterprise_user_id, int):
-                        recipient_uid_bytes = enterprise_user_id.to_bytes(8, byteorder='big', signed=False)
-                        logger.debug(f"Converted enterprise_user_id {enterprise_user_id} to bytes for {recipient_email}")
                 break
     
-    # Final fallback: try get_share_objects API (returns all enterprise users with userAccountUid)
+    # Try get_share_objects API BEFORE falling back to enterprise_user_id
     # Only do this if UID is required (e.g., for record sharing, but not for transfer)
     if not recipient_uid_bytes and require_uid:
         try:
@@ -1018,9 +1041,48 @@ def _get_user_public_key(params, recipient_email, require_uid=True):
         except Exception as e:
             logger.debug(f"Failed to get UID from get_share_objects for {recipient_email}: {e}")
     
+    # LAST RESORT: Fallback to enterprise_user_id (integer) conversion
+    # This is often WRONG and causes "Invalid accessUid" errors
+    if not recipient_uid_bytes and hasattr(params, 'enterprise') and params.enterprise:
+        for user in params.enterprise.get('users', []):
+            if user.get('username', '').lower() == recipient_email.lower():
+                # Only use enterprise_user_id as absolute last resort
+                if 'enterprise_user_id' in user:
+                    enterprise_user_id = user['enterprise_user_id']
+                    if isinstance(enterprise_user_id, int):
+                        recipient_uid_bytes = enterprise_user_id.to_bytes(8, byteorder='big', signed=False)
+                        logger.warning(f"Using enterprise_user_id {enterprise_user_id} as fallback for {recipient_email} - this may cause errors!")
+                break
+    
     # Note: recipient_uid_bytes may be None if not found - that's OK for some operations like transfer
     # Callers that need the UID (like record sharing) should check for None
     return recipient_public_key, use_ecc, recipient_uid_bytes
+
+
+def _get_record_from_cache(params, record_uid):
+    """
+    Get a record from either keeper_drive_records or record_cache.
+    
+    Args:
+        params: KeeperParams instance
+        record_uid: Record UID (base64-url encoded string)
+    
+    Returns:
+        Record dictionary or None if not found
+    """
+    logger = logging.getLogger(__name__)
+    
+    # First try keeper_drive_records (for Keeper Drive v3 records)
+    if hasattr(params, 'keeper_drive_records') and record_uid in params.keeper_drive_records:
+        logger.debug(f"Found record {record_uid} in keeper_drive_records")
+        return params.keeper_drive_records.get(record_uid)
+    
+    # Fallback to standard record_cache (for v2 records or records synced via standard sync)
+    if record_uid in params.record_cache:
+        logger.debug(f"Found record {record_uid} in record_cache")
+        return params.record_cache.get(record_uid)
+    
+    return None
 
 
 def share_record_v3(
@@ -1053,7 +1115,7 @@ def share_record_v3(
         
         # Get the record
         record_uid_bytes = utils.base64_url_decode(record_uid)
-        record = params.record_cache.get(record_uid)
+        record = _get_record_from_cache(params, record_uid)
         
         if not record:
             raise ValueError(f"Record {record_uid} not found in cache")
@@ -1169,7 +1231,7 @@ def update_record_share_v3(
         
         # Get the record
         record_uid_bytes = utils.base64_url_decode(record_uid)
-        record = params.record_cache.get(record_uid)
+        record = _get_record_from_cache(params, record_uid)
         
         if not record:
             raise ValueError(f"Record {record_uid} not found in cache")
@@ -1277,9 +1339,20 @@ def unshare_record_v3(
         # Sync to ensure we have the latest data
         sync_down.sync_down(params)
         
-        # Get the record
+        # Get the record - check both keeper_drive_records and record_cache
         record_uid_bytes = utils.base64_url_decode(record_uid)
-        record = params.record_cache.get(record_uid)
+        record = None
+        
+        # First try keeper_drive_records (for Keeper Drive v3 records)
+        if hasattr(params, 'keeper_drive_records') and record_uid in params.keeper_drive_records:
+            record = params.keeper_drive_records.get(record_uid)
+            logger.debug(f"Found record {record_uid} in keeper_drive_records")
+        
+        # Fallback to standard record_cache (for v2 records or records synced via standard sync)
+        if not record:
+            record = params.record_cache.get(record_uid)
+            if record:
+                logger.debug(f"Found record {record_uid} in record_cache")
         
         if not record:
             raise ValueError(f"Record {record_uid} not found in cache")
@@ -1361,7 +1434,7 @@ def transfer_record_ownership_v3(
         
         # Get the record
         record_uid_bytes = utils.base64_url_decode(record_uid)
-        record = params.record_cache.get(record_uid)
+        record = _get_record_from_cache(params, record_uid)
         
         if not record:
             raise ValueError(f"Record {record_uid} not found in cache")

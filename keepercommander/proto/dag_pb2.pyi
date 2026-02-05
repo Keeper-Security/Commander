@@ -2,7 +2,8 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -78,7 +79,7 @@ class SyncData(_message.Message):
     data: _containers.RepeatedCompositeFieldContainer[Data]
     syncPoint: int
     hasMore: bool
-    def __init__(self, data: _Optional[_Iterable[_Union[Data, _Mapping]]] = ..., syncPoint: _Optional[int] = ..., hasMore: bool = ...) -> None: ...
+    def __init__(self, data: _Optional[_Iterable[_Union[Data, _Mapping]]] = ..., syncPoint: _Optional[int] = ..., hasMore: _Optional[bool] = ...) -> None: ...
 
 class DebugData(_message.Message):
     __slots__ = ("dataType", "path", "ref", "parentRef")

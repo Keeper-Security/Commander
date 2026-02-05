@@ -10,7 +10,8 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -40,7 +41,7 @@ class SyncDownRequest(_message.Message):
     continuationToken: bytes
     dataVersion: int
     debug: bool
-    def __init__(self, continuationToken: _Optional[bytes] = ..., dataVersion: _Optional[int] = ..., debug: bool = ...) -> None: ...
+    def __init__(self, continuationToken: _Optional[bytes] = ..., dataVersion: _Optional[int] = ..., debug: _Optional[bool] = ...) -> None: ...
 
 class SyncDownResponse(_message.Message):
     __slots__ = ("continuationToken", "hasMore", "cacheStatus", "userFolders", "sharedFolders", "userFolderSharedFolders", "sharedFolderFolders", "records", "recordMetaData", "nonSharedData", "recordLinks", "userFolderRecords", "sharedFolderRecords", "sharedFolderFolderRecords", "sharedFolderUsers", "sharedFolderTeams", "recordAddAuditData", "teams", "sharingChanges", "profile", "profilePic", "pendingTeamMembers", "breachWatchRecords", "userAuths", "breachWatchSecurityData", "reusedPasswords", "removedUserFolders", "removedSharedFolders", "removedUserFolderSharedFolders", "removedSharedFolderFolders", "removedRecords", "removedRecordLinks", "removedUserFolderRecords", "removedSharedFolderRecords", "removedSharedFolderFolderRecords", "removedSharedFolderUsers", "removedSharedFolderTeams", "removedTeams", "ksmAppShares", "ksmAppClients", "shareInvitations", "diagnostics", "recordRotations", "users", "removedUsers", "securityScoreData", "notificationSync", "keeperDriveData")
@@ -140,7 +141,7 @@ class SyncDownResponse(_message.Message):
     securityScoreData: _containers.RepeatedCompositeFieldContainer[SecurityScoreData]
     notificationSync: _containers.RepeatedCompositeFieldContainer[_NotificationCenter_pb2.NotificationWrapper]
     keeperDriveData: KeeperDriveData
-    def __init__(self, continuationToken: _Optional[bytes] = ..., hasMore: bool = ..., cacheStatus: _Optional[_Union[CacheStatus, str]] = ..., userFolders: _Optional[_Iterable[_Union[UserFolder, _Mapping]]] = ..., sharedFolders: _Optional[_Iterable[_Union[SharedFolder, _Mapping]]] = ..., userFolderSharedFolders: _Optional[_Iterable[_Union[UserFolderSharedFolder, _Mapping]]] = ..., sharedFolderFolders: _Optional[_Iterable[_Union[SharedFolderFolder, _Mapping]]] = ..., records: _Optional[_Iterable[_Union[Record, _Mapping]]] = ..., recordMetaData: _Optional[_Iterable[_Union[RecordMetaData, _Mapping]]] = ..., nonSharedData: _Optional[_Iterable[_Union[NonSharedData, _Mapping]]] = ..., recordLinks: _Optional[_Iterable[_Union[RecordLink, _Mapping]]] = ..., userFolderRecords: _Optional[_Iterable[_Union[UserFolderRecord, _Mapping]]] = ..., sharedFolderRecords: _Optional[_Iterable[_Union[SharedFolderRecord, _Mapping]]] = ..., sharedFolderFolderRecords: _Optional[_Iterable[_Union[SharedFolderFolderRecord, _Mapping]]] = ..., sharedFolderUsers: _Optional[_Iterable[_Union[SharedFolderUser, _Mapping]]] = ..., sharedFolderTeams: _Optional[_Iterable[_Union[SharedFolderTeam, _Mapping]]] = ..., recordAddAuditData: _Optional[_Iterable[bytes]] = ..., teams: _Optional[_Iterable[_Union[Team, _Mapping]]] = ..., sharingChanges: _Optional[_Iterable[_Union[SharingChange, _Mapping]]] = ..., profile: _Optional[_Union[Profile, _Mapping]] = ..., profilePic: _Optional[_Union[ProfilePic, _Mapping]] = ..., pendingTeamMembers: _Optional[_Iterable[_Union[PendingTeamMember, _Mapping]]] = ..., breachWatchRecords: _Optional[_Iterable[_Union[BreachWatchRecord, _Mapping]]] = ..., userAuths: _Optional[_Iterable[_Union[UserAuth, _Mapping]]] = ..., breachWatchSecurityData: _Optional[_Iterable[_Union[BreachWatchSecurityData, _Mapping]]] = ..., reusedPasswords: _Optional[_Union[ReusedPasswords, _Mapping]] = ..., removedUserFolders: _Optional[_Iterable[bytes]] = ..., removedSharedFolders: _Optional[_Iterable[bytes]] = ..., removedUserFolderSharedFolders: _Optional[_Iterable[_Union[UserFolderSharedFolder, _Mapping]]] = ..., removedSharedFolderFolders: _Optional[_Iterable[_Union[SharedFolderFolder, _Mapping]]] = ..., removedRecords: _Optional[_Iterable[bytes]] = ..., removedRecordLinks: _Optional[_Iterable[_Union[RecordLink, _Mapping]]] = ..., removedUserFolderRecords: _Optional[_Iterable[_Union[UserFolderRecord, _Mapping]]] = ..., removedSharedFolderRecords: _Optional[_Iterable[_Union[SharedFolderRecord, _Mapping]]] = ..., removedSharedFolderFolderRecords: _Optional[_Iterable[_Union[SharedFolderFolderRecord, _Mapping]]] = ..., removedSharedFolderUsers: _Optional[_Iterable[_Union[SharedFolderUser, _Mapping]]] = ..., removedSharedFolderTeams: _Optional[_Iterable[_Union[SharedFolderTeam, _Mapping]]] = ..., removedTeams: _Optional[_Iterable[bytes]] = ..., ksmAppShares: _Optional[_Iterable[_Union[KsmChange, _Mapping]]] = ..., ksmAppClients: _Optional[_Iterable[_Union[KsmChange, _Mapping]]] = ..., shareInvitations: _Optional[_Iterable[_Union[ShareInvitation, _Mapping]]] = ..., diagnostics: _Optional[_Union[SyncDiagnostics, _Mapping]] = ..., recordRotations: _Optional[_Iterable[_Union[RecordRotation, _Mapping]]] = ..., users: _Optional[_Iterable[_Union[User, _Mapping]]] = ..., removedUsers: _Optional[_Iterable[bytes]] = ..., securityScoreData: _Optional[_Iterable[_Union[SecurityScoreData, _Mapping]]] = ..., notificationSync: _Optional[_Iterable[_Union[_NotificationCenter_pb2.NotificationWrapper, _Mapping]]] = ..., keeperDriveData: _Optional[_Union[KeeperDriveData, _Mapping]] = ...) -> None: ...
+    def __init__(self, continuationToken: _Optional[bytes] = ..., hasMore: _Optional[bool] = ..., cacheStatus: _Optional[_Union[CacheStatus, str]] = ..., userFolders: _Optional[_Iterable[_Union[UserFolder, _Mapping]]] = ..., sharedFolders: _Optional[_Iterable[_Union[SharedFolder, _Mapping]]] = ..., userFolderSharedFolders: _Optional[_Iterable[_Union[UserFolderSharedFolder, _Mapping]]] = ..., sharedFolderFolders: _Optional[_Iterable[_Union[SharedFolderFolder, _Mapping]]] = ..., records: _Optional[_Iterable[_Union[Record, _Mapping]]] = ..., recordMetaData: _Optional[_Iterable[_Union[RecordMetaData, _Mapping]]] = ..., nonSharedData: _Optional[_Iterable[_Union[NonSharedData, _Mapping]]] = ..., recordLinks: _Optional[_Iterable[_Union[RecordLink, _Mapping]]] = ..., userFolderRecords: _Optional[_Iterable[_Union[UserFolderRecord, _Mapping]]] = ..., sharedFolderRecords: _Optional[_Iterable[_Union[SharedFolderRecord, _Mapping]]] = ..., sharedFolderFolderRecords: _Optional[_Iterable[_Union[SharedFolderFolderRecord, _Mapping]]] = ..., sharedFolderUsers: _Optional[_Iterable[_Union[SharedFolderUser, _Mapping]]] = ..., sharedFolderTeams: _Optional[_Iterable[_Union[SharedFolderTeam, _Mapping]]] = ..., recordAddAuditData: _Optional[_Iterable[bytes]] = ..., teams: _Optional[_Iterable[_Union[Team, _Mapping]]] = ..., sharingChanges: _Optional[_Iterable[_Union[SharingChange, _Mapping]]] = ..., profile: _Optional[_Union[Profile, _Mapping]] = ..., profilePic: _Optional[_Union[ProfilePic, _Mapping]] = ..., pendingTeamMembers: _Optional[_Iterable[_Union[PendingTeamMember, _Mapping]]] = ..., breachWatchRecords: _Optional[_Iterable[_Union[BreachWatchRecord, _Mapping]]] = ..., userAuths: _Optional[_Iterable[_Union[UserAuth, _Mapping]]] = ..., breachWatchSecurityData: _Optional[_Iterable[_Union[BreachWatchSecurityData, _Mapping]]] = ..., reusedPasswords: _Optional[_Union[ReusedPasswords, _Mapping]] = ..., removedUserFolders: _Optional[_Iterable[bytes]] = ..., removedSharedFolders: _Optional[_Iterable[bytes]] = ..., removedUserFolderSharedFolders: _Optional[_Iterable[_Union[UserFolderSharedFolder, _Mapping]]] = ..., removedSharedFolderFolders: _Optional[_Iterable[_Union[SharedFolderFolder, _Mapping]]] = ..., removedRecords: _Optional[_Iterable[bytes]] = ..., removedRecordLinks: _Optional[_Iterable[_Union[RecordLink, _Mapping]]] = ..., removedUserFolderRecords: _Optional[_Iterable[_Union[UserFolderRecord, _Mapping]]] = ..., removedSharedFolderRecords: _Optional[_Iterable[_Union[SharedFolderRecord, _Mapping]]] = ..., removedSharedFolderFolderRecords: _Optional[_Iterable[_Union[SharedFolderFolderRecord, _Mapping]]] = ..., removedSharedFolderUsers: _Optional[_Iterable[_Union[SharedFolderUser, _Mapping]]] = ..., removedSharedFolderTeams: _Optional[_Iterable[_Union[SharedFolderTeam, _Mapping]]] = ..., removedTeams: _Optional[_Iterable[bytes]] = ..., ksmAppShares: _Optional[_Iterable[_Union[KsmChange, _Mapping]]] = ..., ksmAppClients: _Optional[_Iterable[_Union[KsmChange, _Mapping]]] = ..., shareInvitations: _Optional[_Iterable[_Union[ShareInvitation, _Mapping]]] = ..., diagnostics: _Optional[_Union[SyncDiagnostics, _Mapping]] = ..., recordRotations: _Optional[_Iterable[_Union[RecordRotation, _Mapping]]] = ..., users: _Optional[_Iterable[_Union[User, _Mapping]]] = ..., removedUsers: _Optional[_Iterable[bytes]] = ..., securityScoreData: _Optional[_Iterable[_Union[SecurityScoreData, _Mapping]]] = ..., notificationSync: _Optional[_Iterable[_Union[_NotificationCenter_pb2.NotificationWrapper, _Mapping]]] = ..., keeperDriveData: _Optional[_Union[KeeperDriveData, _Mapping]] = ...) -> None: ...
 
 class DriveRecord(_message.Message):
     __slots__ = ("recordUid", "revision", "version", "shared", "clientModifiedTime", "fileSize", "thumbnailSize")
@@ -158,15 +159,16 @@ class DriveRecord(_message.Message):
     clientModifiedTime: int
     fileSize: int
     thumbnailSize: int
-    def __init__(self, recordUid: _Optional[bytes] = ..., revision: _Optional[int] = ..., version: _Optional[int] = ..., shared: bool = ..., clientModifiedTime: _Optional[int] = ..., fileSize: _Optional[int] = ..., thumbnailSize: _Optional[int] = ...) -> None: ...
+    def __init__(self, recordUid: _Optional[bytes] = ..., revision: _Optional[int] = ..., version: _Optional[int] = ..., shared: _Optional[bool] = ..., clientModifiedTime: _Optional[int] = ..., fileSize: _Optional[int] = ..., thumbnailSize: _Optional[int] = ...) -> None: ...
 
 class KeeperDriveData(_message.Message):
-    __slots__ = ("folders", "folderKeys", "folderAccesses", "revokedFolderAccesses", "recordData", "recordKeys", "recordAccesses", "revokedRecordAccesses", "recordSharingStates", "recordLinks", "removedRecordLinks", "breachWatchRecords", "securityScoreData", "breachWatchSecurityData", "removedFolderRecords", "folderRecords", "recordRotationData", "records", "rawDagData")
+    __slots__ = ("folders", "folderKeys", "folderAccesses", "revokedFolderAccesses", "recordData", "nonSharedData", "recordKeys", "recordAccesses", "revokedRecordAccesses", "recordSharingStates", "recordLinks", "removedRecordLinks", "breachWatchRecords", "securityScoreData", "breachWatchSecurityData", "removedFolderRecords", "folderRecords", "recordRotationData", "records", "rawDagData")
     FOLDERS_FIELD_NUMBER: _ClassVar[int]
     FOLDERKEYS_FIELD_NUMBER: _ClassVar[int]
     FOLDERACCESSES_FIELD_NUMBER: _ClassVar[int]
     REVOKEDFOLDERACCESSES_FIELD_NUMBER: _ClassVar[int]
     RECORDDATA_FIELD_NUMBER: _ClassVar[int]
+    NONSHAREDDATA_FIELD_NUMBER: _ClassVar[int]
     RECORDKEYS_FIELD_NUMBER: _ClassVar[int]
     RECORDACCESSES_FIELD_NUMBER: _ClassVar[int]
     REVOKEDRECORDACCESSES_FIELD_NUMBER: _ClassVar[int]
@@ -186,6 +188,7 @@ class KeeperDriveData(_message.Message):
     folderAccesses: _containers.RepeatedCompositeFieldContainer[_folder_pb2.FolderAccessData]
     revokedFolderAccesses: _containers.RepeatedCompositeFieldContainer[_folder_pb2.RevokedAccess]
     recordData: _containers.RepeatedCompositeFieldContainer[_folder_pb2.RecordData]
+    nonSharedData: _containers.RepeatedCompositeFieldContainer[NonSharedData]
     recordKeys: _containers.RepeatedCompositeFieldContainer[_folder_pb2.RecordKey]
     recordAccesses: _containers.RepeatedCompositeFieldContainer[_folder_pb2.RecordAccessData]
     revokedRecordAccesses: _containers.RepeatedCompositeFieldContainer[_record_sharing_pb2.RevokedAccess]
@@ -200,7 +203,7 @@ class KeeperDriveData(_message.Message):
     recordRotationData: _containers.RepeatedCompositeFieldContainer[RecordRotation]
     records: _containers.RepeatedCompositeFieldContainer[DriveRecord]
     rawDagData: _containers.RepeatedCompositeFieldContainer[_dag_pb2.DebugData]
-    def __init__(self, folders: _Optional[_Iterable[_Union[_folder_pb2.FolderData, _Mapping]]] = ..., folderKeys: _Optional[_Iterable[_Union[_folder_pb2.FolderKey, _Mapping]]] = ..., folderAccesses: _Optional[_Iterable[_Union[_folder_pb2.FolderAccessData, _Mapping]]] = ..., revokedFolderAccesses: _Optional[_Iterable[_Union[_folder_pb2.RevokedAccess, _Mapping]]] = ..., recordData: _Optional[_Iterable[_Union[_folder_pb2.RecordData, _Mapping]]] = ..., recordKeys: _Optional[_Iterable[_Union[_folder_pb2.RecordKey, _Mapping]]] = ..., recordAccesses: _Optional[_Iterable[_Union[_folder_pb2.RecordAccessData, _Mapping]]] = ..., revokedRecordAccesses: _Optional[_Iterable[_Union[_record_sharing_pb2.RevokedAccess, _Mapping]]] = ..., recordSharingStates: _Optional[_Iterable[_Union[_record_sharing_pb2.RecordSharingState, _Mapping]]] = ..., recordLinks: _Optional[_Iterable[_Union[RecordLink, _Mapping]]] = ..., removedRecordLinks: _Optional[_Iterable[_Union[RecordLink, _Mapping]]] = ..., breachWatchRecords: _Optional[_Iterable[_Union[BreachWatchRecord, _Mapping]]] = ..., securityScoreData: _Optional[_Iterable[_Union[SecurityScoreData, _Mapping]]] = ..., breachWatchSecurityData: _Optional[_Iterable[_Union[BreachWatchSecurityData, _Mapping]]] = ..., removedFolderRecords: _Optional[_Iterable[_Union[_record_pb2.FolderRecordKey, _Mapping]]] = ..., folderRecords: _Optional[_Iterable[_Union[_folder_pb2.FolderRecord, _Mapping]]] = ..., recordRotationData: _Optional[_Iterable[_Union[RecordRotation, _Mapping]]] = ..., records: _Optional[_Iterable[_Union[DriveRecord, _Mapping]]] = ..., rawDagData: _Optional[_Iterable[_Union[_dag_pb2.DebugData, _Mapping]]] = ...) -> None: ...
+    def __init__(self, folders: _Optional[_Iterable[_Union[_folder_pb2.FolderData, _Mapping]]] = ..., folderKeys: _Optional[_Iterable[_Union[_folder_pb2.FolderKey, _Mapping]]] = ..., folderAccesses: _Optional[_Iterable[_Union[_folder_pb2.FolderAccessData, _Mapping]]] = ..., revokedFolderAccesses: _Optional[_Iterable[_Union[_folder_pb2.RevokedAccess, _Mapping]]] = ..., recordData: _Optional[_Iterable[_Union[_folder_pb2.RecordData, _Mapping]]] = ..., nonSharedData: _Optional[_Iterable[_Union[NonSharedData, _Mapping]]] = ..., recordKeys: _Optional[_Iterable[_Union[_folder_pb2.RecordKey, _Mapping]]] = ..., recordAccesses: _Optional[_Iterable[_Union[_folder_pb2.RecordAccessData, _Mapping]]] = ..., revokedRecordAccesses: _Optional[_Iterable[_Union[_record_sharing_pb2.RevokedAccess, _Mapping]]] = ..., recordSharingStates: _Optional[_Iterable[_Union[_record_sharing_pb2.RecordSharingState, _Mapping]]] = ..., recordLinks: _Optional[_Iterable[_Union[RecordLink, _Mapping]]] = ..., removedRecordLinks: _Optional[_Iterable[_Union[RecordLink, _Mapping]]] = ..., breachWatchRecords: _Optional[_Iterable[_Union[BreachWatchRecord, _Mapping]]] = ..., securityScoreData: _Optional[_Iterable[_Union[SecurityScoreData, _Mapping]]] = ..., breachWatchSecurityData: _Optional[_Iterable[_Union[BreachWatchSecurityData, _Mapping]]] = ..., removedFolderRecords: _Optional[_Iterable[_Union[_record_pb2.FolderRecordKey, _Mapping]]] = ..., folderRecords: _Optional[_Iterable[_Union[_folder_pb2.FolderRecord, _Mapping]]] = ..., recordRotationData: _Optional[_Iterable[_Union[RecordRotation, _Mapping]]] = ..., records: _Optional[_Iterable[_Union[DriveRecord, _Mapping]]] = ..., rawDagData: _Optional[_Iterable[_Union[_dag_pb2.DebugData, _Mapping]]] = ...) -> None: ...
 
 class UserFolder(_message.Message):
     __slots__ = ("folderUid", "parentUid", "userFolderKey", "keyType", "revision", "data")
@@ -246,7 +249,7 @@ class SharedFolder(_message.Message):
     owner: str
     ownerAccountUid: bytes
     name: bytes
-    def __init__(self, sharedFolderUid: _Optional[bytes] = ..., revision: _Optional[int] = ..., sharedFolderKey: _Optional[bytes] = ..., keyType: _Optional[_Union[_record_pb2.RecordKeyType, str]] = ..., data: _Optional[bytes] = ..., defaultManageRecords: bool = ..., defaultManageUsers: bool = ..., defaultCanEdit: bool = ..., defaultCanReshare: bool = ..., cacheStatus: _Optional[_Union[CacheStatus, str]] = ..., owner: _Optional[str] = ..., ownerAccountUid: _Optional[bytes] = ..., name: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, sharedFolderUid: _Optional[bytes] = ..., revision: _Optional[int] = ..., sharedFolderKey: _Optional[bytes] = ..., keyType: _Optional[_Union[_record_pb2.RecordKeyType, str]] = ..., data: _Optional[bytes] = ..., defaultManageRecords: _Optional[bool] = ..., defaultManageUsers: _Optional[bool] = ..., defaultCanEdit: _Optional[bool] = ..., defaultCanReshare: _Optional[bool] = ..., cacheStatus: _Optional[_Union[CacheStatus, str]] = ..., owner: _Optional[str] = ..., ownerAccountUid: _Optional[bytes] = ..., name: _Optional[bytes] = ...) -> None: ...
 
 class UserFolderSharedFolder(_message.Message):
     __slots__ = ("folderUid", "sharedFolderUid", "revision")
@@ -312,7 +315,7 @@ class Team(_message.Message):
     sharedFolderKeys: _containers.RepeatedCompositeFieldContainer[SharedFolderKey]
     teamEccPrivateKey: bytes
     teamEccPublicKey: bytes
-    def __init__(self, teamUid: _Optional[bytes] = ..., name: _Optional[str] = ..., teamKey: _Optional[bytes] = ..., teamKeyType: _Optional[_Union[_record_pb2.RecordKeyType, str]] = ..., teamPrivateKey: _Optional[bytes] = ..., restrictEdit: bool = ..., restrictShare: bool = ..., restrictView: bool = ..., removedSharedFolders: _Optional[_Iterable[bytes]] = ..., sharedFolderKeys: _Optional[_Iterable[_Union[SharedFolderKey, _Mapping]]] = ..., teamEccPrivateKey: _Optional[bytes] = ..., teamEccPublicKey: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, teamUid: _Optional[bytes] = ..., name: _Optional[str] = ..., teamKey: _Optional[bytes] = ..., teamKeyType: _Optional[_Union[_record_pb2.RecordKeyType, str]] = ..., teamPrivateKey: _Optional[bytes] = ..., restrictEdit: _Optional[bool] = ..., restrictShare: _Optional[bool] = ..., restrictView: _Optional[bool] = ..., removedSharedFolders: _Optional[_Iterable[bytes]] = ..., sharedFolderKeys: _Optional[_Iterable[_Union[SharedFolderKey, _Mapping]]] = ..., teamEccPrivateKey: _Optional[bytes] = ..., teamEccPublicKey: _Optional[bytes] = ...) -> None: ...
 
 class Record(_message.Message):
     __slots__ = ("recordUid", "revision", "version", "shared", "clientModifiedTime", "data", "extra", "udata", "fileSize", "thumbnailSize")
@@ -336,7 +339,7 @@ class Record(_message.Message):
     udata: str
     fileSize: int
     thumbnailSize: int
-    def __init__(self, recordUid: _Optional[bytes] = ..., revision: _Optional[int] = ..., version: _Optional[int] = ..., shared: bool = ..., clientModifiedTime: _Optional[int] = ..., data: _Optional[bytes] = ..., extra: _Optional[bytes] = ..., udata: _Optional[str] = ..., fileSize: _Optional[int] = ..., thumbnailSize: _Optional[int] = ...) -> None: ...
+    def __init__(self, recordUid: _Optional[bytes] = ..., revision: _Optional[int] = ..., version: _Optional[int] = ..., shared: _Optional[bool] = ..., clientModifiedTime: _Optional[int] = ..., data: _Optional[bytes] = ..., extra: _Optional[bytes] = ..., udata: _Optional[str] = ..., fileSize: _Optional[int] = ..., thumbnailSize: _Optional[int] = ...) -> None: ...
 
 class RecordLink(_message.Message):
     __slots__ = ("parentRecordUid", "childRecordUid", "recordKey", "revision")
@@ -402,7 +405,7 @@ class RecordMetaData(_message.Message):
     expiration: int
     expirationNotificationType: _record_pb2.TimerNotificationType
     ownerUsername: str
-    def __init__(self, recordUid: _Optional[bytes] = ..., owner: bool = ..., recordKey: _Optional[bytes] = ..., recordKeyType: _Optional[_Union[_record_pb2.RecordKeyType, str]] = ..., canShare: bool = ..., canEdit: bool = ..., ownerAccountUid: _Optional[bytes] = ..., expiration: _Optional[int] = ..., expirationNotificationType: _Optional[_Union[_record_pb2.TimerNotificationType, str]] = ..., ownerUsername: _Optional[str] = ...) -> None: ...
+    def __init__(self, recordUid: _Optional[bytes] = ..., owner: _Optional[bool] = ..., recordKey: _Optional[bytes] = ..., recordKeyType: _Optional[_Union[_record_pb2.RecordKeyType, str]] = ..., canShare: _Optional[bool] = ..., canEdit: _Optional[bool] = ..., ownerAccountUid: _Optional[bytes] = ..., expiration: _Optional[int] = ..., expirationNotificationType: _Optional[_Union[_record_pb2.TimerNotificationType, str]] = ..., ownerUsername: _Optional[str] = ...) -> None: ...
 
 class SharingChange(_message.Message):
     __slots__ = ("recordUid", "shared")
@@ -410,7 +413,7 @@ class SharingChange(_message.Message):
     SHARED_FIELD_NUMBER: _ClassVar[int]
     recordUid: bytes
     shared: bool
-    def __init__(self, recordUid: _Optional[bytes] = ..., shared: bool = ...) -> None: ...
+    def __init__(self, recordUid: _Optional[bytes] = ..., shared: _Optional[bool] = ...) -> None: ...
 
 class Profile(_message.Message):
     __slots__ = ("data", "profileName", "revision")
@@ -476,7 +479,7 @@ class UserAuth(_message.Message):
     encryptedClientKey: bytes
     revision: int
     name: str
-    def __init__(self, uid: _Optional[bytes] = ..., loginType: _Optional[_Union[_APIRequest_pb2.LoginType, str]] = ..., deleted: bool = ..., iterations: _Optional[int] = ..., salt: _Optional[bytes] = ..., encryptedClientKey: _Optional[bytes] = ..., revision: _Optional[int] = ..., name: _Optional[str] = ...) -> None: ...
+    def __init__(self, uid: _Optional[bytes] = ..., loginType: _Optional[_Union[_APIRequest_pb2.LoginType, str]] = ..., deleted: _Optional[bool] = ..., iterations: _Optional[int] = ..., salt: _Optional[bytes] = ..., encryptedClientKey: _Optional[bytes] = ..., revision: _Optional[int] = ..., name: _Optional[str] = ...) -> None: ...
 
 class BreachWatchSecurityData(_message.Message):
     __slots__ = ("recordUid", "revision", "removed")
@@ -486,7 +489,7 @@ class BreachWatchSecurityData(_message.Message):
     recordUid: bytes
     revision: int
     removed: bool
-    def __init__(self, recordUid: _Optional[bytes] = ..., revision: _Optional[int] = ..., removed: bool = ...) -> None: ...
+    def __init__(self, recordUid: _Optional[bytes] = ..., revision: _Optional[int] = ..., removed: _Optional[bool] = ...) -> None: ...
 
 class ReusedPasswords(_message.Message):
     __slots__ = ("count", "revision")
@@ -520,7 +523,7 @@ class SharedFolderRecord(_message.Message):
     expirationNotificationType: _record_pb2.TimerNotificationType
     ownerUsername: str
     rotateOnExpiration: bool
-    def __init__(self, sharedFolderUid: _Optional[bytes] = ..., recordUid: _Optional[bytes] = ..., recordKey: _Optional[bytes] = ..., canShare: bool = ..., canEdit: bool = ..., ownerAccountUid: _Optional[bytes] = ..., expiration: _Optional[int] = ..., owner: bool = ..., expirationNotificationType: _Optional[_Union[_record_pb2.TimerNotificationType, str]] = ..., ownerUsername: _Optional[str] = ..., rotateOnExpiration: bool = ...) -> None: ...
+    def __init__(self, sharedFolderUid: _Optional[bytes] = ..., recordUid: _Optional[bytes] = ..., recordKey: _Optional[bytes] = ..., canShare: _Optional[bool] = ..., canEdit: _Optional[bool] = ..., ownerAccountUid: _Optional[bytes] = ..., expiration: _Optional[int] = ..., owner: _Optional[bool] = ..., expirationNotificationType: _Optional[_Union[_record_pb2.TimerNotificationType, str]] = ..., ownerUsername: _Optional[str] = ..., rotateOnExpiration: _Optional[bool] = ...) -> None: ...
 
 class SharedFolderUser(_message.Message):
     __slots__ = ("sharedFolderUid", "username", "manageRecords", "manageUsers", "accountUid", "expiration", "expirationNotificationType", "rotateOnExpiration")
@@ -540,7 +543,7 @@ class SharedFolderUser(_message.Message):
     expiration: int
     expirationNotificationType: _record_pb2.TimerNotificationType
     rotateOnExpiration: bool
-    def __init__(self, sharedFolderUid: _Optional[bytes] = ..., username: _Optional[str] = ..., manageRecords: bool = ..., manageUsers: bool = ..., accountUid: _Optional[bytes] = ..., expiration: _Optional[int] = ..., expirationNotificationType: _Optional[_Union[_record_pb2.TimerNotificationType, str]] = ..., rotateOnExpiration: bool = ...) -> None: ...
+    def __init__(self, sharedFolderUid: _Optional[bytes] = ..., username: _Optional[str] = ..., manageRecords: _Optional[bool] = ..., manageUsers: _Optional[bool] = ..., accountUid: _Optional[bytes] = ..., expiration: _Optional[int] = ..., expirationNotificationType: _Optional[_Union[_record_pb2.TimerNotificationType, str]] = ..., rotateOnExpiration: _Optional[bool] = ...) -> None: ...
 
 class SharedFolderTeam(_message.Message):
     __slots__ = ("sharedFolderUid", "teamUid", "name", "manageRecords", "manageUsers", "expiration", "expirationNotificationType", "rotateOnExpiration")
@@ -560,7 +563,7 @@ class SharedFolderTeam(_message.Message):
     expiration: int
     expirationNotificationType: _record_pb2.TimerNotificationType
     rotateOnExpiration: bool
-    def __init__(self, sharedFolderUid: _Optional[bytes] = ..., teamUid: _Optional[bytes] = ..., name: _Optional[str] = ..., manageRecords: bool = ..., manageUsers: bool = ..., expiration: _Optional[int] = ..., expirationNotificationType: _Optional[_Union[_record_pb2.TimerNotificationType, str]] = ..., rotateOnExpiration: bool = ...) -> None: ...
+    def __init__(self, sharedFolderUid: _Optional[bytes] = ..., teamUid: _Optional[bytes] = ..., name: _Optional[str] = ..., manageRecords: _Optional[bool] = ..., manageUsers: _Optional[bool] = ..., expiration: _Optional[int] = ..., expirationNotificationType: _Optional[_Union[_record_pb2.TimerNotificationType, str]] = ..., rotateOnExpiration: _Optional[bool] = ...) -> None: ...
 
 class KsmChange(_message.Message):
     __slots__ = ("appRecordUid", "detailId", "removed", "appClientType", "expiration")
@@ -574,7 +577,7 @@ class KsmChange(_message.Message):
     removed: bool
     appClientType: _enterprise_pb2.AppClientType
     expiration: int
-    def __init__(self, appRecordUid: _Optional[bytes] = ..., detailId: _Optional[bytes] = ..., removed: bool = ..., appClientType: _Optional[_Union[_enterprise_pb2.AppClientType, str]] = ..., expiration: _Optional[int] = ...) -> None: ...
+    def __init__(self, appRecordUid: _Optional[bytes] = ..., detailId: _Optional[bytes] = ..., removed: _Optional[bool] = ..., appClientType: _Optional[_Union[_enterprise_pb2.AppClientType, str]] = ..., expiration: _Optional[int] = ...) -> None: ...
 
 class ShareInvitation(_message.Message):
     __slots__ = ("username",)
@@ -624,7 +627,7 @@ class RecordRotation(_message.Message):
     resourceUid: bytes
     lastRotation: int
     lastRotationStatus: RecordRotationStatus
-    def __init__(self, recordUid: _Optional[bytes] = ..., revision: _Optional[int] = ..., configurationUid: _Optional[bytes] = ..., schedule: _Optional[str] = ..., pwdComplexity: _Optional[bytes] = ..., disabled: bool = ..., resourceUid: _Optional[bytes] = ..., lastRotation: _Optional[int] = ..., lastRotationStatus: _Optional[_Union[RecordRotationStatus, str]] = ...) -> None: ...
+    def __init__(self, recordUid: _Optional[bytes] = ..., revision: _Optional[int] = ..., configurationUid: _Optional[bytes] = ..., schedule: _Optional[str] = ..., pwdComplexity: _Optional[bytes] = ..., disabled: _Optional[bool] = ..., resourceUid: _Optional[bytes] = ..., lastRotation: _Optional[int] = ..., lastRotationStatus: _Optional[_Union[RecordRotationStatus, str]] = ...) -> None: ...
 
 class SecurityScoreData(_message.Message):
     __slots__ = ("recordUid", "data", "revision")

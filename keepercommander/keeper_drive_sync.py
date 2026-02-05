@@ -443,68 +443,74 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
 
 def _decrypt_keeper_drive_keys(params):
     """Decrypt Keeper Drive folder and record keys."""
-    # Decrypt folder keys
-    for folder_uid, folder_obj in params.keeper_drive_folders.items():
-        if 'folder_key_unencrypted' in folder_obj:
-            continue
+    newly_decrypted = True
+    
+    while newly_decrypted:
+        newly_decrypted = False
+        
+        for folder_uid, folder_obj in params.keeper_drive_folders.items():
+            if 'folder_key_unencrypted' in folder_obj:
+                continue
 
-        folder_key = None
+            folder_key = None
 
-        if folder_uid in params.keeper_drive_folder_keys:
-            for fk in params.keeper_drive_folder_keys[folder_uid]:
-                try:
-                    if fk['key_type'] == folder_pb2.ENCRYPTED_BY_USER_KEY:
-                        folder_key = crypto.decrypt_aes_v2(fk['encrypted_key'], params.data_key)
-                        break
-                    elif fk['key_type'] == folder_pb2.ENCRYPTED_BY_PARENT_KEY:
-                        parent_uid = folder_obj.get('parent_uid')
-                        if parent_uid and parent_uid in params.keeper_drive_folders:
-                            parent_folder = params.keeper_drive_folders[parent_uid]
-                            if 'folder_key_unencrypted' in parent_folder:
-                                parent_key = parent_folder['folder_key_unencrypted']
-                                folder_key = crypto.decrypt_aes_v2(fk['encrypted_key'], parent_key)
-                                break
-                except Exception as e:
-                    logging.debug(f"Failed to decrypt folder key for {folder_uid} from FolderKey: {e}")
+            if folder_uid in params.keeper_drive_folder_keys:
+                for fk in params.keeper_drive_folder_keys[folder_uid]:
+                    try:
+                        if fk['key_type'] == folder_pb2.ENCRYPTED_BY_USER_KEY:
+                            
+                            folder_key = crypto.decrypt_aes_v2(fk['encrypted_key'], params.data_key)
+                            break
+                        elif fk['key_type'] == folder_pb2.ENCRYPTED_BY_PARENT_KEY:
+                            parent_uid = folder_obj.get('parent_uid')
+                            if parent_uid and parent_uid in params.keeper_drive_folders:
+                                parent_folder = params.keeper_drive_folders[parent_uid]
+                                if 'folder_key_unencrypted' in parent_folder:
+                                    parent_key = parent_folder['folder_key_unencrypted']
+                                    folder_key = crypto.decrypt_aes_v2(fk['encrypted_key'], parent_key)
+                                    break
+                    except Exception as e:
+                        logging.debug(f"Failed to decrypt folder key for {folder_uid}: {e}")
 
-        if not folder_key and folder_uid in params.keeper_drive_folder_accesses:
-            for fa in params.keeper_drive_folder_accesses[folder_uid]:
-                if 'folder_key' not in fa:
-                    continue
+            # Fallback: try from folder access data
+            if not folder_key and folder_uid in params.keeper_drive_folder_accesses:
+                for fa in params.keeper_drive_folder_accesses[folder_uid]:
+                    if 'folder_key' not in fa:
+                        continue
 
-                try:
-                    encrypted_key = fa['folder_key']['encrypted_key']
-                    key_type = fa['folder_key']['encrypted_key_type']
+                    try:
+                        encrypted_key = fa['folder_key']['encrypted_key']
+                        key_type = fa['folder_key']['encrypted_key_type']
 
-                    if key_type == folder_pb2.encrypted_by_data_key_gcm:
-                        folder_key = crypto.decrypt_aes_v2(encrypted_key, params.data_key)
-                        break
-                    elif key_type == folder_pb2.encrypted_by_data_key:
-                        folder_key = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
-                        break
-                    elif key_type == folder_pb2.encrypted_by_public_key:
-                        folder_key = crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
-                        break
-                    elif key_type == folder_pb2.encrypted_by_public_key_ecc:
-                        folder_key = crypto.decrypt_ec(encrypted_key, params.ecc_key)
-                        break
-                except Exception as e:
-                    logging.debug(f"Failed to decrypt folder key for {folder_uid} from FolderAccessData: {e}")
+                        if key_type == folder_pb2.encrypted_by_data_key_gcm:
+                            folder_key = crypto.decrypt_aes_v2(encrypted_key, params.data_key)
+                            break
+                        elif key_type == folder_pb2.encrypted_by_data_key:
+                            folder_key = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
+                            break
+                        elif key_type == folder_pb2.encrypted_by_public_key:
+                            folder_key = crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
+                            break
+                        elif key_type == folder_pb2.encrypted_by_public_key_ecc:
+                            folder_key = crypto.decrypt_ec(encrypted_key, params.ecc_key)
+                            break
+                    except Exception as e:
+                        logging.debug(f"Failed to decrypt folder key for {folder_uid} from access data: {e}")
 
-        if folder_key:
-            folder_obj['folder_key_unencrypted'] = folder_key
+            if folder_key:
+                folder_obj['folder_key_unencrypted'] = folder_key
+                newly_decrypted = True
 
-            if 'data' in folder_obj and folder_obj['data']:
-                try:
-                    data_bytes = crypto.decrypt_aes_v2(folder_obj['data'], folder_key)
-                    data_json = json.loads(data_bytes.decode('utf-8'))
-                    folder_obj['name'] = data_json.get('name', 'Unnamed Folder')
-                    if 'color' in data_json:
-                        folder_obj['color'] = data_json['color']
-                except Exception as e:
-                    logging.debug(f"Failed to decrypt folder data for {folder_uid}: {e}")
+                if 'data' in folder_obj and folder_obj['data']:
+                    try:
+                        data_bytes = crypto.decrypt_aes_v2(folder_obj['data'], folder_key)
+                        data_json = json.loads(data_bytes.decode('utf-8'))
+                        folder_obj['name'] = data_json.get('name', 'Unnamed Folder')
+                        if 'color' in data_json:
+                            folder_obj['color'] = data_json['color']
+                    except Exception as e:
+                        logging.debug(f"Failed to decrypt folder data for {folder_uid}: {e}")
 
-    # Decrypt record keys
     for record_uid, record_keys_list in params.keeper_drive_record_keys.items():
         if record_uid in params.keeper_drive_records:
             record_obj = params.keeper_drive_records[record_uid]
@@ -516,7 +522,23 @@ def _decrypt_keeper_drive_keys(params):
                 try:
                     if 'folder_uid' in rk:
                         folder_uid = rk['folder_uid']
-                        if folder_uid in params.keeper_drive_folders:
+                        
+                        if rk['encrypted_key_type'] == folder_pb2.encrypted_by_data_key_gcm:
+                            try:
+                                record_key = crypto.decrypt_aes_v2(rk['record_key'], params.data_key)
+                                logging.debug(f"Record {record_uid}: decrypted with data key (GCM) from folderRecord")
+                                break
+                            except Exception as e:
+                                logging.debug(f"Record {record_uid}: data key decrypt failed, trying folder key: {e}")
+                        elif rk['encrypted_key_type'] == folder_pb2.encrypted_by_data_key:
+                            try:
+                                record_key = crypto.decrypt_aes_v1(rk['record_key'], params.data_key)
+                                logging.debug(f"Record {record_uid}: decrypted with data key (CBC) from folderRecord")
+                                break
+                            except Exception as e:
+                                logging.debug(f"Record {record_uid}: data key decrypt failed, trying folder key: {e}")
+                        
+                        if not record_key and folder_uid in params.keeper_drive_folders:
                             folder_obj = params.keeper_drive_folders[folder_uid]
                             if 'folder_key_unencrypted' in folder_obj:
                                 folder_key = folder_obj['folder_key_unencrypted']
