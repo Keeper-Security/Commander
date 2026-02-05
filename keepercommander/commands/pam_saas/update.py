@@ -242,11 +242,17 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
                 else:
                     print(f"  {bcolors.FAIL}* the configuration record's required field(s) are missing or blank: "
                           f"{', '.join(missing_fields)}{bcolors.ENDC}")
+
+                # If the record type is login, migrate to saasConfiguration
+                if config_record.record_type == "login":
+                    print(f"  {bcolors.OKGREEN}* migrate record type to SaaS Configuration.{bcolors.ENDC}")
+                    config_record.type_name = "saasConfiguration"
+                    record_management.update_record(params, config_record)
+
                 print("")
-                return plugin
 
         logging.debug("plugin doesn't used attached scripts, or bad SaaS type in config record.")
-        return None
+        return plugin
 
     def execute(self, params: KeeperParams, **kwargs):
 
@@ -281,9 +287,10 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
 
         if do_all:
             logging.debug("search vault for login record types")
-            for record in list(vault_extensions.find_records(params, record_type="login")):
+            for record in list(vault_extensions.find_records(params, record_type=["login", "saasConfiguration"])):
                 logging.debug("--------------------------------------------------------------------------------------")
                 config_record = vault.TypedRecord.load(params, record.record_uid)  # type: vault.TypedRecord
+
                 logging.debug(f"checking record {record.record_uid}, {record.title}")
                 try:
                     self._update_config(
@@ -298,6 +305,8 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
                     print(f"  *{bcolors.FAIL}{err}{bcolors.ENDC}")
                     logging.debug(traceback.format_exc())
                     logging.debug(f"ERROR (no fatal): {err}")
+
+                params.sync_data = True
 
         elif config_record_uid is not None:
             config_record = vault.TypedRecord.load(params, config_record_uid)  # type: vault.TypedRecord
@@ -322,6 +331,11 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
                         api.sync_down(params)
                         config_record = vault.TypedRecord.load(params, config_record_uid)  # type: vault.TypedRecord
 
+                        # If the record type is login, migrate to saasConfiguration
+                        if config_record.record_type == "login":
+                            logging.debug("migrating from login to saasConfiguration record type")
+                            config_record.type_name = "saasConfiguration"
+
                         for required in [True, False]:
                             for field in plugin.fields:
                                 if field.required is required:
@@ -341,11 +355,11 @@ class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
                         if not do_dry_run:
                             record_management.update_record(params, config_record)
                             print("")
-                            print(f"  {bcolors.OKGREEN}* the configuration record has been updated.{bcolors.ENDC}")
+                            print(f"{bcolors.OKGREEN}The SaaS configuration record has been updated.{bcolors.ENDC}")
                             print("")
                         else:
                             print("")
-                            print(f"  {bcolors.OKBLUE}* the configuration record was not saved due "
+                            print(f"{bcolors.OKBLUE}The SaaS configuration record was not saved due "
                                   f"to dry run.{bcolors.ENDC}")
                             print("")
 
