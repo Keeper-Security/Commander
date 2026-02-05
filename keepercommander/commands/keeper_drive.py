@@ -48,13 +48,13 @@ keeper_drive_mkdir_parser = argparse.ArgumentParser(
 keeper_drive_mkdir_parser.add_argument(
     'folder',
     type=str,
-    help='Folder name to create'
+    help='Folder name or path to create (e.g., "Projects/Work" or "folder1/folder2/folder3")'
 )
 keeper_drive_mkdir_parser.add_argument(
-    '--parent',
-    dest='parent_uid',
-    type=str,
-    help='Parent folder UID (omit for root folder)'
+    '-p', '--parents',
+    dest='create_parents',
+    action='store_true',
+    help='Create parent folders as needed'
 )
 keeper_drive_mkdir_parser.add_argument(
     '--color',
@@ -490,49 +490,170 @@ class KeeperDriveMkdirCommand(Command):
     def get_parser(self):
         return keeper_drive_mkdir_parser
     
+    def _resolve_folder_identifier(self, params, identifier):
+        """
+        Resolve folder identifier (name or UID) to a UID.
+        
+        Args:
+            params: KeeperParams instance
+            identifier: Folder name or UID
+        
+        Returns:
+            Resolved folder UID or None if not found
+        """
+        if not identifier:
+            return None
+        
+        # First check if it's already a valid UID (base64-like string)
+        if identifier in params.keeper_drive_folders:
+            return identifier
+        
+        # Try to find by name (case-insensitive)
+        identifier_lower = identifier.lower()
+        for folder_uid, folder_obj in params.keeper_drive_folders.items():
+            folder_name = folder_obj.get('name', '')
+            if folder_name.lower() == identifier_lower:
+                return folder_uid
+        
+        return None
+    
     def execute(self, params, **kwargs):
         """
         Execute the keeper-drive-mkdir command.
         
         Creates a new folder in KeeperDrive using the v3 API endpoint.
+        Works like regular mkdir - uses current folder context and supports nested paths with -p flag.
         """
-        folder_name = kwargs.get('folder')
-        if not folder_name:
-            raise CommandError('keeper-drive-mkdir', 'Folder name is required')
+        folder_path = kwargs.get('folder')
+        if not folder_path:
+            raise CommandError('keeper-drive-mkdir', 'Folder name or path is required')
         
         # Strip whitespace and validate
-        folder_name = folder_name.strip()
-        if not folder_name:
-            raise CommandError('keeper-drive-mkdir', 'Folder name cannot be empty')
+        folder_path = folder_path.strip()
+        if not folder_path:
+            raise CommandError('keeper-drive-mkdir', 'Folder name or path cannot be empty')
         
-        parent_uid = kwargs.get('parent_uid')
+        create_parents = kwargs.get('create_parents', False)
         color = kwargs.get('color')
         inherit_permissions = not kwargs.get('no_inherit_permissions', False)
         
-        try:
-            result = keeper_drive.create_folder_v3(
-                params=params,
-                folder_name=folder_name,
-                parent_uid=parent_uid,
-                color=color,
-                inherit_permissions=inherit_permissions
-            )
+        # Determine the base folder (current folder or root)
+        base_folder_uid = None
+        if hasattr(params, 'current_folder') and params.current_folder:
+            # Check if current folder is a KeeperDrive folder
+            if params.current_folder in params.keeper_drive_folders:
+                base_folder_uid = params.current_folder
+            # If it's root folder (empty string)
+            elif params.current_folder == '':
+                base_folder_uid = None  # Root
+        
+        # Parse folder path (support both '/' and '//' for escaping)
+        folder_parts = []
+        if '/' in folder_path:
+            # Handle path - check for reserved character usage
+            is_slash = False
+            for x in range(0, len(folder_path) - 1):
+                if folder_path[x] == '/':
+                    is_slash = not is_slash
+                else:
+                    if is_slash and not create_parents:
+                        # Single slash in name without -p flag
+                        raise CommandError('keeper-drive-mkdir', 
+                            'Character "/" is reserved. Use "//" inside folder name')
             
-            if result['success']:
-                location = f"under parent {parent_uid}" if parent_uid else "at root"
-                logging.info(f"✓ Folder '{folder_name}' created successfully {location}")
-                logging.info(f"  Folder UID: {result['folder_uid']}")
+            # Split by '/' and handle '//' as escaped slash
+            parts = folder_path.replace('//', '\x00').split('/')
+            folder_parts = [p.replace('\x00', '/') for p in parts if p]
+        else:
+            folder_parts = [folder_path]
+        
+        if not folder_parts:
+            raise CommandError('keeper-drive-mkdir', 'Invalid folder path')
+        
+        # Check if creating nested folders without -p flag
+        if len(folder_parts) > 1 and not create_parents:
+            raise CommandError('keeper-drive-mkdir', 
+                'Character "/" is reserved. Use "//" inside folder name')
+        
+        try:
+            created_folders = []
+            current_parent_uid = base_folder_uid
+            
+            # Create folders in sequence
+            for i, folder_name in enumerate(folder_parts):
+                is_last = (i == len(folder_parts) - 1)
                 
-                # Mark for sync
-                params.sync_data = True
+                # Check if folder already exists at this level
+                existing_uid = None
+                if hasattr(params, 'keeper_drive_folders'):
+                    for fuid, fobj in params.keeper_drive_folders.items():
+                        if fobj.get('name', '').lower() == folder_name.lower():
+                            # Check if it has the correct parent
+                            existing_parent = fobj.get('parent_uid', '')
+                            expected_parent = current_parent_uid or ''
+                            
+                            # Normalize special parent UIDs
+                            if existing_parent == 'AAAAAAAAAAAAAAAAAPmtNA':
+                                existing_parent = ''
+                            if existing_parent == 'root':
+                                existing_parent = ''
+                            
+                            if existing_parent == expected_parent:
+                                existing_uid = fuid
+                                break
                 
-                return result['folder_uid']
-            else:
-                logging.error(f"✗ Failed to create folder: {result['message']}")
-                raise CommandError('keeper-drive-mkdir', result['message'])
+                if existing_uid:
+                    if is_last and not create_parents:
+                        # If it's the last folder and we're not using -p, it's an error
+                        logging.warning(f'kd-mkdir: Folder "{folder_name}" already exists')
+                        return existing_uid
+                    else:
+                        # Use existing folder as parent for next iteration
+                        logging.debug(f"Folder '{folder_name}' already exists (UID: {existing_uid}), skipping")
+                        current_parent_uid = existing_uid
+                        continue
+                
+                # Create the folder
+                result = keeper_drive.create_folder_v3(
+                    params=params,
+                    folder_name=folder_name,
+                    parent_uid=current_parent_uid,
+                    color=color if is_last else None,  # Only apply color to the final folder
+                    inherit_permissions=inherit_permissions
+                )
+                
+                if result['success']:
+                    created_uid = result['folder_uid']
+                    location = f"under parent {current_parent_uid}" if current_parent_uid else "at root"
+                    if not create_parents or is_last:
+                        logging.info(f"✓ Folder '{folder_name}' created successfully {location}")
+                    logging.debug(f"  Folder UID: {created_uid}")
+                    created_folders.append({'name': folder_name, 'uid': created_uid, 'parent': current_parent_uid})
+                    
+                    # Mark for sync after each creation
+                    params.sync_data = True
+                    
+                    # Trigger sync to update folder cache for next iteration
+                    if i < len(folder_parts) - 1:  # Don't sync on last iteration
+                        from keepercommander import api as comm_api
+                        comm_api.sync_down(params)
+                    
+                    # Use newly created folder as parent for next iteration
+                    current_parent_uid = created_uid
+                else:
+                    logging.error(f"✗ Failed to create folder '{folder_name}': {result['message']}")
+                    raise CommandError('keeper-drive-mkdir', result['message'])
+            
+            # Final summary for multiple folders
+            if len(created_folders) > 1:
+                logging.info(f"✓ Successfully created {len(created_folders)} folders")
+            
+            # Return the UID of the final folder
+            return created_folders[-1]['uid'] if created_folders else None
         
         except Exception as e:
-            logging.error(f"Error creating folder: {str(e)}")
+            if 'Character "/" is reserved' not in str(e):
+                logging.error(f"Error creating folder: {str(e)}")
             raise
 
 
@@ -1089,348 +1210,139 @@ class KeeperDriveListCommand(Command):
         """
         Execute the keeper-drive-list command.
         
-        Lists Keeper Drive folders and records from the cache.
+        Lists Keeper Drive folders and records from the cache in a table format.
         """
+        from keepercommander.commands import base
+        
         show_folders = kwargs.get('folders', False)
         show_records = kwargs.get('records', False)
         verbose = kwargs.get('verbose', False)
-        show_permissions = kwargs.get('permissions', False)
+        fmt = kwargs.get('format', 'table')
         
         # If neither flag specified, show both
         if not show_folders and not show_records:
             show_folders = True
             show_records = True
         
-        # Display Keeper Drive folders
-        if show_folders and params.keeper_drive_folders:
-            logging.info("\n=== Keeper Drive Folders ===")
-            for folder_uid, folder_obj in params.keeper_drive_folders.items():
-                name = folder_obj.get('name', 'Unnamed')
-                color = folder_obj.get('color', 'none')
-                parent_uid = folder_obj.get('parent_uid', 'root')
-                has_key = 'folder_key_unencrypted' in folder_obj
-                
-                logging.info(f"\nFolder: {name}")
-                logging.info(f"  UID: {folder_uid}")
-                logging.info(f"  Parent: {parent_uid}")
-                logging.info(f"  Color: {color}")
-                logging.info(f"  Has Key: {'✓' if has_key else '✗'}")
-                
-                # Show owner info (always)
-                owner_name = folder_obj.get('owner_username')
-                if not owner_name:
-                    owner_uid = folder_obj.get('owner_account_uid')
-                    if owner_uid and hasattr(params, 'user_cache'):
-                        owner_name = params.user_cache.get(owner_uid)
-                
-                # If still no owner name, try to get from folder access with AT_OWNER type
-                if not owner_name and folder_uid in params.keeper_drive_folder_accesses:
-                    for access in params.keeper_drive_folder_accesses[folder_uid]:
-                        if access.get('access_type') == 1:  # AT_OWNER
-                            owner_uid = access.get('access_type_uid')
-                            if owner_uid and hasattr(params, 'user_cache'):
-                                owner_name = params.user_cache.get(owner_uid)
-                                break
-                
-                if owner_name:
-                    logging.info(f"  Owner: {owner_name}")
-                
-                # Show permissions if requested
-                if show_permissions or verbose:
-                    # Check for folder access data
-                    if folder_uid in params.keeper_drive_folder_accesses:
-                        from keepercommander.proto import folder_pb2
-                        
-                        # Map enum values to names
-                        access_type_names = {
-                            0: "UNKNOWN",
-                            1: "OWNER",
-                            2: "USER",
-                            3: "TEAM",
-                            4: "ENTERPRISE",
-                            5: "FOLDER",
-                            6: "APPLICATION"
-                        }
-                        
-                        role_type_names = {
-                            0: "NO_ROLE",
-                            1: "VIEWER",
-                            2: "SHARED_MANAGER",
-                            3: "CONTRIBUTOR",
-                            4: "CONTENT_MANAGER",
-                            5: "MANAGER"
-                        }
-                        
-                        # Role descriptions for better UX
-                        role_descriptions = {
-                            0: "Custom permissions",
-                            1: "Can view folder",
-                            2: "Can manage sharing",
-                            3: "Can view and edit folder",
-                            4: "Can manage folder content",
-                            5: "Full management permissions"
-                        }
-                        
-                        accesses = params.keeper_drive_folder_accesses[folder_uid]
-                        
-                        # Show shared access info (exclude owner)
-                        shared_accesses = [a for a in accesses if a.get('access_type', 0) != folder_pb2.AT_OWNER]
-                        if shared_accesses:
-                            # Count shared users/teams
-                            share_count = len(shared_accesses)
-                            logging.info(f"  Shared With: {share_count} {'entity' if share_count == 1 else 'entities'}")
-                            
-                            for access in shared_accesses:
-                                access_type_val = access.get('access_type', 0)
-                                access_type_name = access_type_names.get(access_type_val, f"Unknown({access_type_val})")
-                                
-                                access_role_val = access.get('access_role_type', 0)
-                                access_role_name = role_type_names.get(access_role_val, f"Unknown({access_role_val})")
-                                role_desc = role_descriptions.get(access_role_val, "")
-                                
-                                inherited = access.get('inherited', False)
-                                hidden = access.get('hidden', False)
-                                
-                                # Get user/team email/name from access_type_uid
-                                access_uid = access.get('access_type_uid', '')
-                                entity_name = access.get('username')
-                                if not entity_name and access_uid and hasattr(params, 'user_cache'):
-                                    entity_name = params.user_cache.get(access_uid)
-                                
-                                # If not in user_cache, try enterprise users
-                                if not entity_name and hasattr(params, 'enterprise') and params.enterprise:
-                                    for user in params.enterprise.get('users', []):
-                                        user_uid = user.get('enterprise_user_id')
-                                        if isinstance(user_uid, int):
-                                            user_uid_bytes = user_uid.to_bytes(16, byteorder='big', signed=False)
-                                            user_uid_str = utils.base64_url_encode(user_uid_bytes)
-                                        else:
-                                            user_uid_str = str(user_uid)
-                                        
-                                        if user_uid_str == access_uid:
-                                            entity_name = user.get('username')
-                                            break
-                                
-                                # Build entity display (email or UID)
-                                entity_display = entity_name if entity_name else access_uid[:8] + '...' if len(access_uid) > 8 else access_uid
-                                
-                                # Build display string
-                                inherited_flag = " [inherited]" if inherited else ""
-                                hidden_flag = " [hidden]" if hidden else ""
-                                
-                                # Show access type and role
-                                if access_type_val == 2:  # AT_USER
-                                    logging.info(f"    - User: {entity_display} - {access_role_name} ({role_desc}){inherited_flag}{hidden_flag}")
-                                elif access_type_val == 3:  # AT_TEAM
-                                    logging.info(f"    - Team: {entity_display} - {access_role_name} ({role_desc}){inherited_flag}{hidden_flag}")
-                                else:
-                                    logging.info(f"    - {access_type_name}: {entity_display} - {access_role_name} ({role_desc}){inherited_flag}{hidden_flag}")
-                        else:
-                            # Not shared with anyone
-                            logging.info(f"  Shared: No")
-                
-                if verbose:
-                    logging.info(f"  Type: {folder_obj.get('type', 'N/A')}")
-                    logging.info(f"  Inherit Permissions: {folder_obj.get('inherit_permissions', 'N/A')}")
-                    if folder_uid in params.keeper_drive_folder_records:
-                        record_count = len(params.keeper_drive_folder_records[folder_uid])
-                        logging.info(f"  Records: {record_count}")
-                    
-                    # Check if in subfolder_cache
-                    in_subfolder = folder_uid in params.subfolder_cache
-                    in_folder_cache = folder_uid in params.folder_cache
-                    logging.info(f"  In subfolder_cache: {'✓' if in_subfolder else '✗'}")
-                    logging.info(f"  In folder_cache: {'✓' if in_folder_cache else '✗'}")
-                    
-                    if in_folder_cache:
-                        folder_node = params.folder_cache[folder_uid]
-                        logging.info(f"  Node name: {folder_node.name}")
-                        logging.info(f"  Subfolders: {len(folder_node.subfolders) if folder_node.subfolders else 0}")
-            
-            logging.info(f"\nTotal Keeper Drive folders: {len(params.keeper_drive_folders)}")
-        elif show_folders:
-            logging.info("No Keeper Drive folders found in cache.")
+        # Collect all items
+        combined_table = []
         
-        # Display Keeper Drive records
-        if show_records and params.keeper_drive_records:
-            logging.info("\n=== Keeper Drive Records ===")
-            for record_uid, record_obj in params.keeper_drive_records.items():
-                version = record_obj.get('version', 'N/A')
-                revision = record_obj.get('revision', 'N/A')
-                has_key = 'record_key_unencrypted' in record_obj
+        # Process folders
+        if show_folders and hasattr(params, 'keeper_drive_folders') and params.keeper_drive_folders:
+            for folder_uid, folder_obj in params.keeper_drive_folders.items():
+                title = folder_obj.get('name', 'Unnamed')
+                parent_uid = folder_obj.get('parent_uid', '')
+                # Replace specific UID with 'root'
+                if parent_uid == 'AAAAAAAAAAAAAAAAAPmtNA':
+                    parent_uid = 'root'
+                elif parent_uid == 'root':
+                    parent_uid = 'root'
+                elif not parent_uid:
+                    parent_uid = ''
                 
-                # Get title from record data if available
+                # Get shared info
+                shared = 'No'
+                if hasattr(params, 'keeper_drive_folder_accesses') and folder_uid in params.keeper_drive_folder_accesses:
+                    from keepercommander.proto import folder_pb2
+                    accesses = params.keeper_drive_folder_accesses[folder_uid]
+                    shared_accesses = [a for a in accesses if a.get('access_type', 0) != folder_pb2.AT_OWNER]
+                    if shared_accesses:
+                        shared = f"Yes ({len(shared_accesses)})"
+                
+                # Folders: Item Type, UID, Title, Type (empty), Description (empty), Shared, Parent/Folder
+                row = ['Folder', folder_uid, title, '', '', shared, parent_uid]
+                combined_table.append(row)
+        
+        # Process records
+        if show_records and hasattr(params, 'keeper_drive_records') and params.keeper_drive_records:
+            for record_uid, record_obj in params.keeper_drive_records.items():
+                
+                # Get title, type, and description from record data
                 title = 'Unknown'
-                type = 'Unknown'
-                if record_uid in params.keeper_drive_record_data:
+                rec_type = 'Unknown'
+                description = ''
+                if hasattr(params, 'keeper_drive_record_data') and record_uid in params.keeper_drive_record_data:
                     data_obj = params.keeper_drive_record_data[record_uid]
                     if 'data_json' in data_obj:
-                        title = data_obj['data_json'].get('title', 'Unknown')
-                        type = data_obj['data_json'].get('type', 'Unknown')
+                        data_json = data_obj['data_json']
+                        title = data_json.get('title', 'Unknown')
+                        rec_type = data_json.get('type', 'Unknown')
+                        # Get description/notes from fields
+                        fields = data_json.get('fields', [])
+                        for field in fields:
+                            if field.get('type') == 'note' or field.get('type') == 'multiline':
+                                field_value = field.get('value', [])
+                                if isinstance(field_value, list) and len(field_value) > 0:
+                                    description = str(field_value[0])
+                                    break
                 
-                logging.info(f"\nRecord: {title}")
-                logging.info(f"  UID: {record_uid}")
-                logging.info(f"  Type: {type}")
-                logging.info(f"  Version: {version}")
-                logging.info(f"  Revision: {revision}")
-                logging.info(f"  Has Key: {'✓' if has_key else '✗'}")
+                # Get shared info
+                shared = 'No'
+                if hasattr(params, 'keeper_drive_record_accesses') and record_uid in params.keeper_drive_record_accesses:
+                    accesses = params.keeper_drive_record_accesses[record_uid]
+                    shared_accesses = [a for a in accesses if not a.get('owner', False)]
+                    if shared_accesses:
+                        shared = f"Yes ({len(shared_accesses)})"
                 
-                # Show owner info
-                owner_name = None
+                # Find folder location
+                folder_location = ''
+                if hasattr(params, 'keeper_drive_folder_records'):
+                    for fuid, rec_set in params.keeper_drive_folder_records.items():
+                        if record_uid in rec_set:
+                            # Replace specific UID with 'root'
+                            if fuid == 'AAAAAAAAAAAAAAAAAPmtNA':
+                                folder_location = 'root'
+                            elif hasattr(params, 'keeper_drive_folders') and fuid in params.keeper_drive_folders:
+                                folder_location = params.keeper_drive_folders[fuid].get('name', fuid)
+                            else:
+                                folder_location = fuid
+                            break
+                else:
+                    # If not in any folder in keeper_drive_folder_records, it might be at root
+                    folder_location = 'root'
                 
-                # Try to get owner from record_data first (most accurate)
-                if record_uid in params.keeper_drive_record_data:
-                    rd_obj = params.keeper_drive_record_data[record_uid]
-                    owner_name = rd_obj.get('user_username')
-                    if not owner_name:
-                        owner_uid = rd_obj.get('user_account_uid')
-                        if owner_uid and hasattr(params, 'user_cache'):
-                            owner_name = params.user_cache.get(owner_uid)
-                
-                # Fallback to meta_data_cache
-                if not owner_name and record_uid in params.meta_data_cache:
-                    md = params.meta_data_cache[record_uid]
-                    owner_name = md.get('owner_username')
-                    if not owner_name:
-                        owner_uid = md.get('owner_account_uid')
-                        if owner_uid and hasattr(params, 'user_cache'):
-                            owner_name = params.user_cache.get(owner_uid)
-                
-                # Fallback to record_owner_cache
-                if not owner_name and record_uid in params.record_owner_cache:
-                    from keepercommander.params import RecordOwner
-                    owner_info = params.record_owner_cache[record_uid]
-                    if isinstance(owner_info, RecordOwner):
-                        owner_uid = owner_info.account_uid
-                        if owner_uid and hasattr(params, 'user_cache'):
-                            owner_name = params.user_cache.get(owner_uid)
-                
-                if owner_name:
-                    logging.info(f"  Owner: {owner_name}")
-                
-                # Show permissions if requested
-                if show_permissions or verbose:
-                    # Check for record access data
-                    if record_uid in params.keeper_drive_record_accesses:
-                        from keepercommander.proto import folder_pb2
-                        
-                        # Map enum values to names
-                        access_type_names = {
-                            0: "UNKNOWN",
-                            1: "OWNER",
-                            2: "USER",
-                            3: "TEAM",
-                            4: "ENTERPRISE",
-                            5: "FOLDER",
-                            6: "APPLICATION"
-                        }
-                        
-                        role_type_names = {
-                            0: "NO_ROLE",
-                            1: "VIEWER",
-                            2: "SHARED_MANAGER",
-                            3: "CONTRIBUTOR",
-                            4: "CONTENT_MANAGER",
-                            5: "MANAGER"
-                        }
-                        
-                        # Role descriptions for better UX
-                        role_descriptions = {
-                            0: "Custom permissions",
-                            1: "Can view record",
-                            2: "Can manage sharing",
-                            3: "Can view and edit record",
-                            4: "Can manage record content",
-                            5: "Full management permissions"
-                        }
-                        
-                        accesses = params.keeper_drive_record_accesses[record_uid]
-                        
-                        # Only show sharing info if record is actually shared with others (exclude owner)
-                        shared_accesses = [a for a in accesses if not a.get('owner', False)]
-                        if shared_accesses:
-                            # Count shared users
-                            share_count = len(shared_accesses)
-                            logging.info(f"  Shared With: {share_count} {'user' if share_count == 1 else 'users'}")
-                            
-                            for access in shared_accesses:
-                                access_role_val = access.get('access_role_type', 0)
-                                access_role_name = role_type_names.get(access_role_val, f"Unknown({access_role_val})")
-                                role_desc = role_descriptions.get(access_role_val, "")
-                                
-                                can_edit = access.get('can_edit', False)
-                                can_view = access.get('can_view', False)
-                                can_share = access.get('can_share', False)
-                                can_delete = access.get('can_delete', False)
-                                
-                                # Get user email/name from access_uid
-                                access_uid = access.get('access_uid', '')
-                                user_name = access.get('username')
-                                if not user_name and access_uid and hasattr(params, 'user_cache'):
-                                    user_name = params.user_cache.get(access_uid)
-                                
-                                # If not in user_cache, try enterprise users
-                                if not user_name and hasattr(params, 'enterprise') and params.enterprise:
-                                    # Try to find user by matching account_uid
-                                    for user in params.enterprise.get('users', []):
-                                        if user.get('user_account_uid') == access_uid:
-                                            user_name = user.get('username')
-                                            break
-                                
-                                # Build user display (email or UID)
-                                user_display = user_name if user_name else access_uid[:8] + '...' if len(access_uid) > 8 else access_uid
-                                
-                                # Show role
-                                if access_role_val == 0:
-                                    # NO_ROLE means custom permissions - just show permissions
-                                    permissions = []
-                                    if can_view:
-                                        permissions.append("View")
-                                    if can_edit:
-                                        permissions.append("Edit")
-                                    if can_share:
-                                        permissions.append("Share")
-                                    if can_delete:
-                                        permissions.append("Delete")
-                                    if permissions:
-                                        logging.info(f"    - {user_display}: Custom ({', '.join(permissions)})")
-                                else:
-                                    # Show role with description
-                                    logging.info(f"    - {user_display}: {access_role_name} ({role_desc})")
-                        else:
-                            # Not shared with anyone
-                            logging.info(f"  Shared: No")
-                    
-                    # Check sharing state
-                    from keepercommander.proto import record_sharing_pb2
-                    if hasattr(params, 'keeper_drive_record_sharing_states'):
-                        if record_uid in params.keeper_drive_record_sharing_states:
-                            state = params.keeper_drive_record_sharing_states[record_uid]
-                            logging.info(f"  Sharing State:")
-                            logging.info(f"    Directly Shared: {'✓' if state.get('is_directly_shared') else '✗'}")
-                            logging.info(f"    Indirectly Shared: {'✓' if state.get('is_indirectly_shared') else '✗'}")
-                
-                if verbose:
-                    logging.info(f"  Shared: {record_obj.get('shared', False)}")
-                    if 'file_size' in record_obj:
-                        logging.info(f"  File Size: {record_obj['file_size']} bytes")
-                    
-                    # Check if in record_cache
-                    in_record_cache = record_uid in params.record_cache
-                    logging.info(f"  In record_cache: {'✓' if in_record_cache else '✗'}")
-            
-            logging.info(f"\nTotal Keeper Drive records: {len(params.keeper_drive_records)}")
-        elif show_records:
-            logging.info("No Keeper Drive records found in cache.")
+                # Records: Item Type, UID, Title, Type, Description, Shared, Parent/Folder
+                row = ['Record', record_uid, title, rec_type, description, shared, folder_location]
+                combined_table.append(row)
         
-        # Summary
-        if not verbose:
-            logging.info("\nSummary:")
-            logging.info(f"  Keeper Drive folders: {len(params.keeper_drive_folders)}")
-            logging.info(f"  Keeper Drive records: {len(params.keeper_drive_records)}")
-            logging.info(f"  Total subfolder_cache entries: {len(params.subfolder_cache)}")
-            logging.info(f"  Total folder_cache entries: {len(params.folder_cache)}")
-            logging.info("\nTip: Use --verbose (-v) for detailed information")
+        # Display results
+        if combined_table:
+            # Sort by type (Folder first, then Record) and then by name
+            combined_table.sort(key=lambda x: (x[0], (x[2] or '').lower()))
+            
+            if verbose or fmt in ('json', 'csv'):
+                # Verbose view: Item Type, UID, Title, Type, Description, Shared, Parent/Folder
+                headers = ['Item Type', 'UID', 'Title', 'Type', 'Description', 'Shared', 'Parent/Folder']
+            else:
+                # Compact view: Item Type, UID, Title, Type, Description, Shared
+                combined_table = [[row[0], row[1], row[2], row[3], row[4], row[5]] for row in combined_table]
+                headers = ['Item Type', 'UID', 'Title', 'Type', 'Description', 'Shared']
+            
+            if fmt != 'json':
+                headers = [base.field_to_title(x) for x in headers]
+            
+            return base.dump_report_data(
+                combined_table, 
+                headers, 
+                fmt=fmt, 
+                filename=kwargs.get('output'),
+                row_number=True, 
+                column_width=None if verbose else 40
+            )
+        else:
+            if show_folders and show_records:
+                logging.info("No Keeper Drive folders or records found in cache.")
+            elif show_folders:
+                logging.info("No Keeper Drive folders found in cache.")
+            elif show_records:
+                logging.info("No Keeper Drive records found in cache.")
+            
+            # Show summary
+            folder_count = len(params.keeper_drive_folders) if hasattr(params, 'keeper_drive_folders') else 0
+            record_count = len(params.keeper_drive_records) if hasattr(params, 'keeper_drive_records') else 0
+            logging.info(f"\nSummary:")
+            logging.info(f"  Keeper Drive folders: {folder_count}")
+            logging.info(f"  Keeper Drive records: {record_count}")
 
 
 class KeeperDriveGrantAccessCommand(Command):
@@ -2616,55 +2528,56 @@ class KeeperDriveGetFolderAccessCommand(Command):
 
 def register_commands(commands):
     """Register KeeperDrive commands"""
-    commands['keeper-drive-mkdir'] = KeeperDriveMkdirCommand()
-    commands['keeper-drive-mkdir-batch'] = KeeperDriveMkdirBatchCommand()
-    commands['keeper-drive-add-record'] = KeeperDriveAddRecordCommand()
-    commands['keeper-drive-add-records-batch'] = KeeperDriveAddRecordsBatchCommand()
-    commands['keeper-drive-update-record'] = KeeperDriveUpdateRecordCommand()
-    commands['keeper-drive-update-folder'] = KeeperDriveUpdateFolderCommand()
-    commands['keeper-drive-update-folders-batch'] = KeeperDriveUpdateFoldersBatchCommand()
-    commands['keeper-drive-list'] = KeeperDriveListCommand()
-    commands['keeper-drive-grant-access'] = KeeperDriveGrantAccessCommand()
-    commands['keeper-drive-update-access'] = KeeperDriveUpdateAccessCommand()
-    commands['keeper-drive-revoke-access'] = KeeperDriveRevokeAccessCommand()
-    commands['keeper-drive-manage-access-batch'] = KeeperDriveManageAccessBatchCommand()
-    commands['keeper-drive-get-record-details'] = KeeperDriveGetRecordDetailsCommand()
-    commands['keeper-drive-get-record-access'] = KeeperDriveGetRecordAccessCommand()
-    commands['keeper-drive-share-record'] = KeeperDriveShareRecordCommand()
-    commands['keeper-drive-update-record-share'] = KeeperDriveUpdateRecordShareCommand()
-    commands['keeper-drive-unshare-record'] = KeeperDriveUnshareRecordCommand()
-    commands['keeper-drive-transfer-record'] = KeeperDriveTransferRecordCommand()
-    commands['keeper-drive-transfer-records-batch'] = KeeperDriveTransferRecordsBatchCommand()
-    commands['keeper-drive-add-record-to-folder'] = KeeperDriveAddRecordToFolderCommand()
-    commands['keeper-drive-remove-record-from-folder'] = KeeperDriveRemoveRecordFromFolderCommand()
-    commands['keeper-drive-move-record'] = KeeperDriveMoveRecordCommand()
-    commands['keeper-drive-manage-folder-records-batch'] = KeeperDriveManageFolderRecordsBatchCommand()
-    commands['keeper-drive-get-folder-access'] = KeeperDriveGetFolderAccessCommand()
+    # Shorter command names (kd-* instead of keeper-drive-*)
+    commands['kd-mkdir'] = KeeperDriveMkdirCommand()
+    commands['kd-mkdir-batch'] = KeeperDriveMkdirBatchCommand()
+    commands['kd-add-record'] = KeeperDriveAddRecordCommand()
+    commands['kd-add-records-batch'] = KeeperDriveAddRecordsBatchCommand()
+    commands['kd-update-record'] = KeeperDriveUpdateRecordCommand()
+    commands['kd-update-folder'] = KeeperDriveUpdateFolderCommand()
+    commands['kd-update-folders-batch'] = KeeperDriveUpdateFoldersBatchCommand()
+    commands['kd-list'] = KeeperDriveListCommand()
+    commands['kd-grant-access'] = KeeperDriveGrantAccessCommand()
+    commands['kd-update-access'] = KeeperDriveUpdateAccessCommand()
+    commands['kd-revoke-access'] = KeeperDriveRevokeAccessCommand()
+    commands['kd-manage-access-batch'] = KeeperDriveManageAccessBatchCommand()
+    commands['kd-record-details'] = KeeperDriveGetRecordDetailsCommand()
+    commands['kd-record-access'] = KeeperDriveGetRecordAccessCommand()
+    commands['kd-share-record'] = KeeperDriveShareRecordCommand()
+    commands['kd-update-record-share'] = KeeperDriveUpdateRecordShareCommand()
+    commands['kd-unshare-record'] = KeeperDriveUnshareRecordCommand()
+    commands['kd-transfer-record'] = KeeperDriveTransferRecordCommand()
+    commands['kd-transfer-records-batch'] = KeeperDriveTransferRecordsBatchCommand()
+    commands['kd-add-record-to-folder'] = KeeperDriveAddRecordToFolderCommand()
+    commands['kd-remove-record-from-folder'] = KeeperDriveRemoveRecordFromFolderCommand()
+    commands['kd-move-record'] = KeeperDriveMoveRecordCommand()
+    commands['kd-manage-folder-records-batch'] = KeeperDriveManageFolderRecordsBatchCommand()
+    commands['kd-folder-access'] = KeeperDriveGetFolderAccessCommand()
 
 
 def register_command_info(aliases, command_info):
     """Register command information for help"""
-    command_info['keeper-drive-mkdir'] = 'Create a KeeperDrive folder (v3 API)'
-    command_info['keeper-drive-mkdir-batch'] = 'Create multiple KeeperDrive folders (v3 API)'
-    command_info['keeper-drive-add-record'] = 'Create a KeeperDrive record (v3 API)'
-    command_info['keeper-drive-add-records-batch'] = 'Create multiple KeeperDrive records (v3 API)'
-    command_info['keeper-drive-update-record'] = 'Update a KeeperDrive record (v3 API)'
-    command_info['keeper-drive-update-folder'] = 'Update a KeeperDrive folder (v3 API)'
-    command_info['keeper-drive-update-folders-batch'] = 'Update multiple KeeperDrive folders (v3 API)'
-    command_info['keeper-drive-list'] = 'List Keeper Drive folders and records'
-    command_info['keeper-drive-grant-access'] = 'Grant user access to a folder (v3 API)'
-    command_info['keeper-drive-update-access'] = 'Update user access to a folder (v3 API)'
-    command_info['keeper-drive-revoke-access'] = 'Revoke user access from a folder (v3 API)'
-    command_info['keeper-drive-manage-access-batch'] = 'Batch manage folder access (v3 API)'
-    command_info['keeper-drive-get-record-details'] = 'Get record metadata (title, color) (v3 API)'
-    command_info['keeper-drive-get-record-access'] = 'Get record access permissions (v3 API)'
-    command_info['keeper-drive-share-record'] = 'Share a record with a user (v3 API)'
-    command_info['keeper-drive-update-record-share'] = 'Update record sharing permissions (v3 API)'
-    command_info['keeper-drive-unshare-record'] = 'Unshare a record from a user (v3 API)'
-    command_info['keeper-drive-transfer-record'] = 'Transfer record ownership to another user (v3 API)'
-    command_info['keeper-drive-transfer-records-batch'] = 'Transfer ownership of multiple records in batch (v3 API)'
-    command_info['keeper-drive-add-record-to-folder'] = 'Add a record to a folder (v3 API)'
-    command_info['keeper-drive-remove-record-from-folder'] = 'Remove a record from a folder (v3 API)'
-    command_info['keeper-drive-move-record'] = 'Move a record between folders or to/from root (v3 API)'
-    command_info['keeper-drive-manage-folder-records-batch'] = 'Batch manage records in a folder (v3 API)'
-    command_info['keeper-drive-get-folder-access'] = 'Retrieve accessors (users and teams) of folders (v3 API)'
+    command_info['kd-mkdir'] = 'Create a KeeperDrive folder (v3 API)'
+    command_info['kd-mkdir-batch'] = 'Create multiple KeeperDrive folders (v3 API)'
+    command_info['kd-add-record'] = 'Create a KeeperDrive record (v3 API)'
+    command_info['kd-add-records-batch'] = 'Create multiple KeeperDrive records (v3 API)'
+    command_info['kd-update-record'] = 'Update a KeeperDrive record (v3 API)'
+    command_info['kd-update-folder'] = 'Update a KeeperDrive folder (v3 API)'
+    command_info['kd-update-folders-batch'] = 'Update multiple KeeperDrive folders (v3 API)'
+    command_info['kd-list'] = 'List Keeper Drive folders and records'
+    command_info['kd-grant-access'] = 'Grant user access to a folder (v3 API)'
+    command_info['kd-update-access'] = 'Update user access to a folder (v3 API)'
+    command_info['kd-revoke-access'] = 'Revoke user access from a folder (v3 API)'
+    command_info['kd-manage-access-batch'] = 'Batch manage folder access (v3 API)'
+    command_info['kd-record-details'] = 'Get record metadata (title, color) (v3 API)'
+    command_info['kd-record-access'] = 'Get record access permissions (v3 API)'
+    command_info['kd-share-record'] = 'Share a record with a user (v3 API)'
+    command_info['kd-update-record-share'] = 'Update record sharing permissions (v3 API)'
+    command_info['kd-unshare-record'] = 'Unshare a record from a user (v3 API)'
+    command_info['kd-transfer-record'] = 'Transfer record ownership to another user (v3 API)'
+    command_info['kd-transfer-records-batch'] = 'Transfer ownership of multiple records in batch (v3 API)'
+    command_info['kd-add-record-to-folder'] = 'Add a record to a folder (v3 API)'
+    command_info['kd-remove-record-from-folder'] = 'Remove a record from a folder (v3 API)'
+    command_info['kd-move-record'] = 'Move a record between folders or to/from root (v3 API)'
+    command_info['kd-manage-folder-records-batch'] = 'Batch manage records in a folder (v3 API)'
+    command_info['kd-folder-access'] = 'Retrieve accessors (users and teams) of folders (v3 API)'
