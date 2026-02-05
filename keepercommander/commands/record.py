@@ -1266,13 +1266,16 @@ class RecordListCommand(Command):
             search_fields=search_fields,
             use_regex=True)]
         if any(records):
-            headers = ['record_uid', 'type', 'title', 'description', 'shared']
+            headers = ['record_uid', 'type', 'title', 'description', 'shared', 'record_type']
             if fmt == 'table':
                 headers = [base.field_to_title(x) for x in headers]
             table = []
             for record in records:
+                # Determine if record is from Keeper Drive or Legacy
+                is_keeper_drive = hasattr(params, 'keeper_drive_records') and record.record_uid in params.keeper_drive_records
+                source = 'KeeperDrive' if is_keeper_drive else 'Legacy'
                 row = [record.record_uid, record.record_type, record.title,
-                       vault_extensions.get_record_description(record), record.shared]
+                       vault_extensions.get_record_description(record), record.shared, source]
                 table.append(row)
             table.sort(key=lambda x: (x[2] or '').lower())
             if fmt != 'json':
