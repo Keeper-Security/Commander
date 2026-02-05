@@ -166,7 +166,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
                     value = get_field_input(item)
                     if value is not None:
                         field_type = item.type
-                        if field_type in ["url", "int", "number", "bool", "enum"]:
+                        if field_type in ["int", "number", "bool", "enum"]:
                             field_type = "text"
 
                         field_args = {
@@ -189,7 +189,7 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
             print(f"{bcolors.FAIL}Require a record title.")
 
         record = vault.TypedRecord()
-        record.type_name = "login"
+        record.type_name = "saasConfiguration"
         record.record_uid = utils.generate_uid()
         record.record_key = utils.generate_aes_key()
         record.title = title

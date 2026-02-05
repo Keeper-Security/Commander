@@ -1,5 +1,7 @@
 from __future__ import annotations
 import argparse
+import logging
+
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ... import vault
 from . import get_plugins_map
@@ -74,8 +76,9 @@ class PAMActionSaasSetCommand(PAMGatewayActionDiscoverCommandBase):
 
         # Make sure this config is a Login record.
 
-        if config_record.record_type != "login":
-            print(self._f("The SaaS configuration record is not a Login record."))
+        if config_record.record_type not in ["login", "saasConfiguration"]:
+            print(self._f("The SaaS configuration record is not a SaaS configuration record: "
+                          f"{config_record.record_type}"))
             return
 
         plugin_name_field = next((x for x in config_record.custom if x.label == "SaaS Type"), None)
