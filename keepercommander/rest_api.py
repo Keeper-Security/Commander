@@ -226,14 +226,23 @@ def execute_rest(context, endpoint, payload):
                         server_key_id = failure['key_id']
                         if 'qrc_ec_key_id' in failure:
                             qrc_ec_key_id = failure['qrc_ec_key_id']
-                            if context.server_key_id != qrc_ec_key_id:
+                            # Defensive check: qrc_ec_key_id must be EC key (7-18)
+                            if not (7 <= qrc_ec_key_id <= 18):
+                                logging.warning(f"Server returned invalid qrc_ec_key_id={qrc_ec_key_id} (expected EC key 7-18). Falling back to EC-only encryption.")
+                                context.disable_qrc()
+                            elif context.server_key_id != qrc_ec_key_id:
                                 # EC key mismatch: update and retry with QRC
                                 logging.debug(f"QRC EC key mismatch: updating from {context.server_key_id} to {qrc_ec_key_id}")
                                 context.server_key_id = qrc_ec_key_id
-                                run_request = True
-                                continue
+                            run_request = True
+                            continue
                         elif server_key_id != context.server_key_id:
-                            context.server_key_id = server_key_id
+                            # If server returns non-EC key without qrc_ec_key_id, disable QRC
+                            if not (7 <= server_key_id <= 18):
+                                logging.warning(f"Server returned non-EC key_id={server_key_id} without qrc_ec_key_id. Falling back to EC-only encryption.")
+                                context.disable_qrc()
+                            else:
+                                context.server_key_id = server_key_id
                             run_request = True
                             continue
                 elif rs.status_code == 403:
