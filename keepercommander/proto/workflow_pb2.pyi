@@ -173,9 +173,19 @@ class WorkflowAccessRequest(_message.Message):
     REASON_FIELD_NUMBER: _ClassVar[int]
     TICKET_FIELD_NUMBER: _ClassVar[int]
     resource: _GraphSync_pb2.GraphSyncRef
-    reason: str
-    ticket: str
-    def __init__(self, resource: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., reason: _Optional[str] = ..., ticket: _Optional[str] = ...) -> None: ...
+    reason: bytes
+    ticket: bytes
+    def __init__(self, resource: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., reason: _Optional[bytes] = ..., ticket: _Optional[bytes] = ...) -> None: ...
+
+class WorkflowApprovalOrDenial(_message.Message):
+    __slots__ = ("resource", "deny", "denialReason")
+    RESOURCE_FIELD_NUMBER: _ClassVar[int]
+    DENY_FIELD_NUMBER: _ClassVar[int]
+    DENIALREASON_FIELD_NUMBER: _ClassVar[int]
+    resource: _GraphSync_pb2.GraphSyncRef
+    deny: bool
+    denialReason: str
+    def __init__(self, resource: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., deny: _Optional[bool] = ..., denialReason: _Optional[str] = ...) -> None: ...
 
 class UserAccessState(_message.Message):
     __slots__ = ("workflows",)
@@ -206,3 +216,9 @@ class TemporalAccessFilter(_message.Message):
     allowedDays: _containers.RepeatedScalarFieldContainer[DayOfWeek]
     timeZone: str
     def __init__(self, timeRanges: _Optional[_Iterable[_Union[TimeOfDayRange, _Mapping]]] = ..., allowedDays: _Optional[_Iterable[_Union[DayOfWeek, str]]] = ..., timeZone: _Optional[str] = ...) -> None: ...
+
+class AuthorizedUsers(_message.Message):
+    __slots__ = ("username",)
+    USERNAME_FIELD_NUMBER: _ClassVar[int]
+    username: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, username: _Optional[_Iterable[str]] = ...) -> None: ...
