@@ -97,6 +97,29 @@ def create_workflow_ref(flow_uid_bytes: bytes) -> GraphSync_pb2.GraphSyncRef:
     return ref
 
 
+def resolve_record_name(params, resource_ref) -> str:
+    """
+    Resolve the display name for a record from a GraphSyncRef.
+    
+    The backend doesn't always populate the 'name' field in the GraphSyncRef
+    response, so we fall back to looking up the record in the local vault cache.
+    
+    Args:
+        params: KeeperParams instance
+        resource_ref: GraphSyncRef protobuf object with value (record UID bytes)
+    
+    Returns:
+        str: Record title, UID, or empty string
+    """
+    if resource_ref.name:
+        return resource_ref.name
+    if resource_ref.value:
+        rec_uid = utils.base64_url_encode(resource_ref.value)
+        rec = vault.KeeperRecord.load(params, rec_uid)
+        return rec.title if rec else rec_uid
+    return ''
+
+
 def parse_duration_to_milliseconds(duration_str: str) -> int:
     """
     Parse duration string to milliseconds.
@@ -510,7 +533,7 @@ class WorkflowReadCommand(Command):
                 # JSON output
                 result = {
                     'record_uid': record_uid,
-                    'record_name': response.parameters.resource.name,
+                    'record_name': resolve_record_name(params, response.parameters.resource),
                     'created_on': response.createdOn,
                     'parameters': {
                         'approvals_needed': response.parameters.approvalsNeeded,
@@ -543,7 +566,7 @@ class WorkflowReadCommand(Command):
             else:
                 # Table output
                 print(f"\n{bcolors.OKBLUE}Workflow Configuration{bcolors.ENDC}\n")
-                print(f"Record: {response.parameters.resource.name}")
+                print(f"Record: {resolve_record_name(params, response.parameters.resource)}")
                 print(f"Record UID: {record_uid}")
                 
                 # Display creation date if available
@@ -898,7 +921,7 @@ class WorkflowGetStateCommand(Command):
                 result = {
                     'flow_uid': utils.base64_url_encode(response.flowUid),
                     'record_uid': utils.base64_url_encode(response.resource.value),
-                    'record_name': response.resource.name,
+                    'record_name': resolve_record_name(params, response.resource),
                     'stage': format_workflow_stage(response.status.stage),
                     'conditions': [format_access_conditions([c]) for c in response.status.conditions],
                     'escalated': response.status.escalated,
@@ -913,7 +936,7 @@ class WorkflowGetStateCommand(Command):
             else:
                 print(f"\n{bcolors.OKBLUE}Workflow State{bcolors.ENDC}\n")
                 print(f"Flow UID: {utils.base64_url_encode(response.flowUid)}")
-                print(f"Record: {response.resource.name}")
+                print(f"Record: {resolve_record_name(params, response.resource)}")
                 print(f"Stage: {format_workflow_stage(response.status.stage)}")
                 if response.status.conditions:
                     print(f"Conditions: {format_access_conditions(response.status.conditions)}")
@@ -979,7 +1002,7 @@ class WorkflowGetUserAccessStateCommand(Command):
                         {
                             'flow_uid': utils.base64_url_encode(wf.flowUid),
                             'record_uid': utils.base64_url_encode(wf.resource.value),
-                            'record_name': wf.resource.name,
+                            'record_name': resolve_record_name(params, wf.resource),
                             'stage': format_workflow_stage(wf.status.stage),
                             'conditions': [format_access_conditions([c]) for c in wf.status.conditions],
                             'escalated': wf.status.escalated,
@@ -997,7 +1020,7 @@ class WorkflowGetUserAccessStateCommand(Command):
             else:
                 print(f"\n{bcolors.OKBLUE}Your Active Workflows{bcolors.ENDC}\n")
                 for idx, wf in enumerate(response.workflows, 1):
-                    print(f"{idx}. {wf.resource.name}")
+                    print(f"{idx}. {resolve_record_name(params, wf.resource)}")
                     print(f"   Flow UID: {utils.base64_url_encode(wf.flowUid)}")
                     print(f"   Stage: {format_workflow_stage(wf.status.stage)}")
                     if wf.status.conditions:
@@ -1059,7 +1082,7 @@ class WorkflowGetApprovalRequestsCommand(Command):
                             'flow_uid': utils.base64_url_encode(wf.flowUid),
                             'user_id': wf.userId,
                             'record_uid': utils.base64_url_encode(wf.resource.value),
-                            'record_name': wf.resource.name,
+                            'record_name': resolve_record_name(params, wf.resource),
                             'started_on': wf.startedOn,
                             'expires_on': wf.expiresOn,
                             'reason': wf.reason.decode('utf-8') if wf.reason else '',
@@ -1073,7 +1096,7 @@ class WorkflowGetApprovalRequestsCommand(Command):
             else:
                 print(f"\n{bcolors.OKBLUE}Pending Approval Requests{bcolors.ENDC}\n")
                 for idx, wf in enumerate(response.workflows, 1):
-                    print(f"{idx}. {wf.resource.name}")
+                    print(f"{idx}. {resolve_record_name(params, wf.resource)}")
                     print(f"   Flow UID: {utils.base64_url_encode(wf.flowUid)}")
                     print(f"   Requested by: User ID {wf.userId}")
                     if wf.startedOn:
@@ -1199,14 +1222,13 @@ class WorkflowRequestAccessCommand(Command):
         record = vault.KeeperRecord.load(params, record_uid)
         record_uid_bytes = utils.base64_url_decode(record_uid)
         
-        # Use WorkflowAccessRequest which properly supports reason and ticket
-        # (Updated proto: WorkflowAccessRequest { resource, reason, ticket })
+        # Use WorkflowAccessRequest which supports reason and ticket
         access_request = workflow_pb2.WorkflowAccessRequest()
         access_request.resource.CopyFrom(create_record_ref(record_uid_bytes, record.title))
         if reason:
-            access_request.reason = reason
+            access_request.reason = reason.encode('utf-8') if isinstance(reason, str) else reason
         if ticket:
-            access_request.ticket = ticket
+            access_request.ticket = ticket.encode('utf-8') if isinstance(ticket, str) else ticket
         
         # Make API call
         try:
@@ -1262,15 +1284,17 @@ class WorkflowApproveCommand(Command):
         flow_uid = kwargs.get('flow_uid')
         flow_uid_bytes = utils.base64_url_decode(flow_uid)
         
-        # Create workflow reference
-        ref = create_workflow_ref(flow_uid_bytes)
+        # Create WorkflowApprovalOrDenial with deny=False for approval
+        approval = workflow_pb2.WorkflowApprovalOrDenial()
+        approval.resource.CopyFrom(create_workflow_ref(flow_uid_bytes))
+        approval.deny = False
         
         # Make API call
         try:
             response = _post_request_to_router(
                 params,
                 'approve_workflow_access',
-                rq_proto=ref
+                rq_proto=approval
             )
             
             if kwargs.get('format') == 'json':
@@ -1305,18 +1329,22 @@ class WorkflowDenyCommand(Command):
     def execute(self, params: KeeperParams, **kwargs):
         """Execute workflow denial."""
         flow_uid = kwargs.get('flow_uid')
-        reason = kwargs.get('reason')
+        reason = kwargs.get('reason') or ''
         flow_uid_bytes = utils.base64_url_decode(flow_uid)
         
-        # Create workflow reference
-        ref = create_workflow_ref(flow_uid_bytes)
+        # Create WorkflowApprovalOrDenial with deny=True for denial
+        denial = workflow_pb2.WorkflowApprovalOrDenial()
+        denial.resource.CopyFrom(create_workflow_ref(flow_uid_bytes))
+        denial.deny = True
+        if reason:
+            denial.denialReason = reason
         
         # Make API call
         try:
             response = _post_request_to_router(
                 params,
                 'deny_workflow_access',
-                rq_proto=ref
+                rq_proto=denial
             )
             
             if kwargs.get('format') == 'json':
@@ -1422,7 +1450,7 @@ class WorkflowEndCommand(Command):
                     print(json.dumps(result, indent=2))
                 else:
                     print(f"\n{bcolors.OKGREEN}✓ Workflow ended (checked in){bcolors.ENDC}\n")
-                    print(f"Record: {workflow_state.resource.name}")
+                    print(f"Record: {resolve_record_name(params, workflow_state.resource)}")
                     print(f"Flow UID: {flow_uid_str}")
                     print("\nCredentials may have been rotated.")
                     print()
