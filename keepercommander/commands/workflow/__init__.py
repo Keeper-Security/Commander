@@ -21,7 +21,7 @@ This module implements commands for managing PAM workflows including:
 Workflow commands are accessed via: pam workflow <subcommand>
 """
 
-__all__ = ['PAMWorkflowCommand']
+__all__ = ['PAMWorkflowCommand', 'check_workflow_access']
 
-from .workflow_commands import PAMWorkflowCommand
+from .workflow_commands import PAMWorkflowCommand, check_workflow_access
 
