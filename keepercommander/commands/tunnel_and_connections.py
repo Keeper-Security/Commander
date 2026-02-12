@@ -411,6 +411,11 @@ class PAMTunnelEditCommand(Command):
                 if _remove_tunneling_override_port and pam_settings.value[0]['portForward'].get('port'):
                     pam_settings.value[0]['portForward'].pop('port')
                     dirty = True
+            # Persist the record changes (new pamSettings field or port modifications)
+            if dirty:
+                record_management.update_record(params, record)
+                api.sync_down(params)
+                dirty = False
             if not tmp_dag.is_tunneling_config_set_up(record_uid):
                 print(f"{bcolors.FAIL}No PAM Configuration UID set. This must be set for tunneling to work. "
                       f"This can be done by running "
@@ -537,6 +542,14 @@ class PAMTunnelStartCommand(Command):
         if not isinstance(record, vault.TypedRecord):
             print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
             return
+
+        # Workflow access check — block if record requires checkout and user hasn't checked out
+        try:
+            from .workflow.workflow_commands import check_workflow_access
+            if not check_workflow_access(params, record_uid):
+                return
+        except ImportError:
+            pass
 
         # Validate PAM settings
         pam_settings = record.get_typed_field('pamSettings')
