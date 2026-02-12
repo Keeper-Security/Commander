@@ -10,6 +10,7 @@ import sys
 import time
 import ssl
 import asyncio
+import requests
 
 from keeper_secrets_manager_core.utils import string_to_bytes, bytes_to_string, url_safe_str_to_bytes
 from cryptography.hazmat.backends import default_backend
@@ -23,7 +24,7 @@ from ....commands.base import FolderMixin
 from ....commands.pam.config_helper import configuration_controller_get
 from ....commands.pam.pam_dto import GatewayAction, GatewayActionWebRTCSession
 from ....commands.pam.router_helper import router_get_relay_access_creds, get_dag_leafs, \
-    get_router_ws_url, router_send_action_to_gateway
+    get_router_ws_url, get_router_url, router_send_action_to_gateway
 from ....display import bcolors
 from ....error import CommandError
 from ....subfolder import try_resolve_path
@@ -934,7 +935,7 @@ async def connect_websocket_with_fallback(ws_endpoint, headers, ssl_context, tub
 # Each tunnel's ready_event is now signaled directly in connect_websocket_with_fallback()
 
 
-async def handle_websocket_responses(params, tube_registry, timeout=60, gateway_uid=None, ready_event=None, stop_event=None):
+async def handle_websocket_responses(params, tube_registry, timeout=60, gateway_uid=None, ready_event=None, stop_event=None, router_tokens=None, cookie_header=None):
     """
     Direct WebSocket handler that connects, listens for responses, and routes them to Rust.
     Uses global conversation key store to support multiple concurrent tunnels.
@@ -946,6 +947,9 @@ async def handle_websocket_responses(params, tube_registry, timeout=60, gateway_
         gateway_uid: Gateway UID (optional, for filtering)
         ready_event: threading.Event to signal when WebSocket is connected
         stop_event: threading.Event to signal when WebSocket should close
+        router_tokens: Optional (encrypted_session_token, encrypted_transmission_key, transmission_key)
+                       so WebSocket uses same auth as streaming HTTP (required for trickle ICE)
+        cookie_header: Optional Cookie header from bind_to_controller for ALB stickiness
     """
     if not WEBSOCKETS_AVAILABLE:
         raise Exception("WebSocket library not available - install with: pip install websockets")
@@ -956,12 +960,17 @@ async def handle_websocket_responses(params, tube_registry, timeout=60, gateway_
 
     logging.debug(f"Connecting to WebSocket: {ws_endpoint}")
 
-    # Prepare headers using the same pattern as HTTP
-    encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
+    # Use shared router tokens when provided (trickle ICE) so router associates this socket with streaming HTTP
+    if router_tokens and len(router_tokens) >= 2:
+        encrypted_session_token, encrypted_transmission_key = router_tokens[0], router_tokens[1]
+    else:
+        encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
     headers = {
         'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
         'Authorization': f'KeeperUser {bytes_to_base64(encrypted_session_token)}',
     }
+    if cookie_header:
+        headers['Cookie'] = cookie_header
     # Set up SSL context
     ssl_context = None
     if ws_endpoint.startswith('wss://'):
@@ -1239,6 +1248,15 @@ def route_message_to_rust(response_item, tube_registry):
                                             # Send answer back to Gateway via HTTP POST
                                             logging.debug(f"Sending ICE restart answer to Gateway for tube {tube_id}")
 
+                                            answer_kwargs = {}
+                                            if signal_handler.trickle_ice and getattr(signal_handler, "_router_transmission_key", None) is not None:
+                                                answer_kwargs = {
+                                                    "transmission_key": signal_handler._router_transmission_key,
+                                                    "encrypted_transmission_key": signal_handler._router_encrypted_transmission_key,
+                                                    "encrypted_session_token": signal_handler._router_encrypted_session_token,
+                                                }
+                                            if getattr(signal_handler, "_http_session", None) is not None:
+                                                answer_kwargs["http_session"] = signal_handler._http_session
                                             router_response = router_send_action_to_gateway(
                                                 params=signal_handler.params,
                                                 destination_gateway_uid_str=session.gateway_uid,
@@ -1256,7 +1274,8 @@ def route_message_to_rust(response_item, tube_registry):
                                                 ),
                                                 message_type=pam_pb2.CMT_CONNECT,
                                                 is_streaming=signal_handler.trickle_ice,  # Streaming only for trickle ICE
-                                                gateway_timeout=GATEWAY_TIMEOUT
+                                                gateway_timeout=GATEWAY_TIMEOUT,
+                                                **answer_kwargs
                                             )
 
                                             logging.debug(f"ICE restart answer sent for tube {tube_id}")
@@ -1322,7 +1341,7 @@ def route_message_to_rust(response_item, tube_registry):
         logging.error(f"Full traceback: {traceback.format_exc()}")
 
 
-def start_websocket_listener(params, tube_registry, timeout=60, gateway_uid=None, tunnel_session=None):
+def start_websocket_listener(params, tube_registry, timeout=60, gateway_uid=None, tunnel_session=None, router_tokens=None, cookie_header=None):
     """
     Start WebSocket listener in a background thread.
 
@@ -1335,6 +1354,9 @@ def start_websocket_listener(params, tube_registry, timeout=60, gateway_uid=None
         timeout: Maximum time to listen for messages (seconds)
         gateway_uid: Gateway UID (optional)
         tunnel_session: TunnelSession instance for dedicated WebSocket (required)
+        router_tokens: Optional (encrypted_session_token, encrypted_transmission_key, transmission_key)
+                       for trickle ICE so WebSocket uses same auth as streaming HTTP requests
+        cookie_header: Optional Cookie header from bind_to_controller for ALB stickiness
 
     Returns:
         (thread, is_reused) tuple - is_reused is always False (each tunnel gets its own WebSocket)
@@ -1356,7 +1378,9 @@ def start_websocket_listener(params, tube_registry, timeout=60, gateway_uid=None
             loop.run_until_complete(handle_websocket_responses(
                 params, tube_registry, timeout, gateway_uid,
                 ready_event=tunnel_session.websocket_ready_event,
-                stop_event=tunnel_session.websocket_stop_event
+                stop_event=tunnel_session.websocket_stop_event,
+                router_tokens=router_tokens,
+                cookie_header=cookie_header
             ))
         except Exception as e:
             logging.error(f"Dedicated WebSocket listener error for tunnel {tunnel_session.tube_id}: {e}")
@@ -1412,7 +1436,7 @@ class TunnelSignalHandler:
 
     def __init__(self, params, record_uid, gateway_uid, symmetric_key, base64_nonce, conversation_id,
                  tube_registry, tube_id=None, trickle_ice=False, websocket_router=None,
-                 conversation_type='tunnel'):
+                 conversation_type='tunnel', router_tokens=None, http_session=None):
         self.params = params
         self.record_uid = record_uid
         self.gateway_uid = gateway_uid
@@ -1431,6 +1455,13 @@ class TunnelSignalHandler:
         self.websocket_router = websocket_router  # For key cleanup
         self.offer_sent = False  # Track if offer has been sent to gateway
         self.buffered_ice_candidates = []  # Buffer ICE candidates until offer is sent
+        # Shared router auth for streaming: (encrypted_session_token, encrypted_transmission_key, transmission_key)
+        self._router_transmission_key = None
+        self._router_encrypted_transmission_key = None
+        self._router_encrypted_session_token = None
+        if router_tokens and len(router_tokens) >= 3:
+            self._router_encrypted_session_token, self._router_encrypted_transmission_key, self._router_transmission_key = router_tokens[0], router_tokens[1], router_tokens[2]
+        self._http_session = http_session  # Shared session for ALB stickiness (bind_to_controller cookie)
 
         # WebSocket routing is handled automatically - no setup needed
         if trickle_ice and not WEBSOCKETS_AVAILABLE:
@@ -1788,7 +1819,16 @@ class TunnelSignalHandler:
 
             logging.debug(f"Sending ICE candidate to gateway immediately")
 
-            # Send an ICE candidate via HTTP POST with streamResponse=True
+            # Use same router tokens and session as WebSocket when streaming (ALB stickiness)
+            ice_kwargs = {}
+            if self.trickle_ice and self._router_transmission_key is not None:
+                ice_kwargs = {
+                    "transmission_key": self._router_transmission_key,
+                    "encrypted_transmission_key": self._router_encrypted_transmission_key,
+                    "encrypted_session_token": self._router_encrypted_session_token,
+                }
+            if self.trickle_ice and getattr(self, "_http_session", None) is not None:
+                ice_kwargs["http_session"] = self._http_session
             router_response = router_send_action_to_gateway(
                 params=self.params,
                 destination_gateway_uid_str=self.gateway_uid,
@@ -1806,7 +1846,8 @@ class TunnelSignalHandler:
                 ),
                 message_type=pam_pb2.CMT_CONNECT,
                 is_streaming=self.trickle_ice,  # Streaming only for trickle ICE
-                gateway_timeout=GATEWAY_TIMEOUT
+                gateway_timeout=GATEWAY_TIMEOUT,
+                **ice_kwargs
             )
 
             if self.trickle_ice:
@@ -1848,7 +1889,15 @@ class TunnelSignalHandler:
 
             logging.debug(f"Sending ICE restart offer to gateway for tube {tube_id}")
 
-            # Send ICE restart offer via HTTP POST with streamResponse=True
+            restart_kwargs = {}
+            if self.trickle_ice and self._router_transmission_key is not None:
+                restart_kwargs = {
+                    "transmission_key": self._router_transmission_key,
+                    "encrypted_transmission_key": self._router_encrypted_transmission_key,
+                    "encrypted_session_token": self._router_encrypted_session_token,
+                }
+            if self.trickle_ice and getattr(self, "_http_session", None) is not None:
+                restart_kwargs["http_session"] = self._http_session
             router_response = router_send_action_to_gateway(
                 params=self.params,
                 destination_gateway_uid_str=self.gateway_uid,
@@ -1866,7 +1915,8 @@ class TunnelSignalHandler:
                 ),
                 message_type=pam_pb2.CMT_CONNECT,
                 is_streaming=self.trickle_ice,  # Streaming only for trickle ICE
-                gateway_timeout=GATEWAY_TIMEOUT
+                gateway_timeout=GATEWAY_TIMEOUT,
+                **restart_kwargs
             )
 
             if self.trickle_ice:
@@ -2052,6 +2102,25 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
         # Register the temporary session so ICE candidates can be buffered immediately
         register_tunnel_session(temp_tube_id, tunnel_session)
 
+        # For trickle ICE, use shared tokens and bind_to_controller for ALB stickiness (same worker for WebSocket + POST)
+        router_tokens = None
+        http_session = None
+        cookie_header = None
+        if trickle_ice:
+            router_tokens = get_keeper_tokens(params)
+            logging.debug("Using shared router tokens for WebSocket and streaming HTTP")
+            http_session = requests.Session()
+            krouter_host = get_router_url(params)
+            verify_ssl = bool(os.environ.get("VERIFY_SSL", "TRUE").upper() == "TRUE")
+            try:
+                bind_url = krouter_host + "/api/user/bind_to_controller/" + gateway_uid
+                http_session.get(bind_url, verify=verify_ssl, timeout=10)
+            except Exception as e:
+                logging.debug(f"bind_to_controller GET failed (continuing): %s", e)
+            if http_session.cookies:
+                cookie_header = "; ".join(f"{c.name}={c.value}" for c in http_session.cookies)
+                logging.debug("Bound to controller for ALB stickiness (WebSocket and streaming HTTP will use same backend)")
+
         # Create the tube to get the WebRTC offer with trickle ICE
         logging.debug("Creating WebRTC offer with trickle ICE gathering")
 
@@ -2066,7 +2135,9 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
             tube_registry=tube_registry,
             tube_id=temp_tube_id,  # Use temp ID initially
             trickle_ice=trickle_ice,
-            conversation_type=conversation_type
+            conversation_type=conversation_type,
+            router_tokens=router_tokens,
+            http_session=http_session
         )
 
         # Store signal handler reference so we can send buffered candidates later
@@ -2126,8 +2197,10 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
         # Start DEDICATED WebSocket listener for this tunnel
         # Each tunnel gets its own WebSocket connection - no sharing, no contention!
         websocket_thread, is_websocket_reused = start_websocket_listener(
-            params, tube_registry, timeout=300, gateway_uid=gateway_uid, 
-            tunnel_session=tunnel_session  # Pass tunnel_session for dedicated WebSocket
+            params, tube_registry, timeout=300, gateway_uid=gateway_uid,
+            tunnel_session=tunnel_session,
+            router_tokens=router_tokens,
+            cookie_header=cookie_header
         )
 
         # Wait for WebSocket to establish connection before sending streaming requests
@@ -2202,6 +2275,15 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                     logging.debug(f"Retry attempt {attempt}/{max_retries} after {retry_delay}s delay...")
                     time.sleep(retry_delay)
 
+                offer_kwargs = {}
+                if trickle_ice and router_tokens:
+                    offer_kwargs = {
+                        "transmission_key": router_tokens[2],
+                        "encrypted_transmission_key": router_tokens[1],
+                        "encrypted_session_token": router_tokens[0],
+                    }
+                if trickle_ice and http_session is not None:
+                    offer_kwargs["http_session"] = http_session
                 router_response = router_send_action_to_gateway(
                     params=params,
                     destination_gateway_uid_str=gateway_uid,
@@ -2219,7 +2301,8 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                     ),
                     message_type=pam_pb2.CMT_CONNECT,
                     is_streaming=trickle_ice,  # Streaming only for trickle ICE
-                    gateway_timeout=GATEWAY_TIMEOUT
+                    gateway_timeout=GATEWAY_TIMEOUT,
+                    **offer_kwargs
                 )
 
                 # Success! Break out of retry loop
