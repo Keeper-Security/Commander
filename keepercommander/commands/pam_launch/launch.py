@@ -283,6 +283,14 @@ class PAMLaunchCommand(Command):
 
             logging.debug(f"Found record: {record_uid}")
 
+            # Workflow access check — block if record requires checkout and user hasn't checked out
+            try:
+                from ..workflow.workflow_commands import check_workflow_access
+                if not check_workflow_access(params, record_uid):
+                    return
+            except ImportError:
+                pass
+
             # Validate --user and --host parameters against allowSupply flags
             # Note: cmdline options override record data when provided
             # launch_credential_uid = kwargs.get('launch_credential_uid')

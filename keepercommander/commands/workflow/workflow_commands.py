@@ -120,6 +120,111 @@ def resolve_record_name(params, resource_ref) -> str:
     return ''
 
 
+def resolve_user_name(params: KeeperParams, user_id: int) -> str:
+    """
+    Resolve an enterprise user ID to email/username.
+
+    Uses params.enterprise['users'] when available (enterprise admin).
+    Falls back to displaying the numeric ID.
+
+    Args:
+        params: KeeperParams instance
+        user_id: Enterprise user ID (int64)
+
+    Returns:
+        str: User email or 'User ID <id>' as fallback
+    """
+    if params.enterprise and 'users' in params.enterprise:
+        for u in params.enterprise['users']:
+            if u.get('enterprise_user_id') == user_id:
+                return u.get('username', f'User ID {user_id}')
+    return f'User ID {user_id}'
+
+
+def check_workflow_access(params: KeeperParams, record_uid: str) -> bool:
+    """
+    Check whether the current user has active checkout access to a PAM record.
+
+    This function should be called before connecting, tunneling, or launching
+    a PAM resource. It verifies:
+      1. Whether the record has a workflow configured.
+      2. If so, whether the user has an active checked-out session.
+
+    If the user does not have access, a helpful message is printed guiding
+    them through the workflow process.
+
+    Args:
+        params: KeeperParams instance with session info
+        record_uid: Record UID string to check
+
+    Returns:
+        True if access is allowed (no workflow, or user has active checkout).
+        False if access is blocked by workflow.
+    """
+    try:
+        # Step 1: Check if the record has a workflow configured
+        record_uid_bytes = utils.base64_url_decode(record_uid)
+        record = vault.KeeperRecord.load(params, record_uid)
+        record_name = record.title if record else record_uid
+
+        ref = create_record_ref(record_uid_bytes, record_name)
+        config_response = _post_request_to_router(
+            params,
+            'read_workflow_config',
+            rq_proto=ref,
+            rs_type=workflow_pb2.WorkflowConfig
+        )
+
+        if config_response is None:
+            # No workflow configured on this record — access is unrestricted
+            return True
+
+        # Step 2: Workflow exists — check user's access state for this record
+        state_rq = workflow_pb2.WorkflowState()
+        state_rq.resource.CopyFrom(ref)
+        state_response = _post_request_to_router(
+            params,
+            'get_workflow_state',
+            rq_proto=state_rq,
+            rs_type=workflow_pb2.WorkflowState
+        )
+
+        if state_response and state_response.status:
+            stage = state_response.status.stage
+
+            if stage == workflow_pb2.WS_STARTED:
+                # User has an active checkout — allow access
+                return True
+
+            if stage == workflow_pb2.WS_READY_TO_START:
+                print(f"\n{bcolors.WARNING}Workflow access approved but not yet checked out.{bcolors.ENDC}")
+                print(f"Run: {bcolors.OKBLUE}pam workflow start {record_uid}{bcolors.ENDC} to check out the record.\n")
+                return False
+
+            if stage == workflow_pb2.WS_WAITING:
+                conditions = state_response.status.conditions
+                cond_str = format_access_conditions(conditions) if conditions else 'approval'
+                print(f"\n{bcolors.WARNING}Workflow access is pending: waiting for {cond_str}.{bcolors.ENDC}")
+                print(f"Your request is being processed. Please wait for approval.\n")
+                return False
+
+            if stage == workflow_pb2.WS_NEEDS_ACTION:
+                print(f"\n{bcolors.WARNING}Workflow requires additional action before access is granted.{bcolors.ENDC}")
+                print(f"Run: {bcolors.OKBLUE}pam workflow state --record {record_uid}{bcolors.ENDC} to see details.\n")
+                return False
+
+        # No active workflow state — user hasn't requested access yet
+        print(f"\n{bcolors.WARNING}This record is protected by a workflow.{bcolors.ENDC}")
+        print(f"You must request access before connecting.")
+        print(f"Run: {bcolors.OKBLUE}pam workflow request {record_uid}{bcolors.ENDC} to request access.\n")
+        return False
+
+    except Exception:
+        # If workflow check fails (e.g. network issue), allow access.
+        # The backend/gateway should still enforce restrictions server-side.
+        return True
+
+
 def parse_duration_to_milliseconds(duration_str: str) -> int:
     """
     Parse duration string to milliseconds.
@@ -247,7 +352,7 @@ class WorkflowCreateCommand(Command):
         pam workflow create <record_uid> --approvals-needed 2 --duration 2h --checkout
     """
     parser = argparse.ArgumentParser(prog='pam workflow create',
-                                     description='Create workflow configuration for a PAM record')
+                                     description='Create workflow configuration for a PAM record', allow_abbrev=False)
     parser.add_argument('record', help='Record UID or name to configure workflow for')
     parser.add_argument('-n', '--approvals-needed', type=int, default=1,
                         help='Number of approvals required (default: 1)')
@@ -318,7 +423,30 @@ class WorkflowCreateCommand(Command):
                 rq_proto=parameters
             )
             
-            # Success (router returns empty response or 200 status)
+            # Auto-add record owner as the first approver (MRD Req #5:
+            # "By Default: The owner of the record must be added to this list")
+            owner_email = params.user
+            owner_added = False
+            if owner_email:
+                try:
+                    approver_config = workflow_pb2.WorkflowConfig()
+                    approver_config.parameters.resource.CopyFrom(
+                        create_record_ref(record_uid_bytes, record.title)
+                    )
+                    approver = workflow_pb2.WorkflowApprover()
+                    approver.user = owner_email
+                    approver_config.approvers.append(approver)
+                    _post_request_to_router(
+                        params,
+                        'add_workflow_approvers',
+                        rq_proto=approver_config
+                    )
+                    owner_added = True
+                except Exception:
+                    # Non-fatal: workflow was created, approver add failed
+                    pass
+
+            # Success output
             if kwargs.get('format') == 'json':
                 result = {
                     'status': 'success',
@@ -331,7 +459,8 @@ class WorkflowCreateCommand(Command):
                         'require_ticket': parameters.requireTicket,
                         'require_mfa': parameters.requireMFA,
                         'access_duration': format_duration_from_milliseconds(parameters.accessLength)
-                    }
+                    },
+                    'owner_approver': owner_email if owner_added else None
                 }
                 print(json.dumps(result, indent=2))
             else:
@@ -346,6 +475,11 @@ class WorkflowCreateCommand(Command):
                     print(f"Requires ticket: Yes")
                 if parameters.requireMFA:
                     print(f"Requires MFA: Yes")
+                if owner_added:
+                    print(f"\nApprover added: {owner_email} (record owner)")
+                else:
+                    print(f"\n{bcolors.WARNING}Note: Add approvers with: "
+                          f"pam workflow add-approver {record_uid} --user <email>{bcolors.ENDC}")
                 print()
                 
         except Exception as e:
@@ -534,7 +668,6 @@ class WorkflowReadCommand(Command):
                 result = {
                     'record_uid': record_uid,
                     'record_name': resolve_record_name(params, response.parameters.resource),
-                    'created_on': response.createdOn,
                     'parameters': {
                         'approvals_needed': response.parameters.approvalsNeeded,
                         'checkout_needed': response.parameters.checkoutNeeded,
@@ -542,7 +675,6 @@ class WorkflowReadCommand(Command):
                         'require_reason': response.parameters.requireReason,
                         'require_ticket': response.parameters.requireTicket,
                         'require_mfa': response.parameters.requireMFA,
-                        'access_length_ms': response.parameters.accessLength,
                         'access_duration': format_duration_from_milliseconds(response.parameters.accessLength)
                     },
                     'approvers': []
@@ -593,7 +725,7 @@ class WorkflowReadCommand(Command):
                         if approver.HasField('user'):
                             print(f"  {idx}. User: {approver.user}{escalation}")
                         elif approver.HasField('userId'):
-                            print(f"  {idx}. User ID: {approver.userId}{escalation}")
+                            print(f"  {idx}. User: {resolve_user_name(params, approver.userId)}{escalation}")
                         elif approver.HasField('teamUid'):
                             team_uid = utils.base64_url_encode(approver.teamUid)
                             print(f"  {idx}. Team: {team_uid}{escalation}")
@@ -928,7 +1060,11 @@ class WorkflowGetStateCommand(Command):
                     'started_on': response.status.startedOn,
                     'expires_on': response.status.expiresOn,
                     'approved_by': [
-                        {'user': a.user, 'user_id': a.userId, 'approved_on': a.approvedOn}
+                        {
+                            'user': a.user if a.user else resolve_user_name(params, a.userId),
+                            'user_id': a.userId,
+                            'approved_on': a.approvedOn
+                        }
                         for a in response.status.approvedBy
                     ]
                 }
@@ -951,7 +1087,7 @@ class WorkflowGetStateCommand(Command):
                 if response.status.approvedBy:
                     print(f"Approved by:")
                     for a in response.status.approvedBy:
-                        name = a.user if a.user else f"User ID {a.userId}"
+                        name = a.user if a.user else resolve_user_name(params, a.userId)
                         ts = ''
                         if a.approvedOn:
                             ts = f" at {datetime.fromtimestamp(a.approvedOn / 1000).strftime('%Y-%m-%d %H:%M:%S')}"
@@ -1009,7 +1145,11 @@ class WorkflowGetUserAccessStateCommand(Command):
                             'started_on': wf.status.startedOn,
                             'expires_on': wf.status.expiresOn,
                             'approved_by': [
-                                {'user': a.user, 'user_id': a.userId, 'approved_on': a.approvedOn}
+                                {
+                                    'user': a.user if a.user else resolve_user_name(params, a.userId),
+                                    'user_id': a.userId,
+                                    'approved_on': a.approvedOn
+                                }
                                 for a in wf.status.approvedBy
                             ]
                         }
@@ -1034,7 +1174,7 @@ class WorkflowGetUserAccessStateCommand(Command):
                         expires = datetime.fromtimestamp(wf.status.expiresOn / 1000)
                         print(f"   Expires: {expires.strftime('%Y-%m-%d %H:%M:%S')}")
                     if wf.status.approvedBy:
-                        approved_names = [a.user if a.user else f"ID:{a.userId}" for a in wf.status.approvedBy]
+                        approved_names = [a.user if a.user else resolve_user_name(params, a.userId) for a in wf.status.approvedBy]
                         print(f"   Approved by: {', '.join(approved_names)}")
                     print()
                 
@@ -1081,10 +1221,12 @@ class WorkflowGetApprovalRequestsCommand(Command):
                         {
                             'flow_uid': utils.base64_url_encode(wf.flowUid),
                             'user_id': wf.userId,
+                            'requested_by': resolve_user_name(params, wf.userId),
                             'record_uid': utils.base64_url_encode(wf.resource.value),
                             'record_name': resolve_record_name(params, wf.resource),
                             'started_on': wf.startedOn,
                             'expires_on': wf.expiresOn,
+                            'duration': format_duration_from_milliseconds(wf.expiresOn - wf.startedOn) if wf.expiresOn and wf.startedOn else None,
                             'reason': wf.reason.decode('utf-8') if wf.reason else '',
                             'external_ref': wf.externalRef.decode('utf-8') if wf.externalRef else '',
                             'mfa_verified': wf.mfaVerified
@@ -1098,10 +1240,12 @@ class WorkflowGetApprovalRequestsCommand(Command):
                 for idx, wf in enumerate(response.workflows, 1):
                     print(f"{idx}. {resolve_record_name(params, wf.resource)}")
                     print(f"   Flow UID: {utils.base64_url_encode(wf.flowUid)}")
-                    print(f"   Requested by: User ID {wf.userId}")
+                    print(f"   Requested by: {resolve_user_name(params, wf.userId)}")
                     if wf.startedOn:
                         started = datetime.fromtimestamp(wf.startedOn / 1000)
                         print(f"   Requested on: {started.strftime('%Y-%m-%d %H:%M:%S')}")
+                    if wf.expiresOn and wf.startedOn:
+                        print(f"   Duration: {format_duration_from_milliseconds(wf.expiresOn - wf.startedOn)}")
                     if wf.expiresOn:
                         expires = datetime.fromtimestamp(wf.expiresOn / 1000)
                         print(f"   Expires: {expires.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1109,7 +1253,8 @@ class WorkflowGetApprovalRequestsCommand(Command):
                         print(f"   Reason: {wf.reason.decode('utf-8')}")
                     if wf.externalRef:
                         print(f"   Ticket: {wf.externalRef.decode('utf-8')}")
-                    print(f"   MFA Verified: {'Yes' if wf.mfaVerified else 'No'}")
+                    if wf.mfaVerified:
+                        print(f"   MFA Verified: Yes")
                     print()
                 
         except Exception as e:
@@ -1476,27 +1621,23 @@ class PAMWorkflowCommand(GroupCommand):
     def __init__(self):
         super(PAMWorkflowCommand, self).__init__()
         
-        # Configuration commands
+        # --- Admin / Approver commands ---
         self.register_command('create', WorkflowCreateCommand(), 'Create workflow configuration', 'c')
         self.register_command('read', WorkflowReadCommand(), 'Read workflow configuration', 'r')
         self.register_command('update', WorkflowUpdateCommand(), 'Update workflow configuration', 'u')
         self.register_command('delete', WorkflowDeleteCommand(), 'Delete workflow configuration', 'd')
-        
-        # Approver management
         self.register_command('add-approver', WorkflowAddApproversCommand(), 'Add approvers', 'aa')
         self.register_command('remove-approver', WorkflowDeleteApproversCommand(), 'Remove approvers', 'ra')
-        
-        # State inspection
-        self.register_command('state', WorkflowGetStateCommand(), 'Get workflow state', 'st')
-        self.register_command('my-access', WorkflowGetUserAccessStateCommand(), 'Get my workflow access', 'ma')
         self.register_command('pending', WorkflowGetApprovalRequestsCommand(), 'Get pending approvals', 'p')
+        self.register_command('approve', WorkflowApproveCommand(), 'Approve access request', 'a')
+        self.register_command('deny', WorkflowDenyCommand(), 'Deny access request', 'dn')
         
-        # Actions
-        self.register_command('start', WorkflowStartCommand(), 'Start workflow (check-out)', 's')
+        # --- User commands ---
         self.register_command('request', WorkflowRequestAccessCommand(), 'Request access', 'rq')
-        self.register_command('approve', WorkflowApproveCommand(), 'Approve access', 'a')
-        self.register_command('deny', WorkflowDenyCommand(), 'Deny access', 'dn')
+        self.register_command('start', WorkflowStartCommand(), 'Start workflow (check-out)', 's')
         self.register_command('end', WorkflowEndCommand(), 'End workflow (check-in)', 'e')
+        self.register_command('my-access', WorkflowGetUserAccessStateCommand(), 'Get my access state', 'ma')
+        self.register_command('state', WorkflowGetStateCommand(), 'Get workflow state', 'st')
         
         self.default_verb = 'state'
 
