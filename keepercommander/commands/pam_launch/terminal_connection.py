@@ -22,6 +22,10 @@ import os
 import sys
 import base64
 import json
+import secrets
+import shutil
+import time
+import uuid
 from typing import TYPE_CHECKING, Optional, Dict, Any
 
 import requests
@@ -61,6 +65,7 @@ from ..pam.router_helper import (
 )
 from ...proto import pam_pb2
 from ...display import bcolors
+from .python_handler import create_python_handler
 
 if TYPE_CHECKING:
     from ...params import KeeperParams
@@ -933,7 +938,6 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 seed = base64_to_bytes(seed)
         else:
             # Generate a random seed if not present
-            import secrets
             seed = secrets.token_bytes(32)
             logging.debug("No trafficEncryptionSeed found, using generated seed")
 
@@ -1001,7 +1005,6 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         # Register the encryption key in the global conversation store
         register_conversation_key(conversation_id, symmetric_key)
         # Create a temporary tunnel session
-        import uuid
         temp_tube_id = str(uuid.uuid4())
 
         # Pre-create tunnel session to buffer early ICE candidates
@@ -1024,6 +1027,23 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         no_trickle_ice = kwargs.get('no_trickle_ice', False)
         trickle_ice = not no_trickle_ice
 
+        # For trickle ICE, use shared tokens and bind_to_controller for ALB stickiness (same worker for WebSocket + POST)
+        router_tokens = None
+        http_session = None
+        cookie_header = None
+        if trickle_ice:
+            router_tokens = get_keeper_tokens(params)
+            http_session = requests.Session()
+            krouter_host = get_router_url(params)
+            try:
+                bind_url = krouter_host + "/api/user/bind_to_controller/" + gateway_uid
+                http_session.get(bind_url, verify=VERIFY_SSL, timeout=10)
+            except Exception as e:
+                logging.debug("bind_to_controller GET failed (continuing): %s", e)
+            if http_session.cookies:
+                cookie_header = "; ".join(f"{c.name}={c.value}" for c in http_session.cookies)
+                logging.debug("Bound to controller for ALB stickiness (WebSocket and streaming HTTP will use same backend)")
+
         # Create signal handler for Rust events
         signal_handler = TunnelSignalHandler(
             params=params,
@@ -1034,7 +1054,9 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             conversation_id=conversation_id,
             tube_registry=tube_registry,
             tube_id=temp_tube_id,
-            trickle_ice=trickle_ice
+            trickle_ice=trickle_ice,
+            router_tokens=router_tokens,
+            http_session=http_session
         )
 
         # Store signal handler reference
@@ -1052,9 +1074,6 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         handler_callback = None
 
         if use_python_handler:
-            # Import and create PythonHandler for simplified Guacamole protocol handling
-            from .python_handler import create_python_handler
-
             logging.debug("Using PythonHandler mode - Rust handles control frames automatically")
 
             # Set conversationType to "python_handler" to enable PythonHandler protocol mode in Rust
@@ -1160,12 +1179,33 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         logging.debug(f"Registered encryption key for conversation: {conversation_id}")
         logging.debug(f"Expecting WebSocket responses for conversation ID: {conversation_id}")
 
-        # Start WebSocket listener
-        websocket_thread = start_websocket_listener(params, tube_registry, timeout=300, gateway_uid=gateway_uid, tunnel_session=tunnel_session)
+        # Start WebSocket listener (pass cookie_header for ALB stickiness when trickle ICE)
+        websocket_thread = start_websocket_listener(
+            params, tube_registry, timeout=300, gateway_uid=gateway_uid,
+            tunnel_session=tunnel_session,
+            router_tokens=router_tokens,
+            cookie_header=cookie_header
+        )
 
-        # Wait a moment for WebSocket to establish connection
-        import time
-        time.sleep(1.5)
+        # Wait for WebSocket to be ready before sending offer (same as pam tunnel start).
+        # Use event.wait() when available so we proceed as soon as ready; fallback to short sleep.
+        max_wait = 15.0
+        # Same backend registration delay as when event is present (router/gateway need time to register)
+        backend_delay = float(os.environ.get('WEBSOCKET_BACKEND_DELAY', '2.0'))
+        if tunnel_session.websocket_ready_event:
+            logging.debug(f"Waiting for dedicated WebSocket to connect (max {max_wait}s)...")
+            websocket_ready = tunnel_session.websocket_ready_event.wait(timeout=max_wait)
+            if not websocket_ready:
+                logging.error(f"Dedicated WebSocket did not become ready within {max_wait}s")
+                signal_handler.cleanup()
+                unregister_tunnel_session(commander_tube_id)
+                return {"success": False, "error": "WebSocket connection timeout"}
+            logging.debug("Dedicated WebSocket connection established and ready for streaming")
+            logging.debug(f"Waiting {backend_delay}s for backend to register conversation...")
+            time.sleep(backend_delay)
+        else:
+            logging.warning("No WebSocket ready event for tunnel, using backend delay %.1fs", backend_delay)
+            time.sleep(backend_delay)
 
         # Send offer to gateway via HTTP POST
         logging.debug(f"{bcolors.OKBLUE}Sending {protocol} connection offer to gateway...{bcolors.ENDC}")
@@ -1173,8 +1213,6 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         # Prepare the offer data with terminal-specific parameters
         # Match webvault format: host, size, audio, video, image (for guacd configuration)
         # These parameters are needed by Gateway to configure guacd BEFORE OpenConnection
-        import shutil
-
         raw_columns = DEFAULT_TERMINAL_COLUMNS
         raw_rows = DEFAULT_TERMINAL_ROWS
         # Get terminal size for Guacamole size parameter
@@ -1306,7 +1344,16 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
 
             # Two paths: streaming vs non-streaming
             if trickle_ice:
-                # Streaming path: Response will come via WebSocket
+                # Streaming path: Response will come via WebSocket (use same tokens and session as WebSocket for ALB stickiness)
+                offer_kwargs = {}
+                if router_tokens and len(router_tokens) >= 3:
+                    offer_kwargs = {
+                        "transmission_key": router_tokens[2],
+                        "encrypted_transmission_key": router_tokens[1],
+                        "encrypted_session_token": router_tokens[0],
+                    }
+                if http_session is not None:
+                    offer_kwargs["http_session"] = http_session
                 router_response = router_send_action_to_gateway(
                     params=params,
                     destination_gateway_uid_str=gateway_uid,
@@ -1317,7 +1364,8 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                     ),
                     message_type=pam_pb2.CMT_CONNECT,
                     is_streaming=True,  # Response will come via WebSocket
-                    gateway_timeout=30000
+                    gateway_timeout=30000,
+                    **offer_kwargs
                 )
 
                 logging.debug(f"{bcolors.OKGREEN}Offer sent to gateway (streaming mode){bcolors.ENDC}")

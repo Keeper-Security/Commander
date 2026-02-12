@@ -194,7 +194,7 @@ def _post_request_to_router(params, path, rq_proto=None, rs_type=None, method='p
 
 def router_send_action_to_gateway(params, gateway_action: GatewayAction, message_type, is_streaming,
                                   destination_gateway_uid_str=None, gateway_timeout=15000, transmission_key=None,
-                                  encrypted_transmission_key=None, encrypted_session_token=None):
+                                  encrypted_transmission_key=None, encrypted_session_token=None, http_session=None):
     # Default time out how long the response from the Gateway should be
     krouter_host = get_router_url(params)
 
@@ -257,7 +257,8 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
         transmission_key=transmission_key,
         rq_proto=rq,
         encrypted_transmission_key=encrypted_transmission_key,
-        encrypted_session_token=encrypted_session_token)
+        encrypted_session_token=encrypted_session_token,
+        http_session=http_session)
 
     rs_body = response.content
 
@@ -306,8 +307,10 @@ def router_send_action_to_gateway(params, gateway_action: GatewayAction, message
 
 
 def router_send_message_to_gateway(params, transmission_key, rq_proto,
-                                   encrypted_transmission_key=None, encrypted_session_token=None):
-
+                                   encrypted_transmission_key=None, encrypted_session_token=None,
+                                   http_session=None):
+    """Send controller message to gateway. When http_session is provided (for streaming/ALB affinity),
+    the request uses that session so cookies match the WebSocket connection."""
     krouter_host = get_router_url(params)
 
     if not encrypted_transmission_key:
@@ -325,16 +328,24 @@ def router_send_message_to_gateway(params, transmission_key, rq_proto,
     if not encrypted_session_token:
         encrypted_session_token = crypto.encrypt_aes_v2(utils.base64_url_decode(params.session_token), transmission_key)
 
-    rs = requests.post(
-        krouter_host+"/api/user/send_controller_message",
-        verify=VERIFY_SSL,
-
-        headers={
-            'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
-            'Authorization': f'KeeperUser {bytes_to_base64(encrypted_session_token)}',
-        },
-        data=encrypted_payload if rq_proto else None
-    )
+    headers = {
+        'TransmissionKey': bytes_to_base64(encrypted_transmission_key),
+        'Authorization': f'KeeperUser {bytes_to_base64(encrypted_session_token)}',
+    }
+    if http_session is not None:
+        rs = http_session.post(
+            krouter_host + "/api/user/send_controller_message",
+            verify=VERIFY_SSL,
+            headers=headers,
+            data=encrypted_payload if rq_proto else None
+        )
+    else:
+        rs = requests.post(
+            krouter_host + "/api/user/send_controller_message",
+            verify=VERIFY_SSL,
+            headers=headers,
+            data=encrypted_payload if rq_proto else None
+        )
 
     if rs.status_code >= 300:
         raise Exception(str(rs.status_code) + ': error: ' + rs.reason + ', message: ' + rs.text)
