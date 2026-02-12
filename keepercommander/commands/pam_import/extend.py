@@ -195,6 +195,188 @@ def build_tree_recursive(params, folder_uid: str):
 
     return tree
 
+
+def _collect_path_to_uid_from_tree(path_prefix: str, tree: dict, path_to_uid: dict, only_existing: bool) -> None:
+    """Walk folder tree and fill path_to_uid. path_prefix e.g. 'gwapp', tree is shf['folder_tree'].
+    If only_existing, only add when node['uid'] is non-empty."""
+    for name, node in (tree or {}).items():
+        path = f"{path_prefix}/{name}" if path_prefix else name
+        uid = (node or {}).get("uid") or ""
+        if only_existing and not uid:
+            continue
+        if uid:
+            path_to_uid[path] = uid
+        subfolders = (node or {}).get("subfolders") or {}
+        if subfolders:
+            _collect_path_to_uid_from_tree(path, subfolders, path_to_uid, only_existing)
+
+
+def _count_existing_and_new_paths(ksm_shared_folders: list, good_paths: list) -> tuple:
+    """Return (x_count, y_count, existing_paths_set, new_nodes_list).
+    existing_paths_set = set of full paths that exist (all segments have uid).
+    new_nodes_list = list of (full_path, parent_path, segment_name, node_ref) for each node with uid '', sorted by path (parent before child)."""
+    sf_name_map = {shf["name"]: shf for shf in ksm_shared_folders}
+    existing_paths = set()
+    new_nodes_list = []  # (full_path, parent_path, segment_name, node_dict)
+
+    for path, parts in good_paths:
+        if not parts or parts[0] not in sf_name_map:
+            continue
+        root_name = parts[0]
+        if len(parts) == 1:
+            existing_paths.add(path)
+            continue
+        tree = sf_name_map[root_name].get("folder_tree") or {}
+        current = tree
+        prefix = root_name
+        parent_path = root_name
+        for i in range(1, len(parts)):
+            name = parts[i]
+            path_so_far = f"{prefix}/{name}" if prefix else name
+            node = current.get(name) if isinstance(current, dict) else None
+            if not node:
+                break
+            uid = node.get("uid") or ""
+            if uid:
+                existing_paths.add(path_so_far)
+                parent_path = path_so_far
+            else:
+                new_nodes_list.append((path_so_far, parent_path, name, node))
+                parent_path = path_so_far
+            current = node.get("subfolders") or {}
+            prefix = path_so_far
+
+    # Dedupe new nodes by path and sort so parent before child
+    seen = set()
+    deduped = []
+    for item in new_nodes_list:
+        if item[0] not in seen:
+            seen.add(item[0])
+            deduped.append(item)
+    deduped.sort(key=lambda x: (x[0].count("/"), x[0]))
+    x_count = len(existing_paths)
+    y_count = len(deduped)
+    return (x_count, y_count, existing_paths, deduped)
+
+
+def _collect_all_folder_uids_under_ksm(ksm_shared_folders: list) -> set:
+    """Return set of all folder UIDs (shared folder roots + all descendants) under KSM app."""
+    out = set()
+    for shf in ksm_shared_folders:
+        out.add(shf["uid"])
+        tree = shf.get("folder_tree") or {}
+
+        def walk(t):
+            for name, node in (t or {}).items():
+                uid = (node or {}).get("uid")
+                if uid:
+                    out.add(uid)
+                walk((node or {}).get("subfolders") or {})
+
+        walk(tree)
+    return out
+
+
+def _get_ksm_app_record_uids(params, ksm_shared_folders: list) -> set:
+    """Return set of all record UIDs in any folder shared to the KSM app."""
+    folder_uids = _collect_all_folder_uids_under_ksm(ksm_shared_folders)
+    record_uids = set()
+    subfolder_record_cache = getattr(params, "subfolder_record_cache", None) or {}
+    for fuid in folder_uids:
+        if fuid in subfolder_record_cache:
+            record_uids.update(subfolder_record_cache[fuid])
+    return record_uids
+
+
+def _get_records_in_folder(params, folder_uid: str):
+    """Return list of (record_uid, title, record_type) for records in folder_uid.
+    record_type from record for autodetect (e.g. pamUser, pamMachine, login)."""
+    subfolder_record_cache = getattr(params, "subfolder_record_cache", None) or {}
+    result = []
+    for ruid in subfolder_record_cache.get(folder_uid, []):
+        try:
+            rec = vault.KeeperRecord.load(params, ruid)
+            title = getattr(rec, "title", "") or ""
+            rtype = ""
+            if hasattr(rec, "record_type"):
+                rtype = getattr(rec, "record_type", "") or ""
+            result.append((ruid, title, rtype))
+        except Exception:
+            pass
+    return result
+
+
+def _get_all_ksm_app_records(params, ksm_shared_folders: list) -> list:
+    """Return list of (record_uid, title, record_type) for every record in any folder under KSM app."""
+    folder_uids = _collect_all_folder_uids_under_ksm(ksm_shared_folders)
+    out = []
+    for fuid in folder_uids:
+        out.extend(_get_records_in_folder(params, fuid))
+    return out
+
+
+def _folder_uids_under_shf(shf: dict) -> set:
+    """Return set of folder UIDs under this shared folder (root + all descendants from folder_tree)."""
+    out = {shf.get("uid")}
+    tree = shf.get("folder_tree") or {}
+
+    def walk(t):
+        for name, node in (t or {}).items():
+            uid = (node or {}).get("uid")
+            if uid:
+                out.add(uid)
+            walk((node or {}).get("subfolders") or {})
+
+    walk(tree)
+    return out
+
+
+def _is_resource_type(obj) -> bool:
+    """True if object is a PAM resource (machine, database, directory, remote browser)."""
+    t = (getattr(obj, "type", None) or "").lower()
+    return t in ("pammachine", "pamdatabase", "pamdirectory", "pamremotebrowser")
+
+
+def _record_identifier(obj, fallback_login: str = "") -> str:
+    """Return identifier for error messages: uid if present, else title, else login (for users)."""
+    uid = getattr(obj, "uid_imported", None) or getattr(obj, "uid", None)
+    if uid and isinstance(uid, str) and RecordV3.is_valid_ref_uid(uid):
+        return f'uid "{uid}"'
+    title = getattr(obj, "title", None) or ""
+    if title:
+        return f'"{title}"'
+    login = getattr(obj, "login", None) or fallback_login
+    return f'login "{login}"' if login else "record"
+
+
+def _has_autogenerated_title(obj) -> bool:
+    """True if obj has title set by base.py when missing in JSON. base.py uses:
+    pamUser -> PAM User - {login}; pamMachine -> PAM Machine - {login};
+    pamDatabase -> PAM Database - {databaseId}; pamDirectory -> PAM Directory - {domainName};
+    pamRemoteBrowser (RBI) -> PAM RBI - {hostname from rbiUrl}."""
+    rtype = (getattr(obj, "type", None) or "").lower()
+    title = (getattr(obj, "title", None) or "").strip()
+    login = (getattr(obj, "login", None) or "").strip()
+    if rtype == "pamuser" and login and title == f"PAM User - {login}":
+        return True
+    if rtype == "pammachine" and login and title == f"PAM Machine - {login}":
+        return True
+    database_id = (getattr(obj, "databaseId", None) or "").strip()
+    if rtype == "pamdatabase" and database_id and title == f"PAM Database - {database_id}":
+        return True
+    domain_name = (getattr(obj, "domainName", None) or "").strip()
+    if rtype == "pamdirectory" and domain_name and title == f"PAM Directory - {domain_name}":
+        return True
+    if rtype == "pamremotebrowser" and getattr(obj, "rbiUrl", None) and title.startswith("PAM RBI - "):
+        return True
+    return False
+
+
+def _vault_title_matches_import(vault_title: str, import_title: str) -> bool:
+    """True if vault record title matches import title verbatim (both already in same form, e.g. from base.py)."""
+    return (vault_title or "").strip() == (import_title or "").strip()
+
+
 class PAMProjectExtendCommand(Command):
     parser = argparse.ArgumentParser(prog="pam project extend")
     parser.add_argument("--config", "-c", required=True, dest="config", action="store", help="PAM Configuration UID or Title")
@@ -284,31 +466,68 @@ class PAMProjectExtendCommand(Command):
                 print(f"""[DRY RUN] Found shared folder: {uid} "{name}" ({permissions})""")
 
         for shf in ksm_shared_folders:
-            shf['folder_tree'] = build_tree_recursive(params, shf['uid'])
+            shf["folder_tree"] = build_tree_recursive(params, shf["uid"])
 
-        # NB! Extract all paths first to resolve inner dependencies for partial paths
-        # TODO: parse from data JSON
-        folder_paths = ["gwapp", "gwapp/folder", "gwapp/f2", "gwapp/f3/f4/f5",
-                        "gwapp///bad", "bad", "gw/bad", "f7/bad",
-                        "f6/good", "gwapp_/f6",
-                        "gwapp/f7", "gwapp_/f7"]
+        project = {
+            "data": {"pam_data": pam_data},
+            "options": {"dry_run": dry_run},
+            "ksm_shared_folders": ksm_shared_folders,
+            "folders": {},
+            "pam_config": {"pam_config_uid": configuration.record_uid, "pam_config_object": None},
+            "error_count": 0,
+        }
 
-        # Process folder paths and update folder trees
-        good_paths, bad_paths = process_folder_paths(folder_paths, ksm_shared_folders)
+        self.process_folders(params, project)
+        self.map_records(params, project)
+        if project.get("error_count", 0) == 0:
+            has_new_no_path = False
+            for o in chain(project.get("mapped_resources", []), project.get("mapped_users", [])):
+                if getattr(o, "_extend_tag", None) == "new" and not (getattr(o, "folder_path", None) or "").strip():
+                    has_new_no_path = True
+                    break
+            if not has_new_no_path:
+                for mach in project.get("mapped_resources", []):
+                    if hasattr(mach, "users") and isinstance(mach.users, list):
+                        for u in mach.users:
+                            if getattr(u, "_extend_tag", None) == "new" and not (getattr(u, "folder_path", None) or "").strip():
+                                has_new_no_path = True
+                                break
+                    if has_new_no_path:
+                        break
+            if has_new_no_path:
+                self.autodetect_folders(params, project)
 
-        if dry_run:
-            print(f"[DRY RUN] Processed {len(folder_paths)} folder paths:")
-            print(f"[DRY RUN]   - Good paths: {len(good_paths)}")
-            for path, _ in good_paths:
-                print(f"[DRY RUN]     ✓ {path}")
-            print(f"[DRY RUN]   - Bad paths: {len(bad_paths)}")
-            for path, reason in bad_paths:
-                print(f"[DRY RUN]     ✗ {path}: {reason}")
+        err_count = project.get("error_count", 0)
+        new_count = project.get("new_record_count", 0)
+        if err_count > 0:
+            print(f"{err_count} errors; aborting. No changes made to vault.")
+            print("Use --dry-run option to see detailed error messages.")
+            return
+        if new_count == 0:
+            print("Nothing to update")
+            return
 
-        folder_trees = [shf['folder_tree'] for shf in ksm_shared_folders]
+        path_to_folder_uid = (project.get("folders") or {}).get("path_to_folder_uid") or {}
+        res_folder_uid = (project.get("folders") or {}).get("resources_folder_uid", "")
+        usr_folder_uid = (project.get("folders") or {}).get("users_folder_uid", "")
+
+        for o in chain(project.get("mapped_resources", []), project.get("mapped_users", [])):
+            if getattr(o, "_extend_tag", None) != "new":
+                continue
+            fp = (getattr(o, "folder_path", None) or "").strip()
+            o.resolved_folder_uid = path_to_folder_uid.get(fp) or (res_folder_uid if _is_resource_type(o) else usr_folder_uid)
+        for mach in project.get("mapped_resources", []):
+            if hasattr(mach, "users") and isinstance(mach.users, list):
+                for u in mach.users:
+                    if getattr(u, "_extend_tag", None) != "new":
+                        continue
+                    fp = (getattr(u, "folder_path", None) or "").strip()
+                    u.resolved_folder_uid = path_to_folder_uid.get(fp) or usr_folder_uid
 
         if dry_run:
             print("[DRY RUN COMPLETE] No changes were made. All actions were validated but not executed.")
+            return
+        self.process_data(params, project)
 
     def get_app_shared_folders(self, params, ksm_app_uid: str) -> list[dict]:
         ksm_shared_folders = []
@@ -337,38 +556,530 @@ class PAMProjectExtendCommand(Command):
         return ksm_shared_folders
 
     def process_folders(self, params, project: dict) -> dict:
-        res = {}
-        # FolderListCommand().execute(params, folders_only=True, pattern="/")
-        # TODO folders = self.find_folders(params, res["root_folder_uid"], folder_name, False)
-        # TODO folders = [x for x in folders if x.type == x.UserFolderType]
-        folders = self.find_folders(params, "", res["root_folder_target"], False)
-        if folders:
-            # select first non-root non-shared sub/folder
-            folders = [x for x in folders if x.type == x.UserFolderType]
-            if len(folders) > 1:
-                logging.warning(f"""Multiple user folders ({len(folders)}) match folder name "{res["root_folder_target"]}" """
-                                f" using first match with UID: {bcolors.OKGREEN}{folders[0].uid}{bcolors.ENDC}")
-                folders = folders[:1]
-        res["root_folder"] = res["root_folder_target"]
-        if folders:
-            res["root_folder_uid"] = str(folders[0].uid)
-        elif project["options"].get("dry_run", False) is not True:
-            # FolderMakeCommand().execute(params, user_folder=True, folder=f"""/{res["root_folder_target"]}""")
-            # TODO: fuid = self.create_subfolder(params, folder_name=res["project_folder"], parent_uid=res["root_folder_uid"])
-            fuid = self.create_subfolder(params, res["root_folder_target"])
-            res["root_folder_uid"] = fuid
-        api.sync_down(params)
-        return res
+        """Step 1: Parse folder_paths from pam_data, build tree, process paths, optionally create new folders.
+        Fills project['folders'] with path_to_folder_uid, good_paths, bad_paths; updates project['error_count']."""
+        data = project.get("data") or {}
+        pam_data = data.get("pam_data") or {}
+        resources = pam_data.get("resources") or []
+        users = pam_data.get("users") or []
+        options = project.get("options") or {}
+        dry_run = options.get("dry_run", False) is True
+        ksm_shared_folders = project.get("ksm_shared_folders") or []
+        folders_out = project.get("folders") or {}
+        project["folders"] = folders_out
 
-    def create_subfolder(self, params, folder_name:str, parent_uid:str="", permissions:Optional[Dict]=None):
-        # TODO: only need create_folder|force_folders(self, params, path)
+        # Collect unique folder_paths from resources, nested machine.users[], and top-level users (raw dicts)
+        folder_paths_set = set()
+        for r in resources:
+            if isinstance(r, dict):
+                if r.get("folder_path"):
+                    folder_paths_set.add((r["folder_path"],))
+                for nested in r.get("users") or []:
+                    if isinstance(nested, dict) and nested.get("folder_path"):
+                        folder_paths_set.add((nested["folder_path"],))
+        for u in users:
+            if isinstance(u, dict) and u.get("folder_path"):
+                folder_paths_set.add((u["folder_path"],))
+        folder_paths = list(set(fp[0] for fp in folder_paths_set))
+
+        good_paths, bad_paths = process_folder_paths(folder_paths, ksm_shared_folders)
+
+        path_to_folder_uid = {}
+        has_errors = bool(bad_paths)
+        for shf in ksm_shared_folders:
+            name = shf.get("name") or ""
+            if name:
+                path_to_folder_uid[name] = shf["uid"]
+            _collect_path_to_uid_from_tree(
+                name,
+                shf.get("folder_tree") or {},
+                path_to_folder_uid,
+                only_existing=has_errors,
+            )
+
+        x_count, y_count, existing_paths_set, new_nodes_list = _count_existing_and_new_paths(
+            ksm_shared_folders, good_paths
+        )
+
+        # Pre-generate UIDs for new folders (same as records: known before create). Fills path_to_folder_uid
+        # so dry run and map_records can resolve folder_path for all good paths.
+        for full_path, _parent_path, _name, node in new_nodes_list:
+            if not (node or {}).get("uid"):
+                uid = api.generate_record_uid()
+                node["uid"] = uid
+                path_to_folder_uid[full_path] = uid
+
+        step1_errors = [(path, reason) for path, reason in bad_paths]
+        if step1_errors:
+            project["error_count"] = project.get("error_count", 0) + len(step1_errors)
+
+        # Folder path printing: dry run always; normal run only if errors or Y > 0
+        print_paths = dry_run or step1_errors or y_count > 0
+        if print_paths:
+            prefix = "[DRY RUN] " if dry_run else ""
+            print(f"{prefix}Processed {len(folder_paths)} folder paths:")
+            print(f"{prefix}  - Good paths: {len(good_paths)}")
+            for path, _ in good_paths:
+                tag = "existing" if path in existing_paths_set else "new"
+                if logging.getLogger().getEffectiveLevel() <= logging.DEBUG:
+                    print(f"{prefix}    [{tag}] {path}")
+                else:
+                    print(f"{prefix}    ✓ {path}")
+            print(f"{prefix}  - Bad paths: {len(bad_paths)}")
+            for path, reason in bad_paths:
+                print(f"{prefix}    ✗ {path}: {reason}")
+            if step1_errors:
+                print(f"Total: {len(step1_errors)} errors")
+
+        if not dry_run and not step1_errors and new_nodes_list:
+            sf_name_map = {shf["name"]: shf for shf in ksm_shared_folders}
+            for full_path, parent_path, name, node in new_nodes_list:
+                parent_uid = path_to_folder_uid.get(parent_path, "")
+                if not parent_uid and parent_path in sf_name_map:
+                    parent_uid = sf_name_map[parent_path]["uid"]
+                new_uid = self.create_subfolder(params, name, parent_uid, folder_uid=node.get("uid"))
+                node["uid"] = new_uid
+                path_to_folder_uid[full_path] = new_uid
+            api.sync_down(params)
+
+        existing_msg = f"{x_count} existing folders (skipped)" if x_count else "0 existing folders"
+        if dry_run:
+            print(f"[DRY RUN] {existing_msg}, {y_count} new folders to be created")
+        else:
+            print(f"{existing_msg}, {y_count} new folders created")
+
+        if logging.getLogger().getEffectiveLevel() <= logging.DEBUG:
+            for path, _ in good_paths:
+                tag = "existing" if path in existing_paths_set else "new"
+                print(f"  [DEBUG] [{tag}] {path}")
+
+        folders_out["path_to_folder_uid"] = path_to_folder_uid
+        folders_out["good_paths"] = good_paths
+        folders_out["bad_paths"] = bad_paths
+        folders_out["folder_stats_x"] = x_count
+        folders_out["folder_stats_y"] = y_count
+        return folders_out
+
+    def map_records(self, params, project: dict) -> tuple:
+        """Step 2: Parse resources/users, tag existing vs new, set obj.uid; collect errors.
+        Returns (resources, users, step2_errors, new_record_count). Updates project['error_count']."""
+        data = project.get("data") or {}
+        pam_data = data.get("pam_data") or {}
+        path_to_folder_uid = (project.get("folders") or {}).get("path_to_folder_uid") or {}
+        ksm_shared_folders = project.get("ksm_shared_folders") or []
+        options = project.get("options") or {}
+        dry_run = options.get("dry_run", False) is True
+
+        rotation_profiles = pam_data.get("rotation_profiles") or {}
+        if not isinstance(rotation_profiles, dict):
+            rotation_profiles = {}
+        pam_cfg_uid = (project.get("pam_config") or {}).get("pam_config_uid", "")
+        rotation_params = PamRotationParams(configUid=pam_cfg_uid, profiles=rotation_profiles)
+
+        usrs = pam_data.get("users") or []
+        rsrs = pam_data.get("resources") or []
+        users = []
+        resources = []
+
+        for user in usrs:
+            rt = str(user.get("type", "")) if isinstance(user, dict) else ""
+            rt = next((x for x in ("login", "pamUser") if x.lower() == rt.lower()), rt)
+            if rt not in ("login", "pamUser") and isinstance(user, dict):
+                pam_keys = ("private_pem_key", "distinguished_name", "connect_database", "managed", "scripts", "rotation_settings")
+                if user.get("url"): rt = "login"
+                elif any(k in user for k in pam_keys): rt = "pamUser"
+            rt = next((x for x in ("login", "pamUser") if x.lower() == rt.lower()), "login")
+            if rt == "login":
+                usr = LoginUserObject.load(user)
+            else:
+                usr = PamUserObject.load(user)
+            if usr:
+                users.append(usr)
+
+        for machine in rsrs:
+            rt = str(machine.get("type", "")).strip() if isinstance(machine, dict) else ""
+            if rt.lower() not in (x.lower() for x in PAM_RESOURCES_RECORD_TYPES):
+                title = str(machine.get("title", "")).strip() if isinstance(machine, dict) else ""
+                logging.error(f"Incorrect record type \"{rt}\" - should be one of {PAM_RESOURCES_RECORD_TYPES}, \"{title}\" record skipped.")
+                continue
+            obj = None
+            rtl = rt.lower()
+            if rtl == "pamdatabase":
+                obj = PamDatabaseObject.load(machine, rotation_params)
+            elif rtl == "pamdirectory":
+                obj = PamDirectoryObject.load(machine, rotation_params)
+            elif rtl == "pammachine":
+                obj = PamMachineObject.load(machine, rotation_params)
+            elif rtl == "pamremotebrowser":
+                obj = PamRemoteBrowserObject.load(machine, rotation_params)
+            if obj:
+                resources.append(obj)
+
+        for obj in chain(resources, users):
+            if not (isinstance(getattr(obj, "uid", None), str) and RecordV3.is_valid_ref_uid(obj.uid)):
+                obj.uid = utils.generate_uid()
+            if hasattr(obj, "users") and isinstance(obj.users, list):
+                for usr in obj.users:
+                    if not (isinstance(getattr(usr, "uid", None), str) and RecordV3.is_valid_ref_uid(usr.uid)):
+                        usr.uid = utils.generate_uid()
+
+        ksm_app_uids = _get_ksm_app_record_uids(params, ksm_shared_folders)
+        all_ksm_records = _get_all_ksm_app_records(params, ksm_shared_folders)
+        good_paths = (project.get("folders") or {}).get("good_paths") or []
+        good_paths_set = {p for p, _ in good_paths}
+        step2_errors = []
+
+        def _scope_key(obj, good_paths_set):
+            # Scope by folder only if path is good (exists or to be created); else "global".
+            # "Global" means: SHF shared to KSM App; for users → autodetected users folder (or single
+            # folder for both); for resources → autodetected resources folder (or same single folder).
+            # 0 or 3+ autodetected folders is an error anyway. Users are never scoped by machine.
+            fp = (getattr(obj, "folder_path", None) or "").strip()
+            if fp and fp in good_paths_set:
+                return fp
+            return "global"
+
+        seen_scope_title = {}  # (scope_key, title) -> list of (ident, machine_suffix) for error message
+        for o in chain(resources, users):
+            scope = _scope_key(o, good_paths_set)
+            title = (getattr(o, "title", None) or "").strip()
+            if title:
+                key = (scope, title)
+                ident = _record_identifier(o)
+                seen_scope_title.setdefault(key, []).append((ident, ""))
+        for mach in resources:
+            if hasattr(mach, "users") and isinstance(mach.users, list):
+                for u in mach.users:
+                    scope = _scope_key(u, good_paths_set)
+                    title = (getattr(u, "title", None) or "").strip()
+                    if title:
+                        key = (scope, title)
+                        ident = _record_identifier(u)
+                        suffix = f' (nested on machine "{getattr(mach, "title", "")}")'
+                        seen_scope_title.setdefault(key, []).append((ident, suffix))
+
+        for (scope, title), idents in seen_scope_title.items():
+            if len(idents) > 1:
+                scope_msg = f"folder {scope}" if scope != "global" else "global"
+                step2_errors.append(
+                    f'ERROR: Duplicate import records with same title "{title}" in same scope ({scope_msg}). '
+                    f'Add explicit "title" in JSON to disambiguate.'
+                )
+
+        def resolve_one(obj, parent_machine=None):
+            ident = _record_identifier(obj)
+            machine_suffix = ""
+            if parent_machine:
+                mt = getattr(parent_machine, "title", None) or ""
+                mu = getattr(parent_machine, "uid", None) or ""
+                machine_suffix = f' user on machine "{mt}"' if mt else f" user on machine <{mu}>"
+
+            uid_imp = getattr(obj, "uid_imported", None)
+            if uid_imp and isinstance(uid_imp, str) and RecordV3.is_valid_ref_uid(uid_imp):
+                if uid_imp not in ksm_app_uids:
+                    step2_errors.append(f'uid "{uid_imp}" not found in KSM app for record {ident}{machine_suffix}')
+                    return
+                obj.uid = uid_imp
+                obj._extend_tag = "existing"
+                return
+
+            folder_path = getattr(obj, "folder_path", None) or ""
+            title = (getattr(obj, "title", None) or "").strip()
+            login = (getattr(obj, "login", None) or "").strip()
+
+            if folder_path:
+                folder_uid = path_to_folder_uid.get(folder_path)
+                if not folder_uid:
+                    if folder_path in good_paths_set:
+                        obj._extend_tag = "new"
+                        return
+                    step2_errors.append(f'folder_path "{folder_path}" could not be resolved for record {ident}{machine_suffix}')
+                    return
+                if not title and not login:
+                    obj._extend_tag = "new"
+                    return
+                recs = _get_records_in_folder(params, folder_uid)
+                matches = [r for r in recs if _vault_title_matches_import(r[1], title)]
+                if len(matches) == 0:
+                    obj._extend_tag = "new"
+                    return
+                if len(matches) == 1:
+                    obj.uid = matches[0][0]
+                    obj._extend_tag = "existing"
+                    return
+                step2_errors.append(f'Multiple matches for record {ident} in folder "{folder_path}"; add folder_path to disambiguate{machine_suffix}')
+                return
+
+            if not title and not login:
+                obj._extend_tag = "new"
+                return
+            matches = [r for r in all_ksm_records if _vault_title_matches_import(r[1], title)]
+            if len(matches) == 0:
+                obj._extend_tag = "new"
+                return
+            if len(matches) == 1:
+                obj.uid = matches[0][0]
+                obj._extend_tag = "existing"
+                return
+            step2_errors.append(f'Multiple matches for record {ident}; add folder_path to disambiguate{machine_suffix}')
+
+        for obj in resources:
+            resolve_one(obj, None)
+        for obj in users:
+            resolve_one(obj, None)
+        for mach in resources:
+            if hasattr(mach, "users") and isinstance(mach.users, list):
+                for usr in mach.users:
+                    resolve_one(usr, mach)
+
+        autogenerated_titles = []
+        for o in chain(resources, users):
+            if _has_autogenerated_title(o):
+                autogenerated_titles.append(getattr(o, "title", None) or "")
+        for mach in resources:
+            if hasattr(mach, "users") and isinstance(mach.users, list):
+                for u in mach.users:
+                    if _has_autogenerated_title(u):
+                        autogenerated_titles.append(getattr(u, "title", None) or "")
+        if autogenerated_titles:
+            print(
+                f"{bcolors.WARNING}Warning: {len(autogenerated_titles)} record(s) have autogenerated titles "
+                f"(e.g. PAM User/Machine/Database/Directory/RBI - <field>). Add \"title\" in import JSON to set an explicit record title.{bcolors.ENDC}"
+            )
+            if logging.getLogger().getEffectiveLevel() <= logging.DEBUG:
+                for t in autogenerated_titles:
+                    print(f"  [DEBUG] autogenerated title: {t}")
+
+        machines = [x for x in resources if not isinstance(x, PamRemoteBrowserObject)]
+        pam_directories = [x for x in machines if (getattr(x, "type", "") or "").lower() == "pamdirectory"]
+        for mach in resources:
+            if not mach:
+                continue
+            admin_cred = get_admin_credential(mach)
+            sftp_user = get_sftp_attribute(mach, "sftpUser")
+            sftp_res = get_sftp_attribute(mach, "sftpResource")
+            if sftp_res:
+                ruids = [x for x in machines if getattr(x, "title", None) == sftp_res]
+                ruids = ruids or [x for x in machines if getattr(x, "login", None) == sftp_res]
+                if len(ruids) == 1 and getattr(ruids[0], "uid", ""):
+                    set_sftp_uid(mach, "sftpResourceUid", ruids[0].uid)
+            if sftp_user:
+                ruids = find_user(mach, users, sftp_user) or find_user(machines, users, sftp_user)
+                if len(ruids) == 1 and getattr(ruids[0], "uid", ""):
+                    set_sftp_uid(mach, "sftpUserUid", ruids[0].uid)
+            if admin_cred:
+                ruids = find_user(mach, users, admin_cred)
+                is_external = False
+                if not ruids:
+                    ruids = find_external_user(mach, machines, admin_cred)
+                    is_external = True
+                if len(ruids) == 1 and getattr(ruids[0], "uid", ""):
+                    set_user_record_uid(mach, ruids[0].uid, is_external)
+            if mach.pam_settings and getattr(mach.pam_settings, "jit_settings", None):
+                jit = mach.pam_settings.jit_settings
+                ref = getattr(jit, "pam_directory_record", None) or ""
+                if ref and isinstance(ref, str) and ref.strip():
+                    matches = [x for x in pam_directories if getattr(x, "title", None) == ref.strip()]
+                    if len(matches) == 1:
+                        jit.pam_directory_uid = matches[0].uid
+            resolve_script_creds(mach, users, resources)
+            if hasattr(mach, "users") and isinstance(mach.users, list):
+                for usr in mach.users:
+                    if usr and hasattr(usr, "rotation_settings") and usr.rotation_settings:
+                        rot = getattr(usr.rotation_settings, "rotation", None)
+                        if rot == "general":
+                            usr.rotation_settings.resourceUid = mach.uid
+                        elif rot in ("iam_user", "scripts_only"):
+                            usr.rotation_settings.resourceUid = pam_cfg_uid
+                    resolve_script_creds(usr, users, resources)
+            if hasattr(mach, "rbi_settings") and getattr(mach.rbi_settings, "connection", None):
+                conn = mach.rbi_settings.connection
+                if getattr(conn, "protocol", None) and str(getattr(conn.protocol, "value", "") or "").lower() == "http":
+                    creds = getattr(conn, "httpCredentials", None)
+                    if creds:
+                        cred = str(creds[0]) if isinstance(creds, list) else str(creds)
+                        matches = [x for x in users if getattr(x, "title", None) == cred]
+                        matches = matches or [x for x in users if getattr(x, "login", None) == cred]
+                        if len(matches) == 1 and getattr(matches[0], "uid", ""):
+                            mach.rbi_settings.connection.httpCredentialsUid = [matches[0].uid]
+        for usr in users:
+            if usr and hasattr(usr, "rotation_settings") and usr.rotation_settings:
+                rot = getattr(usr.rotation_settings, "rotation", None)
+                if rot in ("iam_user", "scripts_only"):
+                    usr.rotation_settings.resourceUid = pam_cfg_uid
+                elif rot == "general":
+                    res = getattr(usr.rotation_settings, "resource", "") or ""
+                    if res:
+                        ruids = [x for x in machines if getattr(x, "title", None) == res]
+                        ruids = ruids or [x for x in machines if getattr(x, "login", None) == res]
+                        if ruids:
+                            usr.rotation_settings.resourceUid = ruids[0].uid
+            resolve_script_creds(usr, users, resources)
+
+        if step2_errors:
+            project["error_count"] = project.get("error_count", 0) + len(step2_errors)
+
+        x_count = sum(1 for o in chain(resources, users) if getattr(o, "_extend_tag", None) == "existing")
+        for mach in resources:
+            if hasattr(mach, "users") and isinstance(mach.users, list):
+                x_count += sum(1 for u in mach.users if getattr(u, "_extend_tag", None) == "existing")
+        y_count = 0
+        for o in chain(resources, users):
+            if getattr(o, "_extend_tag", None) == "new":
+                y_count += 1
+        for mach in resources:
+            if hasattr(mach, "users") and isinstance(mach.users, list):
+                y_count += sum(1 for u in mach.users if getattr(u, "_extend_tag", None) == "new")
+
+        existing_rec_msg = f"{x_count} existing records (skipped)" if x_count else "0 existing records"
+        total_line = f"{existing_rec_msg}, {y_count} new records to be created"
+        for err in step2_errors:
+            print(f"  {err}")
+        if step2_errors:
+            print(f"Total: {len(step2_errors)} errors")
+
+        if dry_run:
+            for o in chain(resources, users):
+                tag = getattr(o, "_extend_tag", "?")
+                path = getattr(o, "folder_path", "") or "autodetect"
+                otype = getattr(o, "type", "") or ""
+                label = getattr(o, "title", None) or getattr(o, "login", None) or ""
+                uid_suffix = f"\tuid={getattr(o, 'uid', '')}" if tag == "existing" else ""
+                print(f"  [DRY RUN] [{tag}]  folder={path}\trecord={otype}: {label}{uid_suffix}")
+            for mach in resources:
+                if hasattr(mach, "users") and isinstance(mach.users, list):
+                    for u in mach.users:
+                        tag = getattr(u, "_extend_tag", "?")
+                        path = getattr(u, "folder_path", "") or "autodetect"
+                        utype = getattr(u, "type", "") or ""
+                        label = getattr(u, "title", None) or getattr(u, "login", None) or ""
+                        uid_suffix = f"\tuid={getattr(u, 'uid', '')}" if tag == "existing" else ""
+                        print(f"  [DRY RUN] [{tag}]  folder={path}\trecord={utype}: {label} (nested on {getattr(mach, 'title', '')}){uid_suffix}")
+            print(f"[DRY RUN] {total_line}")
+        else:
+            if logging.getLogger().getEffectiveLevel() <= logging.DEBUG:
+                for o in chain(resources, users):
+                    tag = getattr(o, "_extend_tag", "?")
+                    path = getattr(o, "folder_path", "") or "autodetect"
+                    otype = getattr(o, "type", "") or ""
+                    label = getattr(o, "title", None) or getattr(o, "login", None) or ""
+                    uid_suffix = f"\tuid={getattr(o, 'uid', '')}" if tag == "existing" else ""
+                    print(f"  [DEBUG] [{tag}]  folder={path}\trecord={otype}: {label}{uid_suffix}")
+                for mach in resources:
+                    if hasattr(mach, "users") and isinstance(mach.users, list):
+                        for u in mach.users:
+                            tag = getattr(u, "_extend_tag", "?")
+                            path = getattr(u, "folder_path", "") or "autodetect"
+                            utype = getattr(u, "type", "") or ""
+                            label = getattr(u, "title", None) or getattr(u, "login", None) or ""
+                            uid_suffix = f"\tuid={getattr(u, 'uid', '')}" if tag == "existing" else ""
+                            print(f"  [DEBUG] [{tag}]  folder={path}\trecord={utype}: {label} (nested on {getattr(mach, 'title', '')}){uid_suffix}")
+            print(total_line)
+
+        project["mapped_resources"] = resources
+        project["mapped_users"] = users
+        project["new_record_count"] = y_count
+        return (resources, users, step2_errors, y_count)
+
+    def autodetect_folders(self, params, project: dict) -> list:
+        """Step 3: Autodetect resources_folder_uid and users_folder_uid when new records have no folder_path.
+        Call only when error_count==0 and there are records with no uid and no folder_path (tagged new).
+        Returns list of step3 errors; updates project['folders'] with resources_folder_uid/users_folder_uid on success."""
+        step3_errors = []
+        folders_out = project.get("folders") or {}
+        ksm_shared_folders = project.get("ksm_shared_folders") or []
+        subfolder_record_cache = getattr(params, "subfolder_record_cache", None) or {}
+
+        new_no_path = []
+        for o in chain(project.get("mapped_resources", []), project.get("mapped_users", [])):
+            if getattr(o, "_extend_tag", None) == "new":
+                if not (getattr(o, "folder_path", None) or "").strip():
+                    new_no_path.append(o)
+        for mach in project.get("mapped_resources", []):
+            if hasattr(mach, "users") and isinstance(mach.users, list):
+                for u in mach.users:
+                    if getattr(u, "_extend_tag", None) == "new" and not (getattr(u, "folder_path", None) or "").strip():
+                        new_no_path.append(u)
+        if not new_no_path:
+            return step3_errors
+
+        shf_list = [(shf["uid"], shf.get("name") or "") for shf in ksm_shared_folders]
+        if len(shf_list) == 1:
+            folders_out["resources_folder_uid"] = shf_list[0][0]
+            folders_out["users_folder_uid"] = shf_list[0][0]
+            print("Warning: Using single shared folder for both resources and users (best practice: separate).")
+            return step3_errors
+
+        if len(shf_list) == 2:
+            names = [n for _, n in shf_list]
+            r_idx = next((i for i, n in enumerate(names) if n.endswith(" - Resources") or n.endswith("- Resources")), -1)
+            u_idx = next((i for i, n in enumerate(names) if n.endswith(" - Users") or n.endswith("- Users")), -1)
+            if r_idx >= 0 and u_idx >= 0 and r_idx != u_idx:
+                folders_out["resources_folder_uid"] = shf_list[r_idx][0]
+                folders_out["users_folder_uid"] = shf_list[u_idx][0]
+                return step3_errors
+
+        non_empty = []
+        for shf in ksm_shared_folders:
+            uids = _folder_uids_under_shf(shf)
+            if any(subfolder_record_cache.get(fuid) for fuid in uids):
+                non_empty.append(shf)
+        if len(non_empty) == 0:
+            step3_errors.append("Autodetect: no folders contain records; cannot assign resources/users folders.")
+            project["error_count"] = project.get("error_count", 0) + len(step3_errors)
+            for e in step3_errors:
+                print(f"  {e}")
+            print(f"Total: {len(step3_errors)} errors")
+            return step3_errors
+        if len(non_empty) == 1:
+            folders_out["resources_folder_uid"] = non_empty[0]["uid"]
+            folders_out["users_folder_uid"] = non_empty[0]["uid"]
+            print("Warning: Using single non-empty folder for both resources and users.")
+            return step3_errors
+        if len(non_empty) == 2:
+            res_uid = users_uid = None
+            for shf in non_empty:
+                uids = _folder_uids_under_shf(shf)
+                for fuid in uids:
+                    recs = _get_records_in_folder(params, fuid)
+                    if not recs:
+                        continue
+                    for ruid, _title, rtype in recs:
+                        rtype = (rtype or "").lower()
+                        if rtype in ("pamuser", "login"):
+                            users_uid = shf["uid"]
+                            break
+                        if rtype in ("pammachine", "pamdatabase", "pamdirectory", "pamremotebrowser"):
+                            res_uid = shf["uid"]
+                            break
+                    if users_uid is not None or res_uid is not None:
+                        break
+                if users_uid is not None and res_uid is not None:
+                    break
+            if res_uid is not None and users_uid is not None:
+                folders_out["resources_folder_uid"] = res_uid
+                folders_out["users_folder_uid"] = users_uid
+                return step3_errors
+            step3_errors.append("Autodetect: could not determine which folder is resources vs users.")
+        else:
+            step3_errors.append("Autodetect: three or more non-empty folders; add folder_path to disambiguate.")
+        project["error_count"] = project.get("error_count", 0) + len(step3_errors)
+        for e in step3_errors:
+            print(f"  {e}")
+        if step3_errors:
+            print(f"Total: {len(step3_errors)} errors")
+        return step3_errors
+
+    def create_subfolder(self, params, folder_name:str, parent_uid:str="", permissions:Optional[Dict]=None, folder_uid:Optional[str]=None):
+        # folder_uid: if provided, create folder with this UID (same as records with pre-generated uid).
 
         name = str(folder_name or "").strip()
         base_folder = params.folder_cache.get(parent_uid, None) or params.root_folder
 
         shared_folder = True if permissions else False
         user_folder = True if not permissions else False  # uf or sff (split later)
-        folder_uid = api.generate_record_uid()
+        if not folder_uid:
+            folder_uid = api.generate_record_uid()
         request: Dict[str, Any] = {
             "command": "folder_add",
             "folder_type": "user_folder",
@@ -513,290 +1224,128 @@ class PAMProjectExtendCommand(Command):
 
 
     def process_data(self, params, project):
-        """Process project data (JSON)"""
+        """Extend: only create records tagged new; use resolved_folder_uid; for existing machines only add new users."""
+        if project.get("options", {}).get("dry_run", False) is True:
+            return
         from ..tunnel_and_connections import PAMTunnelEditCommand
         from ..discoveryrotation import PAMCreateRecordRotationCommand
 
-        # users section is mostly RBI login users, but occasional "disconnected"
-        # PAM User (ex. NOOP rotation) requires explicit record type to be set
-        # also for shared users b/n ssh, vnc, rdp on same host (one pamMachine each)
-        users = []
-        resources = []
-        # errors = 0  # --force option overrides (allows later setup)
+        resources = project.get("mapped_resources") or []
+        users = project.get("mapped_users") or []
+        pam_cfg_uid = (project.get("pam_config") or {}).get("pam_config_uid", "")
+        shfres = (project.get("folders") or {}).get("resources_folder_uid", "")
+        shfusr = (project.get("folders") or {}).get("users_folder_uid", "")
+        pce = (project.get("pam_config") or {}).get("pam_config_object")
 
-        print("Started parsing import data...")
-        pam_data = (project["data"].get("pam_data")
-                    if "data" in project and isinstance(project["data"], dict)
-                    else {})
-        pam_data = pam_data if isinstance(pam_data, dict) else {}
-        rotation_profiles = (pam_data.get("rotation_profiles")
-                            if "rotation_profiles" in pam_data and isinstance(pam_data["rotation_profiles"], dict)
-                            else {})
-        rotation_profiles = rotation_profiles if isinstance(rotation_profiles, dict) else {}
-        pam_cfg_uid = project["pam_config"]["pam_config_uid"]
-        rotation_params = PamRotationParams(configUid=pam_cfg_uid, profiles=rotation_profiles)
-
-        shfres = project["folders"].get("resources_folder_uid", "")
-        shfusr = project["folders"].get("users_folder_uid", "")
-
-        usrs = pam_data["users"] if "users" in pam_data and isinstance(pam_data["users"], list) else []
-        rsrs = pam_data["resources"] if "resources" in pam_data and isinstance(pam_data["resources"], list) else []
-
-        for user in usrs:
-            rt = str(user.get("type", "")) if isinstance(user, dict) else ""
-            rt = next((x for x in ("login", "pamUser") if x.lower() == rt.lower()), rt)
-            if rt not in ("login", "pamUser") and isinstance(user, dict):
-                pam_keys = ("private_pem_key", "distinguished_name", "connect_database", "managed", "scripts", "rotation_settings")
-                if "url" in user: rt = "login"  # RBI login record
-                elif any(key in user for key in pam_keys): rt = "pamUser"
-            rt = next((x for x in ("login", "pamUser") if x.lower() == rt.lower()), "login")
-            # If not found default to "login" which can be changed later
-
-            if rt == "login":
-                usr = LoginUserObject.load(user)
-            else:
-                usr = PamUserObject.load(user)
-            if usr:
-                users.append(usr)
-
-        # each machine has its own users list of pamUser
-        for machine in rsrs:
-            rt = str(machine.get("type", "")).strip() if isinstance(machine, dict) else ""
-            if rt.lower() not in (x.lower() for x in PAM_RESOURCES_RECORD_TYPES):
-                prefix = "Incorrect " if rt else "Missing "
-                title = str(machine.get("title", "")).strip() if isinstance(machine, dict) else ""
-                logging.error(f"""{prefix} record type "{rt}" - should be one of {PAM_RESOURCES_RECORD_TYPES}, "{title}" record skipped.""")
-                continue
-
-            obj = None
-            rt = rt.lower()
-            if rt == "pamDatabase".lower():
-                obj = PamDatabaseObject.load(machine, rotation_params)
-            elif rt == "pamDirectory".lower():
-                obj = PamDirectoryObject.load(machine, rotation_params)
-            elif rt == "pamMachine".lower():
-                obj = PamMachineObject.load(machine, rotation_params)
-            elif rt == "pamRemoteBrowser".lower():
-                obj = PamRemoteBrowserObject.load(machine, rotation_params)
-            else:
-                logging.warning(f"""Skipping unknown resource type "{rt}" """)
-
-            if obj:
-                resources.append(obj)
-
-        # generate record UIDs used for DAG links
-        for obj in chain(resources, users):
-            # preserve any valid UID from JSON otherwise generate new UID
-            if not(isinstance(obj.uid, str) and RecordV3.is_valid_ref_uid(obj.uid)):
-                obj.uid = utils.generate_uid()
-            if hasattr(obj, "users") and isinstance(obj.users, list):
-                for usr in obj.users:
-                    if not(isinstance(usr.uid, str) and RecordV3.is_valid_ref_uid(usr.uid)):
-                        usr.uid = utils.generate_uid()
-
-        # resolve linked object UIDs (machines and users)
-        # pam_settings.connection.administrative_credentials must reference
-        # one of its own users[] -> userRecords["admin_user_record_UID"]
-        machines = [x for x in resources if not isinstance(x, PamRemoteBrowserObject)]
-        for mach in resources:
-            if not mach: continue
-            admin_cred = get_admin_credential(mach)
-            sftp_user = get_sftp_attribute(mach, "sftpUser")
-            sftp_res = get_sftp_attribute(mach, "sftpResource")
-
-            # sftpResourceUid could reference any machine (except RBI)
-            if sftp_res:
-                ruids = [x for x in machines if getattr(x, "title", None) == sftp_res]
-                ruids = ruids or [x for x in machines if getattr(x, "login", None) == sftp_res]
-                if len(ruids) != 1:
-                    logging.warning(f"{bcolors.WARNING}{len(ruids)} matches found for sftpResource in {mach.title}.{bcolors.ENDC} ")
-                ruid = getattr(ruids[0], "uid", "") if ruids else ""
-                if ruid:
-                    set_sftp_uid(mach, "sftpResourceUid", ruid)
-
-            # sftpUserUid could reference any user (except RBI)
-            if sftp_user:
-                ruids = find_user(mach, users, sftp_user)  # try local user first
-                ruids = ruids or find_user(machines, users, sftp_user)  # global search
-                if len(ruids) != 1:
-                    logging.warning(f"{bcolors.WARNING}{len(ruids)} matches found for sftpUser in {mach.title}.{bcolors.ENDC} ")
-                ruid = getattr(ruids[0], "uid", "") if ruids else ""
-                if ruid:
-                    set_sftp_uid(mach, "sftpUserUid", ruid)
-
-            # userRecordUid could reference local or users[] - resolved from userRecords
-            if admin_cred:
-                is_external = False
-                ruids = find_user(mach, users, admin_cred)
-                if not ruids:  # search all pamDirectory for external AD admin user
-                    ruids = find_external_user(mach, machines, admin_cred)
-                    is_external = True
-                if len(ruids) != 1:
-                    logging.warning(f"{bcolors.WARNING}{len(ruids)} matches found for userRecords in {mach.title}.{bcolors.ENDC} ")
-                ruid = getattr(ruids[0], "uid", "") if ruids else ""
-                if ruid:
-                    set_user_record_uid(mach, ruid, is_external)
-
-            # resolve machine PRS creds: additional_credentials[] -> recordRef[]
-            resolve_script_creds(mach, users, resources)
-
-            # resolve users PRS creds and user.rotation_settings.resource
-            if hasattr(mach, "users") and isinstance(mach.users, list):
-                for usr in mach.users:
-                    if (usr and hasattr(usr, "rotation_settings") and usr.rotation_settings
-                        and hasattr(usr.rotation_settings, "rotation")
-                        and usr.rotation_settings.rotation):
-                        if usr.rotation_settings.rotation == "general":
-                            usr.rotation_settings.resourceUid = mach.uid
-                            # rotation_settings.resource is always owner machine (uid)
-                        elif usr.rotation_settings.rotation in ("iam_user", "scripts_only"):
-                            usr.rotation_settings.resourceUid = pam_cfg_uid
-                            # rotation_settings.resource is always pam config uid here
-                    # resolve machine users PRS creds additional_credentials[] -> recordRef[]
-                    resolve_script_creds(usr, users, resources)
-
-            # RBI autofill_credentials -> httpCredentialsUid (rt:login/pamUser)
-            if (hasattr(mach, "rbi_settings") and
-                hasattr(mach.rbi_settings, "connection") and
-                hasattr(mach.rbi_settings.connection, "protocol") and
-                str(mach.rbi_settings.connection.protocol.value).lower() == "http"):
-                if (hasattr(mach.rbi_settings.connection, "httpCredentials")
-                    and mach.rbi_settings.connection.httpCredentials):
-                    cred = mach.rbi_settings.connection.httpCredentials
-                    cred = str(cred[0]) if isinstance(cred, list) else str(cred)
-
-                    # RBI resources do not own any users - search global users[]
-                    # connection.userRecords[] not used by RBI
-                    matches = [x for x in users if getattr(x, "title", None) == cred]
-                    matches = matches or [x for x in users if getattr(x, "login", None) == cred]
-                    if len(matches) != 1:
-                        logging.warning(f"{bcolors.WARNING}{len(matches)} matches found for RBI record {mach.title}.{bcolors.ENDC} ")
-                    uid = getattr(matches[0], "uid", "") if matches else ""
-                    if uid:
-                        mach.rbi_settings.connection.httpCredentialsUid = [uid]
-
-        for usr in users:
-            # resolve user.rotation_settings.resource - "iam_user", "scripts_only"
-            if (usr and hasattr(usr, "rotation_settings") and usr.rotation_settings
-                and hasattr(usr.rotation_settings, "rotation")
-                and usr.rotation_settings.rotation):
-                if usr.rotation_settings.rotation == "general":
-                    # rotation_settings.resource is always owner machine (uid)
-                    logging.warning(f"This user {usr.title} belongs to its own machine users list (consider removal from global users list)")
-                    resource = getattr(usr.rotation_settings, "resource", "")
-                    if resource:
-                        ruids = [x for x in machines if getattr(x, "title", None) == resource]
-                        ruids = ruids or [x for x in machines if getattr(x, "login", None) == resource]
-                        if ruids:
-                            usr.rotation_settings.resourceUid = ruids[0].uid
-                elif usr.rotation_settings.rotation in ("iam_user", "scripts_only"):
-                    usr.rotation_settings.resourceUid = pam_cfg_uid
-                    # rotation_settings.resource is always pam config uid here
-            # resolve users PRS additional_credentials[] -> recordRef[]
-            resolve_script_creds(usr, users, resources)
-
-        # resolve PAM Config PRS additional_credentials[] -> recordRef[]
-        pce = project["pam_config"].get("pam_config_object", None)
-        if pce and pce.scripts and pce.scripts.scripts:
-            resolve_script_creds(pce, users, resources)
-        # only resolve here - create after machine and user creation
-
-        # dry run
-        if project["options"].get("dry_run", False) is True:
-            print("Will import file data here...")
-            return
-
-        # if errors > 0:
-        #     logging.warning(f"{bcolors.WARNING}{errors} errors found.{bcolors.ENDC} ")
-        #     if project["options"]["force"] is True:
-        #         print("Starting data import (--force option present)")
-        #     else:
-        #         print("Exiting. If you want to continue use --force option")
-        #         return
         print("Started importing data...")
-
-        encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
-        tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_cfg_uid, True)
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_cfg_uid, True,
+                         transmission_key=transmission_key)
         pte = PAMTunnelEditCommand()
         prc = PAMCreateRecordRotationCommand()
+        pdelta = 10
 
-        pdelta = 10  # progress delta (update progress stats every pdelta items)
-        msg = "Start data processing "
-        msg += f" {len(resources)} resources" if resources else ""
-        msg += f" {len(users)} external users" if users else ""
-        msg += " - This could take a while..." if len(resources) + len(users) > 0 else ""
-        logging.warning(msg)
+        new_users = [u for u in users if getattr(u, "_extend_tag", None) == "new"]
+        if new_users:
+            logging.warning(f"Processing external users: {len(new_users)}")
+            for n, user in enumerate(new_users):
+                folder_uid = getattr(user, "resolved_folder_uid", None) or shfusr
+                user.create_record(params, folder_uid)
+                if n % pdelta == 0:
+                    print(f"{n}/{len(new_users)}")
+            print(f"{len(new_users)}/{len(new_users)}\n")
 
-        # Create records
-        if users:
-            logging.warning(f"Processing external users: {len(users)}")
-            for n, user in enumerate(users):  # standalone users
-                user.create_record(params, shfusr)
-                if n % pdelta == 0: print(f"{n}/{len(users)}")
-            print(f"{len(users)}/{len(users)}\n")
-
-        # we need pamDirectory first in case AD Admin user is used in Local pamMachine
-        resources.sort(key=lambda r: r.type != "pamDirectory")
-        if resources: logging.warning(f"Processing resources: {len(resources)}")
-        for n, mach in enumerate(resources):
-            if n % pdelta == 0: print(f"{n}/{len(resources)}")
-            # Machine - create machine first to avoid error:
-            # Resource <UID> does not belong to the configuration
+        resources_sorted = sorted(resources, key=lambda r: (getattr(r, "type", "") or "").lower() != "pamdirectory")
+        new_resources = [r for r in resources_sorted if getattr(r, "_extend_tag", None) == "new"]
+        existing_resources = [r for r in resources_sorted if getattr(r, "_extend_tag", None) == "existing"]
+        if new_resources:
+            logging.warning(f"Processing resources: {len(new_resources)}")
+        for n, mach in enumerate(new_resources):
+            if n % pdelta == 0:
+                print(f"{n}/{len(new_resources)}")
+            folder_uid = getattr(mach, "resolved_folder_uid", None) or shfres
             admin_uid = get_admin_credential(mach, True)
-            mach.create_record(params, shfres)
+            mach.create_record(params, folder_uid)
             tdag.link_resource_to_config(mach.uid)
-            if isinstance(mach, PamRemoteBrowserObject): # RBI
+            if isinstance(mach, PamRemoteBrowserObject):
                 args = parse_command_options(mach, True)
                 pte.execute(params, config=pam_cfg_uid, silent=True, **args)
                 args = parse_command_options(mach, False)
-                # bugfix: RBI=True also needs connections=True to enable RBI (in web vault)
                 if args.get("remote_browser_isolation", False) is True:
                     args["connections"] = True
                 tdag.set_resource_allowed(**args)
-            else: # machine/db/directory
+            else:
                 args = parse_command_options(mach, True)
-                if admin_uid: args["admin"] = admin_uid
+                if admin_uid:
+                    args["admin"] = admin_uid
                 pte.execute(params, config=pam_cfg_uid, silent=True, **args)
                 if admin_uid and is_admin_external(mach):
                     tdag.link_user_to_resource(admin_uid, mach.uid, is_admin=True, belongs_to=False)
                 args = parse_command_options(mach, False)
                 tdag.set_resource_allowed(**args)
-
-            # Machine - create its users (if any)
-            users = getattr(mach, "users", [])
-            users = users if isinstance(users, list) else []
-            for user in users:
-                if (isinstance(user, PamUserObject) and user.rotation_settings and
-                    user.rotation_settings.rotation.lower() == "general"):
-                    user.rotation_settings.resourceUid = mach.uid # DAG only
-                user.create_record(params, shfusr)
-                if isinstance(user, PamUserObject):  # rotation setup
-                    tdag.link_user_to_resource(user.uid, mach.uid, admin_uid==user.uid, True)
-                    if user.rotation_settings:
+            mach_users = getattr(mach, "users", []) or []
+            for user in mach_users:
+                if getattr(user, "_extend_tag", None) != "new":
+                    continue
+                rs = getattr(user, "rotation_settings", None)
+                if isinstance(user, PamUserObject) and rs and (getattr(rs, "rotation", "") or "").lower() == "general":
+                    rs.resourceUid = mach.uid
+                ufolder = getattr(user, "resolved_folder_uid", None) or shfusr
+                user.create_record(params, ufolder)
+                if isinstance(user, PamUserObject):
+                    tdag.link_user_to_resource(user.uid, mach.uid, admin_uid == user.uid, True)
+                    if rs:
                         args = {"force": True, "config": pam_cfg_uid, "record_name": user.uid, "admin": admin_uid, "resource": mach.uid}
-                        enabled = user.rotation_settings.enabled # on|off|default
+                        enabled = getattr(rs, "enabled", "")
                         key = {"on": "enable", "off": "disable"}.get(enabled, "")
-                        if key: args[key] = True
-                        # args["schedule_config"] = True  # Schedule from Configuration
-                        schedule_type = user.rotation_settings.schedule.type if user.rotation_settings.schedule and user.rotation_settings.schedule.type else ""
+                        if key:
+                            args[key] = True
+                        schedule = getattr(rs, "schedule", None)
+                        schedule_type = getattr(schedule, "type", "") if schedule else ""
                         if schedule_type == "on-demand":
                             args["on_demand"] = True
-                        elif schedule_type == "cron":
-                            if user.rotation_settings.schedule.cron:
-                                args["schedule_cron_data"] = user.rotation_settings.schedule.cron
-                            else:
-                                logging.warning(f"{bcolors.WARNING}schedule.type=cron but schedule.cron is empty (skipped){bcolors.ENDC} ")
-                        if user.rotation_settings.password_complexity:
-                            args["pwd_complexity"]=user.rotation_settings.password_complexity
+                        elif schedule_type == "cron" and schedule and getattr(schedule, "cron", None):
+                            args["schedule_cron_data"] = rs.schedule.cron
+                        if getattr(rs, "password_complexity", None):
+                            args["pwd_complexity"] = rs.password_complexity
                         prc.execute(params, silent=True, **args)
-        if resources: print(f"{len(resources)}/{len(resources)}\n")
+        if new_resources:
+            print(f"{len(new_resources)}/{len(new_resources)}\n")
 
-        # add scripts with resolved additional credentials - owner records must exist
-        if pce and pce.scripts and pce.scripts.scripts:
-            refs = [x for x in pce.scripts.scripts if x.record_refs]
+        for mach in existing_resources:
+            mach_users = getattr(mach, "users", []) or []
+            admin_uid = get_admin_credential(mach, True)
+            for user in mach_users:
+                if getattr(user, "_extend_tag", None) != "new":
+                    continue
+                rs = getattr(user, "rotation_settings", None)
+                if isinstance(user, PamUserObject) and rs and (getattr(rs, "rotation", "") or "").lower() == "general":
+                    rs.resourceUid = mach.uid
+                ufolder = getattr(user, "resolved_folder_uid", None) or shfusr
+                user.create_record(params, ufolder)
+                if isinstance(user, PamUserObject):
+                    tdag.link_user_to_resource(user.uid, mach.uid, admin_uid == user.uid, True)
+                    if rs:
+                        args = {"force": True, "config": pam_cfg_uid, "record_name": user.uid, "admin": admin_uid, "resource": mach.uid}
+                        enabled = getattr(rs, "enabled", "")
+                        key = {"on": "enable", "off": "disable"}.get(enabled, "")
+                        if key:
+                            args[key] = True
+                        schedule = getattr(rs, "schedule", None)
+                        schedule_type = getattr(schedule, "type", "") if schedule else ""
+                        if schedule_type == "on-demand":
+                            args["on_demand"] = True
+                        elif schedule_type == "cron" and schedule and getattr(schedule, "cron", None):
+                            args["schedule_cron_data"] = rs.schedule.cron
+                        if getattr(rs, "password_complexity", None):
+                            args["pwd_complexity"] = rs.password_complexity
+                        prc.execute(params, silent=True, **args)
+
+        if pce and getattr(pce, "scripts", None) and getattr(pce.scripts, "scripts", None):
+            refs = [x for x in pce.scripts.scripts if getattr(x, "record_refs", None)]
             if refs:
                 api.sync_down(params)
                 add_pam_scripts(params, pam_cfg_uid, refs)
-
         logging.debug("Done processing project data.")
+        return
 

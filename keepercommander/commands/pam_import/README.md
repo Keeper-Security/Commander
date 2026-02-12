@@ -1,13 +1,26 @@
-## PAM Import Command
+## PAM Project Import Commands
 PAM Import command helps customers with thousands of managed companies to automate the creation of folders, gateways, machines, users, connections, tunnels and (optionally) rotations.
 
 ### Command line options
 
-`pam project import --name=project1 --filename=/path/to/import.json --dry-run`
+Initial Import.  
+`pam project import --name=project1 --filename=/path/to/import.json [--dry-run]`
 
 - `--name`, `-n` → Project name _(overrides `"project":""` from JSON)_
 - `--filename`, `-f` → JSON file to load import data from.
 - `--dry-run`, `-d` → Test import without modifying vault.
+
+
+Adding new PAM resources and users to an existing PAM configuration from an import file. The command validates folders and records, then creates only new items (match by title, existing records are skipped). The import JSON format is the same.  
+`pam project extend --config=<uid_or_title> --filename=/path/to/import.json [--dry-run]`
+
+- `--config`, `-c` → PAM Configuration record UID or title.
+- `--filename`, `-f` → JSON file to load import data from.
+- `--dry-run`, `-d` → Test import without modifying vault.
+
+> **Notes:**
+- Use **`--dry-run`** to preview what would be created and to see detailed validation output without changing the vault.
+- If the command reports errors, run it again with **`--dry-run`** for more detailed error messages.
 
 
 ### JSON format details
