@@ -274,6 +274,9 @@ class PAMTunnelEditCommand(Command):
     pam_cmd_parser.add_argument('--remove-tunneling-override-port', '-rtop', required=False,
                                 dest='remove_tunneling_override_port', action='store_true',
                                 help='Remove tunneling override port')
+    pam_cmd_parser.add_argument('--keeper-db-proxy', '-kdbp', required=False, dest='keeper_db_proxy',
+                                choices=['on', 'off', 'default'],
+                                help='Enable/disable Keeper Database Proxy for pamDatabase records (on/off/default)')
 
     def get_parser(self):
         return PAMTunnelEditCommand.pam_cmd_parser
@@ -422,8 +425,42 @@ class PAMTunnelEditCommand(Command):
             if _tunneling is not None and tmp_dag.check_if_resource_allowed(record_uid, "portForwards") != _tunneling:
                 dirty = True
 
+            # Handle --keeper-db-proxy option for database proxy routing (pamDatabase records only)
+            keeper_db_proxy = kwargs.get('keeper_db_proxy')
+            if keeper_db_proxy:
+                if record_type != 'pamDatabase':
+                    raise CommandError('pam tunnel edit',
+                        f'{bcolors.FAIL}--keeper-db-proxy is only supported for pamDatabase records. '
+                        f'Record "{record_name}" is of type "{record_type}".{bcolors.ENDC}')
+                if keeper_db_proxy == 'on' and not tmp_dag.check_if_resource_has_launch_credential(record_uid):
+                    raise CommandError('',
+                        f'{bcolors.FAIL}No Launch Credentials assigned to record "{record_uid}". '
+                        f'Please assign launch credentials to the record before enabling '
+                        f'the database proxy.\n'
+                        f'Use: {bcolors.OKBLUE}pam connection edit <record> '
+                        f'--launch-user (-lu) <pamUser_record>{bcolors.ENDC}')
+                if not pam_settings:
+                    pam_settings = vault.TypedField.new_field('pamSettings', {"connection": {}, "portForward": {}}, "")
+                    record.custom.append(pam_settings)
+                if not pam_settings.value:
+                    pam_settings.value.append({"connection": {}, "portForward": {}})
+                if "connection" not in pam_settings.value[0]:
+                    pam_settings.value[0]["connection"] = {}
+                current_value = pam_settings.value[0]["connection"].get('allowKeeperDBProxy')
+                if keeper_db_proxy == 'on' and current_value is not True:
+                    pam_settings.value[0]["connection"]["allowKeeperDBProxy"] = True
+                    dirty = True
+                elif keeper_db_proxy == 'off' and current_value is not False:
+                    pam_settings.value[0]["connection"]["allowKeeperDBProxy"] = False
+                    dirty = True
+                elif keeper_db_proxy == 'default' and current_value is not None:
+                    pam_settings.value[0]["connection"].pop('allowKeeperDBProxy', None)
+                    dirty = True
+
             if dirty:
                 tmp_dag.set_resource_allowed(resource_uid=record_uid, tunneling=_tunneling, allowed_settings_name=allowed_settings_name)
+                record_management.update_record(params, record)
+                api.sync_down(params)
 
             # Print out the tunnel settings
             if not kwargs.get('silent'):
@@ -770,6 +807,9 @@ class PAMConnectionEditCommand(Command):
     parser.add_argument('--admin-user', '-a', required=False, dest='admin', action='store',
 					help='The record path or UID of the PAM User record to configure the admin '
                     'credential on the PAM Resource')
+    parser.add_argument('--launch-user', '-lu', required=False, dest='launch_user', action='store',
+					help='The record path or UID of the PAM User record to configure as the launch '
+                    'credential on the PAM Resource')
     parser.add_argument('--protocol', '-p', dest='protocol', choices=protocols,
                         help='Set connection protocol')
     parser.add_argument('--connections', '-cn', dest='connections', choices=choices,
@@ -993,6 +1033,20 @@ class PAMConnectionEditCommand(Command):
             if admin_uid and record_type in ("pamDatabase", "pamDirectory", "pamMachine"):
                 tdag.link_user_to_resource(admin_uid, record_uid, is_admin=True, belongs_to=True)
                 # tdag.link_user_to_config(admin_uid)  # is_iam_user=True
+
+            # launch-user parameter sets the launch credential on the resource
+            launch_user_name = kwargs.get('launch_user')
+            if launch_user_name:
+                launch_rec = RecordMixin.resolve_single_record(params, launch_user_name)
+                if not launch_rec:
+                    raise CommandError('',
+                        f'{bcolors.FAIL}Launch user record "{launch_user_name}" not found.{bcolors.ENDC}')
+                if not isinstance(launch_rec, vault.TypedRecord) or launch_rec.record_type != 'pamUser':
+                    raise CommandError('',
+                        f'{bcolors.FAIL}Launch user record must be a pamUser record type.{bcolors.ENDC}')
+                launch_uid = launch_rec.record_uid
+                if record_type in ("pamDatabase", "pamDirectory", "pamMachine"):
+                    tdag.link_user_to_resource(launch_uid, record_uid, is_launch_credential=True, belongs_to=True)
 
             # Print out PAM Settings
             if not kwargs.get("silent", False): tdag.print_tunneling_config(record_uid, record.get_typed_field('pamSettings'), config_uid)

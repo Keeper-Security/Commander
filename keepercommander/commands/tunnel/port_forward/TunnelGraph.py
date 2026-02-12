@@ -325,15 +325,16 @@ class TunnelDAG:
 
         return False
 
-    def link_user_to_resource(self, user_uid, resource_uid, is_admin=None, belongs_to=None):
+    def link_user_to_resource(self, user_uid, resource_uid, is_admin=None, belongs_to=None, is_launch_credential=None):
         resource_vertex = self.linking_dag.get_vertex(resource_uid)
         if resource_vertex is None or not self.resource_belongs_to_config(resource_uid):
             print(f"{bcolors.FAIL}Resource {resource_uid} does not belong to the configuration{bcolors.ENDC}")
             return False
-        self.link_user(user_uid, resource_vertex, is_admin, belongs_to)
+        self.link_user(user_uid, resource_vertex, is_admin, belongs_to, is_launch_credential=is_launch_credential)
         return None
 
-    def link_user(self, user_uid, source_vertex: DAGVertex, is_admin=None, belongs_to=None, is_iam_user=None):
+    def link_user(self, user_uid, source_vertex: DAGVertex, is_admin=None, belongs_to=None, is_iam_user=None,
+                  is_launch_credential=None):
 
         user_vertex = self.linking_dag.get_vertex(user_uid)
         if user_vertex is None:
@@ -347,6 +348,8 @@ class TunnelDAG:
             content["is_admin"] = bool(is_admin)
         if is_iam_user is not None:
             content["is_iam_user"] = bool(is_iam_user)
+        if is_launch_credential is not None:
+            content["is_launch_credential"] = bool(is_launch_credential)
 
         if user_vertex.vertex_type != RefType.PAM_USER:
             user_vertex.vertex_type = RefType.PAM_USER
@@ -392,6 +395,18 @@ class TunnelDAG:
             if acl_edge:
                 content = acl_edge.content_as_dict
                 if content.get('is_admin'):
+                    return user_vertex.uid
+        return False
+
+    def check_if_resource_has_launch_credential(self, resource_uid):
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        if resource_vertex is None:
+            return False
+        for user_vertex in resource_vertex.has_vertices(EdgeType.ACL):
+            acl_edge = user_vertex.get_edge(resource_vertex, EdgeType.ACL)
+            if acl_edge:
+                content = acl_edge.content_as_dict
+                if content.get('is_launch_credential'):
                     return user_vertex.uid
         return False
 
