@@ -1481,9 +1481,10 @@ class PAMProjectImportCommand(Command):
                     set_user_record_uid(mach, ruid, is_external)
 
             # jit_settings.pam_directory_record -> pam_directory_uid (pamDirectory in pam_data.resources by title)
-            if (mach.pam_settings and mach.pam_settings.jit_settings and
-                    getattr(mach.pam_settings.jit_settings, "pam_directory_record", None)):
-                jit = mach.pam_settings.jit_settings
+            # RBI has rbi_settings only (no pam_settings.jit_settings)
+            ps = getattr(mach, "pam_settings", None)
+            jit = getattr(ps, "jit_settings", None) if ps else None
+            if jit and getattr(jit, "pam_directory_record", None):
                 ref = (jit.pam_directory_record or "").strip()
                 if ref:
                     matches = [x for x in pam_directories if getattr(x, "title", None) == ref]
@@ -1628,31 +1629,34 @@ class PAMProjectImportCommand(Command):
                 tdag.set_resource_allowed(**args)
 
                 # After setting allowedSettings, save JIT settings if present
-                # JIT settings don't apply to RBI records (only machine/db/directory)
-                if mach.pam_settings and mach.pam_settings.jit_settings:
-                    jit_dag_dict = mach.pam_settings.jit_settings.to_dag_dict()
+                # JIT settings don't apply to RBI records (only machine/db/directory); RBI has rbi_settings, no pam_settings.jit_settings
+                ps = getattr(mach, "pam_settings", None)
+                jit = getattr(ps, "jit_settings", None) if ps else None
+                ai = getattr(ps, "ai_settings", None) if ps else None
+                if jit:
+                    jit_dag_dict = jit.to_dag_dict()
                     if jit_dag_dict:  # Only save if not empty
                         set_resource_jit_settings(params, mach.uid, jit_dag_dict, pam_cfg_uid)
 
                 # After setting allowedSettings, save AI settings if present
                 # AI settings don't apply to RBI records (only machine/db/directory)
-                if mach.pam_settings and mach.pam_settings.ai_settings:
+                if ai:
                     user_id = ""
                     if getattr(params, "account_uid_bytes", None):
                         user_id = utils.base64_url_encode(params.account_uid_bytes)
                     elif getattr(params, "user", ""):
                         user_id = params.user
-                    ai_dag_dict = mach.pam_settings.ai_settings.to_dag_dict(user_id=user_id)
+                    ai_dag_dict = ai.to_dag_dict(user_id=user_id)
                     if ai_dag_dict:  # Only save if not empty
                         set_resource_keeper_ai_settings(params, mach.uid, ai_dag_dict, pam_cfg_uid)
 
                 # Web vault UI visualizer shows only latest and meta is most wanted path.
                 # Note: DAG may take a while to sync in web vault
                 # Dummy update to meta so it is latest among DATA (after jit/ai).
-                if mach.pam_settings and (mach.pam_settings.jit_settings or mach.pam_settings.ai_settings):
+                if jit or ai:
                     refresh_meta_to_latest(params, mach.uid, pam_cfg_uid)
                 # Bump LINK to config only when AI is present (AI adds the encryption KEY).
-                if mach.pam_settings and mach.pam_settings.ai_settings:
+                if ai:
                     refresh_link_to_config_to_latest(params, mach.uid, pam_cfg_uid)
 
             # Machine - create its users (if any)
@@ -1685,11 +1689,13 @@ class PAMProjectImportCommand(Command):
         if resources: print(f"{len(resources)}/{len(resources)}\n")
 
         # link machine -> pamDirectory (LINK, path=domain) for jit_settings.pam_directory_uid
+        # RBI has rbi_settings only (no pam_settings.jit_settings)
         jit_domain_links_added = False
         for mach in resources:
-            if not (mach and mach.pam_settings and mach.pam_settings.jit_settings):
+            ps = getattr(mach, "pam_settings", None)
+            jit = getattr(ps, "jit_settings", None) if ps else None
+            if not (mach and jit):
                 continue
-            jit = mach.pam_settings.jit_settings
             dir_uid = getattr(jit, "pam_directory_uid", None)
             if not dir_uid:
                 continue
