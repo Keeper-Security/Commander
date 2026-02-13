@@ -116,8 +116,20 @@ def resolve_record_name(params, resource_ref) -> str:
     if resource_ref.value:
         rec_uid = utils.base64_url_encode(resource_ref.value)
         rec = vault.KeeperRecord.load(params, rec_uid)
-        return rec.title if rec else rec_uid
+        return rec.title if rec else ''
     return ''
+
+
+def format_record_label(params, resource_ref) -> str:
+    """
+    Format a record label as 'Name (UID)' for display.
+    If the name can't be resolved, shows just the UID once (no duplication).
+    """
+    rec_uid = utils.base64_url_encode(resource_ref.value) if resource_ref.value else ''
+    rec_name = resolve_record_name(params, resource_ref)
+    if rec_name and rec_name != rec_uid:
+        return f"{rec_name} ({rec_uid})"
+    return rec_uid or 'Unknown'
 
 
 def validate_team(params: KeeperParams, team_input: str) -> str:
@@ -1088,13 +1100,12 @@ class WorkflowGetStateCommand(Command):
                     'stage': format_workflow_stage(response.status.stage),
                     'conditions': [format_access_conditions([c]) for c in response.status.conditions],
                     'escalated': response.status.escalated,
-                    'started_on': response.status.startedOn,
-                    'expires_on': response.status.expiresOn,
+                    'started_on': response.status.startedOn or None,
+                    'expires_on': response.status.expiresOn or None,
                     'approved_by': [
                         {
                             'user': a.user if a.user else resolve_user_name(params, a.userId),
-                            'user_id': a.userId,
-                            'approved_on': a.approvedOn
+                            'approved_on': a.approvedOn or None
                         }
                         for a in response.status.approvedBy
                     ]
@@ -1102,8 +1113,7 @@ class WorkflowGetStateCommand(Command):
                 print(json.dumps(result, indent=2))
             else:
                 print(f"\n{bcolors.OKBLUE}Workflow State{bcolors.ENDC}\n")
-                rec_uid = utils.base64_url_encode(response.resource.value) if response.resource.value else ''
-                print(f"Record: {resolve_record_name(params, response.resource)} ({rec_uid})")
+                print(f"Record: {format_record_label(params, response.resource)}")
                 print(f"Flow UID: {utils.base64_url_encode(response.flowUid)}")
                 print(f"Stage: {format_workflow_stage(response.status.stage)}")
                 if response.status.conditions:
@@ -1174,13 +1184,12 @@ class WorkflowGetUserAccessStateCommand(Command):
                             'stage': format_workflow_stage(wf.status.stage),
                             'conditions': [format_access_conditions([c]) for c in wf.status.conditions],
                             'escalated': wf.status.escalated,
-                            'started_on': wf.status.startedOn,
-                            'expires_on': wf.status.expiresOn,
+                            'started_on': wf.status.startedOn or None,
+                            'expires_on': wf.status.expiresOn or None,
                             'approved_by': [
                                 {
                                     'user': a.user if a.user else resolve_user_name(params, a.userId),
-                                    'user_id': a.userId,
-                                    'approved_on': a.approvedOn
+                                    'approved_on': a.approvedOn or None
                                 }
                                 for a in wf.status.approvedBy
                             ]
@@ -1192,8 +1201,7 @@ class WorkflowGetUserAccessStateCommand(Command):
             else:
                 print(f"\n{bcolors.OKBLUE}Your Active Workflows{bcolors.ENDC}\n")
                 for idx, wf in enumerate(response.workflows, 1):
-                    rec_uid = utils.base64_url_encode(wf.resource.value) if wf.resource.value else ''
-                    print(f"{idx}. Record: {resolve_record_name(params, wf.resource)} ({rec_uid})")
+                    print(f"{idx}. Record: {format_record_label(params, wf.resource)}")
                     print(f"   Flow UID: {utils.base64_url_encode(wf.flowUid)}")
                     print(f"   Stage: {format_workflow_stage(wf.status.stage)}")
                     if wf.status.conditions:
@@ -1257,12 +1265,12 @@ class WorkflowGetApprovalRequestsCommand(Command):
                             'requested_by': resolve_user_name(params, wf.userId),
                             'record_uid': utils.base64_url_encode(wf.resource.value),
                             'record_name': resolve_record_name(params, wf.resource),
-                            'started_on': wf.startedOn,
-                            'expires_on': wf.expiresOn,
+                            'started_on': wf.startedOn or None,
+                            'expires_on': wf.expiresOn or None,
                             'duration': format_duration_from_milliseconds(wf.expiresOn - wf.startedOn) if wf.expiresOn and wf.startedOn else None,
-                            'reason': wf.reason.decode('utf-8') if wf.reason else '',
-                            'external_ref': wf.externalRef.decode('utf-8') if wf.externalRef else '',
-                            'mfa_verified': wf.mfaVerified
+                            'reason': wf.reason.decode('utf-8') if wf.reason else None,
+                            'external_ref': wf.externalRef.decode('utf-8') if wf.externalRef else None,
+                            'mfa_verified': wf.mfaVerified or None
                         }
                         for wf in response.workflows
                     ]
@@ -1271,9 +1279,7 @@ class WorkflowGetApprovalRequestsCommand(Command):
             else:
                 print(f"\n{bcolors.OKBLUE}Pending Approval Requests{bcolors.ENDC}\n")
                 for idx, wf in enumerate(response.workflows, 1):
-                    rec_uid = utils.base64_url_encode(wf.resource.value) if wf.resource.value else ''
-                    rec_name = resolve_record_name(params, wf.resource)
-                    print(f"{idx}. Record: {rec_name} ({rec_uid})")
+                    print(f"{idx}. Record: {format_record_label(params, wf.resource)}")
                     print(f"   Flow UID: {utils.base64_url_encode(wf.flowUid)}")
                     print(f"   Requested by: {resolve_user_name(params, wf.userId)}")
                     if wf.startedOn:
@@ -1310,10 +1316,12 @@ class WorkflowStartCommand(Command):
     
     Example:
         pam workflow start <record_uid>
+        pam workflow start <flow_uid>
     """
     parser = argparse.ArgumentParser(prog='pam workflow start',
-                                     description='Start a workflow (check-out)')
-    parser.add_argument('record', help='Record UID or name')
+                                     description='Start a workflow (check-out). '
+                                                 'Can use either record UID/name or flow UID.')
+    parser.add_argument('uid', help='Record UID, record name, or Flow UID')
     parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
                         default='table', help='Output format')
 
@@ -1322,25 +1330,30 @@ class WorkflowStartCommand(Command):
     
     def execute(self, params: KeeperParams, **kwargs):
         """Execute workflow start."""
-        record_uid = kwargs.get('record')
+        uid = kwargs.get('uid')
         
-        # Resolve record UID
-        if record_uid not in params.record_cache:
-            records = list(params.record_cache.keys())
-            for uid in records:
-                rec = vault.KeeperRecord.load(params, uid)
-                if rec and rec.title == record_uid:
-                    record_uid = uid
+        # Try as record UID or name first
+        record_uid = None
+        record = None
+        if uid in params.record_cache:
+            record_uid = uid
+        else:
+            for cache_uid in params.record_cache:
+                rec = vault.KeeperRecord.load(params, cache_uid)
+                if rec and rec.title == uid:
+                    record_uid = cache_uid
                     break
-            else:
-                raise CommandError('', f'Record "{record_uid}" not found')
         
-        record = vault.KeeperRecord.load(params, record_uid)
-        record_uid_bytes = utils.base64_url_decode(record_uid)
-        
-        # Create workflow state
-        state = workflow_pb2.WorkflowState()
-        state.resource.CopyFrom(create_record_ref(record_uid_bytes, record.title))
+        if record_uid:
+            record = vault.KeeperRecord.load(params, record_uid)
+            record_uid_bytes = utils.base64_url_decode(record_uid)
+            state = workflow_pb2.WorkflowState()
+            state.resource.CopyFrom(create_record_ref(record_uid_bytes, record.title))
+        else:
+            # Treat as flow UID — query state to get record info, then start
+            uid_bytes = utils.base64_url_decode(uid)
+            state = workflow_pb2.WorkflowState()
+            state.flowUid = uid_bytes
         
         # Make API call
         try:
@@ -1349,15 +1362,23 @@ class WorkflowStartCommand(Command):
                 'start_workflow',
                 rq_proto=state
             )
-            
+
             if kwargs.get('format') == 'json':
-                result = {'status': 'success', 'record_uid': record_uid, 'record_name': record.title, 'action': 'checked_out'}
+                result = {'status': 'success', 'action': 'checked_out'}
+                if record:
+                    result['record_uid'] = record_uid
+                    result['record_name'] = record.title
+                else:
+                    result['flow_uid'] = uid
                 print(json.dumps(result, indent=2))
             else:
                 print(f"\n{bcolors.OKGREEN}✓ Workflow started (checked out){bcolors.ENDC}\n")
-                print(f"Record: {record.title} ({record_uid})")
+                if record:
+                    print(f"Record: {record.title} ({record_uid})")
+                else:
+                    print(f"Flow UID: {uid}")
                 print()
-                
+
         except Exception as e:
             raise CommandError('', f'Failed to start workflow: {str(e)}')
 
@@ -1553,12 +1574,13 @@ class WorkflowEndCommand(Command):
     
     Example:
         pam workflow end <flow_uid>
-        pam workflow end <record_uid>  # Auto-detects active flow for record
+        pam workflow end <record_uid>
+        pam workflow end "Record Name"
     """
     parser = argparse.ArgumentParser(prog='pam workflow end',
                                      description='End a workflow (check-in). '
-                                                 'Can use either flow UID or record UID.')
-    parser.add_argument('uid', help='Flow UID or Record UID of the workflow to end')
+                                                 'Can use flow UID, record UID, or record name.')
+    parser.add_argument('uid', help='Flow UID, Record UID, or record name of the workflow to end')
     parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
                         default='table', help='Output format')
 
@@ -1568,80 +1590,78 @@ class WorkflowEndCommand(Command):
     def execute(self, params: KeeperParams, **kwargs):
         """Execute workflow end."""
         uid = kwargs.get('uid')
-        uid_bytes = utils.base64_url_decode(uid)
-        
-        # Try to determine if this is a flow UID or record UID
-        # First, assume it's a flow UID and try to end it
-        ref = create_workflow_ref(uid_bytes)
-        
-        try:
-            response = _post_request_to_router(
-                params,
-                'end_workflow',
-                rq_proto=ref
-            )
-            
-            # Success - it was a flow UID
-            if kwargs.get('format') == 'json':
-                result = {'status': 'success', 'flow_uid': uid, 'action': 'ended'}
-                print(json.dumps(result, indent=2))
-            else:
-                print(f"\n{bcolors.OKGREEN}✓ Workflow ended (checked in){bcolors.ENDC}\n")
-                print(f"Flow UID: {uid}")
-                print("\nCredentials may have been rotated.")
-                print()
-            return
-            
-        except Exception as first_error:
-            # Failed - might be because uid is a record UID, not flow UID
-            # Try to get the active workflow for this record
+
+        # Try as record UID or name first
+        record_uid = None
+        record = None
+        if uid in params.record_cache:
+            record_uid = uid
+        else:
+            for cache_uid in params.record_cache:
+                rec = vault.KeeperRecord.load(params, cache_uid)
+                if rec and rec.title == uid:
+                    record_uid = cache_uid
+                    break
+
+        if record_uid:
+            # Record found — look up active workflow, then end it
+            record = vault.KeeperRecord.load(params, record_uid)
             try:
-                # Query workflow state by record UID
                 state_query = workflow_pb2.WorkflowState()
-                state_query.resource.CopyFrom(create_record_ref(uid_bytes))
-                
+                state_query.resource.CopyFrom(
+                    create_record_ref(utils.base64_url_decode(record_uid), record.title if record else '')
+                )
                 workflow_state = _post_request_to_router(
-                    params,
-                    'get_workflow_state',
-                    rq_proto=state_query,
+                    params, 'get_workflow_state', rq_proto=state_query,
                     rs_type=workflow_pb2.WorkflowState
                 )
-                
                 if not workflow_state or not workflow_state.flowUid:
-                    raise CommandError('', f'No active workflow found for this record. '
-                                          f'The workflow may have already ended or never started.')
-                
-                # Found the flow UID, now end it
+                    raise CommandError('', 'No active workflow found for this record. '
+                                          'The workflow may have already ended or never started.')
+
                 flow_ref = create_workflow_ref(workflow_state.flowUid)
-                response = _post_request_to_router(
-                    params,
-                    'end_workflow',
-                    rq_proto=flow_ref
-                )
-                
-                # Success
+                _post_request_to_router(params, 'end_workflow', rq_proto=flow_ref)
+
                 flow_uid_str = utils.base64_url_encode(workflow_state.flowUid)
                 if kwargs.get('format') == 'json':
                     result = {
                         'status': 'success',
                         'flow_uid': flow_uid_str,
-                        'record_uid': uid,
-                        'record_name': resolve_record_name(params, workflow_state.resource),
+                        'record_uid': record_uid,
+                        'record_name': record.title if record else '',
                         'action': 'ended'
                     }
                     print(json.dumps(result, indent=2))
                 else:
                     print(f"\n{bcolors.OKGREEN}✓ Workflow ended (checked in){bcolors.ENDC}\n")
-                    print(f"Record: {resolve_record_name(params, workflow_state.resource)}")
+                    if record:
+                        print(f"Record: {record.title} ({record_uid})")
+                    else:
+                        print(f"Record: {record_uid}")
                     print(f"Flow UID: {flow_uid_str}")
                     print("\nCredentials may have been rotated.")
                     print()
-                    
             except CommandError:
                 raise
-            except Exception as second_error:
-                # Both attempts failed - show the original error
-                raise CommandError('', f'Failed to end workflow: {str(first_error)}')
+            except Exception as e:
+                raise CommandError('', f'Failed to end workflow: {str(e)}')
+        else:
+            # Treat as flow UID
+            try:
+                uid_bytes = utils.base64_url_decode(uid)
+                ref = create_workflow_ref(uid_bytes)
+                _post_request_to_router(params, 'end_workflow', rq_proto=ref)
+
+                if kwargs.get('format') == 'json':
+                    result = {'status': 'success', 'flow_uid': uid, 'action': 'ended'}
+                    print(json.dumps(result, indent=2))
+                else:
+                    print(f"\n{bcolors.OKGREEN}✓ Workflow ended (checked in){bcolors.ENDC}\n")
+                    print(f"Flow UID: {uid}")
+                    print("\nCredentials may have been rotated.")
+                    print()
+            except Exception as e:
+                raise CommandError('', f'Failed to end workflow: {str(e)}')
 
 
 # ============================================================================
