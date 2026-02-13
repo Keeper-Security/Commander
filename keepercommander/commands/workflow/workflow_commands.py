@@ -120,6 +120,30 @@ def resolve_record_name(params, resource_ref) -> str:
     return ''
 
 
+def validate_team(params: KeeperParams, team_input: str) -> str:
+    """
+    Resolve and validate a team name or UID.
+
+    Checks params.team_cache for matching UID or name (case-insensitive).
+
+    Args:
+        params: KeeperParams instance
+        team_input: Team UID or team name
+
+    Returns:
+        str: Resolved team UID
+
+    Raises:
+        CommandError: If team is not found
+    """
+    if team_input in params.team_cache:
+        return team_input
+    for uid, team_data in params.team_cache.items():
+        if team_data.get('name', '').casefold() == team_input.casefold():
+            return uid
+    raise CommandError('', f'Team "{team_input}" not found. Use a valid team UID or team name.')
+
+
 def resolve_user_name(params: KeeperParams, user_id: int) -> str:
     """
     Resolve an enterprise user ID to email/username.
@@ -451,7 +475,7 @@ class WorkflowCreateCommand(Command):
                 result = {
                     'status': 'success',
                     'record_uid': record_uid,
-                    'record_title': record.title,
+                    'record_name': record.title,
                     'workflow_config': {
                         'approvals_needed': parameters.approvalsNeeded,
                         'checkout_needed': parameters.checkoutNeeded,
@@ -590,7 +614,7 @@ class WorkflowUpdateCommand(Command):
             )
             
             if kwargs.get('format') == 'json':
-                result = {'status': 'success', 'record_uid': record_uid}
+                result = {'status': 'success', 'record_uid': record_uid, 'record_name': record.title}
                 print(json.dumps(result, indent=2))
             else:
                 print(f"\n{bcolors.OKGREEN}✓ Workflow updated successfully{bcolors.ENDC}\n")
@@ -728,7 +752,10 @@ class WorkflowReadCommand(Command):
                             print(f"  {idx}. User: {resolve_user_name(params, approver.userId)}{escalation}")
                         elif approver.HasField('teamUid'):
                             team_uid = utils.base64_url_encode(approver.teamUid)
-                            print(f"  {idx}. Team: {team_uid}{escalation}")
+                            team_data = params.team_cache.get(team_uid, {})
+                            team_name = team_data.get('name', '')
+                            team_display = f"{team_name} ({team_uid})" if team_name else team_uid
+                            print(f"  {idx}. Team: {team_display}{escalation}")
                 else:
                     print(f"\n{bcolors.WARNING}⚠ No approvers configured!{bcolors.ENDC}")
                     print(f"Add approvers with: pam workflow add-approver {record_uid} --user <email>")
@@ -788,7 +815,7 @@ class WorkflowDeleteCommand(Command):
             )
             
             if kwargs.get('format') == 'json':
-                result = {'status': 'success', 'record_uid': record_uid}
+                result = {'status': 'success', 'record_uid': record_uid, 'record_name': record.title}
                 print(json.dumps(result, indent=2))
             else:
                 print(f"\n{bcolors.OKGREEN}✓ Workflow deleted successfully{bcolors.ENDC}\n")
@@ -820,7 +847,7 @@ class WorkflowAddApproversCommand(Command):
     parser.add_argument('-u', '--user', action='append',
                         help='User email to add as approver (can specify multiple times)')
     parser.add_argument('-t', '--team', action='append',
-                        help='Team UID to add as approver (can specify multiple times)')
+                        help='Team name or UID to add as approver (can specify multiple times)')
     parser.add_argument('-e', '--escalation', action='store_true', help='Mark as escalation approver')
     parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
                         default='table', help='Output format')
@@ -856,17 +883,18 @@ class WorkflowAddApproversCommand(Command):
         config = workflow_pb2.WorkflowConfig()
         config.parameters.resource.CopyFrom(create_record_ref(record_uid_bytes, record.title))
         
-        # Add user approvers
+        # Add user approvers (email validated by backend)
         for user_email in users:
             approver = workflow_pb2.WorkflowApprover()
             approver.user = user_email
             approver.escalation = is_escalation
             config.approvers.append(approver)
         
-        # Add team approvers
-        for team_uid in teams:
+        # Add team approvers (accepts team UID or team name)
+        for team_input in teams:
+            resolved_team_uid = validate_team(params, team_input)
             approver = workflow_pb2.WorkflowApprover()
-            approver.teamUid = utils.base64_url_decode(team_uid)
+            approver.teamUid = utils.base64_url_decode(resolved_team_uid)
             approver.escalation = is_escalation
             config.approvers.append(approver)
         
@@ -882,6 +910,7 @@ class WorkflowAddApproversCommand(Command):
                 result = {
                     'status': 'success',
                     'record_uid': record_uid,
+                    'record_name': record.title,
                     'approvers_added': len(users) + len(teams),
                     'escalation': is_escalation
                 }
@@ -909,7 +938,7 @@ class WorkflowDeleteApproversCommand(Command):
                                      description='Remove approvers from a workflow')
     parser.add_argument('record', help='Record UID or name')
     parser.add_argument('-u', '--user', action='append', help='User email to remove as approver')
-    parser.add_argument('-t', '--team', action='append', help='Team UID to remove as approver')
+    parser.add_argument('-t', '--team', action='append', help='Team name or UID to remove as approver')
     parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
                         default='table', help='Output format')
 
@@ -943,16 +972,17 @@ class WorkflowDeleteApproversCommand(Command):
         config = workflow_pb2.WorkflowConfig()
         config.parameters.resource.CopyFrom(create_record_ref(record_uid_bytes, record.title))
         
-        # Add user approvers to remove
+        # Add user approvers to remove (email validated by backend)
         for user_email in users:
             approver = workflow_pb2.WorkflowApprover()
             approver.user = user_email
             config.approvers.append(approver)
         
-        # Add team approvers to remove
-        for team_uid in teams:
+        # Add team approvers to remove (accepts team UID or team name)
+        for team_input in teams:
+            resolved_team_uid = validate_team(params, team_input)
             approver = workflow_pb2.WorkflowApprover()
-            approver.teamUid = utils.base64_url_decode(team_uid)
+            approver.teamUid = utils.base64_url_decode(resolved_team_uid)
             config.approvers.append(approver)
         
         # Make API call
@@ -967,6 +997,7 @@ class WorkflowDeleteApproversCommand(Command):
                 result = {
                     'status': 'success',
                     'record_uid': record_uid,
+                    'record_name': record.title,
                     'approvers_removed': len(users) + len(teams)
                 }
                 print(json.dumps(result, indent=2))
@@ -1071,8 +1102,9 @@ class WorkflowGetStateCommand(Command):
                 print(json.dumps(result, indent=2))
             else:
                 print(f"\n{bcolors.OKBLUE}Workflow State{bcolors.ENDC}\n")
+                rec_uid = utils.base64_url_encode(response.resource.value) if response.resource.value else ''
+                print(f"Record: {resolve_record_name(params, response.resource)} ({rec_uid})")
                 print(f"Flow UID: {utils.base64_url_encode(response.flowUid)}")
-                print(f"Record: {resolve_record_name(params, response.resource)}")
                 print(f"Stage: {format_workflow_stage(response.status.stage)}")
                 if response.status.conditions:
                     print(f"Conditions: {format_access_conditions(response.status.conditions)}")
@@ -1160,7 +1192,8 @@ class WorkflowGetUserAccessStateCommand(Command):
             else:
                 print(f"\n{bcolors.OKBLUE}Your Active Workflows{bcolors.ENDC}\n")
                 for idx, wf in enumerate(response.workflows, 1):
-                    print(f"{idx}. {resolve_record_name(params, wf.resource)}")
+                    rec_uid = utils.base64_url_encode(wf.resource.value) if wf.resource.value else ''
+                    print(f"{idx}. Record: {resolve_record_name(params, wf.resource)} ({rec_uid})")
                     print(f"   Flow UID: {utils.base64_url_encode(wf.flowUid)}")
                     print(f"   Stage: {format_workflow_stage(wf.status.stage)}")
                     if wf.status.conditions:
@@ -1238,7 +1271,9 @@ class WorkflowGetApprovalRequestsCommand(Command):
             else:
                 print(f"\n{bcolors.OKBLUE}Pending Approval Requests{bcolors.ENDC}\n")
                 for idx, wf in enumerate(response.workflows, 1):
-                    print(f"{idx}. {resolve_record_name(params, wf.resource)}")
+                    rec_uid = utils.base64_url_encode(wf.resource.value) if wf.resource.value else ''
+                    rec_name = resolve_record_name(params, wf.resource)
+                    print(f"{idx}. Record: {rec_name} ({rec_uid})")
                     print(f"   Flow UID: {utils.base64_url_encode(wf.flowUid)}")
                     print(f"   Requested by: {resolve_user_name(params, wf.userId)}")
                     if wf.startedOn:
@@ -1316,7 +1351,7 @@ class WorkflowStartCommand(Command):
             )
             
             if kwargs.get('format') == 'json':
-                result = {'status': 'success', 'record_uid': record_uid, 'action': 'checked_out'}
+                result = {'status': 'success', 'record_uid': record_uid, 'record_name': record.title, 'action': 'checked_out'}
                 print(json.dumps(result, indent=2))
             else:
                 print(f"\n{bcolors.OKGREEN}✓ Workflow started (checked out){bcolors.ENDC}\n")
@@ -1387,6 +1422,7 @@ class WorkflowRequestAccessCommand(Command):
                 result = {
                     'status': 'success',
                     'record_uid': record_uid,
+                    'record_name': record.title,
                     'message': 'Access request sent to approvers'
                 }
                 if reason:
@@ -1590,6 +1626,7 @@ class WorkflowEndCommand(Command):
                         'status': 'success',
                         'flow_uid': flow_uid_str,
                         'record_uid': uid,
+                        'record_name': resolve_record_name(params, workflow_state.resource),
                         'action': 'ended'
                     }
                     print(json.dumps(result, indent=2))
