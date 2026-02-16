@@ -360,7 +360,7 @@ class FolderCdCommand(Command):
     def execute(self, params, **kwargs):
         folder_name = kwargs['folder'] if 'folder' in kwargs else ''
         if folder_name:
-            if folder_name in params.folder_cache:
+            if folder_name in params.folder_cache or folder_name in params.keeper_drive_folders:
                 params.current_folder = folder_name
             else:
                 rs = try_resolve_path(params, folder_name)
@@ -1802,12 +1802,21 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
         is_root = (isinstance(node, BaseFolderNode) and (node.type == '/' or node_uid == '')) or \
                   (hasattr(node, 'type') and node.type == 'keeper_drive_folder' and not node_uid)
         
-        if is_root and hasattr(params, 'keeper_drive_folders'):
+        if is_root and hasattr(params, 'keeper_drive_folders') and params.keeper_drive_folders:
             # Add all KeeperDrive folders that are at root level
             for kd_uid, kd_folder in params.keeper_drive_folders.items():
-                parent_uid = kd_folder.get('parent_uid', '')
-                # Check if this folder is at root (parent is empty, 'root', or the special root UID)
-                if parent_uid in ('', 'root', 'AAAAAAAAAAAAAAAAAPmtNA'):
+                parent_uid = kd_folder.get('parent_uid')
+                # Check if this folder is at root:
+                # - parent_uid is None, empty string, 'root', or the special root UID
+                # - Also check if parent doesn't exist in keeper_drive_folders (orphan = root level)
+                is_root_folder = (
+                    parent_uid is None or 
+                    parent_uid == '' or 
+                    parent_uid == 'root' or 
+                    parent_uid == 'AAAAAAAAAAAAAAAAAPmtNA' or
+                    (parent_uid and parent_uid not in params.keeper_drive_folders)
+                )
+                if is_root_folder:
                     # Check if already in dir_nodes
                     already_added = any(hasattr(n, 'uid') and n.uid == kd_uid for n in dir_nodes if n)
                     if not already_added:
