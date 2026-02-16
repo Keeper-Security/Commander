@@ -34,6 +34,11 @@ class DayOfWeek(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     FRIDAY: _ClassVar[DayOfWeek]
     SATURDAY: _ClassVar[DayOfWeek]
     SUNDAY: _ClassVar[DayOfWeek]
+
+class ApprovalQueueKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    AQK_APPROVAL: _ClassVar[ApprovalQueueKind]
+    AQK_ESCALATION: _ClassVar[ApprovalQueueKind]
 WS_READY_TO_START: WorkflowStage
 WS_STARTED: WorkflowStage
 WS_NEEDS_ACTION: WorkflowStage
@@ -52,18 +57,22 @@ THURSDAY: DayOfWeek
 FRIDAY: DayOfWeek
 SATURDAY: DayOfWeek
 SUNDAY: DayOfWeek
+AQK_APPROVAL: ApprovalQueueKind
+AQK_ESCALATION: ApprovalQueueKind
 
 class WorkflowApprover(_message.Message):
-    __slots__ = ("user", "userId", "teamUid", "escalation")
+    __slots__ = ("user", "userId", "teamUid", "escalation", "escalationAfterMs")
     USER_FIELD_NUMBER: _ClassVar[int]
     USERID_FIELD_NUMBER: _ClassVar[int]
     TEAMUID_FIELD_NUMBER: _ClassVar[int]
     ESCALATION_FIELD_NUMBER: _ClassVar[int]
+    ESCALATIONAFTERMS_FIELD_NUMBER: _ClassVar[int]
     user: str
     userId: int
     teamUid: bytes
     escalation: bool
-    def __init__(self, user: _Optional[str] = ..., userId: _Optional[int] = ..., teamUid: _Optional[bytes] = ..., escalation: _Optional[bool] = ...) -> None: ...
+    escalationAfterMs: int
+    def __init__(self, user: _Optional[str] = ..., userId: _Optional[int] = ..., teamUid: _Optional[bytes] = ..., escalation: _Optional[bool] = ..., escalationAfterMs: _Optional[int] = ...) -> None: ...
 
 class WorkflowParameters(_message.Message):
     __slots__ = ("resource", "approvalsNeeded", "checkoutNeeded", "startAccessOnApproval", "requireReason", "requireTicket", "requireMFA", "accessLength", "allowedTimes")
