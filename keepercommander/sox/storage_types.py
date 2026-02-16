@@ -9,6 +9,7 @@ class StorageUser(IUid):
         self.job_title = b''
         self.full_name = b''
         self.node_id = 0
+        self.last_refreshed = 0
 
     def uid(self):
         # -> int

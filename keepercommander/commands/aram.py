@@ -1941,10 +1941,20 @@ class AgingReportCommand(Command):
         in_shared_folder = kwargs.get('in_shared_folder')
         node_id = get_node_id(params, enterprise_id)
 
+        # Pre-filter to specific user if --username is set
+        user_filter = None
+        username_arg = kwargs.get('username')
+        if username_arg:
+            enterprise_users = params.enterprise.get('users', [])
+            for eu in enterprise_users:
+                if eu.get('username') == username_arg:
+                    user_filter = {eu['enterprise_user_id']}
+                    break
+
         get_sox_data_fn = get_compliance_data if exclude_deleted or in_shared_folder else get_prelim_data
         sd_args = [params, node_id, enterprise_id, rebuild] if exclude_deleted or in_shared_folder \
             else [params, enterprise_id, rebuild]
-        sd_kwargs = {'min_updated': period_min_ts}
+        sd_kwargs = {'min_updated': period_min_ts, 'user_filter': user_filter}
         sd = get_sox_data_fn(*sd_args, **sd_kwargs)
         AgingReportCommand.update_aging_data(params, sd, period_start_ts=period_min_ts, rebuild=rebuild)
 

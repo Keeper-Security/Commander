@@ -147,9 +147,40 @@ class BaseComplianceReportCommand(EnterpriseCommand):
         rebuild = kwargs.get('rebuild')
         no_cache = kwargs.get('no_cache')
         shared_only = kwargs.get('shared')
+
+        # Pre-filter users for --username and --team to avoid fetching data for all enterprise users
+        user_filter = None
+        usernames = kwargs.get('username')
+        team_refs = kwargs.get('team')
+        if usernames or team_refs:
+            filtered_user_ids = set()
+            enterprise_users = params.enterprise.get('users', [])
+            if usernames:
+                username_set = set(usernames)
+                for eu in enterprise_users:
+                    if eu.get('username') in username_set:
+                        filtered_user_ids.add(eu['enterprise_user_id'])
+            if team_refs:
+                enterprise_teams = params.enterprise.get('teams', [])
+                team_uids = {t.get('team_uid') for t in enterprise_teams}
+                enterprise_team_users = params.enterprise.get('team_users', [])
+                resolved_team_uids = set()
+                for t_ref in team_refs:
+                    if t_ref in team_uids:
+                        resolved_team_uids.add(t_ref)
+                    else:
+                        for t in enterprise_teams:
+                            if t.get('name') == t_ref:
+                                resolved_team_uids.add(t.get('team_uid'))
+                for tu in enterprise_team_users:
+                    if tu.get('team_uid') in resolved_team_uids:
+                        filtered_user_ids.add(tu.get('enterprise_user_id'))
+            user_filter = filtered_user_ids if filtered_user_ids else None
+
         get_sox_data_fn = sox.get_prelim_data if self.prelim_only else sox.get_compliance_data
         fn_args = [params, enterprise_id] if self.prelim_only else [params, node_id, enterprise_id]
-        fn_kwargs = {'rebuild': rebuild, 'min_updated': min_data_ts, 'no_cache': no_cache, 'shared_only': shared_only}
+        fn_kwargs = {'rebuild': rebuild, 'min_updated': min_data_ts, 'no_cache': no_cache, 'shared_only': shared_only,
+                     'user_filter': user_filter}
         sd = get_sox_data_fn(*fn_args, **fn_kwargs)
         report_fmt = kwargs.get('format', 'table')
         report_data = self.generate_report_data(params, kwargs, sd, report_fmt, node_id, root_node_id)
