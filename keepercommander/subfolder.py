@@ -89,10 +89,23 @@ def contained_folders(params, folders, component):
     """Return list of folders (empty if component not present) containing component within parent folder 'folder'"""
     get_folder_by_id = lambda uid: params.folder_cache.get(uid)
     get_folder_ids = lambda: params.folder_cache.keys()
-    result = folders if component in ('.', '') \
-        else [(get_folder_by_id(f.parent_uid) if f.parent_uid else params.root_folder) for f in folders] if component == '..' \
-        else [get_folder_by_id(component)] if component in get_folder_ids() \
-        else [get_folder_by_id(uid) for f in folders for uid in f.subfolders if get_folder_by_id(uid).name == component]
+    
+    if component in ('.', ''):
+        result = folders
+    elif component == '..':
+        # Handle parent navigation, accounting for KD folders with invalid parent_uid
+        result = []
+        for f in folders:
+            if f.parent_uid:
+                parent = get_folder_by_id(f.parent_uid)
+                result.append(parent if parent else params.root_folder)
+            else:
+                result.append(params.root_folder)
+    elif component in get_folder_ids():
+        result = [get_folder_by_id(component)]
+    else:
+        result = [get_folder_by_id(uid) for f in folders for uid in f.subfolders if get_folder_by_id(uid).name == component]
+    
     return result
 
 

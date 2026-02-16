@@ -18,7 +18,7 @@ This module provides functions for creating records using the KeeperDrive v3 API
 import json
 import logging
 import os
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 from . import utils, crypto, api
 from .params import KeeperParams
@@ -28,6 +28,33 @@ from .api import pad_aes_gcm
 
 
 logger = logging.getLogger(__name__)
+
+
+def _get_record_key_type(params: 'KeeperParams', record_uid: str) -> Optional[int]:
+    """Return the record key type if available (for legacy AES-CBC vs AES-GCM)."""
+    meta = params.meta_data_cache.get(record_uid) if hasattr(params, 'meta_data_cache') else None
+    if meta and 'record_key_type' in meta:
+        return meta.get('record_key_type')
+    return None
+
+
+def _encrypt_record_key_for_folder(
+    record_key: bytes,
+    encryption_key: bytes,
+    record_key_type: Optional[int]
+) -> Tuple[bytes, int]:
+    """
+    Encrypt record_key with encryption_key and return (ciphertext, encrypted_key_type).
+
+    If record_key_type is legacy encrypted_by_data_key, use AES-CBC (v1);
+    otherwise default to AES-GCM (v2).
+    """
+    if record_key_type == folder_pb2.encrypted_by_data_key:
+        return crypto.encrypt_aes_v1(record_key, encryption_key), folder_pb2.encrypted_by_data_key
+    if record_key_type == folder_pb2.encrypted_by_data_key_gcm:
+        return crypto.encrypt_aes_v2(record_key, encryption_key), folder_pb2.encrypted_by_data_key_gcm
+    # Default to AES-GCM for unknown/unsupported types
+    return crypto.encrypt_aes_v2(record_key, encryption_key), folder_pb2.encrypted_by_data_key_gcm
 
 
 def create_record_data_v3(
@@ -44,6 +71,15 @@ def create_record_data_v3(
     """
     Create a RecordAdd protobuf message for record creation.
     
+    According to the v3 API documentation:
+    - recordKey: The record key used to encrypt data and nonSharedData.
+      If the record is created in a folder, recordKey is encrypted with the folderKey;
+      otherwise, it is encrypted with the user's data key.
+    - folderUid: Must be provided when the record is not created at the vault root level.
+    - folderKey: Must be provided when the record is not created at the vault root level.
+      Used to encrypt the record key (for folder access).
+    - recordKeyType: Only supports encrypted_by_data_key_gcm
+    
     Args:
         record_uid: The unique identifier for the record (base64-url encoded)
         record_key: The encryption key for the record (32 bytes for AES-256, unencrypted)
@@ -53,20 +89,35 @@ def create_record_data_v3(
         folder_key: Optional folder key (required if folder_uid is provided)
         record_key_type: Optional encryption key type
         client_modified_time: Optional client modification time
-        data_key: The user's data key for encrypting the record key (required)
+        data_key: The user's data key for encrypting the record key (required when NOT in folder)
     
     Returns:
         RecordAdd protobuf message
-    """
-    if data_key is None:
-        raise ValueError("data_key is required to encrypt the record key")
     
+    Raises:
+        ValueError: If required parameters are missing based on context
+    """
     record_add = record_endpoints_pb2.RecordAdd()
     
     # Required fields (use camelCase for protobuf fields in record_endpoints_pb2)
     record_add.recordUid = utils.base64_url_decode(record_uid)
-    # Encrypt the record key with the user's data key
-    record_add.recordKey = crypto.encrypt_aes_v2(record_key, data_key)
+    
+    if folder_uid and folder_key:
+        record_add.recordKey = crypto.encrypt_aes_v2(record_key, folder_key)
+        record_add.folderUid = utils.base64_url_decode(folder_uid)
+        record_add.folderKey = crypto.encrypt_aes_v2(record_key, folder_key)
+    elif folder_uid and not folder_key:
+        raise ValueError("folder_key is required when folder_uid is provided")
+    else:
+        if data_key is None:
+            raise ValueError("data_key is required when creating record at vault root")
+        record_add.recordKey = crypto.encrypt_aes_v2(record_key, data_key)
+    
+    if record_key_type is not None:
+        record_add.recordKeyType = record_key_type
+    else:
+        from keepercommander.proto import folder_pb2
+        record_add.recordKeyType = folder_pb2.encrypted_by_data_key_gcm
     
     # Encrypt record data with AES-256-GCM
     # First convert to JSON string, then pad it, then encrypt
@@ -81,17 +132,6 @@ def create_record_data_v3(
         non_shared_padded = pad_aes_gcm(non_shared_json)
         non_shared_bytes = non_shared_padded.encode('utf-8') if isinstance(non_shared_padded, str) else non_shared_padded
         record_add.nonSharedData = crypto.encrypt_aes_v2(non_shared_bytes, record_key)
-    
-    if folder_uid:
-        record_add.folderUid = utils.base64_url_decode(folder_uid)
-        
-        if folder_key:
-            # Encrypt record key with folder key
-            record_add.folderKey = crypto.encrypt_aes_v2(record_key, folder_key)
-    
-    # Set record key type if provided
-    if record_key_type is not None:
-        record_add.recordKeyType = record_key_type
     
     if client_modified_time:
         record_add.clientModifiedTime = client_modified_time
@@ -1762,14 +1802,17 @@ def add_record_to_folder_v3(
     if not record_key:
         raise ValueError(f"Record key not found for record {record_uid}. Record may not exist or is not accessible.")
     
-    # Encrypt record key with folder key
-    encrypted_record_key = crypto.encrypt_aes_v2(record_key, folder_key)
+    record_key_type = _get_record_key_type(params, record_uid)
+    encrypted_record_key, encrypted_record_key_type = _encrypt_record_key_for_folder(
+        record_key,
+        folder_key,
+        record_key_type
+    )
     
-    # Create RecordMetadata
     record_metadata = folder_pb2.RecordMetadata()
     record_metadata.recordUid = utils.base64_url_decode(record_uid)
     record_metadata.encryptedRecordKey = encrypted_record_key
-    record_metadata.encryptedRecordKeyType = folder_pb2.encrypted_by_data_key_gcm
+    record_metadata.encryptedRecordKeyType = encrypted_record_key_type
     
     # Make API call
     response = folder_record_update_v3(params, folder_uid, add_records=[record_metadata])
@@ -1940,8 +1983,24 @@ def move_record_v3(
                 'message': f"Error removing from source folder: {str(e)}"
             }
     
-    # Add to destination folder (if not root)
+    # Add to destination (folder or root)
+    # Get record key first (needed for both folder and root)
+    record_key = None
+    if record_uid in params.keeper_drive_records:
+        record_obj = params.keeper_drive_records[record_uid]
+        if 'record_key_unencrypted' in record_obj:
+            record_key = record_obj['record_key_unencrypted']
+    
+    if not record_key and record_uid in params.record_cache:
+        record_obj = params.record_cache[record_uid]
+        if 'record_key_unencrypted' in record_obj:
+            record_key = record_obj['record_key_unencrypted']
+    
+    if not record_key:
+        raise ValueError(f"Record key not found for record {record_uid}. Record may not exist or is not accessible.")
+    
     if to_folder_uid:
+        # Adding to a folder
         # Resolve destination folder UID
         resolved_to_folder = keeper_drive.resolve_folder_identifier(params, to_folder_uid)
         if not resolved_to_folder:
@@ -1963,23 +2022,13 @@ def move_record_v3(
         if not folder_key:
             raise ValueError(f"Folder key not found for destination folder {to_folder_uid}. Try running 'sync-down' first.")
         
-        # Get record key
-        record_key = None
-        if record_uid in params.keeper_drive_records:
-            record_obj = params.keeper_drive_records[record_uid]
-            if 'record_key_unencrypted' in record_obj:
-                record_key = record_obj['record_key_unencrypted']
-        
-        if not record_key and record_uid in params.record_cache:
-            record_obj = params.record_cache[record_uid]
-            if 'record_key_unencrypted' in record_obj:
-                record_key = record_obj['record_key_unencrypted']
-        
-        if not record_key:
-            raise ValueError(f"Record key not found for record {record_uid}. Record may not exist or is not accessible.")
-        
-        # Encrypt record key with folder key
-        encrypted_record_key = crypto.encrypt_aes_v2(record_key, folder_key)
+        # Encrypt record key with folder key (respect legacy key type when available)
+        record_key_type = _get_record_key_type(params, record_uid)
+        encrypted_record_key, encrypted_record_key_type = _encrypt_record_key_for_folder(
+            record_key,
+            folder_key,
+            record_key_type
+        )
         
         # Create RecordMetadata for addition
         record_metadata_add = folder_pb2.RecordMetadata()
@@ -2008,6 +2057,45 @@ def move_record_v3(
                 'to_folder': to_folder_uid,
                 'success': False,
                 'message': f"Error adding to destination folder: {str(e)}"
+            }
+    else:
+        # Adding to root (to_folder_uid is None)
+        # For root level, encrypt record key with user's data key
+        record_key_type = _get_record_key_type(params, record_uid)
+        encrypted_record_key, encrypted_record_key_type = _encrypt_record_key_for_folder(
+            record_key,
+            params.data_key,
+            record_key_type
+        )
+        
+        # Create RecordMetadata for addition to root
+        record_metadata_add = folder_pb2.RecordMetadata()
+        record_metadata_add.recordUid = utils.base64_url_decode(record_uid)
+        record_metadata_add.encryptedRecordKey = encrypted_record_key
+        record_metadata_add.encryptedRecordKeyType = encrypted_record_key_type
+        
+        # Add to root (use empty folder UID)
+        try:
+            # Use empty string for root folder UID
+            response_add = folder_record_update_v3(params, '', add_records=[record_metadata_add])
+            
+            if response_add.folderRecordUpdateResult:
+                result = response_add.folderRecordUpdateResult[0]
+                if result.status != folder_pb2.SUCCESS:
+                    return {
+                        'record_uid': record_uid,
+                        'from_folder': from_folder_uid or 'root',
+                        'to_folder': 'root',
+                        'success': False,
+                        'message': f"Failed to add to root: {result.message}"
+                    }
+        except Exception as e:
+            return {
+                'record_uid': record_uid,
+                'from_folder': from_folder_uid or 'root',
+                'to_folder': 'root',
+                'success': False,
+                'message': f"Error adding to root: {str(e)}"
             }
     
     # Success
@@ -2091,14 +2179,19 @@ def manage_folder_records_batch_v3(
             if not record_key:
                 raise ValueError(f"Record key not found for record {record_uid}")
             
-            # Encrypt record key with folder key
-            encrypted_record_key = crypto.encrypt_aes_v2(record_key, folder_key)
+            # Encrypt ecord key with folder key (respect legacy key type when available)
+            record_key_type = _get_record_key_type(params, record_uid)
+            encrypted_record_key, encrypted_record_key_type = _encrypt_record_key_for_folder(
+                record_key,
+                folder_key,
+                record_key_type
+            )
             
             # Create RecordMetadata
             record_metadata = folder_pb2.RecordMetadata()
             record_metadata.recordUid = utils.base64_url_decode(record_uid)
             record_metadata.encryptedRecordKey = encrypted_record_key
-            record_metadata.encryptedRecordKeyType = folder_pb2.encrypted_by_data_key_gcm
+            record_metadata.encryptedRecordKeyType = encrypted_record_key_type
             
             adds_list.append(record_metadata)
             operation_tracking.append(('add', record_uid))
