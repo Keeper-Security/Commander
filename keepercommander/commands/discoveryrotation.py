@@ -185,6 +185,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('rbi', PAMRbiCommand(), 'Manage Remote Browser Isolation', 'b')
         self.register_command('project', PAMProjectCommand(), 'PAM Project Import/Export', 'p')
         self.register_command('launch', PAMLaunchCommand(), 'Launch a connection to a PAM resource', 'l')
+        self.register_command('universal-sync-config', PAMUniversalSyncConfigCommand(), 'Configure Universal Sync', 'usc')
 
 
 class PAMGatewayCommand(GroupCommand):
@@ -3460,6 +3461,79 @@ class PAMSetMaxInstancesCommand(Command):
             logging.info('%s: max instance count set to %d', gateway.controllerName, max_instances)
         except Exception as e:
             raise CommandError('', f'{bcolors.FAIL}Error setting max instances: {e}{bcolors.ENDC}')
+
+
+class PAMUniversalSyncConfigCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam universal-sync-config')
+    parser.add_argument('--network', '-n', required=True, dest='network', action='store',
+                        help='Network UID or name to configure universal sync')
+    parser.add_argument('--enabled', '-e', dest='enabled', action='store',
+                        choices=['true', 'false'], help='Enable or disable universal sync')
+    parser.add_argument('--dry-run', '-dr', dest='dry_run', action='store',
+                        choices=['true', 'false'], help='Enable or disable dry run mode')
+    parser.add_argument('--folder', '-f', dest='folder', action='append',
+                        help='Folder UID where synced records will be created (can be specified multiple times)')
+    parser.add_argument('--sync-identity', '-si', dest='sync_identity', action='store',
+                        help='Identity record UID to use for syncing')
+    parser.add_argument('--vault-name', '-vn', dest='vault_name', action='store',
+                        help='Vault name for universal sync')
+
+    def get_parser(self):
+        return PAMUniversalSyncConfigCommand.parser
+
+    def execute(self, params, **kwargs):
+        from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
+
+        network_name = kwargs.get('network')
+        if not network_name:
+            raise CommandError('', f'{bcolors.FAIL}Network is required{bcolors.ENDC}')
+
+        network = vault.KeeperRecord.load(params, network_name)
+        if not network:
+            raise CommandError('', f'{bcolors.FAIL}Network "{network_name}" not found{bcolors.ENDC}')
+
+        rq = pam_pb2.PAMUniversalSyncConfig()
+        rq.networkUid = url_safe_str_to_bytes(network.record_uid)
+
+        enabled = kwargs.get('enabled')
+        if enabled is not None:
+            rq.enabled = enabled.lower() == 'true'
+
+        dry_run = kwargs.get('dry_run')
+        if dry_run is not None:
+            rq.dryRunEnabled = dry_run.lower() == 'true'
+
+        folders = kwargs.get('folder')
+        if folders:
+            for folder in folders:
+                folder_uid = folder
+                # Try to resolve folder by name if not a UID
+                if len(folder_uid) != 22:
+                    matching_folders = [f for f in params.folder_cache if params.folder_cache[f].name == folder]
+                    if matching_folders:
+                        folder_uid = matching_folders[0]
+
+                folder_obj = pam_pb2.PAMUniversalSyncFolder()
+                folder_obj.uid = url_safe_str_to_bytes(folder_uid)
+                rq.folders.append(folder_obj)
+
+        sync_identity = kwargs.get('sync_identity')
+        if sync_identity:
+            rq.syncIdentity = url_safe_str_to_bytes(sync_identity)
+
+        vault_name = kwargs.get('vault_name')
+        if vault_name:
+            rq.vaultName = vault_name.encode('utf-8')
+
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+
+        try:
+            router_helper.router_configure_universal_sync(params, rq, transmission_key,
+                                                         encrypted_transmission_key,
+                                                         encrypted_session_token)
+            print(f'{bcolors.OKGREEN}Universal sync configuration updated for network: {network.title}{bcolors.ENDC}')
+        except Exception as e:
+            raise CommandError('', f'{bcolors.FAIL}Error configuring universal sync: {e}{bcolors.ENDC}')
 
 
 class PAMCreateGatewayCommand(Command):
