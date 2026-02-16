@@ -1337,8 +1337,25 @@ def _decrypt_keeper_drive_keys(params):
                     # Check if this key is from a folder record (encrypted with folder key)
                     if 'folder_uid' in rk:
                         folder_uid = rk['folder_uid']
-                        logging.debug(f"Record {record_uid}: trying folder key from folder {folder_uid}, type={rk['encrypted_key_type']}")
-                        if folder_uid in params.keeper_drive_folders:
+                        if folder_uid == '':
+                            logging.debug(f"Record {record_uid}: root-level record, decrypting with user data key, type={rk['encrypted_key_type']}")
+                            if rk['encrypted_key_type'] == folder_pb2.encrypted_by_data_key_gcm:
+                                record_key = crypto.decrypt_aes_v2(rk['record_key'], params.data_key)
+                                logging.debug(f"Record {record_uid}: decrypted with user data key (GCM)")
+                            elif rk['encrypted_key_type'] == folder_pb2.encrypted_by_data_key:
+                                record_key = crypto.decrypt_aes_v1(rk['record_key'], params.data_key)
+                                logging.debug(f"Record {record_uid}: decrypted with user data key (CBC)")
+                            else:
+                                try:
+                                    record_key = crypto.decrypt_aes_v2(rk['record_key'], params.data_key)
+                                    logging.debug(f"Record {record_uid}: decrypted with user data key (GCM, fallback)")
+                                except:
+                                    record_key = crypto.decrypt_aes_v1(rk['record_key'], params.data_key)
+                                    logging.debug(f"Record {record_uid}: decrypted with user data key (CBC, fallback)")
+                            if record_key:
+                                break
+                        elif folder_uid in params.keeper_drive_folders:
+                            logging.debug(f"Record {record_uid}: trying folder key from folder {folder_uid}, type={rk['encrypted_key_type']}")
                             folder_obj = params.keeper_drive_folders[folder_uid]
                             if 'folder_key_unencrypted' in folder_obj:
                                 folder_key = folder_obj['folder_key_unencrypted']
@@ -1542,6 +1559,9 @@ def prepare_folder_tree(params):    # type: (KeeperParams) -> None
             uf = UserFolderNode()
             uf.uid = folder_uid
             uf.parent_uid = sf.get('parent_uid')
+            # Set name from subfolder_cache entry if available (e.g., Keeper Drive folders)
+            if sf.get('name'):
+                uf.name = sf['name']
             params.folder_cache[uf.uid] = uf
 
         elif sf['type'] == 'shared_folder_folder':
@@ -1576,3 +1596,7 @@ def prepare_folder_tree(params):    # type: (KeeperParams) -> None
         parent_folder = params.folder_cache.get(f.parent_uid) if f.parent_uid else params.root_folder
         if parent_folder:
             parent_folder.subfolders.append(f.uid)
+        elif f.parent_uid and hasattr(params, 'keeper_drive_folders') and f.uid in params.keeper_drive_folders:
+            # (e.g., KD root-level folders with a special KD root UID) should be
+            # connected to the vault root so they are navigable.
+            params.root_folder.subfolders.append(f.uid)

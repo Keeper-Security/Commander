@@ -847,7 +847,11 @@ def get_prompt(params):
             break
 
         if f.parent_uid is not None:
-            f = params.folder_cache[f.parent_uid]
+            if f.parent_uid in params.folder_cache:
+                f = params.folder_cache[f.parent_uid]
+            else:
+                # Parent UID not in folder_cache (e.g., KD folders with special root UID)
+                f = params.root_folder
         else:
             if f.type == BaseFolderNode.SharedFolderFolderType:
                 f = params.folder_cache[f.shared_folder_uid]
