@@ -1120,7 +1120,7 @@ class WorkflowGetStateCommand(Command):
             
             if kwargs.get('format') == 'json':
                 result = {
-                    'flow_uid': utils.base64_url_encode(response.flowUid),
+                    'flow_uid': utils.base64_url_encode(response.flowUid) if response.flowUid else None,
                     'record_uid': utils.base64_url_encode(response.resource.value),
                     'record_name': resolve_record_name(params, response.resource),
                     'stage': format_workflow_stage(response.status.stage),
@@ -1140,7 +1140,8 @@ class WorkflowGetStateCommand(Command):
             else:
                 print(f"\n{bcolors.OKBLUE}Workflow State{bcolors.ENDC}\n")
                 print(f"Record: {format_record_label(params, response.resource)}")
-                print(f"Flow UID: {utils.base64_url_encode(response.flowUid)}")
+                if response.flowUid:
+                    print(f"Flow UID: {utils.base64_url_encode(response.flowUid)}")
                 print(f"Stage: {format_workflow_stage(response.status.stage)}")
                 if response.status.conditions:
                     print(f"Conditions: {format_access_conditions(response.status.conditions)}")
@@ -1225,25 +1226,24 @@ class WorkflowGetUserAccessStateCommand(Command):
                 }
                 print(json.dumps(result, indent=2))
             else:
-                print(f"\n{bcolors.OKBLUE}Your Active Workflows{bcolors.ENDC}\n")
-                for idx, wf in enumerate(response.workflows, 1):
-                    print(f"{idx}. Record: {format_record_label(params, wf.resource)}")
-                    print(f"   Flow UID: {utils.base64_url_encode(wf.flowUid)}")
-                    print(f"   Stage: {format_workflow_stage(wf.status.stage)}")
-                    if wf.status.conditions:
-                        print(f"   Conditions: {format_access_conditions(wf.status.conditions)}")
-                    if wf.status.escalated:
-                        print(f"   Escalated: Yes")
-                    if wf.status.startedOn:
-                        started = datetime.fromtimestamp(wf.status.startedOn / 1000)
-                        print(f"   Started: {started.strftime('%Y-%m-%d %H:%M:%S')}")
-                    if wf.status.expiresOn:
-                        expires = datetime.fromtimestamp(wf.status.expiresOn / 1000)
-                        print(f"   Expires: {expires.strftime('%Y-%m-%d %H:%M:%S')}")
+                rows = []
+                for wf in response.workflows:
+                    stage = format_workflow_stage(wf.status.stage)
+                    record_name = resolve_record_name(params, wf.resource)
+                    record_uid = utils.base64_url_encode(wf.resource.value) if wf.resource.value else ''
+                    flow_uid = utils.base64_url_encode(wf.flowUid) if wf.flowUid else ''
+                    conditions = format_access_conditions(wf.status.conditions) if wf.status.conditions else ''
+                    started = datetime.fromtimestamp(wf.status.startedOn / 1000).strftime('%Y-%m-%d %H:%M:%S') if wf.status.startedOn else ''
+                    expires = datetime.fromtimestamp(wf.status.expiresOn / 1000).strftime('%Y-%m-%d %H:%M:%S') if wf.status.expiresOn else ''
+                    approved_by = ''
                     if wf.status.approvedBy:
                         approved_names = [a.user if a.user else resolve_user_name(params, a.userId) for a in wf.status.approvedBy]
-                        print(f"   Approved by: {', '.join(approved_names)}")
-                    print()
+                        approved_by = ', '.join(approved_names)
+                    rows.append([stage, record_name, record_uid, flow_uid, approved_by, started, expires, conditions])
+                headers = ['Stage', 'Record Name', 'Record UID', 'Flow UID', 'Approved By', 'Started', 'Expires', 'Conditions']
+                print()
+                dump_report_data(rows, headers=headers)
+                print()
                 
         except Exception as e:
             raise CommandError('', f'Failed to get user access state: {str(e)}')
