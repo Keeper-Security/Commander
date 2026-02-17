@@ -21,3 +21,4 @@ CLAUDE.md
 AGENTS.md
 keeper_db.sqlite
 .keeper-memory-mcp/
+.mcp/

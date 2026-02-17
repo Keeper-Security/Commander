@@ -3,7 +3,7 @@ import logging
 import os
 import sqlite3
 import sys
-from typing import Dict, Tuple
+from typing import Dict, Optional, Set, Tuple
 
 from .. import api, crypto, utils
 from ..display import Spinner
@@ -74,8 +74,8 @@ def get_sox_database_name(params, enterprise_id):  # type: (KeeperParams, int) -
     return os.path.join(path, f'sox_{enterprise_id}.db')
 
 
-def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache_only=False, no_cache=False, shared_only=False):
-    # type: (KeeperParams, int, bool, int, bool, bool, bool) -> sox_data.SoxData
+def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache_only=False, no_cache=False, shared_only=False, user_filter=None):
+    # type: (KeeperParams, int, bool, int, bool, bool, bool, Optional[Set[int]]) -> sox_data.SoxData
     def sync_down(name_by_id, store):  # type: (Dict[int, str], sqlite_storage.SqliteSoxStorage) ->  None
         spinner = None
         use_spinner = not params.batch_mode
@@ -108,6 +108,7 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
                 entity.user_uid = user_id
                 email = email_lookup.get(user_id)
                 entity.email = encrypt_data(params, email) if email else b''
+                entity.last_refreshed = int(datetime.datetime.now().timestamp())
                 return entity
 
             def to_user_record_link(uuid, ruid):
@@ -191,7 +192,10 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
                 problem_emails = '\n'.join([name_by_id.get(id) for id in problem_ids])
                 logging.error(f'Data could not fetched for the following users: \n{problem_emails}')
 
-            store.rebuild_prelim_data(users, records, links)
+            if user_filter is not None:
+                store.update_user_prelim_data(users, records, links, set(name_by_id.keys()))
+            else:
+                store.rebuild_prelim_data(users, records, links)
         success = False
         try:
             sync_all()
@@ -216,18 +220,39 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
         database_name=database_name,
         close_connection=lambda: close_cached_connection(database_name)
     )
-    last_updated = storage.last_prelim_data_update
-    only_shared_cached = storage.shared_records_only
-    refresh_data = rebuild or not last_updated or min_updated > last_updated or only_shared_cached and not shared_only
-    if refresh_data and not cache_only:
-        user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise.get('users', [])}
-        storage.clear_non_aging_data()
-        sync_down(user_lookup, storage)
+    if user_filter is not None and not cache_only:
+        # Per-user cache invalidation: only fetch users with stale or missing cache entries
+        all_users = params.enterprise.get('users', [])
+        full_filter_lookup = {x['enterprise_user_id']: x['username'] for x in all_users
+                              if x['enterprise_user_id'] in user_filter}
+        only_shared_cached = storage.shared_records_only
+        if rebuild or (only_shared_cached and not shared_only):
+            stale_ids = set(full_filter_lookup.keys())
+        else:
+            stale_ids = set()
+            for uid in full_filter_lookup:
+                user_entity = storage.get_users().get_entity(uid)
+                if not user_entity or (user_entity.last_refreshed or 0) < min_updated:
+                    stale_ids.add(uid)
+        if stale_ids:
+            user_lookup = {uid: full_filter_lookup[uid] for uid in stale_ids}
+            sync_down(user_lookup, storage)
         storage.set_shared_records_only(shared_only)
+    else:
+        # Full cache invalidation: existing behavior
+        last_updated = storage.last_prelim_data_update
+        only_shared_cached = storage.shared_records_only
+        refresh_data = rebuild or not last_updated or min_updated > last_updated or only_shared_cached and not shared_only
+        if refresh_data and not cache_only:
+            user_lookup = {x['enterprise_user_id']: x['username'] for x in params.enterprise.get('users', [])}
+            storage.clear_non_aging_data()
+            sync_down(user_lookup, storage)
+            storage.set_shared_records_only(shared_only)
     return sox_data.SoxData(params, storage=storage)
 
 
-def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_updated=0, no_cache=False, shared_only=False):
+def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_updated=0, no_cache=False, shared_only=False, user_filter=None):
+    # type: (KeeperParams, int, int, bool, int, bool, bool, Optional[Set[int]]) -> sox_data.SoxData
     def sync_down(sdata, node_uid, user_node_id_lookup):
         recs_processed = 0
         spinner = None
@@ -440,13 +465,38 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
 
         run_sync_tasks()
 
-    sd = get_prelim_data(params, enterprise_id, rebuild=rebuild, min_updated=min_updated, cache_only=not min_updated, shared_only=shared_only)
+    sd = get_prelim_data(params, enterprise_id, rebuild=rebuild, min_updated=min_updated, cache_only=not min_updated, shared_only=shared_only, user_filter=user_filter)
     last_compliance_data_update = sd.storage.last_compliance_data_update
-    refresh_data = rebuild or min_updated > last_compliance_data_update
-    if refresh_data:
+    if user_filter is not None:
+        # Per-user compliance cache invalidation
+        stale_compliance_ids = set()
         enterprise_users = params.enterprise.get('users', [])
-        user_node_ids = {e_user.get('enterprise_user_id'): e_user.get('node_id') for e_user in enterprise_users}
-        sync_down(sd, node_id, user_node_id_lookup=user_node_ids)
+        for e_user in enterprise_users:
+            uid = e_user.get('enterprise_user_id')
+            if uid in user_filter:
+                user_entity = sd.storage.get_users().get_entity(uid)
+                if not user_entity or (user_entity.last_compliance_refreshed or 0) < min_updated:
+                    stale_compliance_ids.add(uid)
+        if rebuild or stale_compliance_ids:
+            user_node_ids = {e_user.get('enterprise_user_id'): e_user.get('node_id')
+                             for e_user in enterprise_users if e_user.get('enterprise_user_id') in user_filter}
+            sync_down(sd, node_id, user_node_id_lookup=user_node_ids)
+            # Update per-user compliance timestamps
+            now_ts = int(datetime.datetime.now().timestamp())
+            updated_users = []
+            for uid in user_filter:
+                user_entity = sd.storage.get_users().get_entity(uid)
+                if user_entity:
+                    user_entity.last_compliance_refreshed = now_ts
+                    updated_users.append(user_entity)
+            if updated_users:
+                sd.storage.get_users().put_entities(updated_users)
+    else:
+        refresh_data = rebuild or min_updated > last_compliance_data_update
+        if refresh_data:
+            enterprise_users = params.enterprise.get('users', [])
+            user_node_ids = {e_user.get('enterprise_user_id'): e_user.get('node_id') for e_user in enterprise_users}
+            sync_down(sd, node_id, user_node_id_lookup=user_node_ids)
     rebuild_task = sox_data.RebuildTask(is_full_sync=False, load_compliance_data=True)
     sd.rebuild_data(rebuild_task)
     return sd
