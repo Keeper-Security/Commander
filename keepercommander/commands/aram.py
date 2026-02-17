@@ -1950,6 +1950,8 @@ class AgingReportCommand(Command):
                 if eu.get('username') == username_arg:
                     user_filter = {eu['enterprise_user_id']}
                     break
+            if user_filter is None:
+                raise CommandError('aram', f'User "{username_arg}" not found in enterprise')
 
         get_sox_data_fn = get_compliance_data if exclude_deleted or in_shared_folder else get_prelim_data
         sd_args = [params, node_id, enterprise_id, rebuild] if exclude_deleted or in_shared_folder \

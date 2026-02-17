@@ -232,12 +232,12 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
             stale_ids = set()
             for uid in full_filter_lookup:
                 user_entity = storage.get_users().get_entity(uid)
-                if not user_entity or user_entity.last_refreshed < min_updated:
+                if not user_entity or (user_entity.last_refreshed or 0) < min_updated:
                     stale_ids.add(uid)
         if stale_ids:
             user_lookup = {uid: full_filter_lookup[uid] for uid in stale_ids}
             sync_down(user_lookup, storage)
-            storage.set_shared_records_only(shared_only)
+        storage.set_shared_records_only(shared_only)
     else:
         # Full cache invalidation: existing behavior
         last_updated = storage.last_prelim_data_update

@@ -168,13 +168,16 @@ class BaseComplianceReportCommand(EnterpriseCommand):
                 for t_ref in team_refs:
                     if t_ref in team_uids:
                         resolved_team_uids.add(t_ref)
-                    else:
-                        for t in enterprise_teams:
-                            if t.get('name') == t_ref:
-                                resolved_team_uids.add(t.get('team_uid'))
+                        continue
+                    for t in enterprise_teams:
+                        if t.get('name') == t_ref:
+                            resolved_team_uids.add(t.get('team_uid'))
                 for tu in enterprise_team_users:
                     if tu.get('team_uid') in resolved_team_uids:
                         filtered_user_ids.add(tu.get('enterprise_user_id'))
+            if not filtered_user_ids:
+                logging.warning('No enterprise users matched the provided filters (usernames=%s, teams=%s). '
+                                'Running report for all users.', usernames, team_refs)
             user_filter = filtered_user_ids if filtered_user_ids else None
 
         get_sox_data_fn = sox.get_prelim_data if self.prelim_only else sox.get_compliance_data
