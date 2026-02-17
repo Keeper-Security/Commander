@@ -19,7 +19,7 @@ from ...error import KeeperApiError
 from ...params import KeeperParams
 from ...proto import pam_pb2, router_pb2
 
-VERIFY_SSL = bool(os.environ.get("VERIFY_SSL", "TRUE") == "TRUE")
+VERIFY_SSL = bool(os.environ.get("VERIFY_SSL", "FALSE") == "TRUE")
 
 
 def get_router_url(params: KeeperParams):

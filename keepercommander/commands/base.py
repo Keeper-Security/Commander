@@ -212,6 +212,10 @@ def register_enterprise_commands(commands, aliases, command_info):
     device_management.register_enterprise_commands(commands)
     device_management.register_enterprise_command_info(aliases, command_info)
 
+    from . import cnapp
+    cnapp.register_commands(commands)
+    cnapp.register_command_info(aliases, command_info)
+
     if sys.version_info.major > 3 or (sys.version_info.major == 3 and sys.version_info.minor >= 9):
         from.pedm import pedm_admin
         pedm_command = pedm_admin.PedmCommand()

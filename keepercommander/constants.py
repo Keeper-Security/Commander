@@ -348,6 +348,7 @@ KEEPER_SERVERS = {
     'CA_QA': 'qa.keepersecurity.ca',
     'JP_QA': 'qa.keepersecurity.jp',
     'GOV_QA': 'govcloud.qa.keepersecurity.us',
+    'US_LOCAL': 'local.keepersecurity.com',
 }
 
 
