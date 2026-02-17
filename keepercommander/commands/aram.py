@@ -1945,13 +1945,12 @@ class AgingReportCommand(Command):
         user_filter = None
         username_arg = kwargs.get('username')
         if username_arg:
-            enterprise_users = params.enterprise.get('users', [])
-            for eu in enterprise_users:
-                if eu.get('username') == username_arg:
-                    user_filter = {eu['enterprise_user_id']}
-                    break
-            if user_filter is None:
+            user_lookup = {eu.get('username'): eu.get('enterprise_user_id')
+                           for eu in params.enterprise.get('users', [])}
+            user_id = user_lookup.get(username_arg)
+            if user_id is None:
                 raise CommandError('aram', f'User "{username_arg}" not found in enterprise')
+            user_filter = {user_id}
 
         get_sox_data_fn = get_compliance_data if exclude_deleted or in_shared_folder else get_prelim_data
         sd_args = [params, node_id, enterprise_id, rebuild] if exclude_deleted or in_shared_folder \

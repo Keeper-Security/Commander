@@ -157,24 +157,21 @@ class BaseComplianceReportCommand(EnterpriseCommand):
             enterprise_users = params.enterprise.get('users', [])
             if usernames:
                 username_set = set(usernames)
-                for eu in enterprise_users:
-                    if eu.get('username') in username_set:
-                        filtered_user_ids.add(eu['enterprise_user_id'])
+                user_lookup = {eu.get('username'): eu.get('enterprise_user_id') for eu in enterprise_users}
+                filtered_user_ids.update(uid for u, uid in user_lookup.items() if u in username_set)
             if team_refs:
                 enterprise_teams = params.enterprise.get('teams', [])
                 team_uids = {t.get('team_uid') for t in enterprise_teams}
-                enterprise_team_users = params.enterprise.get('team_users', [])
+                team_name_lookup = {t.get('name'): t.get('team_uid') for t in enterprise_teams}
                 resolved_team_uids = set()
                 for t_ref in team_refs:
                     if t_ref in team_uids:
                         resolved_team_uids.add(t_ref)
-                        continue
-                    for t in enterprise_teams:
-                        if t.get('name') == t_ref:
-                            resolved_team_uids.add(t.get('team_uid'))
-                for tu in enterprise_team_users:
-                    if tu.get('team_uid') in resolved_team_uids:
-                        filtered_user_ids.add(tu.get('enterprise_user_id'))
+                    elif t_ref in team_name_lookup:
+                        resolved_team_uids.add(team_name_lookup[t_ref])
+                enterprise_team_users = params.enterprise.get('team_users', [])
+                filtered_user_ids.update(tu.get('enterprise_user_id') for tu in enterprise_team_users
+                                         if tu.get('team_uid') in resolved_team_uids)
             if not filtered_user_ids:
                 logging.warning('No enterprise users matched the provided filters (usernames=%s, teams=%s).',
                                 usernames, team_refs)
