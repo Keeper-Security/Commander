@@ -209,7 +209,6 @@ class SqliteSoxStorage:
         self._users.put_entities(users)
         self._records.put_entities(records)
         self._user_record_links.put_links(links)
-        self.set_prelim_data_updated()
 
     def clear_all(self):
         self.clear_non_aging_data()
