@@ -100,9 +100,9 @@ def register_command_info(aliases, command_info):
 
 
 SUPPORTED_NODE_COLUMNS = ['parent_node', 'parent_id', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles',
-                          'provisioning']
+                          'provisioning', 'isolated']
 SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count',
-                          'roles', 'alias', '2fa_enabled']
+                          'roles', 'alias', '2fa_enabled', 'job_title']
 SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users', 'queued_user_count', 'queued_users', 'role_count', 'roles']
 SUPPORTED_ROLE_COLUMNS = ['visible_below', 'default_role', 'admin', 'node', 'user_count', 'users', 'team_count', 'teams',
                           'enforcement_count', 'enforcements', 'managed_node_count', 'managed_nodes', 'managed_nodes_permissions']
@@ -460,6 +460,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 }
                 if 'account_share_expiration' in user:
                     u['account_share_expiration'] = user['account_share_expiration']
+                if 'job_title' in user:
+                    u['job_title'] = user['job_title']
                 users[user_id] = u
                 if node_id in nodes:
                     nodes[node_id]['users'].append(user_id)
@@ -760,6 +762,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         elif column == 'sso_provisioning':
                             status = sso_provisioning.get(node_id) if sso_provisioning else None
                             row.append(status)
+                        elif column == 'isolated':
+                            row.append(n.get('isolated', False))
                         else:
                             row.append(None)
 
@@ -846,6 +850,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                                         if x['enterprise_user_id'] == user_id and x['username'] != email])
                         elif column == '2fa_enabled':
                             row.append(u.get('tfa_enabled') or '')
+                        elif column == 'job_title':
+                            row.append(u.get('job_title') or '')
                     if pattern:
                         if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
                             continue
@@ -1964,9 +1970,13 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 command = rq.get('command')
                 if command == 'enterprise_user_add':
                     if rs['result'] == 'success':
-                        logging.info('%s user invited', rq['enterprise_user_username'])
+                        logging.info('%s user invited with Enterprise User ID : %s',
+                                     rq['enterprise_user_username'], rq['enterprise_user_id'])
                     else:
-                        logging.warning('%s failed to invite user: %s', rq['enterprise_user_username'], rs['message'])
+                        error_msg = rs['message']
+                        if error_msg and ';' in error_msg:
+                            error_msg = error_msg.split(';')[0].strip()
+                        logging.warning('%s failed to invite user: %s', rq['enterprise_user_username'], error_msg)
                 else:
                     user = None
                     if not user and 'username' in rq:

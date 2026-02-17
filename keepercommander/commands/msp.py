@@ -434,8 +434,8 @@ class MSPInfoCommand(EnterpriseCommand, MSPMixin):
                     plan = plan_map.get(plan, plan)
                 
                 seats = mc['number_of_seats']
-                if seats > 2000000:
-                    seats = None
+                if seats > 2147483646:
+                    seats = -1
                 
                 if verbose:
                     table.append([mc['mc_enterprise_id'], mc['mc_enterprise_name'], node_path,

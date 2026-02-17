@@ -994,7 +994,8 @@ class KeeperResponseParser:
             "cannot assign",
             "cannot move",
             "cannot get",
-            "not integer"
+            "not integer",
+            "expects"
         ]
         
         error_patterns = [
