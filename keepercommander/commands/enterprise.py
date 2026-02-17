@@ -1970,13 +1970,13 @@ class EnterpriseUserCommand(EnterpriseCommand):
                 command = rq.get('command')
                 if command == 'enterprise_user_add':
                     if rs['result'] == 'success':
-                        if kwargs.get('verbose'):
-                            logging.info('%s user invited (Enterprise User ID: %s)',
-                                         rq['enterprise_user_username'], rq['enterprise_user_id'])
-                        else:
-                            logging.info('%s user invited', rq['enterprise_user_username'])
+                        logging.info('%s user invited with Enterprise User ID : %s',
+                                     rq['enterprise_user_username'], rq['enterprise_user_id'])
                     else:
-                        logging.warning('%s failed to invite user: %s', rq['enterprise_user_username'], rs['message'])
+                        error_msg = rs['message']
+                        if error_msg and ';' in error_msg:
+                            error_msg = error_msg.split(';')[0].strip()
+                        logging.warning('%s failed to invite user: %s', rq['enterprise_user_username'], error_msg)
                 else:
                     user = None
                     if not user and 'username' in rq:
