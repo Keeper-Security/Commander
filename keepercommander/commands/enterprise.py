@@ -100,7 +100,7 @@ def register_command_info(aliases, command_info):
 
 
 SUPPORTED_NODE_COLUMNS = ['parent_node', 'parent_id', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles',
-                          'provisioning']
+                          'provisioning', 'isolated']
 SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count',
                           'roles', 'alias', '2fa_enabled']
 SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users', 'queued_user_count', 'queued_users', 'role_count', 'roles']
@@ -760,6 +760,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         elif column == 'sso_provisioning':
                             status = sso_provisioning.get(node_id) if sso_provisioning else None
                             row.append(status)
+                        elif column == 'isolated':
+                            row.append(n.get('isolated', False))
                         else:
                             row.append(None)
 
