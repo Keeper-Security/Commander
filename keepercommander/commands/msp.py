@@ -434,7 +434,7 @@ class MSPInfoCommand(EnterpriseCommand, MSPMixin):
                     plan = plan_map.get(plan, plan)
                 
                 seats = mc['number_of_seats']
-                if seats > 2147483647:
+                if seats > 2147483646:
                     seats = -1
                 
                 if verbose:
