@@ -3,7 +3,7 @@ import logging
 import os
 import sqlite3
 import sys
-from typing import Dict, Tuple
+from typing import Dict, Optional, Set, Tuple
 
 from .. import api, crypto, utils
 from ..display import Spinner
@@ -75,7 +75,7 @@ def get_sox_database_name(params, enterprise_id):  # type: (KeeperParams, int) -
 
 
 def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache_only=False, no_cache=False, shared_only=False, user_filter=None):
-    # type: (KeeperParams, int, bool, int, bool, bool, bool, ...) -> sox_data.SoxData
+    # type: (KeeperParams, int, bool, int, bool, bool, bool, Optional[Set[int]]) -> sox_data.SoxData
     def sync_down(name_by_id, store):  # type: (Dict[int, str], sqlite_storage.SqliteSoxStorage) ->  None
         spinner = None
         use_spinner = not params.batch_mode
@@ -252,6 +252,7 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
 
 
 def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_updated=0, no_cache=False, shared_only=False, user_filter=None):
+    # type: (KeeperParams, int, int, bool, int, bool, bool, Optional[Set[int]]) -> sox_data.SoxData
     def sync_down(sdata, node_uid, user_node_id_lookup):
         recs_processed = 0
         spinner = None
