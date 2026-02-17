@@ -467,7 +467,7 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
 
     sd = get_prelim_data(params, enterprise_id, rebuild=rebuild, min_updated=min_updated, cache_only=not min_updated, shared_only=shared_only, user_filter=user_filter)
     last_compliance_data_update = sd.storage.last_compliance_data_update
-    refresh_data = rebuild or min_updated > last_compliance_data_update
+    refresh_data = rebuild or min_updated > last_compliance_data_update or user_filter is not None
     if refresh_data:
         enterprise_users = params.enterprise.get('users', [])
         if user_filter is not None:
