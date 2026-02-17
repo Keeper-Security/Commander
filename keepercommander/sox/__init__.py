@@ -237,6 +237,7 @@ def get_prelim_data(params, enterprise_id=0, rebuild=False, min_updated=0, cache
         if stale_ids:
             user_lookup = {uid: full_filter_lookup[uid] for uid in stale_ids}
             sync_down(user_lookup, storage)
+        storage._had_stale_users = bool(stale_ids)
         storage.set_shared_records_only(shared_only)
     else:
         # Full cache invalidation: existing behavior
@@ -467,7 +468,8 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
 
     sd = get_prelim_data(params, enterprise_id, rebuild=rebuild, min_updated=min_updated, cache_only=not min_updated, shared_only=shared_only, user_filter=user_filter)
     last_compliance_data_update = sd.storage.last_compliance_data_update
-    refresh_data = rebuild or min_updated > last_compliance_data_update or user_filter is not None
+    had_stale_users = getattr(sd.storage, '_had_stale_users', False)
+    refresh_data = rebuild or min_updated > last_compliance_data_update or (user_filter is not None and had_stale_users)
     if refresh_data:
         enterprise_users = params.enterprise.get('users', [])
         if user_filter is not None:
