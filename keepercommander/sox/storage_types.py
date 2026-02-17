@@ -11,6 +11,7 @@ class StorageUser(IUid):
         self.node_id = 0
         self.last_refreshed = 0
         self.last_compliance_refreshed = 0
+        self.last_aging_refreshed = 0
 
     def uid(self):
         # -> int
