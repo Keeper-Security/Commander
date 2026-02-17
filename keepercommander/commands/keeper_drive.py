@@ -835,8 +835,29 @@ For detailed record type information, use: record-type-info (rti)
             raise CommandError('keeper-drive-add-record', 'Record title is required (use -t or --title)')
         
         record_type = kwargs.get('record_type', 'login')
-        folder_uid = kwargs.get('folder_uid')
+        folder_input = kwargs.get('folder_uid')
         notes = kwargs.get('notes')
+        
+        # Resolve folder name/path to folder UID
+        folder_uid = None
+        if folder_input:
+            # Check if it's already a UID in folder_cache
+            if folder_input in params.folder_cache:
+                folder_uid = folder_input
+            # Check if it's in keeper_drive_folders
+            elif folder_input in params.keeper_drive_folders:
+                folder_uid = folder_input
+            # Try to resolve as a folder path
+            else:
+                from ..subfolder import try_resolve_path
+                resolved = try_resolve_path(params, folder_input)
+                if resolved is not None:
+                    folder, name = resolved
+                    if name:
+                        raise CommandError('keeper-drive-add-record', f'No such folder: {folder_input}')
+                    folder_uid = folder.uid if hasattr(folder, 'uid') else None
+                else:
+                    raise CommandError('keeper-drive-add-record', f'No such folder: {folder_input}')
         
         # Parse field specifications
         field_specs = kwargs.get('fields', [])
