@@ -260,12 +260,16 @@ class ComplianceReportCommand(BaseComplianceReportCommand):
                 return [u for u in users if u.user_uid in team_users]
 
             usernames = kwargs.get('username')
-            filtered = [o for o in rec_owners if o.email in usernames] if usernames else rec_owners
+            team_refs = kwargs.get('team')
+            if usernames or team_refs:
+                username_matched = {o for o in rec_owners if o.email in usernames} if usernames else set()
+                team_matched = set(filter_by_teams(rec_owners, team_refs)) if team_refs else set()
+                filtered = list(username_matched | team_matched)
+            else:
+                filtered = rec_owners
             job_titles = kwargs.get('job_title')
             filtered = [o for o in filtered if o.job_title in job_titles] if job_titles else filtered
             filtered = [o for o in filtered if o.node_id == node] if node != root_node else filtered
-            team_refs = kwargs.get('team')
-            filtered = filter_by_teams(filtered, team_refs) if team_refs else filtered
             return filtered
 
         def filter_records(records):
