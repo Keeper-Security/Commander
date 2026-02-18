@@ -1967,12 +1967,14 @@ class TerminalDisplayConnectionSettings:
         return obj
 
 class BaseConnectionSettings:
-    def __init__(self, port: Optional[str] = None, allowSupplyUser: Optional[bool] = None, userRecords: Optional[List[str]] = None, recordingIncludeKeys: Optional[bool] = None):
+    def __init__(self, port: Optional[str] = None, allowSupplyUser: Optional[bool] = None, userRecords: Optional[List[str]] = None, recordingIncludeKeys: Optional[bool] = None, launch_credentials: Optional[str] = None):
         self.port = port  # Override port from host
         self.allowSupplyUser = allowSupplyUser
         self.recordingIncludeKeys = recordingIncludeKeys
         self.userRecords = userRecords
-        self.userRecordUid = None # resolved from userRecords
+        self.userRecordUid = None  # resolved from userRecords
+        self.launch_credentials = launch_credentials  # title or login of pamUser for launch
+        self.launchRecordUid = None  # resolved from launch_credentials
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -1987,6 +1989,10 @@ class BaseConnectionSettings:
         obj.allowSupplyUser = utils.value_to_boolean(data.get("allow_supply_user", None))
         obj.userRecords = parse_multiline(data, "administrative_credentials", "Error parsing administrative_credentials")
         obj.recordingIncludeKeys = utils.value_to_boolean(data.get("recording_include_keys", None))
+        launch_creds = parse_multiline(data, "launch_credentials", "Error parsing launch_credentials")
+        creds = next((s for s in launch_creds if s.strip()), "") if launch_creds else ""
+        if creds: obj.launch_credentials = creds
+
         return obj
 
 class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings):
@@ -2039,6 +2045,8 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
             obj.allowSupplyUser = bcs.allowSupplyUser
             obj.userRecords = bcs.userRecords
             obj.recordingIncludeKeys = bcs.recordingIncludeKeys
+            obj.launch_credentials = getattr(bcs, "launch_credentials", None)
+            obj.launchRecordUid = getattr(bcs, "launchRecordUid", None)
 
         ccs = ClipboardConnectionSettings.load(data)
         if ccs:
@@ -2167,6 +2175,8 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
             obj.allowSupplyUser = bcs.allowSupplyUser
             obj.userRecords = bcs.userRecords
             obj.recordingIncludeKeys = bcs.recordingIncludeKeys
+            obj.launch_credentials = getattr(bcs, "launch_credentials", None)
+            obj.launchRecordUid = getattr(bcs, "launchRecordUid", None)
 
         ccs = ClipboardConnectionSettings.load(data)
         if ccs:
@@ -2254,6 +2264,8 @@ class ConnectionSettingsVNC(BaseConnectionSettings, ClipboardConnectionSettings)
             obj.allowSupplyUser = bcs.allowSupplyUser
             obj.userRecords = bcs.userRecords
             obj.recordingIncludeKeys = bcs.recordingIncludeKeys
+            obj.launch_credentials = getattr(bcs, "launch_credentials", None)
+            obj.launchRecordUid = getattr(bcs, "launchRecordUid", None)
 
         ccs = ClipboardConnectionSettings.load(data)
         if ccs:
@@ -2345,6 +2357,8 @@ class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettin
             obj.allowSupplyUser = bcs.allowSupplyUser
             obj.userRecords = bcs.userRecords
             obj.recordingIncludeKeys = bcs.recordingIncludeKeys
+            obj.launch_credentials = getattr(bcs, "launch_credentials", None)
+            obj.launchRecordUid = getattr(bcs, "launchRecordUid", None)
 
         ccs = ClipboardConnectionSettings.load(data)
         if ccs:
@@ -2443,6 +2457,8 @@ class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings,
             obj.allowSupplyUser = bcs.allowSupplyUser
             obj.userRecords = bcs.userRecords
             obj.recordingIncludeKeys = bcs.recordingIncludeKeys
+            obj.launch_credentials = getattr(bcs, "launch_credentials", None)
+            obj.launchRecordUid = getattr(bcs, "launchRecordUid", None)
 
         ccs = ClipboardConnectionSettings.load(data)
         if ccs:
@@ -2545,6 +2561,8 @@ class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnec
             obj.allowSupplyUser = bcs.allowSupplyUser
             obj.userRecords = bcs.userRecords
             obj.recordingIncludeKeys = bcs.recordingIncludeKeys
+            obj.launch_credentials = getattr(bcs, "launch_credentials", None)
+            obj.launchRecordUid = getattr(bcs, "launchRecordUid", None)
 
         tcs = TerminalDisplayConnectionSettings.load(data)
         if tcs:
@@ -2638,6 +2656,8 @@ class BaseDatabaseConnectionSettings(BaseConnectionSettings, ClipboardConnection
             obj.allowSupplyUser = bcs.allowSupplyUser
             obj.userRecords = bcs.userRecords
             obj.recordingIncludeKeys = bcs.recordingIncludeKeys
+            obj.launch_credentials = getattr(bcs, "launch_credentials", None)
+            obj.launchRecordUid = getattr(bcs, "launchRecordUid", None)
 
         ccs = ClipboardConnectionSettings.load(data)
         if ccs:
@@ -2720,6 +2740,8 @@ class ConnectionSettingsSqlServer(BaseDatabaseConnectionSettings):
             obj.database = bdcs.database
             obj.disableCsvExport = bdcs.disableCsvExport
             obj.disableCsvImport = bdcs.disableCsvImport
+            obj.launch_credentials = getattr(bdcs, "launch_credentials", None)
+            obj.launchRecordUid = getattr(bdcs, "launchRecordUid", None)
 
         return obj
 
@@ -2764,6 +2786,8 @@ class ConnectionSettingsPostgreSQL(BaseDatabaseConnectionSettings):
             obj.database = bdcs.database
             obj.disableCsvExport = bdcs.disableCsvExport
             obj.disableCsvImport = bdcs.disableCsvImport
+            obj.launch_credentials = getattr(bdcs, "launch_credentials", None)
+            obj.launchRecordUid = getattr(bdcs, "launchRecordUid", None)
 
         return obj
 
@@ -2808,6 +2832,8 @@ class ConnectionSettingsMySQL(BaseDatabaseConnectionSettings):
             obj.database = bdcs.database
             obj.disableCsvExport = bdcs.disableCsvExport
             obj.disableCsvImport = bdcs.disableCsvImport
+            obj.launch_credentials = getattr(bdcs, "launch_credentials", None)
+            obj.launchRecordUid = getattr(bdcs, "launchRecordUid", None)
 
         return obj
 
@@ -3081,6 +3107,30 @@ def set_user_record_uid(obj, uid: str, is_external: bool = False) -> bool:
             return True
     else:
         logging.debug("""Object has no attribute "userRecordUid" (skipped)""")
+    return False
+
+def get_launch_credential(obj, uid: bool = False) -> str:
+    """Get launch credential: resolved UID if uid=True, else string reference (title/login)."""
+    value: str = ""
+    if not (obj and hasattr(obj, "pam_settings") and hasattr(obj.pam_settings, "connection")):
+        return value
+    conn = obj.pam_settings.connection
+    if uid and getattr(conn, "launchRecordUid", None):
+        value = conn.launchRecordUid
+    elif not uid and getattr(conn, "launch_credentials", None):
+        value = conn.launch_credentials
+    value = value[0] if isinstance(value, list) else value
+    return value if isinstance(value, str) else ""
+
+def set_launch_record_uid(obj, uid: str) -> bool:
+    if not (uid and isinstance(uid, str) and RecordV3.is_valid_ref_uid(uid)):
+        logging.debug(f"""Invalid launchRecordUid "{uid}" (skipped)""")
+        return False
+    if (obj and hasattr(obj, "pam_settings") and hasattr(obj.pam_settings, "connection")
+            and hasattr(obj.pam_settings.connection, "launchRecordUid")):
+        obj.pam_settings.connection.launchRecordUid = uid
+        return True
+    logging.debug("""Object has no attribute "launchRecordUid" (skipped)""")
     return False
 
 def find_external_user(mach, machines, title: str) -> list:

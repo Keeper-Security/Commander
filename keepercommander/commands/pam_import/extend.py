@@ -37,10 +37,12 @@ from .base import (
     find_external_user,
     find_user,
     get_admin_credential,
+    get_launch_credential,
     get_sftp_attribute,
     is_admin_external,
     parse_command_options,
     resolve_script_creds,
+    set_launch_record_uid,
     set_sftp_uid,
     set_user_record_uid
 )
@@ -875,6 +877,11 @@ class PAMProjectExtendCommand(Command):
                     is_external = True
                 if len(ruids) == 1 and getattr(ruids[0], "uid", ""):
                     set_user_record_uid(mach, ruids[0].uid, is_external)
+            launch_cred = get_launch_credential(mach)
+            if launch_cred and not isinstance(mach, PamRemoteBrowserObject):
+                ruids = find_user(mach, users, launch_cred) or find_external_user(mach, machines, launch_cred)
+                if len(ruids) == 1 and getattr(ruids[0], "uid", ""):
+                    set_launch_record_uid(mach, ruids[0].uid)
             if mach.pam_settings and getattr(mach.pam_settings, "jit_settings", None):
                 jit = mach.pam_settings.jit_settings
                 ref = getattr(jit, "pam_directory_record", None) or ""
@@ -1282,6 +1289,7 @@ class PAMProjectExtendCommand(Command):
                 if admin_uid and is_admin_external(mach):
                     tdag.link_user_to_resource(admin_uid, mach.uid, is_admin=True, belongs_to=False)
                 args = parse_command_options(mach, False)
+                args["meta_version"] = 1
                 tdag.set_resource_allowed(**args)
             mach_users = getattr(mach, "users", []) or []
             for user in mach_users:
@@ -1309,6 +1317,9 @@ class PAMProjectExtendCommand(Command):
                         if getattr(rs, "password_complexity", None):
                             args["pwd_complexity"] = rs.password_complexity
                         prc.execute(params, silent=True, **args)
+            launch_uid = get_launch_credential(mach, True)
+            if launch_uid and not isinstance(mach, PamRemoteBrowserObject):
+                tdag.link_user_to_resource(launch_uid, mach.uid, is_launch_credential=True, belongs_to=True)
         if new_resources:
             print(f"{len(new_resources)}/{len(new_resources)}\n")
 
@@ -1340,6 +1351,9 @@ class PAMProjectExtendCommand(Command):
                         if getattr(rs, "password_complexity", None):
                             args["pwd_complexity"] = rs.password_complexity
                         prc.execute(params, silent=True, **args)
+            launch_uid = get_launch_credential(mach, True)
+            if launch_uid and not isinstance(mach, PamRemoteBrowserObject):
+                tdag.link_user_to_resource(launch_uid, mach.uid, is_launch_credential=True, belongs_to=True)
 
         if pce and getattr(pce, "scripts", None) and getattr(pce.scripts, "scripts", None):
             refs = [x for x in pce.scripts.scripts if getattr(x, "record_refs", None)]
