@@ -283,11 +283,14 @@ class PAMLaunchCommand(Command):
 
             logging.debug(f"Found record: {record_uid}")
 
-            # Workflow access check — block if record requires checkout and user hasn't checked out
+            # Workflow access check and 2FA prompt
             try:
-                from ..workflow.workflow_commands import check_workflow_access
-                if not check_workflow_access(params, record_uid):
+                from ..workflow.workflow_commands import check_workflow_and_prompt_2fa
+                should_proceed, two_factor_value = check_workflow_and_prompt_2fa(params, record_uid)
+                if not should_proceed:
                     return
+                if two_factor_value:
+                    kwargs['two_factor_value'] = two_factor_value
             except ImportError:
                 pass
 

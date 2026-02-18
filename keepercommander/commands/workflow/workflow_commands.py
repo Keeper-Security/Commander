@@ -177,7 +177,7 @@ def resolve_user_name(params: KeeperParams, user_id: int) -> str:
     return f'User ID {user_id}'
 
 
-def check_workflow_access(params: KeeperParams, record_uid: str) -> bool:
+def check_workflow_access(params: KeeperParams, record_uid: str):
     """
     Check whether the current user has active checkout access to a PAM record.
 
@@ -185,6 +185,7 @@ def check_workflow_access(params: KeeperParams, record_uid: str) -> bool:
     a PAM resource. It verifies:
       1. Whether the record has a workflow configured.
       2. If so, whether the user has an active checked-out session.
+      3. Whether MFA is required for the workflow.
 
     If the user does not have access, a helpful message is printed guiding
     them through the workflow process.
@@ -194,9 +195,13 @@ def check_workflow_access(params: KeeperParams, record_uid: str) -> bool:
         record_uid: Record UID string to check
 
     Returns:
-        True if access is allowed (no workflow, or user has active checkout).
-        False if access is blocked by workflow.
+        dict with keys:
+            'allowed': bool — True if access is allowed
+            'require_mfa': bool — True if the workflow requires 2FA
+        Returns {'allowed': True, 'require_mfa': False} if no workflow configured.
+        Returns {'allowed': False, 'require_mfa': False} if access is blocked.
     """
+    result = {'allowed': True, 'require_mfa': False}
     try:
         # Step 1: Check if the record has a workflow configured
         record_uid_bytes = utils.base64_url_decode(record_uid)
@@ -213,7 +218,11 @@ def check_workflow_access(params: KeeperParams, record_uid: str) -> bool:
 
         if config_response is None:
             # No workflow configured on this record — access is unrestricted
-            return True
+            return result
+
+        # Check if MFA is required
+        if config_response.parameters and config_response.parameters.requireMFA:
+            result['require_mfa'] = True
 
         # Step 2: Workflow exists — check user's access state for this record
         state_rq = workflow_pb2.WorkflowState()
@@ -230,35 +239,256 @@ def check_workflow_access(params: KeeperParams, record_uid: str) -> bool:
 
             if stage == workflow_pb2.WS_STARTED:
                 # User has an active checkout — allow access
-                return True
+                return result
 
             if stage == workflow_pb2.WS_READY_TO_START:
                 print(f"\n{bcolors.WARNING}Workflow access approved but not yet checked out.{bcolors.ENDC}")
                 print(f"Run: {bcolors.OKBLUE}pam workflow start {record_uid}{bcolors.ENDC} to check out the record.\n")
-                return False
+                result['allowed'] = False
+                return result
 
             if stage == workflow_pb2.WS_WAITING:
                 conditions = state_response.status.conditions
                 cond_str = format_access_conditions(conditions) if conditions else 'approval'
                 print(f"\n{bcolors.WARNING}Workflow access is pending: waiting for {cond_str}.{bcolors.ENDC}")
                 print(f"Your request is being processed. Please wait for approval.\n")
-                return False
+                result['allowed'] = False
+                return result
 
             if stage == workflow_pb2.WS_NEEDS_ACTION:
                 print(f"\n{bcolors.WARNING}Workflow requires additional action before access is granted.{bcolors.ENDC}")
                 print(f"Run: {bcolors.OKBLUE}pam workflow state --record {record_uid}{bcolors.ENDC} to see details.\n")
-                return False
+                result['allowed'] = False
+                return result
 
         # No active workflow state — user hasn't requested access yet
         print(f"\n{bcolors.WARNING}This record is protected by a workflow.{bcolors.ENDC}")
         print(f"You must request access before connecting.")
         print(f"Run: {bcolors.OKBLUE}pam workflow request {record_uid}{bcolors.ENDC} to request access.\n")
-        return False
+        result['allowed'] = False
+        return result
 
     except Exception:
         # If workflow check fails (e.g. network issue), allow access.
         # The backend/gateway should still enforce restrictions server-side.
-        return True
+        return result
+
+
+def check_workflow_and_prompt_2fa(params: KeeperParams, record_uid: str):
+    """
+    Combined workflow access check and 2FA prompt for PAM connections/tunnels.
+    
+    Checks workflow access and prompts for 2FA if required.
+    Prints helpful messages if access is denied.
+    
+    Args:
+        params: KeeperParams instance
+        record_uid: Record UID to check
+    
+    Returns:
+        tuple: (should_proceed: bool, two_factor_value: str or None)
+            - (False, None): Access denied or 2FA failed - abort connection
+            - (True, None): Access allowed, no 2FA required - proceed
+            - (True, value): Access allowed, 2FA provided - proceed with value
+    """
+    wf_result = check_workflow_access(params, record_uid)
+    if not wf_result.get('allowed', True):
+        return (False, None)
+    if wf_result.get('require_mfa', False):
+        two_factor_value = prompt_workflow_2fa(params)
+        if not two_factor_value:
+            return (False, None)
+        return (True, two_factor_value)
+    return (True, None)
+
+
+def prompt_workflow_2fa(params: KeeperParams):
+    """
+    Prompt the user for 2FA verification for a workflow-protected resource.
+
+    Detects the user's configured 2FA methods and handles each type:
+    - TOTP: Prompts for code directly
+    - SMS: Sends SMS via router push, then prompts for code
+    - DUO: Sends DUO push via router, then prompts for code
+    - Security Key (WebAuthn): Gets challenge from router, authenticates with key
+
+    Args:
+        params: KeeperParams instance with session info
+
+    Returns:
+        str: The 2FA value to include in the connect payload, or None if cancelled/failed.
+    """
+    import getpass
+    import json as _json
+    from ...proto import APIRequest_pb2, router_pb2
+    from ... import api
+
+    # List user's 2FA methods
+    try:
+        tfa_list = api.communicate_rest(
+            params, None, 'authentication/2fa_list',
+            rs_type=APIRequest_pb2.TwoFactorListResponse
+        )
+    except Exception:
+        # Fall back to simple TOTP prompt if can't list methods
+        try:
+            code = getpass.getpass('2FA required. Enter TOTP code: ').strip()
+            return code if code else None
+        except (KeyboardInterrupt, EOFError):
+            return None
+
+    if not tfa_list.channels:
+        print(f"{bcolors.FAIL}No 2FA methods configured on your account. Cannot proceed.{bcolors.ENDC}")
+        return None
+
+    # Build a list of usable channels
+    supported_types = {
+        APIRequest_pb2.TWO_FA_CT_TOTP: 'TOTP (Authenticator App)',
+        APIRequest_pb2.TWO_FA_CT_SMS: 'SMS Text Message',
+        APIRequest_pb2.TWO_FA_CT_DUO: 'DUO Security',
+        APIRequest_pb2.TWO_FA_CT_WEBAUTHN: 'Security Key',
+        APIRequest_pb2.TWO_FA_CT_DNA: 'Keeper DNA (Watch)',
+    }
+
+    channels = []
+    for ch in tfa_list.channels:
+        if ch.channelType in supported_types:
+            channels.append(ch)
+
+    if not channels:
+        print(f"{bcolors.FAIL}No supported 2FA methods found. Supported: TOTP, SMS, DUO, Security Key.{bcolors.ENDC}")
+        return None
+
+    # If only one method, use it automatically
+    if len(channels) == 1:
+        selected = channels[0]
+    else:
+        # Let user pick
+        print(f"\n{bcolors.OKBLUE}2FA required. Select authentication method:{bcolors.ENDC}")
+        for idx, ch in enumerate(channels, 1):
+            name = supported_types.get(ch.channelType, 'Unknown')
+            extra = f' ({ch.channelName})' if ch.channelName else ''
+            print(f"  {idx}. {name}{extra}")
+        print(f"  q. Cancel")
+        try:
+            answer = input('Selection: ').strip()
+        except (KeyboardInterrupt, EOFError):
+            return None
+        if answer.lower() == 'q':
+            return None
+        try:
+            idx = int(answer) - 1
+            if 0 <= idx < len(channels):
+                selected = channels[idx]
+            else:
+                print(f"{bcolors.FAIL}Invalid selection.{bcolors.ENDC}")
+                return None
+        except ValueError:
+            print(f"{bcolors.FAIL}Invalid selection.{bcolors.ENDC}")
+            return None
+
+    # Handle based on channel type
+    channel_type = selected.channelType
+
+    if channel_type == APIRequest_pb2.TWO_FA_CT_TOTP:
+        try:
+            code = getpass.getpass('Enter TOTP code: ').strip()
+            return code if code else None
+        except (KeyboardInterrupt, EOFError):
+            return None
+
+    elif channel_type == APIRequest_pb2.TWO_FA_CT_SMS:
+        # Send SMS push via router
+        try:
+            push_rq = router_pb2.Router2FASendPushRequest()
+            push_rq.pushType = APIRequest_pb2.TWO_FA_PUSH_SMS
+            _post_request_to_router(params, '2fa_send_push', rq_proto=push_rq)
+            print(f"{bcolors.OKGREEN}SMS sent.{bcolors.ENDC}")
+        except Exception as e:
+            print(f"{bcolors.FAIL}Failed to send SMS: {e}{bcolors.ENDC}")
+            return None
+        try:
+            code = getpass.getpass('Enter SMS code: ').strip()
+            return code if code else None
+        except (KeyboardInterrupt, EOFError):
+            return None
+
+    elif channel_type == APIRequest_pb2.TWO_FA_CT_DUO:
+        # Send DUO push via router
+        try:
+            push_rq = router_pb2.Router2FASendPushRequest()
+            push_rq.pushType = APIRequest_pb2.TWO_FA_PUSH_DUO_PUSH
+            _post_request_to_router(params, '2fa_send_push', rq_proto=push_rq)
+            print(f"{bcolors.OKGREEN}DUO push sent. Respond on your device, then enter the code.{bcolors.ENDC}")
+        except Exception as e:
+            print(f"{bcolors.FAIL}Failed to send DUO push: {e}{bcolors.ENDC}")
+            return None
+        try:
+            code = getpass.getpass('Enter DUO code: ').strip()
+            return code if code else None
+        except (KeyboardInterrupt, EOFError):
+            return None
+
+    elif channel_type == APIRequest_pb2.TWO_FA_CT_DNA:
+        # Send Keeper DNA push via router
+        try:
+            push_rq = router_pb2.Router2FASendPushRequest()
+            push_rq.pushType = APIRequest_pb2.TWO_FA_PUSH_DNA
+            _post_request_to_router(params, '2fa_send_push', rq_proto=push_rq)
+            print(f"{bcolors.OKGREEN}Keeper DNA push sent. Approve on your watch, then enter the code.{bcolors.ENDC}")
+        except Exception as e:
+            print(f"{bcolors.FAIL}Failed to send DNA push: {e}{bcolors.ENDC}")
+            return None
+        try:
+            code = getpass.getpass('Enter DNA code: ').strip()
+            return code if code else None
+        except (KeyboardInterrupt, EOFError):
+            return None
+
+    elif channel_type == APIRequest_pb2.TWO_FA_CT_WEBAUTHN:
+        # Get challenge from router, authenticate with security key
+        try:
+            challenge_rq = router_pb2.Router2FAGetWebAuthnChallengeRequest()
+            challenge_rs = _post_request_to_router(
+                params, '2fa_get_webauthn_challenge', rq_proto=challenge_rq,
+                rs_type=router_pb2.Router2FAGetWebAuthnChallengeResponse
+            )
+            if not challenge_rs or not challenge_rs.challenge:
+                print(f"{bcolors.FAIL}Failed to get WebAuthn challenge from server.{bcolors.ENDC}")
+                return None
+
+            challenge = _json.loads(challenge_rs.challenge)
+
+            from ...yubikey.yubikey import yubikey_authenticate
+            print(f"\n{bcolors.OKBLUE}Touch the flashing Security key to authenticate...{bcolors.ENDC}\n")
+            response = yubikey_authenticate(challenge)
+
+            if response:
+                signature = {
+                    "id": response.id,
+                    "rawId": utils.base64_url_encode(response.raw_id),
+                    "response": {
+                        "authenticatorData": utils.base64_url_encode(response.response.authenticator_data),
+                        "clientDataJSON": response.response.client_data.b64,
+                        "signature": utils.base64_url_encode(response.response.signature),
+                    },
+                    "type": "public-key",
+                    "clientExtensionResults": dict(response.client_extension_results) if response.client_extension_results else {}
+                }
+                return _json.dumps(signature)
+            else:
+                print(f"{bcolors.FAIL}Security key authentication failed or was cancelled.{bcolors.ENDC}")
+                return None
+
+        except ImportError:
+            from ...yubikey import display_fido2_warning
+            display_fido2_warning()
+            return None
+        except Exception as e:
+            print(f"{bcolors.FAIL}Security key error: {e}{bcolors.ENDC}")
+            return None
+
+    return None
 
 
 def parse_duration_to_milliseconds(duration_str: str) -> int:
