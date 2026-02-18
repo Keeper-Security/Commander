@@ -1626,14 +1626,18 @@ class WorkflowStartCommand(Command):
             state = workflow_pb2.WorkflowState()
             state.resource.CopyFrom(create_record_ref(record_uid_bytes, record.title))
         else:
-            # Treat as flow UID — query state to get record info, then start
-            uid_bytes = utils.base64_url_decode(uid)
+            # Treat as flow UID
+            try:
+                uid_bytes = utils.base64_url_decode(uid)
+            except Exception:
+                raise CommandError('', f'"{uid}" is not a valid record UID/name or flow UID')
             state = workflow_pb2.WorkflowState()
             state.flowUid = uid_bytes
+            state.resource.CopyFrom(create_workflow_ref(uid_bytes))
         
         # Make API call
         try:
-            response = _post_request_to_router(
+            _post_request_to_router(
                 params,
                 'start_workflow',
                 rq_proto=state
