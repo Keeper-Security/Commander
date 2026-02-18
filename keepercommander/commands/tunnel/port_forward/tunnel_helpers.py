@@ -1966,7 +1966,7 @@ class TunnelSignalHandler:
         logging.debug("TunnelSignalHandler cleaned up")
 
 def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
-                      seed, target_host, target_port, socks, trickle_ice=True, record_title=None, allow_supply_host=False):
+                      seed, target_host, target_port, socks, trickle_ice=True, record_title=None, allow_supply_host=False, two_factor_value=None):
     """
     Start a tunnel using Rust WebRTC with trickle ICE via HTTP POST and WebSocket responses.
 
@@ -2284,23 +2284,29 @@ def start_rust_tunnel(params, record_uid, gateway_uid, host, port,
                     }
                 if trickle_ice and http_session is not None:
                     offer_kwargs["http_session"] = http_session
+                
+                # Build tunnel inputs
+                inputs = {
+                    "recordUid": record_uid,
+                    "tubeId": commander_tube_id,
+                    'kind': 'start',
+                    'base64Nonce': base64_nonce,
+                    'conversationType': 'tunnel',
+                    "data": encrypted_data,
+                    "trickleICE": trickle_ice,
+                }
+                if two_factor_value:
+                    inputs['twoFactorValue'] = two_factor_value
+
                 router_response = router_send_action_to_gateway(
                     params=params,
                     destination_gateway_uid_str=gateway_uid,
                     gateway_action=GatewayActionWebRTCSession(
                         conversation_id = conversation_id_original,
-                        inputs={
-                            "recordUid": record_uid,
-                            "tubeId": commander_tube_id,
-                            'kind': 'start',
-                            'base64Nonce': base64_nonce,
-                            'conversationType': 'tunnel',
-                            "data": encrypted_data,
-                            "trickleICE": trickle_ice,
-                        }
+                        inputs=inputs
                     ),
                     message_type=pam_pb2.CMT_CONNECT,
-                    is_streaming=trickle_ice,  # Streaming only for trickle ICE
+                    is_streaming=trickle_ice,
                     gateway_timeout=GATEWAY_TIMEOUT,
                     **offer_kwargs
                 )

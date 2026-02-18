@@ -543,10 +543,12 @@ class PAMTunnelStartCommand(Command):
             print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
             return
 
-        # Workflow access check — block if record requires checkout and user hasn't checked out
+        # Workflow access check and 2FA prompt
+        two_factor_value = None
         try:
-            from .workflow.workflow_commands import check_workflow_access
-            if not check_workflow_access(params, record_uid):
+            from .workflow.workflow_commands import check_workflow_and_prompt_2fa
+            should_proceed, two_factor_value = check_workflow_and_prompt_2fa(params, record_uid)
+            if not should_proceed:
                 return
         except ImportError:
             pass
@@ -646,7 +648,7 @@ class PAMTunnelStartCommand(Command):
 
         # Use Rust WebRTC implementation with configurable trickle ICE
         trickle_ice = not no_trickle_ice
-        result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title, allow_supply_host=allow_supply_host)
+        result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title, allow_supply_host=allow_supply_host, two_factor_value=two_factor_value)
         
         if result and result.get("success"):
             # The helper will show endpoint table when local socket is actually listening

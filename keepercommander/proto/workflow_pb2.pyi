@@ -216,6 +216,20 @@ class TimeOfDayRange(_message.Message):
     endTime: int
     def __init__(self, startTime: _Optional[int] = ..., endTime: _Optional[int] = ...) -> None: ...
 
+class ApprovalQueueEntry(_message.Message):
+    __slots__ = ("flowRef", "approverRef", "kind", "notifyAtMs", "requesterUserId")
+    FLOWREF_FIELD_NUMBER: _ClassVar[int]
+    APPROVERREF_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    NOTIFYATMS_FIELD_NUMBER: _ClassVar[int]
+    REQUESTERUSERID_FIELD_NUMBER: _ClassVar[int]
+    flowRef: _GraphSync_pb2.GraphSyncRef
+    approverRef: _GraphSync_pb2.GraphSyncRef
+    kind: ApprovalQueueKind
+    notifyAtMs: int
+    requesterUserId: int
+    def __init__(self, flowRef: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., approverRef: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., kind: _Optional[_Union[ApprovalQueueKind, str]] = ..., notifyAtMs: _Optional[int] = ..., requesterUserId: _Optional[int] = ...) -> None: ...
+
 class TemporalAccessFilter(_message.Message):
     __slots__ = ("timeRanges", "allowedDays", "timeZone")
     TIMERANGES_FIELD_NUMBER: _ClassVar[int]
