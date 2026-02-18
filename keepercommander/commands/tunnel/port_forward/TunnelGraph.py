@@ -20,6 +20,54 @@ def get_vertex_content(vertex):
     return return_content
 
 
+# Resource meta version (int). Vault uses version >= 1 to read launch credentials from ACL.
+# In set_resource_allowed: meta_version=None or 0 -> legacy (no version in meta); 1 -> v1.
+# Future: add RESOURCE_META_VERSION_V2, etc. and handle them in build_resource_meta().
+RESOURCE_META_VERSION_V1 = 1
+
+
+def build_resource_meta_v1(allowed_settings, rotate_on_termination=False):
+    """
+    Build DAG resource meta payload in v1 format so vault uses ACL is_launch_credential for launch.
+    Returns dict: {"version": <int>, "allowedSettings": allowed_settings, "rotateOnTermination": bool}.
+    """
+    if not isinstance(allowed_settings, dict):
+        allowed_settings = {}
+    return {
+        "version": int(RESOURCE_META_VERSION_V1),
+        "allowedSettings": dict(allowed_settings),
+        "rotateOnTermination": bool(rotate_on_termination),
+    }
+
+
+def build_resource_meta(version, allowed_settings, rotate_on_termination=False):
+    """
+    Build DAG resource meta payload for the given version (int).
+    version=1 -> v1 format; other values can be added for v2, v3, etc.
+    """
+    if version == RESOURCE_META_VERSION_V1:
+        return build_resource_meta_v1(allowed_settings, rotate_on_termination)
+    # Future: elif version == RESOURCE_META_VERSION_V2: return build_resource_meta_v2(...)
+    raise ValueError(f"Unsupported resource meta version: {version}")
+
+
+def ensure_resource_meta_v1(content):
+    """
+    Ensure existing meta content has version 1 and rotateOnTermination (for re-writes).
+    Returns a copy with version=<int> and rotateOnTermination default False if missing.
+    """
+    if content is None:
+        return build_resource_meta_v1({}, False)
+    out = dict(content)
+    out["version"] = int(RESOURCE_META_VERSION_V1)
+    if "rotateOnTermination" not in out:
+        out["rotateOnTermination"] = False
+    # Normalize allowedSettings key if content used a different key (e.g. allowedSettings)
+    if "allowedSettings" not in out and "allowed_settings" in out:
+        out["allowedSettings"] = out.pop("allowed_settings", {})
+    return out
+
+
 class TunnelDAG:
     def __init__(self, params, encrypted_session_token, encrypted_transmission_key, record_uid: str,
                  is_config=False, transmission_key=None):
@@ -441,7 +489,7 @@ class TunnelDAG:
                              session_recording=None, typescript_recording=None, remote_browser_isolation=None,
                              ai_enabled=None, ai_session_terminate=None,
                              allowed_settings_name='allowedSettings', is_config=False,
-                             v_type: RefType=str(RefType.PAM_MACHINE)):
+                             v_type: RefType=str(RefType.PAM_MACHINE), meta_version=None):
         v_type = RefType(v_type)
         allowed_ref_types = [RefType.PAM_MACHINE, RefType.PAM_DATABASE, RefType.PAM_DIRECTORY, RefType.PAM_BROWSER]
         if v_type not in allowed_ref_types:
@@ -545,7 +593,16 @@ class TunnelDAG:
                     settings["aiSessionTerminate"] = ai_session_terminate
 
         if dirty:
-            resource_vertex.add_data(content=content, path='meta', needs_encryption=False)
+            # Legacy: missing or meta_version=0 -> write content as-is (no version in meta)
+            if meta_version is not None and meta_version != 0:
+                meta_payload = build_resource_meta(
+                    meta_version,
+                    content.get(allowed_settings_name, {}),
+                    rotate_on_termination=False,
+                )
+                resource_vertex.add_data(content=meta_payload, path='meta', needs_encryption=False)
+            else:
+                resource_vertex.add_data(content=content, path='meta', needs_encryption=False)
             self.linking_dag.save()
 
     def is_tunneling_config_set_up(self, resource_uid):

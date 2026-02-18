@@ -34,11 +34,13 @@ from .base import (
     find_external_user,
     find_user,
     get_admin_credential,
+    get_launch_credential,
     get_sftp_attribute,
     is_admin_external,
     parse_command_options,
     resolve_domain_admin,
     resolve_script_creds,
+    set_launch_record_uid,
     set_sftp_uid,
     set_user_record_uid
 )
@@ -1480,6 +1482,18 @@ class PAMProjectImportCommand(Command):
                 if ruid:
                     set_user_record_uid(mach, ruid, is_external)
 
+            # launch_credentials: resolve to pamUser UID for pamMachine, pamDatabase, pamDirectory (not RBI)
+            launch_cred = get_launch_credential(mach)
+            if launch_cred and not isinstance(mach, PamRemoteBrowserObject):
+                ruids = find_user(mach, users, launch_cred)
+                if not ruids:
+                    ruids = find_external_user(mach, machines, launch_cred)
+                if len(ruids) != 1:
+                    logging.warning(f"{bcolors.WARNING}{len(ruids)} matches found for launch_credentials in {mach.title}.{bcolors.ENDC} ")
+                ruid = getattr(ruids[0], "uid", "") if ruids else ""
+                if ruid:
+                    set_launch_record_uid(mach, ruid)
+
             # jit_settings.pam_directory_record -> pam_directory_uid (pamDirectory in pam_data.resources by title)
             # RBI has rbi_settings only (no pam_settings.jit_settings)
             ps = getattr(mach, "pam_settings", None)
@@ -1626,6 +1640,7 @@ class PAMProjectImportCommand(Command):
                 if admin_uid and is_admin_external(mach):
                     tdag.link_user_to_resource(admin_uid, mach.uid, is_admin=True, belongs_to=False)
                 args = parse_command_options(mach, False)
+                args["meta_version"] = 1
                 tdag.set_resource_allowed(**args)
 
                 # After setting allowedSettings, save JIT settings if present
@@ -1686,6 +1701,10 @@ class PAMProjectImportCommand(Command):
                         if user.rotation_settings.password_complexity:
                             args["pwd_complexity"]=user.rotation_settings.password_complexity
                         prc.execute(params, silent=True, **args)
+            # Launch credentials: link for pamMachine, pamDatabase, pamDirectory (not RBI)
+            launch_uid = get_launch_credential(mach, True)
+            if launch_uid and not isinstance(mach, PamRemoteBrowserObject):
+                tdag.link_user_to_resource(launch_uid, mach.uid, is_launch_credential=True, belongs_to=True)
         if resources: print(f"{len(resources)}/{len(resources)}\n")
 
         # link machine -> pamDirectory (LINK, path=domain) for jit_settings.pam_directory_uid

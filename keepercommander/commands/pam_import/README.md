@@ -211,11 +211,12 @@ _You can have only one `pam_configuration` section and the only required paramet
 </details>
 
 #### Resources (users, machines etc.):
-Each Machine (pamMachine, pamDatabase, pamDirectory) can specify admin user which will be identified by its unique title or login/username (ex. `"admin_credentials": "admin1"`, or `pamRemoteBrowser` → `pam_settings.connection.autofill_credentials: "BingLogin"`)
+Each Machine (pamMachine, pamDatabase, pamDirectory) can specify **Administrative Credentials** (admin user) and **Launch Credentials** (the credentials used to establish the protocol connection). Both are identified by title or login/username of a pamUser (e.g. `"administrative_credentials": "admin1"`, `"launch_credentials": "user1"`). pamUser and pamRemoteBrowser do not have launch credentials; pamRemoteBrowser uses `pam_settings.connection.autofill_credentials` for RBI login.
 - **Machines** are defined in `pam_data.resources` where each machine can have its own list of `"users": []` one of which is the admin user for that machine. Users that don't belong to a single machine are into global `pam_data.users` section (record type: `login`, `pamUser` for NOOP rotation or shared across multiple machines /ex. same user for ssh, vnc, rdp etc./)
   > **Note 1:** `pam_settings` _(options, connection)_ are explained only in pamMachine section below (per protocol) but they are present in all machine types.  
   > **Note 2:** `attachments` and `scripts` examples are in `pam_configuration: local` section.  
   > **Note 3:** Post rotation scripts (a.k.a. `scripts`) are executed in following order: `pamUser` scripts after any **successful** rotation for that user, `pamMachine` scripts after any **successful** rotation on the machine and `pamConfiguration` scripts after any rotation using that configuration.
+  > **Note 4:** When `allow_supply_user` is false and JIT ephemeral is not used, vault may require a launch credential; import can provide it via `launch_credentials` in the resource's `connection` block.
 
 JIT and KeeperAI settings below are shared across all resource types (pamMachine, pamDatabase, pamDirectory) except User and RBI (pamRemoteBrowser) records.
 
@@ -365,6 +366,7 @@ JIT and KeeperAI settings below are shared across all resource types (pamMachine
             "port": "2222",
             "allow_supply_user": true,
             "administrative_credentials": "admin1",
+            "launch_credentials": "user1",
             "recording_include_keys": true,
             "disable_copy": true,
             "disable_paste": true,
@@ -433,6 +435,7 @@ JIT and KeeperAI settings below are shared across all resource types (pamMachine
 			"port": "2222",
 			"allow_supply_user": true,
 			"administrative_credentials": "admin1",
+			"launch_credentials": "user1",
 			"recording_include_keys": true,
 			"disable_copy": true,
 			"disable_paste": true,
@@ -488,6 +491,7 @@ JIT and KeeperAI settings below are shared across all resource types (pamMachine
 			"port": "2222",
 			"allow_supply_user": true,
 			"administrative_credentials": "admin1",
+			"launch_credentials": "user1",
 			"recording_include_keys": true,
 			"disable_copy": true,
 			"disable_paste": true,
@@ -546,6 +550,7 @@ JIT and KeeperAI settings below are shared across all resource types (pamMachine
 			"port": "2222",
 			"allow_supply_user": true,
 			"administrative_credentials": "admin1",
+			"launch_credentials": "user1",
 			"recording_include_keys": true,
 			"disable_copy": true,
 			"disable_paste": true,
@@ -600,6 +605,7 @@ JIT and KeeperAI settings below are shared across all resource types (pamMachine
 			"port": "2222",
 			"allow_supply_user": true,
 			"administrative_credentials": "admin1",
+			"launch_credentials": "user1",
 			"recording_include_keys": true,
 			"color_scheme": "gray-black",
 			"font_size": "18",
@@ -659,6 +665,7 @@ JIT and KeeperAI settings below are shared across all resource types (pamMachine
 						"port": "2222",
 						"allow_supply_user": true,
 						"administrative_credentials": "admin1",
+						"launch_credentials": "user1",
 						"recording_include_keys": true,
 						"disable_copy": true,
 						"disable_paste": true,
@@ -727,6 +734,7 @@ JIT and KeeperAI settings below are shared across all resource types (pamMachine
 						"port": "2222",
 						"allow_supply_user": true,
 						"administrative_credentials": "admin1",
+						"launch_credentials": "user1",
 						"recording_include_keys": true,
 						"disable_copy": true,
 						"disable_paste": true,
@@ -739,7 +747,7 @@ JIT and KeeperAI settings below are shared across all resource types (pamMachine
 							"sftp_root_directory": "/tmp"
 						}
 					}
-				}
+				},
 				"users": []
 			},
 			{
