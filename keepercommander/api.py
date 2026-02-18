@@ -812,7 +812,7 @@ def execute_router_json(params, endpoint,  request):
     return None
 
 
-def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version=None):
+def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version=None, timeout=None):
     api_request_payload = APIRequest_pb2.ApiRequestPayload()
     if params.session_token:
         api_request_payload.encryptedSessionToken = utils.base64_url_decode(params.session_token)
@@ -824,7 +824,7 @@ def communicate_rest(params, request, endpoint, *, rs_type=None, payload_version
     if isinstance(payload_version, int):
         api_request_payload.apiVersion = payload_version
 
-    rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload)
+    rs = rest_api.execute_rest(params.rest_context, endpoint, api_request_payload, timeout=timeout)
     if isinstance(rs, bytes):
         TTK.update_time_of_last_activity()
         if rs_type:
@@ -856,7 +856,7 @@ def communicate(params, request, retry_on_throttle=True):
         response_json = run_command(params, request)
         if response_json['result'] != 'success':
             if retry_on_throttle and response_json.get('result_code') == 'throttled':
-                logging.info('Throttled. sleeping for 10 seconds')
+                logging.debug('Throttled, retrying in 10 seconds')
                 time.sleep(10)
                 # Allow maximum 1 retry per call
                 return communicate(params, request, retry_on_throttle=False)
