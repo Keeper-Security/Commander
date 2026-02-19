@@ -93,8 +93,8 @@ print(active[-1]['email'] if active else '')
 import json, sys
 teams = json.loads(sys.stdin.read())
 skip = {'everyone', 'admins'}
-candidates = [t for t in teams if t.get('team_name','').lower() not in skip]
-print(candidates[0]['team_name'] if candidates else (teams[0]['team_name'] if teams else ''))
+candidates = [t for t in teams if t.get('name', t.get('team_name','')).lower() not in skip]
+print(candidates[0].get('name', candidates[0].get('team_name','')) if candidates else (teams[0].get('name', teams[0].get('team_name','')) if teams else ''))
 " <<< "$teams_json")
                 echo "  TEAM1=$TEAM1"
             fi
@@ -104,7 +104,7 @@ import json, sys
 teams = json.loads(sys.stdin.read())
 target, u1 = '$TEAM1', '$USER1'
 for t in teams:
-    if t.get('team_name','') == target:
+    if t.get('name', t.get('team_name','')) == target:
         members = t.get('users', [])
         others = [m for m in members if m != u1]
         if others:

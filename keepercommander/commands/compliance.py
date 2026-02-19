@@ -598,11 +598,10 @@ class ComplianceReportCommand(BaseComplianceReportCommand):
 
             # Append aging columns to each row
             record_lookup = sox_data.get_records()
-            for fmt_row in report_data:
+            for idx, fmt_row in enumerate(report_data):
                 rec_uid = fmt_row[0]
                 # Handle collapsed UIDs in table format
-                if not rec_uid and report_data:
-                    idx = report_data.index(fmt_row)
+                if not rec_uid:
                     for i in range(idx - 1, -1, -1):
                         if report_data[i][0]:
                             rec_uid = report_data[i][0]

@@ -548,10 +548,21 @@ def get_compliance_data(params, node_id, enterprise_id=0, rebuild=False, min_upd
     sd = get_prelim_data(params, enterprise_id, rebuild=rebuild, min_updated=min_updated, cache_only=not min_updated, shared_only=shared_only, user_filter=user_filter)
     enterprise_users = params.enterprise.get('users', [])
     all_user_node_ids = {e_user.get('enterprise_user_id'): e_user.get('node_id') for e_user in enterprise_users}
-    has_stale_records = rebuild or any(
-        (rec.last_compliance_refreshed or 0) < min_updated
-        for rec in sd.storage.records.get_all()
-    )
+    if user_filter is not None:
+        filtered_user_recs = set()
+        for uid in user_filter:
+            user = sd.get_user(uid)
+            if user:
+                filtered_user_recs.update(user.records)
+        has_stale_records = rebuild or any(
+            (rec.last_compliance_refreshed or 0) < min_updated
+            for rec in sd.storage.records.get_all() if rec.record_uid in filtered_user_recs
+        )
+    else:
+        has_stale_records = rebuild or any(
+            (rec.last_compliance_refreshed or 0) < min_updated
+            for rec in sd.storage.records.get_all()
+        )
     if has_stale_records:
         sync_down(sd, node_id, user_node_id_lookup=all_user_node_ids)
         if user_filter is not None:
