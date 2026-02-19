@@ -1,0 +1,90 @@
+# Compliance Test Suite
+#
+# Batch file template for Keeper Commander's compliance commands.
+# Placeholders are substituted by compliance_test.sh at runtime:
+#   {OUTDIR}          results directory
+#   {USER1}           primary admin email
+#   {USER2}           secondary user email
+#   {TEAM_ONLY_USER}  user with team-only shared-folder access
+#   {TEAM1}           team name or UID
+#
+# Do not run this file directly — use the runner:
+#   bash tests/compliance_test.sh [after|before|diff|parallel|all]
+
+# ─── compliance report ────────────────────────────────────────────────────────
+# t01: full report (rebuild to ensure fresh data)
+compliance report -r --format json --output {OUTDIR}/t01_report_full.json
+# t02: filter by single user
+compliance report -u {USER1} --format json --output {OUTDIR}/t02_report_user.json
+# t03: filter by team
+compliance report --team {TEAM1} --format json --output {OUTDIR}/t03_report_team.json
+# t04: filter by user + team (OR union)
+compliance report -u {USER1} --team {TEAM1} --format json --output {OUTDIR}/t04_report_user_team.json
+# t05: aging columns present
+compliance report --aging --format json --output {OUTDIR}/t05_report_aging.json
+# t06: aging + user filter
+compliance report --aging -u {USER1} --format json --output {OUTDIR}/t06_report_aging_user.json
+
+# ─── compliance record-access-report ──────────────────────────────────────────
+# t10: single user
+compliance record-access-report --email {USER1} --format json --output {OUTDIR}/t10_rar_user.json
+# t11: single user + aging
+compliance record-access-report --email {USER1} --aging --format json --output {OUTDIR}/t11_rar_user_aging.json
+# t12: all users
+compliance record-access-report --email @all --format json --output {OUTDIR}/t12_rar_all.json
+# t13: all users + aging
+compliance record-access-report --email @all --aging --format json --output {OUTDIR}/t13_rar_all_aging.json
+# t14: second user (cache isolation — different user than t10)
+compliance record-access-report --email {USER2} --aging --format json --output {OUTDIR}/t14_rar_user2_aging.json
+# t15: first user again (should hit warm cache)
+compliance record-access-report --email {USER1} --aging --format json --output {OUTDIR}/t15_rar_user1_cached.json
+# t16: team filter
+compliance record-access-report --email @all --team {TEAM1} --format json --output {OUTDIR}/t16_rar_team.json
+
+# ─── compliance team-report ───────────────────────────────────────────────────
+# t20: full team report
+compliance team-report --format json --output {OUTDIR}/t20_tr_full.json
+# t21: filter by team
+compliance team-report --team {TEAM1} --format json --output {OUTDIR}/t21_tr_team.json
+# t22: filter by user who is a direct shared-folder member
+compliance team-report -u {USER1} --format json --output {OUTDIR}/t22_tr_user_direct.json
+# t23: filter by user whose only SF access is via a team
+compliance team-report -u {TEAM_ONLY_USER} --format json --output {OUTDIR}/t23_tr_user_team_member.json
+# t24: show team users display flag
+compliance team-report -tu --format json --output {OUTDIR}/t24_tr_tu.json
+# t25: team + user combined filter (OR union)
+compliance team-report --team {TEAM1} -u {USER1} --format json --output {OUTDIR}/t25_tr_team_user.json
+
+# ─── compliance summary-report ────────────────────────────────────────────────
+# t30: full summary
+compliance summary-report --format json --output {OUTDIR}/t30_summary_full.json
+# t31: filter by user
+compliance summary-report -u {USER1} --format json --output {OUTDIR}/t31_summary_user.json
+# t32: filter by team
+compliance summary-report --team {TEAM1} --format json --output {OUTDIR}/t32_summary_team.json
+
+# ─── compliance shared-folder-report ──────────────────────────────────────────
+# t40: full sfr
+compliance shared-folder-report --format json --output {OUTDIR}/t40_sfr_full.json
+# t41: filter by team
+compliance shared-folder-report --team {TEAM1} --format json --output {OUTDIR}/t41_sfr_team.json
+# t42: filter by user who is a direct SF member
+compliance shared-folder-report -u {USER1} --format json --output {OUTDIR}/t42_sfr_user_direct.json
+# t43: filter by user whose only SF access is via team
+compliance shared-folder-report -u {TEAM_ONLY_USER} --format json --output {OUTDIR}/t43_sfr_user_team_member.json
+# t44: team + user combined filter (OR union)
+compliance shared-folder-report --team {TEAM1} -u {USER1} --format json --output {OUTDIR}/t44_sfr_team_user.json
+# t45: show team users display flag
+compliance shared-folder-report -tu --format json --output {OUTDIR}/t45_sfr_tu.json
+# t46: --resolve-teams expands team members into SF user matching
+compliance shared-folder-report --team {TEAM1} --resolve-teams --format json --output {OUTDIR}/t46_sfr_team_resolved.json
+
+# ─── incremental cache tests ─────────────────────────────────────────────────
+# t50: rebuild to prime cache
+compliance report -r --format json --output {OUTDIR}/t50_cache_prime.json
+# t51: immediate re-run (warm cache, should be fast)
+compliance report --format json --output {OUTDIR}/t51_cache_warm.json
+# t52: --no-cache run (deletes local db after report)
+compliance report -nc --format json --output {OUTDIR}/t52_cache_nocache.json
+# t53: post-nocache run (db was deleted, must rebuild)
+compliance report --format json --output {OUTDIR}/t53_cache_post_nocache.json

@@ -130,8 +130,11 @@ def encrypt_with_keeper_key(context, data: bytes) -> bytes:
         raise KeeperApiError('invalid_key_id', f'Key ID \"{key_id}\" is not valid.')
 
 
-def execute_rest(context, endpoint, payload):
-    # type: (RestApiContext, str, proto.ApiRequestPayload) -> Optional[Union[bytes, dict]]
+DEFAULT_TIMEOUT = (15, 120)
+
+
+def execute_rest(context, endpoint, payload, timeout=None):
+    # type: (RestApiContext, str, proto.ApiRequestPayload, ...) -> Optional[Union[bytes, dict]]
     if not context.transmission_key:
         context.transmission_key = os.urandom(32)
 
@@ -193,7 +196,8 @@ def execute_rest(context, endpoint, payload):
 
         try:
             rs = requests.post(url, data=request_data, headers={'Content-Type': 'application/octet-stream'},
-                               proxies=context.proxies, verify=context.certificate_check)
+                               proxies=context.proxies, verify=context.certificate_check,
+                               timeout=timeout or DEFAULT_TIMEOUT)
         except requests.exceptions.SSLError as e:
             doc_url = 'https://docs.keeper.io/secrets-manager/commander-cli/using-commander/troubleshooting-commander-cli#ssl-certificate-errors'
             if len(e.args) > 0:
@@ -247,7 +251,7 @@ def execute_rest(context, endpoint, payload):
                             continue
                 elif rs.status_code == 403:
                     if failure.get('error') == 'throttled' and not context.fail_on_throttle:
-                        logging.info('Throttled. sleeping for 10 seconds')
+                        logging.debug('Throttled, retrying in 10 seconds')
                         time.sleep(10)
                         run_request = True
                         continue

@@ -11,6 +11,7 @@ class StorageUser(IUid):
         self.node_id = 0
         self.last_refreshed = 0
         self.last_compliance_refreshed = 0
+        self.last_aging_refreshed = 0
 
     def uid(self):
         # -> int
@@ -25,6 +26,7 @@ class StorageRecord(IUid):
         self.shared = True
         self.in_trash = False
         self.has_attachments = False
+        self.last_compliance_refreshed = 0
 
     def uid(self):
         # -> str
@@ -38,6 +40,7 @@ class StorageRecordAging(IUid):
         self.last_pw_change = 0
         self.last_modified = 0
         self.last_rotation = 0
+        self.last_cached = 0
 
     def uid(self):
         return self.record_uid
