@@ -21,7 +21,7 @@ from urllib.parse import urlparse, urlunparse
 
 
 import requests
-from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
+from keeper_secrets_manager_core.utils import url_safe_str_to_bytes, string_to_bytes
 
 from .base import (Command, GroupCommand, user_choice, dump_report_data, report_output_parser, field_to_title,
                    FolderMixin, RecordMixin, toggle_pam_legacy_commands)
@@ -3482,8 +3482,6 @@ class PAMUniversalSyncConfigCommand(Command):
         return PAMUniversalSyncConfigCommand.parser
 
     def execute(self, params, **kwargs):
-        from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
-
         network_name = kwargs.get('network')
         if not network_name:
             raise CommandError('', f'{bcolors.FAIL}Network is required{bcolors.ENDC}')
@@ -3519,11 +3517,15 @@ class PAMUniversalSyncConfigCommand(Command):
 
         sync_identity = kwargs.get('sync_identity')
         if sync_identity:
-            rq.syncIdentity = url_safe_str_to_bytes(sync_identity)
+            sync_identity_bytes = string_to_bytes(sync_identity)
+            encrypted_sync_identity = crypto.encrypt_aes_v2(sync_identity_bytes, network.record_key)
+            rq.syncIdentity = encrypted_sync_identity
 
         vault_name = kwargs.get('vault_name')
         if vault_name:
-            rq.vaultName = vault_name.encode('utf-8')
+            vault_name_bytes = string_to_bytes(vault_name)
+            encrypted_vault_name = crypto.encrypt_aes_v2(vault_name_bytes, network.record_key)
+            rq.vaultName = encrypted_vault_name
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
 
