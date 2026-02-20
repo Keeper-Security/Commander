@@ -62,8 +62,8 @@ class McTransferMixin:
     def transfer_status_to_text(status: MCTransfer_pb2.MCTransferStatus) -> str:
         if status == MCTransfer_pb2.MCTransferStatus.STATUS_INVALID:
             return 'Invalid'
-        if status == MCTransfer_pb2.MCTransferStatus.STATUS_INITIATED:
-            return 'Initiated'
+        if status == MCTransfer_pb2.MCTransferStatus.STATUS_REQUESTED:
+            return 'Requested'
         if status == MCTransfer_pb2.MCTransferStatus.STATUS_ACCEPTED:
             return 'Accepted'
         if status == MCTransfer_pb2.MCTransferStatus.STATUS_PENDING_APPROVAL:
@@ -151,6 +151,10 @@ class McTransferMixin:
                                 logging.info(f'"{mc_id}" is not a valid Managed Company ID')
                         except:
                             logging.info(f'"{mc_id}" is not a valid Managed Company ID')
+            if len(selected_mc) == len(managed_companies):
+                answer = base.user_choice('Do you want to transfer MSP company as well?', 'yn', 'n')
+                if answer.lower() == 'y':
+                    selected_mc.add(params.enterprise_id)
 
         return selected_mc
 
@@ -310,35 +314,45 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
                 raise error.CommandError('mc-transfer perform', 'Failed to get transfer key')
 
             enterprise_tree_key = params.enterprise['unencrypted_tree_key']
-
+            transfer_self = False
             if len(transfer.mcTransferEnterprises) > 0:
                 managed_companies = params.enterprise.get('managed_companies')
+                has_failed_mc = False
                 for mct in transfer.mcTransferEnterprises:
                     id_mc = mct.enterpriseId
-                    mc = next((x for x in managed_companies if x.get('mc_enterprise_id') == id_mc), None)
-                    if mc:
-                        encrypted_tree_key = utils.base64_url_decode(mc['tree_key'])
-                        if enterprise_tree_key:
-                            try:
-                                tree_key = crypto.decrypt_aes_v2(encrypted_tree_key, enterprise_tree_key)
-                                if ec_key:
-                                    encrypted_tree_key = crypto.encrypt_ec(tree_key, ec_key)
-                                else:
-                                    encrypted_tree_key = crypto.encrypt_rsa(tree_key, rsa_key)
-                                key = MCTransfer_pb2.MCTransferTreeKey()
-                                key.enterpriseId = id_mc
-                                key.treeKey = encrypted_tree_key
-                                rq.mcTransferTreeKeys.append(key)
-                            except:
-                                logging.info(f'"{id_mc}" cannot decrypt encryption key')
+                    if id_mc == params.enterprise_id:
+                        transfer_self = True
+                    else:
+                        mc = next((x for x in managed_companies if x.get('mc_enterprise_id') == id_mc), None)
+                        if mc:
+                            encrypted_tree_key = utils.base64_url_decode(mc['tree_key'])
+                            if enterprise_tree_key:
+                                try:
+                                    tree_key = crypto.decrypt_aes_v2(encrypted_tree_key, enterprise_tree_key)
+                                    if ec_key:
+                                        encrypted_tree_key = crypto.encrypt_ec(tree_key, ec_key)
+                                    else:
+                                        encrypted_tree_key = crypto.encrypt_rsa(tree_key, rsa_key)
+                                    key = MCTransfer_pb2.MCTransferTreeKey()
+                                    key.enterpriseId = id_mc
+                                    key.treeKey = encrypted_tree_key
+                                    rq.mcTransferTreeKeys.append(key)
+                                except:
+                                    logging.info(f'"{id_mc}" cannot decrypt encryption key')
+                                    has_failed_mc = True
+                if has_failed_mc:
+                    transfer_self = False
             elif transfer.movingEnterpriseId == params.enterprise_id:
+                transfer_self = True
+
+            if transfer_self:
                 try:
                     if ec_key:
                         encrypted_tree_key = crypto.encrypt_ec(enterprise_tree_key, ec_key)
                     else:
                         encrypted_tree_key = crypto.encrypt_rsa(enterprise_tree_key, rsa_key)
                     key = MCTransfer_pb2.MCTransferTreeKey()
-                    key.enterpriseId = transfer.movingEnterpriseId
+                    key.enterpriseId = params.enterprise_id
                     key.treeKey = encrypted_tree_key
                     rq.mcTransferTreeKeys.append(key)
                 except:
