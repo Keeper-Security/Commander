@@ -13,7 +13,7 @@ _sym_db = _symbol_database.Default()
 from . import GraphSync_pb2 as GraphSync__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0eworkflow.proto\x12\x08Workflow\x1a\x0fGraphSync.proto\"\x82\x01\n\x10WorkflowApprover\x12\x0e\n\x04user\x18\x01 \x01(\tH\x00\x12\x10\n\x06userId\x18\x02 \x01(\x05H\x00\x12\x11\n\x07teamUid\x18\x03 \x01(\x0cH\x00\x12\x12\n\nescalation\x18\x04 \x01(\x08\x12\x19\n\x11\x65scalationAfterMs\x18\x05 \x01(\x03\x42\n\n\x08\x61pprover\"\x9d\x02\n\x12WorkflowParameters\x12)\n\x08resource\x18\x01 \x01(\x0b\x32\x17.GraphSync.GraphSyncRef\x12\x17\n\x0f\x61pprovalsNeeded\x18\x02 \x01(\x05\x12\x16\n\x0e\x63heckoutNeeded\x18\x03 \x01(\x08\x12\x1d\n\x15startAccessOnApproval\x18\x04 \x01(\x08\x12\x15\n\rrequireReason\x18\x05 \x01(\x08\x12\x15\n\rrequireTicket\x18\x06 \x01(\x08\x12\x12\n\nrequireMFA\x18\x07 \x01(\x08\x12\x14\n\x0c\x61\x63\x63\x65ssLength\x18\x08 \x01(\x03\x12\x34\n\x0c\x61llowedTimes\x18\t \x01(\x0b\x32\x1e.Workflow.TemporalAccessFilter\"\x84\x01\n\x0eWorkflowConfig\x12\x30\n\nparameters\x18\x01 \x01(\x0b\x32\x1c.Workflow.WorkflowParameters\x12-\n\tapprovers\x18\x02 \x03(\x0b\x32\x1a.Workflow.WorkflowApprover\x12\x11\n\tcreatedOn\x18\x03 \x01(\x03\"\xd0\x01\n\x0eWorkflowStatus\x12&\n\x05stage\x18\x01 \x01(\x0e\x32\x17.Workflow.WorkflowStage\x12-\n\nconditions\x18\x02 \x03(\x0e\x32\x19.Workflow.AccessCondition\x12.\n\napprovedBy\x18\x03 \x03(\x0b\x32\x1a.Workflow.WorkflowApproval\x12\x11\n\tstartedOn\x18\x04 \x01(\x03\x12\x11\n\texpiresOn\x18\x05 \x01(\x03\x12\x11\n\tescalated\x18\x06 \x01(\x08\"\xbd\x01\n\x0fWorkflowProcess\x12\x0f\n\x07\x66lowUid\x18\x01 \x01(\x0c\x12\x0e\n\x06userId\x18\x02 \x01(\x03\x12)\n\x08resource\x18\x03 \x01(\x0b\x32\x17.GraphSync.GraphSyncRef\x12\x11\n\tstartedOn\x18\x04 \x01(\x03\x12\x11\n\texpiresOn\x18\x05 \x01(\x03\x12\x0e\n\x06reason\x18\x06 \x01(\x0c\x12\x13\n\x0bmfaVerified\x18\x07 \x01(\x08\x12\x13\n\x0b\x65xternalRef\x18\x08 \x01(\x0c\"U\n\x10WorkflowApproval\x12\x0e\n\x06userId\x18\x01 \x01(\x03\x12\x0c\n\x04user\x18\x02 \x01(\t\x12\x0f\n\x07\x66lowUid\x18\x03 \x01(\x0c\x12\x12\n\napprovedOn\x18\x04 \x01(\x03\"\xcb\x01\n\x0fWorkflowContext\x12\x30\n\x0eworkflowConfig\x18\x01 \x01(\x0b\x32\x18.Workflow.WorkflowConfig\x12+\n\x08workflow\x18\x02 \x01(\x0b\x32\x19.Workflow.WorkflowProcess\x12-\n\tapprovals\x18\x03 \x03(\x0b\x32\x1a.Workflow.WorkflowApproval\x12*\n\x07\x62locker\x18\x04 \x01(\x0b\x32\x19.Workflow.WorkflowProcess\"u\n\rWorkflowState\x12\x0f\n\x07\x66lowUid\x18\x01 \x01(\x0c\x12)\n\x08resource\x18\x02 \x01(\x0b\x32\x17.GraphSync.GraphSyncRef\x12(\n\x06status\x18\x03 \x01(\x0b\x32\x18.Workflow.WorkflowStatus\"b\n\x15WorkflowAccessRequest\x12)\n\x08resource\x18\x01 \x01(\x0b\x32\x17.GraphSync.GraphSyncRef\x12\x0e\n\x06reason\x18\x02 \x01(\x0c\x12\x0e\n\x06ticket\x18\x03 \x01(\x0c\"i\n\x18WorkflowApprovalOrDenial\x12)\n\x08resource\x18\x01 \x01(\x0b\x32\x17.GraphSync.GraphSyncRef\x12\x0c\n\x04\x64\x65ny\x18\x02 \x01(\x08\x12\x14\n\x0c\x64\x65nialReason\x18\x03 \x01(\t\"=\n\x0fUserAccessState\x12*\n\tworkflows\x18\x01 \x03(\x0b\x32\x17.Workflow.WorkflowState\"@\n\x10\x41pprovalRequests\x12,\n\tworkflows\x18\x01 \x03(\x0b\x32\x19.Workflow.WorkflowProcess\"4\n\x0eTimeOfDayRange\x12\x11\n\tstartTime\x18\x01 \x01(\x05\x12\x0f\n\x07\x65ndTime\x18\x02 \x01(\x05\"\xdd\x01\n\x12\x41pprovalQueueEntry\x12(\n\x07\x66lowRef\x18\x01 \x01(\x0b\x32\x17.GraphSync.GraphSyncRef\x12,\n\x0b\x61pproverRef\x18\x02 \x01(\x0b\x32\x17.GraphSync.GraphSyncRef\x12)\n\x04kind\x18\x03 \x01(\x0e\x32\x1b.Workflow.ApprovalQueueKind\x12\x12\n\nnotifyAtMs\x18\x04 \x01(\x03\x12\x1c\n\x0frequesterUserId\x18\x05 \x01(\x03H\x00\x88\x01\x01\x42\x12\n\x10_requesterUserId\"\x80\x01\n\x14TemporalAccessFilter\x12,\n\ntimeRanges\x18\x01 \x03(\x0b\x32\x18.Workflow.TimeOfDayRange\x12(\n\x0b\x61llowedDays\x18\x02 \x03(\x0e\x32\x13.Workflow.DayOfWeek\x12\x10\n\x08timeZone\x18\x03 \x01(\t\"#\n\x0f\x41uthorizedUsers\x12\x10\n\x08username\x18\x01 \x03(\t*[\n\rWorkflowStage\x12\x15\n\x11WS_READY_TO_START\x10\x00\x12\x0e\n\nWS_STARTED\x10\x01\x12\x13\n\x0fWS_NEEDS_ACTION\x10\x02\x12\x0e\n\nWS_WAITING\x10\x03*i\n\x0f\x41\x63\x63\x65ssCondition\x12\x0f\n\x0b\x41\x43_APPROVAL\x10\x00\x12\x0e\n\nAC_CHECKIN\x10\x01\x12\n\n\x06\x41\x43_MFA\x10\x02\x12\x0b\n\x07\x41\x43_TIME\x10\x03\x12\r\n\tAC_REASON\x10\x04\x12\r\n\tAC_TICKET\x10\x05*\x84\x01\n\tDayOfWeek\x12\x1b\n\x17\x44\x41Y_OF_WEEK_UNSPECIFIED\x10\x00\x12\n\n\x06MONDAY\x10\x01\x12\x0b\n\x07TUESDAY\x10\x02\x12\r\n\tWEDNESDAY\x10\x03\x12\x0c\n\x08THURSDAY\x10\x04\x12\n\n\x06\x46RIDAY\x10\x05\x12\x0c\n\x08SATURDAY\x10\x06\x12\n\n\x06SUNDAY\x10\x07*9\n\x11\x41pprovalQueueKind\x12\x10\n\x0c\x41QK_APPROVAL\x10\x00\x12\x12\n\x0e\x41QK_ESCALATION\x10\x01\x42$\n\x18\x63om.keepersecurity.protoB\x08Workflowb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0eworkflow.proto\x12\x08Workflow\x1a\x0fGraphSync.proto\"\x82\x01\n\x10WorkflowApprover\x12\x0e\n\x04user\x18\x01 \x01(\tH\x00\x12\x10\n\x06userId\x18\x02 \x01(\x05H\x00\x12\x11\n\x07teamUid\x18\x03 \x01(\x0cH\x00\x12\x12\n\nescalation\x18\x04 \x01(\x08\x12\x19\n\x11\x65scalationAfterMs\x18\x05 \x01(\x03\x42\n\n\x08\x61pprover\"\x9d\x02\n\x12WorkflowParameters\x12)\n\x08resource\x18\x01 \x01(\x0b\x32\x17.GraphSync.GraphSyncRef\x12\x17\n\x0f\x61pprovalsNeeded\x18\x02 \x01(\x05\x12\x16\n\x0e\x63heckoutNeeded\x18\x03 \x01(\x08\x12\x1d\n\x15startAccessOnApproval\x18\x04 \x01(\x08\x12\x15\n\rrequireReason\x18\x05 \x01(\x08\x12\x15\n\rrequireTicket\x18\x06 \x01(\x08\x12\x12\n\nrequireMFA\x18\x07 \x01(\x08\x12\x14\n\x0c\x61\x63\x63\x65ssLength\x18\x08 \x01(\x03\x12\x34\n\x0c\x61llowedTimes\x18\t \x01(\x0b\x32\x1e.Workflow.TemporalAccessFilter\"\x84\x01\n\x0eWorkflowConfig\x12\x30\n\nparameters\x18\x01 \x01(\x0b\x32\x1c.Workflow.WorkflowParameters\x12-\n\tapprovers\x18\x02 \x03(\x0b\x32\x1a.Workflow.WorkflowApprover\x12\x11\n\tcreatedOn\x18\x03 \x01(\x03\"\xd0\x01\n\x0eWorkflowStatus\x12&\n\x05stage\x18\x01 \x01(\x0e\x32\x17.Workflow.WorkflowStage\x12-\n\nconditions\x18\x02 \x03(\x0e\x32\x19.Workflow.AccessCondition\x12.\n\napprovedBy\x18\x03 \x03(\x0b\x32\x1a.Workflow.WorkflowApproval\x12\x11\n\tstartedOn\x18\x04 \x01(\x03\x12\x11\n\texpiresOn\x18\x05 \x01(\x03\x12\x11\n\tescalated\x18\x06 \x01(\x08\"\xbd\x01\n\x0fWorkflowProcess\x12\x0f\n\x07\x66lowUid\x18\x01 \x01(\x0c\x12\x0e\n\x06userId\x18\x02 \x01(\x03\x12)\n\x08resource\x18\x03 \x01(\x0b\x32\x17.GraphSync.GraphSyncRef\x12\x11\n\tstartedOn\x18\x04 \x01(\x03\x12\x11\n\texpiresOn\x18\x05 \x01(\x03\x12\x0e\n\x06reason\x18\x06 \x01(\x0c\x12\x13\n\x0bmfaVerified\x18\x07 \x01(\x08\x12\x13\n\x0b\x65xternalRef\x18\x08 \x01(\x0c\"U\n\x10WorkflowApproval\x12\x0e\n\x06userId\x18\x01 \x01(\x03\x12\x0c\n\x04user\x18\x02 \x01(\t\x12\x0f\n\x07\x66lowUid\x18\x03 \x01(\x0c\x12\x12\n\napprovedOn\x18\x04 \x01(\x03\"\xcb\x01\n\x0fWorkflowContext\x12\x30\n\x0eworkflowConfig\x18\x01 \x01(\x0b\x32\x18.Workflow.WorkflowConfig\x12+\n\x08workflow\x18\x02 \x01(\x0b\x32\x19.Workflow.WorkflowProcess\x12-\n\tapprovals\x18\x03 \x03(\x0b\x32\x1a.Workflow.WorkflowApproval\x12*\n\x07\x62locker\x18\x04 \x01(\x0b\x32\x19.Workflow.WorkflowProcess\"u\n\rWorkflowState\x12\x0f\n\x07\x66lowUid\x18\x01 \x01(\x0c\x12)\n\x08resource\x18\x02 \x01(\x0b\x32\x17.GraphSync.GraphSyncRef\x12(\n\x06status\x18\x03 \x01(\x0b\x32\x18.Workflow.WorkflowStatus\"b\n\x15WorkflowAccessRequest\x12)\n\x08resource\x18\x01 \x01(\x0b\x32\x17.GraphSync.GraphSyncRef\x12\x0e\n\x06reason\x18\x02 \x01(\x0c\x12\x0e\n\x06ticket\x18\x03 \x01(\x0c\"O\n\x18WorkflowApprovalOrDenial\x12\x0f\n\x07\x66lowUid\x18\x01 \x01(\x0c\x12\x0c\n\x04\x64\x65ny\x18\x02 \x01(\x08\x12\x14\n\x0c\x64\x65nialReason\x18\x03 \x01(\t\"=\n\x0fUserAccessState\x12*\n\tworkflows\x18\x01 \x03(\x0b\x32\x17.Workflow.WorkflowState\"@\n\x10\x41pprovalRequests\x12,\n\tworkflows\x18\x01 \x03(\x0b\x32\x19.Workflow.WorkflowProcess\"4\n\x0eTimeOfDayRange\x12\x11\n\tstartTime\x18\x01 \x01(\x05\x12\x0f\n\x07\x65ndTime\x18\x02 \x01(\x05\"\xdd\x01\n\x12\x41pprovalQueueEntry\x12(\n\x07\x66lowRef\x18\x01 \x01(\x0b\x32\x17.GraphSync.GraphSyncRef\x12,\n\x0b\x61pproverRef\x18\x02 \x01(\x0b\x32\x17.GraphSync.GraphSyncRef\x12)\n\x04kind\x18\x03 \x01(\x0e\x32\x1b.Workflow.ApprovalQueueKind\x12\x12\n\nnotifyAtMs\x18\x04 \x01(\x03\x12\x1c\n\x0frequesterUserId\x18\x05 \x01(\x03H\x00\x88\x01\x01\x42\x12\n\x10_requesterUserId\"\x80\x01\n\x14TemporalAccessFilter\x12,\n\ntimeRanges\x18\x01 \x03(\x0b\x32\x18.Workflow.TimeOfDayRange\x12(\n\x0b\x61llowedDays\x18\x02 \x03(\x0e\x32\x13.Workflow.DayOfWeek\x12\x10\n\x08timeZone\x18\x03 \x01(\t\"#\n\x0f\x41uthorizedUsers\x12\x10\n\x08username\x18\x01 \x03(\t*[\n\rWorkflowStage\x12\x15\n\x11WS_READY_TO_START\x10\x00\x12\x0e\n\nWS_STARTED\x10\x01\x12\x13\n\x0fWS_NEEDS_ACTION\x10\x02\x12\x0e\n\nWS_WAITING\x10\x03*i\n\x0f\x41\x63\x63\x65ssCondition\x12\x0f\n\x0b\x41\x43_APPROVAL\x10\x00\x12\x0e\n\nAC_CHECKIN\x10\x01\x12\n\n\x06\x41\x43_MFA\x10\x02\x12\x0b\n\x07\x41\x43_TIME\x10\x03\x12\r\n\tAC_REASON\x10\x04\x12\r\n\tAC_TICKET\x10\x05*\x84\x01\n\tDayOfWeek\x12\x1b\n\x17\x44\x41Y_OF_WEEK_UNSPECIFIED\x10\x00\x12\n\n\x06MONDAY\x10\x01\x12\x0b\n\x07TUESDAY\x10\x02\x12\r\n\tWEDNESDAY\x10\x03\x12\x0c\n\x08THURSDAY\x10\x04\x12\n\n\x06\x46RIDAY\x10\x05\x12\x0c\n\x08SATURDAY\x10\x06\x12\n\n\x06SUNDAY\x10\x07*9\n\x11\x41pprovalQueueKind\x12\x10\n\x0c\x41QK_APPROVAL\x10\x00\x12\x12\n\x0e\x41QK_ESCALATION\x10\x01\x42$\n\x18\x63om.keepersecurity.protoB\x08Workflowb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -21,14 +21,14 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'workflow_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\030com.keepersecurity.protoB\010Workflow'
-  _globals['_WORKFLOWSTAGE']._serialized_start=2198
-  _globals['_WORKFLOWSTAGE']._serialized_end=2289
-  _globals['_ACCESSCONDITION']._serialized_start=2291
-  _globals['_ACCESSCONDITION']._serialized_end=2396
-  _globals['_DAYOFWEEK']._serialized_start=2399
-  _globals['_DAYOFWEEK']._serialized_end=2531
-  _globals['_APPROVALQUEUEKIND']._serialized_start=2533
-  _globals['_APPROVALQUEUEKIND']._serialized_end=2590
+  _globals['_WORKFLOWSTAGE']._serialized_start=2172
+  _globals['_WORKFLOWSTAGE']._serialized_end=2263
+  _globals['_ACCESSCONDITION']._serialized_start=2265
+  _globals['_ACCESSCONDITION']._serialized_end=2370
+  _globals['_DAYOFWEEK']._serialized_start=2373
+  _globals['_DAYOFWEEK']._serialized_end=2505
+  _globals['_APPROVALQUEUEKIND']._serialized_start=2507
+  _globals['_APPROVALQUEUEKIND']._serialized_end=2564
   _globals['_WORKFLOWAPPROVER']._serialized_start=46
   _globals['_WORKFLOWAPPROVER']._serialized_end=176
   _globals['_WORKFLOWPARAMETERS']._serialized_start=179
@@ -48,17 +48,17 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_WORKFLOWACCESSREQUEST']._serialized_start=1416
   _globals['_WORKFLOWACCESSREQUEST']._serialized_end=1514
   _globals['_WORKFLOWAPPROVALORDENIAL']._serialized_start=1516
-  _globals['_WORKFLOWAPPROVALORDENIAL']._serialized_end=1621
-  _globals['_USERACCESSSTATE']._serialized_start=1623
-  _globals['_USERACCESSSTATE']._serialized_end=1684
-  _globals['_APPROVALREQUESTS']._serialized_start=1686
-  _globals['_APPROVALREQUESTS']._serialized_end=1750
-  _globals['_TIMEOFDAYRANGE']._serialized_start=1752
-  _globals['_TIMEOFDAYRANGE']._serialized_end=1804
-  _globals['_APPROVALQUEUEENTRY']._serialized_start=1807
-  _globals['_APPROVALQUEUEENTRY']._serialized_end=2028
-  _globals['_TEMPORALACCESSFILTER']._serialized_start=2031
-  _globals['_TEMPORALACCESSFILTER']._serialized_end=2159
-  _globals['_AUTHORIZEDUSERS']._serialized_start=2161
-  _globals['_AUTHORIZEDUSERS']._serialized_end=2196
+  _globals['_WORKFLOWAPPROVALORDENIAL']._serialized_end=1595
+  _globals['_USERACCESSSTATE']._serialized_start=1597
+  _globals['_USERACCESSSTATE']._serialized_end=1658
+  _globals['_APPROVALREQUESTS']._serialized_start=1660
+  _globals['_APPROVALREQUESTS']._serialized_end=1724
+  _globals['_TIMEOFDAYRANGE']._serialized_start=1726
+  _globals['_TIMEOFDAYRANGE']._serialized_end=1778
+  _globals['_APPROVALQUEUEENTRY']._serialized_start=1781
+  _globals['_APPROVALQUEUEENTRY']._serialized_end=2002
+  _globals['_TEMPORALACCESSFILTER']._serialized_start=2005
+  _globals['_TEMPORALACCESSFILTER']._serialized_end=2133
+  _globals['_AUTHORIZEDUSERS']._serialized_start=2135
+  _globals['_AUTHORIZEDUSERS']._serialized_end=2170
 # @@protoc_insertion_point(module_scope)
