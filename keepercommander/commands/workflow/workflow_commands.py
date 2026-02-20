@@ -202,76 +202,86 @@ def check_workflow_access(params: KeeperParams, record_uid: str):
         Returns {'allowed': False, 'require_mfa': False} if access is blocked.
     """
     result = {'allowed': True, 'require_mfa': False}
-    try:
-        # Step 1: Check if the record has a workflow configured
-        record_uid_bytes = utils.base64_url_decode(record_uid)
-        record = vault.KeeperRecord.load(params, record_uid)
-        record_name = record.title if record else record_uid
+    
+    # Step 1: Check if the record has a workflow configured
+    record_uid_bytes = utils.base64_url_decode(record_uid)
+    record = vault.KeeperRecord.load(params, record_uid)
+    record_name = record.title if record else record_uid
 
-        ref = create_record_ref(record_uid_bytes, record_name)
+    ref = create_record_ref(record_uid_bytes, record_name)
+    
+    try:
         config_response = _post_request_to_router(
             params,
             'read_workflow_config',
             rq_proto=ref,
             rs_type=workflow_pb2.WorkflowConfig
         )
+    except Exception:
+        # If config read fails (network issue, etc), allow access.
+        # Backend/gateway will still enforce restrictions server-side.
+        return result
 
-        if config_response is None:
-            # No workflow configured on this record — access is unrestricted
+    if config_response is None:
+        # No workflow configured on this record — access is unrestricted
+        return result
+
+    # Remember MFA requirement — only applied if access is granted
+    mfa_required = bool(config_response.parameters and config_response.parameters.requireMFA)
+
+    # Step 2: Get all user's workflows and find the one for this record
+    try:
+        user_state = _post_request_to_router(
+            params,
+            'get_user_access_state',
+            rs_type=workflow_pb2.UserAccessState
+        )
+    except Exception:
+        # If user state check fails (network issue), allow access
+        return result
+
+    # Find workflow for this specific record
+    workflow_for_record = None
+    if user_state and user_state.workflows:
+        for wf in user_state.workflows:
+            if wf.resource and wf.resource.value == record_uid_bytes:
+                workflow_for_record = wf
+                break
+
+    if workflow_for_record and workflow_for_record.status:
+        stage = workflow_for_record.status.stage
+
+        if stage == workflow_pb2.WS_STARTED:
+            # User has an active checkout — allow access, apply MFA if configured
+            result['require_mfa'] = mfa_required
             return result
 
-        # Check if MFA is required
-        if config_response.parameters and config_response.parameters.requireMFA:
-            result['require_mfa'] = True
+        if stage == workflow_pb2.WS_READY_TO_START:
+            print(f"\n{bcolors.WARNING}Workflow access approved but not yet checked out.{bcolors.ENDC}")
+            print(f"Run: {bcolors.OKBLUE}pam workflow start {record_uid}{bcolors.ENDC} to check out the record.\n")
+            result['allowed'] = False
+            return result
 
-        # Step 2: Workflow exists — check user's access state for this record
-        state_rq = workflow_pb2.WorkflowState()
-        state_rq.resource.CopyFrom(ref)
-        state_response = _post_request_to_router(
-            params,
-            'get_workflow_state',
-            rq_proto=state_rq,
-            rs_type=workflow_pb2.WorkflowState
-        )
+        if stage == workflow_pb2.WS_WAITING:
+            conditions = workflow_for_record.status.conditions
+            cond_str = format_access_conditions(conditions) if conditions else 'approval'
+            print(f"\n{bcolors.WARNING}Workflow access is pending: waiting for {cond_str}.{bcolors.ENDC}")
+            print(f"Your request is being processed. Please wait for approval.\n")
+            result['allowed'] = False
+            return result
 
-        if state_response and state_response.status:
-            stage = state_response.status.stage
+        if stage == workflow_pb2.WS_NEEDS_ACTION:
+            print(f"\n{bcolors.WARNING}Workflow requires additional action before access is granted.{bcolors.ENDC}")
+            print(f"Run: {bcolors.OKBLUE}pam workflow state --flow-uid {utils.base64_url_encode(workflow_for_record.flowUid)}{bcolors.ENDC} to see details.\n")
+            result['allowed'] = False
+            return result
 
-            if stage == workflow_pb2.WS_STARTED:
-                # User has an active checkout — allow access
-                return result
-
-            if stage == workflow_pb2.WS_READY_TO_START:
-                print(f"\n{bcolors.WARNING}Workflow access approved but not yet checked out.{bcolors.ENDC}")
-                print(f"Run: {bcolors.OKBLUE}pam workflow start {record_uid}{bcolors.ENDC} to check out the record.\n")
-                result['allowed'] = False
-                return result
-
-            if stage == workflow_pb2.WS_WAITING:
-                conditions = state_response.status.conditions
-                cond_str = format_access_conditions(conditions) if conditions else 'approval'
-                print(f"\n{bcolors.WARNING}Workflow access is pending: waiting for {cond_str}.{bcolors.ENDC}")
-                print(f"Your request is being processed. Please wait for approval.\n")
-                result['allowed'] = False
-                return result
-
-            if stage == workflow_pb2.WS_NEEDS_ACTION:
-                print(f"\n{bcolors.WARNING}Workflow requires additional action before access is granted.{bcolors.ENDC}")
-                print(f"Run: {bcolors.OKBLUE}pam workflow state --record {record_uid}{bcolors.ENDC} to see details.\n")
-                result['allowed'] = False
-                return result
-
-        # No active workflow state — user hasn't requested access yet
-        print(f"\n{bcolors.WARNING}This record is protected by a workflow.{bcolors.ENDC}")
-        print(f"You must request access before connecting.")
-        print(f"Run: {bcolors.OKBLUE}pam workflow request {record_uid}{bcolors.ENDC} to request access.\n")
-        result['allowed'] = False
-        return result
-
-    except Exception:
-        # If workflow check fails (e.g. network issue), allow access.
-        # The backend/gateway should still enforce restrictions server-side.
-        return result
+    # No active workflow for this record — user hasn't requested access yet
+    print(f"\n{bcolors.WARNING}This record is protected by a workflow.{bcolors.ENDC}")
+    print(f"You must request access before connecting.")
+    print(f"Run: {bcolors.OKBLUE}pam workflow request {record_uid}{bcolors.ENDC} to request access.\n")
+    result['allowed'] = False
+    return result
 
 
 def check_workflow_and_prompt_2fa(params: KeeperParams, record_uid: str):
@@ -338,7 +348,8 @@ def prompt_workflow_2fa(params: KeeperParams):
             return None
 
     if not tfa_list.channels:
-        print(f"{bcolors.FAIL}No 2FA methods configured on your account. Cannot proceed.{bcolors.ENDC}")
+        print(f"\n{bcolors.FAIL}This workflow requires 2FA verification{bcolors.ENDC}")
+        print(f"Your account does not have any 2FA methods configured. For available methods, run: {bcolors.OKBLUE}2fa add -h{bcolors.ENDC}")
         return None
 
     # Build a list of usable channels
@@ -460,7 +471,6 @@ def prompt_workflow_2fa(params: KeeperParams):
             challenge = _json.loads(challenge_rs.challenge)
 
             from ...yubikey.yubikey import yubikey_authenticate
-            print(f"\n{bcolors.OKBLUE}Touch the flashing Security key to authenticate...{bcolors.ENDC}\n")
             response = yubikey_authenticate(challenge)
 
             if response:
@@ -949,9 +959,6 @@ class WorkflowReadCommand(Command):
                 # Add approvers
                 for approver in response.approvers:
                     approver_info = {'escalation': approver.escalation}
-                    if approver.escalationAfterMs:
-                        approver_info['escalation_after'] = format_duration_from_milliseconds(approver.escalationAfterMs)
-                        approver_info['escalation_after_ms'] = approver.escalationAfterMs
                     if approver.HasField('user'):
                         approver_info['type'] = 'user'
                         approver_info['email'] = approver.user
@@ -991,8 +998,6 @@ class WorkflowReadCommand(Command):
                     print(f"\n{bcolors.BOLD}Approvers ({len(response.approvers)}):{bcolors.ENDC}")
                     for idx, approver in enumerate(response.approvers, 1):
                         escalation = ' (Escalation)' if approver.escalation else ''
-                        if approver.escalation and approver.escalationAfterMs:
-                            escalation += f' — after {format_duration_from_milliseconds(approver.escalationAfterMs)}'
                         if approver.HasField('user'):
                             print(f"  {idx}. User: {approver.user}{escalation}")
                         elif approver.HasField('userId'):
@@ -1082,13 +1087,11 @@ class WorkflowAddApproversCommand(Command):
     Add approvers to a workflow.
     
     Approvers are users or teams who can approve access requests.
-    You can mark approvers as "escalated" for handling delayed approvals,
-    with an optional auto-escalation delay.
+    You can mark approvers as "escalated" for handling delayed approvals.
     
     Example:
         pam workflow add-approver <record_uid> --user alice@company.com
         pam workflow add-approver <record_uid> --team <team_uid> --escalation
-        pam workflow add-approver <record_uid> --user bob@company.com --escalation --escalation-after 30m
     """
     parser = argparse.ArgumentParser(prog='pam workflow add-approver',
                                      description='Add approvers to a workflow')
@@ -1098,8 +1101,6 @@ class WorkflowAddApproversCommand(Command):
     parser.add_argument('-t', '--team', action='append',
                         help='Team name or UID to add as approver (can specify multiple times)')
     parser.add_argument('-e', '--escalation', action='store_true', help='Mark as escalation approver')
-    parser.add_argument('--escalation-after', dest='escalation_after',
-                        help='Auto-escalate after duration (e.g. 30m, 1h, 2d). Requires --escalation')
     parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
                         default='table', help='Output format')
 
@@ -1112,16 +1113,6 @@ class WorkflowAddApproversCommand(Command):
         users = kwargs.get('user') or []
         teams = kwargs.get('team') or []
         is_escalation = kwargs.get('escalation', False)
-        escalation_after = kwargs.get('escalation_after')
-
-        if escalation_after and not is_escalation:
-            raise CommandError('', '--escalation-after requires --escalation flag')
-
-        escalation_after_ms = 0
-        if escalation_after:
-            escalation_after_ms = parse_duration_to_milliseconds(escalation_after)
-            if not escalation_after_ms:
-                raise CommandError('', f'Invalid escalation duration: {escalation_after}. Use format like 30m, 1h, 2d')
 
         if not users and not teams:
             raise CommandError('', 'Must specify at least one --user or --team')
@@ -1149,8 +1140,6 @@ class WorkflowAddApproversCommand(Command):
             approver = workflow_pb2.WorkflowApprover()
             approver.user = user_email
             approver.escalation = is_escalation
-            if escalation_after_ms:
-                approver.escalationAfterMs = escalation_after_ms
             config.approvers.append(approver)
         
         # Add team approvers (accepts team UID or team name)
@@ -1159,8 +1148,6 @@ class WorkflowAddApproversCommand(Command):
             approver = workflow_pb2.WorkflowApprover()
             approver.teamUid = utils.base64_url_decode(resolved_team_uid)
             approver.escalation = is_escalation
-            if escalation_after_ms:
-                approver.escalationAfterMs = escalation_after_ms
             config.approvers.append(approver)
         
         # Make API call
@@ -1177,8 +1164,7 @@ class WorkflowAddApproversCommand(Command):
                     'record_uid': record_uid,
                     'record_name': record.title,
                     'approvers_added': len(users) + len(teams),
-                    'escalation': is_escalation,
-                    'escalation_after_ms': escalation_after_ms or None
+                    'escalation': is_escalation
                 }
                 print(json.dumps(result, indent=2))
             else:
@@ -1187,8 +1173,6 @@ class WorkflowAddApproversCommand(Command):
                 print(f"Added {len(users) + len(teams)} approver(s)")
                 if is_escalation:
                     print("Type: Escalation approver")
-                    if escalation_after_ms:
-                        print(f"Escalation after: {format_duration_from_milliseconds(escalation_after_ms)}")
                 print()
                 
         except Exception as e:
@@ -1768,7 +1752,7 @@ class WorkflowApproveCommand(Command):
         
         # Create WorkflowApprovalOrDenial with deny=False for approval
         approval = workflow_pb2.WorkflowApprovalOrDenial()
-        approval.resource.CopyFrom(create_workflow_ref(flow_uid_bytes))
+        approval.flowUid = flow_uid_bytes
         approval.deny = False
         
         # Make API call
@@ -1816,7 +1800,7 @@ class WorkflowDenyCommand(Command):
         
         # Create WorkflowApprovalOrDenial with deny=True for denial
         denial = workflow_pb2.WorkflowApprovalOrDenial()
-        denial.resource.CopyFrom(create_workflow_ref(flow_uid_bytes))
+        denial.flowUid = flow_uid_bytes
         denial.deny = True
         if reason:
             denial.denialReason = reason
