@@ -29,10 +29,6 @@ class DockerSetupConstants:
     DEFAULT_RECORD_NAME = 'Commander Service Mode Docker Config'
     DEFAULT_CLIENT_NAME = 'Commander Service Mode - KSM App Client'
     
-    # Default resource names for slack-app-setup
-    DEFAULT_SLACK_FOLDER_NAME = 'Commander Service Mode - Slack App'
-    DEFAULT_SLACK_RECORD_NAME = 'Commander Service Mode Slack App Config'
-    
     # Default service configuration
     DEFAULT_PORT = 8900
     DEFAULT_COMMANDS = 'tree,ls'
@@ -103,6 +99,20 @@ class SlackConfig:
     slack_bot_token: str
     slack_signing_secret: str
     approvals_channel_id: str
+    pedm_enabled: bool = False
+    pedm_polling_interval: int = 120
+    device_approval_enabled: bool = False
+    device_approval_polling_interval: int = 120
+
+
+@dataclass
+class TeamsConfig:
+    """Microsoft Teams App configuration for Docker deployment"""
+    client_id: str
+    client_secret: str
+    tenant_id: str
+    approvals_channel_id: str
+    approvals_team_id: str
     pedm_enabled: bool = False
     pedm_polling_interval: int = 120
     device_approval_enabled: bool = False

@@ -17,7 +17,7 @@ from typing import Dict, Any, List
 
 
 class DockerComposeBuilder:
-    """Builder for docker-compose.yml content with support for Commander and Slack App services"""
+    """Builder for docker-compose.yml content with support for Commander and integration services"""
     
     def __init__(self, setup_result, config: Dict[str, Any]):
         """
@@ -55,22 +55,38 @@ class DockerComposeBuilder:
             self._services['commander'] = self._build_commander_service()
         return {'services': self._services}
     
-    def add_slack_service(self, slack_record_uid: str) -> 'DockerComposeBuilder':
+    def add_integration_service(self, service_name: str, container_name: str,
+                                image: str, record_uid: str,
+                                record_env_key: str) -> 'DockerComposeBuilder':
         """
-        Add Slack App service to the compose configuration
-        
+        Add an integration service (Slack, Teams, etc.) to the compose configuration.
+
         Args:
-            slack_record_uid: UID of the Slack config record
-            
+            service_name: Service key in compose (e.g. 'slack-app', 'teams-app')
+            container_name: Docker container name (e.g. 'keeper-slack-app')
+            image: Docker image (e.g. 'keeper/slack-app:latest')
+            record_uid: UID of the integration config record
+            record_env_key: Env-var name for the record UID (e.g. 'SLACK_RECORD')
+
         Returns:
             Self for method chaining
         """
-        # Ensure commander service exists first
         if 'commander' not in self._services:
             self._services['commander'] = self._build_commander_service()
-        # Add slack service
-        self._services['slack-app'] = self._build_slack_service(slack_record_uid)
+        self._services[service_name] = self._build_integration_service(
+            container_name, image, record_uid, record_env_key
+        )
         return self
+
+    def add_slack_service(self, slack_record_uid: str) -> 'DockerComposeBuilder':
+        """Add Slack App service (convenience wrapper around add_integration_service)."""
+        return self.add_integration_service(
+            service_name='slack-app',
+            container_name='keeper-slack-app',
+            image='keeper/slack-app:latest',
+            record_uid=slack_record_uid,
+            record_env_key='SLACK_RECORD'
+        )
     
     def _build_commander_service(self) -> Dict[str, Any]:
         """Build the Commander service configuration"""
@@ -90,15 +106,17 @@ class DockerComposeBuilder:
         
         return service
     
-    def _build_slack_service(self, slack_record_uid: str) -> Dict[str, Any]:
-        """Build the Slack App service configuration"""
+    def _build_integration_service(self, container_name: str, image: str,
+                                    record_uid: str,
+                                    record_env_key: str) -> Dict[str, Any]:
+        """Build an integration service configuration."""
         return {
-            'container_name': 'keeper-slack-app',
-            'image': 'keeper/slack-app:latest',
+            'container_name': container_name,
+            'image': image,
             'environment': {
                 'KSM_CONFIG': self.setup_result.b64_config,
                 'COMMANDER_RECORD': self.setup_result.record_uid,
-                'SLACK_RECORD': slack_record_uid
+                record_env_key: record_uid
             },
             'depends_on': {
                 'commander': {
