@@ -9,9 +9,7 @@
 # Contact: commander@keepersecurity.com
 #
 
-"""
-Integration setup commands for messaging platforms (Slack, Teams, etc.).
-"""
+"""Integration setup commands."""
 
 from .integration_setup_base import IntegrationSetupCommand
 from .slack_app_setup import SlackAppSetupCommand

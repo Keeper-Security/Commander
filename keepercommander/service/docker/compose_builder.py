@@ -9,24 +9,14 @@
 # Contact: commander@keepersecurity.com
 #
 
-"""
-Builder class for generating docker-compose.yml configuration
-"""
-import os
+"""docker-compose.yml generation."""
 from typing import Dict, Any, List
 
 
 class DockerComposeBuilder:
-    """Builder for docker-compose.yml content with support for Commander and integration services"""
+    """Builds docker-compose.yml for Commander + integration services."""
     
     def __init__(self, setup_result, config: Dict[str, Any]):
-        """
-        Initialize the builder
-        
-        Args:
-            setup_result: Results from Docker setup containing UIDs and KSM config (SetupResult object)
-            config: Service configuration dictionary
-        """
         self.setup_result = setup_result
         self.config = config
         self._service_cmd_parts: List[str] = []
@@ -34,23 +24,11 @@ class DockerComposeBuilder:
         self._services: Dict[str, Dict[str, Any]] = {}
     
     def build(self) -> str:
-        """
-        Build the complete docker-compose.yml content
-        
-        Returns:
-            YAML content as a string
-        """
         if 'commander' not in self._services:
             self._services['commander'] = self._build_commander_service()
         return self.to_yaml()
     
     def build_dict(self) -> Dict[str, Any]:
-        """
-        Build the docker-compose structure as a dictionary
-        
-        Returns:
-            Dictionary structure ready for YAML serialization
-        """
         if 'commander' not in self._services:
             self._services['commander'] = self._build_commander_service()
         return {'services': self._services}
@@ -58,19 +36,7 @@ class DockerComposeBuilder:
     def add_integration_service(self, service_name: str, container_name: str,
                                 image: str, record_uid: str,
                                 record_env_key: str) -> 'DockerComposeBuilder':
-        """
-        Add an integration service (Slack, Teams, etc.) to the compose configuration.
-
-        Args:
-            service_name: Service key in compose (e.g. 'slack-app', 'teams-app')
-            container_name: Docker container name (e.g. 'keeper-slack-app')
-            image: Docker image (e.g. 'keeper/slack-app:latest')
-            record_uid: UID of the integration config record
-            record_env_key: Env-var name for the record UID (e.g. 'SLACK_RECORD')
-
-        Returns:
-            Self for method chaining
-        """
+        """Add an integration service to the compose file. Returns self."""
         if 'commander' not in self._services:
             self._services['commander'] = self._build_commander_service()
         self._services[service_name] = self._build_integration_service(
@@ -78,18 +44,8 @@ class DockerComposeBuilder:
         )
         return self
 
-    def add_slack_service(self, slack_record_uid: str) -> 'DockerComposeBuilder':
-        """Add Slack App service (convenience wrapper around add_integration_service)."""
-        return self.add_integration_service(
-            service_name='slack-app',
-            container_name='keeper-slack-app',
-            image='keeper/slack-app:latest',
-            record_uid=slack_record_uid,
-            record_env_key='SLACK_RECORD'
-        )
     
     def _build_commander_service(self) -> Dict[str, Any]:
-        """Build the Commander service configuration"""
         self._build_service_command()
         
         service = {
@@ -109,7 +65,6 @@ class DockerComposeBuilder:
     def _build_integration_service(self, container_name: str, image: str,
                                     record_uid: str,
                                     record_env_key: str) -> Dict[str, Any]:
-        """Build an integration service configuration."""
         return {
             'container_name': container_name,
             'image': image,
@@ -127,7 +82,6 @@ class DockerComposeBuilder:
         }
     
     def _build_service_command(self) -> None:
-        """Build the service-create command parts"""
         port = self.config['port']
         commands = self.config['commands']
         queue_enabled = self.config.get('queue_enabled', True)
@@ -144,7 +98,6 @@ class DockerComposeBuilder:
         self._add_docker_options()
     
     def _add_security_options(self) -> None:
-        """Add advanced security options (IP filtering, rate limiting, encryption)"""
         # IP allowed list (only add if not default)
         allowed_ip = self.config.get('allowed_ip', '0.0.0.0/0,::/0')
         if allowed_ip and allowed_ip != '0.0.0.0/0,::/0':
@@ -171,7 +124,6 @@ class DockerComposeBuilder:
             self._service_cmd_parts.append(f"-te '{token_expiration}'")
     
     def _add_tunneling_options(self) -> None:
-        """Add ngrok and Cloudflare tunneling options"""
         # Ngrok configuration
         if self.config.get('ngrok_enabled') and self.config.get('ngrok_auth_token'):
             self._service_cmd_parts.append(f"-ng {self.config['ngrok_auth_token']}")
@@ -185,7 +137,6 @@ class DockerComposeBuilder:
                 self._service_cmd_parts.append(f"-cfd {self.config['cloudflare_custom_domain']}")
     
     def _add_docker_options(self) -> None:
-        """Add Docker-specific parameters (KSM config, record UIDs)"""
         self._service_cmd_parts.extend([
             f"-ur {self.setup_result.record_uid}",
             f"--ksm-config {self.setup_result.b64_config}",
@@ -193,7 +144,6 @@ class DockerComposeBuilder:
         ])
     
     def _build_healthcheck(self) -> Dict[str, Any]:
-        """Build the healthcheck configuration"""
         port = self.config['port']
         
         # Build the Python script as a single-line command
@@ -211,12 +161,6 @@ class DockerComposeBuilder:
         }
     
     def to_yaml(self) -> str:
-        """
-        Convert the docker-compose structure to YAML string
-        
-        Returns:
-            YAML formatted string
-        """
         try:
             import yaml
         except ImportError:

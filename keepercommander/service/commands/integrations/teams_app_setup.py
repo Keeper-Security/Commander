@@ -9,12 +9,7 @@
 # Contact: commander@keepersecurity.com
 #
 
-"""
-Microsoft Teams App integration setup command.
-
-Extends IntegrationSetupCommand with Teams-specific configuration
-(Client ID, Client Secret, Tenant ID, Channel ID, Team ID).
-"""
+"""Teams App integration setup command."""
 
 from .... import vault
 from ....display import bcolors
@@ -23,7 +18,7 @@ from .integration_setup_base import IntegrationSetupCommand
 
 
 class TeamsAppSetupCommand(IntegrationSetupCommand):
-    """Microsoft Teams App integration setup command."""
+    """Teams App integration setup."""
 
     def get_integration_name(self):
         return 'Teams'

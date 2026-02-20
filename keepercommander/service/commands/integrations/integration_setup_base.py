@@ -9,20 +9,7 @@
 # Contact: commander@keepersecurity.com
 #
 
-"""
-Abstract base class for integration setup commands.
-
-Uses the Template Method pattern: execute() defines the two-phase setup
-algorithm, while subclasses provide integration-specific behavior
-(config collection, record fields, display).
-
-Every naming convention (command name, folder name, Docker image, etc.)
-is derived automatically from get_integration_name(). Subclasses only
-need to implement the truly unique parts: config prompts, record fields,
-and integration-specific display lines.
-
-Supported integrations: Slack, Teams, and any future messaging platforms.
-"""
+"""Base class for integration setup commands (Slack, Teams, etc.)."""
 
 import argparse
 import os
@@ -48,51 +35,35 @@ UUID_PATTERN = re.compile(
 
 
 class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
-    """Abstract base for messaging platform integration setup commands.
-
-    Subclasses need only implement:
-        - get_integration_name()             (the single seed, e.g. 'Slack')
-        - collect_integration_config()       (interactive config prompts)
-        - build_record_custom_fields(config) (vault TypedField list)
-        - print_integration_specific_resources(config) (extra resource lines)
-        - print_integration_commands()       (available bot commands)
-
-    Everything else -- command name, Docker service details, folder/record
-    names, parser, success output structure -- is derived from the name
-    automatically.  Override any convention method if a non-standard value
-    is needed for a specific integration.
-    """
+    """Base for integration setup commands. All naming conventions are
+    derived from get_integration_name(). Subclasses only implement
+    config collection, record fields, and display."""
 
     _parser_cache: Dict[type, argparse.ArgumentParser] = {}
 
-    # ================================================================
-    # Abstract methods -- subclasses MUST implement
-    # ================================================================
+    # -- Abstract (subclasses must implement) -----------------------
 
     @abstractmethod
     def get_integration_name(self) -> str:
-        """Human-readable name that drives all conventions, e.g. 'Slack', 'Teams'."""
+        """e.g. 'Slack', 'Teams' -- drives all naming conventions."""
 
     @abstractmethod
     def collect_integration_config(self) -> Any:
-        """Interactively collect integration-specific config. Returns a dataclass."""
+        """Prompt user for config values, return a config dataclass."""
 
     @abstractmethod
     def build_record_custom_fields(self, config) -> List:
-        """Return a list of vault.TypedField for the integration record."""
+        """Return list of vault.TypedField for the config record."""
 
     @abstractmethod
     def print_integration_specific_resources(self, config) -> None:
-        """Print resource lines unique to this integration (between record UID and PEDM lines)."""
+        """Print integration-specific resource lines."""
 
     @abstractmethod
     def print_integration_commands(self) -> None:
-        """Print available bot commands / features for this integration."""
+        """Print available bot commands for this integration."""
 
-    # ================================================================
-    # Convention-based defaults (all derived from get_integration_name)
-    # Override only if a specific integration needs a non-standard value.
-    # ================================================================
+    # -- Convention defaults (derived from name, override if needed) -
 
     def get_command_name(self) -> str:
         return f'{self.get_integration_name().lower()}-app-setup'
@@ -116,12 +87,9 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         return f'{self.get_integration_name().upper()}_RECORD'
 
     def get_service_commands(self) -> str:
-        """Command whitelist for the service. Override if a different set is needed."""
         return 'search,share-record,share-folder,record-add,one-time-share,epm,pedm,device-approve,get,server'
 
-    # ================================================================
-    # Parser (auto-generated from name, cached per subclass)
-    # ================================================================
+    # -- Parser (auto-built from name, cached per subclass) ----------
 
     def get_parser(self):
         cls = type(self)
@@ -174,9 +142,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         parser.exit = suppress_exit
         return parser
 
-    # ================================================================
-    # Template Method: execute()
-    # ================================================================
+    # -- Main flow ---------------------------------------------------
 
     def execute(self, params, **kwargs):
         name = self.get_integration_name()
@@ -196,9 +162,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         # Consolidated success output
         self._print_success_message(setup_result, service_config, record_uid, config, config_path)
 
-    # ================================================================
-    # Phase 1 helpers
-    # ================================================================
+    # -- Phase 1 (docker service mode) --------------------------------
 
     def _run_base_docker_setup(self, params, kwargs: Dict[str, Any]) -> Tuple[SetupResult, ServiceConfig, str]:
         docker_cmd = ServiceDockerSetupCommand()
@@ -227,7 +191,6 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         return setup_result, service_config, config_path
 
     def _get_integration_service_configuration(self) -> ServiceConfig:
-        """Collect port + tunneling config (simplified for integration commands)."""
         DockerSetupPrinter.print_header("Service Mode Configuration")
 
         print(f"{bcolors.BOLD}Port:{bcolors.ENDC}")
@@ -267,9 +230,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             cloudflare_public_url=cloudflare_config.get('cloudflare_public_url', '')
         )
 
-    # ================================================================
-    # Phase 2 helpers
-    # ================================================================
+    # -- Phase 2 (integration-specific) --------------------------------
 
     def _run_integration_setup(self, params, setup_result: SetupResult,
                                service_config: ServiceConfig,
@@ -288,9 +249,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
 
         return record_uid, config
 
-    # ================================================================
-    # Record management (shared)
-    # ================================================================
+    # -- Record management ---------------------------------------------
 
     def _create_integration_record(self, params, record_name: str,
                                    folder_uid: str, custom_fields: List) -> str:
@@ -338,9 +297,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         except Exception as e:
             raise CommandError(self.get_command_name(), f'Failed to update record fields: {str(e)}')
 
-    # ================================================================
-    # Docker Compose update (shared)
-    # ================================================================
+    # -- Docker Compose update -----------------------------------------
 
     def _update_docker_compose(self, setup_result: SetupResult,
                                service_config: ServiceConfig,
@@ -375,9 +332,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         except Exception as e:
             raise CommandError(self.get_command_name(), f'Failed to update docker-compose.yml: {str(e)}')
 
-    # ================================================================
-    # Success output (shared structure, delegates to subclass for details)
-    # ================================================================
+    # -- Success output ------------------------------------------------
 
     def _print_success_message(self, setup_result: SetupResult,
                                service_config: ServiceConfig,
@@ -400,16 +355,13 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         self.print_integration_commands()
 
     def _print_integration_resources(self, record_uid: str, config) -> None:
-        """Print Phase 2 resources -- common lines + integration-specific lines."""
         name = self.get_integration_name()
         print(f"    • {name} Config Record: {bcolors.OKBLUE}{record_uid}{bcolors.ENDC}")
         self.print_integration_specific_resources(config)
         print(f"    • PEDM Integration: {bcolors.OKBLUE}{'true' if config.pedm_enabled else 'false'}{bcolors.ENDC}")
         print(f"    • Device Approval: {bcolors.OKBLUE}{'true' if config.device_approval_enabled else 'false'}{bcolors.ENDC}")
 
-    # ================================================================
-    # Shared optional-feature collectors (PEDM, Device Approval)
-    # ================================================================
+    # -- Optional feature collectors -----------------------------------
 
     def _collect_pedm_config(self) -> Tuple[bool, int]:
         print(f"\n{bcolors.BOLD}PEDM (Endpoint Privilege Manager) Integration (optional):{bcolors.ENDC}")
@@ -432,9 +384,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             interval = int(interval_input) if interval_input else 120
         return enabled, interval
 
-    # ================================================================
-    # Input / validation utilities
-    # ================================================================
+    # -- Input / validation --------------------------------------------
 
     def _prompt_with_validation(self, prompt: str, validator, error_msg: str) -> str:
         while True:

@@ -9,9 +9,7 @@
 # Contact: commander@keepersecurity.com
 #
 
-"""
-Data models and constants for Docker setup.
-"""
+"""Docker setup data models and constants."""
 
 from dataclasses import dataclass
 from enum import Enum
@@ -22,8 +20,7 @@ from enum import Enum
 # ========================
 
 class DockerSetupConstants:
-    """Constants for Docker setup command"""
-    # Default resource names for service-docker-setup
+    """Defaults for docker setup."""
     DEFAULT_FOLDER_NAME = 'Commander Service Mode - Docker'
     DEFAULT_APP_NAME = 'Commander Service Mode - KSM App'
     DEFAULT_RECORD_NAME = 'Commander Service Mode Docker Config'
@@ -34,14 +31,8 @@ class DockerSetupConstants:
     DEFAULT_COMMANDS = 'tree,ls'
     DEFAULT_TIMEOUT = '30d'
     
-    # Essential config keys
     RECORD_UID_KEY = 'record_uid'
     KSM_CONFIG_KEY = 'ksm_config'
-
-
-# ========================
-# Enums
-# ========================
 
 
 class SetupStep(Enum):
@@ -55,13 +46,8 @@ class SetupStep(Enum):
     CREATE_CLIENT = 7
 
 
-# ========================
-# Data Classes
-# ========================
-
 @dataclass
 class SetupResult:
-    """Container for setup results that can be reused by integration commands"""
     folder_uid: str
     folder_name: str
     app_uid: str
@@ -72,7 +58,6 @@ class SetupResult:
 
 @dataclass
 class ServiceConfig:
-    """Service configuration for Docker deployment"""
     port: int
     commands: str
     queue_enabled: bool
@@ -94,7 +79,6 @@ class ServiceConfig:
 
 @dataclass
 class SlackConfig:
-    """Slack App configuration for Docker deployment"""
     slack_app_token: str
     slack_bot_token: str
     slack_signing_secret: str
@@ -107,7 +91,6 @@ class SlackConfig:
 
 @dataclass
 class TeamsConfig:
-    """Microsoft Teams App configuration for Docker deployment"""
     client_id: str
     client_secret: str
     tenant_id: str

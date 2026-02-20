@@ -9,12 +9,7 @@
 # Contact: commander@keepersecurity.com
 #
 
-"""
-Slack App integration setup command.
-
-Extends IntegrationSetupCommand with Slack-specific configuration
-(App Token, Bot Token, Signing Secret, Channel ID).
-"""
+"""Slack App integration setup command."""
 
 from .... import vault
 from ....display import bcolors
@@ -23,7 +18,6 @@ from .integration_setup_base import IntegrationSetupCommand
 
 
 class SlackAppSetupCommand(IntegrationSetupCommand):
-    """Slack App integration setup command."""
 
     def get_integration_name(self):
         return 'Slack'
