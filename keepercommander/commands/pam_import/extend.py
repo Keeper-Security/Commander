@@ -46,6 +46,7 @@ from .base import (
     set_sftp_uid,
     set_user_record_uid
 )
+from .keeper_ai_settings import set_resource_jit_settings
 from ..base import Command
 from ..ksm import KSMCommand
 from ..pam import gateway_helper
@@ -1320,6 +1321,13 @@ class PAMProjectExtendCommand(Command):
             launch_uid = get_launch_credential(mach, True)
             if launch_uid and not isinstance(mach, PamRemoteBrowserObject):
                 tdag.link_user_to_resource(launch_uid, mach.uid, is_launch_credential=True, belongs_to=True)
+            jit = mach.pam_settings.jit_settings
+            if jit:
+                jit_dag_dict = jit.to_dag_dict()
+                if jit_dag_dict:  # Only save if not empty
+                    set_resource_jit_settings(params, mach.uid, jit_dag_dict, pam_cfg_uid)
+
+
         if new_resources:
             print(f"{len(new_resources)}/{len(new_resources)}\n")
 
