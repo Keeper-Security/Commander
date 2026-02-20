@@ -117,12 +117,9 @@ def _read_csv(path: str) -> List[Dict[str, str]]:
     return  valid_rows
 
 
-def _parse_fields(obj: Dict, type: str):
+def _parse_fields(obj: Dict, type: str, tmpl=None):
     templates = {
         'rs':{
-            "title": obj.get('title',obj['hostname']),
-            "type": obj.get("type","pamMachine"),
-            "host": obj['hostname'],
             "pam_settings": {
               "options": {
                 "rotation": "off",
@@ -135,14 +132,14 @@ def _parse_fields(obj: Dict, type: str):
             "users": []
         },
         'usr':{
-            "title": obj.get('title',f"{obj['user_path']} - {obj['username']}"),
-            "type": "pamUser",
-            "login": obj['username'],
-            "password": obj.get('password',""),
 			"rotation_settings": {}
           }
     }
     res = templates.get(type,{})
+    if tmpl:
+        res = tmpl
+        
+        
     for key in obj:
         if obj[key] == '': continue
         if key.startswith(type):
@@ -167,7 +164,11 @@ def _gen_data(csv_data: List[Dict[str, str]],
     rsrs = data.get("pam_data", {}).get("resources") or []
     idx = next((i for i, item in enumerate(rsrs) if str(item.get("type")) == "pamMachine"), None)
     tmpl = rsrs.pop(idx) if idx is not None else {}
-    
+    rs_tmpl, usr_tmpl = None,None
+    if tmpl:
+        rs_tmpl = tmpl
+        usr_tmpl = tmpl.get('users',[None])[0]
+        rs_tmpl['users'] = []
 
     seen: set[str] = set()
     for i,obj in enumerate(csv_data):
@@ -181,7 +182,10 @@ def _gen_data(csv_data: List[Dict[str, str]],
         seen.add(host)
 
         # create machine dict
-        mach = _parse_fields(obj,'rs')
+        mach = _parse_fields(obj,'rs',rs_tmpl)
+        mach['hostname'] = host
+        mach['title'] = obj.get('title',host)
+        mach['type'] = obj.get("type","pamMachine")
         if obj.get('folder_path',None):
             mach['folder_path'] = obj['folder_path']
 
@@ -200,10 +204,13 @@ def _gen_data(csv_data: List[Dict[str, str]],
             continue
         seen.add(username)
         
-        user = {"title":obj.get('title',username), "login": username, "password": password}
+        user = (_parse_fields(obj,'usr',usr_tmpl))
         if obj.get('folder_path',None):
             user['folder_path'] = obj['folder_path']
-        user.update(_parse_fields(obj,'usr'))
+        user["title"] = obj.get('title',f"{obj['user_path']} - {obj['username']}")
+        user['type'] = "pamUser"
+        user['login'] = obj['username']
+        user["password"] = obj.get('password',"")
             
         # Map user to resource
         for rs in rsrs:
