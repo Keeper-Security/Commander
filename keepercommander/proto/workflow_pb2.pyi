@@ -187,14 +187,14 @@ class WorkflowAccessRequest(_message.Message):
     def __init__(self, resource: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., reason: _Optional[bytes] = ..., ticket: _Optional[bytes] = ...) -> None: ...
 
 class WorkflowApprovalOrDenial(_message.Message):
-    __slots__ = ("resource", "deny", "denialReason")
-    RESOURCE_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("flowUid", "deny", "denialReason")
+    FLOWUID_FIELD_NUMBER: _ClassVar[int]
     DENY_FIELD_NUMBER: _ClassVar[int]
     DENIALREASON_FIELD_NUMBER: _ClassVar[int]
-    resource: _GraphSync_pb2.GraphSyncRef
+    flowUid: bytes
     deny: bool
     denialReason: str
-    def __init__(self, resource: _Optional[_Union[_GraphSync_pb2.GraphSyncRef, _Mapping]] = ..., deny: _Optional[bool] = ..., denialReason: _Optional[str] = ...) -> None: ...
+    def __init__(self, flowUid: _Optional[bytes] = ..., deny: _Optional[bool] = ..., denialReason: _Optional[str] = ...) -> None: ...
 
 class UserAccessState(_message.Message):
     __slots__ = ("workflows",)
