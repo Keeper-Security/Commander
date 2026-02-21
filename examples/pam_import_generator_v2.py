@@ -118,6 +118,9 @@ def _read_csv(path: str) -> List[Dict[str, str]]:
 def _parse_fields(obj: Dict, type: str, tmpl=None):
     templates = {
         "rs":{
+			"title":"",
+			"host":"",
+			"type":"pamMachine",
             "pam_settings": {
               "options": {
                 "rotation": "off",
@@ -180,9 +183,9 @@ def _gen_data(csv_data: List[Dict[str, str]],
 
         # create machine dict
         mach = _parse_fields(obj,"rs",rs_tmpl)
-        mach["hostname"] = host
-        mach["title"] = obj.get("title",host)
-        mach["type"] = obj.get("type","pamMachine")
+		mach["title"] = obj.get("title",host)
+		mach["host"] = host
+		
         if obj.get("folder_path",None):
             mach["folder_path"] = obj["folder_path"]
 
