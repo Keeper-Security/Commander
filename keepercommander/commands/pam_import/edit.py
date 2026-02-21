@@ -37,6 +37,7 @@ from .base import (
     get_launch_credential,
     get_sftp_attribute,
     is_admin_external,
+    mark_local_users_allowing_empty_password_for_external_admin,
     parse_command_options,
     resolve_domain_admin,
     resolve_script_creds,
@@ -52,6 +53,7 @@ from ..recordv3 import RecordAddCommand
 from ..record_edit import RecordUploadAttachmentCommand
 from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
+from ..tunnel_and_connections import PAMTunnelEditCommand
 from ... import api, crypto, utils, vault, record_management
 from ...display import bcolors
 from ...error import CommandError
@@ -72,7 +74,7 @@ class PAMProjectImportCommand(Command):
     parser.add_argument("--sample-data", "-s", required=False, dest="sample_data", action="store_true", default=False, help="Generate sample data.")
     parser.add_argument("--show-template", "-t", required=False, dest="show_template", action="store_true", default=False, help="Print JSON template required for manual import.")
     # parser.add_argument("--force", "-e", required=False, dest="force", action="store_true", default=False, help="Force data import (re/configure later)")
-    parser.add_argument("--output", "-o", required=False, dest="output", action="store", choices=["token", "base64", "json"], default="base64", help="Output format (token: one-time token, config: base64/json)")
+    parser.add_argument("--output", "-o", required=False, dest="output", action="store", choices=["token", "base64", "json", "k8s"], default="base64", help="Output format (token: one-time token, config: base64/json/k8s)")
 
     def get_parser(self):
         return PAMProjectImportCommand.parser
@@ -351,7 +353,8 @@ class PAMProjectImportCommand(Command):
             return res
 
         # Create new Gateway - PAMCreateGatewayCommand()
-        token_format = None if project["options"]["output"] == "token" else "b64"
+        output_fmt = project["options"]["output"]
+        token_format = None if output_fmt == "token" else ("k8s" if output_fmt == "k8s" else "b64")
         ksm_app_uid = project["ksm_app"]["app_uid"]
         gw = self.create_gateway(
             params,
@@ -363,8 +366,9 @@ class PAMProjectImportCommand(Command):
             res["gateway_token"] = gw[0].get("oneTimeToken", "") if gw and gw_names else ""  # OTT
         else:
             res["gateway_token"] = gw[0].get("config", "") if gw and gw_names else ""  # Config
-            if project["options"]["output"] == "json":
+            if output_fmt == "json":
                 res["gateway_token"] = json.loads(utils.base64_url_decode(res["gateway_token"]))
+            # k8s: config is already Kubernetes Secret YAML string; base64: keep as-is
         res["gateway_device_token"] = gw[0].get("deviceToken", "") if gw and gw_names else ""
 
         # controller_uid is not returned by vault/app_client_add
@@ -377,6 +381,7 @@ class PAMProjectImportCommand(Command):
         return res
 
     def process_pam_config(self, params, project: dict) -> dict:
+        # Local import to avoid circular import with discoveryrotation
         from ..discoveryrotation import PAMConfigurationNewCommand
         res:Dict[str, Any] = {
             "pam_config_name_target": "",
@@ -517,9 +522,8 @@ class PAMProjectImportCommand(Command):
 
     def generate_discovery_playground_data(self, params, project: dict):
         """ Generate data that works with discovery-playground docker setup """
-        from ..tunnel_and_connections import PAMTunnelEditCommand
+        # Local import to avoid circular import with discoveryrotation
         from ..discoveryrotation import PAMCreateRecordRotationCommand
-
         # PUBLIC_KEY = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC0bH13XfBiKcej3/W"\
         # "mnc7GYbx+B+hmfYTaDFqfJ/vEGy3HTSz2t5nDb3+S1clBcCmse5FzEA7aXC3cZXurGBH"\
         # "irz2Ud8wCL2t95cJnrkzfft7lsILnchm0J0Y0TyDW42gLj1JWh/E5qQyUxF0F6xEBKcy"\
@@ -1358,9 +1362,8 @@ class PAMProjectImportCommand(Command):
 
     def process_data(self, params, project):
         """Process project data (JSON)"""
-        from ..tunnel_and_connections import PAMTunnelEditCommand
+        # Local import to avoid circular import with discoveryrotation
         from ..discoveryrotation import PAMCreateRecordRotationCommand
-
         # users section is mostly RBI login users, but occasional "disconnected"
         # PAM User (ex. NOOP rotation) requires explicit record type to be set
         # also for shared users b/n ssh, vnc, rdp on same host (one pamMachine each)
@@ -1546,6 +1549,9 @@ class PAMProjectImportCommand(Command):
                     uid = getattr(matches[0], "uid", "") if matches else ""
                     if uid:
                         mach.rbi_settings.connection.httpCredentialsUid = [uid]
+
+        # Local users on machines/databases/directories with external AD admin may have empty passwords (AD rotates them).
+        mark_local_users_allowing_empty_password_for_external_admin(resources)
 
         for usr in users:
             # resolve user.rotation_settings.resource - "iam_user", "scripts_only"
