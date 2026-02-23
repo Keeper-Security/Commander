@@ -542,7 +542,7 @@ class PAMLaunchCommand(Command):
                 raise CommandError('pam launch', f'Record {record_uid} is not a TypedRecord')
 
             try:
-                from ..workflow.workflow_commands import check_workflow_and_prompt_2fa
+                from ..workflow import check_workflow_and_prompt_2fa
                 should_proceed, two_factor_value = check_workflow_and_prompt_2fa(params, record_uid)
                 if not should_proceed:
                     return

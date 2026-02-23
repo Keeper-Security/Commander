@@ -78,7 +78,7 @@ from .pam_debug.vertex import PAMDebugVertexCommand
 from .pam_import.commands import PAMProjectCommand
 from keepercommander.commands.pam_cloud.pam_privileged_access import PAMPrivilegedAccessCommand
 from .pam_launch.launch import PAMLaunchCommand
-from .workflow.workflow_commands import PAMWorkflowCommand
+from .workflow import PAMWorkflowCommand
 from .pam_service.list import PAMActionServiceListCommand
 from .pam_service.add import PAMActionServiceAddCommand
 from .pam_service.remove import PAMActionServiceRemoveCommand
