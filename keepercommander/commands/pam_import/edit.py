@@ -60,6 +60,7 @@ from ...error import CommandError
 from ...importer import imp_exp
 from ...importer.importer import SharedFolder, Permission
 from ...keeper_dag import EdgeType
+from ...keeper_dag.types import RefType
 from ...params import LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ...proto import record_pb2, APIRequest_pb2, enterprise_pb2
 from ...recordv3 import RecordV3
@@ -1638,6 +1639,7 @@ class PAMProjectImportCommand(Command):
                 # bugfix: RBI=True also needs connections=True to enable RBI (in web vault)
                 if args.get("remote_browser_isolation", False) is True:
                     args["connections"] = True
+                args["v_type"] = RefType.PAM_BROWSER
                 tdag.set_resource_allowed(**args)
             else: # machine/db/directory
                 args = parse_command_options(mach, True)
@@ -1647,6 +1649,8 @@ class PAMProjectImportCommand(Command):
                     tdag.link_user_to_resource(admin_uid, mach.uid, is_admin=True, belongs_to=False)
                 args = parse_command_options(mach, False)
                 args["meta_version"] = 1
+                _rtype = (getattr(mach, "type", "") or "").lower()
+                args["v_type"] = RefType.PAM_DIRECTORY if _rtype == "pamdirectory" else RefType.PAM_DATABASE if _rtype == "pamdatabase" else RefType.PAM_MACHINE
                 tdag.set_resource_allowed(**args)
 
                 # After setting allowedSettings, save JIT settings if present

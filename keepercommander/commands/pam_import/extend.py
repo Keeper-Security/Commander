@@ -15,6 +15,7 @@ import json
 import logging
 import os.path
 import re
+from types import SimpleNamespace
 
 from itertools import chain
 from typing import Any, Dict, Optional, List
@@ -40,6 +41,7 @@ from .base import (
     is_admin_external,
     mark_local_users_allowing_empty_password_for_external_admin,
     parse_command_options,
+    resolve_domain_admin,
     resolve_script_creds,
     set_launch_record_uid,
     set_sftp_uid,
@@ -52,6 +54,7 @@ from .keeper_ai_settings import (
     refresh_link_to_config_to_latest,
 )
 from ...keeper_dag import EdgeType
+from ...keeper_dag.types import RefType
 from ..base import Command
 from ..ksm import KSMCommand
 from ..pam import gateway_helper
@@ -59,7 +62,7 @@ from ..pam.config_helper import configuration_controller_get
 from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
 from ..tunnel_and_connections import PAMTunnelEditCommand
-from ... import api, crypto, utils, vault, vault_extensions
+from ... import api, crypto, utils, vault, vault_extensions, record_management
 from ...display import bcolors
 from ...error import CommandError
 from ...params import LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
@@ -298,7 +301,7 @@ def _get_ksm_app_record_uids(params, ksm_shared_folders: list) -> set:
 
 
 def _get_records_in_folder(params, folder_uid: str):
-    """Return list of (record_uid, title, record_type) for records in folder_uid.
+    """Return list of (record_uid, title, record_type, login) for records in folder_uid.
     record_type from record for autodetect (e.g. pamUser, pamMachine, login)."""
     subfolder_record_cache = getattr(params, "subfolder_record_cache", None) or {}
     result = []
@@ -309,14 +312,20 @@ def _get_records_in_folder(params, folder_uid: str):
             rtype = ""
             if hasattr(rec, "record_type"):
                 rtype = getattr(rec, "record_type", "") or ""
-            result.append((ruid, title, rtype))
+            login = ""
+            fields = getattr(rec, "fields", None)
+            if isinstance(fields, list):
+                field = next((x for x in fields if getattr(x, "type", "") == "login"), None)
+                if field and hasattr(field, "get_default_value"):
+                    login = (field.get_default_value() or "") or ""
+            result.append((ruid, title, rtype, login))
         except Exception:
             pass
     return result
 
 
 def _get_all_ksm_app_records(params, ksm_shared_folders: list) -> list:
-    """Return list of (record_uid, title, record_type) for every record in any folder under KSM app."""
+    """Return list of (record_uid, title, record_type, login) for every record in any folder under KSM app."""
     folder_uids = _collect_all_folder_uids_under_ksm(ksm_shared_folders)
     out = []
     for fuid in folder_uids:
@@ -861,6 +870,9 @@ class PAMProjectExtendCommand(Command):
 
         machines = [x for x in resources if not isinstance(x, PamRemoteBrowserObject)]
         pam_directories = [x for x in machines if (getattr(x, "type", "") or "").lower() == "pamdirectory"]
+        # Augment with vault records so resolve_script_creds can resolve additional_credentials from vault
+        users_for_scripts = list(users) + [SimpleNamespace(uid=r[0], title=r[1] or "", login=(r[3] if len(r) > 3 else "") or "") for r in all_ksm_records if ((r[2] or "").lower() in ("pamuser", "login"))]
+        resources_for_scripts = list(resources) + [SimpleNamespace(uid=r[0], title=r[1] or "", login=(r[3] if len(r) > 3 else "") or "") for r in all_ksm_records if (r[2] or "").lower() in ("pammachine", "pamdatabase", "pamdirectory")]
         for mach in resources:
             if not mach:
                 continue
@@ -872,10 +884,28 @@ class PAMProjectExtendCommand(Command):
                 ruids = ruids or [x for x in machines if getattr(x, "login", None) == sftp_res]
                 if len(ruids) == 1 and getattr(ruids[0], "uid", ""):
                     set_sftp_uid(mach, "sftpResourceUid", ruids[0].uid)
+                elif len(ruids) > 1:
+                    logging.warning(f"{bcolors.WARNING}Multiple records match sftpResource '{sftp_res}' for {getattr(mach, 'title', mach)}; not resolved.{bcolors.ENDC}")
+                else:
+                    ref = (sftp_res or "").strip()
+                    vault_matches = [r for r in all_ksm_records if (r[1] or "").strip() == ref and (r[2] or "").lower() in ("pammachine", "pamdatabase", "pamdirectory")]
+                    if len(vault_matches) == 1:
+                        set_sftp_uid(mach, "sftpResourceUid", vault_matches[0][0])
+                    elif len(vault_matches) > 1:
+                        logging.warning(f"{bcolors.WARNING}Multiple vault records match sftpResource '{ref}' for {getattr(mach, 'title', mach)}; not resolved.{bcolors.ENDC}")
             if sftp_user:
                 ruids = find_user(mach, users, sftp_user) or find_user(machines, users, sftp_user)
                 if len(ruids) == 1 and getattr(ruids[0], "uid", ""):
                     set_sftp_uid(mach, "sftpUserUid", ruids[0].uid)
+                elif len(ruids) > 1:
+                    logging.warning(f"{bcolors.WARNING}Multiple records match sftpUser '{sftp_user}' for {getattr(mach, 'title', mach)}; not resolved.{bcolors.ENDC}")
+                else:
+                    ref = (sftp_user or "").strip()
+                    vault_matches = [r for r in all_ksm_records if ((r[1] or "").strip() == ref or (len(r) > 3 and (r[3] or "").strip() == ref)) and (r[2] or "").lower() in ("pamuser", "login")]
+                    if len(vault_matches) == 1:
+                        set_sftp_uid(mach, "sftpUserUid", vault_matches[0][0])
+                    elif len(vault_matches) > 1:
+                        logging.warning(f"{bcolors.WARNING}Multiple vault records match sftpUser '{ref}' for {getattr(mach, 'title', mach)}; not resolved.{bcolors.ENDC}")
             if admin_cred:
                 ruids = find_user(mach, users, admin_cred)
                 is_external = False
@@ -889,7 +919,7 @@ class PAMProjectExtendCommand(Command):
                 # Fallback only when no match in import (len(ruids) == 0)
                 elif len(ruids) == 0:
                     ref = (admin_cred or "").strip()
-                    vault_matches = [r for r in all_ksm_records if (r[1] or "").strip() == ref and (r[2] or "").lower() in ("pamuser", "login")]
+                    vault_matches = [r for r in all_ksm_records if ((r[1] or "").strip() == ref or (len(r) > 3 and (r[3] or "").strip() == ref)) and (r[2] or "").lower() in ("pamuser", "login")]
                     if len(vault_matches) == 1:
                         set_user_record_uid(mach, vault_matches[0][0], False)
                     elif len(vault_matches) > 1:
@@ -904,7 +934,7 @@ class PAMProjectExtendCommand(Command):
                 # Fallback only when no match in import (len(ruids) == 0)
                 elif len(ruids) == 0:
                     ref = (launch_cred or "").strip()
-                    vault_matches = [r for r in all_ksm_records if (r[1] or "").strip() == ref and (r[2] or "").lower() in ("pamuser", "login")]
+                    vault_matches = [r for r in all_ksm_records if ((r[1] or "").strip() == ref or (len(r) > 3 and (r[3] or "").strip() == ref)) and (r[2] or "").lower() in ("pamuser", "login")]
                     if len(vault_matches) == 1:
                         set_launch_record_uid(mach, vault_matches[0][0])
                     elif len(vault_matches) > 1:
@@ -920,10 +950,16 @@ class PAMProjectExtendCommand(Command):
                     if len(matches) > 1:
                         logging.warning(f"{bcolors.WARNING}Multiple pamDirectory matches for jit_settings.pam_directory_record '{ref}' in {getattr(mach, 'title', mach)}; using first.{bcolors.ENDC}")
                     if len(matches) == 0:
-                        logging.error(f"jit_settings.pam_directory_record '{ref}' for '{getattr(mach, 'title', mach)}': no pamDirectory record found in pam_data.resources. Match by title.")
+                        vault_matches = [r for r in all_ksm_records if (r[1] or "").strip() == ref and (r[2] or "").lower() == "pamdirectory"]
+                        if len(vault_matches) == 1:
+                            jit.pam_directory_uid = vault_matches[0][0]
+                        elif len(vault_matches) > 1:
+                            logging.warning(f"{bcolors.WARNING}Multiple vault pamDirectory matches for jit_settings.pam_directory_record '{ref}' in {getattr(mach, 'title', mach)}; not resolved.{bcolors.ENDC}")
+                        else:
+                            logging.error(f"jit_settings.pam_directory_record '{ref}' for '{getattr(mach, 'title', mach)}': no pamDirectory record found in JSON or vault. Match by title.")
                     else:
                         jit.pam_directory_uid = matches[0].uid
-            resolve_script_creds(mach, users, resources)
+            resolve_script_creds(mach, users_for_scripts, resources_for_scripts)
             if hasattr(mach, "users") and isinstance(mach.users, list):
                 for usr in mach.users:
                     if usr and hasattr(usr, "rotation_settings") and usr.rotation_settings:
@@ -932,7 +968,7 @@ class PAMProjectExtendCommand(Command):
                             usr.rotation_settings.resourceUid = mach.uid
                         elif rot in ("iam_user", "scripts_only"):
                             usr.rotation_settings.resourceUid = pam_cfg_uid
-                    resolve_script_creds(usr, users, resources)
+                    resolve_script_creds(usr, users_for_scripts, resources_for_scripts)
             if hasattr(mach, "rbi_settings") and getattr(mach.rbi_settings, "connection", None):
                 conn = mach.rbi_settings.connection
                 if getattr(conn, "protocol", None) and str(getattr(conn.protocol, "value", "") or "").lower() == "http":
@@ -943,6 +979,15 @@ class PAMProjectExtendCommand(Command):
                         matches = matches or [x for x in users if getattr(x, "login", None) == cred]
                         if len(matches) == 1 and getattr(matches[0], "uid", ""):
                             mach.rbi_settings.connection.httpCredentialsUid = [matches[0].uid]
+                        elif len(matches) > 1:
+                            logging.warning(f"{bcolors.WARNING}Multiple records match RBI httpCredentials '{cred}' for {getattr(mach, 'title', mach)}; not resolved.{bcolors.ENDC}")
+                        else:
+                            ref = (cred or "").strip()
+                            vault_matches = [r for r in all_ksm_records if ((r[1] or "").strip() == ref or (len(r) > 3 and (r[3] or "").strip() == ref)) and (r[2] or "").lower() in ("pamuser", "login")]
+                            if len(vault_matches) == 1:
+                                mach.rbi_settings.connection.httpCredentialsUid = [vault_matches[0][0]]
+                            elif len(vault_matches) > 1:
+                                logging.warning(f"{bcolors.WARNING}Multiple vault records match RBI httpCredentials '{ref}' for {getattr(mach, 'title', mach)}; not resolved.{bcolors.ENDC}")
         # Local users on machines/databases/directories with external AD admin may have empty passwords (AD rotates them).
         mark_local_users_allowing_empty_password_for_external_admin(resources)
         for usr in users:
@@ -951,13 +996,21 @@ class PAMProjectExtendCommand(Command):
                 if rot in ("iam_user", "scripts_only"):
                     usr.rotation_settings.resourceUid = pam_cfg_uid
                 elif rot == "general":
-                    res = getattr(usr.rotation_settings, "resource", "") or ""
+                    res = (getattr(usr.rotation_settings, "resource", "") or "").strip()
                     if res:
                         ruids = [x for x in machines if getattr(x, "title", None) == res]
                         ruids = ruids or [x for x in machines if getattr(x, "login", None) == res]
-                        if ruids:
+                        if len(ruids) == 1:
                             usr.rotation_settings.resourceUid = ruids[0].uid
-            resolve_script_creds(usr, users, resources)
+                        elif len(ruids) > 1:
+                            logging.warning(f"{bcolors.WARNING}Multiple records match rotation_settings.resource '{res}' for user {getattr(usr, 'title', usr)}; not resolved.{bcolors.ENDC}")
+                        else:
+                            vault_matches = [r for r in all_ksm_records if (r[1] or "").strip() == res and (r[2] or "").lower() in ("pammachine", "pamdatabase", "pamdirectory")]
+                            if len(vault_matches) == 1:
+                                usr.rotation_settings.resourceUid = vault_matches[0][0]
+                            elif len(vault_matches) > 1:
+                                logging.warning(f"{bcolors.WARNING}Multiple vault records match rotation_settings.resource '{res}' for user {getattr(usr, 'title', usr)}; not resolved.{bcolors.ENDC}")
+            resolve_script_creds(usr, users_for_scripts, resources_for_scripts)
 
         if step2_errors:
             project["error_count"] = project.get("error_count", 0) + len(step2_errors)
@@ -1287,6 +1340,23 @@ class PAMProjectExtendCommand(Command):
         shfusr = (project.get("folders") or {}).get("users_folder_uid", "")
         pce = (project.get("pam_config") or {}).get("pam_config_object")
 
+        # Resolve domain admin if Domain PAM Config: match against extend JSON users and existing vault users
+        if pce and getattr(pce, "environment", "") == "domain" and getattr(pce, "dom_administrative_credential", None):
+            users_for_domain_admin = list(users)
+            ksm_shared_folders = project.get("ksm_shared_folders") or []
+            if ksm_shared_folders:
+                all_ksm_records = _get_all_ksm_app_records(params, ksm_shared_folders)
+                for r in all_ksm_records:
+                    rtype = ((r[2] if len(r) > 2 else "") or "").lower()
+                    if rtype not in ("pamuser", "login"):
+                        continue
+                    uid = r[0] if r else ""
+                    title = (r[1] if len(r) > 1 else "") or ""
+                    login = (r[3] if len(r) > 3 else "") or ""
+                    if uid:
+                        users_for_domain_admin.append(SimpleNamespace(uid=uid, title=title, login=login))
+            resolve_domain_admin(pce, users_for_domain_admin)
+
         print("Started importing data...")
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_cfg_uid, True,
@@ -1323,6 +1393,7 @@ class PAMProjectExtendCommand(Command):
                 args = parse_command_options(mach, False)
                 if args.get("remote_browser_isolation", False) is True:
                     args["connections"] = True
+                args["v_type"] = RefType.PAM_BROWSER
                 tdag.set_resource_allowed(**args)
             else:
                 args = parse_command_options(mach, True)
@@ -1333,6 +1404,8 @@ class PAMProjectExtendCommand(Command):
                     tdag.link_user_to_resource(admin_uid, mach.uid, is_admin=True, belongs_to=False)
                 args = parse_command_options(mach, False)
                 args["meta_version"] = 1
+                _rtype = (getattr(mach, "type", "") or "").lower()
+                args["v_type"] = RefType.PAM_DIRECTORY if _rtype == "pamdirectory" else RefType.PAM_DATABASE if _rtype == "pamdatabase" else RefType.PAM_MACHINE
                 tdag.set_resource_allowed(**args)
 
                 # After setting allowedSettings, save JIT settings if present
@@ -1448,6 +1521,27 @@ class PAMProjectExtendCommand(Command):
                 jit_domain_links_added = True
         if jit_domain_links_added:
             tdag.linking_dag.save()
+
+        # PAM Domain Config - update domain admin creds
+        if pce and getattr(pce, "environment", "") == "domain":
+            if getattr(pce, "admin_credential_ref", None):
+                pcuid = (project.get("pam_config") or {}).get("pam_config_uid")
+                pcrec = vault.KeeperRecord.load(params, pcuid) if pcuid else None
+                if pcrec and isinstance(pcrec, vault.TypedRecord) and pcrec.version == 6:
+                    if pcrec.record_type == "pamDomainConfiguration":
+                        prf = pcrec.get_typed_field("pamResources")
+                        if not prf:
+                            prf = vault.TypedField.new_field("pamResources", {})
+                            pcrec.fields.append(prf)
+                        prf.value = prf.value or [{}]
+                        if isinstance(prf.value[0], dict):
+                            prf.value[0]["adminCredentialRef"] = pce.admin_credential_ref
+                            record_management.update_record(params, pcrec)
+                            tdag.link_user_to_config_with_options(pce.admin_credential_ref, is_admin="on")
+                        else:
+                            logging.error(f"Unable to add adminCredentialRef - bad pamResources field in PAM Config {pcuid}")
+            else:
+                logging.debug(f"Unable to resolve domain admin '{getattr(pce, 'dom_administrative_credential', '')}' for PAM Domain configuration.")
 
         if pce and getattr(pce, "scripts", None) and getattr(pce.scripts, "scripts", None):
             refs = [x for x in pce.scripts.scripts if getattr(x, "record_refs", None)]
