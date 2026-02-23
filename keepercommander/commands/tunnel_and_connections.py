@@ -546,7 +546,7 @@ class PAMTunnelStartCommand(Command):
         # Workflow access check and 2FA prompt
         two_factor_value = None
         try:
-            from .workflow.workflow_commands import check_workflow_and_prompt_2fa
+            from .workflow import check_workflow_and_prompt_2fa
             should_proceed, two_factor_value = check_workflow_and_prompt_2fa(params, record_uid)
             if not should_proceed:
                 return
