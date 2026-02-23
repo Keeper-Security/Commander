@@ -411,6 +411,11 @@ class PAMTunnelEditCommand(Command):
                 if _remove_tunneling_override_port and pam_settings.value[0]['portForward'].get('port'):
                     pam_settings.value[0]['portForward'].pop('port')
                     dirty = True
+            # Persist the record changes (new pamSettings field or port modifications)
+            if dirty:
+                record_management.update_record(params, record)
+                api.sync_down(params)
+                dirty = False
             if not tmp_dag.is_tunneling_config_set_up(record_uid):
                 print(f"{bcolors.FAIL}No PAM Configuration UID set. This must be set for tunneling to work. "
                       f"This can be done by running "
@@ -538,6 +543,16 @@ class PAMTunnelStartCommand(Command):
             print(f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
             return
 
+        # Workflow access check and 2FA prompt
+        two_factor_value = None
+        try:
+            from .workflow import check_workflow_and_prompt_2fa
+            should_proceed, two_factor_value = check_workflow_and_prompt_2fa(params, record_uid)
+            if not should_proceed:
+                return
+        except ImportError:
+            pass
+
         # Validate PAM settings
         pam_settings = record.get_typed_field('pamSettings')
         if not pam_settings:
@@ -633,7 +648,7 @@ class PAMTunnelStartCommand(Command):
 
         # Use Rust WebRTC implementation with configurable trickle ICE
         trickle_ice = not no_trickle_ice
-        result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title, allow_supply_host=allow_supply_host)
+        result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title, allow_supply_host=allow_supply_host, two_factor_value=two_factor_value)
         
         if result and result.get("success"):
             # The helper will show endpoint table when local socket is actually listening

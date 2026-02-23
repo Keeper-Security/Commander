@@ -1335,6 +1335,11 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 logging.debug("Using userSupplied credential type - user will provide credentials")
             # else: no credentialType - gateway uses pamMachine credentials directly (backward compatible)
 
+            # Add 2FA value if workflow requires MFA
+            two_factor_value = kwargs.get('two_factor_value')
+            if two_factor_value:
+                inputs['twoFactorValue'] = two_factor_value
+
             # Router token is no longer extracted from cookies (removed in commit 338a9fda)
             # Router affinity is now handled server-side
 

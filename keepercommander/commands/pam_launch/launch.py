@@ -283,6 +283,17 @@ class PAMLaunchCommand(Command):
 
             logging.debug(f"Found record: {record_uid}")
 
+            # Workflow access check and 2FA prompt
+            try:
+                from ..workflow import check_workflow_and_prompt_2fa
+                should_proceed, two_factor_value = check_workflow_and_prompt_2fa(params, record_uid)
+                if not should_proceed:
+                    return
+                if two_factor_value:
+                    kwargs['two_factor_value'] = two_factor_value
+            except ImportError:
+                pass
+
             # Validate --user and --host parameters against allowSupply flags
             # Note: cmdline options override record data when provided
             # launch_credential_uid = kwargs.get('launch_credential_uid')
