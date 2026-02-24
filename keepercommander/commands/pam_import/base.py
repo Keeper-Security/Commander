@@ -850,6 +850,7 @@ class PamUserObject():
         self.attachments = None  # fileRef
         self.scripts = None  # script
         self.rotation_settings = None  # DAG: rotation settings
+        self._is_pam_directory_user: bool = False  # True when loaded as a user of pamDirectory (AD); empty password is valid
 
     @classmethod
     def load(cls, data: Union[str, dict], rotation_params: Optional[PamRotationParams] = None):
@@ -931,8 +932,13 @@ class PamUserObject():
         return uid
 
     def validate_record(self):
-        if not self.password:
-            logging.warning("PAM User is missing required field `login`")
+        # For pamDirectory (AD) users, empty password is valid; do not warn (debug only). Otherwise require password.
+        password_empty = not (self.password and isinstance(self.password, str) and self.password.strip())
+        if getattr(self, "_is_pam_directory_user", False):
+            if password_empty:
+                logging.debug("PAM User (pamDirectory/AD) has empty password (valid for AD).")
+        elif password_empty:
+            logging.warning("PAM User is missing required field `password`")
         if not self.rotation_settings:
             logging.debug("PAM User is missing rotation settings")
         if isinstance(self.rotation_settings, PamRotationSettingsObject):
@@ -1565,6 +1571,7 @@ class PamDirectoryObject():
                     continue
                 usr = PamUserObject.load(user, rotation_params)
                 if usr:
+                    usr._is_pam_directory_user = True  # AD users may have empty password
                     obj.users.append(usr)
         else:
             logging.warning(f"""Warning: PAM Directory "{obj.title}" with empty users section.""")
@@ -3075,6 +3082,18 @@ def is_admin_external(mach) -> bool:
         res = True
     return res
 
+def mark_local_users_allowing_empty_password_for_external_admin(resources) -> None:
+    """When a pamMachine/pamDatabase/pamDirectory has is_admin_external
+    (admin_credential is AD/pamDirectory user, e.g. dot-separated 'AD1.Admin'),
+    The machine's local users may have empty passwords (AD admin rotates them).
+    Mark those users so validation does not warn."""
+    for mach in resources or []:
+        if not getattr(mach, "is_admin_external", False):
+            continue
+        if hasattr(mach, "users") and isinstance(mach.users, list):
+            for u in mach.users:
+                u._is_pam_directory_user = True
+
 def get_admin_credential(obj, uid:bool=False) -> str:
     # Get one of pam_settings.connection.{userRecords,userRecordUid}
     value: str = ""
@@ -3134,14 +3153,15 @@ def set_launch_record_uid(obj, uid: str) -> bool:
     return False
 
 def find_external_user(mach, machines, title: str) -> list:
-    # Local pamMachine could reference pamDirectory AD user as its admin
+    # pamMachine/pamDatabase/pamDirectory can reference pamDirectory AD user as admin (dot-separated e.g. "AD1.Admin")
     res = []
-    if title and machines and mach.type == "pamMachine":
-        mu = title.split(".", 1)  # machine/user titles
+    mach_type = getattr(mach, "type", "") or ""
+    if title and machines and mach_type in ("pamMachine", "pamDatabase", "pamDirectory"):
+        mu = title.split(".", 1)  # resource/user titles (e.g. "AD1"."Admin")
         mname = mu[0] if len(mu) > 1 else ""
         uname = mu[1] if len(mu) > 1 else mu[0]
         for m in machines:
-            if m.type == "pamDirectory" and (not mname or mname == m.title):
+            if getattr(m, "type", "") == "pamDirectory" and (not mname or mname == getattr(m, "title", None)):
                 res.extend(search_machine(m, uname) or [])
     return res
 
