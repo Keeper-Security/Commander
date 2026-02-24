@@ -8,6 +8,7 @@
 # Contact: ops@keepersecurity.com
 #
 import json
+import logging
 import shutil
 from typing import Tuple, List, Union, Optional
 
@@ -69,19 +70,19 @@ def keeper_colorize(text, color):
 
 def show_government_warning():
     """Display U.S. Government Information System warning for GOV environments."""
-    print('')
-    print(f'{bcolors.WARNING}' + '=' * 80 + f'{bcolors.ENDC}')
-    print(f'{bcolors.WARNING}U.S. GOVERNMENT INFORMATION SYSTEM{bcolors.ENDC}')
-    print(f'{bcolors.WARNING}' + '=' * 80 + f'{bcolors.ENDC}')
-    print('')
-    print('You are about to access a U.S. Government Information System. Although the')
-    print('encrypted vault adheres to a zero-knowledge security architecture, system')
-    print('access logs are subject to monitoring, recording and audit. Unauthorized')
-    print('use of this system is prohibited and may result in civil and criminal')
-    print('penalties. Your use of this system indicates your acknowledgement and consent.')
-    print('')
-    print(f'{bcolors.WARNING}' + '=' * 80 + f'{bcolors.ENDC}')
-    print('')
+    logging.warning('')
+    logging.warning(f'{bcolors.WARNING}' + '=' * 80 + f'{bcolors.ENDC}')
+    logging.warning(f'{bcolors.WARNING}U.S. GOVERNMENT INFORMATION SYSTEM{bcolors.ENDC}')
+    logging.warning(f'{bcolors.WARNING}' + '=' * 80 + f'{bcolors.ENDC}')
+    logging.warning('')
+    logging.warning('You are about to access a U.S. Government Information System. Although the')
+    logging.warning('encrypted vault adheres to a zero-knowledge security architecture, system')
+    logging.warning('access logs are subject to monitoring, recording and audit. Unauthorized')
+    logging.warning('use of this system is prohibited and may result in civil and criminal')
+    logging.warning('penalties. Your use of this system indicates your acknowledgement and consent.')
+    logging.warning('')
+    logging.warning(f'{bcolors.WARNING}' + '=' * 80 + f'{bcolors.ENDC}')
+    logging.warning('')
 
 
 def welcome():
@@ -300,27 +301,27 @@ def post_login_summary(record_count=0, breachwatch_count=0, show_tips=True):
     DIM = Fore.WHITE
     WARN = Fore.YELLOW
 
-    print()
+    logging.info('')
 
     # Vault summary
     if record_count > 0:
-        print(f"  {ACCENT}✓{Fore.RESET} Decrypted {record_count} records")
+        logging.info(f"  {ACCENT}✓{Fore.RESET} Decrypted {record_count} records")
 
     # BreachWatch warning
     if breachwatch_count > 0:
-        print(f"  {WARN}⚠ {breachwatch_count} high-risk passwords{Fore.RESET} - run {ACCENT}breachwatch list{Fore.RESET}")
+        logging.info(f"  {WARN}⚠ {breachwatch_count} high-risk passwords{Fore.RESET} - run {ACCENT}breachwatch list{Fore.RESET}")
 
     if show_tips:
-        print()
-        print(f"  {DIM}Quick Start:{Fore.RESET}")
-        print(f"    {ACCENT}ls{Fore.RESET}            List records")
-        print(f"    {ACCENT}ls -l -f{Fore.RESET}      List folders")
-        print(f"    {ACCENT}cd <UID>{Fore.RESET}      Change folder")
-        print(f"    {ACCENT}get <UID>{Fore.RESET}     Get record or folder info")
-        print(f"    {ACCENT}supershell{Fore.RESET}    Launch vault TUI")
-        print(f"    {ACCENT}search{Fore.RESET} <text> Search your vault")
-        print(f"    {ACCENT}this-device{Fore.RESET}   Configure device settings")
-        print(f"    {ACCENT}whoami{Fore.RESET}        Display account info")
-        print(f"    {ACCENT}?{Fore.RESET}             List all commands")
+        logging.info('')
+        logging.info(f"  {DIM}Quick Start:{Fore.RESET}")
+        logging.info(f"    {ACCENT}ls{Fore.RESET}            List records")
+        logging.info(f"    {ACCENT}ls -l -f{Fore.RESET}      List folders")
+        logging.info(f"    {ACCENT}cd <UID>{Fore.RESET}      Change folder")
+        logging.info(f"    {ACCENT}get <UID>{Fore.RESET}     Get record or folder info")
+        logging.info(f"    {ACCENT}supershell{Fore.RESET}    Launch vault TUI")
+        logging.info(f"    {ACCENT}search{Fore.RESET} <text> Search your vault")
+        logging.info(f"    {ACCENT}this-device{Fore.RESET}   Configure device settings")
+        logging.info(f"    {ACCENT}whoami{Fore.RESET}        Display account info")
+        logging.info(f"    {ACCENT}?{Fore.RESET}             List all commands")
 
-    print()
+    logging.info('')
