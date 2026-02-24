@@ -85,10 +85,44 @@ class CommandHandler:
     def download_config_from_vault(self, params: KeeperParams, title: str, config_dir: Path) -> bool:
         """Download config file from vault if it exists."""
         try:
-            if record_uid := self.find_config_record(params, title):
-                self.execute_cli_command(params, f"download-attachment {record_uid} --out-dir '{config_dir}'")
+            record_uid = self.find_config_record(params, title)
+            if not record_uid:
+                return False
+
+            self.execute_cli_command(params, f"download-attachment {record_uid} --out-dir '{config_dir}'")
+
+            json_path = config_dir / 'service_config.json'
+            yaml_path = config_dir / 'service_config.yaml'
+            if json_path.exists() or yaml_path.exists():
                 return True
-            return False
+
+            return self._restore_config_from_custom_field(params, record_uid, config_dir)
         except Exception as e:
             logger.error(f"Error downloading config from vault: {e}")
+            return False
+
+    def _restore_config_from_custom_field(self, params: KeeperParams, record_uid: str, config_dir: Path) -> bool:
+        """Write service_config content from a custom field to disk."""
+        try:
+            from ... import vault
+            record = vault.KeeperRecord.load(params, record_uid)
+            if not isinstance(record, vault.TypedRecord) or not record.custom:
+                return False
+
+            field_map = {
+                'service_config_json': config_dir / 'service_config.json',
+                'service_config_yaml': config_dir / 'service_config.yaml',
+            }
+            for field in record.custom:
+                if field.label in field_map and field.get_default_value():
+                    dest = field_map[field.label]
+                    dest.write_text(field.get_default_value())
+                    from ... import utils
+                    utils.set_file_permissions(str(dest))
+                    logger.debug(f"Restored {dest.name} from custom field")
+                    return True
+
+            return False
+        except Exception as e:
+            logger.error(f"Error restoring config from custom field: {e}")
             return False
