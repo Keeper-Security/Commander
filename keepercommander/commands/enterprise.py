@@ -1014,7 +1014,10 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                             row.append(len(enforcements))
                         elif column == 'enforcements':
                             enforcements = role_enforcements.get(role_id, {})
-                            row.append(list(enforcements.keys()))
+                            if kwargs.get('format') == 'json':
+                                row.append(dict(enforcements))
+                            else:
+                                row.append(list(enforcements.keys()))
                         elif column == 'managed_node_count':
                             row.append(len(managed_nodes_list))
                         elif column == 'managed_nodes':
@@ -1147,6 +1150,10 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                         n.append(node)
                     else:
                         node_lookup[node_name] = [n, node]
+                if not node.get('parent_id'):
+                    ent_name = params.enterprise['enterprise_name'].lower()
+                    if ent_name not in node_lookup:
+                        node_lookup[ent_name] = node
 
         parent_id = None
         if kwargs.get('parent'):
