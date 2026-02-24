@@ -476,7 +476,7 @@ def force_quit():
             subprocess.run('reset')
         elif os.name == 'nt':
             subprocess.run('cls')
-        print('Auto-logout timer activated.')
+        logging.warning('Auto-logout timer activated.')
     except:
         pass
     os._exit(0)
@@ -734,7 +734,7 @@ def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # t
             try:
                 LoginCommand().execute(params, email=params.user, password=params.password, new_login=new_login)
             except KeyboardInterrupt:
-                print('')
+                logging.info('')
             except EOFError:
                 return 0
             except Exception as e:
@@ -742,10 +742,10 @@ def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # t
         else:
             if params.device_token:
                 logging.info('Region: %s', params.server)
-            print()
+            logging.info('')
             logging.info("You are not logged in.")
-            print(f'Type {Fore.GREEN}login <email>{Fore.RESET} to authenticate or {Fore.GREEN}server <region>{Fore.RESET} to change data centers.')
-            print(f'Type {Fore.GREEN}?{Fore.RESET} for a list of all available commands.')
+            logging.info(f'Type {Fore.GREEN}login <email>{Fore.RESET} to authenticate or {Fore.GREEN}server <region>{Fore.RESET} to change data centers.')
+            logging.info(f'Type {Fore.GREEN}?{Fore.RESET} for a list of all available commands.')
 
     # Mark that we're in the shell loop (used by supershell to know if it should start a shell on exit)
     params._in_shell_loop = True
