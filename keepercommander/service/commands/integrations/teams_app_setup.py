@@ -31,7 +31,7 @@ class TeamsAppSetupCommand(IntegrationSetupCommand):
         client_id = self._prompt_with_validation(
             "Client ID:",
             lambda v: self.is_valid_uuid(v),
-            "Invalid Client ID (must be a valid UUID with 32 hex characters)"
+            "Invalid Client ID (must be 32 hex characters in pattern xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)"
         )
 
         print(f"\n{bcolors.BOLD}CLIENT_SECRET:{bcolors.ENDC}")
@@ -47,7 +47,7 @@ class TeamsAppSetupCommand(IntegrationSetupCommand):
         tenant_id = self._prompt_with_validation(
             "Tenant ID:",
             lambda v: self.is_valid_uuid(v),
-            "Invalid Tenant ID (must be a valid UUID with 32 hex characters)"
+            "Invalid Tenant ID (must be 32 hex characters in pattern xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)"
         )
 
         print(f"\n{bcolors.BOLD}APPROVALS_CHANNEL_ID:{bcolors.ENDC}")
@@ -63,7 +63,7 @@ class TeamsAppSetupCommand(IntegrationSetupCommand):
         approvals_team_id = self._prompt_with_validation(
             "Team ID:",
             lambda v: self.is_valid_uuid(v),
-            "Invalid Team ID (must be a valid UUID with 32 hex characters)"
+            "Invalid Team ID (must be 32 hex characters in pattern xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)"
         )
 
         pedm_enabled, pedm_interval = self._collect_pedm_config()
