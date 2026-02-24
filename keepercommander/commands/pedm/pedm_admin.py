@@ -62,11 +62,28 @@ class PedmUtils:
         found_policies: Dict[str, admin_types.PedmPolicy] = {}
         p: Optional[admin_types.PedmPolicy]
         if isinstance(policy_names, list):
+            resolve_by_name = []
             for policy_name in policy_names:
                 p = pedm.policies.get_entity(policy_name)
-                if p is None:
-                    raise base.CommandError(f'Policy name "{policy_name}" is not found')
-                found_policies[p.policy_uid] = p
+                if p is not None:
+                    found_policies[p.policy_uid] = p
+                else:
+                    resolve_by_name.append(policy_name)
+
+            if resolve_by_name:
+                all_policies = list(pedm.policies.get_all_entities())
+                for policy_name in resolve_by_name:
+                    l_name = policy_name.lower()
+                    matches = [x for x in all_policies
+                               if isinstance(x.data, dict) and
+                               isinstance(x.data.get('PolicyName'), str) and
+                               x.data['PolicyName'].lower() == l_name]
+                    if len(matches) == 0:
+                        raise base.CommandError(f'Policy "{policy_name}" is not found')
+                    if len(matches) > 1:
+                        raise base.CommandError(f'Policy "{policy_name}" is not unique. Please use Policy UID')
+                    found_policies[matches[0].policy_uid] = matches[0]
+
         if len(found_policies) == 0:
             raise base.CommandError('No policies were found')
         return list(found_policies.values())
@@ -79,7 +96,17 @@ class PedmUtils:
 
         if isinstance(policy, admin_types.PedmPolicy):
             return policy
-        raise base.CommandError(f'Policy UID \"{policy_uid}\" does not exist')
+
+        l_name = policy_uid.lower()
+        matches = [x for x in pedm.policies.get_all_entities()
+                   if isinstance(x.data, dict) and
+                   isinstance(x.data.get('PolicyName'), str) and
+                   x.data['PolicyName'].lower() == l_name]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise base.CommandError(f'Policy \"{policy_uid}\" is not unique. Please use Policy UID')
+        raise base.CommandError(f'Policy \"{policy_uid}\" does not exist')
 
     @staticmethod
     def resolve_single_approval(pedm: admin_plugin.PedmPlugin, approval_uid: Any) -> admin_types.PedmApproval:
@@ -1268,6 +1295,10 @@ class PedmPolicyListCommand(base.ArgparseCommand):
             actions = data.get('Actions') or {}
             on_success = actions.get('OnSuccess') or {}
             controls = on_success.get('Controls') or ''
+            if isinstance(controls, list):
+                controls = ', '.join(str(c) for c in controls)
+            elif isinstance(controls, str):
+                controls = controls.replace('\n', ', ')
 
             collections = [x.collection_uid for x in plugin.storage.collection_links.get_links_for_object(policy.policy_uid)]
             collections = ['*' if x == all_agents else x for x in collections]
@@ -1476,13 +1507,44 @@ class PedmPolicyViewCommand(base.ArgparseCommand):
 
         policy = PedmUtils.resolve_single_policy(plugin, kwargs.get('policy'))
 
-        body = json.dumps(policy.data, indent=4)
+        fmt = kwargs.get('format', 'table')
         filename = kwargs.get('output')
-        if kwargs.get('format') == 'json' and filename:
-            with open(filename, 'w') as f:
-                f.write(body)
-        else:
-            return body
+
+        if fmt == 'json':
+            body = json.dumps(policy.data, indent=4)
+            if filename:
+                with open(filename, 'w') as f:
+                    f.write(body)
+            else:
+                return body
+
+        data = policy.data or {}
+        all_agents = utils.base64_url_encode(plugin.all_agents)
+        headers = ['policy_uid', 'policy_name', 'policy_type', 'status', 'controls',
+                   'users', 'machines', 'applications', 'collections']
+
+        actions = data.get('Actions') or {}
+        on_success = actions.get('OnSuccess') or {}
+        controls = on_success.get('Controls') or ''
+        if isinstance(controls, list):
+            controls = ', '.join(str(c) for c in controls)
+        elif isinstance(controls, str):
+            controls = controls.replace('\n', ', ')
+
+        collections = [x.collection_uid for x in plugin.storage.collection_links.get_links_for_object(policy.policy_uid)]
+        collections = ['*' if x == all_agents else x for x in collections]
+        collections.sort()
+
+        status = data.get('Status')
+        if policy.disabled:
+            status = 'off'
+
+        table = [[policy.policy_uid, data.get('PolicyName'), data.get('PolicyType'), status,
+                  controls, data.get('UserCheck'), data.get('MachineCheck'),
+                  data.get('ApplicationCheck'), collections]]
+
+        headers = [report_utils.field_to_title(x) for x in headers]
+        return report_utils.dump_report_data(table, headers, fmt=fmt, filename=filename)
 
 
 class PedmPolicyDeleteCommand(base.ArgparseCommand):
@@ -1502,6 +1564,9 @@ class PedmPolicyDeleteCommand(base.ArgparseCommand):
             status = rs.remove[0]
             if isinstance(status, admin_types.EntityStatus) and not status.success:
                 raise base.CommandError(f'Failed to delete policy "{status.entity_uid}": {status.message}')
+
+        policy_names = ', '.join(p.data.get('PolicyName') or p.policy_uid for p in policies)
+        logging.info('Successfully deleted policy: %s', policy_names)
 
 
 class PedmPolicyAgentsCommand(base.ArgparseCommand):
@@ -1525,7 +1590,8 @@ class PedmPolicyAgentsCommand(base.ArgparseCommand):
         rq.policyUid.extend(policy_uids)
         rq.summaryOnly = False
         rs = api.execute_router(context, "pedm/get_policy_agents", rq, rs_type=pedm_pb2.PolicyAgentResponse)
-        assert rs is not None
+        if rs is None:
+            rs = pedm_pb2.PolicyAgentResponse()
 
         table = []
         headers = ['key', 'uid', 'name', 'status']
@@ -1580,6 +1646,9 @@ class PedmPolicyAssignCommand(base.ArgparseCommand):
         if len(policy_uids) == 0:
             raise base.CommandError('Nothing to do')
 
+        if len(collection_uids) == 0:
+            raise base.CommandError('No collections specified. Use -c/--collection <uid> to specify collections to assign. Use "*" or "all" to assign all agents.')
+
         statuses = plugin.assign_policy_collections(policy_uids, collection_uids)
         for status in statuses.add:
             if not status.success:
@@ -1587,6 +1656,13 @@ class PedmPolicyAssignCommand(base.ArgparseCommand):
         for status in statuses.remove:
             if not status.success:
                 raise base.CommandError(f'Failed to remove from policy: {status.message}')
+
+        policy_names = ', '.join(p.data.get('PolicyName') or p.policy_uid for p in policies)
+        collection_labels = ', '.join(
+            '*' if c == plugin.all_agents else utils.base64_url_encode(c)
+            for c in collection_uids
+        )
+        logging.info('Successfully assigned collection(s) [%s] to policy: %s', collection_labels, policy_names)
 
 
 class PedmCollectionCommand(base.GroupCommandNew):
