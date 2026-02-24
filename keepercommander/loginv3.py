@@ -385,11 +385,11 @@ class LoginV3Flow:
                 raise Exception(msg)
             elif resp.sessionTokenType == APIRequest_pb2.ACCOUNT_RECOVERY:
                 if new_password_if_reset_required:
-                    print('Resetting expired Master Password.\n')
+                    logging.info('Resetting expired Master Password.\n')
                     LoginV3API.change_master_password(params, new_password_if_reset_required) # always returns False
                     return False
                 elif new_password_if_reset_required is None:
-                    print('Your Master Password has expired, you are required to change it before you can login.\n')
+                    logging.info('Your Master Password has expired, you are required to change it before you can login.\n')
                     if LoginV3Flow.change_master_password(params):
                         return False
                 # Return exception if password change fails
@@ -491,7 +491,7 @@ class LoginV3Flow:
 
         try:
             while True:
-                print('Please choose a new Master Password.')
+                logging.info('Please choose a new Master Password.')
                 password = getpass.getpass(prompt='... {0:>24}: '.format('Master Password'), stream=None).strip()
                 if not password:
                     raise KeyboardInterrupt()
@@ -786,7 +786,7 @@ class LoginV3Flow:
         backup_type = rs.backupKeyType
 
         if backup_type == APIRequest_pb2.BKT_SEC_ANSWER:
-            print(f'Security Question: {rs.securityQuestion}')
+            logging.info(f'Security Question: {rs.securityQuestion}')
             answer = getpass.getpass(prompt='Answer: ', stream=None)
             if not answer:
                 return
@@ -794,7 +794,7 @@ class LoginV3Flow:
             auth_hash = crypto.derive_keyhash_v1(recovery_phrase, rs.salt, rs.iterations)
         elif backup_type == APIRequest_pb2.BKT_PASSPHRASE_HASH:
             p = PassphrasePrompt()
-            print('Please enter your Recovery Phrase ')
+            logging.info('Please enter your Recovery Phrase ')
             if os.isatty(0):
                 phrase = prompt('Recovery Phrase: ', lexer=p, completer=p, key_bindings=p.kb, validator=p,
                                 validate_while_typing=False, editing_mode=EditingMode.VI, wrap_lines=True,

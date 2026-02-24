@@ -112,7 +112,7 @@ def welcome_print_version(params):
     elif not ver_info.get('is_up_to_date'):
         from colorama import Fore
         current = ver_info.get('current_github_version')
-        print(f"{Fore.YELLOW}Update available: v{current} (you have v{this_app_version}). Type 'version' for details.{Fore.RESET}\n")
+        logging.warning(f"{Fore.YELLOW}Update available: v{current} (you have v{this_app_version}). Type 'version' for details.{Fore.RESET}\n")
     else:
         pass
         # print("Your version of the Commander CLI is %s." % this_app_version)

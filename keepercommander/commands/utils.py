@@ -469,7 +469,7 @@ class SyncDownCommand(Command):
         if len(params.pending_share_requests) > 0:
             for user in params.pending_share_requests:
                 accepted = False
-                print('Note: You have pending share request from ' + user)
+                logging.info('Note: You have pending share request from ' + user)
                 answer = user_choice('Do you want to accept these request?', 'yn', 'n')
                 rq = {
                     'command': 'accept_share' if answer == 'y' else 'cancel_share',
@@ -506,38 +506,38 @@ class ThisDeviceCommand(Command):
         # Check for valid sub-commands that need a value
         if len(ops) == 1 and action != 'register':
             if action in ('timeout', 'to'):
-                print(f"Usage: this-device timeout <duration>  (e.g., 10m, 1h, 7d, 30d)")
+                logging.error(f"Usage: this-device timeout <duration>  (e.g., 10m, 1h, 7d, 30d)")
             elif action == '2fa_expiration':
-                print(f"Usage: this-device 2fa_expiration <duration>  (e.g., login, 12h, 24h, 30d, forever)")
+                logging.error(f"Usage: this-device 2fa_expiration <duration>  (e.g., login, 12h, 24h, 30d, forever)")
             elif action in ('persistent_login', 'persistent-login', 'pl'):
-                print(f"Usage: this-device persistent-login <on|off>")
+                logging.error(f"Usage: this-device persistent-login <on|off>")
             elif action in ('ip_auto_approve', 'ip-auto-approve', 'iaa'):
-                print(f"Usage: this-device ip-auto-approve <on|off>")
+                logging.error(f"Usage: this-device ip-auto-approve <on|off>")
             elif action == 'no-yubikey-pin':
-                print(f"Usage: this-device no-yubikey-pin <on|off>")
+                logging.error(f"Usage: this-device no-yubikey-pin <on|off>")
             elif action in ('rename', 'ren'):
-                print(f"Usage: this-device rename <name>")
+                logging.error(f"Usage: this-device rename <name>")
             else:
-                print(f"Unknown sub-command: {action}")
-            print(f"Run {Fore.GREEN}this-device -h{Fore.RESET} for detailed help.")
+                logging.error(f"Unknown sub-command: {action}")
+            logging.error(f"Run {Fore.GREEN}this-device -h{Fore.RESET} for detailed help.")
             return
 
         if len(ops) >= 1 and action != 'register' and len(ops) != 2:
-            print(f"Invalid arguments. Run {Fore.GREEN}this-device -h{Fore.RESET} for help.")
+            logging.error(f"Invalid arguments. Run {Fore.GREEN}this-device -h{Fore.RESET} for help.")
             return
 
         def register_device():
             is_device_registered = loginv3.LoginV3API.register_encrypted_data_key_for_device(params)
 
             if is_device_registered:
-                print(bcolors.OKGREEN + "Successfully registered device" + bcolors.ENDC)
+                logging.info(bcolors.OKGREEN + "Successfully registered device" + bcolors.ENDC)
             else:
-                print(bcolors.OKGREEN + "Device already registered" + bcolors.ENDC)
+                logging.info(bcolors.OKGREEN + "Device already registered" + bcolors.ENDC)
 
         if action == 'rename' or action == 'ren':
             value = ops[1]
             loginv3.LoginV3API.rename_device(params, value)
-            print(bcolors.OKGREEN + "Successfully renamed device to '" + value + "'" + bcolors.ENDC)
+            logging.info(bcolors.OKGREEN + "Successfully renamed device to '" + value + "'" + bcolors.ENDC)
 
         elif action == 'register':
             register_device()
@@ -552,7 +552,7 @@ class ThisDeviceCommand(Command):
             value_extracted = ThisDeviceCommand.get_setting_str_to_value('persistent_login', value)
             loginv3.LoginV3API.set_user_setting(params, 'persistent_login', value_extracted)
             msg = (bcolors.OKGREEN + "ENABLED" + bcolors.ENDC) if value_extracted == '1' else (bcolors.FAIL + "DISABLED" + bcolors.ENDC)
-            print("Successfully " + msg + " Persistent Login on this account")
+            logging.info("Successfully " + msg + " Persistent Login on this account")
 
             register_device()
 
@@ -562,7 +562,7 @@ class ThisDeviceCommand(Command):
 
                 if this_device:
                     if 'encryptedDataKeyPresent' not in this_device:
-                        print(bcolors.WARNING + "\tThis device is not registered. To register, run command `this-device register`" + bcolors.ENDC)
+                        logging.warning(bcolors.WARNING + "\tThis device is not registered. To register, run command `this-device register`" + bcolors.ENDC)
 
         elif action == 'ip_auto_approve' or action == 'ip-auto-approve' or action == 'iaa':
             value = ops[1]
@@ -572,14 +572,14 @@ class ThisDeviceCommand(Command):
             # invert ip_auto_approve value before passing it to ip_disable_auto_approve
             value_extracted = '0' if value_extracted == '1' else '1' if value_extracted == '0' else value_extracted
             loginv3.LoginV3API.set_user_setting(params, 'ip_disable_auto_approve', value_extracted)
-            print("Successfully " + msg + " 'ip_auto_approve'")
+            logging.info("Successfully " + msg + " 'ip_auto_approve'")
 
         elif action == 'no-yubikey-pin':
             value = ops[1]
             value_extracted = ThisDeviceCommand.get_setting_str_to_value('no-yubikey-pin', value)
             msg = (bcolors.OKGREEN + "ENABLED" + bcolors.ENDC) if value_extracted == '0' else (bcolors.FAIL + "DISABLED" + bcolors.ENDC)
             loginv3.LoginV3API.set_user_setting(params, 'security_keys_no_user_verify', value_extracted)
-            print("Successfully " + msg + " Security Key PIN verification")
+            logging.info("Successfully " + msg + " Security Key PIN verification")
 
         elif action == 'timeout' or action == 'to':
 
@@ -587,7 +587,7 @@ class ThisDeviceCommand(Command):
             timeout_delta = enforce_timeout_range(ThisDeviceCommand.get_setting_str_to_value('logout_timer', value))
             loginv3.LoginV3API.set_user_setting(params, 'logout_timer', get_timeout_setting_from_delta(timeout_delta))
             dispay_value = 'default value' if timeout_delta == timedelta(0) else format_timeout(timeout_delta)
-            print(f'Successfully set "logout_timer" to {dispay_value}.')
+            logging.info(f'Successfully set "logout_timer" to {dispay_value}.')
 
         elif action == '2fa_expiration':
             value = ops[1]
@@ -599,7 +599,7 @@ class ThisDeviceCommand(Command):
             rq = APIRequest_pb2.TwoFactorUpdateExpirationRequest()
             rq.expireIn = mfa_expiration
             api.communicate_rest(params, rq, 'authentication/2fa_update_expiration')
-            print(f'Successfully set "2fa_expiration" to {value}.')
+            logging.info(f'Successfully set "2fa_expiration" to {value}.')
 
         else:
             raise Exception("Unknown sub-command " + action + ". Available sub-commands: ", ", ".join(this_device_available_command_verbs))
@@ -803,7 +803,7 @@ class RecordDeleteAllCommand(Command):
         api.sync_down(params)
         
         if self._is_vault_empty(params):
-            print("No records or folders to delete. Vault is already empty.")
+            logging.info("No records or folders to delete. Vault is already empty.")
             return
         
         if not self._confirm_user_wants_deletion(kwargs):
@@ -840,7 +840,7 @@ class RecordDeleteAllCommand(Command):
         if force_flag_passed:
             # Force flag was passed via command line, skip confirmation
             logging.info("Force flag detected, proceeding without confirmation...")
-            print(f"{bcolors.WARNING}Force mode: Deleting all records and folders without confirmation{bcolors.ENDC}")
+            logging.warning(f"{bcolors.WARNING}Force mode: Deleting all records and folders without confirmation{bcolors.ENDC}")
             return True
         
         # Show confirmation prompt
@@ -865,12 +865,12 @@ class RecordDeleteAllCommand(Command):
             return DeletionStats()
         
         if skipped_stats['shared_folders'] > 0 or skipped_stats['shared_records'] > 0:
-            print(f"\nSHARED FOLDER CONTENT SKIPPED:")
-            print(f"   • {skipped_stats['shared_folders']} shared folders avoided")
-            print(f"   • {skipped_stats['shared_records']} records in shared folders avoided")
-            print(f"\nFor shared folders with many records, use this workflow:")
-            print(f"   1. Run 'transform-folder <shared_folder_uid>' to convert shared folder to user folder (fast)")
-            print(f"   2. Then run delete-all to clean remaining user vault content\n")
+            logging.warning(f"\nSHARED FOLDER CONTENT SKIPPED:")
+            logging.warning(f"   • {skipped_stats['shared_folders']} shared folders avoided")
+            logging.warning(f"   • {skipped_stats['shared_records']} records in shared folders avoided")
+            logging.warning(f"\nFor shared folders with many records, use this workflow:")
+            logging.warning(f"   1. Run 'transform-folder <shared_folder_uid>' to convert shared folder to user folder (fast)")
+            logging.warning(f"   2. Then run delete-all to clean remaining user vault content\n")
         
         logging.info('Preparing to delete %s records from user folders', len(records_with_folders))
         return self._delete_objects_in_batches(params, records_with_folders, 'records')
@@ -1696,9 +1696,9 @@ class LoginCommand(Command):
                 if not region:
                     # Check extended server list
                     region = next((k for k, v in KEEPER_SERVERS.items() if v == params.server), params.server)
-                print(f'{Fore.CYAN}Data center: {Fore.WHITE}{region}{Fore.RESET}')
-                print(f'{Fore.CYAN}Use {Fore.GREEN}login --server <region>{Fore.CYAN} to change (US, EU, AU, CA, JP, GOV){Fore.RESET}')
-                print()
+                logging.info(f'{Fore.CYAN}Data center: {Fore.WHITE}{region}{Fore.RESET}')
+                logging.info(f'{Fore.CYAN}Use {Fore.GREEN}login --server <region>{Fore.CYAN} to change (US, EU, AU, CA, JP, GOV){Fore.RESET}')
+                logging.info('')
                 user = input(f'{Fore.GREEN}Email: {Fore.RESET}').strip()
             if not user:
                 return
@@ -1745,12 +1745,12 @@ class LoginCommand(Command):
             show_help = kwargs.get('show_help', True)
             if show_help:
                 if params.batch_mode:
-                    # One-shot login from terminal - show simple success message
-                    print()
-                    print(f'{Fore.GREEN}Keeper login successful.{Fore.RESET}')
-                    print(f'Type "{Fore.GREEN}keeper shell{Fore.RESET}" for the interactive shell, "{Fore.GREEN}keeper supershell{Fore.RESET}" for the vault UI,')
-                    print(f'or "{Fore.GREEN}keeper help{Fore.RESET}" to see all available commands.')
-                    print()
+                    # One-shot login from terminal - show simple success message (stderr, not stdout)
+                    logging.warning('')
+                    logging.warning(f'{Fore.GREEN}Keeper login successful.{Fore.RESET}')
+                    logging.warning(f'Type "{Fore.GREEN}keeper shell{Fore.RESET}" for the interactive shell, "{Fore.GREEN}keeper supershell{Fore.RESET}" for the vault UI,')
+                    logging.warning(f'or "{Fore.GREEN}keeper help{Fore.RESET}" to see all available commands.')
+                    logging.warning('')
                 else:
                     # Interactive shell - show full summary with tips
                     record_count = getattr(params, '_sync_record_count', 0)
@@ -1768,7 +1768,7 @@ class CheckEnforcementsCommand(Command):
     def execute(self, params, **kwargs):
         if params.enforcements:
             if 'enterprise_invited' in params.enforcements:
-                print('You\'ve been invited to join {0}.'.format(params.enforcements['enterprise_invited']))
+                logging.info('You\'ve been invited to join {0}.'.format(params.enforcements['enterprise_invited']))
                 action = user_choice('A(ccept)/D(ecline)/I(gnore)?: ', 'adi')
                 action = action.lower()
                 if action == 'a':

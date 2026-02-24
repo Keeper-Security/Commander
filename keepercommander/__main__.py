@@ -335,13 +335,13 @@ def main(from_package=False):
             params.server = resolved_server
         else:
             # Show error and valid options
-            print(f"\nError: '{opts.server}' is not a valid Keeper server.")
-            print('\nValid server codes:')
-            print('  Production: US, EU, AU, CA, JP, GOV')
-            print('  Dev:        US_DEV, EU_DEV, AU_DEV, CA_DEV, JP_DEV, GOV_DEV')
-            print('  QA:         US_QA, EU_QA, AU_QA, CA_QA, JP_QA, GOV_QA')
-            print('\nYou can also use the full hostname (e.g., keepersecurity.com, keepersecurity.eu)')
-            print('')
+            logging.error(f"\nError: '{opts.server}' is not a valid Keeper server.")
+            logging.error('\nValid server codes:')
+            logging.error('  Production: US, EU, AU, CA, JP, GOV')
+            logging.error('  Dev:        US_DEV, EU_DEV, AU_DEV, CA_DEV, JP_DEV, GOV_DEV')
+            logging.error('  QA:         US_QA, EU_QA, AU_QA, CA_QA, JP_QA, GOV_QA')
+            logging.error('\nYou can also use the full hostname (e.g., keepersecurity.com, keepersecurity.eu)')
+            logging.error('')
             sys.exit(1)
 
     if opts.user is not None:
@@ -395,17 +395,17 @@ def main(from_package=False):
 
     # If no command provided, show helpful welcome message
     if not opts.command and not params.commands:
-        print('')
-        print('Keeper Commander - CLI-based vault and admin interface to the Keeper platform')
-        print('')
-        print('To get started:')
-        print('  keeper login          Authenticate to Keeper')
-        print('  keeper shell          Open interactive command shell')
-        print('  keeper supershell     Open full-screen vault browser (TUI)')
-        print('  keeper -h             Show help and available options')
-        print('')
-        print('Learn more at https://docs.keeper.io/en/keeperpam/commander-cli/overview')
-        print('')
+        logging.warning('')
+        logging.warning('Keeper Commander - CLI-based vault and admin interface to the Keeper platform')
+        logging.warning('')
+        logging.warning('To get started:')
+        logging.warning('  keeper login          Authenticate to Keeper')
+        logging.warning('  keeper shell          Open interactive command shell')
+        logging.warning('  keeper supershell     Open full-screen vault browser (TUI)')
+        logging.warning('  keeper -h             Show help and available options')
+        logging.warning('')
+        logging.warning('Learn more at https://docs.keeper.io/en/keeperpam/commander-cli/overview')
+        logging.warning('')
         return
 
     if isinstance(params.timedelay, int) and params.timedelay >= 1 and params.commands:

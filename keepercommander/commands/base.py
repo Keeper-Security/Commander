@@ -755,6 +755,10 @@ class Command(CliCommand):
             envvars = params.environment_variables
             args = '' if args is None else args
             if parser:
+                # Update prog to match alias name (e.g., 'find-password' instead of 'clipboard-copy')
+                alias_cmd = d.get('command')
+                if alias_cmd and alias_cmd != parser.prog:
+                    parser.prog = alias_cmd
                 args = expand_cmd_args(args, envvars)
                 args = normalize_output_param(args)
                 if self.support_extra_parameters():
