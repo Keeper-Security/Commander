@@ -9,9 +9,7 @@
 # Contact: commander@keepersecurity.com
 #
 
-"""
-Data models and constants for Docker setup.
-"""
+"""Docker setup data models and constants."""
 
 from dataclasses import dataclass
 from enum import Enum
@@ -22,30 +20,19 @@ from enum import Enum
 # ========================
 
 class DockerSetupConstants:
-    """Constants for Docker setup command"""
-    # Default resource names for service-docker-setup
+    """Defaults for docker setup."""
     DEFAULT_FOLDER_NAME = 'Commander Service Mode - Docker'
     DEFAULT_APP_NAME = 'Commander Service Mode - KSM App'
     DEFAULT_RECORD_NAME = 'Commander Service Mode Docker Config'
     DEFAULT_CLIENT_NAME = 'Commander Service Mode - KSM App Client'
-    
-    # Default resource names for slack-app-setup
-    DEFAULT_SLACK_FOLDER_NAME = 'Commander Service Mode - Slack App'
-    DEFAULT_SLACK_RECORD_NAME = 'Commander Service Mode Slack App Config'
     
     # Default service configuration
     DEFAULT_PORT = 8900
     DEFAULT_COMMANDS = 'tree,ls'
     DEFAULT_TIMEOUT = '30d'
     
-    # Essential config keys
     RECORD_UID_KEY = 'record_uid'
     KSM_CONFIG_KEY = 'ksm_config'
-
-
-# ========================
-# Enums
-# ========================
 
 
 class SetupStep(Enum):
@@ -59,13 +46,8 @@ class SetupStep(Enum):
     CREATE_CLIENT = 7
 
 
-# ========================
-# Data Classes
-# ========================
-
 @dataclass
 class SetupResult:
-    """Container for setup results that can be reused by integration commands"""
     folder_uid: str
     folder_name: str
     app_uid: str
@@ -76,7 +58,6 @@ class SetupResult:
 
 @dataclass
 class ServiceConfig:
-    """Service configuration for Docker deployment"""
     port: int
     commands: str
     queue_enabled: bool
@@ -98,11 +79,23 @@ class ServiceConfig:
 
 @dataclass
 class SlackConfig:
-    """Slack App configuration for Docker deployment"""
     slack_app_token: str
     slack_bot_token: str
     slack_signing_secret: str
     approvals_channel_id: str
+    pedm_enabled: bool = False
+    pedm_polling_interval: int = 120
+    device_approval_enabled: bool = False
+    device_approval_polling_interval: int = 120
+
+
+@dataclass
+class TeamsConfig:
+    client_id: str
+    client_secret: str
+    tenant_id: str
+    approvals_channel_id: str
+    approvals_team_id: str
     pedm_enabled: bool = False
     pedm_polling_interval: int = 120
     device_approval_enabled: bool = False
