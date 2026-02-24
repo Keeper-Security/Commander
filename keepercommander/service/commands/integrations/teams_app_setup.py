@@ -85,9 +85,9 @@ class TeamsAppSetupCommand(IntegrationSetupCommand):
 
     def build_record_custom_fields(self, config):
         return [
-            vault.TypedField.new_field('secret', config.client_id, 'client_id'),
+            vault.TypedField.new_field('text', config.client_id, 'client_id'),
             vault.TypedField.new_field('secret', config.client_secret, 'client_secret'),
-            vault.TypedField.new_field('secret', config.tenant_id, 'tenant_id'),
+            vault.TypedField.new_field('text', config.tenant_id, 'tenant_id'),
             vault.TypedField.new_field('text', config.approvals_channel_id, 'approvals_channel_id'),
             vault.TypedField.new_field('text', config.approvals_team_id, 'approvals_team_id'),
             vault.TypedField.new_field('text', 'true' if config.pedm_enabled else 'false', 'pedm_enabled'),
