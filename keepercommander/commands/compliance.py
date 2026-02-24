@@ -315,12 +315,13 @@ class ComplianceCommand(GroupCommand):
 
 
 class BaseComplianceReportCommand(EnterpriseCommand):
-    def __init__(self, report_headers, allow_no_opts=True, prelim_only=False):
+    def __init__(self, report_headers, allow_no_opts=True, prelim_only=False, needs_full_sharing_data=False):
         super(BaseComplianceReportCommand, self).__init__()
         self.title = None
         self.report_headers = report_headers
         self.allow_no_opts = allow_no_opts
         self.prelim_only = prelim_only
+        self.needs_full_sharing_data = needs_full_sharing_data
         self.group_by_column = None
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
@@ -390,7 +391,7 @@ class BaseComplianceReportCommand(EnterpriseCommand):
         get_sox_data_fn = sox.get_prelim_data if self.prelim_only else sox.get_compliance_data
         fn_args = [params, enterprise_id] if self.prelim_only else [params, node_id, enterprise_id]
         fn_kwargs = {'rebuild': rebuild, 'min_updated': min_data_ts, 'no_cache': no_cache, 'shared_only': shared_only,
-                     'user_filter': user_filter}
+                     'user_filter': None if self.needs_full_sharing_data else user_filter}
         sd = get_sox_data_fn(*fn_args, **fn_kwargs)
         kwargs['_user_filter'] = user_filter
         report_fmt = kwargs.get('format', 'table')
@@ -670,7 +671,8 @@ class ComplianceTeamReportCommand(BaseComplianceReportCommand):
 
 class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
     def __init__(self):
-        super(ComplianceRecordAccessReportCommand, self).__init__([], allow_no_opts=True, prelim_only=False)
+        super(ComplianceRecordAccessReportCommand, self).__init__([], allow_no_opts=True, prelim_only=False,
+                                                                  needs_full_sharing_data=True)
         self.group_by_column = 0
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
@@ -678,20 +680,6 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
 
     def execute(self, params, **kwargs):  # type: (KeeperParams, any) -> any
         kwargs['shared'] = True
-        emails = kwargs.get('email') or ['@all']
-        if '@all' not in emails:
-            enterprise_users = params.enterprise.get('users', [])
-            id_to_email = {eu.get('enterprise_user_id'): eu.get('username') for eu in enterprise_users}
-            resolved_emails = []
-            for ref in emails:
-                if ref.isdigit():
-                    email = id_to_email.get(int(ref))
-                    if email:
-                        resolved_emails.append(email)
-                else:
-                    resolved_emails.append(ref)
-            if resolved_emails:
-                kwargs['username'] = resolved_emails
         return super().execute(params, **kwargs)
 
     def generate_report_data(self, params, kwargs, sox_data, report_fmt, node, root_node):
@@ -793,8 +781,8 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
                                         use_spinner=use_spinner,
                                         stale_rec_ids=stale_rec_ids)
 
-            # Update last_aging_refreshed for stale users
-            if user_filter_uids is not None:
+            # Update last_aging_refreshed for stale users (only when aging was actually fetched)
+            if rec_ids and user_filter_uids is not None:
                 now_ts = int(datetime.datetime.now().timestamp())
                 updated_users = []
                 for uid in user_filter_uids:
@@ -884,7 +872,8 @@ class ComplianceRecordAccessReportCommand(BaseComplianceReportCommand):
 class ComplianceSummaryReportCommand(BaseComplianceReportCommand):
     def __init__(self):
         headers = ['email', 'total_items', 'total_owned', 'active_owned', 'deleted_owned']
-        super(ComplianceSummaryReportCommand, self).__init__(headers, allow_no_opts=True, prelim_only=False)
+        super(ComplianceSummaryReportCommand, self).__init__(headers, allow_no_opts=True, prelim_only=False,
+                                                             needs_full_sharing_data=True)
 
     def get_parser(self):  # type: () -> Optional[argparse.ArgumentParser]
         return summary_report_parser
