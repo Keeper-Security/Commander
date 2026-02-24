@@ -86,6 +86,12 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
     def get_record_env_key(self) -> str:
         return f'{self.get_integration_name().upper()}_RECORD'
 
+    def get_commander_service_name(self) -> str:
+        return f'commander-{self.get_integration_name().lower()}'
+
+    def get_commander_container_name(self) -> str:
+        return f'keeper-service-{self.get_integration_name().lower()}'
+
     def get_service_commands(self) -> str:
         return 'search,share-record,share-folder,record-add,one-time-share,epm,pedm,device-approve,get,server'
 
@@ -186,7 +192,6 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         DockerSetupPrinter.print_completion("Docker Setup Complete!")
 
         service_config = self._get_integration_service_configuration()
-        docker_cmd.generate_and_save_docker_compose(setup_result, service_config)
 
         return setup_result, service_config, config_path
 
@@ -305,10 +310,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         compose_file = os.path.join(os.getcwd(), 'docker-compose.yml')
         service_name = self.get_docker_service_name()
 
-        if not os.path.exists(compose_file):
-            raise CommandError(self.get_command_name(), f'docker-compose.yml not found at {compose_file}')
-
-        try:
+        if os.path.exists(compose_file):
             with open(compose_file, 'r') as f:
                 content = f.read()
 
@@ -316,7 +318,12 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
                 DockerSetupPrinter.print_warning(f"{service_name} service already exists in docker-compose.yml")
                 return
 
-            builder = DockerComposeBuilder(setup_result, asdict(service_config))
+        try:
+            builder = DockerComposeBuilder(
+                setup_result, asdict(service_config),
+                commander_service_name=self.get_commander_service_name(),
+                commander_container_name=self.get_commander_container_name()
+            )
             yaml_content = builder.add_integration_service(
                 service_name=service_name,
                 container_name=self.get_docker_container_name(),

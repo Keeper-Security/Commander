@@ -16,29 +16,31 @@ from typing import Dict, Any, List
 class DockerComposeBuilder:
     """Builds docker-compose.yml for Commander + integration services."""
     
-    def __init__(self, setup_result, config: Dict[str, Any]):
+    def __init__(self, setup_result, config: Dict[str, Any], commander_service_name: str = 'commander', commander_container_name: str = 'keeper-service'):
         self.setup_result = setup_result
         self.config = config
+        self.commander_service_name = commander_service_name
+        self.commander_container_name = commander_container_name
         self._service_cmd_parts: List[str] = []
         self._volumes: List[str] = []
         self._services: Dict[str, Dict[str, Any]] = {}
-    
+
     def build(self) -> str:
-        if 'commander' not in self._services:
-            self._services['commander'] = self._build_commander_service()
+        if self.commander_service_name not in self._services:
+            self._services[self.commander_service_name] = self._build_commander_service()
         return self.to_yaml()
-    
+
     def build_dict(self) -> Dict[str, Any]:
-        if 'commander' not in self._services:
-            self._services['commander'] = self._build_commander_service()
+        if self.commander_service_name not in self._services:
+            self._services[self.commander_service_name] = self._build_commander_service()
         return {'services': self._services}
     
     def add_integration_service(self, service_name: str, container_name: str,
                                 image: str, record_uid: str,
                                 record_env_key: str) -> 'DockerComposeBuilder':
         """Add an integration service to the compose file. Returns self."""
-        if 'commander' not in self._services:
-            self._services['commander'] = self._build_commander_service()
+        if self.commander_service_name not in self._services:
+            self._services[self.commander_service_name] = self._build_commander_service()
         self._services[service_name] = self._build_integration_service(
             container_name, image, record_uid, record_env_key
         )
@@ -49,7 +51,7 @@ class DockerComposeBuilder:
         self._build_service_command()
         
         service = {
-            'container_name': 'keeper-service',
+            'container_name': self.commander_container_name,
             'ports': [f"127.0.0.1:{self.config['port']}:{self.config['port']}"],
             'image': 'keeper/commander:latest',
             'command': ' '.join(self._service_cmd_parts),
@@ -74,7 +76,7 @@ class DockerComposeBuilder:
                 record_env_key: record_uid
             },
             'depends_on': {
-                'commander': {
+                self.commander_service_name: {
                     'condition': 'service_healthy'
                 }
             },
