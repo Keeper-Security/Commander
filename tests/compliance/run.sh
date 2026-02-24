@@ -13,15 +13,15 @@
 #   - python3 on PATH
 #
 # Quick start:
-#   bash tests/compliance_test.sh after           # run tests on current branch
-#   bash tests/compliance_test.sh before          # run tests on baseline
-#   bash tests/compliance_test.sh diff            # compare existing results
-#   bash tests/compliance_test.sh parallel        # run both simultaneously
-#   bash tests/compliance_test.sh all             # run both sequentially, then diff
+#   bash tests/compliance/run.sh after           # run tests on current branch
+#   bash tests/compliance/run.sh before          # run tests on baseline
+#   bash tests/compliance/run.sh diff            # compare existing results
+#   bash tests/compliance/run.sh parallel        # run both simultaneously
+#   bash tests/compliance/run.sh all             # run both sequentially, then diff
 #
 # Configuration:
 #   The script auto-discovers users and teams from the vault. Override any
-#   value by exporting env vars or creating tests/compliance_test.env:
+#   value by exporting env vars or creating tests/compliance/test.env:
 #
 #     AFTER_DIR       Commander under test      (default: repo root)
 #     BEFORE_DIR      Baseline Commander        (default: empty, skips 'before')
@@ -35,12 +35,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TEMPLATE="$SCRIPT_DIR/compliance_test.batch"
-RESULTS_DIR="$SCRIPT_DIR/compliance_test_results"
+REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+TEMPLATE="$SCRIPT_DIR/test.batch"
+RESULTS_DIR="$SCRIPT_DIR/results"
 
 # Load env file if present (won't override already-exported vars)
-ENV_FILE="$SCRIPT_DIR/compliance_test.env"
+ENV_FILE="$SCRIPT_DIR/test.env"
 if [ -f "$ENV_FILE" ]; then
     echo "Loading config from $ENV_FILE"
     set -a; source "$ENV_FILE"; set +a
@@ -49,11 +49,36 @@ fi
 AFTER_DIR="${AFTER_DIR:-$REPO_DIR}"
 BEFORE_DIR="${BEFORE_DIR:-}"
 KEEPER_CONFIG="${KEEPER_CONFIG:-./config.json}"
+AFTER_KEEPER_CONFIG="${AFTER_KEEPER_CONFIG:-$KEEPER_CONFIG}"
+BEFORE_KEEPER_CONFIG="${BEFORE_KEEPER_CONFIG:-$KEEPER_CONFIG}"
+
+# Convert path to native OS format for Python (no-op on Unix, forward-slash Windows path on MSYS)
+native_path() {
+    if command -v cygpath &>/dev/null; then
+        cygpath -m "$1"
+    else
+        echo "$1"
+    fi
+}
+
+# Resolve venv bin directory (Scripts on Windows, bin on Unix)
+venv_keeper() {
+    local dir="$1"
+    if [ -x "$dir/.venv/Scripts/keeper" ] || [ -x "$dir/.venv/Scripts/keeper.exe" ]; then
+        echo ".venv/Scripts/keeper"
+    else
+        echo ".venv/bin/keeper"
+    fi
+}
 
 # ── Helper: run a keeper command and capture output ──────────────────────────
 keeper_cmd() {
     local dir="$1"; shift
-    (cd "$dir" && .venv/bin/keeper --config "$KEEPER_CONFIG" "$@" 2>/dev/null)
+    local keeper; keeper=$(venv_keeper "$dir")
+    local cfg="$KEEPER_CONFIG"
+    [[ "$dir" == "$AFTER_DIR" ]] && cfg="$AFTER_KEEPER_CONFIG"
+    [[ "$dir" == "$BEFORE_DIR" ]] && cfg="$BEFORE_KEEPER_CONFIG"
+    (cd "$dir" && "$keeper" --config "$cfg" "$@" 2>/dev/null)
 }
 
 # ── Auto-discover test parameters from the vault ────────────────────────────
@@ -68,19 +93,19 @@ discover() {
             users_json=$(keeper_cmd "$dir" enterprise-info -u --format json || echo "[]")
             if [ -z "${USER1:-}" ]; then
                 USER1=$(python3 -c "
-import json, sys
+import json, sys, random
 users = json.loads(sys.stdin.read())
 active = [u for u in users if u.get('status','') == 'Active']
-print(active[0]['email'] if active else users[0]['email'] if users else '')
+print(random.choice(active)['email'] if active else users[0]['email'] if users else '')
 " <<< "$users_json")
                 echo "  USER1=$USER1"
             fi
             if [ -z "${USER2:-}" ]; then
                 USER2=$(python3 -c "
-import json, sys
+import json, sys, random
 users = json.loads(sys.stdin.read())
 active = [u for u in users if u.get('status','') == 'Active' and u.get('email','') != '$USER1']
-print(active[-1]['email'] if active else '')
+print(random.choice(active)['email'] if active else '')
 " <<< "$users_json")
                 echo "  USER2=$USER2"
             fi
@@ -90,11 +115,17 @@ print(active[-1]['email'] if active else '')
             teams_json=$(keeper_cmd "$dir" enterprise-info -t --columns users --format json || echo "[]")
             if [ -z "${TEAM1:-}" ]; then
                 TEAM1=$(python3 -c "
-import json, sys
+import json, sys, random
 teams = json.loads(sys.stdin.read())
 skip = {'everyone', 'admins'}
-candidates = [t for t in teams if t.get('name', t.get('team_name','')).lower() not in skip]
-print(candidates[0].get('name', candidates[0].get('team_name','')) if candidates else (teams[0].get('name', teams[0].get('team_name','')) if teams else ''))
+candidates = [t for t in teams if t.get('name', t.get('team_name','')).lower() not in skip and len(t.get('users', [])) >= 2]
+if not candidates:
+    candidates = [t for t in teams if t.get('name', t.get('team_name','')).lower() not in skip and len(t.get('users', [])) >= 1]
+if candidates:
+    pick = random.choice(candidates)
+    print(pick.get('name', pick.get('team_name','')))
+elif teams:
+    print(teams[0].get('name', teams[0].get('team_name','')))
 " <<< "$teams_json")
                 echo "  TEAM1=$TEAM1"
             fi
@@ -134,6 +165,7 @@ print('$USER2')
 # ── Generate a concrete batch file from the template ─────────────────────────
 generate_batch() {
     local outdir="$1" dest="$2"
+    outdir=$(native_path "$outdir")
     sed -e "s|{OUTDIR}|$outdir|g" \
         -e "s|{USER1}|$USER1|g" \
         -e "s|{USER2}|$USER2|g" \
@@ -150,6 +182,7 @@ run_after() {
     mkdir -p "$out"
     generate_batch "$out" "$batch"
 
+    local keeper; keeper=$(venv_keeper "$AFTER_DIR")
     echo "=== Running AFTER (current branch) ==="
     echo "  Dir:    $AFTER_DIR"
     echo "  Output: $out"
@@ -158,7 +191,7 @@ run_after() {
     echo "    TEAM1=$TEAM1  TEAM_ONLY_USER=$TEAM_ONLY_USER"
     echo ""
     cd "$AFTER_DIR"
-    .venv/bin/keeper --config "$KEEPER_CONFIG" run-batch "$batch" 2>&1 | tee "$out/_run.log"
+    "$keeper" --config "$AFTER_KEEPER_CONFIG" run-batch "$batch" 2>&1 | tee "$out/_run.log"
     echo ""
     echo "=== AFTER complete ==="
 }
@@ -174,6 +207,7 @@ run_before() {
     mkdir -p "$out"
     generate_batch "$out" "$batch"
 
+    local keeper; keeper=$(venv_keeper "$BEFORE_DIR")
     echo "=== Running BEFORE (baseline) ==="
     echo "  Dir:    $BEFORE_DIR"
     echo "  Output: $out"
@@ -182,62 +216,19 @@ run_before() {
     echo "    TEAM1=$TEAM1  TEAM_ONLY_USER=$TEAM_ONLY_USER"
     echo ""
     cd "$BEFORE_DIR"
-    .venv/bin/keeper --config "$KEEPER_CONFIG" run-batch "$batch" 2>&1 | tee "$out/_run.log"
+    "$keeper" --config "$BEFORE_KEEPER_CONFIG" run-batch "$batch" 2>&1 | tee "$out/_run.log"
     echo ""
     echo "=== BEFORE complete ==="
 }
 
 # ── Compare results ──────────────────────────────────────────────────────────
 diff_results() {
-    local after_out="$RESULTS_DIR/after"
-    local before_out="$RESULTS_DIR/before"
+    local results_native
+    results_native=$(native_path "$RESULTS_DIR")
     echo ""
     echo "=== Comparing results ==="
     echo ""
-
-    if [ ! -d "$after_out" ]; then
-        echo "ERROR: No 'after' results found at $after_out"; exit 1
-    fi
-    if [ ! -d "$before_out" ]; then
-        echo "ERROR: No 'before' results found at $before_out"; exit 1
-    fi
-
-    local any_diff=0
-    for f in "$after_out"/t*.json; do
-        local fname
-        fname=$(basename "$f")
-        local before_f="$before_out/$fname"
-        if [ ! -f "$before_f" ]; then
-            echo "  [SKIP]  $fname — no baseline (new test or baseline error)"
-            continue
-        fi
-        local after_rows before_rows
-        after_rows=$(python3 -c "import json; d=json.load(open('$f')); print(len(d) if isinstance(d,list) else 'obj')" 2>/dev/null || echo "ERR")
-        before_rows=$(python3 -c "import json; d=json.load(open('$before_f')); print(len(d) if isinstance(d,list) else 'obj')" 2>/dev/null || echo "ERR")
-        if [ "$after_rows" = "$before_rows" ]; then
-            echo "  [OK]    $fname — rows: $after_rows"
-        else
-            echo "  [DIFF]  $fname — before=$before_rows, after=$after_rows"
-            any_diff=1
-        fi
-    done
-
-    for f in "$after_out"/t*.json; do
-        local fname
-        fname=$(basename "$f")
-        if [ ! -f "$before_out/$fname" ]; then
-            local after_rows
-            after_rows=$(python3 -c "import json; d=json.load(open('$f')); print(len(d) if isinstance(d,list) else 'obj')" 2>/dev/null || echo "ERR")
-            echo "  [NEW]   $fname — rows: $after_rows (no baseline to compare)"
-        fi
-    done
-
-    echo ""
-    if [ "$any_diff" -eq 0 ]; then
-        echo "All comparable tests match."
-    else
-        echo "Some tests differ — review above."
-    fi
+    python3 "$SCRIPT_DIR/diff.py" "$results_native"
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -246,6 +237,7 @@ case "${1:-help}" in
     before)   run_before ;;
     diff)     diff_results ;;
     parallel)
+        discover "$AFTER_DIR"
         run_after &
         local_after_pid=$!
         run_before &
@@ -265,7 +257,7 @@ case "${1:-help}" in
         cat <<'USAGE'
 Compliance Test Runner — A/B test harness for Commander compliance commands.
 
-Usage: bash tests/compliance_test.sh <mode>
+Usage: bash tests/compliance/run.sh <mode>
 
 Modes:
   after      Run the test suite against the current branch (AFTER_DIR)
@@ -275,11 +267,11 @@ Modes:
   all        Run after, then before, then diff
 
 Configuration:
-  Set values in tests/compliance_test.env or export as env vars.
+  Set values in tests/compliance/test.env or export as env vars.
   If not set, USER1/USER2/TEAM1/TEAM_ONLY_USER are auto-discovered
   from the vault via enterprise-info.
 
-  See tests/compliance_test.env.example for all options.
+  See tests/compliance/test.env.example for all options.
 USAGE
         exit 1
         ;;
