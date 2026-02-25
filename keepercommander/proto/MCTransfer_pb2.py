@@ -13,7 +13,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x10MCTransfer.proto\x12\nMCTransfer\"\x84\x01\n\x11MCTransferRequest\x12\x16\n\x0e\x65nterpriseName\x18\x01 \x01(\t\x12\x1c\n\x14\x65nterpriseAdminEmail\x18\x02 \x01(\t\x12\x39\n\x12mcTransferTreeKeys\x18\x03 \x03(\x0b\x32\x1d.MCTransfer.MCTransferTreeKey\":\n\x11MCTransferTreeKey\x12\x14\n\x0c\x65nterpriseId\x18\x01 \x01(\x05\x12\x0f\n\x07treeKey\x18\x02 \x01(\x0c\"[\n\x1cMCTransferApproveDenyRequest\x12\x14\n\x0c\x65nterpriseId\x18\x01 \x01(\x05\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x14\n\x0ctransferDate\x18\x03 \x01(\x03\"U\n\x1dMCTransferApproveDenyResponse\x12\x34\n\x0fmcTransferState\x18\x01 \x01(\x0b\x32\x1b.MCTransfer.MCTransferState\"O\n\x16MCTransferListResponse\x12\x35\n\x10mcTransferStates\x18\x01 \x03(\x0b\x32\x1b.MCTransfer.MCTransferState\"D\n\x14MCTransferEnterprise\x12\x14\n\x0c\x65nterpriseId\x18\x01 \x01(\x05\x12\x16\n\x0e\x65nterpriseName\x18\x02 \x01(\t\"\xd6\x02\n\x0fMCTransferState\x12\x1a\n\x12movingEnterpriseId\x18\x01 \x01(\x05\x12\x1c\n\x14movingEnterpriseName\x18\x02 \x01(\t\x12\"\n\x1amovingEnterpriseAdminEmail\x18\x03 \x01(\t\x12\x1f\n\x17receivingEnterpriseName\x18\x04 \x01(\t\x12%\n\x1dreceivingEnterpriseAdminEmail\x18\x05 \x01(\t\x12\x34\n\x0etransferStatus\x18\x06 \x01(\x0e\x32\x1c.MCTransfer.MCTransferStatus\x12\x10\n\x08\x63omments\x18\x07 \x01(\t\x12\x14\n\x0ctransferDate\x18\x08 \x01(\x03\x12?\n\x15mcTransferEnterprises\x18\t \x03(\x0b\x32 .MCTransfer.MCTransferEnterprise*\xa8\x01\n\x10MCTransferStatus\x12\x12\n\x0eSTATUS_INVALID\x10\x00\x12\x14\n\x10STATUS_REQUESTED\x10\x01\x12\x13\n\x0fSTATUS_ACCEPTED\x10\x02\x12\x1b\n\x17STATUS_PENDING_APPROVAL\x10\x03\x12\x13\n\x0fSTATUS_APPROVED\x10\x04\x12\x11\n\rSTATUS_DENIED\x10\x05\x12\x10\n\x0cSTATUS_READY\x10\x06\x42&\n\x18\x63om.keepersecurity.protoB\nMCTransferb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x10MCTransfer.proto\x12\nMCTransfer\"\x86\x01\n\x11MCTransferRequest\x12\x16\n\x0e\x65nterpriseName\x18\x01 \x01(\t\x12\x1e\n\x16\x65nterpriseContactEmail\x18\x02 \x01(\t\x12\x39\n\x12mcTransferTreeKeys\x18\x03 \x03(\x0b\x32\x1d.MCTransfer.MCTransferTreeKey\":\n\x11MCTransferTreeKey\x12\x14\n\x0c\x65nterpriseId\x18\x01 \x01(\x05\x12\x0f\n\x07treeKey\x18\x02 \x01(\x0c\"[\n\x1cMCTransferApproveDenyRequest\x12\x14\n\x0c\x65nterpriseId\x18\x01 \x01(\x05\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x14\n\x0ctransferDate\x18\x03 \x01(\x03\"U\n\x1dMCTransferApproveDenyResponse\x12\x34\n\x0fmcTransferState\x18\x01 \x01(\x0b\x32\x1b.MCTransfer.MCTransferState\"O\n\x16MCTransferListResponse\x12\x35\n\x10mcTransferStates\x18\x01 \x03(\x0b\x32\x1b.MCTransfer.MCTransferState\"D\n\x14MCTransferEnterprise\x12\x14\n\x0c\x65nterpriseId\x18\x01 \x01(\x05\x12\x16\n\x0e\x65nterpriseName\x18\x02 \x01(\t\"\xd6\x02\n\x0fMCTransferState\x12\x1a\n\x12movingEnterpriseId\x18\x01 \x01(\x05\x12\x1c\n\x14movingEnterpriseName\x18\x02 \x01(\t\x12\"\n\x1amovingEnterpriseAdminEmail\x18\x03 \x01(\t\x12\x1f\n\x17receivingEnterpriseName\x18\x04 \x01(\t\x12%\n\x1dreceivingEnterpriseAdminEmail\x18\x05 \x01(\t\x12\x34\n\x0etransferStatus\x18\x06 \x01(\x0e\x32\x1c.MCTransfer.MCTransferStatus\x12\x10\n\x08\x63omments\x18\x07 \x01(\t\x12\x14\n\x0ctransferDate\x18\x08 \x01(\x03\x12?\n\x15mcTransferEnterprises\x18\t \x03(\x0b\x32 .MCTransfer.MCTransferEnterprise*\xa8\x01\n\x10MCTransferStatus\x12\x12\n\x0eSTATUS_INVALID\x10\x00\x12\x14\n\x10STATUS_REQUESTED\x10\x01\x12\x13\n\x0fSTATUS_ACCEPTED\x10\x02\x12\x1b\n\x17STATUS_PENDING_APPROVAL\x10\x03\x12\x13\n\x0fSTATUS_APPROVED\x10\x04\x12\x11\n\rSTATUS_DENIED\x10\x05\x12\x10\n\x0cSTATUS_READY\x10\x06\x42&\n\x18\x63om.keepersecurity.protoB\nMCTransferb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -21,20 +21,20 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'MCTransfer_pb2', _globals)
 if _descriptor._USE_C_DESCRIPTORS == False:
   _globals['DESCRIPTOR']._options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\030com.keepersecurity.protoB\nMCTransfer'
-  _globals['_MCTRANSFERSTATUS']._serialized_start=904
-  _globals['_MCTRANSFERSTATUS']._serialized_end=1072
+  _globals['_MCTRANSFERSTATUS']._serialized_start=906
+  _globals['_MCTRANSFERSTATUS']._serialized_end=1074
   _globals['_MCTRANSFERREQUEST']._serialized_start=33
-  _globals['_MCTRANSFERREQUEST']._serialized_end=165
-  _globals['_MCTRANSFERTREEKEY']._serialized_start=167
-  _globals['_MCTRANSFERTREEKEY']._serialized_end=225
-  _globals['_MCTRANSFERAPPROVEDENYREQUEST']._serialized_start=227
-  _globals['_MCTRANSFERAPPROVEDENYREQUEST']._serialized_end=318
-  _globals['_MCTRANSFERAPPROVEDENYRESPONSE']._serialized_start=320
-  _globals['_MCTRANSFERAPPROVEDENYRESPONSE']._serialized_end=405
-  _globals['_MCTRANSFERLISTRESPONSE']._serialized_start=407
-  _globals['_MCTRANSFERLISTRESPONSE']._serialized_end=486
-  _globals['_MCTRANSFERENTERPRISE']._serialized_start=488
-  _globals['_MCTRANSFERENTERPRISE']._serialized_end=556
-  _globals['_MCTRANSFERSTATE']._serialized_start=559
-  _globals['_MCTRANSFERSTATE']._serialized_end=901
+  _globals['_MCTRANSFERREQUEST']._serialized_end=167
+  _globals['_MCTRANSFERTREEKEY']._serialized_start=169
+  _globals['_MCTRANSFERTREEKEY']._serialized_end=227
+  _globals['_MCTRANSFERAPPROVEDENYREQUEST']._serialized_start=229
+  _globals['_MCTRANSFERAPPROVEDENYREQUEST']._serialized_end=320
+  _globals['_MCTRANSFERAPPROVEDENYRESPONSE']._serialized_start=322
+  _globals['_MCTRANSFERAPPROVEDENYRESPONSE']._serialized_end=407
+  _globals['_MCTRANSFERLISTRESPONSE']._serialized_start=409
+  _globals['_MCTRANSFERLISTRESPONSE']._serialized_end=488
+  _globals['_MCTRANSFERENTERPRISE']._serialized_start=490
+  _globals['_MCTRANSFERENTERPRISE']._serialized_end=558
+  _globals['_MCTRANSFERSTATE']._serialized_start=561
+  _globals['_MCTRANSFERSTATE']._serialized_end=903
 # @@protoc_insertion_point(module_scope)

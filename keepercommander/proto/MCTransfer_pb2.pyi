@@ -24,14 +24,14 @@ STATUS_DENIED: MCTransferStatus
 STATUS_READY: MCTransferStatus
 
 class MCTransferRequest(_message.Message):
-    __slots__ = ["enterpriseName", "enterpriseAdminEmail", "mcTransferTreeKeys"]
+    __slots__ = ["enterpriseName", "enterpriseContactEmail", "mcTransferTreeKeys"]
     ENTERPRISENAME_FIELD_NUMBER: _ClassVar[int]
-    ENTERPRISEADMINEMAIL_FIELD_NUMBER: _ClassVar[int]
+    ENTERPRISECONTACTEMAIL_FIELD_NUMBER: _ClassVar[int]
     MCTRANSFERTREEKEYS_FIELD_NUMBER: _ClassVar[int]
     enterpriseName: str
-    enterpriseAdminEmail: str
+    enterpriseContactEmail: str
     mcTransferTreeKeys: _containers.RepeatedCompositeFieldContainer[MCTransferTreeKey]
-    def __init__(self, enterpriseName: _Optional[str] = ..., enterpriseAdminEmail: _Optional[str] = ..., mcTransferTreeKeys: _Optional[_Iterable[_Union[MCTransferTreeKey, _Mapping]]] = ...) -> None: ...
+    def __init__(self, enterpriseName: _Optional[str] = ..., enterpriseContactEmail: _Optional[str] = ..., mcTransferTreeKeys: _Optional[_Iterable[_Union[MCTransferTreeKey, _Mapping]]] = ...) -> None: ...
 
 class MCTransferTreeKey(_message.Message):
     __slots__ = ["enterpriseId", "treeKey"]

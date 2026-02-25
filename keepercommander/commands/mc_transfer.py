@@ -170,7 +170,7 @@ class McTransferJoinMspCommand(enterprise_common.EnterpriseCommand, McTransferMi
 
         rq = MCTransfer_pb2.MCTransferRequest()
         rq.enterpriseName = enterprise_name
-        rq.enterpriseAdminEmail = enterprise_email
+        rq.enterpriseContactEmail = enterprise_email
         if enterprise_type == EnterpriseType.MSP:
             selected_mcs = self.selected_managed_companies(params)
             if len(selected_mcs) > 0:
@@ -203,7 +203,7 @@ class McTransferStatusCommand(enterprise_common.EnterpriseCommand, McTransferMix
         if enterprise_name:
             rq.enterpriseName = enterprise_name
         if enterprise_email:
-            rq.enterpriseAdminEmail = enterprise_email
+            rq.enterpriseContactEmail = enterprise_email
         transfer: Optional[MCTransfer_pb2.MCTransferState]
         transfer = api.communicate_rest(params, rq, 'enterprise/mc_transfer_status', rs_type=MCTransfer_pb2.MCTransferState)
         if transfer:
@@ -235,7 +235,7 @@ class McTransferCancelCommand(enterprise_common.EnterpriseCommand, McTransferMix
 
         rq = MCTransfer_pb2.MCTransferRequest()
         rq.enterpriseName = enterprise_name
-        rq.enterpriseAdminEmail = enterprise_email
+        rq.enterpriseContactEmail = enterprise_email
         try:
             api.communicate_rest(params, rq, 'enterprise/mc_transfer_cancel')
         except error.KeeperApiError as kae:
@@ -269,7 +269,7 @@ class McTransferAcceptMcCommand(enterprise_common.EnterpriseCommand, McTransferM
         try:
             rq = MCTransfer_pb2.MCTransferRequest()
             rq.enterpriseName = enterprise_name
-            rq.enterpriseAdminEmail = enterprise_email
+            rq.enterpriseContactEmail = enterprise_email
             api.communicate_rest(params, rq, 'enterprise/mc_transfer_accept_mc')
         except error.KeeperApiError as kae:
             raise error.CommandError('mc-transfer accept-mc', kae.message)
@@ -287,7 +287,7 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
 
         rq = MCTransfer_pb2.MCTransferRequest()
         rq.enterpriseName = enterprise_name
-        rq.enterpriseAdminEmail = enterprise_email
+        rq.enterpriseContactEmail = enterprise_email
         transfer: Optional[MCTransfer_pb2.MCTransferState]
         transfer = api.communicate_rest(params, rq, 'enterprise/mc_transfer_status', rs_type=MCTransfer_pb2.MCTransferState)
         if transfer.transferStatus != MCTransfer_pb2.MCTransferStatus.STATUS_APPROVED:
@@ -296,7 +296,7 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
 
         rq = MCTransfer_pb2.MCTransferRequest()
         rq.enterpriseName = enterprise_name
-        rq.enterpriseAdminEmail = enterprise_email
+        rq.enterpriseContactEmail = enterprise_email
 
         if transfer.receivingEnterpriseName:
             public_key_rs: Optional[breachwatch_pb2.EnterprisePublicKeyResponse]
