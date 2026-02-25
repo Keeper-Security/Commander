@@ -12,7 +12,9 @@
 import argparse
 import logging
 import os
+import signal
 import sys
+import threading
 from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes
 
 from .base import Command, GroupCommand, dump_report_data, RecordMixin
@@ -490,6 +492,11 @@ class PAMTunnelStartCommand(Command):
     pam_cmd_parser.add_argument('--no-trickle-ice', '-nti', required=False, dest='no_trickle_ice', action='store_true',
                                 help='Disable trickle ICE for WebRTC connections. By default, trickle ICE is enabled '
                                      'for real-time candidate exchange.')
+    pam_cmd_parser.add_argument('--foreground', '-fg', required=False, dest='foreground', action='store_true',
+                                help='Keep the tunnel running in the foreground, blocking until '
+                                     'SIGTERM/SIGINT/Ctrl+C is received. Use this flag when running '
+                                     'tunnels from scripts, systemd services, or any non-interactive '
+                                     'context where the process would otherwise exit immediately.')
 
     def get_parser(self):
         return PAMTunnelStartCommand.pam_cmd_parser
@@ -636,8 +643,34 @@ class PAMTunnelStartCommand(Command):
         result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title, allow_supply_host=allow_supply_host)
         
         if result and result.get("success"):
-            # The helper will show endpoint table when local socket is actually listening
-            pass
+            if kwargs.get('foreground', False):
+                fg_shutdown = threading.Event()
+
+                def _fg_signal_handler(signum, _frame):
+                    sig_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
+                    print(f"\n{bcolors.WARNING}Received {sig_name}, stopping tunnel...{bcolors.ENDC}")
+                    fg_shutdown.set()
+
+                prev_sigterm = signal.signal(signal.SIGTERM, _fg_signal_handler)
+                prev_sigint = signal.signal(signal.SIGINT, _fg_signal_handler)
+
+                print(f"\n{bcolors.OKGREEN}Tunnel running in foreground mode.{bcolors.ENDC}")
+                print(f"{bcolors.OKGREEN}Press Ctrl+C or send SIGTERM (kill {os.getpid()}) to stop.{bcolors.ENDC}\n")
+
+                try:
+                    fg_shutdown.wait()
+                except KeyboardInterrupt:
+                    pass
+                finally:
+                    signal.signal(signal.SIGTERM, prev_sigterm)
+                    signal.signal(signal.SIGINT, prev_sigint)
+                    print(f"\n{bcolors.OKBLUE}Stopping tunnel for record {record_uid}...{bcolors.ENDC}")
+                    try:
+                        stop_cmd = PAMTunnelStopCommand()
+                        stop_cmd.execute(params, uid=record_uid)
+                        print(f"{bcolors.OKGREEN}Tunnel stopped.{bcolors.ENDC}")
+                    except Exception as fg_err:
+                        logging.warning("Error stopping tunnel during foreground shutdown: %s", fg_err)
         else:
             # Print failure message
             error_msg = result.get("error", "Unknown error") if result else "Failed to start tunnel"
