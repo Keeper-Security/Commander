@@ -66,13 +66,20 @@ def list_resource_data_edges(
             if not config_uid:
                 config_uid = resource_uid
 
+        # Load config record and get config key for DAG root
+        vault.KeeperRecord.load(params, config_uid)
+        config_record_key = params.record_cache.get(config_uid, {}).get('record_key_unencrypted')
+        if not config_record_key:
+            logging.warning(f"Config record key not available for {config_uid}")
+            return []
+
         # Create DAG connection
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
 
         # Create a dummy record for DAG
         dag_record = PasswordRecord()
         dag_record.record_uid = config_uid
-        dag_record.record_key = record_key  # Use record key to decrypt keychain
+        dag_record.record_key = config_record_key  # Use config key for DAG root
 
         conn = Connection(
             params=params,
@@ -165,13 +172,20 @@ def get_resource_settings(
             if not config_uid:
                 config_uid = resource_uid
 
+        # Load config record and get config key for DAG root
+        vault.KeeperRecord.load(params, config_uid)
+        config_record_key = params.record_cache.get(config_uid, {}).get('record_key_unencrypted')
+        if not config_record_key:
+            logging.warning(f"Config record key not available for {config_uid}")
+            return None
+
         # Create DAG connection
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
 
         # Create a dummy record for DAG (uses config UID as record UID)
         dag_record = PasswordRecord()
         dag_record.record_uid = config_uid
-        dag_record.record_key = record_key  # Use record key to decrypt keychain
+        dag_record.record_key = config_record_key  # Use config key for DAG root
 
         conn = Connection(
             params=params,
@@ -435,13 +449,20 @@ def set_resource_keeper_ai_settings(
             if not config_uid:
                 config_uid = resource_uid
 
+        # Load config record and get config key for DAG root
+        vault.KeeperRecord.load(params, config_uid)
+        config_record_key = params.record_cache.get(config_uid, {}).get('record_key_unencrypted')
+        if not config_record_key:
+            logging.warning(f"Config record key not available for {config_uid}")
+            return False
+
         # Create DAG connection
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
 
         # Create a dummy record for DAG (uses config UID as record UID)
         dag_record = PasswordRecord()
         dag_record.record_uid = config_uid
-        dag_record.record_key = record_key  # Use actual record key for encryption
+        dag_record.record_key = config_record_key  # Use config key for DAG root
 
         conn = Connection(
             params=params,
@@ -577,13 +598,20 @@ def set_resource_jit_settings(
             if not config_uid:
                 config_uid = resource_uid
 
+        # Load config record and get config key for DAG root
+        vault.KeeperRecord.load(params, config_uid)
+        config_record_key = params.record_cache.get(config_uid, {}).get('record_key_unencrypted')
+        if not config_record_key:
+            logging.warning(f"Config record key not available for {config_uid}")
+            return False
+
         # Create DAG connection
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
 
         # Create a dummy record for DAG (uses config UID as record UID)
         dag_record = PasswordRecord()
         dag_record.record_uid = config_uid
-        dag_record.record_key = record_key  # Use actual record key for encryption
+        dag_record.record_key = config_record_key  # Use config key for DAG root
 
         conn = Connection(
             params=params,
@@ -689,10 +717,15 @@ def refresh_meta_to_latest(
             config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, resource_uid)
             if not config_uid:
                 config_uid = resource_uid
+        vault.KeeperRecord.load(params, config_uid)
+        config_record_key = params.record_cache.get(config_uid, {}).get('record_key_unencrypted')
+        if not config_record_key:
+            logging.warning(f"Config record key not available for {config_uid}")
+            return False
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         dag_record = PasswordRecord()
         dag_record.record_uid = config_uid
-        dag_record.record_key = record_key
+        dag_record.record_key = config_record_key
         conn = Connection(
             params=params,
             encrypted_transmission_key=encrypted_transmission_key,
@@ -757,10 +790,15 @@ def refresh_link_to_config_to_latest(
             config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, resource_uid)
             if not config_uid:
                 config_uid = resource_uid
+        vault.KeeperRecord.load(params, config_uid)
+        config_record_key = params.record_cache.get(config_uid, {}).get('record_key_unencrypted')
+        if not config_record_key:
+            logging.warning(f"Config record key not available for {config_uid}")
+            return False
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         dag_record = PasswordRecord()
         dag_record.record_uid = config_uid
-        dag_record.record_key = record_key
+        dag_record.record_key = config_record_key
         conn = Connection(
             params=params,
             encrypted_transmission_key=encrypted_transmission_key,
