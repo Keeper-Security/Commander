@@ -1696,9 +1696,9 @@ class LoginCommand(Command):
                 if not region:
                     # Check extended server list
                     region = next((k for k, v in KEEPER_SERVERS.items() if v == params.server), params.server)
-                logging.info(f'{Fore.CYAN}Data center: {Fore.WHITE}{region}{Fore.RESET}')
-                logging.info(f'{Fore.CYAN}Use {Fore.GREEN}login --server <region>{Fore.CYAN} to change (US, EU, AU, CA, JP, GOV){Fore.RESET}')
-                logging.info('')
+                print(f'{Fore.CYAN}Data center: {Fore.WHITE}{region}{Fore.RESET}', file=sys.stderr)
+                print(f'{Fore.CYAN}Use {Fore.GREEN}login --server <region>{Fore.CYAN} to change (US, EU, AU, CA, JP, GOV){Fore.RESET}', file=sys.stderr)
+                print('', file=sys.stderr)
                 user = input(f'{Fore.GREEN}Email: {Fore.RESET}').strip()
             if not user:
                 return
