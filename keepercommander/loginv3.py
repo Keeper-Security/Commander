@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import sys
 from collections import namedtuple
 from sys import platform as _platform
 from typing import Optional, List, Any
@@ -45,7 +46,7 @@ class LoginV3Flow:
 
     def _fallback_to_password_auth(self, params, encryptedDeviceToken, clone_code_bytes, login_type):
         """Helper method to handle fallback from biometric to default authentication"""
-        logging.info("Falling back to default authentication...")
+        print("Falling back to default authentication...", file=sys.stderr)
         return LoginV3API.startLoginMessage(params, encryptedDeviceToken, cloneCode=clone_code_bytes, loginType=login_type)
 
     def login(self, params, new_device=False, new_login=False, new_password_if_reset_required=None):   # type: (KeeperParams, bool, bool, string) -> None
@@ -119,8 +120,8 @@ class LoginV3Flow:
                 try:
                     from .biometric.commands.verify import BiometricVerifyCommand
                     auth_helper = BiometricVerifyCommand()
-                    logging.info("Attempting biometric authentication...")
-                    logging.info("Press Ctrl+C to skip biometric and use default login method")
+                    print("Attempting biometric authentication...", file=sys.stderr)
+                    print("Press Ctrl+C to skip biometric and use default login method", file=sys.stderr)
                     
                     biometric_result = auth_helper.biometric_authenticate(params, username=params.user)
                     
@@ -128,11 +129,11 @@ class LoginV3Flow:
                         logging.debug("Biometric authentication successful!")
                         step.verify_biometric_key(biometric_result.get('login_token'))
                     else:
-                        logging.info("Biometric authentication failed")
+                        print("Biometric authentication failed", file=sys.stderr)
                         step.fallback_to_password()
                         
                 except KeyboardInterrupt:
-                    logging.info("Biometric authentication cancelled by user")
+                    print("Biometric authentication cancelled by user", file=sys.stderr)
                     step.fallback_to_password()
                             
                 except Exception as e:
@@ -150,7 +151,7 @@ class LoginV3Flow:
                         else:
                             raise Exception("Device needs approval for biometric authentication. Please register your device first.")
                     else:
-                        logging.info(f"Biometric authentication error: {e}")
+                        print(f"Biometric authentication error: {e}", file=sys.stderr)
                         step.fallback_to_password()
 
                 if should_cancel:
@@ -256,8 +257,8 @@ class LoginV3Flow:
                 if encryptedLoginToken:
                     resp = LoginV3API.resume_login(params, encryptedLoginToken, encryptedDeviceToken, loginMethod='AFTER_SSO')
                 else:
-                    logging.info(bcolors.BOLD + bcolors.OKGREEN + "\nAttempting to authenticate with a master password." + bcolors.ENDC + bcolors.ENDC)
-                    logging.info(bcolors.OKBLUE + "(Note: SSO users can create a Master Password in Web Vault > Settings)\n" + bcolors.ENDC)
+                    print(bcolors.BOLD + bcolors.OKGREEN + "\nAttempting to authenticate with a master password." + bcolors.ENDC + bcolors.ENDC, file=sys.stderr)
+                    print(bcolors.OKBLUE + "(Note: SSO users can create a Master Password in Web Vault > Settings)\n" + bcolors.ENDC, file=sys.stderr)
                     is_alternate_login = True
                     resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType='ALTERNATE')
 
@@ -272,7 +273,7 @@ class LoginV3Flow:
 
             elif resp.loginState == APIRequest_pb2.REGION_REDIRECT:
                 params.server = resp.stateSpecificValue
-                logging.info('Redirecting to region: %s', params.server)
+                print('Redirecting to region: %s' % params.server, file=sys.stderr)
                 LoginV3API.register_device_in_region(params, encryptedDeviceToken)
                 resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken)
 
@@ -385,18 +386,18 @@ class LoginV3Flow:
                 raise Exception(msg)
             elif resp.sessionTokenType == APIRequest_pb2.ACCOUNT_RECOVERY:
                 if new_password_if_reset_required:
-                    logging.info('Resetting expired Master Password.\n')
+                    print('Resetting expired Master Password.\n', file=sys.stderr)
                     LoginV3API.change_master_password(params, new_password_if_reset_required) # always returns False
                     return False
                 elif new_password_if_reset_required is None:
-                    logging.info('Your Master Password has expired, you are required to change it before you can login.\n')
+                    print('Your Master Password has expired, you are required to change it before you can login.\n', file=sys.stderr)
                     if LoginV3Flow.change_master_password(params):
                         return False
                 # Return exception if password change fails
                 params.clear_session()
                 raise Exception('Change password failed')
             elif resp.sessionTokenType == APIRequest_pb2.SHARE_ACCOUNT:
-                logging.info('Account transfer required')
+                print('Account transfer required', file=sys.stderr)
                 accepted = api.accept_account_transfer_consent(params)
                 if accepted:
                     return False
@@ -425,7 +426,8 @@ class LoginV3Flow:
                 if bw_audit:
                     params.breach_watch.send_audit_events = True
 
-        logging.info(bcolors.OKGREEN + "Successfully authenticated with " + login_type_message + "" + bcolors.ENDC)
+        if not params.batch_mode:
+            print(bcolors.OKGREEN + "Successfully authenticated with " + login_type_message + "" + bcolors.ENDC, file=sys.stderr)
         return True
 
     @staticmethod
@@ -491,7 +493,7 @@ class LoginV3Flow:
 
         try:
             while True:
-                logging.info('Please choose a new Master Password.')
+                print('Please choose a new Master Password.', file=sys.stderr)
                 password = getpass.getpass(prompt='... {0:>24}: '.format('Master Password'), stream=None).strip()
                 if not password:
                     raise KeyboardInterrupt()
@@ -505,7 +507,7 @@ class LoginV3Flow:
                             failed_rules.append(rule.description)
                     if len(failed_rules) == 0:
                         LoginV3API.change_master_password(params, password, min_iterations)
-                        logging.info('Password changed')
+                        print('Password changed', file=sys.stderr)
                         params.password = password
                         return True
                     else:
@@ -514,7 +516,7 @@ class LoginV3Flow:
                 else:
                     logging.warning('Passwords do not match.')
         except KeyboardInterrupt:
-            logging.info('Canceled')
+            print('Canceled', file=sys.stderr)
         params.session_token = None
         params.data_key = None
         return False
@@ -762,8 +764,8 @@ class LoginV3Flow:
         raise KeyboardInterrupt()
 
     def handle_account_recovery(self, params, encrypted_login_token_bytes):
-        logging.info('')
-        logging.info('Password Recovery')
+        print('', file=sys.stderr)
+        print('Password Recovery', file=sys.stderr)
         rq = APIRequest_pb2.MasterPasswordRecoveryVerificationRequest()
         rq.encryptedLoginToken = encrypted_login_token_bytes
         try:
@@ -772,7 +774,7 @@ class LoginV3Flow:
             if kae.result_code != 'bad_request' and not kae.message.startswith('Email has been sent.'):
                 raise kae
 
-        logging.info('Please check your email and enter the verification code below:')
+        print('Please check your email and enter the verification code below:', file=sys.stderr)
         verification_code = input('Verification Code: ')
         if not verification_code:
             return
@@ -786,7 +788,7 @@ class LoginV3Flow:
         backup_type = rs.backupKeyType
 
         if backup_type == APIRequest_pb2.BKT_SEC_ANSWER:
-            logging.info(f'Security Question: {rs.securityQuestion}')
+            print(f'Security Question: {rs.securityQuestion}', file=sys.stderr)
             answer = getpass.getpass(prompt='Answer: ', stream=None)
             if not answer:
                 return
@@ -794,7 +796,7 @@ class LoginV3Flow:
             auth_hash = crypto.derive_keyhash_v1(recovery_phrase, rs.salt, rs.iterations)
         elif backup_type == APIRequest_pb2.BKT_PASSPHRASE_HASH:
             p = PassphrasePrompt()
-            logging.info('Please enter your Recovery Phrase ')
+            print('Please enter your Recovery Phrase ', file=sys.stderr)
             if os.isatty(0):
                 phrase = prompt('Recovery Phrase: ', lexer=p, completer=p, key_bindings=p.kb, validator=p,
                                 validate_while_typing=False, editing_mode=EditingMode.VI, wrap_lines=True,
@@ -810,7 +812,7 @@ class LoginV3Flow:
             recovery_phrase = ' '.join(words)
             auth_hash = crypto.generate_hkdf_key('recovery_auth_token', recovery_phrase)
         else:
-            logging.info('Unsupported account recovery type')
+            print('Unsupported account recovery type', file=sys.stderr)
             return
 
         rq = APIRequest_pb2.GetDataKeyBackupV3Request()
@@ -844,7 +846,7 @@ class LoginV3API:
     @staticmethod
     def get_device_id(params, new_device=False):   # type: (KeeperParams, bool) -> bytes
         if new_device:
-            logging.info('Resetting device token')
+            print('Resetting device token', file=sys.stderr)
             params.device_token = None
             if 'device_token' in params.config:
                 del params.config['device_token']
@@ -935,7 +937,7 @@ class LoginV3API:
             if 'error' in rs and 'message' in rs:
                 if rs['error'] == 'region_redirect':
                     params.server = rs['region_host']
-                    logging.info('Redirecting to region: %s', params.server)
+                    print('Redirecting to region: %s' % params.server, file=sys.stderr)
                     LoginV3API.register_device_in_region(params, encryptedDeviceToken)
                     return LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType=loginType)
 
@@ -977,7 +979,7 @@ class LoginV3API:
             if 'error' in rs and 'message' in rs:
                 if rs['error'] == 'region_redirect':
                     params.server = rs['region_host']
-                    logging.info('Redirecting to region: %s', params.server)
+                    print('Redirecting to region: %s' % params.server, file=sys.stderr)
                     LoginV3API.register_device_in_region(params, encryptedDeviceToken)
                     return LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType=loginType)
 
