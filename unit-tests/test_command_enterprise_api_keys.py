@@ -5,6 +5,7 @@ import tempfile
 import os
 import io
 import sys
+import re
 from unittest import TestCase, mock
 
 from data_enterprise import EnterpriseEnvironment
@@ -135,7 +136,16 @@ class TestEnterpriseApiKeys(TestCase):
         self.assertIn('Token: token_generated_for_test', output)
         self.assertIn('Name: SIEM Tool', output)
         self.assertIn('Enterprise ID: 8560', output)
-        self.assertIn('Expires: 2025-08-09', output)  # Date format
+        # Check for expiration date format (YYYY-MM-DD HH:MM:SS) - should be approximately 30 days from now
+        expiration_match = re.search(r'Expires: (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', output)
+        self.assertIsNotNone(expiration_match, f"Expected expiration date format not found in output: {output}")
+        expiration_str = expiration_match.group(1)
+        expiration_date = datetime.datetime.strptime(expiration_str, '%Y-%m-%d %H:%M:%S')
+        # Verify expiration is approximately 30 days from now (within 1 day tolerance)
+        now = datetime.datetime.now()
+        expected_expiration = now + datetime.timedelta(days=30)
+        days_diff = abs((expiration_date - expected_expiration).days)
+        self.assertLessEqual(days_diff, 1, f"Expiration date {expiration_str} should be approximately 30 days from now")
         self.assertIn('Integrations:', output)
         self.assertIn('- SIEM: READ_WRITE (2)', output)
 
@@ -220,6 +230,28 @@ class TestEnterpriseApiKeys(TestCase):
         
         self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
         self.assertIsNotNone(result)
+        
+        # Parse and validate JSON structure
+        data = json.loads(result)
+        self.assertIsInstance(data['issued_date'], int)
+        self.assertIsInstance(data['expiration_date'], int)  # Should be timestamp for 7d expiration
+
+    def test_api_key_generate_json_output_never_expires(self):
+        """Test API key generation with JSON output for never-expiring key"""
+        params = get_connected_params()
+        
+        cmd = enterprise_api_keys.ApiKeyGenerateCommand()
+        TestEnterpriseApiKeys.expected_commands = ['generate_token']
+        
+        result = cmd.execute(params, name='Permanent JSON Key', integrations='SIEM:2', expires='never', format='json')
+        
+        self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
+        self.assertIsNotNone(result)
+        
+        # Parse and validate JSON structure
+        data = json.loads(result)
+        self.assertIsInstance(data['issued_date'], int)
+        self.assertEqual(data['expiration_date'], 'never')  # Should be 'never' string
 
     def test_api_key_generate_json_with_output_file(self):
         """Test API key generation with JSON output to file"""
@@ -262,7 +294,7 @@ class TestEnterpriseApiKeys(TestCase):
         with mock.patch('builtins.print') as mock_print:
             cmd.execute(params, name='Test Key')
         
-        mock_print.assert_called_with("At least one integration is required. Example: --integrations 'SIEM:2'")
+        mock_print.assert_called_with("At least one integration is required. Example: --integrations 'SIEM:2' or --integrations 'CSPM:1' or --integrations 'BILLING:2'")
 
     def test_api_key_generate_invalid_role_format(self):
         """Test API key generation fails with invalid integration format"""
@@ -287,6 +319,49 @@ class TestEnterpriseApiKeys(TestCase):
         
         # Should print error about invalid integration
         mock_print.assert_called()
+
+    def test_api_key_generate_billing_non_msp(self):
+        """Test API key generation fails for BILLING integration when not MSP"""
+        params = get_connected_params()
+        
+        cmd = enterprise_api_keys.ApiKeyGenerateCommand()
+        
+        # Mock is_msp to return False
+        with mock.patch('keepercommander.commands.enterprise_api_keys.EnterpriseCommand.is_msp', return_value=False):
+            with mock.patch('builtins.print') as mock_print:
+                cmd.execute(params, name='Billing Key', integrations='BILLING:2')
+        
+        # Should print error about MSP requirement
+        mock_print.assert_called_with("The 'Billing' integration is only available for MSP (Managed Service Provider) enterprises.")
+
+    def test_api_key_generate_billing_msp(self):
+        """Test API key generation succeeds for BILLING integration when MSP"""
+        params = get_connected_params()
+        
+        cmd = enterprise_api_keys.ApiKeyGenerateCommand()
+        TestEnterpriseApiKeys.expected_commands = ['generate_token']
+        
+        # Mock is_msp to return True
+        with mock.patch('keepercommander.commands.enterprise_api_keys.EnterpriseCommand.is_msp', return_value=True):
+            with mock.patch.object(cmd, 'get_enterprise_id', return_value=8560 << 32):
+                with mock.patch('builtins.print'):
+                    cmd.execute(params, name='Billing Key', integrations='BILLING:2', expires='30d')
+        
+        self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
+
+    def test_api_key_generate_success_cspm(self):
+        """Test successful API key generation with CSPM integration"""
+        params = get_connected_params()
+
+        cmd = enterprise_api_keys.ApiKeyGenerateCommand()
+        TestEnterpriseApiKeys.expected_commands = ['generate_token']
+
+        # Mock get_enterprise_id to avoid API call
+        with mock.patch.object(cmd, 'get_enterprise_id', return_value=8560 << 32):
+            with mock.patch('builtins.print'):
+                cmd.execute(params, name='CSPM Integration', integrations='CSPM:1', expires='30d')
+
+        self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
 
     def test_api_key_revoke_success(self):
         """Test successful API key revocation"""
@@ -461,7 +536,13 @@ class TestEnterpriseApiKeys(TestCase):
         self.assertEqual(data['token'], 'token_generated_for_test')
         self.assertEqual(data['enterprise_id'], 8560)
         self.assertIn('issued_date', data)
+        # issued_date should be raw timestamp (integer)
+        self.assertIsInstance(data['issued_date'], int)
         self.assertIn('expiration_date', data)
+        # expiration_date should be raw timestamp (integer) or 'never'
+        self.assertIsInstance(data['expiration_date'], (int, str))
+        if isinstance(data['expiration_date'], str):
+            self.assertEqual(data['expiration_date'], 'never')
         self.assertIn('integrations', data)
         
         # Validate integrations
@@ -612,10 +693,12 @@ class TestEnterpriseApiKeys(TestCase):
             rs.name = request.tokenName  # Should be "SIEM Tool"
             rs.token = "token_generated_for_test"
             rs.enterprise_id = 8560
+            # Use the issuedDate from request (which includes +3000ms offset)
             rs.issuedDate = request.issuedDate
             if hasattr(request, 'expirationDate') and request.expirationDate:
-                # Set expiration to match terminal example: 2025-08-09 16:24:35
-                rs.expirationDate = int(datetime.datetime(2025, 8, 9, 16, 24, 35).timestamp() * 1000)
+                # Use the expirationDate from request (calculated based on expires parameter)
+                rs.expirationDate = request.expirationDate
+            # If expirationDate is not set, it means 'never' expires
             
             # Add integration from request (using integrationRequests)
             for integration_req in request.integrationRequests:
@@ -639,6 +722,8 @@ class TestEnterpriseApiKeys(TestCase):
     def _get_role_name_by_id(role_id):
         """Helper method to map role IDs to names"""
         role_map = {
-            1: "SIEM"
+            1: "SIEM",
+            2: "CSPM",
+            3: "BILLING"
         }
         return role_map.get(role_id, f"Role_{role_id}") 

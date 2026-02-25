@@ -48,26 +48,33 @@ Examples:
   # Generate API key with SIEM role and 30-day expiration
   public-api-key generate --name "SIEM Integration" --integrations "SIEM:2" --expires 30d
   
-  # Generate API key with 24-hour expiration
-  public-api-key generate --name "Temp Access" --integrations "SIEM:2" --expires 24h
+  # Generate API key with BILLING role and 24-hour expiration
+  public-api-key generate --name "Billing Tool" --integrations "BILLING:2" --expires 24h
   
   # Generate permanent API key with read-only access
   public-api-key generate --name "Monitoring Tool" --integrations "SIEM:1" --expires never
   
-  # Generate API key and save details to JSON file
-  public-api-key generate --name "Backup Tool" --integrations "SIEM:2" --expires 1y --format json --output backup_key.json
+  # Generate API key with CSPM role and 30-day expiration
+  public-api-key generate --name "CSPM Integration" --integrations "CSPM:1" --expires 30d
+  
+  # Generate API key with BILLING role and save details to JSON file
+  public-api-key generate --name "Billing Integration" --integrations "BILLING:2" --expires 1y --format json --output billing_key.json
     ''',
     formatter_class=argparse.RawDescriptionHelpFormatter
 )
 api_key_generate_parser.add_argument('--name', dest='name', required=True, 
-                                     help='API key name. Examples: "SIEM Integration", "Backup Tool", "Monitoring Service"')
+                                     help='API key name. Examples: "SIEM Integration", "Billing Tool", "Backup Tool", "Monitoring Service"')
 api_key_generate_parser.add_argument('--integrations', dest='integrations', required=True, action='store', 
                                      help='''Integration with action type. 
 Format: "RoleName:ActionType"
+Available integrations: SIEM, CSPM, BILLING
 Action types: 1=READ (read-only), 2=READ_WRITE (full access)
 Examples: 
   --integrations "SIEM:2"                    # SIEM role with read-write access
-  --integrations "SIEM:1"                    # SIEM role with read-only access''')
+  --integrations "SIEM:1"                    # SIEM role with read-only access
+  --integrations "CSPM:1"                    # CSPM role with read-only access  
+  --integrations "BILLING:2"                 # BILLING role with read-write access
+  --integrations "BILLING:1"                 # BILLING role with read-only access''')
 api_key_generate_parser.add_argument('--expires', dest='expires', action='store',
                                      choices=['24h', '7d', '30d', '1y', 'never'],
                                      default='never',
@@ -150,8 +157,19 @@ class ApiKeyCommand(GroupCommand):
         print('  # Generate a new API key for SIEM integration (30-day expiration)')
         print('  public-api-key generate --name "SIEM Tool" --integrations "SIEM:2" --expires 30d')
         print()
+        print('  # Generate a new API key for CSPM integration (30-day expiration)')
+        print('  public-api-key generate --name "CSPM Integration" --integrations "CSPM:1" --expires 30d')
+        print()
+        print('  # Generate a new API key for BILLING integration (30-day expiration)')
+        print('  public-api-key generate --name "Billing Tool" --integrations "BILLING:2" --expires 30d')
+        print()
         print('  # Revoke an API key')
         print('  public-api-key revoke "SIEM Integration"')
+        print()
+        print('Available Integrations:')
+        print('  SIEM    - Security Information and Event Management')
+        print('  CSPM    - Cloud Security Posture Management')
+        print('  BILLING - Billing and subscription management')
         print()
         print('Role Action Types:')
         print('  1 = READ       (read-only access)')
@@ -241,7 +259,7 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
             # Create the generate token request
             rq = publicapi_pb2.GenerateTokenRequest()
             rq.tokenName = name
-            rq.issuedDate = int(datetime.datetime.now().timestamp() * 1000) + 300
+            rq.issuedDate = int(datetime.datetime.now().timestamp() * 1000) + 3000
             
             # Set expiration based on the selected option
             expires = kwargs.get('expires', 'never')
@@ -265,7 +283,7 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
             # Parse integrations - now required
             integrations_str = kwargs.get('integrations')
             if not integrations_str:
-                print("At least one integration is required. Example: --integrations 'SIEM:2'")
+                print("At least one integration is required. Example: --integrations 'SIEM:2' or --integrations 'CSPM:1' or --integrations 'BILLING:2'")
                 return
             
             for integration_spec in integrations_str.split(','):
@@ -275,18 +293,23 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
 
                 if ':' in integration_spec:
                     integration_id_str, action_type_str = integration_spec.split(':', 1)
-                    allowed_integrations = [("SIEM", 1)]
+                    allowed_integrations = [("SIEM", 1), ("CSPM", 2), ("BILLING", 3)]
                     allowed_integration_names = [integration[0].upper() for integration in allowed_integrations]
                     if integration_id_str.strip().upper() not in allowed_integration_names:
                         print(f"Integration '{integration_id_str.strip()}' does not match allowed integrations: {', '.join(allowed_integration_names)}. Skipping.")
                         return
+
+                    if integration_id_str.strip().upper() == "BILLING" and not EnterpriseCommand.is_msp(params):
+                        print("The 'Billing' integration is only available for MSP (Managed Service Provider) enterprises.")
+                        return
+
                     integration_id_str = integration_id_str.strip()
                     integration_id = next(integration[1] for integration in allowed_integrations if integration[0].upper() == integration_id_str.upper())
                     action_type_str = action_type_str.strip()
                 else:
                     # If no action type specified, default to READ-write (2)
                     print(f"Error: Integration specification must include action type. Got: '{integration_spec}'")
-                    print("Required format: 'IntegrationName:ActionType' (e.g., 'SIEM:1')")
+                    print("Required format: 'IntegrationName:ActionType' (e.g., 'SIEM:1' or 'BILLING:2')")
                     return
                 
                 # Map action type number to enum
