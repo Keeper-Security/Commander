@@ -294,7 +294,7 @@ class TestEnterpriseApiKeys(TestCase):
         with mock.patch('builtins.print') as mock_print:
             cmd.execute(params, name='Test Key')
         
-        mock_print.assert_called_with("At least one integration is required. Example: --integrations 'SIEM:2' or --integrations 'BILLING:2'")
+        mock_print.assert_called_with("At least one integration is required. Example: --integrations 'SIEM:2' or --integrations 'CSPM:1' or --integrations 'BILLING:2'")
 
     def test_api_key_generate_invalid_role_format(self):
         """Test API key generation fails with invalid integration format"""
@@ -347,6 +347,20 @@ class TestEnterpriseApiKeys(TestCase):
                 with mock.patch('builtins.print'):
                     cmd.execute(params, name='Billing Key', integrations='BILLING:2', expires='30d')
         
+        self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
+
+    def test_api_key_generate_success_cspm(self):
+        """Test successful API key generation with CSPM integration"""
+        params = get_connected_params()
+
+        cmd = enterprise_api_keys.ApiKeyGenerateCommand()
+        TestEnterpriseApiKeys.expected_commands = ['generate_token']
+
+        # Mock get_enterprise_id to avoid API call
+        with mock.patch.object(cmd, 'get_enterprise_id', return_value=8560 << 32):
+            with mock.patch('builtins.print'):
+                cmd.execute(params, name='CSPM Integration', integrations='CSPM:1', expires='30d')
+
         self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
 
     def test_api_key_revoke_success(self):
@@ -709,6 +723,7 @@ class TestEnterpriseApiKeys(TestCase):
         """Helper method to map role IDs to names"""
         role_map = {
             1: "SIEM",
+            2: "CSPM",
             3: "BILLING"
         }
         return role_map.get(role_id, f"Role_{role_id}") 

@@ -54,6 +54,9 @@ Examples:
   # Generate permanent API key with read-only access
   public-api-key generate --name "Monitoring Tool" --integrations "SIEM:1" --expires never
   
+  # Generate API key with CSPM role and 30-day expiration
+  public-api-key generate --name "CSPM Integration" --integrations "CSPM:1" --expires 30d
+  
   # Generate API key with BILLING role and save details to JSON file
   public-api-key generate --name "Billing Integration" --integrations "BILLING:2" --expires 1y --format json --output billing_key.json
     ''',
@@ -64,11 +67,12 @@ api_key_generate_parser.add_argument('--name', dest='name', required=True,
 api_key_generate_parser.add_argument('--integrations', dest='integrations', required=True, action='store', 
                                      help='''Integration with action type. 
 Format: "RoleName:ActionType"
-Available integrations: SIEM, BILLING
+Available integrations: SIEM, CSPM, BILLING
 Action types: 1=READ (read-only), 2=READ_WRITE (full access)
 Examples: 
   --integrations "SIEM:2"                    # SIEM role with read-write access
   --integrations "SIEM:1"                    # SIEM role with read-only access
+  --integrations "CSPM:1"                    # CSPM role with read-only access  
   --integrations "BILLING:2"                 # BILLING role with read-write access
   --integrations "BILLING:1"                 # BILLING role with read-only access''')
 api_key_generate_parser.add_argument('--expires', dest='expires', action='store',
@@ -153,6 +157,9 @@ class ApiKeyCommand(GroupCommand):
         print('  # Generate a new API key for SIEM integration (30-day expiration)')
         print('  public-api-key generate --name "SIEM Tool" --integrations "SIEM:2" --expires 30d')
         print()
+        print('  # Generate a new API key for CSPM integration (30-day expiration)')
+        print('  public-api-key generate --name "CSPM Integration" --integrations "CSPM:1" --expires 30d')
+        print()
         print('  # Generate a new API key for BILLING integration (30-day expiration)')
         print('  public-api-key generate --name "Billing Tool" --integrations "BILLING:2" --expires 30d')
         print()
@@ -161,6 +168,7 @@ class ApiKeyCommand(GroupCommand):
         print()
         print('Available Integrations:')
         print('  SIEM    - Security Information and Event Management')
+        print('  CSPM    - Cloud Security Posture Management')
         print('  BILLING - Billing and subscription management')
         print()
         print('Role Action Types:')
@@ -275,7 +283,7 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
             # Parse integrations - now required
             integrations_str = kwargs.get('integrations')
             if not integrations_str:
-                print("At least one integration is required. Example: --integrations 'SIEM:2' or --integrations 'BILLING:2'")
+                print("At least one integration is required. Example: --integrations 'SIEM:2' or --integrations 'CSPM:1' or --integrations 'BILLING:2'")
                 return
             
             for integration_spec in integrations_str.split(','):
@@ -285,7 +293,7 @@ class ApiKeyGenerateCommand(EnterpriseCommand):
 
                 if ':' in integration_spec:
                     integration_id_str, action_type_str = integration_spec.split(':', 1)
-                    allowed_integrations = [("SIEM", 1), ("BILLING", 3)]
+                    allowed_integrations = [("SIEM", 1), ("CSPM", 2), ("BILLING", 3)]
                     allowed_integration_names = [integration[0].upper() for integration in allowed_integrations]
                     if integration_id_str.strip().upper() not in allowed_integration_names:
                         print(f"Integration '{integration_id_str.strip()}' does not match allowed integrations: {', '.join(allowed_integration_names)}. Skipping.")
