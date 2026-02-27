@@ -21,7 +21,7 @@ from .base import Command, GroupCommand, dump_report_data, RecordMixin
 from .tunnel.port_forward.TunnelGraph import TunnelDAG
 from .tunnel.port_forward.tunnel_helpers import find_open_port, get_config_uid, get_keeper_tokens, \
     get_or_create_tube_registry, get_gateway_uid_from_record, resolve_record, resolve_pam_config, resolve_folder, \
-    remove_field, start_rust_tunnel, get_tunnel_session, CloseConnectionReasons, create_rust_webrtc_settings
+    remove_field, start_rust_tunnel, get_tunnel_session, unregister_tunnel_session, CloseConnectionReasons, create_rust_webrtc_settings
 from .. import api, vault, record_management
 from ..display import bcolors
 from ..error import CommandError
@@ -497,6 +497,10 @@ class PAMTunnelStartCommand(Command):
                                      'SIGTERM/SIGINT/Ctrl+C is received. Use this flag when running '
                                      'tunnels from scripts, systemd services, or any non-interactive '
                                      'context where the process would otherwise exit immediately.')
+    pam_cmd_parser.add_argument('--pid-file', required=False, dest='pid_file', action='store',
+                                help='Write the process PID to a file when using --foreground. '
+                                     'Enables stopping the tunnel from another terminal via '
+                                     'kill -SIGTERM $(cat <pid-file>). The file is removed on shutdown.')
 
     def get_parser(self):
         return PAMTunnelStartCommand.pam_cmd_parser
@@ -644,33 +648,66 @@ class PAMTunnelStartCommand(Command):
         
         if result and result.get("success"):
             if kwargs.get('foreground', False):
-                fg_shutdown = threading.Event()
+                if not params.batch_mode:
+                    print(f"\n{bcolors.OKBLUE}Note: --foreground is not needed inside the interactive shell.{bcolors.ENDC}")
+                    print(f"{bcolors.OKBLUE}The tunnel is already running and will persist until you exit the shell.{bcolors.ENDC}")
+                    print(f"{bcolors.OKBLUE}Use 'pam tunnel list' to see active tunnels, 'pam tunnel stop' to stop them.{bcolors.ENDC}\n")
+                else:
+                    fg_tube_id = result.get("tube_id")
+                    fg_tube_registry = result.get("tube_registry")
+                    fg_shutdown = threading.Event()
+                    pid_file = kwargs.get('pid_file')
 
-                def _fg_signal_handler(signum, _frame):
-                    sig_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
-                    print(f"\n{bcolors.WARNING}Received {sig_name}, stopping tunnel...{bcolors.ENDC}")
-                    fg_shutdown.set()
+                    def _fg_signal_handler(signum, _frame):
+                        sig_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
+                        print(f"\n{bcolors.WARNING}Received {sig_name}, stopping tunnel...{bcolors.ENDC}")
+                        fg_shutdown.set()
 
-                prev_sigterm = signal.signal(signal.SIGTERM, _fg_signal_handler)
-                prev_sigint = signal.signal(signal.SIGINT, _fg_signal_handler)
+                    prev_sigterm = signal.signal(signal.SIGTERM, _fg_signal_handler)
+                    prev_sigint = signal.signal(signal.SIGINT, _fg_signal_handler)
 
-                print(f"\n{bcolors.OKGREEN}Tunnel running in foreground mode.{bcolors.ENDC}")
-                print(f"{bcolors.OKGREEN}Press Ctrl+C or send SIGTERM (kill {os.getpid()}) to stop.{bcolors.ENDC}\n")
+                    if pid_file:
+                        try:
+                            with open(pid_file, 'w') as pf:
+                                pf.write(str(os.getpid()))
+                        except Exception as e:
+                            logging.warning("Could not write PID file '%s': %s", pid_file, e)
+                            pid_file = None
 
-                try:
-                    fg_shutdown.wait()
-                except KeyboardInterrupt:
-                    pass
-                finally:
-                    signal.signal(signal.SIGTERM, prev_sigterm)
-                    signal.signal(signal.SIGINT, prev_sigint)
-                    print(f"\n{bcolors.OKBLUE}Stopping tunnel for record {record_uid}...{bcolors.ENDC}")
+                    print(f"\n{bcolors.OKGREEN}Tunnel running in foreground mode{bcolors.ENDC}")
+                    print(f"  Record:     {record_uid}")
+                    if fg_tube_id:
+                        print(f"  Tube ID:    {fg_tube_id}")
+                    print(f"  Listening:  {host}:{port}")
+                    print(f"  PID:        {os.getpid()}")
+                    if pid_file:
+                        print(f"  PID file:   {pid_file}")
+                    print(f"\n{bcolors.OKGREEN}To stop: kill -SIGTERM {os.getpid()}  (or Ctrl+C){bcolors.ENDC}\n")
+
                     try:
-                        stop_cmd = PAMTunnelStopCommand()
-                        stop_cmd.execute(params, uid=record_uid)
-                        print(f"{bcolors.OKGREEN}Tunnel stopped.{bcolors.ENDC}")
-                    except Exception as fg_err:
-                        logging.warning("Error stopping tunnel during foreground shutdown: %s", fg_err)
+                        fg_shutdown.wait()
+                    except KeyboardInterrupt:
+                        pass
+                    finally:
+                        signal.signal(signal.SIGTERM, prev_sigterm)
+                        signal.signal(signal.SIGINT, prev_sigint)
+                        print(f"\n{bcolors.OKBLUE}Stopping tunnel {fg_tube_id or record_uid}...{bcolors.ENDC}")
+                        try:
+                            if fg_tube_registry and fg_tube_id:
+                                fg_tube_registry.close_tube(fg_tube_id, reason=CloseConnectionReasons.Normal)
+                                unregister_tunnel_session(fg_tube_id)
+                            else:
+                                stop_cmd = PAMTunnelStopCommand()
+                                stop_cmd.execute(params, uid=record_uid)
+                            print(f"{bcolors.OKGREEN}Tunnel stopped.{bcolors.ENDC}")
+                        except Exception as fg_err:
+                            logging.warning("Error stopping tunnel during foreground shutdown: %s", fg_err)
+                        finally:
+                            if pid_file:
+                                try:
+                                    os.remove(pid_file)
+                                except OSError:
+                                    pass
         else:
             # Print failure message
             error_msg = result.get("error", "Unknown error") if result else "Failed to start tunnel"
