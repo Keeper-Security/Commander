@@ -13,6 +13,7 @@ import argparse
 import logging
 import os
 import signal
+import subprocess
 import sys
 import threading
 from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes
@@ -21,7 +22,8 @@ from .base import Command, GroupCommand, dump_report_data, RecordMixin
 from .tunnel.port_forward.TunnelGraph import TunnelDAG
 from .tunnel.port_forward.tunnel_helpers import find_open_port, get_config_uid, get_keeper_tokens, \
     get_or_create_tube_registry, get_gateway_uid_from_record, resolve_record, resolve_pam_config, resolve_folder, \
-    remove_field, start_rust_tunnel, get_tunnel_session, unregister_tunnel_session, CloseConnectionReasons, create_rust_webrtc_settings
+    remove_field, start_rust_tunnel, get_tunnel_session, unregister_tunnel_session, CloseConnectionReasons, \
+    wait_for_tunnel_connection, create_rust_webrtc_settings
 from .. import api, vault, record_management
 from ..display import bcolors
 from ..error import CommandError
@@ -501,6 +503,15 @@ class PAMTunnelStartCommand(Command):
                                 help='Write the process PID to a file when using --foreground. '
                                      'Enables stopping the tunnel from another terminal via '
                                      'kill -SIGTERM $(cat <pid-file>). The file is removed on shutdown.')
+    pam_cmd_parser.add_argument('--run', '-R', required=False, dest='run_command', action='store',
+                                help='Start the tunnel, wait for it to be ready, execute the '
+                                     'specified command, then stop the tunnel and exit with the '
+                                     "command's exit code. "
+                                     "Example: --run 'pg_dump -h localhost -p 5432 mydb > backup.sql'")
+    pam_cmd_parser.add_argument('--timeout', required=False, dest='connect_timeout', action='store',
+                                type=int, default=30,
+                                help='Seconds to wait for the tunnel to connect before giving up '
+                                     '(used with --foreground and --run). Default: 30')
 
     def get_parser(self):
         return PAMTunnelStartCommand.pam_cmd_parser
@@ -569,8 +580,12 @@ class PAMTunnelStartCommand(Command):
             target_host = kwargs.get('target_host')
             target_port = kwargs.get('target_port')
 
-            # If not provided via command line, prompt interactively
+            # If not provided via command line, prompt interactively (or error in batch mode)
             if not target_host:
+                if params.batch_mode:
+                    raise CommandError('tunnel start',
+                                       'Target host is required in non-interactive mode. '
+                                       'Use --target-host <HOST> --target-port <PORT>')
                 print(f"{bcolors.WARNING}This resource requires you to supply the target host and port.{bcolors.ENDC}")
                 try:
                     target_host = input(f"{bcolors.OKBLUE}Enter target hostname or IP address: {bcolors.ENDC}").strip()
@@ -582,6 +597,10 @@ class PAMTunnelStartCommand(Command):
                     return
 
             if not target_port:
+                if params.batch_mode:
+                    raise CommandError('tunnel start',
+                                       'Target port is required in non-interactive mode. '
+                                       'Use --target-host <HOST> --target-port <PORT>')
                 try:
                     target_port_str = input(f"{bcolors.OKBLUE}Enter target port number: {bcolors.ENDC}").strip()
                     if not target_port_str:
@@ -647,7 +666,51 @@ class PAMTunnelStartCommand(Command):
         result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title, allow_supply_host=allow_supply_host)
         
         if result and result.get("success"):
-            if kwargs.get('foreground', False):
+            run_command = kwargs.get('run_command')
+            connect_timeout = kwargs.get('connect_timeout', 30)
+
+            if run_command:
+                run_tube_id = result.get("tube_id")
+                run_tube_registry = result.get("tube_registry")
+
+                print(f"{bcolors.OKBLUE}Waiting for tunnel to connect (timeout: {connect_timeout}s)...{bcolors.ENDC}")
+                conn_status = wait_for_tunnel_connection(result, timeout=connect_timeout, show_progress=False)
+
+                if not conn_status.get("connected"):
+                    err = conn_status.get("error", "Connection failed")
+                    print(f"{bcolors.FAIL}Tunnel did not connect: {err}{bcolors.ENDC}")
+                    if run_tube_registry and run_tube_id:
+                        try:
+                            run_tube_registry.close_tube(run_tube_id, reason=CloseConnectionReasons.Normal)
+                            unregister_tunnel_session(run_tube_id)
+                        except Exception:
+                            pass
+                    return
+
+                print(f"{bcolors.OKGREEN}Tunnel ready{bcolors.ENDC}  {host}:{port} -> {target_host}:{target_port}")
+                print(f"{bcolors.OKBLUE}Running:{bcolors.ENDC} {run_command}\n")
+
+                try:
+                    proc = subprocess.run(run_command, shell=True)
+                    cmd_exit = proc.returncode
+                except KeyboardInterrupt:
+                    cmd_exit = 130
+                except Exception as run_err:
+                    logging.warning("Error running command: %s", run_err)
+                    cmd_exit = 1
+                finally:
+                    print(f"\n{bcolors.OKBLUE}Stopping tunnel {run_tube_id or record_uid}...{bcolors.ENDC}")
+                    try:
+                        if run_tube_registry and run_tube_id:
+                            run_tube_registry.close_tube(run_tube_id, reason=CloseConnectionReasons.Normal)
+                            unregister_tunnel_session(run_tube_id)
+                        print(f"{bcolors.OKGREEN}Tunnel stopped.{bcolors.ENDC}")
+                    except Exception as stop_err:
+                        logging.warning("Error stopping tunnel: %s", stop_err)
+
+                sys.exit(cmd_exit)
+
+            elif kwargs.get('foreground', False):
                 if not params.batch_mode:
                     print(f"\n{bcolors.OKBLUE}Note: --foreground is not needed inside the interactive shell.{bcolors.ENDC}")
                     print(f"{bcolors.OKBLUE}The tunnel is already running and will persist until you exit the shell.{bcolors.ENDC}")
@@ -665,6 +728,22 @@ class PAMTunnelStartCommand(Command):
 
                     prev_sigterm = signal.signal(signal.SIGTERM, _fg_signal_handler)
                     prev_sigint = signal.signal(signal.SIGINT, _fg_signal_handler)
+
+                    print(f"{bcolors.OKBLUE}Waiting for tunnel to connect (timeout: {connect_timeout}s)...{bcolors.ENDC}")
+                    conn_status = wait_for_tunnel_connection(result, timeout=connect_timeout, show_progress=False)
+
+                    if not conn_status.get("connected"):
+                        signal.signal(signal.SIGTERM, prev_sigterm)
+                        signal.signal(signal.SIGINT, prev_sigint)
+                        err = conn_status.get("error", "Connection failed")
+                        print(f"{bcolors.FAIL}Tunnel did not connect: {err}{bcolors.ENDC}")
+                        if fg_tube_registry and fg_tube_id:
+                            try:
+                                fg_tube_registry.close_tube(fg_tube_id, reason=CloseConnectionReasons.Normal)
+                                unregister_tunnel_session(fg_tube_id)
+                            except Exception:
+                                pass
+                        return
 
                     if pid_file:
                         try:
