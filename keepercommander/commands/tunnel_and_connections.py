@@ -52,8 +52,12 @@ def _tunnel_registry_dir():
 def _register_tunnel(pid, record_uid, tube_id, host, port,
                      target_host=None, target_port=None, mode='foreground',
                      record_title=None):
-    """Write a JSON file for an active tunnel so other processes can see it."""
-    path = os.path.join(_tunnel_registry_dir(), f'{pid}.json')
+    """Write a JSON file for an active tunnel so other processes can see it.
+
+    Uses atomic write (temp file + rename) so readers never see partial data.
+    """
+    reg_dir = _tunnel_registry_dir()
+    path = os.path.join(reg_dir, f'{pid}.json')
     data = {
         'pid': pid,
         'record_uid': record_uid,
@@ -66,11 +70,17 @@ def _register_tunnel(pid, record_uid, tube_id, host, port,
         'record_title': record_title,
         'started': time.strftime('%Y-%m-%d %H:%M:%S'),
     }
+    tmp_path = path + '.tmp'
     try:
-        with open(path, 'w') as f:
+        with open(tmp_path, 'w') as f:
             json.dump(data, f)
+        os.replace(tmp_path, path)
     except Exception as exc:
         logging.debug("Could not write tunnel registry file %s: %s", path, exc)
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
 
 
 def _unregister_tunnel(pid=None):
@@ -101,6 +111,19 @@ def _is_pid_alive(pid):
             return False
 
 
+def _stop_tunnel_process(pid):
+    """Send a termination signal to a tunnel process.
+
+    On Unix, sends SIGTERM for graceful shutdown.
+    On Windows, calls TerminateProcess (Python maps SIGTERM to it).
+    """
+    try:
+        os.kill(pid, signal.SIGTERM)
+        return True
+    except OSError:
+        return False
+
+
 def _list_registered_tunnels():
     """Read all registry files, verify PID liveness, clean stale entries.
 
@@ -120,7 +143,8 @@ def _list_registered_tunnels():
                 result.append(data)
             else:
                 os.remove(fpath)
-        except Exception:
+        except Exception as exc:
+            logging.debug("Removing corrupt tunnel registry file %s: %s", fpath, exc)
             try:
                 os.remove(fpath)
             except OSError:
@@ -287,12 +311,11 @@ class PAMTunnelStopCommand(Command):
                            entry.get('record_title', '')):
                     pid = entry.get('pid')
                     if pid and _is_pid_alive(pid):
-                        try:
-                            os.kill(pid, signal.SIGTERM)
-                            print(f"{bcolors.OKGREEN}Sent SIGTERM to tunnel process "
+                        if _stop_tunnel_process(pid):
+                            print(f"{bcolors.OKGREEN}Sent stop signal to tunnel process "
                                   f"(PID {pid}, {entry.get('mode', '?')} mode){bcolors.ENDC}")
-                        except OSError as e:
-                            print(f"{bcolors.FAIL}Failed to signal PID {pid}: {e}{bcolors.ENDC}")
+                        else:
+                            print(f"{bcolors.FAIL}Failed to signal PID {pid}{bcolors.ENDC}")
                     else:
                         _unregister_tunnel(pid)
                     return
@@ -352,13 +375,12 @@ class PAMTunnelStopCommand(Command):
             print(f"{bcolors.WARNING}Stopping {len(registered)} external tunnel(s):{bcolors.ENDC}")
             for entry in registered:
                 pid = entry.get('pid')
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                    print(f"  {bcolors.OKGREEN}Sent SIGTERM to PID {pid} "
+                if _stop_tunnel_process(pid):
+                    print(f"  {bcolors.OKGREEN}Sent stop signal to PID {pid} "
                           f"({entry.get('mode', '?')} mode, {entry.get('host')}:{entry.get('port')}){bcolors.ENDC}")
                     stopped_count += 1
-                except OSError as e:
-                    print(f"  {bcolors.FAIL}Failed to signal PID {pid}: {e}{bcolors.ENDC}")
+                else:
+                    print(f"  {bcolors.FAIL}Failed to signal PID {pid}{bcolors.ENDC}")
                     failed_count += 1
                     _unregister_tunnel(pid)
 
@@ -782,9 +804,18 @@ class PAMTunnelStartCommand(Command):
         # Use Rust WebRTC implementation with configurable trickle ICE
         trickle_ice = not no_trickle_ice
 
+        # Validate mutual exclusivity of mode flags
+        background = kwargs.get('background', False)
+        foreground = kwargs.get('foreground', False)
+        run_command = kwargs.get('run_command')
+        mode_flags = sum(bool(f) for f in [background, foreground, run_command])
+        if mode_flags > 1:
+            raise CommandError('tunnel start',
+                               '--foreground, --background, and --run are mutually exclusive. '
+                               'Use only one at a time.')
+
         # --background: launch a separate Commander process with --foreground,
         # then poll the file-based tunnel registry for readiness.
-        background = kwargs.get('background', False)
         if background:
             if not params.batch_mode:
                 print(f"\n{bcolors.OKBLUE}Note: --background is not needed inside the interactive shell.{bcolors.ENDC}")
@@ -798,6 +829,8 @@ class PAMTunnelStartCommand(Command):
             bg_cmd = [sys.executable, '-m', 'keepercommander']
             if params.config_filename:
                 bg_cmd.extend(['--config', os.path.abspath(params.config_filename)])
+            if hasattr(params, 'server') and params.server:
+                bg_cmd.extend(['--server', params.server])
 
             tunnel_parts = ['pam', 'tunnel', 'start', record_uid,
                             '--port', str(port), '--foreground',
@@ -820,7 +853,7 @@ class PAMTunnelStartCommand(Command):
                     bg_cmd,
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
                     start_new_session=True,
                 )
             except Exception as e:
@@ -830,8 +863,15 @@ class PAMTunnelStartCommand(Command):
             bg_info = None
             while time.time() < bg_deadline:
                 if bg_proc.poll() is not None:
+                    stderr_output = ''
+                    try:
+                        stderr_output = bg_proc.stderr.read().decode('utf-8', errors='replace').strip()
+                    except Exception:
+                        pass
                     print(f"{bcolors.FAIL}Background tunnel process exited "
                           f"(code {bg_proc.returncode}){bcolors.ENDC}")
+                    if stderr_output:
+                        print(f"{bcolors.FAIL}{stderr_output}{bcolors.ENDC}")
                     return
                 for entry in _list_registered_tunnels():
                     if entry.get('pid') == bg_proc.pid and entry.get('record_uid') == record_uid:
@@ -839,7 +879,7 @@ class PAMTunnelStartCommand(Command):
                         break
                 if bg_info:
                     break
-                time.sleep(1)
+                time.sleep(0.5)
 
             if not bg_info:
                 print(f"{bcolors.FAIL}Tunnel did not become ready within the timeout{bcolors.ENDC}")
@@ -868,7 +908,6 @@ class PAMTunnelStartCommand(Command):
         result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title, allow_supply_host=allow_supply_host)
 
         if result and result.get("success"):
-            run_command = kwargs.get('run_command')
             connect_timeout = kwargs.get('connect_timeout', 30)
 
             if run_command:
@@ -896,6 +935,7 @@ class PAMTunnelStartCommand(Command):
                 print(f"{bcolors.OKGREEN}Tunnel ready{bcolors.ENDC}  {host}:{port} -> {target_host}:{target_port}")
                 print(f"{bcolors.OKBLUE}Running:{bcolors.ENDC} {run_command}\n")
 
+                cmd_exit = 1
                 try:
                     proc = subprocess.run(run_command, shell=True)
                     cmd_exit = proc.returncode
@@ -917,7 +957,7 @@ class PAMTunnelStartCommand(Command):
 
                 sys.exit(cmd_exit)
 
-            elif kwargs.get('foreground', False):
+            elif foreground:
                 if not params.batch_mode:
                     print(f"\n{bcolors.OKBLUE}Note: --foreground is not needed inside the interactive shell.{bcolors.ENDC}")
                     print(f"{bcolors.OKBLUE}The tunnel is already running and will persist until you exit the shell.{bcolors.ENDC}")
@@ -935,6 +975,9 @@ class PAMTunnelStartCommand(Command):
 
                     prev_sigterm = signal.signal(signal.SIGTERM, _fg_signal_handler)
                     prev_sigint = signal.signal(signal.SIGINT, _fg_signal_handler)
+                    prev_sighup = None
+                    if hasattr(signal, 'SIGHUP'):
+                        prev_sighup = signal.signal(signal.SIGHUP, _fg_signal_handler)
 
                     print(f"{bcolors.OKBLUE}Waiting for tunnel to connect (timeout: {connect_timeout}s)...{bcolors.ENDC}")
                     conn_status = wait_for_tunnel_connection(result, timeout=connect_timeout, show_progress=False)
@@ -942,6 +985,8 @@ class PAMTunnelStartCommand(Command):
                     if not conn_status.get("connected"):
                         signal.signal(signal.SIGTERM, prev_sigterm)
                         signal.signal(signal.SIGINT, prev_sigint)
+                        if prev_sighup is not None:
+                            signal.signal(signal.SIGHUP, prev_sighup)
                         err = conn_status.get("error", "Connection failed")
                         print(f"{bcolors.FAIL}Tunnel did not connect: {err}{bcolors.ENDC}")
                         if fg_tube_registry and fg_tube_id:
@@ -982,6 +1027,8 @@ class PAMTunnelStartCommand(Command):
                         _unregister_tunnel()
                         signal.signal(signal.SIGTERM, prev_sigterm)
                         signal.signal(signal.SIGINT, prev_sigint)
+                        if prev_sighup is not None:
+                            signal.signal(signal.SIGHUP, prev_sighup)
                         print(f"\n{bcolors.OKBLUE}Stopping tunnel {fg_tube_id or record_uid}...{bcolors.ENDC}")
                         try:
                             if fg_tube_registry and fg_tube_id:
