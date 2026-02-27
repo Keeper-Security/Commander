@@ -625,11 +625,11 @@ class PAMTunnelStartCommand(Command):
                                 help='Seconds to wait for the tunnel to connect before giving up '
                                      '(used with --foreground, --background, and --run). Default: 30')
     pam_cmd_parser.add_argument('--background', '-bg', required=False, dest='background', action='store_true',
-                                help='Start the tunnel, wait for connection readiness, then '
-                                     'daemonize and return control to the caller. The tunnel '
-                                     'continues running in the background. Use --pid-file to '
-                                     'write the daemon PID for later shutdown via '
-                                     'kill -SIGTERM $(cat <pid-file>). Linux/macOS only.')
+                                help='Start the tunnel in a background process, wait for '
+                                     'connection readiness, then return control to the caller. '
+                                     'The tunnel continues running independently. Use --pid-file '
+                                     'to write the daemon PID for later shutdown. Use '
+                                     "'pam tunnel list' / 'pam tunnel stop' from any session.")
 
     def get_parser(self):
         return PAMTunnelStartCommand.pam_cmd_parser
@@ -782,9 +782,8 @@ class PAMTunnelStartCommand(Command):
         # Use Rust WebRTC implementation with configurable trickle ICE
         trickle_ice = not no_trickle_ice
 
-        # --background: fork before starting tunnel so Rust threads are
-        # created only in the child process (threads don't survive fork).
-        _bg_pipe_w = None
+        # --background: launch a separate Commander process with --foreground,
+        # then poll the file-based tunnel registry for readiness.
         background = kwargs.get('background', False)
         if background:
             if not params.batch_mode:
@@ -792,120 +791,87 @@ class PAMTunnelStartCommand(Command):
                 print(f"{bcolors.OKBLUE}The tunnel is already running and will persist until you exit the shell.{bcolors.ENDC}")
                 print(f"{bcolors.OKBLUE}Use 'pam tunnel list' to see active tunnels, 'pam tunnel stop' to stop them.{bcolors.ENDC}\n")
                 return
-            if os.name == 'nt':
-                raise CommandError('tunnel start',
-                                   '--background is not supported on Windows. '
-                                   'Use --foreground in a background job (Start-Process).')
-            r_fd, w_fd = os.pipe()
-            child_pid = os.fork()
-            if child_pid > 0:
-                os.close(w_fd)
+
+            connect_timeout = kwargs.get('connect_timeout', 30)
+            pid_file = kwargs.get('pid_file')
+
+            bg_cmd = [sys.executable, '-m', 'keepercommander']
+            if params.config_filename:
+                bg_cmd.extend(['--config', os.path.abspath(params.config_filename)])
+
+            tunnel_parts = ['pam', 'tunnel', 'start', record_uid,
+                            '--port', str(port), '--foreground',
+                            '--timeout', str(connect_timeout)]
+            if host and host != '127.0.0.1':
+                tunnel_parts.extend(['--host', host])
+            if target_host:
+                tunnel_parts.extend(['--target-host', str(target_host)])
+            if target_port:
+                tunnel_parts.extend(['--target-port', str(target_port)])
+            if pid_file:
+                tunnel_parts.extend(['--pid-file', pid_file])
+            if no_trickle_ice:
+                tunnel_parts.append('--no-trickle-ice')
+            bg_cmd.append(' '.join(tunnel_parts))
+
+            print(f"{bcolors.OKBLUE}Starting tunnel in background...{bcolors.ENDC}")
+            try:
+                bg_proc = subprocess.Popen(
+                    bg_cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except Exception as e:
+                raise CommandError('tunnel start', f'Failed to launch background process: {e}')
+
+            bg_deadline = time.time() + connect_timeout + 20
+            bg_info = None
+            while time.time() < bg_deadline:
+                if bg_proc.poll() is not None:
+                    print(f"{bcolors.FAIL}Background tunnel process exited "
+                          f"(code {bg_proc.returncode}){bcolors.ENDC}")
+                    return
+                for entry in _list_registered_tunnels():
+                    if entry.get('pid') == bg_proc.pid and entry.get('record_uid') == record_uid:
+                        bg_info = entry
+                        break
+                if bg_info:
+                    break
+                time.sleep(1)
+
+            if not bg_info:
+                print(f"{bcolors.FAIL}Tunnel did not become ready within the timeout{bcolors.ENDC}")
                 try:
-                    data = b""
-                    while True:
-                        chunk = os.read(r_fd, 4096)
-                        if not chunk:
-                            break
-                        data += chunk
-                finally:
-                    os.close(r_fd)
-                msg = data.decode('utf-8', errors='replace')
-                if msg.startswith("READY\n"):
-                    print(msg[6:], end='')
-                else:
-                    print(f"{bcolors.FAIL}{msg}{bcolors.ENDC}")
+                    bg_proc.terminate()
+                except Exception:
+                    pass
                 return
-            else:
-                os.close(r_fd)
-                os.setsid()
-                _bg_pipe_w = w_fd
+
+            print(f"\n{bcolors.OKGREEN}Tunnel running in background{bcolors.ENDC}")
+            print(f"  Record:     {bg_info.get('record_title') or record_uid}")
+            if bg_info.get('tube_id'):
+                print(f"  Tube ID:    {bg_info['tube_id']}")
+            print(f"  Listening:  {host}:{port}")
+            print(f"  Daemon PID: {bg_proc.pid}")
+            if pid_file:
+                print(f"  PID file:   {pid_file}")
+            print(f"\n{bcolors.OKGREEN}To stop: pam tunnel stop {record_uid}  or  "
+                  f"kill -SIGTERM {bg_proc.pid}{bcolors.ENDC}")
+            if pid_file:
+                print(f"    or:   kill -SIGTERM $(cat {pid_file})")
+            print(f"{bcolors.OKBLUE}Use 'pam tunnel list' from any Commander session "
+                  f"to see this tunnel.{bcolors.ENDC}")
+            return
 
         result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title, allow_supply_host=allow_supply_host)
-        
-        if _bg_pipe_w is not None and (not result or not result.get("success")):
-            error_msg = result.get("error", "Unknown error") if result else "Failed to start tunnel"
-            os.write(_bg_pipe_w, f"Background tunnel failed: {error_msg}".encode())
-            os.close(_bg_pipe_w)
-            os._exit(1)
 
         if result and result.get("success"):
             run_command = kwargs.get('run_command')
             connect_timeout = kwargs.get('connect_timeout', 30)
 
-            if _bg_pipe_w is not None:
-                bg_tube_id = result.get("tube_id")
-                bg_tube_registry = result.get("tube_registry")
-                bg_shutdown = threading.Event()
-                pid_file = kwargs.get('pid_file')
-
-                conn_status = wait_for_tunnel_connection(result, timeout=connect_timeout, show_progress=False)
-
-                if not conn_status.get("connected"):
-                    err = conn_status.get("error", "Connection failed")
-                    os.write(_bg_pipe_w, f"Tunnel did not connect: {err}".encode())
-                    os.close(_bg_pipe_w)
-                    if bg_tube_registry and bg_tube_id:
-                        try:
-                            bg_tube_registry.close_tube(bg_tube_id, reason=CloseConnectionReasons.Normal)
-                            unregister_tunnel_session(bg_tube_id)
-                        except Exception:
-                            pass
-                    os._exit(1)
-
-                if pid_file:
-                    try:
-                        with open(pid_file, 'w') as pf:
-                            pf.write(str(os.getpid()))
-                    except Exception as e:
-                        logging.warning("Could not write PID file '%s': %s", pid_file, e)
-                        pid_file = None
-
-                _register_tunnel(os.getpid(), record_uid, bg_tube_id, host, port,
-                                 target_host, target_port, mode='background',
-                                 record_title=record.title if record else None)
-
-                info = []
-                info.append(f"{bcolors.OKGREEN}Tunnel running in background{bcolors.ENDC}")
-                info.append(f"  Record:     {record_uid}")
-                if bg_tube_id:
-                    info.append(f"  Tube ID:    {bg_tube_id}")
-                info.append(f"  Listening:  {host}:{port}")
-                info.append(f"  Daemon PID: {os.getpid()}")
-                if pid_file:
-                    info.append(f"  PID file:   {pid_file}")
-                info.append(f"\n{bcolors.OKGREEN}To stop: pam tunnel stop {record_uid}  or  kill -SIGTERM {os.getpid()}{bcolors.ENDC}")
-                if pid_file:
-                    info.append(f"    or:   kill -SIGTERM $(cat {pid_file})")
-                info.append(f"{bcolors.OKBLUE}Use 'pam tunnel list' from any Commander session to see this tunnel.{bcolors.ENDC}")
-
-                os.write(_bg_pipe_w, ("READY\n" + "\n".join(info) + "\n").encode())
-                os.close(_bg_pipe_w)
-
-                def _bg_signal_handler(signum, _frame):
-                    bg_shutdown.set()
-                signal.signal(signal.SIGTERM, _bg_signal_handler)
-                signal.signal(signal.SIGINT, _bg_signal_handler)
-
-                try:
-                    bg_shutdown.wait()
-                except Exception:
-                    pass
-                finally:
-                    _unregister_tunnel()
-                    try:
-                        if bg_tube_registry and bg_tube_id:
-                            bg_tube_registry.close_tube(bg_tube_id, reason=CloseConnectionReasons.Normal)
-                            unregister_tunnel_session(bg_tube_id)
-                    except Exception:
-                        pass
-                    if pid_file:
-                        try:
-                            os.remove(pid_file)
-                        except OSError:
-                            pass
-                os._exit(0)
-
-            elif run_command:
+            if run_command:
                 run_tube_id = result.get("tube_id")
                 run_tube_registry = result.get("tube_registry")
 
