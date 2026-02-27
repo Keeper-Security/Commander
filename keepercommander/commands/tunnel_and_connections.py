@@ -10,12 +10,14 @@
 #
 
 import argparse
+import json
 import logging
 import os
 import signal
 import subprocess
 import sys
 import threading
+import time
 from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes
 
 from .base import Command, GroupCommand, dump_report_data, RecordMixin
@@ -30,6 +32,101 @@ from ..error import CommandError
 from ..params import LAST_RECORD_UID
 from ..subfolder import find_folders
 from ..utils import value_to_boolean
+
+
+# ---------------------------------------------------------------------------
+#  File-based tunnel registry
+#
+#  Each foreground/background/run tunnel writes a JSON metadata file to
+#  ~/.keeper/tunnel-sessions/<pid>.json.  This lets `pam tunnel list` and
+#  `pam tunnel stop` discover tunnels across Commander processes.
+# ---------------------------------------------------------------------------
+
+def _tunnel_registry_dir():
+    """Return (and create) the tunnel session registry directory."""
+    base = os.path.join(os.path.expanduser('~'), '.keeper', 'tunnel-sessions')
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def _register_tunnel(pid, record_uid, tube_id, host, port,
+                     target_host=None, target_port=None, mode='foreground',
+                     record_title=None):
+    """Write a JSON file for an active tunnel so other processes can see it."""
+    path = os.path.join(_tunnel_registry_dir(), f'{pid}.json')
+    data = {
+        'pid': pid,
+        'record_uid': record_uid,
+        'tube_id': tube_id,
+        'host': host,
+        'port': port,
+        'target_host': target_host,
+        'target_port': target_port,
+        'mode': mode,
+        'record_title': record_title,
+        'started': time.strftime('%Y-%m-%d %H:%M:%S'),
+    }
+    try:
+        with open(path, 'w') as f:
+            json.dump(data, f)
+    except Exception as exc:
+        logging.debug("Could not write tunnel registry file %s: %s", path, exc)
+
+
+def _unregister_tunnel(pid=None):
+    """Remove the registry file for a tunnel (defaults to current PID)."""
+    pid = pid or os.getpid()
+    path = os.path.join(_tunnel_registry_dir(), f'{pid}.json')
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def _is_pid_alive(pid):
+    """Check whether a process with the given PID is still running."""
+    if os.name == 'nt':
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x100000, False, pid)  # SYNCHRONIZE
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+        return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+
+def _list_registered_tunnels():
+    """Read all registry files, verify PID liveness, clean stale entries.
+
+    Returns a list of dicts for tunnels whose owning process is still alive.
+    """
+    reg_dir = _tunnel_registry_dir()
+    result = []
+    for fname in os.listdir(reg_dir):
+        if not fname.endswith('.json'):
+            continue
+        fpath = os.path.join(reg_dir, fname)
+        try:
+            with open(fpath) as f:
+                data = json.load(f)
+            pid = data.get('pid')
+            if pid and _is_pid_alive(pid):
+                result.append(data)
+            else:
+                os.remove(fpath)
+        except Exception:
+            try:
+                os.remove(fpath)
+            except OSError:
+                pass
+    return result
+
 
 # Group Commands
 class PAMTunnelCommand(GroupCommand):
@@ -70,72 +167,64 @@ class PAMTunnelListCommand(Command):
         return PAMTunnelListCommand.pam_cmd_parser
 
     def execute(self, params, **kwargs):
-        # Try to get active tunnels from Rust PyTubeRegistry
-        # Logger initialization is handled by get_or_create_tube_registry()
+        table = []
+        headers = ['Record', 'Remote Target', 'Local Address', 'Tunnel ID', 'Conversation ID', 'Status']
+
+        # In-process tunnels from the Rust PyTubeRegistry
         tube_registry = get_or_create_tube_registry(params)
-        if tube_registry:
-            if not tube_registry.has_active_tubes():
-                logging.warning(f"{bcolors.OKBLUE}No Tunnels running{bcolors.ENDC}")
-                return
-
-            table = []
-            headers = ['Record', 'Remote Target', 'Local Address', 'Tunnel ID', 'Conversation ID', 'Status']
-
-            # Get all tube IDs
+        in_process_tube_ids = set()
+        if tube_registry and tube_registry.has_active_tubes():
             tube_ids = tube_registry.all_tube_ids()
-
             for tube_id in tube_ids:
-                # Get conversation IDs for this tube
+                in_process_tube_ids.add(tube_id)
                 conversation_ids = tube_registry.get_conversation_ids_by_tube_id(tube_id)
-
-                # Get tunnel session for detailed info
                 tunnel_session = get_tunnel_session(tube_id)
 
-                # Record title
                 record_title = tunnel_session.record_title if tunnel_session and tunnel_session.record_title else f"{bcolors.WARNING}unknown{bcolors.ENDC}"
 
-                # Remote target
                 if tunnel_session and tunnel_session.target_host and tunnel_session.target_port:
                     remote_target = f"{tunnel_session.target_host}:{tunnel_session.target_port}"
                 else:
                     remote_target = f"{bcolors.WARNING}unknown{bcolors.ENDC}"
 
-                # Local listening address
                 if tunnel_session and tunnel_session.host and tunnel_session.port:
                     local_addr = f"{bcolors.OKGREEN}{tunnel_session.host}:{tunnel_session.port}{bcolors.ENDC}"
                 else:
                     local_addr = f"{bcolors.WARNING}unknown{bcolors.ENDC}"
 
-                # Tunnel ID (tube_id) - this is what's needed for stopping
-                tunnel_id = tube_id
-
-                # Conversation ID - WebRTC signaling identifier
                 conv_id = conversation_ids[0] if conversation_ids else (tunnel_session.conversation_id if tunnel_session else 'none')
 
-                # Connection state
                 try:
                     state = tube_registry.get_connection_state(tube_id)
                     status_color = f"{bcolors.OKGREEN}" if state.lower() == "connected" else f"{bcolors.WARNING}"
                     status = f"{status_color}{state}{bcolors.ENDC}"
-                except:
+                except Exception:
                     status = f"{bcolors.WARNING}unknown{bcolors.ENDC}"
 
-                row = [
-                    record_title,
-                    remote_target,
-                    local_addr,
-                    tunnel_id,
-                    conv_id,
-                    status,
-                ]
-                table.append(row)
+                table.append([record_title, remote_target, local_addr, tube_id, conv_id, status])
 
-            dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
-        else:
-            # Rust WebRTC library is required for tunnel operations
-            print(f"{bcolors.FAIL}This command requires the Rust WebRTC library (keeper_pam_webrtc_rs).{bcolors.ENDC}")
-            print(f"{bcolors.OKBLUE}Please ensure the keeper_pam_webrtc_rs module is installed and available.{bcolors.ENDC}")
+        # Cross-process tunnels from the file-based registry
+        for entry in _list_registered_tunnels():
+            if entry.get('tube_id') in in_process_tube_ids:
+                continue
+            pid = entry.get('pid')
+            rec = entry.get('record_title') or entry.get('record_uid', '?')
+            th = entry.get('target_host')
+            tp = entry.get('target_port')
+            remote = f"{th}:{tp}" if th and tp else f"{bcolors.WARNING}n/a{bcolors.ENDC}"
+            h = entry.get('host', '127.0.0.1')
+            p = entry.get('port', '?')
+            local = f"{bcolors.OKGREEN}{h}:{p}{bcolors.ENDC}"
+            tid = entry.get('tube_id', '')
+            mode = entry.get('mode', '?')
+            status = f"{bcolors.OKGREEN}{mode} (PID {pid}){bcolors.ENDC}"
+            table.append([rec, remote, local, tid, '', status])
+
+        if not table:
+            logging.warning(f"{bcolors.OKBLUE}No Tunnels running{bcolors.ENDC}")
             return
+
+        dump_report_data(table, headers, fmt='table', filename="", row_number=False, column_width=None)
 
 
 class PAMTunnelStopCommand(Command):
@@ -191,6 +280,23 @@ class PAMTunnelStopCommand(Command):
             if tube_id:
                 matching_tubes = [tube_id]
 
+        # Fall back to file-based registry (cross-process tunnels)
+        if not matching_tubes:
+            for entry in _list_registered_tunnels():
+                if uid in (entry.get('tube_id', ''), entry.get('record_uid', ''),
+                           entry.get('record_title', '')):
+                    pid = entry.get('pid')
+                    if pid and _is_pid_alive(pid):
+                        try:
+                            os.kill(pid, signal.SIGTERM)
+                            print(f"{bcolors.OKGREEN}Sent SIGTERM to tunnel process "
+                                  f"(PID {pid}, {entry.get('mode', '?')} mode){bcolors.ENDC}")
+                        except OSError as e:
+                            print(f"{bcolors.FAIL}Failed to signal PID {pid}: {e}{bcolors.ENDC}")
+                    else:
+                        _unregister_tunnel(pid)
+                    return
+
         if not matching_tubes:
             raise CommandError('tunnel stop', f"No active tunnels found matching '{uid}'")
 
@@ -221,43 +327,49 @@ class PAMTunnelStopCommand(Command):
             raise CommandError('tunnel stop', f"Failed to stop any tunnels matching '{uid}'")
 
     def _stop_all_tunnels(self, params):
-        """Stop all active tunnels"""
-        tube_registry = get_or_create_tube_registry(params)
-        if not tube_registry:
-            raise CommandError('tunnel stop', 'This command requires the Rust WebRTC library')
+        """Stop all active tunnels (in-process and cross-process)."""
+        stopped_count = 0
+        failed_count = 0
 
-        # Get all active tunnel IDs
-        all_tube_ids = tube_registry.all_tube_ids()
-        
-        if not all_tube_ids:
+        # In-process tunnels
+        tube_registry = get_or_create_tube_registry(params)
+        if tube_registry:
+            all_tube_ids = tube_registry.all_tube_ids()
+            if all_tube_ids:
+                print(f"{bcolors.WARNING}Stopping {len(all_tube_ids)} in-process tunnel(s):{bcolors.ENDC}")
+                for tube_id in all_tube_ids:
+                    try:
+                        tube_registry.close_tube(tube_id, reason=CloseConnectionReasons.Normal)
+                        print(f"  {bcolors.OKGREEN}Stopped: {tube_id}{bcolors.ENDC}")
+                        stopped_count += 1
+                    except Exception as e:
+                        print(f"  {bcolors.FAIL}Failed: {tube_id}: {e}{bcolors.ENDC}")
+                        failed_count += 1
+
+        # Cross-process tunnels from file registry
+        registered = _list_registered_tunnels()
+        if registered:
+            print(f"{bcolors.WARNING}Stopping {len(registered)} external tunnel(s):{bcolors.ENDC}")
+            for entry in registered:
+                pid = entry.get('pid')
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                    print(f"  {bcolors.OKGREEN}Sent SIGTERM to PID {pid} "
+                          f"({entry.get('mode', '?')} mode, {entry.get('host')}:{entry.get('port')}){bcolors.ENDC}")
+                    stopped_count += 1
+                except OSError as e:
+                    print(f"  {bcolors.FAIL}Failed to signal PID {pid}: {e}{bcolors.ENDC}")
+                    failed_count += 1
+                    _unregister_tunnel(pid)
+
+        if stopped_count == 0 and failed_count == 0:
             print(f"{bcolors.WARNING}No active tunnels to stop.{bcolors.ENDC}")
             return
 
-        # Confirm with user
-        print(f"{bcolors.WARNING}About to stop {len(all_tube_ids)} active tunnel(s):{bcolors.ENDC}")
-        for tube_id in all_tube_ids:
-            print(f"  - {tube_id}")
-        
-        # Stop all tunnels
-        stopped_count = 0
-        failed_count = 0
-        for tube_id in all_tube_ids:
-            try:
-                tube_registry.close_tube(tube_id, reason=CloseConnectionReasons.Normal)
-                print(f"{bcolors.OKGREEN}Stopped tunnel: {tube_id}{bcolors.ENDC}")
-                stopped_count += 1
-            except Exception as e:
-                print(f"{bcolors.FAIL}Failed to stop tunnel {tube_id}: {e}{bcolors.ENDC}")
-                failed_count += 1
-
-        # Summary
         if stopped_count > 0:
             print(f"\n{bcolors.OKGREEN}Successfully stopped {stopped_count} tunnel(s).{bcolors.ENDC}")
         if failed_count > 0:
             print(f"{bcolors.FAIL}Failed to stop {failed_count} tunnel(s).{bcolors.ENDC}")
-        
-        if stopped_count == 0:
-            raise CommandError('tunnel stop', 'Failed to stop any tunnels')
 
 
 class PAMTunnelEditCommand(Command):
@@ -748,6 +860,10 @@ class PAMTunnelStartCommand(Command):
                         logging.warning("Could not write PID file '%s': %s", pid_file, e)
                         pid_file = None
 
+                _register_tunnel(os.getpid(), record_uid, bg_tube_id, host, port,
+                                 target_host, target_port, mode='background',
+                                 record_title=record.title if record else None)
+
                 info = []
                 info.append(f"{bcolors.OKGREEN}Tunnel running in background{bcolors.ENDC}")
                 info.append(f"  Record:     {record_uid}")
@@ -757,11 +873,10 @@ class PAMTunnelStartCommand(Command):
                 info.append(f"  Daemon PID: {os.getpid()}")
                 if pid_file:
                     info.append(f"  PID file:   {pid_file}")
-                info.append(f"\n{bcolors.OKGREEN}To stop: kill -SIGTERM {os.getpid()}{bcolors.ENDC}")
+                info.append(f"\n{bcolors.OKGREEN}To stop: pam tunnel stop {record_uid}  or  kill -SIGTERM {os.getpid()}{bcolors.ENDC}")
                 if pid_file:
                     info.append(f"    or:   kill -SIGTERM $(cat {pid_file})")
-                info.append(f"\n{bcolors.WARNING}Note: This tunnel is managed by a background process (PID {os.getpid()}).{bcolors.ENDC}")
-                info.append(f"{bcolors.WARNING}'pam tunnel list' from other Commander sessions cannot see it.{bcolors.ENDC}")
+                info.append(f"{bcolors.OKBLUE}Use 'pam tunnel list' from any Commander session to see this tunnel.{bcolors.ENDC}")
 
                 os.write(_bg_pipe_w, ("READY\n" + "\n".join(info) + "\n").encode())
                 os.close(_bg_pipe_w)
@@ -776,6 +891,7 @@ class PAMTunnelStartCommand(Command):
                 except Exception:
                     pass
                 finally:
+                    _unregister_tunnel()
                     try:
                         if bg_tube_registry and bg_tube_id:
                             bg_tube_registry.close_tube(bg_tube_id, reason=CloseConnectionReasons.Normal)
@@ -807,6 +923,10 @@ class PAMTunnelStartCommand(Command):
                             pass
                     return
 
+                _register_tunnel(os.getpid(), record_uid, run_tube_id, host, port,
+                                 target_host, target_port, mode='run',
+                                 record_title=record.title if record else None)
+
                 print(f"{bcolors.OKGREEN}Tunnel ready{bcolors.ENDC}  {host}:{port} -> {target_host}:{target_port}")
                 print(f"{bcolors.OKBLUE}Running:{bcolors.ENDC} {run_command}\n")
 
@@ -819,6 +939,7 @@ class PAMTunnelStartCommand(Command):
                     logging.warning("Error running command: %s", run_err)
                     cmd_exit = 1
                 finally:
+                    _unregister_tunnel()
                     print(f"\n{bcolors.OKBLUE}Stopping tunnel {run_tube_id or record_uid}...{bcolors.ENDC}")
                     try:
                         if run_tube_registry and run_tube_id:
@@ -873,6 +994,10 @@ class PAMTunnelStartCommand(Command):
                             logging.warning("Could not write PID file '%s': %s", pid_file, e)
                             pid_file = None
 
+                    _register_tunnel(os.getpid(), record_uid, fg_tube_id, host, port,
+                                     target_host, target_port, mode='foreground',
+                                     record_title=record.title if record else None)
+
                     print(f"\n{bcolors.OKGREEN}Tunnel running in foreground mode{bcolors.ENDC}")
                     print(f"  Record:     {record_uid}")
                     if fg_tube_id:
@@ -881,15 +1006,14 @@ class PAMTunnelStartCommand(Command):
                     print(f"  PID:        {os.getpid()}")
                     if pid_file:
                         print(f"  PID file:   {pid_file}")
-                    print(f"\n{bcolors.OKGREEN}To stop: kill -SIGTERM {os.getpid()}  (or Ctrl+C){bcolors.ENDC}")
-                    print(f"\n{bcolors.WARNING}Note: This tunnel is only visible in this process.{bcolors.ENDC}")
-                    print(f"{bcolors.WARNING}'pam tunnel list' from other Commander sessions cannot see it.{bcolors.ENDC}\n")
+                    print(f"\n{bcolors.OKGREEN}To stop: kill -SIGTERM {os.getpid()}  (or Ctrl+C)  or  pam tunnel stop {record_uid}{bcolors.ENDC}\n")
 
                     try:
                         fg_shutdown.wait()
                     except KeyboardInterrupt:
                         pass
                     finally:
+                        _unregister_tunnel()
                         signal.signal(signal.SIGTERM, prev_sigterm)
                         signal.signal(signal.SIGINT, prev_sigint)
                         print(f"\n{bcolors.OKBLUE}Stopping tunnel {fg_tube_id or record_uid}...{bcolors.ENDC}")
