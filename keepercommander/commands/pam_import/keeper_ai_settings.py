@@ -20,6 +20,7 @@ from ...vault import PasswordRecord
 from ... import vault
 from ...display import bcolors
 from ..tunnel.port_forward.tunnel_helpers import get_config_uid, generate_random_bytes, get_keeper_tokens
+from ...keeper_dag.crypto import encrypt_aes
 
 
 def list_resource_data_edges(
@@ -467,27 +468,6 @@ def set_resource_keeper_ai_settings(
             logging.warning(f"Resource vertex {resource_uid} not found in DAG")
             return False
 
-        # Ensure the vertex keychain has the record key for encryption
-        # The DAG save will use vertex.key (first key in keychain) to encrypt DATA edges
-        if not resource_vertex.keychain or len(resource_vertex.keychain) == 0:
-            resource_vertex.keychain = [record_key]
-        else:
-            # Ensure record key is in keychain (prepend it so it's the first/primary key)
-            keychain = resource_vertex.keychain
-            if record_key not in keychain:
-                keychain.insert(0, record_key)
-                resource_vertex.keychain = keychain
-
-        # Ensure there is a KEY edge so DATA edges can be added/encrypted.
-        # Prefer existing parent vertices; fall back to root if none exist.
-        if not resource_vertex.has_key:
-            parent_vertices = resource_vertex.belongs_to_vertices()
-            if parent_vertices:
-                resource_vertex.belongs_to(parent_vertices[0], edge_type=EdgeType.KEY)
-            else:
-                resource_vertex.belongs_to_root(EdgeType.KEY)
-            logging.debug(f"Added KEY edge for resource {resource_uid} to enable DATA encryption")
-
         # Find and deactivate existing 'ai_settings' edge for proper versioning
         existing_edge = None
         for edge in resource_vertex.edges:
@@ -502,12 +482,16 @@ def set_resource_keeper_ai_settings(
             existing_edge.active = False
             logging.debug(f"Deactivated existing 'ai_settings' edge (version {existing_edge.version})")
 
-        # Add new DATA edge with the settings
-        # The DAG will automatically encrypt it on save using vertex.key (record key)
+        # Pre-encrypt content with record key (matches Web Vault: encrypted=True, needs_encryption=False)
+        content_bytes = json.dumps(settings).encode()
+        encrypted_content = encrypt_aes(content_bytes, record_key)
+
+        # Add new DATA edge with pre-encrypted content
         resource_vertex.add_data(
-            content=settings,  # Will be serialized to JSON and encrypted on save
+            content=encrypted_content,
             path='ai_settings',
-            needs_encryption=True,
+            needs_encryption=False,
+            is_encrypted=True,
             modified=True
         )
 
@@ -609,27 +593,6 @@ def set_resource_jit_settings(
             logging.warning(f"Resource vertex {resource_uid} not found in DAG")
             return False
 
-        # Ensure the vertex keychain has the record key for encryption
-        # The DAG save will use vertex.key (first key in keychain) to encrypt DATA edges
-        if not resource_vertex.keychain or len(resource_vertex.keychain) == 0:
-            resource_vertex.keychain = [record_key]
-        else:
-            # Ensure record key is in keychain (prepend it so it's the first/primary key)
-            keychain = resource_vertex.keychain
-            if record_key not in keychain:
-                keychain.insert(0, record_key)
-                resource_vertex.keychain = keychain
-
-        # Ensure there is a KEY edge so DATA edges can be added/encrypted.
-        # Prefer existing parent vertices; fall back to root if none exist.
-        if not resource_vertex.has_key:
-            parent_vertices = resource_vertex.belongs_to_vertices()
-            if parent_vertices:
-                resource_vertex.belongs_to(parent_vertices[0], edge_type=EdgeType.KEY)
-            else:
-                resource_vertex.belongs_to_root(EdgeType.KEY)
-            logging.debug(f"Added KEY edge for resource {resource_uid} to enable DATA encryption")
-
         # Find and deactivate existing 'jit_settings' edge for proper versioning
         existing_edge = None
         for edge in resource_vertex.edges:
@@ -644,12 +607,16 @@ def set_resource_jit_settings(
             existing_edge.active = False
             logging.debug(f"Deactivated existing 'jit_settings' edge (version {existing_edge.version})")
 
-        # Add new DATA edge with the settings
-        # The DAG will automatically encrypt it on save using vertex.key (record key)
+        # Pre-encrypt content with record key (matches Web Vault: encrypted=True, needs_encryption=False)
+        content_bytes = json.dumps(settings).encode()
+        encrypted_content = encrypt_aes(content_bytes, record_key)
+
+        # Add new DATA edge with pre-encrypted content
         resource_vertex.add_data(
-            content=settings,  # Will be serialized to JSON and encrypted on save
+            content=encrypted_content,
             path='jit_settings',
-            needs_encryption=True,
+            needs_encryption=False,
+            is_encrypted=True,
             modified=True
         )
 
@@ -844,3 +811,123 @@ def print_keeper_ai_settings(params: KeeperParams, resource_uid: str, config_uid
                 print(f"      - {tag_name}")
 
     print()
+
+
+def inspect_resource_in_graph(
+    params: KeeperParams,
+    resource_uid: str,
+    config_uid: Optional[str] = None,
+    show_raw_content: bool = False
+) -> Dict[str, Any]:
+    """
+    Inspect all graph edges and vertices referencing a record UID.
+    Returns edges (tail->head), vertices (UIDs), and DATA edges grouped by path with all versions.
+
+    Args:
+        params: KeeperParams instance
+        resource_uid: UID of the PAM resource
+        config_uid: Optional PAM config UID
+        show_raw_content: If True, load DAG with decrypt=False and include raw stored content
+            (encrypted bytes) in data_by_path. Use this to see what's actually stored without
+            auto-decrypt skewing the picture.
+
+    Returns:
+        {
+            "edges": [{"type": str, "tail": str, "head": str, "path": str|None, "version": int, "active": bool}, ...],
+            "vertices": [uid, ...],
+            "data_by_path": {"path_name": [{"version": int, "active": bool, "has_content": bool,
+                "raw_content_len"?: int, "raw_content_preview"?: str}, ...], ...}
+        }
+    """
+    result: Dict[str, Any] = {"edges": [], "vertices": [], "data_by_path": {}}
+    try:
+        vault.KeeperRecord.load(params, resource_uid)
+        record_key = params.record_cache.get(resource_uid, {}).get('record_key_unencrypted')
+        if not record_key:
+            logging.warning(f"Record key not available for {resource_uid}")
+            return result
+
+        if not config_uid:
+            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+            config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, resource_uid)
+            if not config_uid:
+                config_uid = resource_uid
+
+        vault.KeeperRecord.load(params, config_uid)
+        config_record_key = params.record_cache.get(config_uid, {}).get('record_key_unencrypted')
+        if not config_record_key:
+            logging.warning(f"Config record key not available for {config_uid}")
+            return result
+
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+        dag_record = PasswordRecord()
+        dag_record.record_uid = config_uid
+        dag_record.record_key = config_record_key
+
+        conn = Connection(
+            params=params,
+            encrypted_transmission_key=encrypted_transmission_key,
+            encrypted_session_token=encrypted_session_token,
+            transmission_key=transmission_key,
+            use_write_protobuf=True
+        )
+        linking_dag = DAG(
+            conn=conn,
+            record=dag_record,
+            graph_id=0,
+            write_endpoint=PamEndpoints.PAM,
+            decrypt=not show_raw_content
+        )
+        linking_dag.load()
+
+        # 1) All edges referencing record_uid (tail==ruid or head_uid==ruid)
+        edge_records = []
+        vertex_uids = {resource_uid}
+
+        for vertex in linking_dag.all_vertices:
+            tail_uid = vertex.uid
+            for edge in (vertex.edges or []):
+                if not edge:
+                    continue
+                head_uid = edge.head_uid
+                if tail_uid != resource_uid and head_uid != resource_uid:
+                    continue
+                vertex_uids.add(tail_uid)
+                vertex_uids.add(head_uid)
+                edge_records.append({
+                    "type": edge.edge_type.value if hasattr(edge.edge_type, 'value') else str(edge.edge_type),
+                    "tail": tail_uid,
+                    "head": head_uid,
+                    "path": edge.path,
+                    "version": getattr(edge, 'version', 0),
+                    "active": getattr(edge, 'active', True),
+                })
+                if edge.edge_type == EdgeType.DATA:
+                    path_key = edge.path or "(no path)"
+                    if path_key not in result["data_by_path"]:
+                        result["data_by_path"][path_key] = []
+                    entry = {
+                        "version": getattr(edge, 'version', 0),
+                        "active": getattr(edge, 'active', True),
+                        "has_content": edge.content is not None,
+                    }
+                    if show_raw_content and edge.content is not None:
+                        raw = edge.content
+                        if isinstance(raw, bytes):
+                            entry["raw_content_len"] = len(raw)
+                            # First 64 bytes as hex for encrypted blob preview
+                            entry["raw_content_preview"] = raw[:64].hex()
+                        else:
+                            s = str(raw)
+                            entry["raw_content_len"] = len(s)
+                            entry["raw_content_preview"] = s[:128] + ("..." if len(s) > 128 else "")
+                    result["data_by_path"][path_key].append(entry)
+
+        result["edges"] = edge_records
+        result["vertices"] = sorted(vertex_uids)
+        return result
+
+    except Exception as e:
+        logging.error(f"Error inspecting graph for {resource_uid}: {e}", exc_info=True)
+        result["error"] = str(e)
+        return result
