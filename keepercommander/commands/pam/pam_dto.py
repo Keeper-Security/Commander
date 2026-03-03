@@ -228,3 +228,22 @@ class GatewayActionWebRTCSession(GatewayAction):
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionUniversalSyncRunInputs:
+
+    def __init__(self, network_uid, dry_run=False):
+        self.networkUid = network_uid
+        self.dryRun = dry_run
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionUniversalSyncRun(GatewayAction):
+
+    def __init__(self, inputs: GatewayActionUniversalSyncRunInputs, conversation_id=None):
+        super().__init__('universal-sync-run', inputs=inputs, conversation_id=conversation_id, is_scheduled=True)
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)

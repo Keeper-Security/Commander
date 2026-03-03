@@ -39,11 +39,14 @@ from .pam.pam_dto import (
     GatewayActionRotate,
     GatewayActionRotateInputs, GatewayAction, GatewayActionJobInfoInputs,
     GatewayActionJobInfo,
-    GatewayActionJobCancel)
+    GatewayActionJobCancel,
+    GatewayActionUniversalSyncRun,
+    GatewayActionUniversalSyncRunInputs)
 
 from .pam.router_helper import router_send_action_to_gateway, print_router_response, \
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, \
-    get_router_url
+    get_router_url,
+    get_response_payload
 from .record_edit import RecordEditMixin
 from .helpers.timeout import parse_timeout
 from .email_commands import find_email_config_record, load_email_config_from_record, update_oauth_tokens_in_record
@@ -186,6 +189,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('project', PAMProjectCommand(), 'PAM Project Import/Export', 'p')
         self.register_command('launch', PAMLaunchCommand(), 'Launch a connection to a PAM resource', 'l')
         self.register_command('universal-sync-config', PAMUniversalSyncConfigCommand(), 'Configure Universal Sync', 'usc')
+        self.register_command('universal-sync-run', PAMUniversalSyncRunCommand(), 'Run Universal Sync', 'usr')
 
 
 class PAMGatewayCommand(GroupCommand):
@@ -3536,6 +3540,64 @@ class PAMUniversalSyncConfigCommand(Command):
             print(f'{bcolors.OKGREEN}Universal sync configuration updated for network: {network.title}{bcolors.ENDC}')
         except Exception as e:
             raise CommandError('', f'{bcolors.FAIL}Error configuring universal sync: {e}{bcolors.ENDC}')
+
+
+class PAMUniversalSyncRunCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam universal-sync-run')
+    parser.add_argument('--network', '-n', required=True, dest='network', action='store',
+                        help='Network UID or name to run universal sync')
+    parser.add_argument('--dry-run', '-dr', dest='dry_run', action='store_true',
+                        help='Run in dry-run mode (default: false)')
+
+    def get_parser(self):
+        return PAMUniversalSyncRunCommand.parser
+
+    def execute(self, params, **kwargs):
+        network_name = kwargs.get('network')
+        if not network_name:
+            raise CommandError('', f'{bcolors.FAIL}Network is required{bcolors.ENDC}')
+
+        network = vault.KeeperRecord.load(params, network_name)
+        if not network:
+            raise CommandError('', f'{bcolors.FAIL}Network "{network_name}" not found{bcolors.ENDC}')
+
+        dry_run = kwargs.get('dry_run', False)
+
+        action_inputs = GatewayActionUniversalSyncRunInputs(
+            network_uid=network.record_uid,
+            dry_run=dry_run
+        )
+
+        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
+
+        try:
+            conversation_id = GatewayAction.generate_conversation_id()
+            router_response = router_send_action_to_gateway(
+                params=params,
+                gateway_action=GatewayActionUniversalSyncRun(inputs=action_inputs, conversation_id=conversation_id),
+                message_type=pam_pb2.CMT_GENERAL,
+                is_streaming=False,
+                transmission_key=transmission_key,
+                encrypted_transmission_key=encrypted_transmission_key,
+                encrypted_session_token=encrypted_session_token
+            )
+
+            if router_response is None:
+                print(f'{bcolors.FAIL}The router returned a failure.{bcolors.ENDC}')
+                return
+
+            # Get the response payload data
+            payload = get_response_payload(router_response)
+            data = payload.get('data') if payload else None
+
+            if data and "has been queued" in data.get("Response", ""):
+                mode_str = 'dry-run mode' if dry_run else 'live mode'
+                print(f'{bcolors.OKGREEN}Universal sync job has been queued for network: {network.title} ({mode_str}){bcolors.ENDC}')
+                print(f"To check the status, use the command '{bcolors.OKGREEN}pam action job-info {conversation_id} --gateway=<GATEWAY_UID>{bcolors.ENDC}'.")
+            else:
+                print_router_response(router_response, 'job_info', conversation_id)
+        except Exception as e:
+            raise CommandError('', f'{bcolors.FAIL}Error running universal sync: {e}{bcolors.ENDC}')
 
 
 class PAMCreateGatewayCommand(Command):
