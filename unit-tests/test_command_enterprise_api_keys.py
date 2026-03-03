@@ -294,7 +294,7 @@ class TestEnterpriseApiKeys(TestCase):
         with mock.patch('builtins.print') as mock_print:
             cmd.execute(params, name='Test Key')
         
-        mock_print.assert_called_with("At least one integration is required. Example: --integrations 'SIEM:2' or --integrations 'BILLING:2'")
+        mock_print.assert_called_with("At least one integration is required. Example: --integrations 'SIEM:2', --integrations 'CSPM:2', or --integrations 'BILLING:2'")
 
     def test_api_key_generate_invalid_role_format(self):
         """Test API key generation fails with invalid integration format"""
@@ -348,6 +348,65 @@ class TestEnterpriseApiKeys(TestCase):
                     cmd.execute(params, name='Billing Key', integrations='BILLING:2', expires='30d')
         
         self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
+
+    def test_api_key_generate_cspm_success(self):
+        """Test API key generation succeeds for CSPM integration"""
+        params = get_connected_params()
+        
+        cmd = enterprise_api_keys.ApiKeyGenerateCommand()
+        TestEnterpriseApiKeys.expected_commands = ['generate_token']
+        
+        captured_output = io.StringIO()
+        with mock.patch.object(cmd, 'get_enterprise_id', return_value=8560 << 32):
+            with mock.patch('sys.stdout', captured_output):
+                cmd.execute(params, name='CSPM Tool', integrations='CSPM:2', expires='30d')
+        
+        self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
+        
+        output = captured_output.getvalue()
+        self.assertIn('API Key generated successfully', output)
+        self.assertIn('Name: CSPM Tool', output)
+        self.assertIn('Enterprise ID: 8560', output)
+        self.assertIn('Integrations:', output)
+        self.assertIn('- CSPM: READ_WRITE (2)', output)
+
+    def test_api_key_generate_cspm_read_only(self):
+        """Test API key generation succeeds for CSPM integration with read-only access"""
+        params = get_connected_params()
+        
+        cmd = enterprise_api_keys.ApiKeyGenerateCommand()
+        TestEnterpriseApiKeys.expected_commands = ['generate_token']
+        
+        captured_output = io.StringIO()
+        with mock.patch.object(cmd, 'get_enterprise_id', return_value=8560 << 32):
+            with mock.patch('sys.stdout', captured_output):
+                cmd.execute(params, name='CSPM Read Key', integrations='CSPM:1', expires='7d')
+        
+        self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
+        
+        output = captured_output.getvalue()
+        self.assertIn('API Key generated successfully', output)
+        self.assertIn('- CSPM: READ (1)', output)
+
+    def test_api_key_generate_cspm_json_output(self):
+        """Test API key generation with CSPM integration in JSON format"""
+        params = get_connected_params()
+        
+        cmd = enterprise_api_keys.ApiKeyGenerateCommand()
+        TestEnterpriseApiKeys.expected_commands = ['generate_token']
+        
+        result = cmd.execute(params, name='CSPM JSON Key', integrations='CSPM:2', expires='30d', format='json')
+        
+        self.assertEqual(len(TestEnterpriseApiKeys.expected_commands), 0)
+        self.assertIsNotNone(result)
+        
+        data = json.loads(result)
+        self.assertEqual(data['name'], 'CSPM JSON Key')
+        self.assertEqual(data['token'], 'token_generated_for_test')
+        self.assertEqual(len(data['integrations']), 1)
+        self.assertEqual(data['integrations'][0]['api_integration_type_name'], 'CSPM')
+        self.assertEqual(data['integrations'][0]['action_type'], 2)
+        self.assertEqual(data['integrations'][0]['action_type_name'], 'READ_WRITE')
 
     def test_api_key_revoke_success(self):
         """Test successful API key revocation"""
@@ -709,6 +768,7 @@ class TestEnterpriseApiKeys(TestCase):
         """Helper method to map role IDs to names"""
         role_map = {
             1: "SIEM",
+            2: "CSPM",
             3: "BILLING"
         }
         return role_map.get(role_id, f"Role_{role_id}") 
