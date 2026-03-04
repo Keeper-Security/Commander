@@ -451,6 +451,8 @@ class PAMProjectImportCommand(Command):
                 "ai_terminate_session_on_detection": pce.ai_terminate_session_on_detection
             })
 
+            if pce.identity_provider_uid: args["identity_provider_uid"] = pce.identity_provider_uid
+
             if pce.environment == "local":
                 if pce.network_cidr: args["network_cidr"] = pce.network_cidr
                 if pce.network_id: args["network_id"] = pce.network_id

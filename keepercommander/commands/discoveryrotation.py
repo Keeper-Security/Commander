@@ -10,6 +10,7 @@
 #
 import argparse
 import fnmatch
+import itertools
 import json
 import logging
 import os.path
@@ -1750,8 +1751,8 @@ class PAMConfigurationListCommand(Command):
                 "resource_record_uids": facade.resource_ref,
                 "fields": {}
             }
-            
-            for field in configuration.fields:
+
+            for field in itertools.chain(configuration.fields, configuration.custom):
                 if field.type in ('pamResources', 'fileRef'):
                     continue
                 values = list(field.get_external_value())
@@ -1774,7 +1775,7 @@ class PAMConfigurationListCommand(Command):
             table.append(['Gateway UID', facade.controller_uid])
             table.append(['Resource Record UIDs', facade.resource_ref])
 
-            for field in configuration.fields:
+            for field in itertools.chain(configuration.fields, configuration.custom):
                 if field.type in ('pamResources', 'fileRef'):
                     continue
                 values = list(field.get_external_value())
@@ -1826,7 +1827,7 @@ class PAMConfigurationListCommand(Command):
 
                         if is_verbose:
                             fields = {}
-                            for field in c.fields:
+                            for field in itertools.chain(c.fields, c.custom):
                                 if field.type in ('pamResources', 'fileRef'):
                                     continue
                                 value = ', '.join(field.get_external_value())
@@ -1841,7 +1842,7 @@ class PAMConfigurationListCommand(Command):
 
                         if is_verbose:
                             fields = []
-                            for field in c.fields:
+                            for field in itertools.chain(c.fields, c.custom):
                                 if field.type in ('pamResources', 'fileRef'):
                                     continue
                                 value = ', '.join(field.get_external_value())
@@ -1875,6 +1876,8 @@ common_parser.add_argument('--shared-folder', '-sf', dest='shared_folder_uid', a
                                 'which the gateway has access to.')
 common_parser.add_argument('--schedule', '-sc', dest='default_schedule', action='store', help='Default Schedule: Use CRON syntax')
 common_parser.add_argument('--port-mapping', '-pm', dest='port_mapping', action='append', help='Port Mapping')
+common_parser.add_argument('--identity-provider', '-idp', dest='identity_provider_uid',
+                           action='store', help='Identity Provider UID')
 network_group = common_parser.add_argument_group('network', 'Local network configuration')
 network_group.add_argument('--network-id', dest='network_id', action='store', help='Network ID')
 network_group.add_argument('--network-cidr', dest='network_cidr', action='store', help='Network CIDR')
@@ -2040,6 +2043,10 @@ class PamConfigurationEditMixin(RecordEditMixin):
             extra_properties.append(f'schedule.defaultRotationSchedule=$JSON:{{"type": "CRON", "cron": "{schedule}", "tz": "Etc/UTC"}}')
         else:
             extra_properties.append('schedule.defaultRotationSchedule=On-Demand')
+
+        identity_provider_uid = kwargs.get('identity_provider_uid')
+        if identity_provider_uid:
+            extra_properties.append(f'text.identityProviderUid={identity_provider_uid}')
 
         if record.record_type == 'pamNetworkConfiguration':
             network_id = kwargs.get('network_id')
@@ -2230,6 +2237,7 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
 
         rt_fields = RecordEditMixin.get_record_type_fields(params, record.record_type)
         if rt_fields:
+            rt_fields.append({"$ref": "text", "label": "identityProviderUid"})
             RecordEditMixin.adjust_typed_record_fields(record, rt_fields)
 
         # resolve folder path to UID
@@ -2374,6 +2382,11 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
                 rt_fields = RecordEditMixin.get_record_type_fields(params, record_type)
                 if rt_fields:
                     RecordEditMixin.adjust_typed_record_fields(configuration, rt_fields)
+
+        rt_fields = RecordEditMixin.get_record_type_fields(params, configuration.record_type)
+        if rt_fields:
+            rt_fields.append({"$ref": "text", "label": "identityProviderUid"})
+            RecordEditMixin.adjust_typed_record_fields(configuration, rt_fields)
 
         title = kwargs.get('title')
         if title:
