@@ -2160,7 +2160,7 @@ def prepare_record_add_or_update(update_flag, params, records):
                 if '$ref' in field:
                     f = RecordSchemaField()
                     f.ref = field['$ref']
-                    f.label = field.get('label') or ''
+                    f.label = field.get('label') or field['$ref']
                     if 'required' in field:
                         if field['required']:
                             f.required = True
