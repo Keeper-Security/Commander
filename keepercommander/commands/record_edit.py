@@ -856,7 +856,7 @@ class RecordAddCommand(Command, RecordEditMixin):
                 ref = rf.get('$ref')
                 if not ref:
                     continue
-                label = rf.get('label', '')
+                label = rf.get('label') or ref
                 required = rf.get('required', False)
                 default_value = None
                 if ref == 'appFiller':
