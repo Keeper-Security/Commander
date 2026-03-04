@@ -2237,7 +2237,6 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
 
         rt_fields = RecordEditMixin.get_record_type_fields(params, record.record_type)
         if rt_fields:
-            rt_fields.append({"$ref": "text", "label": "identityProviderUid"})
             RecordEditMixin.adjust_typed_record_fields(record, rt_fields)
 
         # resolve folder path to UID
@@ -2385,7 +2384,6 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
 
         rt_fields = RecordEditMixin.get_record_type_fields(params, configuration.record_type)
         if rt_fields:
-            rt_fields.append({"$ref": "text", "label": "identityProviderUid"})
             RecordEditMixin.adjust_typed_record_fields(configuration, rt_fields)
 
         title = kwargs.get('title')
