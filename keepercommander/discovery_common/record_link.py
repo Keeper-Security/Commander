@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
 from .utils import get_connection, make_agent
-from .types import UserAcl, DiscoveryObject
+from .types import UserAcl, UserAclRotationSettings, DiscoveryObject
 from ..keeper_dag import DAG, EdgeType
 from ..keeper_dag.types import PamGraphId, PamEndpoints
 import importlib
@@ -120,7 +120,7 @@ class RecordLink:
         """
         Get the vertex that the UID belongs to.
 
-        This method will check the vertex ACL to see which edge has a True value for belongs_to.
+        This method will check the vertex ACL to see which edge has a True value for set_acl.
         If it is found, the record UID that the head points at will be returned.
         If not found, None is returned.
         """
@@ -130,7 +130,7 @@ class RecordLink:
             for edge in vertex.edges:
                 if edge.edge_type == EdgeType.ACL:
                     content = edge.content_as_object(UserAcl)
-                    if content.belongs_to is True:
+                    if content.belongs_to:
                         return edge.head_uid
         return None
 
@@ -269,7 +269,13 @@ class RecordLink:
         if acl_edge is None:
             return None
 
-        return acl_edge.content_as_object(UserAcl)
+        # Get the ACL
+        # Add rotation settings if missing.
+        acl = acl_edge.content_as_object(UserAcl)
+        if acl.rotation_settings is None:
+            acl.rotation_settings = UserAclRotationSettings()
+
+        return acl
 
     def acl_has_belong_to_vertex(self, discovery_vertex: DAGVertex) -> Optional[DAGVertex]:
         """
@@ -295,7 +301,7 @@ class RecordLink:
             if edge.edge_type != EdgeType.ACL:
                 continue
             content = edge.content_as_object(UserAcl)
-            if content.belongs_to is True:
+            if content.belongs_to:
                 return self.dag.get_vertex(edge.head_uid)
         return None
 
@@ -375,7 +381,7 @@ class RecordLink:
                         continue
                     if edge.edge_type == EdgeType.ACL:
                         content = edge.content_as_object(UserAcl)  # type: UserAcl
-                        if content.is_admin is True:
+                        if content.is_admin:
                             return vertex.uid
         return None
 
@@ -448,10 +454,10 @@ class RecordLink:
                 style = "solid"
 
                 # To reduce the number of edges, only show the active edges
-                if edge.active is True:
+                if edge.active:
                     color = "black"
                     style = "bold"
-                elif show_only_active_edges is True:
+                elif show_only_active_edges:
                     continue
 
                 # If the vertex is not active, gray out the DATA edge
@@ -464,9 +470,9 @@ class RecordLink:
                 edge_tip = ""
                 if edge.edge_type == EdgeType.ACL and v.active is True:
                     content = edge.content_as_dict
-                    if content.get("is_admin") is True:
+                    if content.get("is_admin"):
                         color = "red"
-                    if content.get("belongs_to") is True:
+                    if content.get("belongs_to"):
                         if color == "red":
                             color = "purple"
                         else:
@@ -482,7 +488,7 @@ class RecordLink:
                     label = "UNK"
                 if edge.path is not None and edge.path != "":
                     label += f"\\npath={edge.path}"
-                if show_version is True:
+                if show_version:
                     label += f"\\nv={edge.version}"
 
                 # tail, head (arrow side), label, ...
@@ -491,7 +497,7 @@ class RecordLink:
             shape = "ellipse"
             fillcolor = "white"
             color = "black"
-            if v.active is False:
+            if not v.active:
                 fillcolor = "grey"
 
             label = f"uid={v.uid}"

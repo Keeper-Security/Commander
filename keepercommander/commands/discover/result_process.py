@@ -1331,12 +1331,17 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                                debug_level=debug_level)
         infra.load(sync_point)
 
-        configuration = None
         try:
             configuration = infra.get_root.has_vertices()[0]
         except (Exception,):
             print(f"{bcolors.FAIL}Could not find the configuration in the infrastructure graph. "
                   f"Has discovery been run for this gateway?{bcolors.ENDC}")
+            return
+
+        if configuration is None:
+            print(f"{bcolors.FAIL}Could not find the configuration in the infrastructure graph. "
+                  f"Has discovery been run for this gateway?{bcolors.ENDC}")
+            return
 
         record_type_to_vertices_map = sort_infra_vertices(configuration)
 

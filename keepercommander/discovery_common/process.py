@@ -88,7 +88,11 @@ class Process:
                                     fail_on_corrupt=False,
                                     **kwargs)
         self.record_link = RecordLink(record=record, logger=logger, debug_level=debug_level, **kwargs)
-        self.user_service = UserService(record=record, logger=logger, debug_level=debug_level, **kwargs)
+        self.user_service = UserService(record=record,
+                                        logger=logger,
+                                        debug_level=debug_level,
+                                        record_linking=self.record_link,
+                                        **kwargs)
 
         # This is the root UID for all graphs; get it from one of them.
         self.configuration_uid = self.jobs.dag.uid
@@ -1019,7 +1023,7 @@ class Process:
 
                                         if admin_uid is not None:
                                             self.logger.debug("    found directory user admin, connect to resource")
-                                            # self.record_link.belongs_to(admin_uid, add_content.record_uid, acl=acl)
+                                            self.record_link.belongs_to(admin_uid, add_content.record_uid, acl=acl)
                                             should_prompt_for_admin = False
                                         else:
                                             self.logger.debug("    did not find the directory user for the admin, "
@@ -1561,8 +1565,5 @@ class Process:
         self.logger.debug(f"saving additions from process run")
         self.infra.save(delta_graph=False)
         self.logger.debug("# ####################################################################################")
-
-        # Update the user service mapping
-        self.user_service.run(infra=self.infra)
 
         return bulk_process_results

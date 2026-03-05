@@ -5,6 +5,7 @@ import time
 import datetime
 import base64
 import json
+import hashlib
 from keeper_secrets_manager_core.crypto import CryptoUtils
 from typing import Any, Union, Optional, List, TYPE_CHECKING
 
@@ -311,6 +312,9 @@ class UserAclRotationSettings(BaseModel):
     # A list of SaaS Record configuration records.
     saas_record_uid_list: List[str] = []
 
+    # Do we need to rotate service passwords on this machine when this password is rotated?
+    controls_services: bool = False
+
     def set_pwd_complexity(self, complexity: Union[dict, str, bytes], record_key_bytes: bytes):
         if isinstance(complexity, dict):
             complexity = json.dumps(complexity)
@@ -364,6 +368,42 @@ class UserAcl(BaseModel):
             rotation_settings=UserAclRotationSettings()
         )
 
+
+# -------------
+
+class UserDataRotationSettings(BaseModel):
+
+    # If True, user password change does not change service passwords.
+    no_update_services: bool = False
+
+
+class UserData(BaseModel):
+
+    rotation_settings: UserDataRotationSettings = UserDataRotationSettings()
+
+
+# -------------
+
+class MachineDataAllowSettings(BaseModel):
+    connections: bool = False
+    portForwards: bool = False
+    rotation: bool = False
+    sessionRecording: bool = False
+    typescriptRecording: bool = False
+
+
+class MachineDataRotationSettings(BaseModel):
+    # If True, service password will not be changed when user's password is changed.
+    no_update_services: bool = False
+
+
+class MachineData(BaseModel):
+
+    allowedSettings: MachineDataAllowSettings = MachineDataAllowSettings()
+    rotation_settings: MachineDataRotationSettings = MachineDataRotationSettings()
+
+
+# -------------
 
 class DiscoveryItem(BaseModel):
     pass
@@ -525,6 +565,18 @@ class DiscoveryObject(BaseModel):
     item: Union[DiscoveryConfiguration, DiscoveryUser, DiscoveryMachine, DiscoveryDatabase, DiscoveryDirectory]
 
     @property
+    def md5(self) -> str:
+        data = self.model_dump()
+
+        # Don't include these in the MD5
+        data.pop("missing_since_ts", None)
+        data.pop("access_user", None)
+
+        m = hashlib.md5()
+        m.update(json.dumps(data).encode('utf-8'))
+        return m.hexdigest()
+
+    @property
     def record_exists(self):
         return self.record_uid is not None
 
@@ -603,29 +655,98 @@ class NormalizedRecord(BaseModel):
     title: str
     fields: List[RecordField] = []
     note: Optional[str] = None
+    record_exists: bool = True
 
-    def _field(self, field_type, label) -> Optional[RecordField]:
+    def _field(self,
+               field_type: Optional[str] = None,
+               label: Optional[str] = None) -> Optional[RecordField]:
+        if field_type is None and label is None:
+            raise ValueError("either field_type or label needs to be set to find field in NormalizedRecord.")
+
         for field in self.fields:
-            value = field.value
-            if value is None or len(value) == 0:
-                continue
-            if field.label == field_type and value[0].lower() == label.lower():
+            if field_type is not None and field_type == field.type:
+                return field
+            if label is not None and label == field.label:
                 return field
         return None
 
-    def find_user(self, user):
+    def find_field(self,
+                   field_type: Optional[str] = None,
+                   label: Optional[str] = None) -> Optional[RecordField]:
+
+        return self._field(field_type=field_type, label=label)
+
+    def get_value(self,
+                  field_type: Optional[str] = None,
+                  label: Optional[str] = None) -> Optional[Any]:
+
+        field = self.find_field(field_type=field_type, label=label)
+        if field is None or field.value is None or len(field.value) == 0:
+            return None
+        return field.value[0]
+
+    def get_user(self) -> Optional[str]:
+        field = self._field(field_type="login")
+        if field is None:
+            return None
+        value = field.value
+        if isinstance(value, list):
+            if len(value) == 0:
+                return None
+            value = value[0]
+        return value
+
+    def get_dn(self) -> Optional[str]:
+        field = self._field(label="distinguishedName")
+        if field is None:
+            return None
+        value = field.value
+        if isinstance(value, list):
+            if len(value) == 0:
+                return None
+            value = value[0]
+        return value
+
+    def has_user(self, user) -> bool:
 
         from .utils import split_user_and_domain
 
-        res = self._field("login", user)
-        if res is None:
-            user, _ = split_user_and_domain(user)
-            res = self._field("login", user)
+        user, _ = split_user_and_domain(user)
 
-        return res
+        field = self._field(field_type="login")
+        if field is None:
+            return False
 
-    def find_dn(self, user):
-        return self._field("distinguishedName", user)
+        value = field.value
+        if isinstance(value, list):
+            if len(value) == 0:
+                return False
+            value = value[0]
+        elif isinstance(value, str):
+            value = value.lower()
+
+        if user.lower() == value:
+            return True
+
+        return False
+
+    def has_dn(self, user) -> bool:
+        field = self._field(label="distinguishedName")
+        if field is None:
+            return False
+
+        value = field.value
+        if isinstance(value, list):
+            if len(value) == 0:
+                return False
+            value = value[0]
+        elif isinstance(value, str):
+            value = value.lower()
+
+        if user.lower() == value:
+            return True
+
+        return False
 
       
 class PromptResult(BaseModel):
@@ -733,6 +854,8 @@ class BulkProcessResults(BaseModel):
 
 # Service/Schedule Task/IIS Pool
 
+
+# This is still used to migrate; do not remove
 class ServiceAcl(BaseModel):
     is_service: bool = False
     is_task: bool = False
