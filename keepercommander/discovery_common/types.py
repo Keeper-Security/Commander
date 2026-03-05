@@ -365,6 +365,9 @@ class UserAcl(BaseModel):
     # No clue what this is. Vault team adding stuff without telling others.
     is_launch_credential: bool = False
 
+    # Do we need to rotate service passwords on this machine when this password is rotated?
+    controls_services: bool = False
+
     rotation_settings: Optional[UserAclRotationSettings] = None
 
     @staticmethod
@@ -375,6 +378,32 @@ class UserAcl(BaseModel):
         return UserAcl(
             rotation_settings=UserAclRotationSettings()
         )
+
+
+# -------------
+
+class UserData(BaseModel):
+
+    # If True, user password change does not change service passwords.
+    no_update_services: bool = False
+
+# -------------
+
+
+class MachineDataAllowSettings(BaseModel):
+    connections: bool = False
+    portForwards: bool = False
+    rotation: bool = False
+    sessionRecording: bool = False
+    typescriptRecording: bool = False
+
+
+class MachineData(BaseModel):
+
+    allowedSettings: MachineDataAllowSettings = MachineDataAllowSettings()
+    no_update_services: bool = False
+
+# -------------
 
 
 class DiscoveryItem(BaseModel):
@@ -842,6 +871,8 @@ class BulkProcessResults(BaseModel):
 
 # Service/Schedule Task/IIS Pool
 
+
+# This is still used to migrate; do not remove
 class ServiceAcl(BaseModel):
     is_service: bool = False
     is_task: bool = False

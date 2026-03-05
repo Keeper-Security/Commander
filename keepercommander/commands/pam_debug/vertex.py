@@ -53,7 +53,7 @@ class PAMDebugVertexCommand(PAMGatewayActionDiscoverCommandBase):
             return
 
         infra = Infrastructure(record=gateway_context.configuration, params=params, fail_on_corrupt=False,
-                               debug_level=debug_level)
+                               debug_level=debug_level, use_per_graph_endpoints=False)
         infra.load()
 
         vertex_uid = kwargs.get("vertex_uid")

@@ -59,6 +59,7 @@ class Verify:
         self.record_link = RecordLink(record=record, logger=logger, debug_level=debug_level, fail_on_corrupt=False,
                                       **kwargs)
         self.user_service = UserService(record=record, logger=logger, debug_level=debug_level, fail_on_corrupt=False,
+                                        record_linking= self.record_link,
                                         **kwargs)
 
         if logger is None:
@@ -230,9 +231,9 @@ class Verify:
 
         # Check to make sure the user service graph exists.
         # The "UserService" instance should do this, but we want to make sure.
-        if self.user_service.dag.has_graph is False:
+        if self.record_link.dag.has_graph is False:
             self.logger.debug("the user service graph contains no data")
-            configuration_vertex = self.user_service.dag.get_root
+            configuration_vertex = self.record_link.dag.get_root
             if configuration_vertex.uid != self.conn.get_record_uid(self.record):
                 raise Exception("The user service graph root/con does not match ")
 
@@ -260,7 +261,7 @@ class Verify:
                           color_name=Verify.UNK)
                 continue
 
-            user_service_resource_vertex = self.user_service.dag.get_vertex(resource_content.record_uid)
+            user_service_resource_vertex = self.record_link.dag.get_vertex(resource_content.record_uid)
             if user_service_resource_vertex is None:
                 self._msg(f" * Machine {resource_content.name} does not have a vertex in the user service graph")
                 if fix is True:

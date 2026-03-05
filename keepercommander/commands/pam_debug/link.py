@@ -53,7 +53,7 @@ class PAMDebugLinkCommand(PAMGatewayActionDiscoverCommandBase):
         record_link = RecordLink(record=gateway_context.configuration,
                                  params=params,
                                  logger=logging,
-                                 debug_level=debug_level)
+                                 debug_level=debug_level, use_per_graph_endpoints=False)
 
         resource_record = vault.KeeperRecord.load(params, resource_uid)  # type: Optional[TypedRecord]
         if resource_record is None:
