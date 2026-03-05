@@ -860,14 +860,24 @@ class PedmAgentDeleteCommand(base.ArgparseCommand):
         if len(agent_uid_list) == 0:
             return
 
+        force = kwargs.get('force') is True
+        if not force:
+            answer = prompt_utils.user_choice(f'Do you want to delete {len(agent_uid_list)} agent(s)?', 'yN')
+            if answer.lower() not in {'y', 'yes'}:
+                return
+
         statuses = plugin.modify_agents(remove_agents=agent_uid_list)
+        deleted_count = 0
         if isinstance(statuses.remove, list):
             for status in statuses.remove:
                 if isinstance(status, admin_types.EntityStatus):
                     if status.success:
-                        utils.get_logger().info(f'Agent "{status.entity_uid}" deleted successfully.')
+                        deleted_count += 1
+                        print(f'Agent "{status.entity_uid}" deleted successfully.')
                     else:
                         utils.get_logger().warning(f'Failed to remove agent "{status.entity_uid}": {status.message}')
+        if deleted_count > 0:
+            print(f'\n{deleted_count} agent(s) deleted successfully.')
 
 
 class PedmAgentEditCommand(base.ArgparseCommand):
