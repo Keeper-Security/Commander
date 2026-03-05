@@ -720,9 +720,12 @@ class PedmDeploymentDownloadCommand(base.ArgparseCommand):
         token = f'{host}:{deployment.deployment_uid}:{utils.base64_url_encode(deployment.private_key)}'
         filename = kwargs.get('file')
         if filename:
+            if os.path.isdir(filename):
+                raise base.CommandError(f'"{filename}" is a directory. Please provide a full file path, e.g. "{os.path.join(filename, "deployment-token.txt")}"')
             with open(filename, 'wt') as f:
                 f.write(token)
-                return None
+            logging.info('Deployment token saved to: %s', os.path.abspath(filename))
+            return None
 
         if not kwargs.get('verbose'):
             return token
