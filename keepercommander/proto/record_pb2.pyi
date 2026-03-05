@@ -2,7 +2,8 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -176,7 +177,7 @@ class RecordTypesRequest(_message.Message):
     user: bool
     enterprise: bool
     pam: bool
-    def __init__(self, standard: bool = ..., user: bool = ..., enterprise: bool = ..., pam: bool = ...) -> None: ...
+    def __init__(self, standard: _Optional[bool] = ..., user: _Optional[bool] = ..., enterprise: _Optional[bool] = ..., pam: _Optional[bool] = ...) -> None: ...
 
 class RecordTypesResponse(_message.Message):
     __slots__ = ("recordTypes", "standardCounter", "userCounter", "enterpriseCounter", "pamCounter")
@@ -510,7 +511,7 @@ class File(_message.Message):
     fileSize: int
     thumbSize: int
     is_script: bool
-    def __init__(self, record_uid: _Optional[bytes] = ..., record_key: _Optional[bytes] = ..., data: _Optional[bytes] = ..., fileSize: _Optional[int] = ..., thumbSize: _Optional[int] = ..., is_script: bool = ...) -> None: ...
+    def __init__(self, record_uid: _Optional[bytes] = ..., record_key: _Optional[bytes] = ..., data: _Optional[bytes] = ..., fileSize: _Optional[int] = ..., thumbSize: _Optional[int] = ..., is_script: _Optional[bool] = ...) -> None: ...
 
 class FilesAddRequest(_message.Message):
     __slots__ = ("files", "client_time")
@@ -552,7 +553,7 @@ class FilesGetRequest(_message.Message):
     record_uids: _containers.RepeatedScalarFieldContainer[bytes]
     for_thumbnails: bool
     emergency_access_account_owner: str
-    def __init__(self, record_uids: _Optional[_Iterable[bytes]] = ..., for_thumbnails: bool = ..., emergency_access_account_owner: _Optional[str] = ...) -> None: ...
+    def __init__(self, record_uids: _Optional[_Iterable[bytes]] = ..., for_thumbnails: _Optional[bool] = ..., emergency_access_account_owner: _Optional[str] = ...) -> None: ...
 
 class FileGetStatus(_message.Message):
     __slots__ = ("record_uid", "status", "url", "success_status_code", "fileKeyType")
@@ -620,7 +621,7 @@ class UserPermission(_message.Message):
     accountUid: bytes
     timerNotificationType: TimerNotificationType
     rotateOnExpiration: bool
-    def __init__(self, username: _Optional[str] = ..., owner: bool = ..., shareAdmin: bool = ..., sharable: bool = ..., editable: bool = ..., awaitingApproval: bool = ..., expiration: _Optional[int] = ..., accountUid: _Optional[bytes] = ..., timerNotificationType: _Optional[_Union[TimerNotificationType, str]] = ..., rotateOnExpiration: bool = ...) -> None: ...
+    def __init__(self, username: _Optional[str] = ..., owner: _Optional[bool] = ..., shareAdmin: _Optional[bool] = ..., sharable: _Optional[bool] = ..., editable: _Optional[bool] = ..., awaitingApproval: _Optional[bool] = ..., expiration: _Optional[int] = ..., accountUid: _Optional[bytes] = ..., timerNotificationType: _Optional[_Union[TimerNotificationType, str]] = ..., rotateOnExpiration: _Optional[bool] = ...) -> None: ...
 
 class SharedFolderPermission(_message.Message):
     __slots__ = ("sharedFolderUid", "resharable", "editable", "revision", "expiration", "timerNotificationType", "rotateOnExpiration")
@@ -638,7 +639,7 @@ class SharedFolderPermission(_message.Message):
     expiration: int
     timerNotificationType: TimerNotificationType
     rotateOnExpiration: bool
-    def __init__(self, sharedFolderUid: _Optional[bytes] = ..., resharable: bool = ..., editable: bool = ..., revision: _Optional[int] = ..., expiration: _Optional[int] = ..., timerNotificationType: _Optional[_Union[TimerNotificationType, str]] = ..., rotateOnExpiration: bool = ...) -> None: ...
+    def __init__(self, sharedFolderUid: _Optional[bytes] = ..., resharable: _Optional[bool] = ..., editable: _Optional[bool] = ..., revision: _Optional[int] = ..., expiration: _Optional[int] = ..., timerNotificationType: _Optional[_Union[TimerNotificationType, str]] = ..., rotateOnExpiration: _Optional[bool] = ...) -> None: ...
 
 class RecordData(_message.Message):
     __slots__ = ("revision", "version", "shared", "encryptedRecordData", "encryptedExtraData", "clientModifiedTime", "nonSharedData", "linkedRecordData", "fileId", "fileSize", "thumbnailSize", "recordKeyType", "recordKey", "recordUid")
@@ -670,7 +671,7 @@ class RecordData(_message.Message):
     recordKeyType: RecordKeyType
     recordKey: bytes
     recordUid: bytes
-    def __init__(self, revision: _Optional[int] = ..., version: _Optional[int] = ..., shared: bool = ..., encryptedRecordData: _Optional[str] = ..., encryptedExtraData: _Optional[str] = ..., clientModifiedTime: _Optional[int] = ..., nonSharedData: _Optional[str] = ..., linkedRecordData: _Optional[_Iterable[_Union[RecordData, _Mapping]]] = ..., fileId: _Optional[_Iterable[bytes]] = ..., fileSize: _Optional[int] = ..., thumbnailSize: _Optional[int] = ..., recordKeyType: _Optional[_Union[RecordKeyType, str]] = ..., recordKey: _Optional[bytes] = ..., recordUid: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, revision: _Optional[int] = ..., version: _Optional[int] = ..., shared: _Optional[bool] = ..., encryptedRecordData: _Optional[str] = ..., encryptedExtraData: _Optional[str] = ..., clientModifiedTime: _Optional[int] = ..., nonSharedData: _Optional[str] = ..., linkedRecordData: _Optional[_Iterable[_Union[RecordData, _Mapping]]] = ..., fileId: _Optional[_Iterable[bytes]] = ..., fileSize: _Optional[int] = ..., thumbnailSize: _Optional[int] = ..., recordKeyType: _Optional[_Union[RecordKeyType, str]] = ..., recordKey: _Optional[bytes] = ..., recordUid: _Optional[bytes] = ...) -> None: ...
 
 class RecordDataWithAccessInfo(_message.Message):
     __slots__ = ("recordUid", "recordData", "userPermission", "sharedFolderPermission")
@@ -700,7 +701,7 @@ class IsObjectShareAdmin(_message.Message):
     uid: bytes
     isAdmin: bool
     objectType: CheckShareAdminObjectType
-    def __init__(self, uid: _Optional[bytes] = ..., isAdmin: bool = ..., objectType: _Optional[_Union[CheckShareAdminObjectType, str]] = ...) -> None: ...
+    def __init__(self, uid: _Optional[bytes] = ..., isAdmin: _Optional[bool] = ..., objectType: _Optional[_Union[CheckShareAdminObjectType, str]] = ...) -> None: ...
 
 class AmIShareAdmin(_message.Message):
     __slots__ = ("isObjectShareAdmin",)
@@ -748,7 +749,7 @@ class SharedRecord(_message.Message):
     expiration: int
     timerNotificationType: TimerNotificationType
     rotateOnExpiration: bool
-    def __init__(self, toUsername: _Optional[str] = ..., recordUid: _Optional[bytes] = ..., recordKey: _Optional[bytes] = ..., sharedFolderUid: _Optional[bytes] = ..., teamUid: _Optional[bytes] = ..., editable: bool = ..., shareable: bool = ..., transfer: bool = ..., useEccKey: bool = ..., removeVaultData: bool = ..., expiration: _Optional[int] = ..., timerNotificationType: _Optional[_Union[TimerNotificationType, str]] = ..., rotateOnExpiration: bool = ...) -> None: ...
+    def __init__(self, toUsername: _Optional[str] = ..., recordUid: _Optional[bytes] = ..., recordKey: _Optional[bytes] = ..., sharedFolderUid: _Optional[bytes] = ..., teamUid: _Optional[bytes] = ..., editable: _Optional[bool] = ..., shareable: _Optional[bool] = ..., transfer: _Optional[bool] = ..., useEccKey: _Optional[bool] = ..., removeVaultData: _Optional[bool] = ..., expiration: _Optional[int] = ..., timerNotificationType: _Optional[_Union[TimerNotificationType, str]] = ..., rotateOnExpiration: _Optional[bool] = ...) -> None: ...
 
 class RecordShareUpdateResponse(_message.Message):
     __slots__ = ("addSharedRecordStatus", "updateSharedRecordStatus", "removeSharedRecordStatus")
@@ -778,7 +779,7 @@ class GetRecordPermissionsRequest(_message.Message):
     ISSHAREADMIN_FIELD_NUMBER: _ClassVar[int]
     recordUids: _containers.RepeatedScalarFieldContainer[bytes]
     isShareAdmin: bool
-    def __init__(self, recordUids: _Optional[_Iterable[bytes]] = ..., isShareAdmin: bool = ...) -> None: ...
+    def __init__(self, recordUids: _Optional[_Iterable[bytes]] = ..., isShareAdmin: _Optional[bool] = ...) -> None: ...
 
 class GetRecordPermissionsResponse(_message.Message):
     __slots__ = ("recordPermissions",)
@@ -798,7 +799,7 @@ class RecordPermission(_message.Message):
     canEdit: bool
     canShare: bool
     canTransfer: bool
-    def __init__(self, recordUid: _Optional[bytes] = ..., owner: bool = ..., canEdit: bool = ..., canShare: bool = ..., canTransfer: bool = ...) -> None: ...
+    def __init__(self, recordUid: _Optional[bytes] = ..., owner: _Optional[bool] = ..., canEdit: _Optional[bool] = ..., canShare: _Optional[bool] = ..., canTransfer: _Optional[bool] = ...) -> None: ...
 
 class GetShareObjectsRequest(_message.Message):
     __slots__ = ("startWith", "contains", "filtered", "sharedFolderUid")
@@ -810,7 +811,7 @@ class GetShareObjectsRequest(_message.Message):
     contains: str
     filtered: bool
     sharedFolderUid: bytes
-    def __init__(self, startWith: _Optional[str] = ..., contains: _Optional[str] = ..., filtered: bool = ..., sharedFolderUid: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, startWith: _Optional[str] = ..., contains: _Optional[str] = ..., filtered: _Optional[bool] = ..., sharedFolderUid: _Optional[bytes] = ...) -> None: ...
 
 class GetShareObjectsResponse(_message.Message):
     __slots__ = ("shareRelationships", "shareFamilyUsers", "shareEnterpriseUsers", "shareTeams", "shareMCTeams", "shareMCEnterpriseUsers", "shareEnterpriseNames")
@@ -846,7 +847,7 @@ class ShareUser(_message.Message):
     isShareAdmin: bool
     isAdminOfSharedFolderOwner: bool
     userAccountUid: bytes
-    def __init__(self, username: _Optional[str] = ..., fullname: _Optional[str] = ..., enterpriseId: _Optional[int] = ..., status: _Optional[_Union[ShareStatus, str]] = ..., isShareAdmin: bool = ..., isAdminOfSharedFolderOwner: bool = ..., userAccountUid: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, username: _Optional[str] = ..., fullname: _Optional[str] = ..., enterpriseId: _Optional[int] = ..., status: _Optional[_Union[ShareStatus, str]] = ..., isShareAdmin: _Optional[bool] = ..., isAdminOfSharedFolderOwner: _Optional[bool] = ..., userAccountUid: _Optional[bytes] = ...) -> None: ...
 
 class ShareTeam(_message.Message):
     __slots__ = ("teamname", "enterpriseId", "teamUid")
@@ -882,7 +883,7 @@ class TransferRecord(_message.Message):
     recordUid: bytes
     recordKey: bytes
     useEccKey: bool
-    def __init__(self, username: _Optional[str] = ..., recordUid: _Optional[bytes] = ..., recordKey: _Optional[bytes] = ..., useEccKey: bool = ...) -> None: ...
+    def __init__(self, username: _Optional[str] = ..., recordUid: _Optional[bytes] = ..., recordKey: _Optional[bytes] = ..., useEccKey: _Optional[bool] = ...) -> None: ...
 
 class RecordsOnwershipTransferResponse(_message.Message):
     __slots__ = ("transferRecordStatus",)

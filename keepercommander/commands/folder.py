@@ -1874,16 +1874,31 @@ def formatted_tree(params, folder, verbose=False, show_records=False, shares=Fal
             
             # Add KeeperDrive records for this folder
             if hasattr(params, 'keeper_drive_folder_records'):
-                # For root folder, check for records with root parent or in root UID
+                # For root folder, collect KD records that are not inside any known KD sub-folder
                 if is_root:
-                    root_uid = 'AAAAAAAAAAAAAAAAAPmtNA'
-                    if root_uid in params.keeper_drive_folder_records:
-                        kd_rec_uids = params.keeper_drive_folder_records[root_uid]
-                        for rec_uid in kd_rec_uids:
-                            if rec_uid not in rec_uids:
+                    kd_folders = getattr(params, 'keeper_drive_folders', {})
+                    shown_rec_uids = set(rec_uids)
+                    # Records associated with container UIDs that are NOT real KD sub-folders
+                    # (includes the KD root UID and any other non-folder containers)
+                    for folder_uid, kd_rec_uids in params.keeper_drive_folder_records.items():
+                        if folder_uid not in kd_folders:
+                            for rec_uid in kd_rec_uids:
+                                if rec_uid not in shown_rec_uids:
+                                    rec = api.get_record(params, rec_uid)
+                                    if isinstance(rec, Record):
+                                        rec_nodes.append(rec)
+                                        shown_rec_uids.add(rec_uid)
+                    # Also show KD records that have NO folder association at all
+                    if hasattr(params, 'keeper_drive_records'):
+                        all_filed = set()
+                        for uids in params.keeper_drive_folder_records.values():
+                            all_filed.update(uids)
+                        for rec_uid in params.keeper_drive_records:
+                            if rec_uid not in all_filed and rec_uid not in shown_rec_uids:
                                 rec = api.get_record(params, rec_uid)
                                 if isinstance(rec, Record):
                                     rec_nodes.append(rec)
+                                    shown_rec_uids.add(rec_uid)
                 # For specific folders
                 elif node_uid_for_recs in params.keeper_drive_folder_records:
                     kd_rec_uids = params.keeper_drive_folder_records[node_uid_for_recs]

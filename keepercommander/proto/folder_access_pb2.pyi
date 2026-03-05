@@ -3,7 +3,8 @@ from google.api import annotations_pb2 as _annotations_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -25,7 +26,7 @@ class GetFolderAccessResponse(_message.Message):
     folderAccessResults: _containers.RepeatedCompositeFieldContainer[GetFolderAccessResult]
     continuationToken: ContinuationToken
     hasMore: bool
-    def __init__(self, folderAccessResults: _Optional[_Iterable[_Union[GetFolderAccessResult, _Mapping]]] = ..., continuationToken: _Optional[_Union[ContinuationToken, _Mapping]] = ..., hasMore: bool = ...) -> None: ...
+    def __init__(self, folderAccessResults: _Optional[_Iterable[_Union[GetFolderAccessResult, _Mapping]]] = ..., continuationToken: _Optional[_Union[ContinuationToken, _Mapping]] = ..., hasMore: _Optional[bool] = ...) -> None: ...
 
 class ContinuationToken(_message.Message):
     __slots__ = ("lastModified",)
