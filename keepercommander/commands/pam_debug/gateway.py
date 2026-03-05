@@ -5,7 +5,6 @@ from .graph import PAMDebugGraphCommand
 from ...display import bcolors
 from ...discovery_common.infrastructure import Infrastructure
 from ...discovery_common.record_link import RecordLink
-from ...discovery_common.user_service import UserService
 from ...discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
 from typing import TYPE_CHECKING
 
@@ -49,11 +48,12 @@ class PAMDebugGatewayCommand(PAMGatewayActionDiscoverCommandBase):
             multi_conf_msg(gateway, err)
             return
 
-        infra = Infrastructure(record=gateway_context.configuration, params=params, fail_on_corrupt=False)
+        infra = Infrastructure(record=gateway_context.configuration, params=params, fail_on_corrupt=False,
+                               use_per_graph_endpoints=False)
         infra.load()
 
-        record_link = RecordLink(record=gateway_context.configuration, params=params, fail_on_corrupt=False)
-        user_service = UserService(record=gateway_context.configuration, params=params, fail_on_corrupt=False)
+        record_link = RecordLink(record=gateway_context.configuration, params=params, fail_on_corrupt=False,
+                                 use_per_graph_endpoints=False)
 
         if gateway_context is None:
             print(f"  {self._f('Cannot get gateway information. Gateway may not be up.')}")
@@ -86,16 +86,12 @@ class PAMDebugGatewayCommand(PAMGatewayActionDiscoverCommandBase):
             print(self._h("Record Linking Graph"))
             graph.do_list(params=params, gateway_context=gateway_context, graph_type="rl", debug_level=debug_level,
                           indent=1)
-        else:
-            print(f"{self._f('The gateway configuration does not have a record linking graph.')}")
 
-        print("")
-
-        if user_service.dag.has_graph is True:
+            print("")
             print(self._h("User to Service/Task Graph"))
             graph.do_list(params=params, gateway_context=gateway_context, graph_type="service", debug_level=debug_level,
                           indent=1)
         else:
-            print(f"{self._f('The gateway configuration does not have a user to service/task graph.')}")
+            print(f"{self._f('The gateway configuration does not have a record linking graph.')}")
 
         print("")

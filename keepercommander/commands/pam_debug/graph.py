@@ -7,19 +7,18 @@ from ...display import bcolors
 from ... import vault
 from ...discovery_common.infrastructure import Infrastructure
 from ...discovery_common.record_link import RecordLink
-from ...discovery_common.user_service import UserService
 from ...discovery_common.jobs import Jobs
 from ...discovery_common.constants import (PAM_USER, PAM_DIRECTORY, PAM_MACHINE, PAM_DATABASE, VERTICES_SORT_MAP,
-                                           DIS_INFRA_GRAPH_ID, RECORD_LINK_GRAPH_ID, USER_SERVICE_GRAPH_ID,
-                                           DIS_JOBS_GRAPH_ID)
+                                           DIS_INFRA_GRAPH_ID, RECORD_LINK_GRAPH_ID, DIS_JOBS_GRAPH_ID)
 from ...discovery_common.types import (DiscoveryObject, DiscoveryUser, DiscoveryDirectory, DiscoveryMachine,
-                                       DiscoveryDatabase, JobContent)
+                                       DiscoveryDatabase, JobContent, ServiceAcl)
 from ...discovery_common.dag_sort import sort_infra_vertices
 from ...keeper_dag import DAG
 from ...keeper_dag.connection.commander import Connection as CommanderConnection
 from ...keeper_dag.connection.local import Connection as LocalConnection
 from ...keeper_dag.types import GRAPH_ID_TO_ENDPOINT, PamEndpoints
 from ...keeper_dag.vertex import DAGVertex
+from ...keeper_dag.edge import DAGEdge, EdgeType
 from typing import Optional, Union, TYPE_CHECKING
 
 Connection = Union[CommanderConnection, LocalConnection]
@@ -40,7 +39,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
     parser.add_argument('--configuration-uid', "-c", required=False, dest='configuration_uid',
                         action='store', help='PAM configuration UID, if gateway has multiple.')
 
-    parser.add_argument('--type', '-t', required=True, choices=['infra', 'rl', 'service', 'jobs'],
+    parser.add_argument('--type', '-t', required=True, choices=['infra', 'rl', 'jobs'],
                         dest='graph_type', action='store', help='Graph type', default='infra')
     parser.add_argument('--raw', required=False, dest='raw', action='store_true',
                         help='Render raw graph. Will render corrupt graphs.')
@@ -67,7 +66,6 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
     graph_id_map = {
         "infra": DIS_INFRA_GRAPH_ID,
         "rl": RECORD_LINK_GRAPH_ID,
-        "service": USER_SERVICE_GRAPH_ID,
         "jobs": DIS_JOBS_GRAPH_ID
     }
 
@@ -78,7 +76,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                             indent: int = 0):
 
         infra = Infrastructure(record=gateway_context.configuration, params=params, logger=logging,
-                               debug_level=debug_level)
+                               debug_level=debug_level, use_per_graph_endpoints=False)
         infra.load(sync_point=0)
 
         try:
@@ -164,7 +162,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         record_link = RecordLink(record=gateway_context.configuration,
                                  params=params,
                                  logger=logging,
-                                 debug_level=debug_level)
+                                 debug_level=debug_level, use_per_graph_endpoints=False)
         configuration = record_link.dag.get_root
         
         record = vault.KeeperRecord.load(params, configuration.uid)  # type: Optional[TypedRecord]
@@ -219,7 +217,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                 for item in group[record_type]:
                     vertex = item.get("v")  # type: DAGVertex
                     record = item.get("r")  # type: TypedRecord
-                    text = self._gr(f"{record.title}; {record.record_uid}")
+                    text = self._gr(f"{record.title}; {record.record_uid} ")
                     if not vertex.active:
                         text += " " + self._f("Inactive")
                     print(f"{pad}    * {text}")
@@ -315,56 +313,112 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
     def _do_text_list_service(self, params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0,
                               indent: int = 0):
 
-        user_service = UserService(record=gateway_context.configuration, params=params, logger=logging,
-                                   debug_level=debug_level)
-        configuration = user_service.dag.get_root
+        pad = ""
+        if indent > 0:
+            pad = "".ljust(2 * indent, ' ')
 
-        def _handle(current_vertex: DAGVertex, parent_vertex: Optional[DAGVertex] = None, indent: int = 0):
+        record_link = RecordLink(record=gateway_context.configuration, params=params, logger=logging,
+                                 debug_level=debug_level,
+                                 use_per_graph_endpoints=False)
+        configuration = record_link.dag.get_root
 
-            pad = ""
-            if indent > 0:
-                pad = "".ljust(2 * indent, ' ') + "* "
+        machine_dict = {}
 
-            record = vault.KeeperRecord.load(params, current_vertex.uid)  # type: Optional[TypedRecord]
-            if record is None:
-                if not current_vertex.active:
-                    print(f"{pad}Record {current_vertex.uid} does not exists, inactive in the graph.")
+        # New user/service mapping using PAM graph
+        for resource_vertex in configuration.has_vertices():
+            if not resource_vertex.active:
+                continue
+
+            machine_record = vault.KeeperRecord.load(params, resource_vertex.uid)  # type: Optional[TypedRecord]
+            if machine_record is None or machine_record.record_type != PAM_MACHINE:
+                continue
+
+            if machine_record is not None:
+                machine_name = f"{machine_record.title}, {machine_record.record_uid}"
+            else:
+                machine_name = self._f(f"Record vertex {resource_vertex.uid} has no record.")
+
+            for user_vertex in resource_vertex.has_vertices():
+                if not user_vertex.active:
+                    continue
+
+                user_record = vault.KeeperRecord.load(params, user_vertex.uid)  # type: Optional[TypedRecord]
+                acl = record_link.get_acl(parent_record_uid=resource_vertex.uid, record_uid=user_vertex.uid)
+                if acl is not None and acl.controls_services:
+                    if resource_vertex.uid not in machine_dict:
+                        machine_dict[resource_vertex.uid] = {
+                            "machine_name": machine_name,
+                            "users": []
+                        }
+
+                    if user_record is not None:
+                        user_name = f"{user_record.title}, {user_record.record_uid}"
+                    else:
+                        user_name = self._f(f"Record vertex {user_vertex.uid} has no record.")
+
+                    machine_dict[resource_vertex.uid]["users"].append(user_name)
+
+        # Old user/service mapping using graph 13.
+        dag = DAG(conn=record_link.conn, graph_id=13, record=gateway_context.configuration)
+        if dag.has_graph:
+            for us_machine_vertex in dag.get_root.has_vertices():
+                if not us_machine_vertex.active:
+                    continue
+
+                machine_record = vault.KeeperRecord.load(params, us_machine_vertex.uid)  # type: Optional[TypedRecord]
+                if machine_record is not None:
+                    machine_name = f"{machine_record.title}, {machine_record.record_uid}"
                 else:
-                    print(f"{pad}Record {current_vertex.uid} does not exists, active in the graph.")
-                return
-            elif not current_vertex.active:
-                print(f"{pad}{record.record_type}, {record.title}, {record.record_uid} exists, "
-                      "inactive in the graph.")
-                return
+                    machine_name = self._f(f"Record vertex {us_machine_vertex.uid} has no record.")
 
-            acl_text = ""
-            if parent_vertex is not None:
-                acl = user_service.get_acl(resource_uid=parent_vertex.uid, user_uid=current_vertex.uid)
-                if acl is not None:
-                    acl_text = self._f("No Services")
-                    acl_parts = []
-                    if acl.is_service:
-                        acl_parts.append(self._bl("Service"))
-                    if acl.is_task:
-                        acl_parts.append(self._bl("Task"))
-                    if acl.is_iis_pool:
-                        acl_parts.append(self._bl("IIS Pool"))
-                    if len(acl_parts) > 0:
-                        acl_text = ", ".join(acl_parts)
-                    acl_text = f" -> {acl_text}"
+                for us_user_vertex in us_machine_vertex.has_vertices():
+                    if not us_user_vertex.active:
+                        continue
+                    acl_edge = us_user_vertex.get_edge(us_machine_vertex, edge_type=EdgeType.ACL)
+                    if acl_edge is None:
+                        continue
+                    service_acl = acl_edge.content_as_object(ServiceAcl)
+                    if service_acl is None:
+                        continue
 
-            print(f"{pad}{record.record_type}, {record.title}, {record.record_uid}{acl_text}")
+                    user_record = vault.KeeperRecord.load(params, us_user_vertex.uid)  # type: Optional[TypedRecord]
 
-            for vertex in current_vertex.has_vertices():
-                _handle(current_vertex=vertex, parent_vertex=current_vertex, indent=indent+1)
+                    if us_machine_vertex.uid not in machine_dict:
+                        machine_dict[us_machine_vertex.uid] = {
+                            "machine_name": machine_name,
+                            "users": []
+                        }
 
-        _handle(current_vertex=configuration, parent_vertex=None, indent=indent)
+                    types = []
+                    if service_acl.is_service:
+                        types.append("Services")
+                    if service_acl.is_task:
+                        types.append("Tasks")
+                    if service_acl.is_iis_pool:
+                        types.append("IIS Pool")
+                    text = ""
+                    if len(types) > 0:
+                        text = "(" + ", ".join(types) + ")"
+
+                    if user_record is not None:
+                        user_name = f"OLD: {user_record.title}, {user_record.record_uid}, {text}"
+                    else:
+                        user_name = self._f(f"OLD: Record vertex {us_user_vertex.uid} has no record.")
+
+                    machine_dict[us_machine_vertex.uid]["users"].append(user_name)
+        else:
+            logging.debug("no old user service graph")
+
+        for machine in machine_dict.values():
+            print(f"{pad}{machine['machine_name']}")
+            for user in machine["users"]:
+                print(f"{pad}  * {user}")
 
     def _do_text_list_jobs(self, params: KeeperParams, gateway_context: GatewayContext, debug_level: int = 0,
                            indent: int = 0):
 
         infra = Infrastructure(record=gateway_context.configuration, params=params, logger=logging,
-                               debug_level=debug_level, fail_on_corrupt=False)
+                               debug_level=debug_level, fail_on_corrupt=False, use_per_graph_endpoints=False)
         infra.load(sync_point=0)
 
         pad = ""
@@ -461,7 +515,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                          debug_level: int = 0):
 
         infra = Infrastructure(record=gateway_context.configuration, params=params, logger=logging,
-                               debug_level=debug_level)
+                               debug_level=debug_level, use_per_graph_endpoints=False)
         infra.load(sync_point=0)
 
         print("")
@@ -487,7 +541,7 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
         rl = RecordLink(record=gateway_context.configuration,
                         params=params,
                         logger=logging,
-                        debug_level=debug_level)
+                        debug_level=debug_level, use_per_graph_endpoints=False)
 
         print("")
         dot_instance = rl.to_dot(
@@ -506,33 +560,11 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
                 raise err
         print("")
 
-    def _do_render_service(self, params: KeeperParams, gateway_context: GatewayContext, filepath: str,
-                           graph_format: str, debug_level: int = 0):
-
-        service = UserService(record=gateway_context.configuration, params=params, logger=logging,
-                              debug_level=debug_level)
-
-        print("")
-        dot_instance = service.to_dot(
-            graph_type=graph_format if graph_format != "raw" else "dot",
-            show_only_active_vertices=False,
-            show_only_active_edges=False
-        )
-        if graph_format == "raw":
-            print(dot_instance)
-        else:
-            try:
-                dot_instance.render(filepath)
-                print(f"User service/tasks graph rendered to {self._gr(filepath)}")
-            except Exception as err:
-                print(self._f(f"Could not generate graph: {err}"))
-                raise err
-        print("")
-
     def _do_render_jobs(self, params: KeeperParams, gateway_context: GatewayContext, filepath: str,
                         graph_format: str, debug_level: int = 0):
 
-        jobs = Jobs(record=gateway_context.configuration, params=params, logger=logging, debug_level=debug_level)
+        jobs = Jobs(record=gateway_context.configuration, params=params, logger=logging, debug_level=debug_level,
+                    use_per_graph_endpoints=False)
 
         print("")
         dot_instance = jobs.dag.to_dot()
