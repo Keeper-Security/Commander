@@ -1,0 +1,411 @@
+#  _  __
+# | |/ /___ ___ _ __  ___ _ _ ®
+# | ' </ -_) -_) '_ \/ -_) '_|
+# |_|\_\___\___| .__/\___|_|
+#              |_|
+#
+# Keeper Commander
+# Copyright 2025 Keeper Security Inc.
+# Contact: ops@keepersecurity.com
+#
+
+"""
+KeeperDrive — record sharing, permission, and transfer commands.
+
+Single Responsibility: every class here deals with *who* can access a
+record and at what permission level.
+
+Design patterns:
+  - Strategy: ``KeeperDriveShareRecordCommand`` dispatches by action name.
+  - Template Method: ``KeeperDriveRecordPermissionCommand`` decomposes its
+    workflow into resolve → collect → compute → display → execute steps.
+"""
+
+import logging
+
+from ..base import Command
+from ...error import CommandError
+from ... import keeper_drive as _kd
+from .helpers import (
+    parse_expiration, infer_role,
+    command_error_handler, check_result,
+)
+from .parsers import (
+    keeper_drive_share_record_parser,
+    keeper_drive_record_permission_parser,
+    keeper_drive_transfer_record_parser,
+)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# kd-share-record   (Strategy pattern — grant / update / revoke)
+# ══════════════════════════════════════════════════════════════════════════
+
+class KeeperDriveShareRecordCommand(Command):
+    """Manage record sharing using grant/update/revoke actions."""
+
+    def get_parser(self):
+        return keeper_drive_share_record_parser
+
+    def execute(self, params, **kwargs):
+        from keepercommander.commands.base import user_choice
+
+        record_arg = kwargs.get('record')
+        emails = kwargs.get('email') or []
+        action = kwargs.get('action') or 'grant'
+        role = kwargs.get('role')
+        dry_run = kwargs.get('dry_run', False)
+        recursive = kwargs.get('recursive', False)
+        force = kwargs.get('force', False)
+
+        if not record_arg:
+            raise CommandError('kd-share-record', 'Record path or UID is required')
+        if not emails:
+            raise CommandError('kd-share-record', 'Recipient email is required (use -e or --email)')
+        if action in ('grant', 'update') and not role:
+            raise CommandError('kd-share-record', f'Role is required for action "{action}"')
+
+        if kwargs.get('contacts_only'):
+            emails = [self._resolve_contact(params, e, force) for e in emails]
+
+        expiration = parse_expiration(
+            kwargs.get('expire_at'), kwargs.get('expire_in'), 'kd-share-record')
+        access_role_type = _kd.resolve_role_name(role) if role else None
+        record_uids = self._resolve_record_uids(params, record_arg, recursive)
+
+        if dry_run:
+            self._print_dry_run(action, record_uids, emails, role, expiration)
+            return
+
+        with command_error_handler('kd-share-record'):
+            for email in emails:
+                for record_uid in record_uids:
+                    result = self._dispatch(params, action, record_uid, email,
+                                            access_role_type, expiration)
+                    self._log_results(result, action, email)
+
+    # Strategy dispatch
+    @staticmethod
+    def _dispatch(params, action, record_uid, email, access_role_type, expiration):
+        if action == 'grant':
+            return _kd.share_record_v3(
+                params=params, record_uid=record_uid, recipient_email=email,
+                access_role_type=access_role_type, expiration_timestamp=expiration)
+        elif action == 'update':
+            return _kd.update_record_share_v3(
+                params=params, record_uid=record_uid, recipient_email=email,
+                access_role_type=access_role_type, expiration_timestamp=expiration)
+        else:
+            return _kd.unshare_record_v3(
+                params=params, record_uid=record_uid, recipient_email=email)
+
+    @staticmethod
+    def _log_results(result, action, email):
+        verbs = {'grant': 'granted to', 'update': 'changed for', 'revoke': 'revoked from'}
+        for res in result['results']:
+            uid = res['record_uid']
+            if res.get('pending'):
+                logging.warning("Share invitation has been sent to '%s'", email)
+                logging.warning('Please repeat this command when invitation is accepted.')
+            elif res['success']:
+                logging.info('Record "%s" access permissions has been %s user \'%s\'',
+                             uid, verbs.get(action, action), email)
+            else:
+                logging.info('Failed to %s record "%s" access for user \'%s\': %s',
+                             action, uid, email, res['message'])
+
+    @staticmethod
+    def _resolve_contact(params, email, force):
+        from keepercommander import api
+        from keepercommander.commands.base import user_choice, dump_report_data
+
+        known_users = api.get_share_objects(params).get('users', {})
+        if email.casefold() in [u.casefold() for u in known_users]:
+            return email
+
+        get_user = lambda addr: next(iter(addr.split('@')), '').casefold()
+        matches = [c for c in known_users if get_user(email) == get_user(c)]
+        if len(matches) > 1:
+            raise CommandError('kd-share-record', 'More than 1 matching usernames found. Aborting')
+        match = next(iter(matches), None)
+        if match:
+            dump_report_data([[email, match]], ['Requested', 'Known Contact'])
+            if force or user_choice('\tReplace with known matching contact?', 'yn', default='n') == 'y':
+                return match
+        raise CommandError('kd-share-record',
+                           f'Recipient {email!r} is not a known contact')
+
+    @staticmethod
+    def _resolve_record_uids(params, record_arg, recursive):
+        kd_folders = getattr(params, 'keeper_drive_folders', {})
+
+        folder_uid = _kd.resolve_folder_identifier(params, record_arg)
+        if folder_uid and folder_uid in kd_folders:
+            record_uids = []
+            def collect(fuid, visited=None):
+                if visited is None:
+                    visited = set()
+                if fuid in visited:
+                    return
+                visited.add(fuid)
+                folder = kd_folders.get(fuid, {})
+                record_uids.extend(folder.get('record_uids', []))
+                if recursive:
+                    for child in folder.get('children', []):
+                        collect(child, visited)
+            collect(folder_uid)
+            if not record_uids:
+                raise CommandError('kd-share-record', 'No records found in the specified folder')
+            return record_uids
+
+        resolved_uid = _kd.resolve_kd_record_uid(params, record_arg)
+        if not resolved_uid:
+            raise CommandError('kd-share-record',
+                               f"Record '{record_arg}' not found in KeeperDrive cache")
+        return [resolved_uid]
+
+    @staticmethod
+    def _print_dry_run(action, record_uids, emails, role, expiration):
+        print(f"[dry-run] Action    : {action.upper()}")
+        print(f"[dry-run] Records   : {', '.join(record_uids)}")
+        print(f"[dry-run] Recipients: {', '.join(emails)}")
+        if role:
+            print(f"[dry-run] Role      : {role.upper()}")
+        if expiration:
+            print(f"[dry-run] Expires   : {expiration} ms")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# kd-record-permission  (Template Method — resolve → collect → compute → display → execute)
+# ══════════════════════════════════════════════════════════════════════════
+
+class KeeperDriveRecordPermissionCommand(Command):
+    """Bulk-update sharing permissions on records within a KeeperDrive folder."""
+
+    _ROLE_NAMES = [
+        'contributor', 'viewer', 'shared-manager',
+        'content-manager', 'content-share-manager', 'manager',
+    ]
+
+    def get_parser(self):
+        return keeper_drive_record_permission_parser
+
+    def execute(self, params, **kwargs):
+        from keepercommander.display import dump_report_data
+        from keepercommander.commands.base import user_choice, bcolors
+
+        folder_name = kwargs.get('folder') or ''
+        action = kwargs.get('action')
+        role = kwargs.get('role')
+        recursive = kwargs.get('recursive', False)
+        dry_run = kwargs.get('dry_run', False)
+        force = kwargs.get('force', False)
+
+        if action == 'grant' and not role:
+            raise CommandError('kd-record-permission', 'Role is required for grant action')
+
+        kd_folders = getattr(params, 'keeper_drive_folders', {})
+        kd_folder_records = getattr(params, 'keeper_drive_folder_records', {})
+        kd_record_data = getattr(params, 'keeper_drive_record_data', {})
+
+        role_map_pb = {name: _kd.resolve_role_name(name) for name in self._ROLE_NAMES}
+
+        # Step 1: Resolve
+        folder_uid, display_name = self._resolve_folder(kd_folders, folder_name, params)
+
+        if not force and not dry_run:
+            role_label = role.upper().replace('-', '_') if role else 'ALL'
+            logging.info('\nRequest to %s "%s" role permission(s) in "%s" folder %s',
+                         'GRANT' if action == 'grant' else 'REVOKE',
+                         role_label, display_name,
+                         'recursively' if recursive else 'only')
+
+        # Step 2: Collect
+        record_uids = self._collect_record_uids(kd_folders, kd_folder_records, folder_uid, recursive)
+        if not record_uids:
+            raise CommandError('kd-record-permission', 'No records found in the specified folder')
+
+        try:
+            accesses_result = _kd.get_record_accesses_v3(params, list(record_uids))
+        except Exception as e:
+            raise CommandError('kd-record-permission', f'Failed to fetch record accesses: {e}')
+
+        # Step 3: Compute
+        updates, revokes = self._compute_changes(
+            accesses_result, record_uids, params.user, action, role, role_map_pb)
+        if not updates and not revokes:
+            logging.info('No permission changes are needed.')
+            return
+
+        # Step 4: Display
+        if dry_run or not force:
+            self._print_plan(updates, revokes, kd_record_data, dump_report_data, bcolors)
+        if dry_run:
+            return
+
+        if not force:
+            print('\n\n' + bcolors.WARNING + bcolors.BOLD + 'ALERT!!!' + bcolors.ENDC)
+            if user_choice('Do you want to proceed with these permission changes?', 'yn', 'n').lower() != 'y':
+                return
+
+        # Step 5: Execute
+        self._execute_changes(params, updates, revokes)
+        params.sync_data = True
+
+    @staticmethod
+    def _resolve_folder(kd_folders, folder_name, params=None):
+        if not folder_name:
+            return None, 'root'
+        if params is not None:
+            resolved = _kd.resolve_folder_identifier(params, folder_name)
+            if resolved and resolved in kd_folders:
+                return resolved, kd_folders[resolved].get('name', resolved)
+        if folder_name in kd_folders:
+            return folder_name, kd_folders[folder_name].get('name', folder_name)
+        lower = folder_name.lower()
+        for fuid, fobj in kd_folders.items():
+            if fobj.get('name', '').lower() == lower:
+                return fuid, fobj.get('name', fuid)
+        raise CommandError('kd-record-permission', f'Folder "{folder_name}" not found')
+
+    @staticmethod
+    def _collect_record_uids(kd_folders, kd_folder_records, folder_uid, recursive):
+        record_uids = set()
+
+        def walk(fuid, visited=None):
+            if visited is None:
+                visited = set()
+            if fuid in visited:
+                return
+            visited.add(fuid)
+            record_uids.update(kd_folder_records.get(fuid, set()))
+            if recursive:
+                for child_uid, child_obj in kd_folders.items():
+                    if child_obj.get('parent_uid') == fuid and child_uid not in visited:
+                        walk(child_uid, visited)
+
+        if folder_uid:
+            walk(folder_uid)
+        else:
+            for fuid, recs in kd_folder_records.items():
+                if fuid not in kd_folders:
+                    record_uids.update(recs)
+            if recursive:
+                for fuid in list(kd_folders):
+                    walk(fuid)
+        return record_uids
+
+    @staticmethod
+    def _compute_changes(accesses_result, record_uids, current_user, action, role, role_map_pb):
+        updates, revokes = [], []
+        for access in accesses_result.get('record_accesses', []):
+            rec_uid = access.get('record_uid')
+            if not rec_uid or rec_uid not in record_uids or access.get('owner'):
+                continue
+            email = access.get('accessor_name', '')
+            if not email or email == current_user:
+                continue
+            cur_role = infer_role(access)
+            if action == 'grant':
+                if cur_role != role:
+                    updates.append({
+                        'record_uid': rec_uid, 'email': email,
+                        'cur_role': cur_role, 'new_role': role,
+                        'access_role_type': role_map_pb.get(role),
+                    })
+            else:
+                if not role or cur_role == role:
+                    revokes.append({'record_uid': rec_uid, 'email': email, 'cur_role': cur_role})
+        return updates, revokes
+
+    @staticmethod
+    def _print_plan(updates, revokes, kd_record_data, dump_report_data, bcolors):
+        def title_for(rec_uid):
+            obj = kd_record_data.get(rec_uid, {})
+            dj = obj.get('data_json', {}) if isinstance(obj, dict) else {}
+            return (dj.get('title', '')[:32]) if isinstance(dj, dict) else ''
+
+        if updates:
+            table = [[u['record_uid'], title_for(u['record_uid']), u['email'],
+                       u['cur_role'].upper(), u['new_role'].upper()] for u in updates]
+            dump_report_data(table,
+                             ['Record UID', 'Title', 'Email', 'Current Role', 'New Role'],
+                             title=(bcolors.OKGREEN + ' GRANT' + bcolors.ENDC + ' Record permission(s)'),
+                             row_number=True, group_by=0)
+            logging.info('')
+        if revokes:
+            table = [[r['record_uid'], title_for(r['record_uid']), r['email'],
+                       r['cur_role'].upper()] for r in revokes]
+            dump_report_data(table,
+                             ['Record UID', 'Title', 'Email', 'Current Role'],
+                             title=(bcolors.FAIL + ' REVOKE' + bcolors.ENDC + ' Record share(s)'),
+                             row_number=True, group_by=0)
+            logging.info('')
+
+    @staticmethod
+    def _execute_changes(params, updates, revokes):
+        for u in updates:
+            try:
+                result = _kd.update_record_share_v3(
+                    params=params, record_uid=u['record_uid'],
+                    recipient_email=u['email'],
+                    access_role_type=u['access_role_type'],
+                    expiration_timestamp=None)
+                if result.get('success'):
+                    logging.info("'%s' for %s: %s -> %s",
+                                 u['record_uid'], u['email'],
+                                 u['cur_role'].upper(), u['new_role'].upper())
+                else:
+                    msg = (result.get('results') or [{}])[0].get('message', 'Unknown error')
+                    logging.error("Failed '%s' for %s: %s", u['record_uid'], u['email'], msg)
+            except Exception as e:
+                logging.error("Error updating '%s' for %s: %s", u['record_uid'], u['email'], e)
+
+        for r in revokes:
+            try:
+                result = _kd.unshare_record_v3(
+                    params=params, record_uid=r['record_uid'], recipient_email=r['email'])
+                if result.get('success'):
+                    logging.info("Revoked '%s' from %s (%s)",
+                                 r['record_uid'], r['email'], r['cur_role'].upper())
+                else:
+                    msg = (result.get('results') or [{}])[0].get('message', 'Unknown error')
+                    logging.error("Failed to revoke '%s' from %s: %s",
+                                  r['record_uid'], r['email'], msg)
+            except Exception as e:
+                logging.error("Error revoking '%s' from %s: %s", r['record_uid'], r['email'], e)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# kd-transfer-record
+# ══════════════════════════════════════════════════════════════════════════
+
+class KeeperDriveTransferRecordCommand(Command):
+    """Transfer record ownership to another user."""
+
+    def get_parser(self):
+        return keeper_drive_transfer_record_parser
+
+    def execute(self, params, **kwargs):
+        identifiers = kwargs.get('record_uids') or []
+        new_owner_email = kwargs.get('new_owner_email')
+
+        if not identifiers or not new_owner_email:
+            raise CommandError('kd-transfer-record', 'Record UID(s) and new owner email are required')
+
+        with command_error_handler('kd-transfer-record'):
+            for identifier in identifiers:
+                record_uid = _kd.resolve_kd_record_uid(params, identifier)
+                if not record_uid:
+                    raise CommandError('kd-transfer-record',
+                                       f"Record '{identifier}' not found in KeeperDrive cache")
+                result = _kd.transfer_record_ownership_v3(
+                    params=params, record_uid=record_uid, new_owner_email=new_owner_email)
+                check_result(result, 'kd-transfer-record')
+                for res in result['results']:
+                    if res['success']:
+                        logging.info("Record '%s' ownership transferred to %s",
+                                     res['record_uid'], new_owner_email)
+                        logging.warning("You will no longer have access to this record!")
+                    else:
+                        logging.error("Failed to transfer: %s", res['message'])

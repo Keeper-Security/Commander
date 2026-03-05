@@ -4,9 +4,9 @@ from typing import List, Dict
 
 import google
 
-from . import utils, crypto
-from .params import RecordOwner
-from .proto import folder_pb2, record_pb2
+from .. import utils, crypto
+from ..params import RecordOwner
+from ..proto import folder_pb2, record_pb2
 
 
 def _ensure_keeper_drive_attrs(params):
@@ -88,8 +88,13 @@ def collect_from_response(acc, response, resp_bw_recs, resp_sec_data_recs, resp_
         acc['revoked_folder_accesses'].extend(kd_data.revokedFolderAccesses)
     if len(kd_data.recordData) > 0:
         acc['record_data'].extend(kd_data.recordData)
-    if len(kd_data.recordKeys) > 0:
-        acc['record_keys'].extend(kd_data.recordKeys)
+    # recordKeys does not exist as a top-level field in KeeperDriveData;
+    # record keys are embedded in folderRecords[].recordMetadata.encryptedRecordKey
+    # and are extracted during _process_keeper_drive_sync. Use getattr defensively
+    # so that if the field is ever added to the proto it is collected automatically.
+    rk_attr = getattr(kd_data, 'recordKeys', None)
+    if rk_attr:
+        acc['record_keys'].extend(rk_attr)
     if len(kd_data.recordAccesses) > 0:
         acc['record_accesses'].extend(kd_data.recordAccesses)
     if len(kd_data.revokedRecordAccesses) > 0:
@@ -244,21 +249,21 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
                 fa.tlaProperties, preserving_proto_field_name=True
             )
         if fa.HasField('permissions'):
+            p = fa.permissions
             fa_obj['permissions'] = {
-                'can_add_users': fa.permissions.canAddUsers if fa.permissions.canAddUsers else False,
-                'can_remove_users': fa.permissions.canRemoveUsers if fa.permissions.canRemoveUsers else False,
-                'can_add_records': fa.permissions.canAddRecords if fa.permissions.canAddRecords else False,
-                'can_remove_records': fa.permissions.canRemoveRecords if fa.permissions.canRemoveRecords else False,
-                'can_delete_records': fa.permissions.canDeleteRecords if fa.permissions.canDeleteRecords else False,
-                'can_create_folders': fa.permissions.canCreateFolders if fa.permissions.canCreateFolders else False,
-                'can_delete_folders': fa.permissions.canDeleteFolders if fa.permissions.canDeleteFolders else False,
-                'can_change_user_permissions': fa.permissions.canChangeUserPermissions if fa.permissions.canChangeUserPermissions else False,
-                'can_change_record_permissions': fa.permissions.canChangeRecordPermissions if fa.permissions.canChangeRecordPermissions else False,
-                'can_change_folder_ownership': fa.permissions.canChangeFolderOwnership if fa.permissions.canChangeFolderOwnership else False,
-                'can_change_record_ownership': fa.permissions.canChangeRecordOwnership if fa.permissions.canChangeRecordOwnership else False,
-                'can_edit_records': fa.permissions.canEditRecords if fa.permissions.canEditRecords else False,
-                'can_view_records': fa.permissions.canViewRecords if fa.permissions.canViewRecords else False,
-                'can_reshare_records': fa.permissions.canReshareRecords if fa.permissions.canReshareRecords else False,
+                'can_add':              p.canAdd,
+                'can_remove':           p.canRemove,
+                'can_delete':           p.canDelete,
+                'can_list_access':      p.canListAccess,
+                'can_update_access':    p.canUpdateAccess,
+                'can_change_ownership': p.canChangeOwnership,
+                'can_edit_records':     p.canEditRecords,
+                'can_view_records':     p.canViewRecords,
+                'can_approve_access':   p.canApproveAccess,
+                'can_request_access':   p.canRequestAccess,
+                'can_update_setting':   p.canUpdateSetting,
+                'can_list_records':     p.canListRecords,
+                'can_list_folders':     p.canListFolders,
             }
         params.keeper_drive_folder_accesses[folder_uid].append(fa_obj)
 
@@ -329,10 +334,13 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
             'inherited': ra.inherited if hasattr(ra, 'inherited') else False,
             'hidden': ra.hidden if hasattr(ra, 'hidden') else False,
             'denied_access': ra.deniedAccess if hasattr(ra, 'deniedAccess') else False,
+            'can_view_title': ra.can_view_title if hasattr(ra, 'can_view_title') and ra.can_view_title else False,
             'can_edit': ra.can_edit if hasattr(ra, 'can_edit') and ra.can_edit else False,
             'can_view': ra.can_view if hasattr(ra, 'can_view') and ra.can_view else False,
-            'can_share': ra.can_share if hasattr(ra, 'can_share') and ra.can_share else False,
+            'can_list_access': ra.can_list_access if hasattr(ra, 'can_list_access') and ra.can_list_access else False,
+            'can_update_access': ra.can_update_access if hasattr(ra, 'can_update_access') and ra.can_update_access else False,
             'can_delete': ra.can_delete if hasattr(ra, 'can_delete') and ra.can_delete else False,
+            'can_change_ownership': ra.can_change_ownership if hasattr(ra, 'can_change_ownership') and ra.can_change_ownership else False,
             'can_request_access': ra.can_request_access if hasattr(ra, 'can_request_access') and ra.can_request_access else False,
             'can_approve_access': ra.can_approve_access if hasattr(ra, 'can_approve_access') and ra.can_approve_access else False,
             'date_created': ra.dateCreated if hasattr(ra, 'dateCreated') else 0,
@@ -370,29 +378,48 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
             record_obj = params.keeper_drive_records[record_uid]
             record_obj['shared'] = record_obj.get('shared', False) or state_obj['is_shared']
 
-    # Process record links
+    # Process record links (Vault.RecordLink: parentRecordUid, childRecordUid, recordKey, revision)
     for rl in record_links:
-        record_uid = utils.base64_url_encode(rl.record_uid)
+        child_uid = utils.base64_url_encode(rl.childRecordUid) if rl.childRecordUid else None
+        parent_uid = utils.base64_url_encode(rl.parentRecordUid) if rl.parentRecordUid else None
+        if not child_uid:
+            continue
         link_obj = {
-            'record_uid': record_uid,
-            'record_key': rl.record_key,
+            'record_uid': child_uid,
+            'parent_uid': parent_uid,
+            'record_key': rl.recordKey,
         }
-        if record_uid not in params.keeper_drive_record_links:
-            params.keeper_drive_record_links[record_uid] = []
-        existing_keys = [lk.get('record_key') for lk in params.keeper_drive_record_links[record_uid]]
-        if rl.record_key not in existing_keys:
-            params.keeper_drive_record_links[record_uid].append(link_obj)
+        if child_uid not in params.keeper_drive_record_links:
+            params.keeper_drive_record_links[child_uid] = []
+        existing_keys = [lk.get('record_key') for lk in params.keeper_drive_record_links[child_uid]]
+        if rl.recordKey not in existing_keys:
+            params.keeper_drive_record_links[child_uid].append(link_obj)
+
+        # Record links carry encrypted record keys - add to record_keys for decryption
+        if rl.recordKey:
+            if child_uid not in params.keeper_drive_record_keys:
+                params.keeper_drive_record_keys[child_uid] = []
+            rk_obj = {
+                'record_uid': child_uid,
+                'parent_uid': parent_uid,
+                'record_key': rl.recordKey,
+                'encrypted_key_type': folder_pb2.encrypted_by_data_key_gcm,
+                'source': 'record_link',
+            }
+            params.keeper_drive_record_keys[child_uid].append(rk_obj)
 
     for rrl in removed_record_links:
-        record_uid = utils.base64_url_encode(rrl.record_uid)
-        if record_uid in params.keeper_drive_record_links:
-            if rrl.record_key:
-                params.keeper_drive_record_links[record_uid] = [
-                    lk for lk in params.keeper_drive_record_links[record_uid]
-                    if lk.get('record_key') != rrl.record_key
+        child_uid = utils.base64_url_encode(rrl.childRecordUid) if rrl.childRecordUid else None
+        if not child_uid:
+            continue
+        if child_uid in params.keeper_drive_record_links:
+            if rrl.recordKey:
+                params.keeper_drive_record_links[child_uid] = [
+                    lk for lk in params.keeper_drive_record_links[child_uid]
+                    if lk.get('record_key') != rrl.recordKey
                 ]
             else:
-                del params.keeper_drive_record_links[record_uid]
+                del params.keeper_drive_record_links[child_uid]
 
     # Process folder records (associations)
     for fr in folder_records:
@@ -511,92 +538,235 @@ def _decrypt_keeper_drive_keys(params):
                     except Exception as e:
                         logging.debug(f"Failed to decrypt folder data for {folder_uid}: {e}")
 
-    for record_uid, record_keys_list in params.keeper_drive_record_keys.items():
-        if record_uid in params.keeper_drive_records:
-            record_obj = params.keeper_drive_records[record_uid]
-            if 'record_key_unencrypted' in record_obj:
+    _decrypt_keeper_drive_record_keys(params)
+
+
+def _try_decrypt_record_key(rk, params):
+    """Try all applicable methods to decrypt a single record key entry.
+    Returns decrypted key bytes or None."""
+    encrypted_key = rk['record_key']
+    key_type = rk.get('encrypted_key_type', 0)
+    folder_uid = rk.get('folder_uid')
+    parent_uid = rk.get('parent_uid')
+
+    # 1. Try public key decryption (works regardless of source)
+    if key_type == folder_pb2.encrypted_by_public_key:
+        if params.rsa_key2:
+            try:
+                return crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
+            except Exception as e:
+                logging.debug(f"RSA decrypt failed: {e}")
+        return None
+    if key_type == folder_pb2.encrypted_by_public_key_ecc:
+        if params.ecc_key:
+            try:
+                return crypto.decrypt_ec(encrypted_key, params.ecc_key)
+            except Exception as e:
+                logging.debug(f"EC decrypt failed: {e}")
+        return None
+
+    # 2. For record-link keys, try parent record key then data key
+    if rk.get('source') == 'record_link' and parent_uid:
+        if parent_uid in params.keeper_drive_records:
+            parent_obj = params.keeper_drive_records[parent_uid]
+            if 'record_key_unencrypted' in parent_obj:
+                try:
+                    return crypto.decrypt_aes_v2(encrypted_key, parent_obj['record_key_unencrypted'])
+                except Exception:
+                    pass
+                try:
+                    return crypto.decrypt_aes_v1(encrypted_key, parent_obj['record_key_unencrypted'])
+                except Exception:
+                    pass
+
+    # Build ordered list of keys to try
+    keys_to_try = []
+
+    if folder_uid and folder_uid in params.keeper_drive_folders:
+        folder_obj = params.keeper_drive_folders[folder_uid]
+        if 'folder_key_unencrypted' in folder_obj:
+            keys_to_try.append(('folder', folder_obj['folder_key_unencrypted']))
+
+    keys_to_try.append(('data', params.data_key))
+
+    # 3. Symmetric decryption with candidate keys
+    for label, dec_key in keys_to_try:
+        if key_type == folder_pb2.encrypted_by_data_key_gcm:
+            try:
+                return crypto.decrypt_aes_v2(encrypted_key, dec_key)
+            except Exception:
+                continue
+        elif key_type == folder_pb2.encrypted_by_data_key:
+            try:
+                return crypto.decrypt_aes_v1(encrypted_key, dec_key)
+            except Exception:
+                continue
+        else:
+            try:
+                return crypto.decrypt_aes_v2(encrypted_key, dec_key)
+            except Exception:
+                pass
+            try:
+                return crypto.decrypt_aes_v1(encrypted_key, dec_key)
+            except Exception:
                 continue
 
-            record_key = None
-            for rk in record_keys_list:
-                try:
-                    if 'folder_uid' in rk:
-                        folder_uid = rk['folder_uid']
-                        
-                        if rk['encrypted_key_type'] == folder_pb2.encrypted_by_data_key_gcm:
-                            try:
-                                record_key = crypto.decrypt_aes_v2(rk['record_key'], params.data_key)
-                                logging.debug(f"Record {record_uid}: decrypted with data key (GCM) from folderRecord")
-                                break
-                            except Exception as e:
-                                logging.debug(f"Record {record_uid}: data key decrypt failed, trying folder key: {e}")
-                        elif rk['encrypted_key_type'] == folder_pb2.encrypted_by_data_key:
-                            try:
-                                record_key = crypto.decrypt_aes_v1(rk['record_key'], params.data_key)
-                                logging.debug(f"Record {record_uid}: decrypted with data key (CBC) from folderRecord")
-                                break
-                            except Exception as e:
-                                logging.debug(f"Record {record_uid}: data key decrypt failed, trying folder key: {e}")
-                        
-                        if not record_key and folder_uid in params.keeper_drive_folders:
-                            folder_obj = params.keeper_drive_folders[folder_uid]
-                            if 'folder_key_unencrypted' in folder_obj:
-                                folder_key = folder_obj['folder_key_unencrypted']
-                                if rk['encrypted_key_type'] == folder_pb2.encrypted_by_data_key_gcm:
-                                    record_key = crypto.decrypt_aes_v2(rk['record_key'], folder_key)
-                                elif rk['encrypted_key_type'] == folder_pb2.encrypted_by_data_key:
-                                    record_key = crypto.decrypt_aes_v1(rk['record_key'], folder_key)
-                                else:
-                                    try:
-                                        record_key = crypto.decrypt_aes_v2(rk['record_key'], folder_key)
-                                    except:
-                                        record_key = crypto.decrypt_aes_v1(rk['record_key'], folder_key)
-                                if record_key:
-                                    break
-                    else:
-                        if rk['encrypted_key_type'] == folder_pb2.encrypted_by_data_key_gcm:
-                            record_key = crypto.decrypt_aes_v2(rk['record_key'], params.data_key)
-                            break
-                        elif rk['encrypted_key_type'] == folder_pb2.encrypted_by_data_key:
-                            record_key = crypto.decrypt_aes_v1(rk['record_key'], params.data_key)
-                            break
-                        elif rk['encrypted_key_type'] == folder_pb2.encrypted_by_public_key:
-                            if params.rsa_key2:
-                                record_key = crypto.decrypt_rsa(rk['record_key'], params.rsa_key2)
-                                break
-                        elif rk['encrypted_key_type'] == folder_pb2.encrypted_by_public_key_ecc:
-                            if params.ecc_key:
-                                record_key = crypto.decrypt_ec(rk['record_key'], params.ecc_key)
-                                break
-                        elif rk['encrypted_key_type'] == folder_pb2.no_key or rk['encrypted_key_type'] == 0:
-                            try:
-                                record_key = crypto.decrypt_aes_v2(rk['record_key'], params.data_key)
-                                break
-                            except:
-                                try:
-                                    record_key = crypto.decrypt_aes_v1(rk['record_key'], params.data_key)
-                                    break
-                                except:
-                                    logging.debug(f"Record {record_uid}: failed to decrypt with data key (type=0)")
-                except Exception as e:
-                    logging.debug(f"Failed to decrypt record key for {record_uid}: {e}")
+    return None
 
-            if record_key:
-                record_obj['record_key_unencrypted'] = record_key
 
-                if record_uid in params.keeper_drive_record_data:
-                    rd_obj = params.keeper_drive_record_data[record_uid]
-                    if 'data' in rd_obj and rd_obj['data']:
+def _decrypt_record_data(record_uid, record_key, params):
+    """Decrypt record data using the record key and store data_json."""
+    if record_uid not in params.keeper_drive_record_data:
+        return
+    rd_obj = params.keeper_drive_record_data[record_uid]
+    if 'data_json' in rd_obj:
+        return
+    if 'data' not in rd_obj or not rd_obj['data']:
+        return
+    try:
+        try:
+            data_bytes = crypto.decrypt_aes_v2(rd_obj['data'], record_key)
+        except Exception:
+            data_bytes = crypto.decrypt_aes_v1(rd_obj['data'], record_key)
+        data_json = json.loads(data_bytes.decode('utf-8'))
+        rd_obj['data_json'] = data_json
+    except Exception as e:
+        logging.warning(f"Failed to decrypt record data for {record_uid}: {e}")
+
+
+def _decrypt_keeper_drive_record_keys(params):
+    """Decrypt all Keeper Drive record keys, trying multiple sources."""
+
+    # Pass 0: check if record keys were already decrypted by the regular vault
+    # sync (via recordMetaData or record_cache in SyncDownResponse). This is
+    # the primary path for records shared with the current user.
+    for record_uid, record_obj in params.keeper_drive_records.items():
+        if 'record_key_unencrypted' in record_obj:
+            continue
+        # Check meta_data_cache (decrypted record metadata from regular sync)
+        if record_uid in params.meta_data_cache:
+            meta = params.meta_data_cache[record_uid]
+            if 'record_key_unencrypted' in meta:
+                record_obj['record_key_unencrypted'] = meta['record_key_unencrypted']
+                _decrypt_record_data(record_uid, meta['record_key_unencrypted'], params)
+                logging.debug(f"Record {record_uid}: key obtained from meta_data_cache")
+                continue
+        # Check record_cache (records already processed by regular vault sync)
+        if record_uid in params.record_cache:
+            cached = params.record_cache[record_uid]
+            if 'record_key_unencrypted' in cached:
+                record_obj['record_key_unencrypted'] = cached['record_key_unencrypted']
+                _decrypt_record_data(record_uid, cached['record_key_unencrypted'], params)
+                logging.debug(f"Record {record_uid}: key obtained from record_cache")
+
+    # Pass 1: decrypt from keeper_drive_record_keys entries
+    for record_uid, record_keys_list in params.keeper_drive_record_keys.items():
+        if record_uid not in params.keeper_drive_records:
+            continue
+        record_obj = params.keeper_drive_records[record_uid]
+        if 'record_key_unencrypted' in record_obj:
+            continue
+
+        for rk in record_keys_list:
+            try:
+                record_key = _try_decrypt_record_key(rk, params)
+                if record_key:
+                    record_obj['record_key_unencrypted'] = record_key
+                    _decrypt_record_data(record_uid, record_key, params)
+                    break
+            except Exception as e:
+                logging.debug(f"Failed to decrypt record key for {record_uid}: {e}")
+
+    # Pass 2: for records still without keys, try all available decryption keys
+    # against the record data directly. This catches records whose keys weren't
+    # delivered through the expected folderRecords/recordKeys channels.
+    undecrypted = [
+        uid for uid, obj in params.keeper_drive_records.items()
+        if 'record_key_unencrypted' not in obj
+        and uid in params.keeper_drive_record_data
+        and params.keeper_drive_record_data[uid].get('data')
+    ]
+    if undecrypted:
+        logging.debug(f"Pass 2: {len(undecrypted)} record(s) still need decryption")
+
+    for record_uid in undecrypted:
+        record_obj = params.keeper_drive_records[record_uid]
+        rd_obj = params.keeper_drive_record_data[record_uid]
+        record_key = None
+
+        # Try record link keys with parent record key, then data key
+        if record_uid in params.keeper_drive_record_links:
+            for link in params.keeper_drive_record_links[record_uid]:
+                enc_key = link.get('record_key')
+                if not enc_key:
+                    continue
+                parent = link.get('parent_uid')
+                if parent and parent in params.keeper_drive_records:
+                    parent_obj = params.keeper_drive_records[parent]
+                    if 'record_key_unencrypted' in parent_obj:
                         try:
+                            record_key = crypto.decrypt_aes_v2(enc_key, parent_obj['record_key_unencrypted'])
+                        except Exception:
                             try:
-                                data_bytes = crypto.decrypt_aes_v2(rd_obj['data'], record_key)
-                            except:
-                                data_bytes = crypto.decrypt_aes_v1(rd_obj['data'], record_key)
+                                record_key = crypto.decrypt_aes_v1(enc_key, parent_obj['record_key_unencrypted'])
+                            except Exception:
+                                pass
+                if not record_key:
+                    try:
+                        record_key = crypto.decrypt_aes_v2(enc_key, params.data_key)
+                    except Exception:
+                        try:
+                            record_key = crypto.decrypt_aes_v1(enc_key, params.data_key)
+                        except Exception:
+                            pass
+                if not record_key and params.rsa_key2:
+                    try:
+                        record_key = crypto.decrypt_rsa(enc_key, params.rsa_key2)
+                    except Exception:
+                        pass
+                if not record_key and params.ecc_key:
+                    try:
+                        record_key = crypto.decrypt_ec(enc_key, params.ecc_key)
+                    except Exception:
+                        pass
+                if record_key:
+                    break
 
+        # Try decrypting record data directly with folder keys as a last resort.
+        # If the record data was encrypted with a folder key (instead of a per-record key),
+        # this will succeed and we use the folder key as the effective record key.
+        if not record_key:
+            candidate_folder_keys = set()
+            for folder_uid, rec_set in params.keeper_drive_folder_records.items():
+                if record_uid in rec_set and folder_uid in params.keeper_drive_folders:
+                    fobj = params.keeper_drive_folders[folder_uid]
+                    if 'folder_key_unencrypted' in fobj:
+                        candidate_folder_keys.add(id(fobj['folder_key_unencrypted']))
+                        try:
+                            data_bytes = crypto.decrypt_aes_v2(rd_obj['data'], fobj['folder_key_unencrypted'])
                             data_json = json.loads(data_bytes.decode('utf-8'))
                             rd_obj['data_json'] = data_json
-                        except Exception as e:
-                            logging.warning(f"Failed to decrypt record data for {record_uid}: {e}")
+                            record_obj['record_key_unencrypted'] = fobj['folder_key_unencrypted']
+                            logging.debug(f"Record {record_uid}: decrypted data directly with folder key {folder_uid}")
+                            record_key = fobj['folder_key_unencrypted']
+                            break
+                        except Exception:
+                            pass
+
+        if record_key and 'record_key_unencrypted' not in record_obj:
+            record_obj['record_key_unencrypted'] = record_key
+            _decrypt_record_data(record_uid, record_key, params)
+
+    # Log remaining undecrypted records
+    still_undecrypted = [
+        uid for uid, obj in params.keeper_drive_records.items()
+        if 'record_key_unencrypted' not in obj
+    ]
+    if still_undecrypted:
+        logging.debug(
+            f"KeeperDrive: {len(still_undecrypted)} record(s) could not be decrypted: "
+            f"{still_undecrypted[:5]}{'...' if len(still_undecrypted) > 5 else ''}"
+        )
 
 
 def _reconstruct_keeper_drive_entities(params):
@@ -610,6 +780,7 @@ def _reconstruct_keeper_drive_entities(params):
             'type': 'user_folder',
             'name': folder_obj.get('name', 'Unnamed Folder'),
             'folder_key_unencrypted': folder_obj['folder_key_unencrypted'],
+            'source': 'keeper_drive',
         }
 
         if 'parent_uid' in folder_obj and folder_obj['parent_uid']:
@@ -644,6 +815,9 @@ def _reconstruct_keeper_drive_entities(params):
             'shared': record_obj.get('shared', False),
             'record_key_unencrypted': record_obj['record_key_unencrypted'],
             'data_unencrypted': json.dumps(rd_obj['data_json']).encode('utf-8'),
+            'extra_unencrypted': None,
+            'udata': {},
+            'source': 'keeper_drive',
         }
 
         params.record_cache[record_uid] = record_entry
@@ -668,5 +842,3 @@ def _reconstruct_keeper_drive_entities(params):
                     is_owner,
                     rd_obj['user_account_uid']
                 )
-
-    logging.info(f"Reconstructed {len(params.keeper_drive_folders)} Keeper Drive folder(s) and {len(params.keeper_drive_records)} record(s)")

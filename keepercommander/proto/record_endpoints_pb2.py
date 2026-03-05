@@ -15,7 +15,7 @@ from . import record_pb2 as record__pb2
 from . import folder_pb2 as folder__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16record_endpoints.proto\x12\trecord.v3\x1a\x0crecord.proto\x1a\x0c\x66older.proto\"\x83\x01\n\x11RecordsAddRequest\x12%\n\x07records\x18\x01 \x03(\x0b\x32\x14.record.v3.RecordAdd\x12\x12\n\nclientTime\x18\x02 \x01(\x03\x12\x33\n\x13securityDataKeyType\x18\x03 \x01(\x0e\x32\x16.Records.RecordKeyType\"\xfc\x02\n\tRecordAdd\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x11\n\trecordKey\x18\x02 \x01(\x0c\x12/\n\rrecordKeyType\x18\x03 \x01(\x0e\x32\x18.Folder.EncryptedKeyType\x12\x1a\n\x12\x63lientModifiedTime\x18\x04 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x05 \x01(\x0c\x12\x15\n\rnonSharedData\x18\x06 \x01(\x0c\x12\x11\n\tfolderUid\x18\x07 \x01(\x0c\x12\x11\n\tfolderKey\x18\x08 \x01(\x0c\x12(\n\x0brecordLinks\x18\t \x03(\x0b\x32\x13.Records.RecordLink\x12#\n\x05\x61udit\x18\n \x01(\x0b\x32\x14.Records.RecordAudit\x12+\n\x0csecurityData\x18\x0b \x01(\x0b\x32\x15.Records.SecurityData\x12\x35\n\x11securityScoreData\x18\x0c \x01(\x0b\x32\x1a.Records.SecurityScoreDataB*\n&com.keepersecurity.proto.api.record.v3P\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16record_endpoints.proto\x12\trecord.v3\x1a\x0crecord.proto\x1a\x0c\x66older.proto\"\x83\x01\n\x11RecordsAddRequest\x12%\n\x07records\x18\x01 \x03(\x0b\x32\x14.record.v3.RecordAdd\x12\x12\n\nclientTime\x18\x02 \x01(\x03\x12\x33\n\x13securityDataKeyType\x18\x03 \x01(\x0e\x32\x16.Records.RecordKeyType\"\xa8\x03\n\tRecordAdd\x12\x11\n\trecordUid\x18\x01 \x01(\x0c\x12\x11\n\trecordKey\x18\x02 \x01(\x0c\x12/\n\rrecordKeyType\x18\x03 \x01(\x0e\x32\x18.Folder.EncryptedKeyType\x12=\n\x14recordKeyEncryptedBy\x18\x04 \x01(\x0e\x32\x1f.Folder.FolderKeyEncryptionType\x12\x1a\n\x12\x63lientModifiedTime\x18\x05 \x01(\x03\x12\x0c\n\x04\x64\x61ta\x18\x06 \x01(\x0c\x12\x15\n\rnonSharedData\x18\x07 \x01(\x0c\x12\x11\n\tfolderUid\x18\x08 \x01(\x0c\x12(\n\x0brecordLinks\x18\t \x03(\x0b\x32\x13.Records.RecordLink\x12#\n\x05\x61udit\x18\n \x01(\x0b\x32\x14.Records.RecordAudit\x12+\n\x0csecurityData\x18\x0b \x01(\x0b\x32\x15.Records.SecurityData\x12\x35\n\x11securityScoreData\x18\x0c \x01(\x0b\x32\x1a.Records.SecurityScoreDataB*\n&com.keepersecurity.proto.api.record.v3P\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -26,5 +26,5 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_RECORDSADDREQUEST']._serialized_start=66
   _globals['_RECORDSADDREQUEST']._serialized_end=197
   _globals['_RECORDADD']._serialized_start=200
-  _globals['_RECORDADD']._serialized_end=580
+  _globals['_RECORDADD']._serialized_end=624
 # @@protoc_insertion_point(module_scope)
