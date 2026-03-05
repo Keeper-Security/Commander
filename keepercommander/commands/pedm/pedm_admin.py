@@ -654,6 +654,8 @@ class PedmDeploymentUpdateCommand(base.ArgparseCommand):
             if isinstance(status, admin_types.EntityStatus) and not status.success:
                 raise base.CommandError(f'Failed to update policy "{status.entity_uid}": {status.message}')
 
+        logging.info('Successfully updated deployment: %s', deployment.name or deployment.deployment_uid)
+
 
 class PedmDeploymentDeleteCommand(base.ArgparseCommand):
     def __init__(self):
@@ -855,11 +857,14 @@ class PedmAgentDeleteCommand(base.ArgparseCommand):
         if len(agent_uid_list) == 0:
             return
 
-        statuses = plugin.modify_agents( remove_agents=agent_uid_list)
+        statuses = plugin.modify_agents(remove_agents=agent_uid_list)
         if isinstance(statuses.remove, list):
             for status in statuses.remove:
-                if isinstance(status, admin_types.EntityStatus) and not status.success:
-                    utils.get_logger().warning(f'Failed to remove agent "{status.entity_uid}": {status.message}')
+                if isinstance(status, admin_types.EntityStatus):
+                    if status.success:
+                        utils.get_logger().info(f'Agent "{status.entity_uid}" deleted successfully.')
+                    else:
+                        utils.get_logger().warning(f'Failed to remove agent "{status.entity_uid}": {status.message}')
 
 
 class PedmAgentEditCommand(base.ArgparseCommand):
@@ -878,9 +883,8 @@ class PedmAgentEditCommand(base.ArgparseCommand):
 
         deployment_uid = kwargs.get('deployment')
         if deployment_uid:
-            deployment = plugin.deployments.get_entity(deployment_uid)
-            if not deployment:
-                raise base.CommandError(f'Deployment "{deployment_uid}" does not exist')
+            deployment = PedmUtils.resolve_single_deployment(plugin, deployment_uid)
+            deployment_uid = deployment.deployment_uid
         else:
             deployment_uid = None
 
@@ -912,8 +916,11 @@ class PedmAgentEditCommand(base.ArgparseCommand):
             statuses = plugin.modify_agents(update_agents=update_agents)
             if isinstance(statuses.update, list):
                 for status in statuses.update:
-                    if isinstance(status, admin_types.EntityStatus) and not status.success:
-                        utils.get_logger().warning(f'Failed to update agent "{status.entity_uid}": {status.message}')
+                    if isinstance(status, admin_types.EntityStatus):
+                        if status.success:
+                            utils.get_logger().info(f'Agent "{status.entity_uid}" updated successfully.')
+                        else:
+                            utils.get_logger().warning(f'Failed to update agent "{status.entity_uid}": {status.message}')
 
 
 class PedmAgentListCommand(base.ArgparseCommand):
@@ -2080,10 +2087,19 @@ class PedmApprovalViewCommand(base.ArgparseCommand):
             approval.expire_in
         )
 
-        row = [approval.approval_uid, approval_type, approval_status, approval.agent_uid, approval.account_info,
-               approval.application_info, approval.justification, approval.expire_in, approval.created]
-
         fmt = kwargs.get('format')
+        justification = approval.justification
+        if fmt != 'json' and isinstance(justification, str):
+            try:
+                parsed = json.loads(justification)
+                if isinstance(parsed, dict):
+                    justification = parsed.get('text', justification)
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        row = [approval.approval_uid, approval_type, approval_status, approval.agent_uid, approval.account_info,
+               approval.application_info, justification, approval.expire_in, approval.created]
+
         if fmt == 'json':
             table = [row]
         else:
@@ -2109,6 +2125,7 @@ class PedmApprovalListCommand(base.ArgparseCommand):
             approval_type = approval_type.lower()
         else:
             approval_type = None
+        fmt = kwargs.get('format')
         table: List[List[Any]] = []
         headers = ['approval_uid', 'approval_type', 'status', 'agent_uid', 'account_info', 'application_info', 'justification', 'expire_in', 'created']
         for approval in plugin.approvals.get_all_entities():
@@ -2124,12 +2141,19 @@ class PedmApprovalListCommand(base.ArgparseCommand):
 
             account_info = [y[:30] for y in (f'{k}={v}' for k, v in approval.account_info.items())]
             application_info = [y[:30] for y in (f'{k}={v}' for k, v in approval.application_info.items())]
+            justification = approval.justification
+            if fmt != 'json' and isinstance(justification, str):
+                try:
+                    parsed = json.loads(justification)
+                    if isinstance(parsed, dict):
+                        justification = parsed.get('text', justification)
+                except (json.JSONDecodeError, ValueError):
+                    pass
             table.append([approval.approval_uid, pedm_shared.approval_type_to_name(approval.approval_type),
-                          status, approval.agent_uid, account_info, application_info, approval.justification,
+                          status, approval.agent_uid, account_info, application_info, justification,
                           approval.expire_in, approval.created])
 
         table.sort(key=lambda x: x[8], reverse=True)
-        fmt = kwargs.get('format')
         if fmt != 'json':
             headers = [report_utils.field_to_title(x) for x in headers]
         return report_utils.dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'))
