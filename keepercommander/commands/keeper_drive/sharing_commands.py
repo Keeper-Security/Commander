@@ -38,7 +38,7 @@ from .parsers import (
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-share-record   (Strategy pattern — grant / update / revoke)
+# kd-share-record   (Strategy pattern — grant / revoke / owner)
 # ══════════════════════════════════════════════════════════════════════════
 
 class KeeperDriveShareRecordCommand(Command):
@@ -62,8 +62,10 @@ class KeeperDriveShareRecordCommand(Command):
             raise CommandError('kd-share-record', 'Record path or UID is required')
         if not emails:
             raise CommandError('kd-share-record', 'Recipient email is required (use -e or --email)')
-        if action in ('grant', 'update') and not role:
-            raise CommandError('kd-share-record', f'Role is required for action "{action}"')
+        if action == 'owner' and len(emails) > 1:
+            raise CommandError('kd-share-record', 'Ownership can only be transferred to a single account')
+        if action == 'grant' and not role:
+            raise CommandError('kd-share-record', 'Role is required for grant action')
 
         if kwargs.get('contacts_only'):
             emails = [self._resolve_contact(params, e, force) for e in emails]
@@ -80,31 +82,62 @@ class KeeperDriveShareRecordCommand(Command):
         with command_error_handler('kd-share-record'):
             for email in emails:
                 for record_uid in record_uids:
-                    result = self._dispatch(params, action, record_uid, email,
-                                            access_role_type, expiration)
-                    self._log_results(result, action, email)
+                    result, effective_action = self._dispatch(
+                        params, action, record_uid, email, access_role_type, expiration)
+                    self._log_results(result, effective_action, email)
 
-    # Strategy dispatch
+    # Strategy dispatch — returns (result, effective_action)
     @staticmethod
     def _dispatch(params, action, record_uid, email, access_role_type, expiration):
+        if action == 'owner':
+            return (_kd.transfer_record_ownership_v3(
+                params=params, record_uid=record_uid, new_owner_email=email), 'owner')
+
         if action == 'grant':
-            return _kd.share_record_v3(
+            already_shared = KeeperDriveShareRecordCommand._is_already_shared(
+                params, record_uid, email)
+            if already_shared:
+                logging.debug(
+                    "Record '%s' is already shared with '%s'; switching to update.",
+                    record_uid, email)
+                return (_kd.update_record_share_v3(
+                    params=params, record_uid=record_uid, recipient_email=email,
+                    access_role_type=access_role_type, expiration_timestamp=expiration), 'update')
+            return (_kd.share_record_v3(
                 params=params, record_uid=record_uid, recipient_email=email,
-                access_role_type=access_role_type, expiration_timestamp=expiration)
-        elif action == 'update':
-            return _kd.update_record_share_v3(
-                params=params, record_uid=record_uid, recipient_email=email,
-                access_role_type=access_role_type, expiration_timestamp=expiration)
-        else:
-            return _kd.unshare_record_v3(
-                params=params, record_uid=record_uid, recipient_email=email)
+                access_role_type=access_role_type, expiration_timestamp=expiration), 'grant')
+
+        return (_kd.unshare_record_v3(
+            params=params, record_uid=record_uid, recipient_email=email), 'revoke')
+
+    @staticmethod
+    def _is_already_shared(params, record_uid, email):
+        """Return True if *email* already has a non-owner share on *record_uid*."""
+        try:
+            access_result = _kd.get_record_accesses_v3(params, [record_uid])
+            return any(
+                a.get('accessor_name', '').casefold() == email.casefold()
+                and not a.get('owner', False)
+                for a in access_result.get('record_accesses', [])
+                if a.get('record_uid') == record_uid
+            )
+        except Exception as exc:
+            logging.debug("Could not fetch record accesses for '%s': %s", record_uid, exc)
+            return False
 
     @staticmethod
     def _log_results(result, action, email):
         verbs = {'grant': 'granted to', 'update': 'changed for', 'revoke': 'revoked from'}
         for res in result['results']:
             uid = res['record_uid']
-            if res.get('pending'):
+            if action == 'owner':
+                if res['success']:
+                    logging.info("Record '%s' ownership transferred to '%s'", uid, email)
+                    logging.warning("You will no longer have access to this record!")
+                else:
+                    logging.error("Failed to transfer ownership of '%s' to '%s': %s",
+                                  uid, email, res.get('message', 'unknown error'))
+            elif res.get('pending'):
                 logging.warning("Share invitation has been sent to '%s'", email)
                 logging.warning('Please repeat this command when invitation is accepted.')
             elif res['success']:
@@ -168,11 +201,15 @@ class KeeperDriveShareRecordCommand(Command):
     def _print_dry_run(action, record_uids, emails, role, expiration):
         print(f"[dry-run] Action    : {action.upper()}")
         print(f"[dry-run] Records   : {', '.join(record_uids)}")
-        print(f"[dry-run] Recipients: {', '.join(emails)}")
-        if role:
-            print(f"[dry-run] Role      : {role.upper()}")
-        if expiration:
-            print(f"[dry-run] Expires   : {expiration} ms")
+        if action == 'owner':
+            print(f"[dry-run] New Owner : {emails[0]}")
+            print("[dry-run] Warning   : You will no longer have access to transferred records!")
+        else:
+            print(f"[dry-run] Recipients: {', '.join(emails)}")
+            if role:
+                print(f"[dry-run] Role      : {role.upper()}")
+            if expiration:
+                print(f"[dry-run] Expires   : {expiration} ms")
 
 
 # ══════════════════════════════════════════════════════════════════════════

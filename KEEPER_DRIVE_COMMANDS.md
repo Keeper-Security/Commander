@@ -509,7 +509,7 @@ kd-share-record <record> -e <email> [options]
 | Flag | Description |
 |---|---|
 | `-e EMAIL`, `--email EMAIL` | Recipient email (required). Repeatable: `-e user1@example.com -e user2@example.com` |
-| `-a ACTION`, `--action ACTION` | `grant` (default), `update`, `revoke` |
+| `-a ACTION`, `--action ACTION` | `grant` (default), `update`, `revoke`, `owner` (transfer ownership) |
 | `-r ROLE`, `--role ROLE` | Permission role. Required for `grant`/`update` |
 | `-R`, `--recursive` | Apply to all records in a folder and sub-folders |
 | `--contacts-only` | Only share with known contacts |
@@ -538,9 +538,14 @@ kd-share-record rec123abc -e temp@example.com -r viewer --expire-in 30d
 # Bulk share all records in a folder
 kd-share-record folderabc -e team@example.com -r viewer -R
 
+# Transfer ownership to another user (single recipient only)
+kd-share-record rec123abc -e newowner@example.com -a owner
+
 # Dry-run preview
 kd-share-record rec123abc -e user@example.com -r manager --dry-run
 ```
+
+> **Note:** `-a owner` transfers record ownership. Only one recipient is allowed. You will lose access to the record after the transfer.
 
 ---
 
@@ -732,9 +737,9 @@ kd-record-access rec123abc --format json
 ### Sharing commands
 | Command | Description |
 |---|---|
-| `kd-share-record` | Grant / update / revoke record sharing |
+| `kd-share-record` | Grant / revoke / transfer ownership of a record |
 | `kd-record-permission` | Bulk update sharing across a folder |
-| `kd-transfer-record` | Transfer record ownership |
+| `kd-transfer-record` | Transfer record ownership (dedicated command) |
 
 ---
 

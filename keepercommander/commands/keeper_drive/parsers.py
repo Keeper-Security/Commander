@@ -94,8 +94,8 @@ keeper_drive_share_folder_parser = _make_parser(
     'kd-share-folder', 'Change the sharing permissions of a KeeperDrive folder')
 keeper_drive_share_folder_parser.add_argument(
     '-a', '--action', dest='action',
-    choices=['grant', 'update', 'remove'], default='grant', action='store',
-    help="shared folder action: grant (default), update (change role), remove")
+    choices=['grant', 'remove'], default='grant', action='store',
+    help="shared folder action: grant (default, also updates existing shares), remove")
 keeper_drive_share_folder_parser.add_argument(
     '-e', '--email', dest='user', action='append', metavar='USER',
     help='account email or @existing for all users in the folder')
@@ -193,7 +193,7 @@ keeper_drive_update_record_parser.add_argument(
     '-n', '--notes', dest='notes', type=str, help='append/modify record notes')
 keeper_drive_update_record_parser.add_argument(
     '-r', '--record', dest='record_uids', metavar='RECORD', type=str, action='append',
-    help='record path or UID. Repeatable: -r uid1 -r uid2')
+    help='record path or UID.')
 keeper_drive_update_record_parser.add_argument(
     'fields', nargs='*', type=str,
     help='load record type data from strings with dot notation')
@@ -243,8 +243,8 @@ keeper_drive_share_record_parser.add_argument(
     '-f', '--force', dest='force', action='store_true',
     help='Skip confirmation prompts')
 keeper_drive_share_record_parser.add_argument(
-    '-a', '--action', dest='action', choices=['grant', 'revoke', 'update'],
-    default='grant', help="sharing action. 'grant' if omitted")
+    '-a', '--action', dest='action', choices=['grant', 'revoke', 'owner'],
+    default='grant', help="sharing action. 'grant' if omitted (also updates existing shares); 'owner' transfers ownership")
 keeper_drive_share_record_parser.add_argument(
     '-r', '--role', dest='role',
     choices=[
