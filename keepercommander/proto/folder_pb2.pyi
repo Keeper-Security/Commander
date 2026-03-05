@@ -56,33 +56,29 @@ class FolderModifyStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
 class FolderPermissionBits(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     noBits: _ClassVar[FolderPermissionBits]
-    canAddUsers: _ClassVar[FolderPermissionBits]
-    canRemoveUsers: _ClassVar[FolderPermissionBits]
-    canAddRecords: _ClassVar[FolderPermissionBits]
-    canRemoveRecords: _ClassVar[FolderPermissionBits]
-    canDeleteRecords: _ClassVar[FolderPermissionBits]
-    canCreateFolders: _ClassVar[FolderPermissionBits]
-    canDeleteFolders: _ClassVar[FolderPermissionBits]
-    canChangeUserPermissions: _ClassVar[FolderPermissionBits]
-    canChangeRecordPermissions: _ClassVar[FolderPermissionBits]
-    canChangeFolderOwnership: _ClassVar[FolderPermissionBits]
-    canChangeRecordOwnership: _ClassVar[FolderPermissionBits]
+    canAdd: _ClassVar[FolderPermissionBits]
+    canRemove: _ClassVar[FolderPermissionBits]
+    canDelete: _ClassVar[FolderPermissionBits]
+    canListAccess: _ClassVar[FolderPermissionBits]
+    canUpdateAccess: _ClassVar[FolderPermissionBits]
+    canChangeOwnership: _ClassVar[FolderPermissionBits]
     canEditRecords: _ClassVar[FolderPermissionBits]
     canViewRecords: _ClassVar[FolderPermissionBits]
-    canReshareRecords: _ClassVar[FolderPermissionBits]
     canApproveAccess: _ClassVar[FolderPermissionBits]
     canRequestAccess: _ClassVar[FolderPermissionBits]
     canUpdateSetting: _ClassVar[FolderPermissionBits]
+    canListRecords: _ClassVar[FolderPermissionBits]
+    canListFolders: _ClassVar[FolderPermissionBits]
 
 class AccessRoleType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
-    NO_ROLE: _ClassVar[AccessRoleType]
+    NAVIGATOR: _ClassVar[AccessRoleType]
+    REQUESTOR: _ClassVar[AccessRoleType]
     VIEWER: _ClassVar[AccessRoleType]
     SHARED_MANAGER: _ClassVar[AccessRoleType]
-    CONTRIBUTOR: _ClassVar[AccessRoleType]
     CONTENT_MANAGER: _ClassVar[AccessRoleType]
+    CONTENT_SHARE_MANAGER: _ClassVar[AccessRoleType]
     MANAGER: _ClassVar[AccessRoleType]
-    CUSTOM: _ClassVar[AccessRoleType]
     UNRESOLVED: _ClassVar[AccessRoleType]
 
 class AccessType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
@@ -124,30 +120,26 @@ BAD_REQUEST: FolderModifyStatus
 ACCESS_DENIED: FolderModifyStatus
 NOT_FOUND: FolderModifyStatus
 noBits: FolderPermissionBits
-canAddUsers: FolderPermissionBits
-canRemoveUsers: FolderPermissionBits
-canAddRecords: FolderPermissionBits
-canRemoveRecords: FolderPermissionBits
-canDeleteRecords: FolderPermissionBits
-canCreateFolders: FolderPermissionBits
-canDeleteFolders: FolderPermissionBits
-canChangeUserPermissions: FolderPermissionBits
-canChangeRecordPermissions: FolderPermissionBits
-canChangeFolderOwnership: FolderPermissionBits
-canChangeRecordOwnership: FolderPermissionBits
+canAdd: FolderPermissionBits
+canRemove: FolderPermissionBits
+canDelete: FolderPermissionBits
+canListAccess: FolderPermissionBits
+canUpdateAccess: FolderPermissionBits
+canChangeOwnership: FolderPermissionBits
 canEditRecords: FolderPermissionBits
 canViewRecords: FolderPermissionBits
-canReshareRecords: FolderPermissionBits
 canApproveAccess: FolderPermissionBits
 canRequestAccess: FolderPermissionBits
 canUpdateSetting: FolderPermissionBits
-NO_ROLE: AccessRoleType
+canListRecords: FolderPermissionBits
+canListFolders: FolderPermissionBits
+NAVIGATOR: AccessRoleType
+REQUESTOR: AccessRoleType
 VIEWER: AccessRoleType
 SHARED_MANAGER: AccessRoleType
-CONTRIBUTOR: AccessRoleType
 CONTENT_MANAGER: AccessRoleType
+CONTENT_SHARE_MANAGER: AccessRoleType
 MANAGER: AccessRoleType
-CUSTOM: AccessRoleType
 UNRESOLVED: AccessRoleType
 AT_UNKNOWN: AccessType
 AT_OWNER: AccessType
@@ -629,80 +621,64 @@ class FolderUpdateResponse(_message.Message):
     def __init__(self, folderUpdateResults: _Optional[_Iterable[_Union[FolderModifyResult, _Mapping]]] = ...) -> None: ...
 
 class FolderPermissions(_message.Message):
-    __slots__ = ("canAddUsers", "canRemoveUsers", "canAddRecords", "canRemoveRecords", "canDeleteRecords", "canCreateFolders", "canDeleteFolders", "canChangeUserPermissions", "canChangeRecordPermissions", "canChangeFolderOwnership", "canChangeRecordOwnership", "canEditRecords", "canViewRecords", "canReshareRecords", "canApproveAccess", "canRequestAccess", "canUpdateSetting")
-    CANADDUSERS_FIELD_NUMBER: _ClassVar[int]
-    CANREMOVEUSERS_FIELD_NUMBER: _ClassVar[int]
-    CANADDRECORDS_FIELD_NUMBER: _ClassVar[int]
-    CANREMOVERECORDS_FIELD_NUMBER: _ClassVar[int]
-    CANDELETERECORDS_FIELD_NUMBER: _ClassVar[int]
-    CANCREATEFOLDERS_FIELD_NUMBER: _ClassVar[int]
-    CANDELETEFOLDERS_FIELD_NUMBER: _ClassVar[int]
-    CANCHANGEUSERPERMISSIONS_FIELD_NUMBER: _ClassVar[int]
-    CANCHANGERECORDPERMISSIONS_FIELD_NUMBER: _ClassVar[int]
-    CANCHANGEFOLDEROWNERSHIP_FIELD_NUMBER: _ClassVar[int]
-    CANCHANGERECORDOWNERSHIP_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("canAdd", "canRemove", "canDelete", "canListAccess", "canUpdateAccess", "canChangeOwnership", "canEditRecords", "canViewRecords", "canApproveAccess", "canRequestAccess", "canUpdateSetting", "canListRecords", "canListFolders")
+    CANADD_FIELD_NUMBER: _ClassVar[int]
+    CANREMOVE_FIELD_NUMBER: _ClassVar[int]
+    CANDELETE_FIELD_NUMBER: _ClassVar[int]
+    CANLISTACCESS_FIELD_NUMBER: _ClassVar[int]
+    CANUPDATEACCESS_FIELD_NUMBER: _ClassVar[int]
+    CANCHANGEOWNERSHIP_FIELD_NUMBER: _ClassVar[int]
     CANEDITRECORDS_FIELD_NUMBER: _ClassVar[int]
     CANVIEWRECORDS_FIELD_NUMBER: _ClassVar[int]
-    CANRESHARERECORDS_FIELD_NUMBER: _ClassVar[int]
     CANAPPROVEACCESS_FIELD_NUMBER: _ClassVar[int]
     CANREQUESTACCESS_FIELD_NUMBER: _ClassVar[int]
     CANUPDATESETTING_FIELD_NUMBER: _ClassVar[int]
-    canAddUsers: bool
-    canRemoveUsers: bool
-    canAddRecords: bool
-    canRemoveRecords: bool
-    canDeleteRecords: bool
-    canCreateFolders: bool
-    canDeleteFolders: bool
-    canChangeUserPermissions: bool
-    canChangeRecordPermissions: bool
-    canChangeFolderOwnership: bool
-    canChangeRecordOwnership: bool
+    CANLISTRECORDS_FIELD_NUMBER: _ClassVar[int]
+    CANLISTFOLDERS_FIELD_NUMBER: _ClassVar[int]
+    canAdd: bool
+    canRemove: bool
+    canDelete: bool
+    canListAccess: bool
+    canUpdateAccess: bool
+    canChangeOwnership: bool
     canEditRecords: bool
     canViewRecords: bool
-    canReshareRecords: bool
     canApproveAccess: bool
     canRequestAccess: bool
     canUpdateSetting: bool
-    def __init__(self, canAddUsers: _Optional[bool] = ..., canRemoveUsers: _Optional[bool] = ..., canAddRecords: _Optional[bool] = ..., canRemoveRecords: _Optional[bool] = ..., canDeleteRecords: _Optional[bool] = ..., canCreateFolders: _Optional[bool] = ..., canDeleteFolders: _Optional[bool] = ..., canChangeUserPermissions: _Optional[bool] = ..., canChangeRecordPermissions: _Optional[bool] = ..., canChangeFolderOwnership: _Optional[bool] = ..., canChangeRecordOwnership: _Optional[bool] = ..., canEditRecords: _Optional[bool] = ..., canViewRecords: _Optional[bool] = ..., canReshareRecords: _Optional[bool] = ..., canApproveAccess: _Optional[bool] = ..., canRequestAccess: _Optional[bool] = ..., canUpdateSetting: _Optional[bool] = ...) -> None: ...
+    canListRecords: bool
+    canListFolders: bool
+    def __init__(self, canAdd: _Optional[bool] = ..., canRemove: _Optional[bool] = ..., canDelete: _Optional[bool] = ..., canListAccess: _Optional[bool] = ..., canUpdateAccess: _Optional[bool] = ..., canChangeOwnership: _Optional[bool] = ..., canEditRecords: _Optional[bool] = ..., canViewRecords: _Optional[bool] = ..., canApproveAccess: _Optional[bool] = ..., canRequestAccess: _Optional[bool] = ..., canUpdateSetting: _Optional[bool] = ..., canListRecords: _Optional[bool] = ..., canListFolders: _Optional[bool] = ...) -> None: ...
 
 class Capabilities(_message.Message):
-    __slots__ = ("canAddUsers", "canRemoveUsers", "canAddRecords", "canRemoveRecords", "canDeleteRecords", "canCreateFolders", "canDeleteFolders", "canChangeUserPermissions", "canChangeRecordPermissions", "canChangeFolderOwnership", "canChangeRecordOwnership", "canEditRecords", "canViewRecords", "canReshareRecords", "canApproveAccess", "canRequestAccess", "canUpdateSetting")
-    CANADDUSERS_FIELD_NUMBER: _ClassVar[int]
-    CANREMOVEUSERS_FIELD_NUMBER: _ClassVar[int]
-    CANADDRECORDS_FIELD_NUMBER: _ClassVar[int]
-    CANREMOVERECORDS_FIELD_NUMBER: _ClassVar[int]
-    CANDELETERECORDS_FIELD_NUMBER: _ClassVar[int]
-    CANCREATEFOLDERS_FIELD_NUMBER: _ClassVar[int]
-    CANDELETEFOLDERS_FIELD_NUMBER: _ClassVar[int]
-    CANCHANGEUSERPERMISSIONS_FIELD_NUMBER: _ClassVar[int]
-    CANCHANGERECORDPERMISSIONS_FIELD_NUMBER: _ClassVar[int]
-    CANCHANGEFOLDEROWNERSHIP_FIELD_NUMBER: _ClassVar[int]
-    CANCHANGERECORDOWNERSHIP_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("canAdd", "canRemove", "canDelete", "canListAccess", "canUpdateAccess", "canChangeOwnership", "canEditRecords", "canViewRecords", "canApproveAccess", "canRequestAccess", "canUpdateSetting", "canListRecords", "canListFolders")
+    CANADD_FIELD_NUMBER: _ClassVar[int]
+    CANREMOVE_FIELD_NUMBER: _ClassVar[int]
+    CANDELETE_FIELD_NUMBER: _ClassVar[int]
+    CANLISTACCESS_FIELD_NUMBER: _ClassVar[int]
+    CANUPDATEACCESS_FIELD_NUMBER: _ClassVar[int]
+    CANCHANGEOWNERSHIP_FIELD_NUMBER: _ClassVar[int]
     CANEDITRECORDS_FIELD_NUMBER: _ClassVar[int]
     CANVIEWRECORDS_FIELD_NUMBER: _ClassVar[int]
-    CANRESHARERECORDS_FIELD_NUMBER: _ClassVar[int]
     CANAPPROVEACCESS_FIELD_NUMBER: _ClassVar[int]
     CANREQUESTACCESS_FIELD_NUMBER: _ClassVar[int]
     CANUPDATESETTING_FIELD_NUMBER: _ClassVar[int]
-    canAddUsers: SetBooleanValue
-    canRemoveUsers: SetBooleanValue
-    canAddRecords: SetBooleanValue
-    canRemoveRecords: SetBooleanValue
-    canDeleteRecords: SetBooleanValue
-    canCreateFolders: SetBooleanValue
-    canDeleteFolders: SetBooleanValue
-    canChangeUserPermissions: SetBooleanValue
-    canChangeRecordPermissions: SetBooleanValue
-    canChangeFolderOwnership: SetBooleanValue
-    canChangeRecordOwnership: SetBooleanValue
+    CANLISTRECORDS_FIELD_NUMBER: _ClassVar[int]
+    CANLISTFOLDERS_FIELD_NUMBER: _ClassVar[int]
+    canAdd: SetBooleanValue
+    canRemove: SetBooleanValue
+    canDelete: SetBooleanValue
+    canListAccess: SetBooleanValue
+    canUpdateAccess: SetBooleanValue
+    canChangeOwnership: SetBooleanValue
     canEditRecords: SetBooleanValue
     canViewRecords: SetBooleanValue
-    canReshareRecords: SetBooleanValue
     canApproveAccess: SetBooleanValue
     canRequestAccess: SetBooleanValue
     canUpdateSetting: SetBooleanValue
-    def __init__(self, canAddUsers: _Optional[_Union[SetBooleanValue, str]] = ..., canRemoveUsers: _Optional[_Union[SetBooleanValue, str]] = ..., canAddRecords: _Optional[_Union[SetBooleanValue, str]] = ..., canRemoveRecords: _Optional[_Union[SetBooleanValue, str]] = ..., canDeleteRecords: _Optional[_Union[SetBooleanValue, str]] = ..., canCreateFolders: _Optional[_Union[SetBooleanValue, str]] = ..., canDeleteFolders: _Optional[_Union[SetBooleanValue, str]] = ..., canChangeUserPermissions: _Optional[_Union[SetBooleanValue, str]] = ..., canChangeRecordPermissions: _Optional[_Union[SetBooleanValue, str]] = ..., canChangeFolderOwnership: _Optional[_Union[SetBooleanValue, str]] = ..., canChangeRecordOwnership: _Optional[_Union[SetBooleanValue, str]] = ..., canEditRecords: _Optional[_Union[SetBooleanValue, str]] = ..., canViewRecords: _Optional[_Union[SetBooleanValue, str]] = ..., canReshareRecords: _Optional[_Union[SetBooleanValue, str]] = ..., canApproveAccess: _Optional[_Union[SetBooleanValue, str]] = ..., canRequestAccess: _Optional[_Union[SetBooleanValue, str]] = ..., canUpdateSetting: _Optional[_Union[SetBooleanValue, str]] = ...) -> None: ...
+    canListRecords: SetBooleanValue
+    canListFolders: SetBooleanValue
+    def __init__(self, canAdd: _Optional[_Union[SetBooleanValue, str]] = ..., canRemove: _Optional[_Union[SetBooleanValue, str]] = ..., canDelete: _Optional[_Union[SetBooleanValue, str]] = ..., canListAccess: _Optional[_Union[SetBooleanValue, str]] = ..., canUpdateAccess: _Optional[_Union[SetBooleanValue, str]] = ..., canChangeOwnership: _Optional[_Union[SetBooleanValue, str]] = ..., canEditRecords: _Optional[_Union[SetBooleanValue, str]] = ..., canViewRecords: _Optional[_Union[SetBooleanValue, str]] = ..., canApproveAccess: _Optional[_Union[SetBooleanValue, str]] = ..., canRequestAccess: _Optional[_Union[SetBooleanValue, str]] = ..., canUpdateSetting: _Optional[_Union[SetBooleanValue, str]] = ..., canListRecords: _Optional[_Union[SetBooleanValue, str]] = ..., canListFolders: _Optional[_Union[SetBooleanValue, str]] = ...) -> None: ...
 
 class FolderRecordUpdateRequest(_message.Message):
     __slots__ = ("folderUid", "addRecords", "updateRecords", "removeRecords")
@@ -792,8 +768,18 @@ class RevokedAccess(_message.Message):
     accessType: AccessType
     def __init__(self, folderUid: _Optional[bytes] = ..., actorUid: _Optional[bytes] = ..., accessType: _Optional[_Union[AccessType, str]] = ...) -> None: ...
 
+class DeniedAccess(_message.Message):
+    __slots__ = ("folderUid", "actorUid", "accessType")
+    FOLDERUID_FIELD_NUMBER: _ClassVar[int]
+    ACTORUID_FIELD_NUMBER: _ClassVar[int]
+    ACCESSTYPE_FIELD_NUMBER: _ClassVar[int]
+    folderUid: bytes
+    actorUid: bytes
+    accessType: AccessType
+    def __init__(self, folderUid: _Optional[bytes] = ..., actorUid: _Optional[bytes] = ..., accessType: _Optional[_Union[AccessType, str]] = ...) -> None: ...
+
 class RecordAccessData(_message.Message):
-    __slots__ = ("accessTypeUid", "accessType", "recordUid", "accessRoleType", "owner", "inherited", "hidden", "deniedAccess", "can_edit", "can_view", "can_share", "can_delete", "can_request_access", "can_approve_access", "dateCreated", "lastModified", "tlaProperties")
+    __slots__ = ("accessTypeUid", "accessType", "recordUid", "accessRoleType", "owner", "inherited", "hidden", "deniedAccess", "can_view_title", "can_edit", "can_view", "can_list_access", "can_update_access", "can_delete", "can_change_ownership", "can_request_access", "can_approve_access", "dateCreated", "lastModified", "tlaProperties")
     ACCESSTYPEUID_FIELD_NUMBER: _ClassVar[int]
     ACCESSTYPE_FIELD_NUMBER: _ClassVar[int]
     RECORDUID_FIELD_NUMBER: _ClassVar[int]
@@ -802,10 +788,13 @@ class RecordAccessData(_message.Message):
     INHERITED_FIELD_NUMBER: _ClassVar[int]
     HIDDEN_FIELD_NUMBER: _ClassVar[int]
     DENIEDACCESS_FIELD_NUMBER: _ClassVar[int]
+    CAN_VIEW_TITLE_FIELD_NUMBER: _ClassVar[int]
     CAN_EDIT_FIELD_NUMBER: _ClassVar[int]
     CAN_VIEW_FIELD_NUMBER: _ClassVar[int]
-    CAN_SHARE_FIELD_NUMBER: _ClassVar[int]
+    CAN_LIST_ACCESS_FIELD_NUMBER: _ClassVar[int]
+    CAN_UPDATE_ACCESS_FIELD_NUMBER: _ClassVar[int]
     CAN_DELETE_FIELD_NUMBER: _ClassVar[int]
+    CAN_CHANGE_OWNERSHIP_FIELD_NUMBER: _ClassVar[int]
     CAN_REQUEST_ACCESS_FIELD_NUMBER: _ClassVar[int]
     CAN_APPROVE_ACCESS_FIELD_NUMBER: _ClassVar[int]
     DATECREATED_FIELD_NUMBER: _ClassVar[int]
@@ -819,16 +808,19 @@ class RecordAccessData(_message.Message):
     inherited: bool
     hidden: bool
     deniedAccess: bool
+    can_view_title: bool
     can_edit: bool
     can_view: bool
-    can_share: bool
+    can_list_access: bool
+    can_update_access: bool
     can_delete: bool
+    can_change_ownership: bool
     can_request_access: bool
     can_approve_access: bool
     dateCreated: int
     lastModified: int
     tlaProperties: _tla_pb2.TLAProperties
-    def __init__(self, accessTypeUid: _Optional[bytes] = ..., accessType: _Optional[_Union[AccessType, str]] = ..., recordUid: _Optional[bytes] = ..., accessRoleType: _Optional[_Union[AccessRoleType, str]] = ..., owner: _Optional[bool] = ..., inherited: _Optional[bool] = ..., hidden: _Optional[bool] = ..., deniedAccess: _Optional[bool] = ..., can_edit: _Optional[bool] = ..., can_view: _Optional[bool] = ..., can_share: _Optional[bool] = ..., can_delete: _Optional[bool] = ..., can_request_access: _Optional[bool] = ..., can_approve_access: _Optional[bool] = ..., dateCreated: _Optional[int] = ..., lastModified: _Optional[int] = ..., tlaProperties: _Optional[_Union[_tla_pb2.TLAProperties, _Mapping]] = ...) -> None: ...
+    def __init__(self, accessTypeUid: _Optional[bytes] = ..., accessType: _Optional[_Union[AccessType, str]] = ..., recordUid: _Optional[bytes] = ..., accessRoleType: _Optional[_Union[AccessRoleType, str]] = ..., owner: _Optional[bool] = ..., inherited: _Optional[bool] = ..., hidden: _Optional[bool] = ..., deniedAccess: _Optional[bool] = ..., can_view_title: _Optional[bool] = ..., can_edit: _Optional[bool] = ..., can_view: _Optional[bool] = ..., can_list_access: _Optional[bool] = ..., can_update_access: _Optional[bool] = ..., can_delete: _Optional[bool] = ..., can_change_ownership: _Optional[bool] = ..., can_request_access: _Optional[bool] = ..., can_approve_access: _Optional[bool] = ..., dateCreated: _Optional[int] = ..., lastModified: _Optional[int] = ..., tlaProperties: _Optional[_Union[_tla_pb2.TLAProperties, _Mapping]] = ...) -> None: ...
 
 class AccessData(_message.Message):
     __slots__ = ("accessTypeUid", "accessRoleType", "deniedAccess", "inherited", "hidden", "capabilities")

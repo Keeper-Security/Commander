@@ -220,14 +220,17 @@ class KeeperParams:
         self.security_score_data = {}
         self.sso_login_info = None
         # Keeper Drive caches for atomic sync objects
-        self.keeper_drive_folders = {}          # folder_uid -> FolderData
-        self.keeper_drive_folder_keys = {}      # folder_uid -> list of FolderKey
-        self.keeper_drive_folder_accesses = {}  # folder_uid -> list of FolderAccessData
-        self.keeper_drive_records = {}          # record_uid -> DriveRecord
-        self.keeper_drive_record_data = {}      # record_uid -> RecordData
-        self.keeper_drive_record_keys = {}      # record_uid -> list of RecordKey
-        self.keeper_drive_record_accesses = {}  # record_uid -> list of RecordAccessData
-        self.keeper_drive_folder_records = {}   # folder_uid -> set of record_uids
+        self.keeper_drive_folders = {}                  # folder_uid -> FolderData
+        self.keeper_drive_folder_keys = {}              # folder_uid -> list of FolderKey
+        self.keeper_drive_folder_accesses = {}          # folder_uid -> list of FolderAccessData
+        self.keeper_drive_records = {}                  # record_uid -> DriveRecord
+        self.keeper_drive_record_data = {}              # record_uid -> RecordData
+        self.keeper_drive_record_keys = {}              # record_uid -> list of RecordKey
+        self.keeper_drive_record_accesses = {}          # record_uid -> list of RecordAccessData
+        self.keeper_drive_folder_records = {}           # folder_uid -> set of record_uids
+        self.keeper_drive_record_sharing_states = {}    # record_uid -> sharing state dict
+        self.keeper_drive_record_links = {}             # record_uid -> list of record link dicts
+        self.keeper_drive_raw_dag_data = []             # list of raw DAG entry dicts
         self.__proxy = None
         self.ssh_agent = None
         self.unmask_all = False
@@ -309,6 +312,9 @@ class KeeperParams:
         self.keeper_drive_record_keys = {}
         self.keeper_drive_record_accesses = {}
         self.keeper_drive_folder_records = {}
+        self.keeper_drive_record_sharing_states = {}
+        self.keeper_drive_record_links = {}
+        self.keeper_drive_raw_dag_data = []
         self.ws = None
         if self.ssh_agent:
             self.ssh_agent.close()
