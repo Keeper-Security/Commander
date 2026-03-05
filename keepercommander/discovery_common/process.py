@@ -88,7 +88,11 @@ class Process:
                                     fail_on_corrupt=False,
                                     **kwargs)
         self.record_link = RecordLink(record=record, logger=logger, debug_level=debug_level, **kwargs)
-        self.user_service = UserService(record=record, logger=logger, debug_level=debug_level, **kwargs)
+        self.user_service = UserService(record=record,
+                                        logger=logger,
+                                        debug_level=debug_level,
+                                        record_linking=self.record_link,
+                                        **kwargs)
 
         # This is the root UID for all graphs; get it from one of them.
         self.configuration_uid = self.jobs.dag.uid

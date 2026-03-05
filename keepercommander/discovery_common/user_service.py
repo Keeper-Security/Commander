@@ -4,11 +4,11 @@ import os
 
 from .constants import PAM_MACHINE, PAM_USER, PAM_DIRECTORY, DOMAIN_USER_CONFIGS
 from .utils import get_connection, make_agent, split_user_and_domain, value_to_boolean
-from .types import DiscoveryObject, ServiceAcl, NormalizedRecord
+from .types import DiscoveryObject, ServiceAcl, NormalizedRecord, UserAcl
 from .infrastructure import Infrastructure
 from .record_link import RecordLink
 from ..keeper_dag import DAG, EdgeType
-from ..keeper_dag.types import PamEndpoints, PamGraphId
+from ..keeper_dag.types import PamGraphId
 import importlib
 from typing import Any, Optional, List, Callable, Dict, TYPE_CHECKING
 
@@ -19,23 +19,42 @@ if TYPE_CHECKING:
 
 class UserService:
 
-    def __init__(self, record: Any, logger: Optional[Any] = None, history_level: int = 0,
-                 debug_level: int = 0, fail_on_corrupt: bool = True, log_prefix: str = "GS Services/Tasks",
-                 save_batch_count: int = 200, agent: Optional[str] = None,
+    """
+    Map when a user's password is rotated, which machine services need to also be changed.
+
+    In Windows, services, scheduled tasks, iis pool, etc. require the password for the user that service will be run as.
+    When a user's password is changed, each of these services need have their password changed.
+
+    We store the map in the PAM graph, in the rotation settings, `controls_services`.
+    When a user's password is changed, each ACL edge connected to user will be checked.
+    If `controls_services` is True, the machine will be logged in and each service will be checked to see if this
+      user controls them.
+    If the user does, then the password on the service is changed.
+
+    This used to be stored in graph 13, but has been moved the PAM graph.
+    A migration is run to moved items from the old graph and placed in the PAM graph.
+
+    """
+
+    def __init__(self,
+                 record_linking: RecordLink,
+                 record: Any,
+                 logger: Optional[Any] = None,
+                 history_level: int = 0,
+                 debug_level: int = 0,
+                 fail_on_corrupt: bool = True,
+                 log_prefix: str = "GS Services",
+                 save_batch_count: int = 200,
+                 agent: Optional[str] = None,
                  use_per_graph_endpoints: bool = False,
                  **kwargs):
-        """
-        :param use_per_graph_endpoints: If True, use the per-graph URL transport
-            (`/api/user/graph-sync/service_links/...`) via `read_endpoint` /
-            `write_endpoint`. If False (default), use the legacy single-endpoint
-            transport via `graph_id=PamGraphId.SERVICE_LINKS`. The legacy
-            default is preserved for backward compatibility; it will be removed
-            in a future major version once all consumers have migrated.
-        """
 
         # Keep these for other graphs
         self._params = kwargs.get("params")
         self._ksm = kwargs.get("ksm")
+        self.record_linking = record_linking
+        self.service_graph = None
+        self.did_migration = False
 
         self.conn = get_connection(**kwargs)
 
@@ -72,6 +91,8 @@ class UserService:
         except (Exception,):
             pass
 
+        self._migrate()
+
     def debug(self, msg, level: int = 0, secret: bool = False):
         if self.log_finer_level >= level:
             if secret:
@@ -80,44 +101,50 @@ class UserService:
             else:
                 self.logger.debug(msg)
 
-    @property
-    def dag(self) -> DAG:
-        if self._dag is None:
+    def _migrate(self):
 
-            if self.use_per_graph_endpoints:
-                self._dag = DAG(conn=self.conn,
-                                record=self.record,
-                                read_endpoint=PamEndpoints.SERVICE_LINKS,
-                                write_endpoint=PamEndpoints.SERVICE_LINKS,
-                                auto_save=False,
-                                logger=self.logger,
-                                history_level=self.history_level,
-                                debug_level=self.debug_level,
-                                name="Discovery Services",
-                                fail_on_corrupt=self.fail_on_corrupt,
-                                log_prefix=self.log_prefix,
-                                save_batch_count=self.save_batch_count,
-                                agent=self.agent)
-            else:
-                self._dag = DAG(conn=self.conn,
-                                record=self.record,
-                                graph_id=PamGraphId.SERVICE_LINKS,
-                                auto_save=False,
-                                logger=self.logger,
-                                history_level=self.history_level,
-                                debug_level=self.debug_level,
-                                name="Discovery Services",
-                                fail_on_corrupt=self.fail_on_corrupt,
-                                log_prefix=self.log_prefix,
-                                save_batch_count=self.save_batch_count,
-                                agent=self.agent)
+        """
+        Migrate items from the old user service graph to the PAM graph.
+        """
 
-            self._dag.load(sync_point=0)
+        self.debug("perform user service graph migration")
 
-            # If an empty graph, call root get create a vertex.
-            _ = self._dag.get_root
+        self.service_graph = DAG(conn=self.conn,
+                                 record=self.record,
+                                 graph_id=PamGraphId.SERVICE_LINKS,
+                                 auto_save=False,
+                                 logger=self.logger,
+                                 history_level=self.history_level,
+                                 debug_level=self.debug_level,
+                                 name="Discovery Services",
+                                 fail_on_corrupt=self.fail_on_corrupt,
+                                 log_prefix=self.log_prefix,
+                                 save_batch_count=self.save_batch_count,
+                                 agent=self.agent)
 
-        return self._dag
+        self.service_graph.load(sync_point=0)
+        if self.service_graph.has_graph:
+            for resource_vertex in self.service_graph.get_root.has_vertices():
+                for user_vertex in resource_vertex.has_vertices():
+                    acl_edge = user_vertex.get_edge(resource_vertex, edge_type=EdgeType.ACL)
+                    if acl_edge is not None:
+                        service_acl = acl_edge.content_as_object(ServiceAcl)  # type: ServiceAcl
+                        if service_acl.is_used:
+                            user_acl = self.record_linking.get_acl(user_vertex.uid, resource_vertex.uid)
+                            if user_acl is None:
+                                user_acl = UserAcl.default()
+                            user_acl.controls_services = True
+                            self.record_linking.belongs_to(user_vertex.uid, resource_vertex.uid, acl=user_acl)
+                    user_vertex.delete()
+                resource_vertex.delete()
+                self.did_migration = True
+
+        if self.did_migration:
+            self.service_graph.save()
+            self.record_linking.save()
+            self.debug("  items were migrated")
+        else:
+            self.debug("  no items to migrated")
 
     def close(self):
         """
@@ -142,15 +169,8 @@ class UserService:
     def __del__(self):
         self.close()
 
-    @property
-    def has_graph(self) -> bool:
-        return self.dag.has_graph
-
-    def reload(self):
-        self._dag.load(sync_point=0)
-
-    def get_record_link(self, uid: str) -> DAGVertex:
-        return self.dag.get_vertex(uid)
+    def get_record_link(self, uid: str) -> Optional[DAGVertex]:
+        return self.record_linking.dag.get_vertex(uid)
 
     @staticmethod
     def get_record_uid(discovery_vertex: DAGVertex) -> str:
@@ -167,16 +187,15 @@ class UserService:
             return content.record_uid
         raise Exception(f"The discovery vertex {discovery_vertex.uid} data does not have a populated record UID.")
 
-    def belongs_to(self,
-                   resource_uid: str,
-                   user_uid: str, acl: Optional[ServiceAcl] = None,
-                   resource_name: Optional[str] = None,
-                   user_name: Optional[str] = None):
+    def set_acl(self,
+                resource_uid: str,
+                user_uid: str,
+                acl: UserAcl,
+                resource_name: Optional[str] = None,
+                user_name: Optional[str] = None):
 
         """
-        Link vault records using record UIDs.
-
-        If a link already exists, no additional link will be created.
+        Update the record linking ACL with control_services
         """
 
         if resource_uid is None:
@@ -188,76 +207,65 @@ class UserService:
 
         # Get thr record vertices.
         # If a vertex does not exist, then add the vertex using the record UID
-        resource_vertex = self.dag.get_vertex(resource_uid)
+        resource_vertex = self.record_linking.dag.get_vertex(resource_uid)
         if resource_vertex is None:
             self.debug(f"adding resource vertex for record UID {resource_uid} ({resource_name})")
-            resource_vertex = self.dag.add_vertex(uid=resource_uid, name=resource_name)
+            resource_vertex = self.record_linking.dag.add_vertex(uid=resource_uid, name=resource_name)
 
-        user_vertex = self.dag.get_vertex(user_uid)
+        user_vertex = self.record_linking.dag.get_vertex(user_uid)
         if user_vertex is None:
             self.debug(f"adding user vertex for record UID {user_uid} ({user_name})")
-            user_vertex = self.dag.add_vertex(uid=user_uid, name=user_name)
+            user_vertex = self.record_linking.dag.add_vertex(uid=user_uid, name=user_name)
 
         self.debug(f"user {user_vertex.uid} controls services on {resource_vertex.uid}")
+        user_vertex.belongs_to(resource_vertex, edge_type=EdgeType.ACL, content=acl)
 
-        edge_type = EdgeType.LINK
-        if acl is not None:
-            edge_type = EdgeType.ACL
-
-        self.debug(f"Connect {user_vertex.uid} to {resource_vertex.uid}")
-        user_vertex.belongs_to(resource_vertex, edge_type=edge_type, content=acl)
+        link_exists = resource_vertex.get_edge(self.record_linking.dag.get_root, EdgeType.LINK)
+        if link_exists is None:
+            self.debug(f"  * no link to configuration, adding.")
+            resource_vertex.belongs_to_root(edge_type=EdgeType.LINK)
 
     def disconnect_from(self, resource_uid: str, user_uid: str):
-        resource_vertex = self.dag.get_vertex(resource_uid)
-        user_vertex = self.dag.get_vertex(user_uid)
-        user_vertex.disconnect_from(resource_vertex)
+        resource_vertex = self.record_linking.dag.get_vertex(resource_uid)
+        if resource_vertex is not None:
+            user_vertex = self.record_linking.dag.get_vertex(user_uid)
+            if user_vertex is not None:
+                user_vertex.disconnect_from(resource_vertex)
 
-    def get_acl(self, resource_uid, user_uid) -> Optional[ServiceAcl]:
+    def get_acl(self, resource_uid, user_uid) -> Optional[UserAcl]:
 
         """
-        Get the service/task ACL between a resource and the user.
-
+        Get the user ACL from the record linking graph.
         """
-
-        resource_vertex = self.dag.get_vertex(resource_uid)
-        user_vertex = self.dag.get_vertex(user_uid)
-        if resource_vertex is None or user_vertex is None:
-            if resource_vertex is None:
-                self.debug("The resource vertex does not exists get; return default ACL")
-            if user_vertex is None:
-                self.debug("The user vertex does not exists get; return default ACL")
-            return ServiceAcl()
-
-        acl_edge = user_vertex.get_edge(resource_vertex, edge_type=EdgeType.ACL)  # type: DAGEdge
-        if acl_edge is None:
-            self.debug(f"ACL does not exists between resource {resource_uid} and user {user_vertex} doesn't "
-                       "exist; return None")
-            return None
-
-        return acl_edge.content_as_object(ServiceAcl)
+        return self.record_linking.get_acl(user_uid, resource_uid)
 
     def resource_has_link(self, resource_uid) -> bool:
         """
         Is this resource linked to the configuration?
         """
 
-        resource_vertex = self.dag.get_vertex(resource_uid)
+        resource_vertex = self.record_linking.dag.get_vertex(resource_uid)
         if resource_vertex is None:
             return False
-        link_edge = resource_vertex.get_edge(self.dag.get_root, edge_type=EdgeType.LINK)  # type: DAGEdge
+        link_edge = resource_vertex.get_edge(self.record_linking.dag.get_root, edge_type=EdgeType.LINK)  # type: DAGEdge
         return link_edge is not None
 
     def get_resource_vertices(self, user_uid: str) -> List[DAGVertex]:
 
         """
-        Get the resource vertices where the user is used for a service or task.
-
+        Get the resource vertices where the user controls a service.
         """
 
-        user_vertex = self.dag.get_vertex(user_uid)
+        user_vertex = self.record_linking.dag.get_vertex(user_uid)
         if user_vertex is None:
             return []
-        return user_vertex.belongs_to_vertices()
+        resource_vertices = []
+        for resource_vertex in user_vertex.belongs_to_vertices():
+            user_acl = self.record_linking.get_acl(user_uid, resource_vertex.uid)
+            if user_acl:
+                if user_acl.controls_services:
+                    resource_vertices.append(resource_vertex)
+        return resource_vertices
 
     def get_user_vertices(self, resource_uid: str) -> List[DAGVertex]:
 
@@ -265,10 +273,16 @@ class UserService:
         Get the user vertices that control a service or task on this machine.
 
         """
-        resource_vertex = self.dag.get_vertex(resource_uid)
+        resource_vertex = self.record_linking.dag.get_vertex(resource_uid)
         if resource_vertex is None:
             return []
-        return resource_vertex.has_vertices()
+        user_vertices = []
+        for user_vertex in resource_vertex.has_vertices():
+            user_acl = self.record_linking.get_acl(user_vertex.uid, resource_uid)
+            if user_acl:
+                if user_acl.controls_services:
+                    user_vertices.append(user_vertex)
+        return user_vertices
 
     @staticmethod
     def delete(vertex: DAGVertex):
@@ -276,21 +290,16 @@ class UserService:
             vertex.delete()
 
     def save(self):
-        if self.dag.has_graph:
-            self.debug("saving the service user.")
-            self.dag.save(delta_graph=False)
-        else:
-            self.debug("the service user graph does not contain any data, was not saved.")
+        self.record_linking.save()
 
-    def to_dot(self, graph_format: str = "svg", show_version: bool = True, show_only_active_vertices: bool = True,
-               show_only_active_edges: bool = True, graph_type: str = "dot"):
+    def to_dot(self, graph_format: str = "svg", graph_type: str = "dot"):
 
         try:
             mod = importlib.import_module("graphviz")
         except ImportError:
             raise Exception("Cannot to_dot(), graphviz module is not installed.")
 
-        dot = getattr(mod, "Digraph")(comment=f"DAG for Services/Tasks", format=graph_format)
+        dot = getattr(mod, "Digraph")(comment=f"DAG for Services", format=graph_format)
 
         if graph_type == "dot":
             dot.attr(rankdir='RL')
@@ -301,74 +310,24 @@ class UserService:
         else:
             dot.attr(layout=graph_type)
 
-        self.debug(f"have {len(self.dag.all_vertices)} vertices")
-        for v in self.dag.all_vertices:
-            if show_only_active_vertices is True and v.active is False:
+        # This will get all the resources (and cloud users)
+        for resource_vertex in self.record_linking.dag.get_root.has_vertices():
+            if not resource_vertex.active:
                 continue
 
-            tooltip = ""
-
-            for edge in v.edges:
-
-                color = "grey"
-                style = "solid"
-
-                # To reduce the number of edges, only show the active edges
-                if edge.active:
-                    color = "black"
-                    style = "bold"
-                elif show_only_active_edges:
+            plotted_resource = False
+            for user_vertex in resource_vertex.has_vertices():
+                acl = self.record_linking.get_acl(user_vertex.uid, resource_vertex.uid)
+                if acl is None or not acl.controls_services:
                     continue
 
-                # If the vertex is not active, gray out the DATA edge
-                if edge.edge_type == EdgeType.DATA and v.active is False:
-                    color = "grey"
+                if not plotted_resource:
+                    dot.edge(resource_vertex.uid, self.record_linking.dag.get_root.uid)
+                    dot.node(resource_vertex.uid)
+                    plotted_resource = True
 
-                if edge.edge_type == EdgeType.DELETION:
-                    style = "dotted"
-
-                edge_tip = ""
-                if edge.edge_type == EdgeType.ACL and v.active is True:
-                    content = edge.content_as_dict
-                    red = "00"
-                    green = "00"
-                    blue = "00"
-                    if content.get("is_service"):
-                        red = "FF"
-                    if content.get("is_task"):
-                        blue = "FF"
-                    if content.get("is_iis_pool"):
-                        green = "FF"
-                    if red == "FF" and blue == "FF" and green == "FF":
-                        color = "#808080"
-                    else:
-                        color = f"#{red}{green}{blue}"
-                        style = "bold"
-
-                    tooltip += f"TO {edge.head_uid}\\n"
-                    for k, val in content.items():
-                        tooltip += f" * {k}={val}\\n"
-                    tooltip += f"--------------------\\n\\n"
-
-                label = DAG.EDGE_LABEL.get(edge.edge_type)
-                if label is None:
-                    label = "UNK"
-                if edge.path is not None and edge.path != "":
-                    label += f"\\npath={edge.path}"
-                if show_version:
-                    label += f"\\nv={edge.version}"
-
-                # tail, head (arrow side), label, ...
-                dot.edge(v.uid, edge.head_uid, label, style=style, fontcolor=color, color=color, tooltip=edge_tip)
-
-            shape = "ellipse"
-            fillcolor = "white"
-            color = "black"
-            if not v.active:
-                fillcolor = "grey"
-
-            label = f"uid={v.uid}"
-            dot.node(v.uid, label, color=color, fillcolor=fillcolor, style="filled", shape=shape, tooltip=tooltip)
+                dot.edge(user_vertex.uid, resource_vertex.uid)
+                dot.node(user_vertex.uid)
 
         return dot
 
@@ -381,11 +340,13 @@ class UserService:
         """
 
         self.cleanup_mapping = {}
-        for user_service_machine in self.dag.get_root.has_vertices():
-            if user_service_machine.uid not in self.cleanup_mapping:
-                self.cleanup_mapping[user_service_machine.uid] = {}
-            for user_service_user in user_service_machine.has_vertices():
-                self.cleanup_mapping[user_service_machine.uid][user_service_user.uid] = False
+        for resource_vertex in self.record_linking.dag.get_root.has_vertices():
+            if resource_vertex.uid not in self.cleanup_mapping:
+                self.cleanup_mapping[resource_vertex.uid] = {}
+            for user_vertex in resource_vertex.has_vertices():
+                acl = self.record_linking.get_acl(user_vertex.uid, resource_vertex.uid)
+                if acl is not None and acl.controls_services:
+                    self.cleanup_mapping[resource_vertex.uid][user_vertex.uid] = False
 
     def _user_is_used(self, machine_record_uid: str, user_record_uid: str):
 
@@ -408,9 +369,13 @@ class UserService:
         for machine_record_uid in self.cleanup_mapping:
             for user_record_uid in self.cleanup_mapping[machine_record_uid]:
                 if not self.cleanup_mapping[machine_record_uid][user_record_uid]:
-                    self.debug(f" * disconnect user {user_record_uid} from machine {machine_record_uid}")
-                    did_something = True
-                    self.disconnect_from(machine_record_uid, user_record_uid)
+                    acl = self.record_linking.get_acl(user_record_uid, machine_record_uid)
+                    if acl is not None and acl.controls_services:
+                        self.debug(f"  * set controls_services for user {user_record_uid} "
+                                   f"from machine {machine_record_uid} to false")
+                        did_something = True
+                        acl.controls_services = False
+                        self.record_linking.belongs_to(user_record_uid, machine_record_uid, acl=acl)
         if not did_something:
             self.debug(f"  nothing to cleanup")
 
@@ -457,7 +422,6 @@ class UserService:
         return user_records
 
     def _get_directory_users_from_conf_record(self,
-                                              record_linking: RecordLink,
                                               domain_name: str,
                                               record_lookup_func: Callable,
                                               netbios: Optional[str] = None) -> Dict[str, str]:
@@ -475,7 +439,7 @@ class UserService:
             # If the domain name is not set, or it is, and we match the one that machine is joined to.
             if (config_domain_name is None
                     or (config_domain_name.lower() == domain_name or config_domain_name.lower() == netbios)):
-                config_vertex = record_linking.dag.get_vertex(configuration_record.record_uid)
+                config_vertex = self.record_linking.dag.get_vertex(configuration_record.record_uid)
                 for child_vertex in config_vertex.has_vertices():
                     user_record = record_lookup_func(child_vertex.uid, allow_sm=False)  # type: NormalizedRecord
                     if not user_record:
@@ -535,7 +499,6 @@ class UserService:
         return user_records
 
     def _get_directory_users_from_records(self,
-                                          record_linking: RecordLink,
                                           domain_name: str,
                                           record_lookup_func: Callable) -> Dict[str, str]:
 
@@ -543,7 +506,7 @@ class UserService:
 
         # From the record linking graph, check each record connected to the configuration to see if it is a
         # PAM directory record.
-        for rl_resource_vertex in record_linking.dag.get_root.has_vertices():
+        for rl_resource_vertex in self.record_linking.dag.get_root.has_vertices():
             directory_record = record_lookup_func(rl_resource_vertex.uid, allow_sm=False)  # type: NormalizedRecord
             if directory_record and directory_record.record_type == PAM_DIRECTORY:
                 record_domain_name = directory_record.get_value(label="domainName")
@@ -612,7 +575,6 @@ class UserService:
                    infra: Infrastructure,
                    infra_machine_content: DiscoveryObject,
                    infra_machine_vertex: DAGVertex,
-                   record_linking: RecordLink,
                    record_lookup_func: Callable,
                    netbios: Optional[str] = None,
                    domain_name: Optional[str] = None) -> Dict[str, str]:
@@ -625,7 +587,7 @@ class UserService:
         It will first check the records linking graph. Then check the infrastructure graph.
         """
 
-        self.debug(f"  getting users for {infra_machine_content.name}, {infra_machine_content.record_uid}")
+        self.debug(f"    getting users for {infra_machine_content.name}, {infra_machine_content.record_uid}")
 
         if netbios is not None:
             netbios = netbios.lower()
@@ -646,41 +608,39 @@ class UserService:
             # Cache them so we don't have to get them again.
             if self.directory_user_cache is not None:
                 directory_user_records = self.directory_user_cache.get(domain_name)
-                self.debug(f"  using directory user cache for {domain_name}, "
+                self.debug(f"    using directory user cache for {domain_name}, "
                            f"{len(directory_user_records)} users")
                 using_directory_user_cache = True
 
         ###########################
 
         # Find the users using the record linking graph.
-        self.debug(f"   getting users from record linking", level=1)
-        record_link_vertex = record_linking.dag.get_vertex(infra_machine_content.record_uid)
+        self.debug(f"      getting users from record linking", level=1)
+        record_link_vertex = self.record_linking.dag.get_vertex(infra_machine_content.record_uid)
         if record_link_vertex is None:
             self.debug("    record uid {machine_record_uid} does not exist in the Vault.", level=1)
         else:
 
             # Get the local users from records
-            self.debug("    getting local users from records", level=1)
+            self.debug("        getting local users from records", level=1)
             user_records = self._get_local_users_from_record(rl_machine_vertex=record_link_vertex,
                                                              record_lookup_func=record_lookup_func)
-            self.debug(f"      * found {len(user_records)} local users from records", level=1)
+            self.debug(f"         * found {len(user_records)} local users from records", level=1)
             local_user_records = {**local_user_records, **user_records}
 
             if not using_directory_user_cache and domain_name is not None:
 
                 self.debug("    getting directory users from the configuration record", level=1)
-                user_records = self._get_directory_users_from_conf_record(record_linking=record_linking,
-                                                                          domain_name=domain_name,
+                user_records = self._get_directory_users_from_conf_record(domain_name=domain_name,
                                                                           netbios=netbios,
                                                                           record_lookup_func=record_lookup_func)
 
-                self.debug(f"      * found {len(user_records)} directory users records from "
+                self.debug(f"          * found {len(user_records)} directory users records from "
                            "the configuration record", level=1)
                 directory_user_records = {**directory_user_records, **user_records}
 
-                self.debug("    getting directory users from directory records", level=1)
-                user_records = self._get_directory_users_from_records(record_linking=record_linking,
-                                                                      domain_name=domain_name,
+                self.debug("      getting directory users from directory records", level=1)
+                user_records = self._get_directory_users_from_records(domain_name=domain_name,
                                                                       record_lookup_func=record_lookup_func)
                 self.debug(f"      * found {len(user_records)} directory users from records for {domain_name}",
                            level=1)
@@ -691,30 +651,30 @@ class UserService:
 
         # Find the users via infrastructure graph
 
-        self.debug(f"  getting users from infrastructure", level=1)
-        self.debug("    getting local users from infrastructure", level=1)
+        self.debug(f"    getting users from infrastructure", level=1)
+        self.debug("       getting local users from infrastructure", level=1)
         user_records = self._get_local_users_from_infra(infra_machine_vertex=infra_machine_vertex,
                                                         record_lookup_func=record_lookup_func)
-        self.debug(f"      * found {len(user_records)} local users from graph", level=1)
+        self.debug(f"         * found {len(user_records)} local users from graph", level=1)
         local_user_records = {**user_records, **local_user_records}
 
         if not using_directory_user_cache and domain_name is not None:
 
-            self.debug("    getting directory users from configuration infrastructure", level=1)
+            self.debug("      getting directory users from configuration infrastructure", level=1)
             user_records = self._get_directory_users_from_conf_infra(infra=infra,
                                                                      domain_name=domain_name,
                                                                      record_lookup_func=record_lookup_func)
-            self.debug(f"      * found {len(user_records)} directory users from configuration for {domain_name}",
+            self.debug(f"        * found {len(user_records)} directory users from configuration for {domain_name}",
                        level=1)
             directory_user_records = {**user_records, **directory_user_records}
 
             # -------------
 
-            self.debug("    getting directory users from directory infrastructure", level=1)
+            self.debug("      getting directory users from directory infrastructure", level=1)
             user_records = self._get_directory_users_from_infra(infra_machine_vertex=infra_machine_vertex,
                                                                 domain_name=domain_name,
                                                                 record_lookup_func=record_lookup_func)
-            self.debug(f"      * found {len(user_records)} directory users from graph for {domain_name}", level=1)
+            self.debug(f"        * found {len(user_records)} directory users from graph for {domain_name}", level=1)
             directory_user_records = {**user_records, **directory_user_records}
 
         # If we were not using the directory cache, cache them.
@@ -725,7 +685,7 @@ class UserService:
 
         all_record = {**directory_user_records, **local_user_records}
 
-        self.debug(f"  total union of users count {len(all_record.keys())}")
+        self.debug(f"    total union of users count {len(all_record.keys())}")
 
         return all_record
 
@@ -733,7 +693,6 @@ class UserService:
                                    infra: Infrastructure,
                                    infra_machine_content: DiscoveryObject,
                                    infra_machine_vertex: DAGVertex,
-                                   record_linking: RecordLink,
                                    record_lookup_func: Callable,
                                    strict: bool = False,
                                    domain_name: Optional[str] = None,
@@ -763,10 +722,12 @@ class UserService:
                        f"({infra_machine_vertex.uid})")
 
             # We don't care about the name of the service, we just need a list users.
+
             service_users = []
             for service_user in getattr(infra_machine_content.item.facts, f"{service_type}s"):
                 self.debug(f"  * {service_type}: {service_user.name} ({service_user.user})", secret=True)
                 user = service_user.user.lower()
+
                 if not strict:
                     user, domain = split_user_and_domain(user)
                     if user is not None:
@@ -781,45 +742,43 @@ class UserService:
                 else:
                     service_users.append(user)
 
-            service_users = list(set(service_users))
+                service_users = list(set(service_users))
 
-            if len(service_users) == 0:
-                self.debug(f"  no users control {service_type}s, skipping.")
-                continue
+                if len(service_users) == 0:
+                    self.debug(f"    no users control {service_type}s, skipping.")
+                    continue
 
             users = self._get_users(infra=infra,
                                     infra_machine_content=infra_machine_content,
                                     infra_machine_vertex=infra_machine_vertex,
-                                    record_linking=record_linking,
                                     record_lookup_func=record_lookup_func,
                                     netbios=netbios,
                                     domain_name=domain_name)
 
             if self.log_finer_level >= 2 and self.insecure_debug:
                 for k, v in users.items():
-                    self.debug(f"> {k} = {v}")
+                    self.debug(f"      > {k} = {v}")
 
-            self.debug(f"users to check: {service_users}", secret=True)
+            self.debug(f"    users to check: {service_users}", secret=True)
             for service_user in service_users:
-                self.debug(f"  * {service_user}", secret=True)
+                self.debug(f"    . {service_user}", secret=True)
                 if service_user in users:
                     record_uid = users[service_user]
-                    self.debug(f"    found user {service_user} for {service_type}", secret=True)
+                    self.debug(f"      found user {service_user} for {service_type}", secret=True)
                     acl = self.get_acl(infra_machine_content.record_uid, record_uid)
                     if acl is None:
-                        acl = ServiceAcl()
-                    acl_attr = "is_" + service_type
+                        acl = UserAcl().default()
 
                     # Flag the user was found; don't disconnect
                     self._user_is_used(machine_record_uid=infra_machine_content.record_uid,
                                        user_record_uid=record_uid)
 
                     # Only update if the attribute is currently False; reduce edges.
-                    if getattr(acl, acl_attr) is False:
-                        setattr(acl, acl_attr, True)
-                        self.belongs_to(resource_uid=infra_machine_content.record_uid,
-                                        user_uid=record_uid,
-                                        acl=acl)
+                    if not acl.controls_services:
+                        acl.controls_services = True
+                        self.set_acl(resource_uid=infra_machine_content.record_uid,
+                                     user_uid=record_uid,
+                                     acl=acl)
 
     def _get_resource_info(self,
                            record_uid: str,
@@ -873,7 +832,6 @@ class UserService:
     def run_full(self,
                  record_lookup_func: Callable,
                  infra: Optional[Infrastructure] = None,
-                 record_linking: Optional[RecordLink] = None,
                  domain_name: Optional[str] = None,
                  netbios: Optional[str] = None,
                  **kwargs):
@@ -883,7 +841,6 @@ class UserService:
         This is driven by the record linking graph.
 
         :param infra: Instance of Infrastructure graph.
-        :param record_linking: Instance of the Record Linking graph.
         :param record_lookup_func: A function that will return a record by record id. Returns a normalize record.
         :param domain_name: Domain name if there is a directory (i.e. example.com)
         :param netbios: NetBIOS of the domain controller (i.e. EXMAPLE)
@@ -897,7 +854,6 @@ class UserService:
         # Load fresh
 
         created_infra = False
-        created_record_linking = False
 
         try:
 
@@ -909,12 +865,8 @@ class UserService:
                 infra.load(sync_point=0)
                 created_infra = True
 
-            if not record_linking:
-                record_linking = RecordLink(record=self.record, logger=self.logger, ksm=self._ksm, params=self._params)
-                created_record_linking = True
-
             # The PAM Configuration record is the root vertex of the PAM/record linking graph.
-            rl_configuration_vertex = record_linking.dag.get_root
+            rl_configuration_vertex = self.record_linking.dag.get_root
 
             # At this level the vertex will either be a resource or a cloud user.
             for rl_resource_vertex in rl_configuration_vertex.has_vertices():
@@ -959,16 +911,17 @@ class UserService:
                     self.debug("  machine has no user controlled services, skipping")
                     continue
 
-                user_service_machine_vertex = self.dag.get_vertex(infra_machine_content.record_uid)
+                user_service_machine_vertex = self.record_linking.dag.get_vertex(infra_machine_content.record_uid)
 
                 # If the resource does not exist in the user service graph, add a vertex and link it to the
                 #  user service root/configuration vertex.
                 if user_service_machine_vertex is None:
-                    user_service_machine_vertex = self.dag.add_vertex(uid=infra_machine_content.record_uid,
-                                                                      name=infra_machine_content.name)
+                    user_service_machine_vertex = self.record_linking.dag.add_vertex(
+                        uid=infra_machine_content.record_uid,
+                        name=infra_machine_content.name)
 
                 # If the UserService resource vertex is not connect to root, connect it.
-                if not self.dag.get_root.has(user_service_machine_vertex):
+                if not self.record_linking.dag.get_root.has(user_service_machine_vertex):
                     user_service_machine_vertex.belongs_to_root(EdgeType.LINK)
 
                 self.debug("-" * 40)
@@ -976,7 +929,6 @@ class UserService:
                     infra=infra,
                     infra_machine_content=infra_machine_content,
                     infra_machine_vertex=infra_machine_vertex,
-                    record_linking=record_linking,
                     record_lookup_func=record_lookup_func,
                     domain_name=domain_name,
                     netbios=netbios)
@@ -985,6 +937,7 @@ class UserService:
             # Disconnect any users not used.
             # TODO - Handle this better.
             #        If a machine is off, or we cannot connect, we might disconnect users.
+            #        We can uses the infrastructure graph to see this.
             #        This needs more testing.
             # self._cleanup_users()
 
@@ -997,5 +950,3 @@ class UserService:
         finally:
             if created_infra:
                 infra.close()
-            if created_record_linking:
-                record_linking.close()
