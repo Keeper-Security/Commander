@@ -5,12 +5,12 @@ from ...display import bcolors
 from ... import vault, vault_extensions
 from ...discovery_common.infrastructure import Infrastructure
 from ...discovery_common.record_link import RecordLink
-from ...discovery_common.user_service import UserService
 from ...discovery_common.types import UserAcl, DiscoveryObject
 from ...discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
 from ...keeper_dag import EdgeType
 import time
 import re
+import json
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -65,7 +65,7 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
 
             for configuration_record in configuration_records:
 
-                record_link = RecordLink(record=configuration_record, params=params)
+                record_link = RecordLink(record=configuration_record, params=params, use_per_graph_endpoints=False)
                 record_vertex = record_link.dag.get_vertex(record.record_uid)
                 if record_vertex is not None and record_vertex.active is True:
                     controller_uid = configuration_record.record_uid
@@ -95,10 +95,9 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
             print(f"{bcolors.FAIL}Could not find the gateway for configuration record.{controller_uid}{bcolors.ENDC}")
             return
 
-        infra = Infrastructure(record=configuration_record, params=params)
+        infra = Infrastructure(record=configuration_record, params=params, use_per_graph_endpoints=False)
         infra.load()
-        record_link = RecordLink(record=configuration_record, params=params)
-        user_service = UserService(record=configuration_record, params=params)
+        record_link = RecordLink(record=configuration_record, params=params, use_per_graph_endpoints=False)
 
         print("")
         print(self._h("Record Information"))
@@ -161,6 +160,11 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
 
         if record_vertex is not None:
             print(self._h("Record Linking"))
+
+            print(self._b("  Record Data (meta)"))
+            print(f"  Raw JSON: {json.dumps(record_vertex.content_as_dict)}")
+            print("")
+
             record_parent_vertices = record_vertex.belongs_to_vertices()
             print(self._b("  Parent Records"))
             if len(record_parent_vertices) > 0:
@@ -178,17 +182,13 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
                         acl_content = acl_edge.content_as_object(UserAcl)  # type: UserAcl
                         print(f"    * ACL to {self._n(parent_record.record_type)}; {parent_record.title}; "
                               f"{record_parent_vertex.uid}")
+                        print(f"      . Raw JSON: {json.dumps(acl_edge.content_as_dict)}")
                         if acl_content.is_admin:
                             print(f"      . Is {self._gr('Admin')}")
                         if acl_content.belongs_to:
                             print(f"      . Belongs")
                         else:
                             print(f"      . Is {self._bl('Remote user')}")
-
-                        if acl_content.is_iam_user:
-                            print(f"      . Is an IAM User (user belonging to configuration)")
-                        else:
-                            print(f"      . Is NOT an IAM User (user belonging to configuration)")
 
                         if acl_content.rotation_settings is None:
                             print(f"{bcolors.FAIL}      . There are no rotation settings!{bcolors.ENDC}")
@@ -279,124 +279,90 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
         if record.record_type == PAM_USER or record.record_type == PAM_MACHINE:
 
             # Get the user to service/task vertex.
-            user_service_vertex = user_service.dag.get_vertex(record_uid)
+            record_vertex = record_link.dag.get_vertex(record_uid)
 
-            if user_service_vertex is not None:
+            if record_vertex is not None:
 
                 # If the record is a PAM User
                 if record.record_type == PAM_USER:
 
-                    user_results = {
-                        "is_task": [],
-                        "is_service": []
-                    }
+                    machines = []
 
                     # Get a list of all the resources the user is the username/password on service/task.
-                    for us_machine_vertex in user_service.get_resource_vertices(record_uid):
+                    for machine_vertex in record_vertex.belongs_to_vertices():
 
-                        # Get the resource record
-                        us_machine_record = (
-                            vault.KeeperRecord.load(params, us_machine_vertex.uid))  # type: Optional[TypedRecord]
+                        acl = record_link.get_acl(machine_vertex.uid, record_vertex.uid)
+                        if (acl is not None
+                                and acl.rotation_settings is not None
+                                and acl.controls_services):
 
-                        acl = user_service.get_acl(us_machine_vertex.uid, user_service_vertex.uid)
-                        for attr in ["is_task", "is_service"]:
-                            value = getattr(acl, attr)
-                            if value is True:
+                            # Get the resource record
+                            machine_record = vault.KeeperRecord.load(params,
+                                                                     machine_vertex.uid)  # type: Optional[TypedRecord]
 
-                                # If the resource record does not exist.
-                                if us_machine_record is None:
+                            # If the resource record does not exist.
+                            if machine_record is None:
 
-                                    # Default the title to Unknown (in red).
-                                    # See if we have an infrastructure vertex with this record UID.
-                                    # If we do have it, use the title inside the first vertex's data content.
-                                    title = self._f("Unknown")
-                                    infra_resource_vertices = infra.dag.search_content(
-                                        {"record_uid": us_machine_vertex.uid})
-                                    if len(infra_resource_vertices) > 0:
-                                        infra_resource_vertex = infra_resource_vertices[0]
-                                        if infra_resource_vertex.has_data is True:
-                                            content = DiscoveryObject.get_discovery_object(infra_resource_vertex)
-                                            title = content.title
+                                # Default the title to Unknown (in red).
+                                # See if we have an infrastructure vertex with this record UID.
+                                # If we do have it, use the title inside the first vertex's data content.
+                                title = self._f("Unknown")
+                                infra_resource_vertices = infra.dag.search_content(
+                                    {"record_uid": machine_vertex.uid})
+                                if len(infra_resource_vertices) > 0:
+                                    infra_resource_vertex = infra_resource_vertices[0]
+                                    if infra_resource_vertex.has_data is True:
+                                        content = DiscoveryObject.get_discovery_object(infra_resource_vertex)
+                                        title = content.title
 
-                                    user_results[attr].append(f"  * Record {us_machine_vertex.uid}, "
-                                                              f"{title} does not exists.")
+                                machines.append(f"  * Record {machine_vertex.uid}, {title} does not exists.")
 
-                                # Record exists; just use information from the record.
-                                else:
-                                    user_results[attr].append(f"  * {us_machine_record.title}, "
-                                                              f"{us_machine_vertex.uid}")
+                            # Record exists; just use information from the record.
+                            else:
+                                machines.append(f"  * {machine_record.title}, {machine_record.record_uid}, "
+                                                f"vertex {machine_vertex.uid}")
 
-                    print(f"{bcolors.HEADER}Service on Machines{bcolors.ENDC}")
-                    if len(user_results["is_service"]) > 0:
-                        for service in user_results["is_service"]:
-                            print(service)
-                    else:
-                        print("  PAM User is not used for any services.")
-                    print("")
-
-                    print(f"{bcolors.HEADER}Scheduled Tasks on Machines{bcolors.ENDC}")
-                    if len(user_results["is_task"]) > 0:
-                        for task in user_results["is_task"]:
-                            print(task)
-                    else:
-                        print("  PAM User is not used for any scheduled tasks.")
-                    print("")
+                    if len(machines) > 0:
+                        print(f"{bcolors.HEADER}Controls Services on Machine{bcolors.ENDC}")
+                        for item in machines:
+                            print(item)
 
                 # If the record is a PAM Machine
-                else:
-                    user_results = {
-                        "is_task": [],
-                        "is_service": []
-                    }
+                elif record.record_type == PAM_MACHINE:
+                    users = []
 
                     # Get the users that are used for tasks/services on this machine.
-                    for us_user_vertex in user_service.get_user_vertices(record_uid):
+                    for user_vertex in record_vertex.has_vertices():
+                        user_record = vault.KeeperRecord.load(params, user_vertex.uid)  # type: Optional[TypedRecord]
+                        acl = record_link.get_acl(record_vertex.uid, user_vertex.uid)
+                        if acl is not None and acl.controls_services:
+                            # If the user record does not exist.
+                            if user_record is None:
 
-                        us_user_record = vault.KeeperRecord.load(params,
-                                                                 us_user_vertex.uid)  # type: Optional[TypedRecord]
-                        acl = user_service.get_acl(user_service_vertex.uid, us_user_vertex.uid)
-                        for attr in ["is_task", "is_service"]:
-                            value = getattr(acl, attr)
-                            if value is True:
+                                # Default the title to Unknown (in red).
+                                # See if we have an infrastructure vertex with this record UID.
+                                # If we do have it, use the title inside the first vertex's data content.
+                                title = self._f("Unknown")
+                                infra_resource_vertices = infra.dag.search_content(
+                                    {"record_uid": user_vertex.uid})
+                                if len(infra_resource_vertices) > 0:
+                                    infra_resource_vertex = infra_resource_vertices[0]
+                                    if infra_resource_vertex.has_data is True:
+                                        content = DiscoveryObject.get_discovery_object(infra_resource_vertex)
+                                        title = content.title
 
-                                # If the user record does not exist.
-                                if us_user_record is None:
+                                users.append(f"  * Record {user_vertex.uid}, {title} does not exists.")
 
-                                    # Default the title to Unknown (in red).
-                                    # See if we have an infrastructure vertex with this record UID.
-                                    # If we do have it, use the title inside the first vertex's data content.
-                                    title = self._f("Unknown")
-                                    infra_resource_vertices = infra.dag.search_content(
-                                        {"record_uid": us_user_vertex.uid})
-                                    if len(infra_resource_vertices) > 0:
-                                        infra_resource_vertex = infra_resource_vertices[0]
-                                        if infra_resource_vertex.has_data is True:
-                                            content = DiscoveryObject.get_discovery_object(infra_resource_vertex)
-                                            title = content.title
+                            # Record exists; just use information from the record.
+                            else:
+                                users.append(f"  * {user_record.title}, {user_record.record_uid}, "
+                                             f"vertex {user_vertex.uid}")
 
-                                    user_results[attr].append(f"  * Record {us_user_vertex.uid}, "
-                                                              f"{title} does not exists.")
+                    if len(users) > 0:
+                        print(f"{bcolors.HEADER}Users that are used for services{bcolors.ENDC}")
+                        for item in users:
+                            print(item)
 
-                                # Record exists; just use information from the record.
-                                else:
-                                    user_results[attr].append(f"  * {us_user_record.title}, "
-                                                              f"{us_user_vertex.uid}")
-
-                    print(f"{bcolors.HEADER}Users that are used for Services{bcolors.ENDC}")
-                    if len(user_results["is_service"]) > 0:
-                        for service in user_results["is_service"]:
-                            print(service)
-                    else:
-                        print("  Machine does not use any non-builtin users for services.")
-                    print("")
-
-                    print(f"{bcolors.HEADER}Users that are used for Scheduled Tasks{bcolors.ENDC}")
-                    if len(user_results["is_task"]) > 0:
-                        for task in user_results["is_task"]:
-                            print(task)
-                    else:
-                        print("  Machine does not use any non-builtin users for scheduled tasks.")
-                    print("")
             else:
                 print(self._f("There are no services or schedule tasks associated with this record."))
                 print("")
