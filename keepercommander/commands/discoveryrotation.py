@@ -83,6 +83,8 @@ from .workflow import PAMWorkflowCommand
 from .pam_service.list import PAMActionServiceListCommand
 from .pam_service.add import PAMActionServiceAddCommand
 from .pam_service.remove import PAMActionServiceRemoveCommand
+from .pam_service.enable import PAMActionServiceEnableCommand
+from .pam_service.disable import PAMActionServiceDisableCommand
 from .pam_saas.set import PAMActionSaasSetCommand
 from .pam_saas.user import PAMActionSaasUserCommand
 from .pam_saas.remove import PAMActionSaasRemoveCommand
@@ -277,6 +279,10 @@ class PAMActionServiceCommand(GroupCommand):
                               'Add a user and machine to the mapping', 'a')
         self.register_command('remove', PAMActionServiceRemoveCommand(),
                               'Remove a user and machine from the mapping', 'r')
+        self.register_command('enable', PAMActionServiceEnableCommand(),
+                              'Enable service password rotation on a machine or user', 'e')
+        self.register_command('disable', PAMActionServiceDisableCommand(),
+                              'Disable service password rotation on a machine or user', 'd')
         self.default_verb = 'list'
 
 

@@ -15,6 +15,8 @@ from ...discovery_common.jobs import Jobs, JobItem
 from ...discovery_common.dag_sort import sort_infra_vertices
 from ...discovery_common.infrastructure import Infrastructure
 from ...discovery_common.process import Process, QuitException, NoDiscoveryDataException
+from ...discovery_common.record_link import RecordLink
+from ...discovery_common.user_service import UserService
 from ...discovery_common.types import (
     DiscoveryObject, UserAcl, PromptActionEnum, PromptResult, BulkRecordAdd, BulkRecordConvert, BulkProcessResults,
     BulkRecordSuccess, BulkRecordFail, DirectoryInfo, NormalizedRecord, RecordField)
@@ -99,7 +101,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 record_type == "pamAzureConfiguration")
 
     @staticmethod
-    def _get_shared_folder(params: KeeperParams, pad: str, gateway_context: GatewayContext) -> str:
+    def _get_shared_folder(params: KeeperParams, pad: str, gateway_context: GatewayContext) -> Optional[str]:
         while True:
             shared_folders = gateway_context.get_shared_folders(params)
             index = 0
@@ -113,7 +115,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                 print(f"{pad}{_f('Input was not a number.')}")
 
     @staticmethod
-    def get_field_values(record: TypedRecord, field_type: str) -> List[Any]:
+    def get_field_values(record: TypedRecord, field_type: str) -> Optional[List[Any]]:
         return next(
             (f.value
              for f in record.fields
@@ -147,7 +149,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
 
         elif key_field == "host":
             values = self.get_field_values(record, "pamHostname")
-            if len(values) == 0:
+            if values is None or len(values) == 0:
                 return []
 
             host = values[0].get("hostName")
@@ -171,7 +173,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     return []
 
                 values = self.get_field_values(record, "login")
-                if len(values) == 0:
+                if values is None or len(values) == 0:
                     return []
 
                 keys.append(f"{resource_uid}:{values[0]}".lower())
@@ -179,7 +181,9 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         return keys
 
     @staticmethod
-    def _record_lookup(record_uid: str,  context: Optional[Any] = None) -> Optional[NormalizedRecord]:
+    def _record_lookup(record_uid: str,
+                       context: Optional[Any] = None,
+                       allow_sm: bool = False) -> Optional[NormalizedRecord]:
 
         """
         Get the record from the Vault, normalize it, and return it.
@@ -286,7 +290,7 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                     new_values = map(str.strip, new_value.split(','))
                     new_value = "\n".join(new_values)
                 elif type_hint == "multiline":
-                    print(_b(f"{pad}Enter multiline of text or a path, on the first line, "
+                    print(_b(f"{pad}Enter multiple of text or a path, on the first line, "
                              "to a file that contains the value."))
                     print(_b(f"{pad}To end, type 'END' at the start of a new line. You can paste text."))
                     new_value = ""
@@ -449,8 +453,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
     def _prompt(self,
                 content: DiscoveryObject,
                 acl: UserAcl,
+                parent_vertex: DAGVertex,
                 vertex: Optional[DAGVertex] = None,
-                parent_vertex: Optional[DAGVertex] = None,
                 resource_has_admin: bool = True,
                 item_count: int = 0,
                 items_left: int = 0,
@@ -820,6 +824,10 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         login_field = next((x for x in record.fields if x.type == "login"), None)
         password_field = next((x for x in record.fields if x.type == "password"), None)
         private_key_field = next((x for x in record.fields if x.type == "keyPair"), None)
+
+        if login_field is None:
+            logging.error("Record is missing the login field.")
+            return None
 
         content.set_field_value("login", login_field.value)
         if password_field is not None:
@@ -1251,6 +1259,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         for bulk_convert_record in bulk_convert_records:
 
             record = vault.KeeperRecord.load(params, bulk_convert_record.record_uid)
+            if record is None:
+                continue
 
             rotation_disabled = False
 
@@ -1349,6 +1359,8 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
         }
 
         sync_point = job_item.sync_point
+        if sync_point is None:
+            sync_point = 0
         infra = Infrastructure(record=gateway_context.configuration,
                                params=params,
                                logger=logging,
@@ -1356,12 +1368,17 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                                use_per_graph_endpoints=True)
         infra.load(sync_point)
 
-        configuration = None
         try:
             configuration = infra.get_root.has_vertices()[0]
         except (Exception,):
             print(f"{bcolors.FAIL}Could not find the configuration in the infrastructure graph. "
                   f"Has discovery been run for this gateway?{bcolors.ENDC}")
+            return
+
+        if configuration is None:
+            print(f"{bcolors.FAIL}Could not find the configuration in the infrastructure graph. "
+                  f"Has discovery been run for this gateway?{bcolors.ENDC}")
+            return
 
         record_type_to_vertices_map = sort_infra_vertices(configuration)
 
@@ -1482,6 +1499,31 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
             print(f"  {_w('No items will be prompted.')}")
 
         print("")
+
+    # TODO - `context` is not being passed; run_full might need to change to work with Commander.
+    def map_users_to_services(self,
+                              params: KeeperParams,
+                              configuration_record: TypedRecord,
+                              debug_level: int = 0):
+
+        record_link = RecordLink(record=configuration_record,
+                                 params=params,
+                                 logger=logging,
+                                 debug_level=debug_level)
+        user_service = UserService(record_linking=record_link,
+                                   record=configuration_record,
+                                   params=params,
+                                   logger=logging,
+                                   debug_level=debug_level)
+
+        infra = Infrastructure(record=configuration_record,
+                               params=params,
+                               logger=logging,
+                               debug_level=debug_level)
+        infra.load(0)
+
+        user_service.run_full(record_lookup_func=self._record_lookup,
+                              infra=infra)
 
     def execute(self, params: KeeperParams, **kwargs):
 
@@ -1609,6 +1651,16 @@ class PAMGatewayActionDiscoverResultProcessCommand(PAMGatewayActionDiscoverComma
                         self.remove_job(params=params, configuration_record=configuration_record, job_id=job_id)
                 else:
                     print(f"{bcolors.FAIL}No records have been added.{bcolors.ENDC}")
+
+                # New users may have been added.
+                # Map the users to Windows services.
+                # try:
+                #     self.map_users_to_services(params=params,
+                #                                configuration_record=configuration_record,
+                #                                debug_level=debug_level)
+                # except Exception as err:
+                #     logging.error(err)
+                #     print(f"{bcolors.FAIL}Could not map users to services.{bcolors.ENDC}")
 
             except NoDiscoveryDataException:
                 print(f"{bcolors.OKGREEN}All items have been added for this discovery job.{bcolors.ENDC}")

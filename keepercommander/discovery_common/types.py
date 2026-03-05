@@ -317,6 +317,9 @@ class UserAclRotationSettings(BaseModel):
     # A list of SaaS Record configuration records.
     saas_record_uid_list: List[str] = []
 
+    # Do we need to rotate service passwords on this machine when this password is rotated?
+    controls_services: bool = False
+
     def set_pwd_complexity(self, complexity: Union[dict, str, bytes], record_key_bytes: bytes):
         if isinstance(complexity, dict):
             complexity = json.dumps(complexity)
@@ -375,6 +378,32 @@ class UserAcl(BaseModel):
         return UserAcl(
             rotation_settings=UserAclRotationSettings()
         )
+
+
+# -------------
+
+class UserData(BaseModel):
+
+    # If True, user password change does not change service passwords.
+    no_update_services: bool = False
+
+# -------------
+
+
+class MachineDataAllowSettings(BaseModel):
+    connections: bool = False
+    portForwards: bool = False
+    rotation: bool = False
+    sessionRecording: bool = False
+    typescriptRecording: bool = False
+
+
+class MachineData(BaseModel):
+
+    allowedSettings: MachineDataAllowSettings = MachineDataAllowSettings()
+    no_update_services: bool = False
+
+# -------------
 
 
 class DiscoveryItem(BaseModel):
@@ -842,6 +871,8 @@ class BulkProcessResults(BaseModel):
 
 # Service/Schedule Task/IIS Pool
 
+
+# This is still used to migrate; do not remove
 class ServiceAcl(BaseModel):
     is_service: bool = False
     is_task: bool = False
