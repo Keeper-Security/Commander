@@ -36,7 +36,7 @@ def create_record_data_v3(record_uid, record_key, data,
     if folder_uid and folder_key:
         ra.recordKey = crypto.encrypt_aes_v2(record_key, folder_key)
         ra.folderUid = utils.base64_url_decode(folder_uid)
-        ra.folderKey = crypto.encrypt_aes_v2(record_key, folder_key)
+        ra.recordKeyEncryptedBy = folder_pb2.ENCRYPTED_BY_PARENT_KEY
     elif folder_uid and not folder_key:
         raise ValueError("folder_key required when folder_uid is provided")
     else:

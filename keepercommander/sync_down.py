@@ -1112,6 +1112,8 @@ def prepare_folder_tree(params):    # type: (KeeperParams) -> None
         if parent_folder:
             parent_folder.subfolders.append(f.uid)
         elif f.parent_uid and hasattr(params, 'keeper_drive_folders') and f.uid in params.keeper_drive_folders:
-            # (e.g., KD root-level folders with a special KD root UID) should be
-            # connected to the vault root so they are navigable.
+            # KD root-level folders have a parent UID pointing to the KD vault root,
+            # which is not a real vault folder. Clear parent_uid so that navigation
+            # and ls treat them as direct children of the vault root.
+            f.parent_uid = None
             params.root_folder.subfolders.append(f.uid)

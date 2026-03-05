@@ -300,7 +300,7 @@ class KeeperDriveListCommand(Command):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-share-folder   (Strategy pattern — grant / update / remove)
+# kd-share-folder   (Strategy pattern — grant / remove)
 # ══════════════════════════════════════════════════════════════════════════
 
 class KeeperDriveShareFolderCommand(Command):
@@ -312,7 +312,6 @@ class KeeperDriveShareFolderCommand(Command):
     # Strategy dispatch table: action → (api_function, success_verb)
     _ACTIONS = {
         'grant':  ('grant_folder_access_v3',  'added'),
-        'update': ('update_folder_access_v3', 'updated'),
         'remove': ('revoke_folder_access_v3', 'removed'),
     }
 

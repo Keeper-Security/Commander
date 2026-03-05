@@ -43,6 +43,7 @@ def create_accumulator():
         'folder_keys': [],
         'folder_accesses': [],
         'revoked_folder_accesses': [],
+        'denied_folder_accesses': [],
         'record_data': [],
         'record_keys': [],
         'record_accesses': [],
@@ -86,6 +87,9 @@ def collect_from_response(acc, response, resp_bw_recs, resp_sec_data_recs, resp_
         acc['folder_accesses'].extend(kd_data.folderAccesses)
     if len(kd_data.revokedFolderAccesses) > 0:
         acc['revoked_folder_accesses'].extend(kd_data.revokedFolderAccesses)
+    dfa_attr = getattr(kd_data, 'deniedFolderAccesses', None)
+    if dfa_attr:
+        acc['denied_folder_accesses'].extend(dfa_attr)
     if len(kd_data.recordData) > 0:
         acc['record_data'].extend(kd_data.recordData)
     # recordKeys does not exist as a top-level field in KeeperDriveData;
@@ -155,6 +159,7 @@ def process(params, acc):
         acc['folder_keys'],
         acc['folder_accesses'],
         acc['revoked_folder_accesses'],
+        acc['denied_folder_accesses'],
         acc['records'],
         acc['record_data'],
         acc['record_keys'],
@@ -171,6 +176,7 @@ def process(params, acc):
 
 
 def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, revoked_folder_accesses,
+                                denied_folder_accesses,
                                 records, record_data_list, record_keys, record_accesses, revoked_record_accesses,
                                 folder_records, removed_folder_records, users,
                                 record_sharing_states, record_links, removed_record_links, raw_dag_data):
@@ -180,6 +186,7 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
     record_links = record_links or []
     removed_record_links = removed_record_links or []
     raw_dag_data = raw_dag_data or []
+    denied_folder_accesses = denied_folder_accesses or []
 
     # Store users in user_cache
     for user in users:
@@ -276,6 +283,25 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
                 fa for fa in params.keeper_drive_folder_accesses[folder_uid]
                 if fa['access_type_uid'] != actor_uid
             ]
+
+    # Process denied folder accesses — remove both the access entry and the cached folder key
+    # so the folder is treated as inaccessible for this actor.
+    for dfa in denied_folder_accesses:
+        try:
+            folder_uid = utils.base64_url_encode(dfa.folderUid)
+            actor_uid = utils.base64_url_encode(dfa.actorUid)
+            if folder_uid in params.keeper_drive_folder_accesses:
+                params.keeper_drive_folder_accesses[folder_uid] = [
+                    fa for fa in params.keeper_drive_folder_accesses[folder_uid]
+                    if fa['access_type_uid'] != actor_uid
+                ]
+            if folder_uid in params.keeper_drive_folders:
+                folder_obj = params.keeper_drive_folders[folder_uid]
+                folder_obj.pop('folder_key_unencrypted', None)
+                folder_obj['denied'] = True
+                logging.debug('Folder %s access denied for actor %s', folder_uid, actor_uid)
+        except Exception as e:
+            logging.debug('Failed to process denied folder access: %s', e)
 
     # Process records (DriveRecord metadata)
     for record in records:
@@ -439,6 +465,9 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
                 'folder_uid': folder_uid,
                 'record_key': fr.recordMetadata.encryptedRecordKey,
                 'encrypted_key_type': fr.recordMetadata.encryptedRecordKeyType,
+                # ENCRYPTED_BY_USER_KEY (0) → record key encrypted with user data_key
+                # ENCRYPTED_BY_PARENT_KEY (1) → record key encrypted with the folder key
+                'folder_key_encryption_type': int(fr.folderKeyEncryptionType),
             }
             if fr.recordMetadata.HasField('tlaProperties'):
                 rk_obj['tla_properties'] = google.protobuf.json_format.MessageToDict(
@@ -468,6 +497,40 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
     _reconstruct_keeper_drive_entities(params)
 
 
+def _try_decrypt_symmetric(enc_key, sym_key):
+    """Try AES-256-GCM then AES-256-CBC with *sym_key*. Returns plaintext or None."""
+    for fn in (crypto.decrypt_aes_v2, crypto.decrypt_aes_v1):
+        try:
+            result = fn(enc_key, sym_key)
+            if result:
+                return result
+        except Exception:
+            pass
+    return None
+
+
+def _try_decrypt_with_user_keys(enc_key, params):
+    """Try every available user key (symmetric then asymmetric). Returns plaintext or None."""
+    result = _try_decrypt_symmetric(enc_key, params.data_key)
+    if result:
+        return result
+    if params.rsa_key2:
+        try:
+            result = crypto.decrypt_rsa(enc_key, params.rsa_key2)
+            if result:
+                return result
+        except Exception:
+            pass
+    if params.ecc_key:
+        try:
+            result = crypto.decrypt_ec(enc_key, params.ecc_key)
+            if result:
+                return result
+        except Exception:
+            pass
+    return None
+
+
 def _decrypt_keeper_drive_keys(params):
     """Decrypt Keeper Drive folder and record keys."""
     newly_decrypted = True
@@ -483,23 +546,31 @@ def _decrypt_keeper_drive_keys(params):
 
             if folder_uid in params.keeper_drive_folder_keys:
                 for fk in params.keeper_drive_folder_keys[folder_uid]:
+                    enc_key = fk['encrypted_key']
                     try:
                         if fk['key_type'] == folder_pb2.ENCRYPTED_BY_USER_KEY:
-                            
-                            folder_key = crypto.decrypt_aes_v2(fk['encrypted_key'], params.data_key)
-                            break
+                            # FolderKeyEncryptionType only tells us the KEY SOURCE (user vs parent),
+                            # not the encryption algorithm.  Try all algorithms in likelihood order:
+                            #   AES-256-GCM (60 B) — modern default
+                            #   AES-256-CBC (48 B) — legacy
+                            #   RSA-2048    (256 B) — shared folder re-encrypted for this user
+                            #   ECC                — EC-based key wrap
+                            folder_key = _try_decrypt_with_user_keys(enc_key, params)
+                            if folder_key:
+                                break
                         elif fk['key_type'] == folder_pb2.ENCRYPTED_BY_PARENT_KEY:
                             parent_uid = folder_obj.get('parent_uid')
                             if parent_uid and parent_uid in params.keeper_drive_folders:
                                 parent_folder = params.keeper_drive_folders[parent_uid]
                                 if 'folder_key_unencrypted' in parent_folder:
                                     parent_key = parent_folder['folder_key_unencrypted']
-                                    folder_key = crypto.decrypt_aes_v2(fk['encrypted_key'], parent_key)
-                                    break
+                                    folder_key = _try_decrypt_symmetric(enc_key, parent_key)
+                                    if folder_key:
+                                        break
                     except Exception as e:
                         logging.debug(f"Failed to decrypt folder key for {folder_uid}: {e}")
 
-            # Fallback: try from folder access data
+            # Fallback: try from folder access data (EncryptedDataKey — has explicit algorithm)
             if not folder_key and folder_uid in params.keeper_drive_folder_accesses:
                 for fa in params.keeper_drive_folder_accesses[folder_uid]:
                     if 'folder_key' not in fa:
@@ -511,15 +582,19 @@ def _decrypt_keeper_drive_keys(params):
 
                         if key_type == folder_pb2.encrypted_by_data_key_gcm:
                             folder_key = crypto.decrypt_aes_v2(encrypted_key, params.data_key)
-                            break
                         elif key_type == folder_pb2.encrypted_by_data_key:
                             folder_key = crypto.decrypt_aes_v1(encrypted_key, params.data_key)
-                            break
                         elif key_type == folder_pb2.encrypted_by_public_key:
-                            folder_key = crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
-                            break
+                            if params.rsa_key2:
+                                folder_key = crypto.decrypt_rsa(encrypted_key, params.rsa_key2)
                         elif key_type == folder_pb2.encrypted_by_public_key_ecc:
-                            folder_key = crypto.decrypt_ec(encrypted_key, params.ecc_key)
+                            if params.ecc_key:
+                                folder_key = crypto.decrypt_ec(encrypted_key, params.ecc_key)
+                        else:
+                            # Unknown type — try all user keys as a last resort
+                            folder_key = _try_decrypt_with_user_keys(encrypted_key, params)
+
+                        if folder_key:
                             break
                     except Exception as e:
                         logging.debug(f"Failed to decrypt folder key for {folder_uid} from access data: {e}")
@@ -579,15 +654,28 @@ def _try_decrypt_record_key(rk, params):
                 except Exception:
                     pass
 
-    # Build ordered list of keys to try
-    keys_to_try = []
-
+    # Build ordered list of keys to try.
+    # Use folderKeyEncryptionType when available to prefer the correct key source:
+    #   ENCRYPTED_BY_USER_KEY (0) → data_key should come first
+    #   ENCRYPTED_BY_PARENT_KEY (1) → folder key should come first (default / unknown)
+    fket = rk.get('folder_key_encryption_type')
+    folder_key_val = None
     if folder_uid and folder_uid in params.keeper_drive_folders:
         folder_obj = params.keeper_drive_folders[folder_uid]
         if 'folder_key_unencrypted' in folder_obj:
-            keys_to_try.append(('folder', folder_obj['folder_key_unencrypted']))
+            folder_key_val = folder_obj['folder_key_unencrypted']
 
-    keys_to_try.append(('data', params.data_key))
+    keys_to_try = []
+    if fket == int(folder_pb2.ENCRYPTED_BY_USER_KEY):
+        # Record key was encrypted directly with the user's data key
+        keys_to_try.append(('data', params.data_key))
+        if folder_key_val is not None:
+            keys_to_try.append(('folder', folder_key_val))
+    else:
+        # Record key was encrypted with the parent folder key (or unknown — try folder first)
+        if folder_key_val is not None:
+            keys_to_try.append(('folder', folder_key_val))
+        keys_to_try.append(('data', params.data_key))
 
     # 3. Symmetric decryption with candidate keys
     for label, dec_key in keys_to_try:
