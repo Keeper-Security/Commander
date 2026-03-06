@@ -311,7 +311,7 @@ class PedmPlugin(IPedmAdmin):
         collections: List[admin_types.PedmCollection] = []
         for collection_dto in get_collections():
             try:
-                if collection_dto.collection_type in (1000, 1001, 1002):
+                if 1000 <= collection_dto.collection_type < 2000:
                     collection_value = collection_dto.data.decode('utf-8')
                 else:
                     collection_value = crypto.decrypt_aes_v2(collection_dto.data, self.agent_key).decode('utf-8')
