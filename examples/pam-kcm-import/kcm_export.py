@@ -274,7 +274,6 @@ class KCM_export:
                 return False
 
     def generate_data(self):
-        display('By default, this import will keep the Connection Group nesting you have set in KCM, but any Group with a KSM config will be modelled as a root shared folder', 'yellow')
         display('What handling do you want to apply to Connection Groups?','cyan')
         display('(1) Set Groups with KSM Config as Root Shared Folders (recommended)')
         display('''The folder structure will largely follow that of KCM, however any Connection Group with a KSM Service Configuration will be created as a root shared folder:  
@@ -375,7 +374,7 @@ Connection group B1/
                     
                 resource = {
                     'folder_path':folder_path,
-                    'title': f'Resource {name}',
+                    'title': f'KCM Resource - {name}',
                     'type':types.get(connection['protocol'],'pamMachine'),
                     "host": "",
                     "pam_settings": {
