@@ -486,7 +486,7 @@ Connection group B1/
                 # Create resource for SFTP
                 sftp_resource = {
                     'folder_path':resource['folder_path']+'/SFTP Resources',
-                    'title': f'SFTP connection for resource {resource['host']}',
+                    'title': f'SFTP connection for resource {resource["host"]}',
                     'type':'pamMachine',
                     "host": sftp_settings.get("host",""),
                     "port": sftp_settings.get("port",""),
@@ -507,7 +507,7 @@ Connection group B1/
                 # Create User for SFTP
                 sftp_user = {
                     'folder_path':f'KCM Users - {resource["folder_path"][16:]}/SFTP Users',
-                    'title': f'SFTP credentials for resource {resource['host']}',
+                    'title': f'SFTP credentials for resource {resource["host"]}',
                     'type':'pamUsers',
                     'login': sftp_settings.get("login",""),
                     'password': sftp_settings.get("password",""),
@@ -516,8 +516,8 @@ Connection group B1/
                 self.user_records.append(sftp_user)
                 # Set correct SFTP settings
                 resource['pam_settings']['connection']['sftp'].update({
-                    "sftp_resource": f'SFTP connection for resource {resource['host']}',
-                    "sftp_user_credentials": f'SFTP credentials for resource {resource['host']}'
+                    "sftp_resource": f'SFTP connection for resource {resource["host"]}',
+                    "sftp_user_credentials": f'SFTP credentials for resource {resource["host"]}'
                 })
                 
         if self.dynamic_tokens:
