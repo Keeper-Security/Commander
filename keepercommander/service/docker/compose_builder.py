@@ -37,12 +37,13 @@ class DockerComposeBuilder:
     
     def add_integration_service(self, service_name: str, container_name: str,
                                 image: str, record_uid: str,
-                                record_env_key: str) -> 'DockerComposeBuilder':
+                                record_env_key: str,
+                                ports: List[str] = None) -> 'DockerComposeBuilder':
         """Add an integration service to the compose file. Returns self."""
         if self.commander_service_name not in self._services:
             self._services[self.commander_service_name] = self._build_commander_service()
         self._services[service_name] = self._build_integration_service(
-            container_name, image, record_uid, record_env_key
+            container_name, image, record_uid, record_env_key, ports or []
         )
         return self
 
@@ -65,23 +66,26 @@ class DockerComposeBuilder:
         return service
     
     def _build_integration_service(self, container_name: str, image: str,
-                                    record_uid: str,
-                                    record_env_key: str) -> Dict[str, Any]:
-        return {
+                                    record_uid: str, record_env_key: str,
+                                    ports: List[str] = None) -> Dict[str, Any]:
+        service: Dict[str, Any] = {
             'container_name': container_name,
             'image': image,
-            'environment': {
-                'KSM_CONFIG': self.setup_result.b64_config,
-                'COMMANDER_RECORD': self.setup_result.record_uid,
-                record_env_key: record_uid
-            },
-            'depends_on': {
-                self.commander_service_name: {
-                    'condition': 'service_healthy'
-                }
-            },
-            'restart': 'unless-stopped'
         }
+        if ports:
+            service['ports'] = ports
+        service['environment'] = {
+            'KSM_CONFIG': self.setup_result.b64_config,
+            'COMMANDER_RECORD': self.setup_result.record_uid,
+            record_env_key: record_uid
+        }
+        service['depends_on'] = {
+            self.commander_service_name: {
+                'condition': 'service_healthy'
+            }
+        }
+        service['restart'] = 'unless-stopped'
+        return service
     
     def _build_service_command(self) -> None:
         port = self.config['port']
