@@ -16,6 +16,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes
@@ -38,14 +39,24 @@ from ..utils import value_to_boolean
 #  File-based tunnel registry
 #
 #  Each foreground/background/run tunnel writes a JSON metadata file to
-#  ~/.keeper/tunnel-sessions/<pid>.json.  This lets `pam tunnel list` and
-#  `pam tunnel stop` discover tunnels across Commander processes.
+#  <tempdir>/keeper-tunnel-sessions/<pid>.json.  This lets `pam tunnel list`
+#  and `pam tunnel stop` discover tunnels across Commander processes.
+#
+#  The registry lives in the system temp directory rather than ~/.keeper/
+#  so that it survives credential removal/replacement.  Temp directories
+#  are cleared on reboot, which matches tunnel lifecycle (tunnels don't
+#  survive reboots).
 # ---------------------------------------------------------------------------
 
 def _tunnel_registry_dir():
     """Return (and create) the tunnel session registry directory."""
-    base = os.path.join(os.path.expanduser('~'), '.keeper', 'tunnel-sessions')
+    base = os.path.join(tempfile.gettempdir(), 'keeper-tunnel-sessions')
     os.makedirs(base, exist_ok=True)
+    if os.name != 'nt':
+        try:
+            os.chmod(base, 0o700)
+        except OSError:
+            pass
     return base
 
 
