@@ -1,12 +1,10 @@
 from __future__ import annotations
 import argparse
-import logging
-
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext
 from ... import vault
 from . import get_plugins_map
 from ...discovery_common.record_link import RecordLink
-from ...discovery_common.constants import PAM_USER, PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY
+from ...discovery_common.constants import PAM_USER
 from ...discovery_common.types import UserAclRotationSettings
 from typing import Optional, TYPE_CHECKING
 
@@ -22,8 +20,6 @@ class PAMActionSaasSetCommand(PAMGatewayActionDiscoverCommandBase):
                         help='The UID of the User record')
     parser.add_argument('--config-record-uid', '-c', required=True, dest='config_record_uid',
                         action='store', help='The UID of the record that has SaaS configuration')
-    parser.add_argument('--resource-uid', '-r', required=False, dest='resource_uid', action='store',
-                        help='The UID of the Resource record, if needed.')
 
     def get_parser(self):
         return PAMActionSaasSetCommand.parser
@@ -114,26 +110,8 @@ class PAMActionSaasSetCommand(PAMGatewayActionDiscoverCommandBase):
                           f'{", ".join(missing_fields)}'))
             return
 
-        parent_uid = gateway_context.configuration_uid
-
-        # Not sure if SaaS type rotation should be limited to NOOP rotation.
-        # Allow a resource record to be used.
-        if resource_uid is not None:
-            # Check to see if the record exists.
-            resource_record = vault.KeeperRecord.load(params, resource_uid)  # type: Optional[TypedRecord]
-            if resource_record is None:
-                print(self._f("The resource record does not exists."))
-                return
-
-            # Make sure this user is a PAM User.
-            if user_record.record_type in [PAM_MACHINE, PAM_DATABASE, PAM_DIRECTORY]:
-                print(self._f("The resource record does not have the correct record type."))
-                return
-
-            parent_uid = resource_uid
-
         record_link = RecordLink(record=gateway_context.configuration, params=params, fail_on_corrupt=False)
-        acl = record_link.get_acl(user_uid, parent_uid)
+        acl = record_link.get_acl(user_uid, gateway_context.configuration_uid)
         if acl is None:
             if resource_uid is not None:
                 print(self._f("There is no relationship between the user and the resource record."))
@@ -144,25 +122,20 @@ class PAMActionSaasSetCommand(PAMGatewayActionDiscoverCommandBase):
         if acl.rotation_settings is None:
             acl.rotation_settings = UserAclRotationSettings()
 
-        if resource_uid is not None and acl.rotation_settings.noop is True:
-            print(self._f("The rotation is flagged as No Operation, however you passed in a resource record. "
-                          "This combination is not allowed."))
-            return
-
-        # If there is a resource record, it not NOOP.
-        # If there is NO resource record, it is NOOP.
-        # However, if this is an IAM User, don't set the NOOP
-        if acl.is_iam_user is False:
-            acl.rotation_settings.noop = resource_uid is None
-
         # Make sure we are not re-adding the same SaaS config.
         if config_record_uid in acl.rotation_settings.saas_record_uid_list:
             print(self._f("The SaaS configuration record is already being used for this user."))
             return
 
+        # SaaS users are like cloud users, but with noop set to True.
+        # The frontend logic is if noop = True and saas_record_uid_list has an item; it's a SaaS Rotation.
+        # Also make sure other attributes don't exist.
+        acl.rotation_settings.noop = True
+        acl.is_iam_user = False
+        acl.is_admin = False
         acl.rotation_settings.saas_record_uid_list = [config_record_uid]
 
-        record_link.belongs_to(user_uid, parent_uid, acl=acl)
+        record_link.belongs_to(user_uid, gateway_context.configuration_uid, acl=acl)
         record_link.save()
 
         print(self._gr(f"Setting {plugin_name} rotation for the user record."))

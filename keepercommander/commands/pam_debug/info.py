@@ -203,7 +203,20 @@ class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
                                       f"{acl_content.rotation_settings.get_pwd_complexity(key_bytes)}")
                             print(f"      . Disabled = {acl_content.rotation_settings.disabled}")
                             print(f"      . NOOP = {acl_content.rotation_settings.noop}")
-                            print(f"      . SaaS Config Records = {acl_content.rotation_settings.saas_record_uid_list}")
+                            print(f"      . SaaS configuration record UID = "
+                                  f"{acl_content.rotation_settings.saas_record_uid_list}")
+
+                            if len(acl_content.rotation_settings.saas_record_uid_list) > 0:
+                                if acl_content.rotation_settings.noop:
+                                    saas_config_uid = acl_content.rotation_settings.saas_record_uid_list[0]
+                                    saas_config = vault.KeeperRecord.load(
+                                        params,
+                                        saas_config_uid)  # type: Optional[TypedRecord]
+
+                                    print(f"      . SaaS configuration record is {saas_config.title}")
+                                else:
+                                    print(f"{bcolors.FAIL}      . Has SaaS plugin config record, "
+                                          f"however it's not NOOP{bcolors.ENDC}")
 
                     elif record.record_type == PAM_USER:
                         print(f"{bcolors.FAIL}    * PAM User has NO acl!!!!!!{bcolors.ENDC}")
