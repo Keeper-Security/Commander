@@ -320,7 +320,7 @@ class PedmPlugin(IPedmAdmin):
                     collection_uid=collection_dto.collection_uid, collection_type=collection_dto.collection_type,
                     collection_data=collection_data, created=collection_dto.created)
             except Exception as e:
-                self.logger.debug('Collection "%s" load error: %s', collection_dto.collection_uid, e)
+                self.logger.error('Collection "%s" load error: %s', collection_dto.collection_uid, e)
                 collection = admin_types.PedmCollection(
                     collection_uid=collection_dto.collection_uid, collection_type=collection_dto.collection_type,
                     collection_data={}, created=collection_dto.created)

@@ -1515,6 +1515,7 @@ class PedmPolicyViewCommand(base.ArgparseCommand):
             if filename:
                 with open(filename, 'w') as f:
                     f.write(body)
+                return
             else:
                 return body
 
