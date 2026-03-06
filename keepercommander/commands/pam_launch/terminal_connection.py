@@ -23,7 +23,6 @@ import sys
 import base64
 import json
 import secrets
-import shutil
 import time
 import uuid
 from typing import TYPE_CHECKING, Optional, Dict, Any
@@ -101,29 +100,23 @@ DEFAULT_PORTS = {
     ProtocolType.SQLSERVER: 1433,
 }
 
-# Default terminal metrics used to translate local console dimensions into the
-# pixel-based values that Guacamole expects.
-DEFAULT_TERMINAL_COLUMNS = 80
-DEFAULT_TERMINAL_ROWS = 24
-DEFAULT_CELL_WIDTH_PX = 10
-DEFAULT_CELL_HEIGHT_PX = 19
-DEFAULT_SCREEN_DPI = 96
+from .terminal_size import (
+    DEFAULT_TERMINAL_COLUMNS,
+    DEFAULT_TERMINAL_ROWS,
+    DEFAULT_CELL_WIDTH_PX,
+    DEFAULT_CELL_HEIGHT_PX,
+    DEFAULT_SCREEN_DPI,
+    _build_screen_info,
+    get_terminal_size_pixels,
+)
 
-
-def _build_screen_info(columns: int, rows: int) -> Dict[str, int]:
-    """Convert character columns/rows into pixel measurements for the Gateway."""
-    col_value = columns if isinstance(columns, int) and columns > 0 else DEFAULT_TERMINAL_COLUMNS
-    row_value = rows if isinstance(rows, int) and rows > 0 else DEFAULT_TERMINAL_ROWS
-    return {
-        "columns": col_value,
-        "rows": row_value,
-        "pixel_width": col_value * DEFAULT_CELL_WIDTH_PX,
-        "pixel_height": row_value * DEFAULT_CELL_HEIGHT_PX,
-        "dpi": DEFAULT_SCREEN_DPI,
-    }
-
-
-DEFAULT_SCREEN_INFO = _build_screen_info(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS)
+# Computed at import time using the best available platform APIs so the initial
+# offer payload carries accurate pixel dimensions even before the connection
+# loop runs. Falls back to fixed cell-size constants if the query fails.
+try:
+    DEFAULT_SCREEN_INFO = get_terminal_size_pixels()
+except Exception:
+    DEFAULT_SCREEN_INFO = _build_screen_info(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS)
 
 MAX_MESSAGE_SIZE_LINE = "a=max-message-size:1073741823"
 
@@ -1213,16 +1206,16 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         # Prepare the offer data with terminal-specific parameters
         # Match webvault format: host, size, audio, video, image (for guacd configuration)
         # These parameters are needed by Gateway to configure guacd BEFORE OpenConnection
-        raw_columns = DEFAULT_TERMINAL_COLUMNS
-        raw_rows = DEFAULT_TERMINAL_ROWS
-        # Get terminal size for Guacamole size parameter
+        # Get terminal size for Guacamole size parameter (offer payload).
+        # get_terminal_size_pixels() queries the terminal internally and uses
+        # platform-specific APIs (Windows: GetCurrentConsoleFontEx; Unix:
+        # TIOCGWINSZ) to obtain exact pixel dimensions before falling back to
+        # the fixed cell-size estimate.
         try:
-            terminal_size = shutil.get_terminal_size(fallback=(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS))
-            raw_columns = terminal_size.columns
-            raw_rows = terminal_size.lines
+            screen_info = get_terminal_size_pixels()
         except Exception:
             logging.debug("Falling back to default terminal size for offer payload")
-        screen_info = _build_screen_info(raw_columns, raw_rows)
+            screen_info = _build_screen_info(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS)
         logging.debug(
             f"Using terminal metrics columns={screen_info['columns']} rows={screen_info['rows']} -> "
             f"{screen_info['pixel_width']}x{screen_info['pixel_height']}px @ {screen_info['dpi']}dpi"

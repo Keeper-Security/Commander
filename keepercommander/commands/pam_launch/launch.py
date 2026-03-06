@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Dict, Any, Optional
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
 from .terminal_connection import launch_terminal_connection
+from .terminal_size import get_terminal_size_pixels, is_interactive_tty
 from .guac_cli.stdin_handler import StdinHandler
 from ..base import Command
 from ..tunnel.port_forward.tunnel_helpers import (
@@ -573,6 +574,32 @@ class PAMLaunchCommand(Command):
                 stdin_handler.start()
                 logging.debug("STDIN handler started")  # (pipe/blob/end mode)
 
+                # --- Terminal resize tracking ---
+                # Resize polling is skipped entirely in non-interactive (piped)
+                # environments where get_terminal_size() returns a dummy value.
+                _resize_enabled = is_interactive_tty()
+                # Poll cols/rows cheaply every N iterations; a timestamp guard
+                # ensures correctness if the loop sleep interval ever changes.
+                _RESIZE_POLL_EVERY = 3        # iterations  (~0.3 s at 0.1 s/iter)
+                _RESIZE_POLL_INTERVAL = 0.3   # seconds - authoritative threshold
+                _RESIZE_DEBOUNCE = 0.25       # seconds - max send rate during drag
+                _resize_poll_counter = 0
+                _last_resize_poll_time = 0.0
+                _last_resize_send_time = 0.0
+                # Track the last *sent* size; only updated when we actually send.
+                # This keeps re-detecting the change each poll during rapid resize
+                # so the final resting size is always dispatched.
+                _last_sent_cols = 0
+                _last_sent_rows = 0
+                if _resize_enabled:
+                    try:
+                        _init_ts = shutil.get_terminal_size()
+                        _last_sent_cols = _init_ts.columns
+                        _last_sent_rows = _init_ts.lines
+                    except Exception:
+                        _resize_enabled = False
+                        logging.debug("Could not query initial terminal size - resize polling disabled")
+
                 elapsed = 0
                 while not shutdown_requested and python_handler.running:
                     # Check if tube/connection is closed
@@ -587,6 +614,49 @@ class PAMLaunchCommand(Command):
                         pass
                     time.sleep(0.1)
                     elapsed += 0.1
+
+                    # --- Resize polling (Phase 1: cheap cols/rows check) ---
+                    # Check every _RESIZE_POLL_EVERY iterations AND at least
+                    # _RESIZE_POLL_INTERVAL seconds since the last poll, so the
+                    # check stays correct if the loop sleep ever changes.
+                    if _resize_enabled:
+                        _resize_poll_counter += 1
+                        _now = time.time()
+                        if (
+                            _resize_poll_counter % _RESIZE_POLL_EVERY == 0
+                            and _now - _last_resize_poll_time >= _RESIZE_POLL_INTERVAL
+                        ):
+                            _last_resize_poll_time = _now
+                            try:
+                                _cur_ts = shutil.get_terminal_size()
+                                _cur_cols = _cur_ts.columns
+                                _cur_rows = _cur_ts.lines
+                            except Exception:
+                                _cur_cols, _cur_rows = _last_sent_cols, _last_sent_rows
+
+                            if (_cur_cols, _cur_rows) != (_last_sent_cols, _last_sent_rows):
+                                # Phase 2: size changed - apply debounce then
+                                # fetch exact pixels and send.
+                                if _now - _last_resize_send_time >= _RESIZE_DEBOUNCE:
+                                    try:
+                                        _si = get_terminal_size_pixels(_cur_cols, _cur_rows)
+                                        python_handler.send_size(
+                                            _si['pixel_width'],
+                                            _si['pixel_height'],
+                                            _si['dpi'],
+                                        )
+                                        _last_sent_cols = _cur_cols
+                                        _last_sent_rows = _cur_rows
+                                        _last_resize_send_time = _now
+                                        logging.debug(
+                                            f"Terminal resized: {_cur_cols}x{_cur_rows} cols/rows "
+                                            f"-> {_si['pixel_width']}x{_si['pixel_height']}px "
+                                            f"@ {_si['dpi']}dpi"
+                                        )
+                                    except Exception as _e:
+                                        logging.debug(f"Failed to send resize: {_e}")
+                                # else: debounce active - _last_sent_cols/rows unchanged
+                                # so the change is re-detected on the next eligible poll.
 
                     # Status indicator every 30 seconds
                     if elapsed % 30.0 < 0.1 and elapsed > 0.1:

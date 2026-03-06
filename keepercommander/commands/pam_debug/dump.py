@@ -118,7 +118,7 @@ class PAMDebugDumpCommand(Command):
 
             valid_uids.append(rec_uid)
 
-            # v6 PAM Configuration records ARE their own graph root — no rotation-cache entry exists for them.
+            # v6 PAM Configuration records ARE their own graph root - no rotation-cache entry exists for them.
             if version == 6:
                 config_to_records.setdefault(rec_uid, []).append(rec_uid)
                 record_config_map[rec_uid] = rec_uid
@@ -187,7 +187,7 @@ class PAMDebugDumpCommand(Command):
                 'revision': revision,
             }
 
-            # data — same structure as `get --format=json`
+            # data - same structure as `get --format=json`
             data = {}
             try:
                 r = api.get_record(params, rec_uid)
@@ -199,12 +199,12 @@ class PAMDebugDumpCommand(Command):
             except Exception as err:
                 logging.warning('Could not build data for record %s: %s', rec_uid, err)
 
-            # graph_sync — dict keyed by config_uid, then by graph name.
+            # graph_sync - dict keyed by config_uid, then by graph name.
             # A record may be referenced by more than one PAM Configuration; we query
             # every already-loaded DAG so cross-config references are captured.
             # Inner value may contain:
-            #   "vertex_active": bool  — present when the record UID is a vertex in that graph
-            #   "edges": [...]         — present only when there are active, non-deleted edges
+            #   "vertex_active": bool  - present when the record UID is a vertex in that graph
+            #   "edges": [...]         - present only when there are active, non-deleted edges
             # Config/graph keys are omitted when the record has no presence there.
             graph_sync: Dict[str, Dict[str, dict]] = {}
             for (c_uid, graph_id), dag in dag_cache.items():
@@ -234,8 +234,8 @@ def _collect_graph_entry(dag: 'DAGType', record_uid: str, params: 'KeeperParams'
     """Build the per-graph entry for record_uid.
 
     Returns a dict with zero or more of:
-      "vertex_active": bool   — record_uid exists as a vertex in this graph
-      "edges": [...]          — active, non-deleted edges referencing record_uid
+      "vertex_active": bool   - record_uid exists as a vertex in this graph
+      "edges": [...]          - active, non-deleted edges referencing record_uid
 
     Returns an empty dict when the record has no presence in the graph at all,
     signalling the caller to omit this graph from the output.
@@ -258,7 +258,7 @@ def _collect_edges_for_record(dag: 'DAGType', record_uid: str, params: 'KeeperPa
                                config_uid: str) -> List[dict]:
     """Return all non-deleted edges that reference record_uid as head or tail.
 
-    Inactive edges (active=False) are included — they may represent settings
+    Inactive edges (active=False) are included - they may represent settings
     that exist in the graph but have been superseded or are pending deletion.
     The 'active' field in each output dict lets the caller distinguish them.
     DELETION and UNDENIAL edges are still excluded (bookkeeping, not data).
@@ -325,7 +325,7 @@ def _extract_edge_contents(edge, tail_uid: str, params: 'KeeperParams', config_u
     fast content_as_dict path has already failed, to avoid unnecessary
     network round trips.
 
-    config_uid is the PAM configuration that owns the DAG being traversed —
+    config_uid is the PAM configuration that owns the DAG being traversed -
     passed from the caller so records not in the rotation cache are still
     handled correctly.
     """
@@ -357,7 +357,7 @@ def _extract_edge_contents(edge, tail_uid: str, params: 'KeeperParams', config_u
     except Exception:
         pass
 
-    # All decode/decrypt attempts failed but content exists — return the first
+    # All decode/decrypt attempts failed but content exists - return the first
     # 40 bytes as hex so the caller can tell there IS data vs truly absent.
     raw = edge.content
     if isinstance(raw, (bytes, str)):
