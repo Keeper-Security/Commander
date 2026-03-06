@@ -574,6 +574,11 @@ class RecordEditMixin:
                     (x for x in record.fields
                      if (not parsed_field.type or x.type == parsed_field.type) and
                      (ignore_label or (x.label or '').lower() == f_label)), None)
+                # When label is omitted (e.g. "url=value") and there is a single field of this type, use it
+                if not record_field and not f_label and field_type and rf and rf.multiple != record_types.Multiple.Always:
+                    candidates = [x for x in record.fields if x.type == field_type]
+                    if len(candidates) == 1:
+                        record_field = candidates[0]
                 if record_field:
                     is_field = True
                 else:
