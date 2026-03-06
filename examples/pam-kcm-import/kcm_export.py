@@ -3,6 +3,8 @@
 Connects to KCM Database (local/remote) and exports connections and connection groups.
 Generates JSON file ready to be imported by pam project extend command.
 
+Must be run along with a dictionary of KCM parameters named KCM_mappings.json.
+
 Can handle the import of Connection Groups in three ways:
 1 - Keeps the Connection Group nesting, except if the Group has a KSM configuration set, in which case it will mapped as a root gateway shared folder.
   ROOT/                                                                                                                                                                      
