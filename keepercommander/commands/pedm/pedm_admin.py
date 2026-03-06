@@ -654,7 +654,7 @@ class PedmDeploymentUpdateCommand(base.ArgparseCommand):
             if isinstance(status, admin_types.EntityStatus) and not status.success:
                 raise base.CommandError(f'Failed to update policy "{status.entity_uid}": {status.message}')
 
-        logging.info('Successfully updated deployment: %s', deployment.name or deployment.deployment_uid)
+        utils.get_logger().info('Successfully updated deployment: %s', deployment.name or deployment.deployment_uid)
 
 
 class PedmDeploymentDeleteCommand(base.ArgparseCommand):
@@ -724,7 +724,7 @@ class PedmDeploymentDownloadCommand(base.ArgparseCommand):
                 raise base.CommandError(f'"{filename}" is a directory. Please provide a full file path, e.g. "{os.path.join(filename, "deployment-token.txt")}"')
             with open(filename, 'wt') as f:
                 f.write(token)
-            logging.info('Deployment token saved to: %s', os.path.abspath(filename))
+            utils.get_logger().info('Deployment token saved to: %s', os.path.abspath(filename))
             return None
 
         if not kwargs.get('verbose'):
@@ -873,11 +873,11 @@ class PedmAgentDeleteCommand(base.ArgparseCommand):
                 if isinstance(status, admin_types.EntityStatus):
                     if status.success:
                         deleted_count += 1
-                        print(f'Agent "{status.entity_uid}" deleted successfully.')
+                        utils.get_logger().info('Agent "%s" deleted successfully.', status.entity_uid)
                     else:
                         utils.get_logger().warning(f'Failed to remove agent "{status.entity_uid}": {status.message}')
         if deleted_count > 0:
-            print(f'\n{deleted_count} agent(s) deleted successfully.')
+            utils.get_logger().info('%d agent(s) deleted successfully.', deleted_count)
 
 
 class PedmAgentEditCommand(base.ArgparseCommand):
