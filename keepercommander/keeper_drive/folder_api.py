@@ -505,6 +505,35 @@ def manage_folder_access_batch_v3(params, access_grants=None,
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# Internal UID → username resolver
+# ══════════════════════════════════════════════════════════════════════════
+
+def _resolve_uid_to_username(params, uid_b64: str) -> Optional[str]:
+    """Try to resolve a base64-url accessor UID to a username.
+
+    Checks the share-objects cache (``vault/get_share_objects``), which
+    includes every user the vault owner has ever interacted with and
+    carries both ``username`` and ``userAccountUid`` fields.  The result
+    is a cached API call so repeated lookups are free.
+    """
+    try:
+        from ..proto.record_pb2 import GetShareObjectsRequest, GetShareObjectsResponse
+        rq = GetShareObjectsRequest()
+        rs = api.communicate_rest(params, rq, 'vault/get_share_objects',
+                                  rs_type=GetShareObjectsResponse)
+        for user_list in (rs.shareRelationships, rs.shareFamilyUsers,
+                          rs.shareEnterpriseUsers, rs.shareMCEnterpriseUsers):
+            for su in user_list:
+                if su.userAccountUid:
+                    su_uid = utils.base64_url_encode(su.userAccountUid)
+                    if su_uid == uid_b64:
+                        return su.username
+    except Exception:
+        pass
+    return None
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # High-level: get_folder_access_v3
 # ══════════════════════════════════════════════════════════════════════════
 
@@ -554,6 +583,12 @@ def get_folder_access_v3(params, folder_uids, continuation_token=None, page_size
                             if u.get('user_account_uid') == auid:
                                 username = u.get('username')
                                 break
+                    if not username:
+                        username = _resolve_uid_to_username(params, auid)
+                        if username:
+                            if not hasattr(params, 'user_cache'):
+                                params.user_cache = {}
+                            params.user_cache[auid] = username
                 ai = {
                     'accessor_uid': auid, 'access_type': at, 'role': rt,
                     'inherited': bool(a.inherited), 'hidden': bool(a.hidden),

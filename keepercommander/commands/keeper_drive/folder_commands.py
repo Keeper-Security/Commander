@@ -490,61 +490,53 @@ class KeeperDriveRemoveFolderCommand(Command):
             self._preview_and_confirm(params, removals, operation, force, dry_run, quiet)
 
     def _preview_and_confirm(self, params, removals, operation, force, dry_run, quiet):
-        print(f"\n{'='*72}")
-        print(f"  KeeperDrive Folder Removal — Preview")
-        print(f"{'='*72}\n")
-
         result = _kd.remove_folder_v3(params, removals, dry_run=True)
         any_error = False
-        error_summary = []
+        error_lines = []
+        summary_lines = []
 
         for pr in result['preview_results']:
             name = self._folder_name(params, pr['folder_uid'])
-            print(f"  {'─'*68}")
             if pr.get('error'):
                 any_error = True
                 err = pr['error']
-                print(f"  Folder  : {name}  [{pr['folder_uid']}]")
-                print(f"  Status  : {pr['status']}  — {err.get('code', '')}  {err.get('message', '')}")
-                error_summary.append(
+                error_lines.append(
                     f"  • {name} [{pr['folder_uid']}]: {err.get('code', '')} — {err.get('message', '')}"
                 )
             else:
-                self._print_impact(pr['folder_uid'], name, operation, pr.get('impact'), quiet)
-                print(f"  Status  : {pr['status']}")
+                summary_lines.extend(
+                    self._impact_summary(pr['folder_uid'], name, operation, pr.get('impact'), quiet)
+                )
 
-        print(f"\n{'─'*72}")
+        if summary_lines:
+            for line in summary_lines:
+                print(line)
 
         if any_error:
-            print(f"\n  {'[DRY-RUN] ' if dry_run else ''}The following folder(s) cannot be removed:\n")
-            for line in error_summary:
+            print(f"\n{'[Dry-run] ' if dry_run else ''}The following folder(s) cannot be removed:")
+            for line in error_lines:
                 print(line)
-            print()
             if not dry_run:
-                print("  Aborting — fix the errors above before retrying.\n")
+                print('\nAborting — fix the errors above before retrying.')
             return
 
         if dry_run:
-            print("  Dry-run mode — no folders were deleted.\n")
+            print('\n[Dry-run] No folders were deleted.')
             return
 
         if not force:
             from ..base import user_choice
-            prompt = (f"  Permanently delete {len(removals)} folder(s) and all their contents?"
+            prompt = ('Do you want to permanently delete the folder(s) and all their contents?'
                       if operation == 'delete-permanent'
-                      else f"  Move {len(removals)} folder(s) to trash?")
+                      else 'Do you want to proceed with the folder deletion?')
             if user_choice(prompt, 'yn', default='n').lower() != 'y':
-                print("  Cancelled.\n")
                 return
 
         confirm_result = _kd.remove_folder_v3(params, removals, dry_run=False)
         if confirm_result['confirmed']:
-            verb = 'permanently deleted' if operation == 'delete-permanent' else 'moved to trash'
-            print(f"\n  {len(removals)} folder(s) {verb} successfully.")
             params.sync_data = True
         else:
-            print("\n  Removal was not confirmed by the server.")
-        print(f"\n{'='*72}\n")
+            logging.warning('Folder removal was not confirmed by the server.')
 
     @staticmethod
     def _folder_name(params, folder_uid):
@@ -553,14 +545,26 @@ class KeeperDriveRemoveFolderCommand(Command):
         return f.get('name') or folder_uid
 
     @staticmethod
-    def _print_impact(folder_uid, name, operation, impact, quiet):
-        if not quiet:
-            print(f"  Folder   : {name}  [{folder_uid}]")
-            print(f"  Operation: {operation}")
-        if impact:
-            print(f"  Sub-folders affected : {impact.get('folders_count', 0)}")
-            print(f"  Records affected     : {impact.get('records_count', 0)}")
-            print(f"  Users affected       : {impact.get('affected_users_count', 0)}")
-            print(f"  Teams affected       : {impact.get('affected_teams_count', 0)}")
+    def _impact_summary(folder_uid, name, operation, impact, quiet):
+        action = 'permanently deleted' if operation == 'delete-permanent' else 'moved to trash'
+        lines = [f"\nThe following folder will be {action}:"]
+        lines.append(f"  {name} [{folder_uid}]")
+        if impact and not quiet:
+            parts = []
+            folders = impact.get('folders_count', 0)
+            records = impact.get('records_count', 0)
+            users = impact.get('affected_users_count', 0)
+            teams = impact.get('affected_teams_count', 0)
+            if folders:
+                parts.append(f"{folders} sub-folder(s)")
+            if records:
+                parts.append(f"{records} record(s)")
+            if users:
+                parts.append(f"{users} user(s)")
+            if teams:
+                parts.append(f"{teams} team(s)")
+            if parts:
+                lines.append(f"  This will affect: {', '.join(parts)}")
             for w in impact.get('warnings', []):
-                print(f"  Warning              : {w}")
+                lines.append(f"  Warning: {w}")
+        return lines

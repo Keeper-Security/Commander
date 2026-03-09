@@ -109,6 +109,15 @@ COMMAND_CATEGORIES = {
         'epm'
     },
 
+    # KeeperDrive Commands
+    'KeeperDrive Commands': {
+        'kd-mkdir', 'kd-record-add', 'kd-record-update', 'kd-rndir', 'kd-list',
+        'kd-share-folder', 'kd-record-details', 'kd-record-access', 'kd-share-record',
+        'kd-record-permission', 'kd-transfer-record', 'kd-add-record-to-folder',
+        'kd-remove-record-from-folder', 'kd-ln', 'kd-folder-access', 'kd-rm',
+        'kd-rmdir', 'kd-shortcut', 'kd-get'
+    },
+
     # Legacy Commands
     'Legacy Commands': {
         'rotate', 'connect', 'ssh', 'ssh-agent', 'rdp', 'rsync', 'set', 'echo',
@@ -145,5 +154,6 @@ def get_category_order():
         'Miscellaneous Commands',
         'KeeperPAM Commands',
         'EPM Commands',
+        'KeeperDrive Commands',
         'Legacy Commands'
     ]

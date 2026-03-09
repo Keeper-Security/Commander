@@ -509,47 +509,43 @@ class KeeperDriveRemoveRecordCommand(Command):
         return removals
 
     def _preview_and_confirm(self, params, removals, operation, force, dry_run):
-        print(f"\n{'='*72}")
-        print(f"  KeeperDrive Record Removal — Preview")
-        print(f"{'='*72}\n")
-
         result = _kd.remove_record_v3(params, removals, dry_run=True)
         any_error = False
+        summary_lines = []
 
         for pr in result['preview_results']:
             title = self._record_title(params, pr['record_uid'])
-            print(f"  {'─'*68}")
             if pr.get('error'):
                 any_error = True
-                print(f"  Record  : {title}  [{pr['record_uid']}]")
-                print(f"  Status  : {pr['status']}  — "
-                      f"{pr['error'].get('code', '')}  {pr['error'].get('message', '')}")
+                err = pr['error']
+                summary_lines.append(
+                    f"  {title} [{pr['record_uid']}]: "
+                    f"{err.get('code', '')} — {err.get('message', '')}"
+                )
             else:
-                self._print_impact(pr['record_uid'], title, operation, pr.get('impact'))
-                print(f"  Status  : {pr['status']}")
+                summary_lines.extend(
+                    self._impact_summary(pr['record_uid'], title, operation, pr.get('impact'))
+                )
 
-        print(f"\n{'─'*72}")
+        for line in summary_lines:
+            print(line)
 
-        if dry_run:
-            print("  Dry-run mode — no records were deleted.\n")
-            return
         if any_error:
-            print("  One or more records could not be previewed. Aborting.\n")
+            print('\nOne or more records could not be previewed. Aborting.')
+            return
+        if dry_run:
+            print('\n[Dry-run] No records were deleted.')
             return
         if not force:
             from ..base import user_choice
-            if user_choice(f"  Proceed with deletion of {len(removals)} record(s)?",
-                           'yn', default='n').lower() != 'y':
-                print("  Cancelled.\n")
+            if user_choice('Do you want to proceed with deletion?', 'yn', default='n').lower() != 'y':
                 return
 
         confirm_result = _kd.remove_record_v3(params, removals, dry_run=False)
         if confirm_result['confirmed']:
-            print(f"\n  {len(removals)} record(s) removed successfully.")
             params.sync_data = True
         else:
-            print("\n  Removal was not confirmed by the server.")
-        print(f"\n{'='*72}\n")
+            logging.warning('Record removal was not confirmed by the server.')
 
     @staticmethod
     def _record_title(params, record_uid):
@@ -557,16 +553,30 @@ class KeeperDriveRemoveRecordCommand(Command):
             record_uid, {}).get('title') or record_uid
 
     @staticmethod
-    def _print_impact(record_uid, title, operation, impact):
-        print(f"  Record  : {title}  [{record_uid}]")
-        print(f"  Operation: {operation}")
+    def _impact_summary(record_uid, title, operation, impact):
+        lines = [f"\nThe following record will be {operation}:"]
+        lines.append(f"  {title} [{record_uid}]")
         if impact:
-            print(f"  Folders affected : {impact.get('folders_count', 0)}")
-            print(f"  Records affected : {impact.get('records_count', 0)}")
-            print(f"  Users affected   : {impact.get('affected_users_count', 0)}")
-            print(f"  Teams affected   : {impact.get('affected_teams_count', 0)}")
+            folders = impact.get('folders_count', 0)
+            records = impact.get('records_count', 0)
+            users = impact.get('affected_users_count', 0)
+            teams = impact.get('affected_teams_count', 0)
+            parts = []
+            if folders:
+                parts.append(f"{folders} folder(s)")
+            if records:
+                parts.append(f"{records} record(s)")
+            if users:
+                parts.append(f"{users} user(s)")
+            if teams:
+                parts.append(f"{teams} team(s)")
+            if parts:
+                lines.append(f"  This will affect: {', '.join(parts)}")
             for ri in impact.get('record_info', []):
                 if ri.get('locations_count', 0) > 1:
-                    print(f"  Note             : record exists in {ri['locations_count']} folder locations")
+                    lines.append(
+                        f"  Note: record exists in {ri['locations_count']} folder locations"
+                    )
             for w in impact.get('warnings', []):
-                print(f"  Warning          : {w}")
+                lines.append(f"  Warning: {w}")
+        return lines

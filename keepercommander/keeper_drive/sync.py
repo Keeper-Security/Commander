@@ -73,6 +73,10 @@ def clear_caches(params):
     params.keeper_drive_record_sharing_states.clear()
     params.keeper_drive_record_links.clear()
     params.keeper_drive_raw_dag_data.clear()
+    # keeper_drive_trashed_folders is intentionally NOT cleared here.
+    # The server keeps sending trashed folders in every sync_down response
+    # (including full/CLEAR syncs), so the trashed-UID filter must survive
+    # cache clears. The set is persisted to disk and reloaded on session start.
 
 
 def collect_from_response(acc, response, resp_bw_recs, resp_sec_data_recs, resp_sec_scores, record_rotation_items):
@@ -149,10 +153,7 @@ def process(params, acc):
     if not has_data(acc):
         return
     _ensure_keeper_drive_attrs(params)
-    logging.debug(
-        'Processing Keeper Drive sync data: folders=%d folder_records=%d records=%d record_keys=%d',
-        len(acc['folders']), len(acc['folder_records']), len(acc['records']), len(acc['record_keys'])
-    )
+    
     _process_keeper_drive_sync(
         params,
         acc['folders'],
@@ -481,6 +482,27 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
         record_uid = utils.base64_url_encode(rfr.record_uid)
         if folder_uid in params.keeper_drive_folder_records:
             params.keeper_drive_folder_records[folder_uid].discard(record_uid)
+
+    # Purge orphaned records — records no longer present in any folder should
+    # not appear in kd-list after a successful removal + sync_down.
+    all_folder_record_uids = {
+        uid
+        for rec_set in params.keeper_drive_folder_records.values()
+        for uid in rec_set
+    }
+    orphaned = [uid for uid in list(params.keeper_drive_records)
+                if uid not in all_folder_record_uids]
+    for uid in orphaned:
+        params.keeper_drive_records.pop(uid, None)
+        params.keeper_drive_record_data.pop(uid, None)
+        params.keeper_drive_record_keys.pop(uid, None)
+        params.keeper_drive_record_accesses.pop(uid, None)
+        params.keeper_drive_record_sharing_states.pop(uid, None)
+        params.keeper_drive_record_links.pop(uid, None)
+        params.record_cache.pop(uid, None)
+        params.meta_data_cache.pop(uid, None)
+        params.record_owner_cache.pop(uid, None)
+        logging.debug('Purged orphaned KeeperDrive record from cache: %s', uid)
 
     if raw_dag_data:
         for dag_entry in raw_dag_data:
@@ -880,10 +902,9 @@ def _reconstruct_keeper_drive_entities(params):
         params.subfolder_cache[folder_uid] = user_folder
 
     for folder_uid, record_uids in params.keeper_drive_folder_records.items():
-        if folder_uid not in params.subfolder_record_cache:
-            params.subfolder_record_cache[folder_uid] = set()
-        for record_uid in record_uids:
-            params.subfolder_record_cache[folder_uid].add(record_uid)
+        # Replace (not additive) so that records removed from a folder are
+        # evicted from the subfolder_record_cache on the very next sync.
+        params.subfolder_record_cache[folder_uid] = set(record_uids)
 
     for record_uid, record_obj in params.keeper_drive_records.items():
         if 'record_key_unencrypted' not in record_obj:
