@@ -28,7 +28,8 @@ Can handle the import of Connection Groups in three ways:
   Connection group B1/
 """
 
-from json import dump,dumps,loads
+from json import dump,dumps,load,loads
+from copy import deepcopy
 
 ## RICH Console styling - can be removed if rich was not imported ##
 from rich.console import Console
@@ -125,13 +126,16 @@ def handle_prompt(valid_inputs,prompt='Input: '):
 def validate_file_upload(format,filename=None):                                                                                                                                                                                      
     if not filename:
         filename = input('File path: ')
+    if filename[0] in ['"',"'"]:
+        filename = filename[1:]
+    if filename[-1] in ['"',"'"]:
+        filename = filename[:-1]
     try:
         with open(filename,'r') as file:
             if format=='csv':
                 from csv import DictReader
                 return list(DictReader(file))
             elif format=='json':
-                from json import load
                 return load(file)
             elif format=='yaml':
                 from yaml import safe_load
@@ -141,6 +145,12 @@ def validate_file_upload(format,filename=None):
         display(f'Error: Exception {e} raised','bold red')
         return validate_file_upload(format)
 
+
+def set_nested(d, keys, value):
+    for key in keys[:-1]:
+        d = d.setdefault(key, {})
+    d[keys[-1]] = value
+    
 
 def debug(text,DEBUG):
     if DEBUG:
@@ -152,6 +162,8 @@ class KCM_export:
         self.mappings = validate_file_upload('json','KCM_mappings.json')
         self.debug = DEBUG
         self.db_config = DB_CONFIG
+        self.template_rs = None
+        self.template_usr = None
         self.folder_structure = 'ksm_based'
         self.separator = '/'
         self.dynamic_tokens = []
@@ -162,6 +174,7 @@ class KCM_export:
         display('What database are you running on KCM?', 'cyan')
         list_items(['(1) MySQL','(2) PostgreSQL'])
         self.database = handle_prompt({'1':'MYSQL','2':'POSTGRES'})
+        print()
         
         # Collect db credentials
         self.collect_db_config()
@@ -171,14 +184,15 @@ class KCM_export:
         if not connect:
             display('Unable to connect to database, ending program','bold red')
             return
+        print()
         
         # Generate template
-        json_template = self.generate_data()
+        json_output = self.generate_data()
               
         display('# Data collected and import-ready', 'green')
         display('Exporting JSON template...')
-        with open('pam_import.json','w') as user_file:
-            dump(json_template,user_file,indent=2)
+        with open('pam_import.json','w') as result_file:
+            dump(json_output,result_file,indent=2)
         display('Exported pam_import.json successfully','italic green')
         
         return
@@ -300,6 +314,36 @@ Connection group B/
 Connection group B1/  
         ''', 'yellow')
         self.folder_structure = handle_prompt({'1':'ksm_based','2':'nested','3':'flat'})
+        print()
+        
+        display('Do you wish to use a template file?','cyan')
+        display('''A JSON template file can be used to set default parameters on your resources / users.  
+The format of this file is as follows:          
+{  
+.   "pam_data": {  
+.       "resources": [  
+.           {  
+.               ...pamDirectory parameters,  
+.               "users": [ ...pamDirectory users ]  
+.           },  
+.           {  
+.               ...pamMachine default parameters,  
+.               "users": [ { ...pamUser default parameters } ]  
+.           }  
+.       ]  
+.   }  
+}
+        ''','yellow')
+        list_items(['(1) Yes','(2) No'])
+        if handle_prompt({'1':True,'2':False}):
+            display('## Please upload your JSON template', 'cyan')
+            templ = validate_file_upload('json')
+            templ_resources = templ.get('pam_data',{}).get('resources',[])
+            if len(templ_resources)>1:
+                self.template_rs = templ_resources[1]
+            if self.template_rs.get('users',[]):
+                self.template_usr = self.template_rs['users'][0]
+        print()
         
         self.group_paths = {}
     
@@ -328,7 +372,6 @@ Connection group B1/
         self.connections = {}
         self.users = {}
         self.shared_folders = []
-        print(self.group_paths)
         
         for connection in self.connection_data:
             id = connection['connection_id']
@@ -349,12 +392,13 @@ Connection group B1/
                 if len(folder_array)>1:
                     folder_path += self.separator+self.separator.join(folder_array[1:])
                 # Create user
-                user = {
+                user = deepcopy(self.template_usr) if self.template_usr else deepcopy({
                     'folder_path': folder_path,
                     'title': f'KCM User - {name}',
                     'type': "pamUser",
                     'rotation_settings':{}
-                }
+                })
+                if self.template_usr: user.update({'folder_path': folder_path,'title': f'KCM User - {name}'})
                 self.users[id] = user
             
             # Add resources
@@ -372,7 +416,7 @@ Connection group B1/
                     'sql-server': 'pamDatabase',
                 }
                     
-                resource = {
+                resource = deepcopy(self.template_rs) if self.template_rs else deepcopy({
                     'folder_path':folder_path,
                     'title': f'KCM Resource - {name}',
                     'type':types.get(connection['protocol'],'pamMachine'),
@@ -389,45 +433,34 @@ Connection group B1/
                         "launch_credentials": f'KCM User - {name}'
                       }
                     }
-                }                
+                })
+                if self.template_rs:
+                    resource.update({
+                        'folder_path':folder_path,
+                        'title': f'KCM Resource - {name}',
+                        'type':types.get(connection['protocol'],'pamMachine'),
+                        'users':[]
+                    })
+                    resource['pam_settings']['connection']['protocol'] = connection['protocol'] if connection['protocol'] != "postgres" else "postgresql"
+                    resource['pam_settings']['connection']['launch_credentials'] = f'KCM User - {name}'
                 self.connections[id] = resource
             
-            def handle_arg(id,name,arg,value):
-                def handle_mapping(mapping,value,dir):
+            def handle_arg(id,name,arg,value,resource,user):
+                def handle_mapping(mapping, value, dir):
                     if mapping == 'ignore':
-                        debug(f'Mapping {arg} ignored',self.debug)
+                        debug(f'Mapping {arg} ignored', self.debug)
                         return dir
-                    if mapping=='log':
-                        if name not in self.logged_records:
-                            debug(f'Adding record {name} to logged records',self.debug)
-                            self.logged_records[name] = {'name':name, arg:value}
-                        else:
-                            self.logged_records[name][arg] = value
+                    if mapping == 'log':
+                        record = self.logged_records.setdefault(name, {'name': name})
+                        record[arg] = value
                         return dir
                     if mapping is None:
-                        debug(f'Mapping {arg} recognized but not supported',self.debug)
+                        debug(f'Mapping {arg} recognized but not supported', self.debug)
                         return dir
                     if '=' in mapping:
-                        value = mapping.split('=')[1]
-                        mapping = mapping.split('=')[0] 
-                    if '.' in mapping:
-                        param_array = mapping.split('.')
-                        if len(param_array)>=2:
-                            if param_array[0] not in dir[id]:
-                                dir[id][param_array[0]] = {}
-                            if len(param_array)==2:
-                                dir[id][param_array[0]][param_array[1]] = value
-                        if len(param_array)>=3:
-                            if param_array[1] not in dir[id][param_array[0]]:
-                                dir[id][param_array[0]][param_array[1]] = {}
-                            if len(param_array)==3:
-                                dir[id][param_array[0]][param_array[1]][param_array[2]] = value
-                        if len(param_array)>=4:
-                            if param_array[2] not in dir[id][param_array[0]][param_array[1]]:
-                                dir[id][param_array[0]][param_array[1]][param_array[2]] = {}
-                            dir[id][param_array[0]][param_array[1]][param_array[2]][param_array[3]] = value
-                    else:
-                        dir[id][mapping] = value
+                        mapping, value = mapping.split('=', 1)
+                    keys = mapping.split('.')
+                    set_nested(dir[id], keys, value)
                     return dir
                 
                 if value.startswith('${KEEPER_') and id not in self.dynamic_tokens:
@@ -459,10 +492,10 @@ Connection group B1/
  
             # Handle args
             if connection['parameter_name']:
-                handle_arg(id,connection['name'],connection['parameter_name'],connection['parameter_value'])
+                handle_arg(id,connection['name'],connection['parameter_name'],connection['parameter_value'],self.connections[id],self.users[id])
             # Handle attributes
             if connection['attribute_name']:
-                handle_arg(id,connection['name'],connection['attribute_name'],connection['attribute_value'])
+                handle_arg(id,connection['name'],connection['attribute_name'],connection['attribute_value'],self.connections[id],self.users[id])
 
         
         self.user_records = list(user for user in self.users.values())
@@ -518,11 +551,13 @@ Connection group B1/
                     "sftp_resource": f'SFTP connection for resource {resource["host"]}',
                     "sftp_user_credentials": f'SFTP credentials for resource {resource["host"]}'
                 })
-                
+        
+        display('# Export Results')
+        
         if self.dynamic_tokens:
-            display(f'{len(self.dynamic_tokens)} dynamic tokens detected, they will be added to the JSON file.')
-        if self.logged_records:
-            display(f'{len(self.logged_records)-len(self.dynamic_tokens)} records logged, they will be added to the JSON file.')
+            display(f'- {len(self.dynamic_tokens)} dynamic tokens detected, they will be added to the JSON file.','yellow')
+        if len(self.logged_records)-len(self.dynamic_tokens)>0:
+            display(f'- {len(self.logged_records)-len(self.dynamic_tokens)} records logged, they will be added to the JSON file.','yellow')
         
         logged_records = []
         if self.logged_records:
@@ -533,6 +568,7 @@ Connection group B1/
             shared_folders.extend([f'KCM Users - {folder}',f'KCM Resources - {folder}'])
         display('Make sure to add the following Shared Folders to your Gateway Application before importing:')
         list_items(shared_folders)
+        
         
         return {
             "pam_data": {
