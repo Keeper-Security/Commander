@@ -2642,7 +2642,8 @@ class SuperShellApp(App):
         
         try:
             from ...proto import APIRequest_pb2, enterprise_pb2
-            from .. import api, utils
+            from keepercommander import api
+            from keepercommander.commands import utils
             import json
             
             record = self.records[app_uid]
