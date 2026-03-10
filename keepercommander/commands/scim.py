@@ -153,6 +153,7 @@ class ScimCreateCommand(EnterpriseCommand):
         api.communicate(params, rq)
         api.query_enterprise(params)
         scim_url = get_scim_url(params, matched_node['node_id'])
+        node_id = matched_node['node_id']
         logging.info('')
         logging.info('SCIM ID: %d', rq['scim_id'])
         logging.info('SCIM URL: %s', scim_url)
@@ -162,6 +163,10 @@ class ScimCreateCommand(EnterpriseCommand):
             'scim_id': rq['scim_id'],
             'scim_url': scim_url,
             'provisioning_token': token,
+            'node_name': self.get_node_path(params, node_id),
+            'node_id': node_id,
+            'prefix': prefix or '',
+            'unique_groups': kwargs.get('unique_groups', '') == 'on',
         }
 
 
