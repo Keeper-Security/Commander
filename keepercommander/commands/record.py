@@ -277,9 +277,13 @@ class RecordGetUidCommand(Command):
             admins = api.get_share_admins_for_shared_folder(params, uid)
             sf = api.get_shared_folder(params, uid)
             if fmt == 'json':
+                folder_path = get_folder_path(params, sf.shared_folder_uid, delimiter=os.sep)
+                if folder_path and folder_path.endswith(os.sep):
+                    folder_path = folder_path[:-1]
                 sfo = {
                     "shared_folder_uid": sf.shared_folder_uid,
                     "name": sf.name,
+                    "path": folder_path or sf.name,
                     "manage_users": sf.default_manage_users,
                     "manage_records": sf.default_manage_records,
                     "can_edit": sf.default_can_edit,
@@ -291,17 +295,25 @@ class RecordGetUidCommand(Command):
                         'can_edit': r['can_edit'],
                         'can_share': r['can_share']
                     } for r in sf.records]
+                def _format_expiration(expiration_value):
+                    if expiration_value is None or expiration_value <= 0:
+                        return 'never'
+                    return datetime.datetime.fromtimestamp(expiration_value // 1000).isoformat()
                 if sf.users:
                     sfo['users'] = [{
                         'username': u['username'],
+                        'user_id': u.get('account_uid'),
                         'manage_records': u['manage_records'],
-                        'manage_users': u['manage_users']
+                        'manage_users': u['manage_users'],
+                        'expiration': _format_expiration(u.get('expiration'))
                     } for u in sf.users]
                 if sf.teams:
                     sfo['teams'] = [{
                         'name': t['name'],
+                        'team_uid': t.get('team_uid'),
                         'manage_records': t['manage_records'],
-                        'manage_users': t['manage_users']
+                        'manage_users': t['manage_users'],
+                        'expiration': _format_expiration(t.get('expiration'))
                     } for t in sf.teams]
 
                 if admins:
