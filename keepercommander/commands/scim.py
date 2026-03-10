@@ -152,12 +152,17 @@ class ScimCreateCommand(EnterpriseCommand):
 
         api.communicate(params, rq)
         api.query_enterprise(params)
+        scim_url = get_scim_url(params, matched_node['node_id'])
         logging.info('')
         logging.info('SCIM ID: %d', rq['scim_id'])
-        logging.info('SCIM URL: %s', get_scim_url(params, matched_node['node_id']))
+        logging.info('SCIM URL: %s', scim_url)
         logging.info('Provisioning Token: %s', token)
         logging.info('')
-        return token
+        return {
+            'scim_id': rq['scim_id'],
+            'scim_url': scim_url,
+            'provisioning_token': token,
+        }
 
 
 def find_scim(param, name):  # type: (KeeperParams, any) -> dict
