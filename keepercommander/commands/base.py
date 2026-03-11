@@ -162,6 +162,12 @@ def register_commands(commands, aliases, command_info):
         service_commands(commands)
         service_command_info(aliases, command_info)
 
+    from .ai import AiCommand, AiGrammarCommand
+    commands['ai'] = AiCommand()
+    commands['ai-grammar'] = AiGrammarCommand()
+    command_info['ai'] = 'Translate natural language to Commander commands using AI'
+    command_info['ai-grammar'] = 'Dump the command grammar used by AI mode'
+
     toggle_pam_legacy_commands(legacy=False)
 
 

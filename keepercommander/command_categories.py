@@ -91,6 +91,11 @@ COMMAND_CATEGORIES = {
         'email-config'
     },
 
+    # AI Commands
+    'AI Commands': {
+        'ai', 'ai-grammar'
+    },
+
     # Miscellaneous Commands
     'Miscellaneous Commands': {
         'this-device', 'login', 'login-status', 'biometric', 'whoami', 'logout',
@@ -142,6 +147,7 @@ def get_category_order():
         'Domain Management Commands',
         'Email Configuration Commands',
         'Service Mode REST API',
+        'AI Commands',
         'Miscellaneous Commands',
         'KeeperPAM Commands',
         'EPM Commands',
