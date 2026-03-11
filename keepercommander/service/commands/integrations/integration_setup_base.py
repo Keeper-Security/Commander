@@ -86,6 +86,10 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
     def get_record_env_key(self) -> str:
         return f'{self.get_integration_name().upper()}_RECORD'
 
+    def get_integration_service_ports(self, config) -> List[str]:
+        """Return host:container port mappings for the integration container. Override if needed."""
+        return []
+
     def get_commander_service_name(self) -> str:
         return f'commander-{self.get_integration_name().lower()}'
 
@@ -250,7 +254,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         record_uid = self._create_integration_record(params, record_name, setup_result.folder_uid, custom_fields)
 
         DockerSetupPrinter.print_step(2, 2, f"Updating docker-compose.yml with {name} App service...")
-        self._update_docker_compose(setup_result, service_config, record_uid)
+        self._update_docker_compose(setup_result, service_config, record_uid, config)
 
         return record_uid, config
 
@@ -306,7 +310,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
 
     def _update_docker_compose(self, setup_result: SetupResult,
                                service_config: ServiceConfig,
-                               record_uid: str) -> None:
+                               record_uid: str, config=None) -> None:
         compose_file = os.path.join(os.getcwd(), 'docker-compose.yml')
         service_name = self.get_docker_service_name()
 
@@ -329,7 +333,8 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
                 container_name=self.get_docker_container_name(),
                 image=self.get_docker_image(),
                 record_uid=record_uid,
-                record_env_key=self.get_record_env_key()
+                record_env_key=self.get_record_env_key(),
+                ports=self.get_integration_service_ports(config)
             ).build()
 
             with open(compose_file, 'w') as f:

@@ -311,7 +311,7 @@ class PedmPlugin(IPedmAdmin):
         collections: List[admin_types.PedmCollection] = []
         for collection_dto in get_collections():
             try:
-                if collection_dto.collection_type in (1000, 1001, 1002):
+                if 1000 <= collection_dto.collection_type < 2000:
                     collection_value = collection_dto.data.decode('utf-8')
                 else:
                     collection_value = crypto.decrypt_aes_v2(collection_dto.data, self.agent_key).decode('utf-8')
@@ -320,7 +320,7 @@ class PedmPlugin(IPedmAdmin):
                     collection_uid=collection_dto.collection_uid, collection_type=collection_dto.collection_type,
                     collection_data=collection_data, created=collection_dto.created)
             except Exception as e:
-                self.logger.info('Collection "%s" load error: %s', collection_dto.collection_uid, e)
+                self.logger.error('Collection "%s" load error: %s', collection_dto.collection_uid, e)
                 collection = admin_types.PedmCollection(
                     collection_uid=collection_dto.collection_uid, collection_type=collection_dto.collection_type,
                     collection_data={}, created=collection_dto.created)
@@ -532,9 +532,10 @@ class PedmPlugin(IPedmAdmin):
             rq_link.collectionUid.extend(collections)
             rq.setCollection.append(rq_link)
 
-        status_rs = api.execute_router(self.params, rq, 'pedm/set_policy_collections', rs_type=pedm_pb2.PedmStatusResponse)
+        status_rs = api.execute_router(self.params, 'pedm/set_policy_collections', rq, rs_type=pedm_pb2.PedmStatusResponse)
         self._need_sync = True
-        assert status_rs is not None
+        if status_rs is None:
+            return admin_types.ModifyStatus(add=[], update=[], remove=[])
         return admin_types.ModifyStatus.from_proto(status_rs)
 
     def modify_policies(self, *,
