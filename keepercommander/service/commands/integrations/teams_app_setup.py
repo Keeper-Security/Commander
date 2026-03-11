@@ -11,9 +11,12 @@
 
 """Teams App integration setup command."""
 
+from typing import List
+
 from .... import vault
 from ....display import bcolors
 from ...docker import TeamsConfig
+from ...config.config_validation import ConfigValidator, ValidationError
 from .integration_setup_base import IntegrationSetupCommand
 
 
@@ -66,6 +69,16 @@ class TeamsAppSetupCommand(IntegrationSetupCommand):
             "Invalid Team ID (must be 32 hex characters in pattern xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)"
         )
 
+        print(f"\n{bcolors.BOLD}TEAMS_BOT_PORT:{bcolors.ENDC}")
+        print(f"  Port on which the Teams bot will listen for incoming requests")
+        while True:
+            bot_port_input = input(f"{bcolors.OKBLUE}Bot Port [Press Enter for 3978]:{bcolors.ENDC} ").strip() or '3978'
+            try:
+                bot_port = ConfigValidator.validate_port(bot_port_input)
+                break
+            except ValidationError as e:
+                print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
+
         pedm_enabled, pedm_interval = self._collect_pedm_config()
         da_enabled, da_interval = self._collect_device_approval_config()
 
@@ -77,6 +90,7 @@ class TeamsAppSetupCommand(IntegrationSetupCommand):
             tenant_id=tenant_id,
             approvals_channel_id=approvals_channel_id,
             approvals_team_id=approvals_team_id,
+            bot_port=bot_port,
             pedm_enabled=pedm_enabled,
             pedm_polling_interval=pedm_interval,
             device_approval_enabled=da_enabled,
@@ -95,6 +109,9 @@ class TeamsAppSetupCommand(IntegrationSetupCommand):
             vault.TypedField.new_field('text', 'true' if config.device_approval_enabled else 'false', 'device_approval_enabled'),
             vault.TypedField.new_field('text', str(config.device_approval_polling_interval), 'device_approval_polling_interval'),
         ]
+
+    def get_integration_service_ports(self, config) -> List[str]:
+        return [f'{config.bot_port}:{config.bot_port}']
 
     # ── Display ───────────────────────────────────────────────────
 
