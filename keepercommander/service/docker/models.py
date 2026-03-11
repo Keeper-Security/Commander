@@ -96,6 +96,7 @@ class TeamsConfig:
     tenant_id: str
     approvals_channel_id: str
     approvals_team_id: str
+    bot_port: int = 3978
     pedm_enabled: bool = False
     pedm_polling_interval: int = 120
     device_approval_enabled: bool = False
