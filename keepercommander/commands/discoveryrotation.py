@@ -75,7 +75,7 @@ from .pam_debug.rotation_setting import PAMDebugRotationSettingsCommand
 from .pam_debug.link import PAMDebugLinkCommand
 from .pam_debug.vertex import PAMDebugVertexCommand
 from .pam_import.commands import PAMProjectCommand
-from keepercommander.commands.pam_cloud.pam_credential_request import PAMRequestAccessCommand
+from keepercommander.commands.pam_cloud.pam_request_access import PAMRequestAccessCommand
 from .pam_launch.launch import PAMLaunchCommand
 from .pam_service.list import PAMActionServiceListCommand
 from .pam_service.add import PAMActionServiceAddCommand
