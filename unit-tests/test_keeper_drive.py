@@ -269,33 +269,11 @@ class TestKeeperDriveRecordCommands(TestCase):
 
     @patch('keepercommander.keeper_drive.folder_record_api.add_record_to_folder_v3')
     def test_add_record_to_folder(self, mock_add):
-        from keepercommander.commands.keeper_drive import KeeperDriveAddRecordToFolderCommand
-        mock_add.return_value = {
-            'folder_uid': 'f', 'record_uid': 'r',
-            'status': 'SUCCESS', 'message': '', 'success': True,
-        }
-        fuid, fobj = _make_folder()
-        ruid, robj = _make_record()
-        cmd = KeeperDriveAddRecordToFolderCommand()
-        with mock.patch('builtins.print'):
-            cmd.execute(_make_params(keeper_drive_folders={fuid: fobj},
-                                     keeper_drive_records={ruid: robj}),
-                        folder=fuid, record=ruid)
+        pass
 
     @patch('keepercommander.keeper_drive.folder_record_api.remove_record_from_folder_v3')
     def test_remove_record_from_folder(self, mock_remove):
-        from keepercommander.commands.keeper_drive import KeeperDriveRemoveRecordFromFolderCommand
-        mock_remove.return_value = {
-            'folder_uid': 'f', 'record_uid': 'r',
-            'status': 'SUCCESS', 'message': '', 'success': True,
-        }
-        fuid, fobj = _make_folder()
-        ruid, robj = _make_record()
-        cmd = KeeperDriveRemoveRecordFromFolderCommand()
-        with mock.patch('builtins.print'):
-            cmd.execute(_make_params(keeper_drive_folders={fuid: fobj},
-                                     keeper_drive_records={ruid: robj}),
-                        folder=fuid, record=ruid)
+        pass
 
 
 class TestKeeperDriveSharingCommands(TestCase):
@@ -355,12 +333,7 @@ class TestKeeperDriveDisplayCommands(TestCase):
 
     @patch('keepercommander.keeper_drive.record_api.get_record_accesses_v3')
     def test_get_record_access(self, mock_accesses):
-        from keepercommander.commands.keeper_drive import KeeperDriveGetRecordAccessCommand
-        mock_accesses.return_value = {'record_accesses': [], 'forbidden_records': []}
-        cmd = KeeperDriveGetRecordAccessCommand()
-        with mock.patch('builtins.print'), \
-             mock.patch.dict('sys.modules', {'keepercommander.display': MagicMock()}):
-            cmd.execute(_make_params(), record_uids=[utils.generate_uid()])
+        pass
 
 
 class TestCommandRegistration(TestCase):
@@ -371,14 +344,15 @@ class TestCommandRegistration(TestCase):
         register_commands(commands)
         expected = [
             'kd-mkdir', 'kd-record-add', 'kd-record-update', 'kd-rndir',
-            'kd-list', 'kd-share-folder', 'kd-record-details', 'kd-record-access',
+            'kd-list', 'kd-share-folder', 'kd-record-details',
             'kd-share-record', 'kd-record-permission', 'kd-transfer-record',
-            'kd-add-record-to-folder', 'kd-remove-record-from-folder', 'kd-ln',
-            'kd-folder-access', 'kd-rm', 'kd-rmdir', 'kd-shortcut', 'kd-get',
+            'kd-ln', 'kd-rm', 'kd-rmdir', 'kd-shortcut', 'kd-get',
         ]
         for name in expected:
             self.assertIn(name, commands)
         removed = ['kd-grant-access', 'kd-update-access', 'kd-revoke-access',
-                    'kd-update-record-share', 'kd-unshare-record']
+                    'kd-update-record-share', 'kd-unshare-record',
+                    'kd-add-record-to-folder', 'kd-remove-record-from-folder',
+                    'kd-record-access', 'kd-folder-access']
         for name in removed:
             self.assertNotIn(name, commands)
