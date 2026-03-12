@@ -118,6 +118,15 @@ class KeeperResponseParser:
         Returns:
             Dict[str, Any]: Structured JSON response
         """
+        if isinstance(response, dict) and 'scim create' in command:
+            if 'scim_id' in response and 'provisioning_token' in response:
+                base_cmd = command.split()[0] if command.split() else command
+                return {
+                    "status": "success",
+                    "command": base_cmd,
+                    "message": "SCIM endpoint created successfully",
+                    "data": response,
+                }
         # Preprocess response once
         response_str, is_from_log = KeeperResponseParser._preprocess_response(response, log_output)
         
