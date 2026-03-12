@@ -118,7 +118,6 @@ class KeeperResponseParser:
         Returns:
             Dict[str, Any]: Structured JSON response
         """
-        # scim create/edit return a dict with scim_id, scim_url, provisioning_token, etc. - pass through to data
         if isinstance(response, dict) and ('scim create' in command or 'scim edit' in command):
             if 'scim_id' in response and 'provisioning_token' in response:
                 base_cmd = command.split()[0] if command.split() else command

@@ -255,7 +255,6 @@ class ScimEditCommand(EnterpriseCommand):
         api.query_enterprise(params)
         node_id = scim['node_id']
         scim_url = get_scim_url(params, node_id)
-        # Re-fetch scim for server-confirmed prefix/unique_groups after update
         updated = find_scim(params, str(scim['scim_id']))
         logging.info('')
         logging.info('SCIM ID: %d', scim['scim_id'])
