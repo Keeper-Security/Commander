@@ -33,7 +33,7 @@ def _make_parser(prog, description):
 # ══════════════════════════════════════════════════════════════════════════
 
 keeper_drive_mkdir_parser = _make_parser(
-    'keeper-drive-mkdir', 'Create a new KeeperDrive folder using v3 API')
+    'kd-mkdir', 'Create a new KeeperDrive folder using v3 API')
 keeper_drive_mkdir_parser.add_argument(
     'folder', type=str,
     help='Folder name or path to create (e.g., "Projects/Work" or "folder1/folder2/folder3")')
@@ -56,7 +56,7 @@ keeper_drive_update_folder_parser.add_argument(
     help='folder new name')
 keeper_drive_update_folder_parser.add_argument(
     '--color', dest='color', action='store',
-    choices=['none', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'gray'],
+    choices=['none', 'red', 'orange', 'yellow', 'green', 'blue', 'gray'],
     help='folder color')
 keeper_drive_update_folder_parser.add_argument(
     '--inherit', dest='inherit_permissions', action='store_true',
@@ -72,7 +72,7 @@ keeper_drive_update_folder_parser.add_argument(
 
 
 keeper_drive_list_parser = _make_parser(
-    'keeper-drive-list', 'List Keeper Drive folders and records')
+    'kd-list', 'List Keeper Drive folders and records')
 keeper_drive_list_parser.add_argument(
     '--folders', action='store_true', help='Show only folders')
 keeper_drive_list_parser.add_argument(
@@ -119,7 +119,7 @@ keeper_drive_share_folder_parser.add_argument(
 
 
 keeper_drive_get_folder_access_parser = _make_parser(
-    'keeper-drive-get-folder-access',
+    'kd-get-folder-access',
     'Retrieve accessors (users and teams) of Keeper Drive folders')
 keeper_drive_get_folder_access_parser.add_argument(
     'folder_uids', nargs='+', type=str,
@@ -200,7 +200,7 @@ keeper_drive_update_record_parser.add_argument(
 
 
 keeper_drive_add_record_to_folder_parser = _make_parser(
-    'keeper-drive-add-record-to-folder',
+    'kd-add-record-to-folder',
     'Add an existing record to a Keeper Drive folder')
 keeper_drive_add_record_to_folder_parser.add_argument(
     '--folder', type=str, required=True, help='Folder UID, name, or path')
@@ -209,7 +209,7 @@ keeper_drive_add_record_to_folder_parser.add_argument(
 
 
 keeper_drive_remove_record_from_folder_parser = _make_parser(
-    'keeper-drive-remove-record-from-folder',
+    'kd-remove-record-from-folder',
     'Remove a record from a Keeper Drive folder')
 keeper_drive_remove_record_from_folder_parser.add_argument(
     '--folder', type=str, required=True, help='Folder UID, name, or path')
@@ -269,7 +269,7 @@ _sr_expire.add_argument(
 
 
 keeper_drive_record_permission_parser = _make_parser(
-    'keeper-drive-record-permission', 'Modify the permissions of a record')
+    'kd-record-permission', 'Modify the permissions of a record')
 keeper_drive_record_permission_parser.add_argument(
     '--dry-run', dest='dry_run', action='store_true',
     help='Display the permissions changes without committing them')
@@ -294,7 +294,7 @@ keeper_drive_record_permission_parser.add_argument(
 
 
 keeper_drive_transfer_record_parser = _make_parser(
-    'keeper-drive-transfer-record', 'Transfer record ownership to another user')
+    'kd-transfer-record', 'Transfer record ownership to another user')
 keeper_drive_transfer_record_parser.add_argument(
     'record_uids', nargs='+', type=str, help='Record UID(s) to transfer')
 keeper_drive_transfer_record_parser.add_argument(
@@ -306,7 +306,7 @@ keeper_drive_transfer_record_parser.add_argument(
 # ══════════════════════════════════════════════════════════════════════════
 
 keeper_drive_get_record_details_parser = _make_parser(
-    'keeper-drive-get-record-details',
+    'kd-get-record-details',
     'Get record metadata (title, color, etc.) using v3 API')
 keeper_drive_get_record_details_parser.add_argument(
     'record_uids', nargs='+', type=str, help='Record UIDs to get details for')
@@ -316,7 +316,7 @@ keeper_drive_get_record_details_parser.add_argument(
 
 
 keeper_drive_get_record_access_parser = _make_parser(
-    'keeper-drive-get-record-access',
+    'kd-get-record-access',
     'Get record access information using v3 API')
 keeper_drive_get_record_access_parser.add_argument(
     'record_uids', nargs='+', type=str,

@@ -49,7 +49,7 @@ class KeeperDriveMkdirCommand(Command):
     def execute(self, params, **kwargs):
         folder_path = (kwargs.get('folder') or '').strip()
         if not folder_path:
-            raise CommandError('keeper-drive-mkdir', 'Folder name or path is required')
+            raise CommandError('kd-mkdir', 'Folder name or path is required')
 
         create_parents = kwargs.get('create_parents', False)
         color = kwargs.get('color')
@@ -62,7 +62,7 @@ class KeeperDriveMkdirCommand(Command):
 
         folder_parts = self._parse_path(folder_path, create_parents)
         if len(folder_parts) > 1 and not create_parents:
-            raise CommandError('keeper-drive-mkdir',
+            raise CommandError('kd-mkdir',
                                'Character "/" is reserved. Use "//" inside folder name')
 
         created_folders = []
@@ -79,14 +79,14 @@ class KeeperDriveMkdirCommand(Command):
                 current_parent_uid = existing_uid
                 continue
 
-            with command_error_handler('keeper-drive-mkdir'):
+            with command_error_handler('kd-mkdir'):
                 result = _kd.create_folder_v3(
                     params=params, folder_name=folder_name,
                     parent_uid=current_parent_uid,
                     color=color if is_last else None,
                     inherit_permissions=inherit_permissions,
                 )
-                check_result(result, 'keeper-drive-mkdir')
+                check_result(result, 'kd-mkdir')
 
             created_uid = result['folder_uid']
             created_folders.append(created_uid)
@@ -109,12 +109,12 @@ class KeeperDriveMkdirCommand(Command):
                 is_slash = not is_slash
             else:
                 if is_slash and not create_parents:
-                    raise CommandError('keeper-drive-mkdir',
+                    raise CommandError('kd-mkdir',
                                        'Character "/" is reserved. Use "//" inside folder name')
         parts = folder_path.replace('//', '\x00').split('/')
         result = [p.replace('\x00', '/') for p in parts if p]
         if not result:
-            raise CommandError('keeper-drive-mkdir', 'Invalid folder path')
+            raise CommandError('kd-mkdir', 'Invalid folder path')
         return result
 
     @staticmethod
@@ -239,8 +239,10 @@ class KeeperDriveListCommand(Command):
             accesses = getattr(params, 'keeper_drive_folder_accesses', {}).get(folder_uid)
             if accesses:
                 from keepercommander.proto import folder_pb2
-                at_owner = int(folder_pb2.AT_OWNER)
-                non_owner = [a for a in accesses if int(a.get('access_type', 0)) != at_owner]
+                at_user = int(folder_pb2.AT_USER)
+                at_team = int(folder_pb2.AT_TEAM)
+                non_owner = [a for a in accesses
+                             if int(a.get('access_type', 0)) in (at_user, at_team)]
                 if non_owner:
                     shared = f"Yes ({len(non_owner)})"
             rows.append(['Folder', folder_uid, title, '', '', shared, parent_uid])

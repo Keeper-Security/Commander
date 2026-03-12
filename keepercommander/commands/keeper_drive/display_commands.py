@@ -58,7 +58,7 @@ class KeeperDriveGetRecordDetailsCommand(Command):
             uid = _kd.resolve_kd_record_uid(params, ident)
             if not uid:
                 raise CommandError('kd-record-details',
-                                   f"Record '{ident}' not found in KeeperDrive cache")
+                                   f"Record '{ident}' not found")
             record_uids.append(uid)
 
         with command_error_handler('kd-record-details'):
@@ -105,7 +105,7 @@ class KeeperDriveGetRecordAccessCommand(Command):
             uid = _kd.resolve_kd_record_uid(params, ident)
             if not uid:
                 raise CommandError('kd-record-access',
-                                   f"Record '{ident}' not found in KeeperDrive cache")
+                                   f"Record '{ident}' not found")
             record_uids.append(uid)
 
         with command_error_handler('kd-record-access'):

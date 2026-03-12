@@ -436,6 +436,122 @@ def unshare_record_v3(params, record_uid, recipient_email):
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# Batch record sharing  (bulk update / revoke in a single REST call per chunk)
+# ══════════════════════════════════════════════════════════════════════════
+
+_SHARE_BATCH_SIZE = 200
+"""Maximum number of permissions per vault/records/v3/share request."""
+
+
+def batch_update_record_shares_v3(params, updates, expiration_timestamp=None, chunk_size=_SHARE_BATCH_SIZE):
+    """Send multiple updateSharingPermissions in as few REST calls as possible.
+
+    *updates* is a list of dicts with keys:
+        ``record_uid``, ``email``, ``access_role_type``,
+        ``cur_role`` (for logging), ``new_role`` (for logging).
+
+    Returns a list of ``(item_dict, result_dict)`` pairs, one per permission
+    in input order (skipped items carry ``result['skipped'] = True``).
+    """
+    from .. import sync_down as sd
+    sd.sync_down(params)
+
+    outcomes = []
+    for i in range(0, len(updates), chunk_size):
+        chunk = updates[i:i + chunk_size]
+        rq = record_sharing_pb2.Request()
+        built = []
+        for u in chunk:
+            try:
+                perm = _build_share_permissions(
+                    params, u['record_uid'], u['email'],
+                    u['access_role_type'], expiration_timestamp,
+                    include_role=True,
+                )
+                rq.updateSharingPermissions.append(perm)
+                built.append(u)
+            except Exception as exc:
+                outcomes.append((u, {'success': False, 'skipped': True,
+                                      'message': str(exc)}))
+
+        if not built:
+            continue
+
+        try:
+            rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
+                                      rs_type=record_sharing_pb2.Response)
+            statuses = [parse_sharing_status(s) for s in rs.updatedSharingStatus]
+            status_by_uid = {s['record_uid']: s for s in statuses}
+            for u in built:
+                outcomes.append((u, status_by_uid.get(u['record_uid'],
+                                                        {'success': False,
+                                                         'message': 'No status returned'})))
+        except Exception as exc:
+            for u in built:
+                outcomes.append((u, {'success': False, 'message': str(exc)}))
+
+    return outcomes
+
+
+def batch_unshare_records_v3(params, revokes, chunk_size=_SHARE_BATCH_SIZE):
+    """Send multiple revokeSharingPermissions in as few REST calls as possible.
+
+    *revokes* is a list of dicts with keys:
+        ``record_uid``, ``email``, ``cur_role`` (for logging).
+
+    Returns a list of ``(item_dict, result_dict)`` pairs.
+    """
+    from .. import sync_down as sd
+    sd.sync_down(params)
+
+    outcomes = []
+    for i in range(0, len(revokes), chunk_size):
+        chunk = revokes[i:i + chunk_size]
+        rq = record_sharing_pb2.Request()
+        built = []
+        for r in chunk:
+            try:
+                rec = get_record_from_cache(params, r['record_uid'])
+                if not rec:
+                    raise ValueError(f"Record {r['record_uid']} not found in cache")
+                _, _, uid_bytes, _ = get_user_public_key(params, r['email'])
+                if not uid_bytes:
+                    raise ValueError(f"User {r['email']} not found")
+
+                uid_b = utils.base64_url_decode(r['record_uid'])
+                perm = record_sharing_pb2.Permissions()
+                perm.recipientUid = uid_bytes
+                perm.recordUid = uid_b
+                perm.rules.accessTypeUid = uid_bytes
+                perm.rules.accessType = folder_pb2.AT_USER
+                perm.rules.recordUid = uid_b
+
+                rq.revokeSharingPermissions.append(perm)
+                built.append(r)
+            except Exception as exc:
+                outcomes.append((r, {'success': False, 'skipped': True,
+                                      'message': str(exc)}))
+
+        if not built:
+            continue
+
+        try:
+            rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
+                                      rs_type=record_sharing_pb2.Response)
+            statuses = [parse_sharing_status(s) for s in rs.revokedSharingStatus]
+            status_by_uid = {s['record_uid']: s for s in statuses}
+            for r in built:
+                outcomes.append((r, status_by_uid.get(r['record_uid'],
+                                                        {'success': False,
+                                                         'message': 'No status returned'})))
+        except Exception as exc:
+            for r in built:
+                outcomes.append((r, {'success': False, 'message': str(exc)}))
+
+    return outcomes
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # Ownership transfer
 # ══════════════════════════════════════════════════════════════════════════
 
