@@ -277,13 +277,11 @@ class RecordGetUidCommand(Command):
             admins = api.get_share_admins_for_shared_folder(params, uid)
             sf = api.get_shared_folder(params, uid)
             if fmt == 'json':
-                folder_path = get_folder_path(params, sf.shared_folder_uid, delimiter=os.sep)
-                if folder_path and folder_path.endswith(os.sep):
-                    folder_path = folder_path[:-1]
+                path = get_folder_path(params, sf.shared_folder_uid, delimiter=os.sep) if sf.shared_folder_uid else ''
                 sfo = {
                     "shared_folder_uid": sf.shared_folder_uid,
                     "name": sf.name,
-                    "path": folder_path or sf.name,
+                    "path": path,
                     "manage_users": sf.default_manage_users,
                     "manage_records": sf.default_manage_records,
                     "can_edit": sf.default_can_edit,
