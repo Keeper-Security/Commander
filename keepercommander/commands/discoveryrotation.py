@@ -68,11 +68,12 @@ from .discover.rule_list import PAMGatewayActionDiscoverRuleListCommand
 from .discover.rule_remove import PAMGatewayActionDiscoverRuleRemoveCommand
 from .discover.rule_update import PAMGatewayActionDiscoverRuleUpdateCommand
 from .pam_debug.acl import PAMDebugACLCommand
+from .pam_debug.dump import PAMDebugDumpCommand
+from .pam_debug.gateway import PAMDebugGatewayCommand
 from .pam_debug.graph import PAMDebugGraphCommand
 from .pam_debug.info import PAMDebugInfoCommand
-from .pam_debug.gateway import PAMDebugGatewayCommand
-from .pam_debug.rotation_setting import PAMDebugRotationSettingsCommand
 from .pam_debug.link import PAMDebugLinkCommand
+from .pam_debug.rotation_setting import PAMDebugRotationSettingsCommand
 from .pam_debug.vertex import PAMDebugVertexCommand
 from .pam_import.commands import PAMProjectCommand
 from keepercommander.commands.pam_cloud.pam_request_access import PAMRequestAccessCommand
@@ -314,6 +315,8 @@ class PAMDebugCommand(GroupCommand):
                               'Create/reset rotation settings', 'rs')
         self.register_command('vertex', PAMDebugVertexCommand(),
                               'Debug a graph vertex', 'v')
+        self.register_command('dump', PAMDebugDumpCommand(),
+                              'Dump folder records data and GraphSync to JSON', 'd')
 
 
 class PAMLegacyCommand(Command):

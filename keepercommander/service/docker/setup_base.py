@@ -33,6 +33,7 @@ from ...error import CommandError
 from .models import SetupResult, SetupStep, DockerSetupConstants
 from .printer import DockerSetupPrinter
 from ..config.config_validation import ConfigValidator, ValidationError
+from ..config.record_handler import RecordHandler
 
 
 class DockerSetupBase:
@@ -62,8 +63,8 @@ class DockerSetupBase:
         DockerSetupPrinter.print_step(SetupStep.CREATE_RECORD.value, total_steps, f"Creating record '{record_name}'...")
         record_uid = self._create_config_record(params, record_name, folder_uid)
 
-        # Step 4: Upload config file
-        DockerSetupPrinter.print_step(SetupStep.UPLOAD_CONFIG.value, total_steps, "Uploading config.json attachment...")
+        # Step 4: Store config file (attachment or custom field)
+        DockerSetupPrinter.print_step(SetupStep.UPLOAD_CONFIG.value, total_steps, "Storing config.json...")
         self._upload_config_file(params, record_uid, config_path)
 
         # Step 5: Create KSM app
@@ -180,40 +181,64 @@ class DockerSetupBase:
             raise CommandError('docker-setup', f'Failed to create record: {str(e)}')
 
     def _upload_config_file(self, params, record_uid: str, config_path: str) -> None:
-        """Upload config.json as attachment to the record"""
+        """Upload config.json as attachment, or store as custom field if no file storage plan."""
         temp_config_path = None
         try:
-            # Clean the config first
             cleaned_config_path = self._clean_config_json(config_path)
             if cleaned_config_path != config_path:
                 temp_config_path = cleaned_config_path
-            
-            record = vault.KeeperRecord.load(params, record_uid)
-            if not isinstance(record, vault.TypedRecord):
-                raise CommandError('docker-setup', 'Invalid record type for attachments')
-            # Delete existing config.json attachments to prevent duplicates
-            self._delete_existing_config_attachments(record, params)
 
-            # Upload attachment
-            upload_task = attachment.FileUploadTask(cleaned_config_path)
-            upload_task.title = 'config.json'
-            
-            attachment.upload_attachments(params, record, [upload_task])
-            record_management.update_record(params, record)
-            params.sync_data = True
-            api.sync_down(params)
-            
-            DockerSetupPrinter.print_success("Config file uploaded successfully")
+            if RecordHandler.has_file_storage(params):
+                self._upload_config_as_attachment(params, record_uid, cleaned_config_path)
+            else:
+                self._store_config_as_custom_field(params, record_uid, cleaned_config_path)
+        except CommandError:
+            raise
         except Exception as e:
-            raise CommandError('docker-setup', f'Failed to upload config file: {str(e)}')
+            raise CommandError('docker-setup', f'Failed to store config file: {str(e)}')
         finally:
             if temp_config_path and os.path.exists(temp_config_path):
                 try:
                     os.unlink(temp_config_path)
-                except OSError as e:
-                    # Log or handle specifically
-                    print(f"Warning: Could not delete temporary config file: {e}")
+                except OSError:
                     pass
+
+    def _upload_config_as_attachment(self, params, record_uid: str, config_path: str) -> None:
+        """Upload config.json as a file attachment (requires file storage plan)."""
+        record = vault.KeeperRecord.load(params, record_uid)
+        if not isinstance(record, vault.TypedRecord):
+            raise CommandError('docker-setup', 'Invalid record type for attachments')
+        self._delete_existing_config_attachments(record, params)
+
+        upload_task = attachment.FileUploadTask(config_path)
+        upload_task.title = 'config.json'
+
+        attachment.upload_attachments(params, record, [upload_task])
+        record_management.update_record(params, record)
+        params.sync_data = True
+        api.sync_down(params)
+
+        DockerSetupPrinter.print_success("Config file uploaded as attachment")
+
+    def _store_config_as_custom_field(self, params, record_uid: str, config_path: str) -> None:
+        """Store config.json content as a custom field (fallback when no file storage plan)."""
+        with open(config_path, 'r') as f:
+            config_content = f.read()
+
+        record = vault.KeeperRecord.load(params, record_uid)
+        if not isinstance(record, vault.TypedRecord):
+            raise CommandError('docker-setup', 'Invalid record type')
+
+        if record.custom is None:
+            record.custom = []
+        record.custom = [f for f in record.custom if f.label != 'config_json']
+        record.custom.append(vault.TypedField.new_field('secret', config_content, 'config_json'))
+
+        record_management.update_record(params, record)
+        params.sync_data = True
+        api.sync_down(params)
+
+        DockerSetupPrinter.print_success("Config stored as custom field (no file storage plan)")
 
     def _delete_existing_config_attachments(self, record, params) -> None:
         """Delete any existing config.json attachments to prevent duplicates"""
