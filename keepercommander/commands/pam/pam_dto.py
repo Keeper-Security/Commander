@@ -228,3 +228,67 @@ class GatewayActionWebRTCSession(GatewayAction):
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+# IDENTITY PROVIDER ACTIONS
+# These use existing RM action strings with optional idpConfigUid for IdP credential scoping.
+# See: KPC Track B (resolve_config_uid on DRAction base class in dr-controller)
+
+
+class GatewayActionIdpInputs:
+
+    def __init__(self, configuration_uid, idp_config_uid=None, **kwargs):
+        self.configurationUid = configuration_uid
+        if idp_config_uid and idp_config_uid != configuration_uid:
+            self.idpConfigUid = idp_config_uid
+        for key, value in kwargs.items():
+            if value is not None:
+                setattr(self, key, value)
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionIdpCreateUser(GatewayAction):
+
+    def __init__(self, inputs: GatewayActionIdpInputs, conversation_id=None):
+        super().__init__('rm-create-user', inputs=inputs, conversation_id=conversation_id, is_scheduled=False)
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionIdpDeleteUser(GatewayAction):
+
+    def __init__(self, inputs: GatewayActionIdpInputs, conversation_id=None):
+        super().__init__('rm-delete-user', inputs=inputs, conversation_id=conversation_id, is_scheduled=False)
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionIdpAddUserToGroup(GatewayAction):
+
+    def __init__(self, inputs: GatewayActionIdpInputs, conversation_id=None):
+        super().__init__('rm-add-user-to-group', inputs=inputs, conversation_id=conversation_id, is_scheduled=False)
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionIdpRemoveUserFromGroup(GatewayAction):
+
+    def __init__(self, inputs: GatewayActionIdpInputs, conversation_id=None):
+        super().__init__('rm-remove-user-from-group', inputs=inputs, conversation_id=conversation_id, is_scheduled=False)
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionIdpGroupList(GatewayAction):
+
+    def __init__(self, inputs: GatewayActionIdpInputs, conversation_id=None):
+        super().__init__('rm-group-list', inputs=inputs, conversation_id=conversation_id, is_scheduled=False)
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
