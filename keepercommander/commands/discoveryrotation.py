@@ -76,6 +76,7 @@ from .pam_debug.link import PAMDebugLinkCommand
 from .pam_debug.vertex import PAMDebugVertexCommand
 from .pam_import.commands import PAMProjectCommand
 from keepercommander.commands.pam_cloud.pam_request_access import PAMRequestAccessCommand
+from keepercommander.commands.pam_cloud.pam_idp import PAMIdpCommand
 from .pam_launch.launch import PAMLaunchCommand
 from .pam_service.list import PAMActionServiceListCommand
 from .pam_service.add import PAMActionServiceAddCommand
@@ -189,6 +190,8 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('launch', PAMLaunchCommand(), 'Launch a connection to a PAM resource', 'l')
         self.register_command('request-access', PAMRequestAccessCommand(),
                               'Request access for a shared record', 'cr')
+        self.register_command('idp', PAMIdpCommand(),
+                              'Manage Identity Provider operations', 'i')
 
 
 class PAMGatewayCommand(GroupCommand):
