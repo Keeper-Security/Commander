@@ -118,17 +118,6 @@ keeper_drive_share_folder_parser.add_argument(
     'folder', nargs='+', type=str, help='KeeperDrive folder path or UID')
 
 
-keeper_drive_get_folder_access_parser = _make_parser(
-    'kd-get-folder-access',
-    'Retrieve accessors (users and teams) of Keeper Drive folders')
-keeper_drive_get_folder_access_parser.add_argument(
-    'folder_uids', nargs='+', type=str,
-    help='Folder UIDs, names, or paths to query (max 100)')
-keeper_drive_get_folder_access_parser.add_argument(
-    '--verbose', '-v', action='store_true',
-    help='Show detailed information including permissions')
-
-
 kd_rmdir_parser = _make_parser(
     'kd-rmdir',
     'Remove a KeeperDrive folder and its entire contents. '
@@ -197,24 +186,6 @@ keeper_drive_update_record_parser.add_argument(
 keeper_drive_update_record_parser.add_argument(
     'fields', nargs='*', type=str,
     help='load record type data from strings with dot notation')
-
-
-keeper_drive_add_record_to_folder_parser = _make_parser(
-    'kd-add-record-to-folder',
-    'Add an existing record to a Keeper Drive folder')
-keeper_drive_add_record_to_folder_parser.add_argument(
-    '--folder', type=str, required=True, help='Folder UID, name, or path')
-keeper_drive_add_record_to_folder_parser.add_argument(
-    '--record', type=str, required=True, help='Record UID to add to the folder')
-
-
-keeper_drive_remove_record_from_folder_parser = _make_parser(
-    'kd-remove-record-from-folder',
-    'Remove a record from a Keeper Drive folder')
-keeper_drive_remove_record_from_folder_parser.add_argument(
-    '--folder', type=str, required=True, help='Folder UID, name, or path')
-keeper_drive_remove_record_from_folder_parser.add_argument(
-    '--record', type=str, required=True, help='Record UID to remove from the folder')
 
 
 keeper_drive_ln_parser = _make_parser(
@@ -313,20 +284,6 @@ keeper_drive_get_record_details_parser.add_argument(
 keeper_drive_get_record_details_parser.add_argument(
     '--format', dest='format', choices=['table', 'json'], default='table',
     help='Output format (default: table)')
-
-
-keeper_drive_get_record_access_parser = _make_parser(
-    'kd-get-record-access',
-    'Get record access information using v3 API')
-keeper_drive_get_record_access_parser.add_argument(
-    'record_uids', nargs='+', type=str,
-    help='Record UIDs to get access information for')
-keeper_drive_get_record_access_parser.add_argument(
-    '--format', dest='format', choices=['table', 'json'], default='table',
-    help='Output format (default: table)')
-keeper_drive_get_record_access_parser.add_argument(
-    '--verbose', '-v', dest='verbose', action='store_true', default=False,
-    help='Show individual permission flags in addition to the role name')
 
 
 # ══════════════════════════════════════════════════════════════════════════

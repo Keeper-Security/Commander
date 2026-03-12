@@ -29,8 +29,6 @@ from .helpers import (
 from .parsers import (
     keeper_drive_add_record_parser,
     keeper_drive_update_record_parser,
-    keeper_drive_add_record_to_folder_parser,
-    keeper_drive_remove_record_from_folder_parser,
     keeper_drive_ln_parser,
     kd_shortcut_list_parser,
     kd_shortcut_keep_parser,
@@ -221,54 +219,8 @@ class KeeperDriveUpdateRecordCommand(Command, RecordEditMixin):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# kd-add-record-to-folder / kd-remove-record-from-folder / kd-ln
+# kd-ln
 # ══════════════════════════════════════════════════════════════════════════
-
-class KeeperDriveAddRecordToFolderCommand(Command):
-    """Add an existing record to a folder."""
-
-    def get_parser(self):
-        return keeper_drive_add_record_to_folder_parser
-
-    def execute(self, params, **kwargs):
-        folder_arg = kwargs.get('folder')
-        record_arg = kwargs.get('record')
-        if not folder_arg or not record_arg:
-            raise CommandError('kd-add-record-to-folder', 'Folder and record are required')
-        folder_uid = resolve_folder_uid(params, folder_arg)
-        if not folder_uid:
-            raise CommandError('kd-add-record-to-folder', f"Folder '{folder_arg}' not found")
-        record_uid = _kd.resolve_kd_record_uid(params, record_arg)
-        if not record_uid:
-            raise CommandError('kd-add-record-to-folder',
-                               f"Record '{record_arg}' not found")
-        with command_error_handler('kd-add-record-to-folder'):
-            result = _kd.add_record_to_folder_v3(params, folder_uid=folder_uid, record_uid=record_uid)
-            check_result(result, 'kd-add-record-to-folder')
-
-
-class KeeperDriveRemoveRecordFromFolderCommand(Command):
-    """Remove a record from a folder."""
-
-    def get_parser(self):
-        return keeper_drive_remove_record_from_folder_parser
-
-    def execute(self, params, **kwargs):
-        folder_arg = kwargs.get('folder')
-        record_arg = kwargs.get('record')
-        if not folder_arg or not record_arg:
-            raise CommandError('kd-remove-record-from-folder', 'Folder and record are required')
-        folder_uid = resolve_folder_uid(params, folder_arg)
-        if not folder_uid:
-            raise CommandError('kd-remove-record-from-folder', f"Folder '{folder_arg}' not found")
-        record_uid = _kd.resolve_kd_record_uid(params, record_arg)
-        if not record_uid:
-            raise CommandError('kd-remove-record-from-folder',
-                               f"Record '{record_arg}' not found")
-        with command_error_handler('kd-remove-record-from-folder'):
-            result = _kd.remove_record_from_folder_v3(params, folder_uid=folder_uid, record_uid=record_uid)
-            check_result(result, 'kd-remove-record-from-folder')
-
 
 class KeeperDriveLnCommand(Command):
     """Create a link between a record and a KeeperDrive folder (positional: RECORD FOLDER)."""
