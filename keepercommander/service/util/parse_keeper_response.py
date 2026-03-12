@@ -118,6 +118,15 @@ class KeeperResponseParser:
         Returns:
             Dict[str, Any]: Structured JSON response
         """
+        if isinstance(response, dict) and 'scim create' in command:
+            if 'scim_id' in response and 'provisioning_token' in response:
+                base_cmd = command.split()[0] if command.split() else command
+                return {
+                    "status": "success",
+                    "command": base_cmd,
+                    "message": "SCIM endpoint created successfully",
+                    "data": response,
+                }
         # Preprocess response once
         response_str, is_from_log = KeeperResponseParser._preprocess_response(response, log_output)
         
@@ -486,27 +495,41 @@ class KeeperResponseParser:
 
     @staticmethod
     def _parse_mkdir_command(response: str) -> Dict[str, Any]:
-        """Parse 'mkdir' command output to extract folder UID."""
+        """Parse 'mkdir' command output to extract folder UID, path, and name."""
         response_str = response.strip()
-        
-        # Success case - try to extract UID
+        lines = [ln.strip() for ln in response_str.split('\n') if ln.strip()]
+
         result = {
             "status": "success",
             "command": "mkdir",
             "data": None
         }
-        
-        if re.match(r'^[a-zA-Z0-9_-]+$', response_str):
+
+        for line in lines:
+            try:
+                data = json.loads(line)
+                if isinstance(data, dict) and 'folder_uid' in data:
+                    result["data"] = {
+                        "folder_uid": data["folder_uid"],
+                        "path": data.get("path"),
+                        "name": data.get("name")
+                    }
+                    return result
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        last_line = lines[-1] if lines else response_str
+        if re.match(r'^[a-zA-Z0-9_-]+$', last_line):
             result["data"] = {
-                "folder_uid": response_str
+                "folder_uid": last_line
             }
         else:
-            uid_match = re.search(r'folder_uid=([a-zA-Z0-9_-]+)', response_str)
+            uid_match = re.search(r'folder_uid=([a-zA-Z0-9_-]+)', last_line)
             if uid_match:
                 result["data"] = {
                     "folder_uid": uid_match.group(1)
                 }
-            
+
         return result
 
     @staticmethod
