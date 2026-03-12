@@ -354,7 +354,7 @@ def _check_existing_access(params, folder_uid, uid_bytes, target_role_name):
     """Return existing role name or None."""
     try:
         uid_encoded = utils.base64_url_encode(uid_bytes)
-        info = get_folder_access_v3(params, [folder_uid])
+        info = get_folder_access_v3(params, [folder_uid], resolve_usernames=False)
         if info.get('results'):
             for a in info['results'][0].get('accessors', []):
                 if a.get('access_type') == 'AT_USER' and a.get('accessor_uid') == uid_encoded:
@@ -537,7 +537,8 @@ def _resolve_uid_to_username(params, uid_b64: str) -> Optional[str]:
 # High-level: get_folder_access_v3
 # ══════════════════════════════════════════════════════════════════════════
 
-def get_folder_access_v3(params, folder_uids, continuation_token=None, page_size=None):
+def get_folder_access_v3(params, folder_uids, continuation_token=None,
+                         page_size=None, resolve_usernames=True):
     if not folder_uids or len(folder_uids) > 100:
         raise ValueError("Provide 1..100 folder UIDs")
     from ..proto import folder_access_pb2
@@ -576,7 +577,7 @@ def get_folder_access_v3(params, folder_uids, continuation_token=None, page_size
                 at = folder_pb2.AccessType.Name(a.accessType)
                 rt = folder_pb2.AccessRoleType.Name(a.accessRoleType)
                 username = None
-                if at == 'AT_USER':
+                if resolve_usernames and at == 'AT_USER':
                     username = getattr(params, 'user_cache', {}).get(auid)
                     if not username and hasattr(params, 'enterprise') and params.enterprise:
                         for u in params.enterprise.get('users', []):

@@ -94,15 +94,48 @@ def find_kd_folders_for_record(params, record_uid):
 
 
 def resolve_kd_record_uid(params, identifier):
-    """Resolve a record identifier (UID or title) to a KeeperDrive record UID."""
+    """Resolve a record identifier (UID, title, or name) to a record UID.
+
+    Lookup order:
+      1. Direct UID match in keeper_drive_records
+      2. Direct UID match in record_cache (vault records)
+      3. Title match from decrypted keeper_drive_record_data
+      4. Title match from record_cache (data_unencrypted)
+    """
+    import json
+
     kd = getattr(params, 'keeper_drive_records', {})
     if identifier in kd:
         return identifier
+
+    rc = getattr(params, 'record_cache', {})
+    if identifier in rc:
+        return identifier
+
     lower = identifier.casefold()
-    for uid, rec in kd.items():
-        title = rec.get('title', '')
-        if isinstance(title, str) and title.casefold() == lower:
-            return uid
+
+    kd_data = getattr(params, 'keeper_drive_record_data', {})
+    for uid in kd:
+        rd = kd_data.get(uid, {})
+        dj = rd.get('data_json', {})
+        if isinstance(dj, dict):
+            t = dj.get('title', '')
+            if isinstance(t, str) and t.casefold() == lower:
+                return uid
+
+    for uid, rec in rc.items():
+        if uid in kd:
+            continue
+        data = rec.get('data_unencrypted')
+        if data:
+            try:
+                dj = json.loads(data.decode('utf-8') if isinstance(data, bytes) else data)
+                t = dj.get('title', '')
+                if isinstance(t, str) and t.casefold() == lower:
+                    return uid
+            except Exception:
+                pass
+
     return None
 
 
