@@ -111,9 +111,6 @@ def resolve_user_uid_bytes(params, user_identifier: str) -> Optional[bytes]:
                 if user.get('username', '').lower() == lower:
                     if user.get('user_account_uid'):
                         return utils.base64_url_decode(user['user_account_uid'])
-                    eid = user.get('enterprise_user_id')
-                    if isinstance(eid, int):
-                        return eid.to_bytes(8, byteorder='big', signed=False)
                     break
         return None
 
@@ -198,26 +195,19 @@ def get_user_public_key(params, recipient_email, require_uid=True):
             rq = GetShareObjectsRequest()
             rs = api.communicate_rest(params, rq, 'vault/get_share_objects',
                                       rs_type=GetShareObjectsResponse)
+            if not hasattr(params, 'user_cache'):
+                params.user_cache = {}
             for ul in (rs.shareRelationships, rs.shareFamilyUsers,
                        rs.shareEnterpriseUsers, rs.shareMCEnterpriseUsers):
                 for su in ul:
-                    if su.username.lower() == recipient_email.lower() and su.userAccountUid:
-                        uid = su.userAccountUid
-                        recipient_uid_bytes = uid if isinstance(uid, bytes) else utils.base64_url_decode(uid)
-                        break
-                if recipient_uid_bytes:
-                    break
+                    if su.userAccountUid and su.username:
+                        su_uid_b64 = utils.base64_url_encode(su.userAccountUid)
+                        params.user_cache[su_uid_b64] = su.username
+                        if su.username.lower() == recipient_email.lower():
+                            recipient_uid_bytes = (su.userAccountUid if isinstance(su.userAccountUid, bytes)
+                                                   else utils.base64_url_decode(su.userAccountUid))
         except Exception:
             pass
-
-    if not recipient_uid_bytes and hasattr(params, 'enterprise') and params.enterprise:
-        for user in params.enterprise.get('users', []):
-            if user.get('username', '').lower() == recipient_email.lower():
-                eid = user.get('enterprise_user_id')
-                if isinstance(eid, int):
-                    recipient_uid_bytes = eid.to_bytes(8, byteorder='big', signed=False)
-                    logger.warning("Using enterprise_user_id %d as UID fallback for %s", eid, recipient_email)
-                break
 
     return recipient_public_key, use_ecc, recipient_uid_bytes, needs_invite
 

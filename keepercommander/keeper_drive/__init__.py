@@ -39,6 +39,7 @@ _SUBMODULE_MAP = {
         'create_record_v3', 'update_record_v3', 'create_records_batch_v3',
         'get_record_details_v3', 'get_record_accesses_v3',
         'share_record_v3', 'update_record_share_v3', 'unshare_record_v3',
+        'batch_update_record_shares_v3', 'batch_unshare_records_v3',
         'transfer_record_ownership_v3', 'transfer_records_ownership_batch_v3',
     ],
     'folder_record_api': [

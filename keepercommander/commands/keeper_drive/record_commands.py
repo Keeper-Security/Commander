@@ -79,6 +79,8 @@ class KeeperDriveAddRecordCommand(Command, RecordEditMixin):
         if add_attachments:
             logging.warning('File attachments are not yet supported in kd-record-add. '
                             'Use record-add for attachment support.')
+            if not kwargs.get('force'):
+                return
 
         with command_error_handler('kd-record-add'):
             result = _kd.create_record_v3(params=params, folder_uid=folder_uid, record_data=data)
@@ -184,6 +186,12 @@ class KeeperDriveUpdateRecordCommand(Command, RecordEditMixin):
         if not record_uids:
             raise CommandError('kd-record-update', 'Record UID is required (use -r or --record)')
 
+        record_type = kwargs.get('record_type')
+        if record_type and record_type not in ('legacy', 'general'):
+            rt_fields = self.get_record_type_fields(params, record_type)
+            if not rt_fields:
+                raise CommandError('kd-record-update', f'Record type "{record_type}" cannot be found.')
+
         fields = {}
         for spec in [f.strip() for f in kwargs.get('fields', []) if f.strip()]:
             try:
@@ -202,10 +210,10 @@ class KeeperDriveUpdateRecordCommand(Command, RecordEditMixin):
                 record_uid = _kd.resolve_kd_record_uid(params, identifier)
                 if not record_uid:
                     raise CommandError('kd-record-update',
-                                       f"Record '{identifier}' not found in KeeperDrive cache")
+                                       f"Record '{identifier}' not found")
                 result = _kd.update_record_v3(
                     params=params, record_uid=record_uid,
-                    title=kwargs.get('title'), record_type=kwargs.get('record_type'),
+                    title=kwargs.get('title'), record_type=record_type,
                     fields=fields or None, notes=kwargs.get('notes'),
                 )
                 check_result(result, 'kd-record-update')
@@ -233,7 +241,7 @@ class KeeperDriveAddRecordToFolderCommand(Command):
         record_uid = _kd.resolve_kd_record_uid(params, record_arg)
         if not record_uid:
             raise CommandError('kd-add-record-to-folder',
-                               f"Record '{record_arg}' not found in KeeperDrive cache")
+                               f"Record '{record_arg}' not found")
         with command_error_handler('kd-add-record-to-folder'):
             result = _kd.add_record_to_folder_v3(params, folder_uid=folder_uid, record_uid=record_uid)
             check_result(result, 'kd-add-record-to-folder')
@@ -256,7 +264,7 @@ class KeeperDriveRemoveRecordFromFolderCommand(Command):
         record_uid = _kd.resolve_kd_record_uid(params, record_arg)
         if not record_uid:
             raise CommandError('kd-remove-record-from-folder',
-                               f"Record '{record_arg}' not found in KeeperDrive cache")
+                               f"Record '{record_arg}' not found")
         with command_error_handler('kd-remove-record-from-folder'):
             result = _kd.remove_record_from_folder_v3(params, folder_uid=folder_uid, record_uid=record_uid)
             check_result(result, 'kd-remove-record-from-folder')
@@ -275,7 +283,7 @@ class KeeperDriveLnCommand(Command):
             return
         record_uid = _kd.resolve_kd_record_uid(params, src)
         if not record_uid:
-            raise CommandError('kd-ln', f"Record '{src}' not found in KeeperDrive cache")
+            raise CommandError('kd-ln', f"Record '{src}' not found")
         folder_uid = resolve_folder_uid(params, dst)
         if not folder_uid:
             raise CommandError('kd-ln', f"Folder '{dst}' not found")
@@ -492,7 +500,7 @@ class KeeperDriveRemoveRecordCommand(Command):
         for identifier in record_args:
             record_uid = _kd.resolve_kd_record_uid(params, identifier)
             if not record_uid:
-                raise CommandError('kd-rm', f"Record '{identifier}' not found in KeeperDrive cache")
+                raise CommandError('kd-rm', f"Record '{identifier}' not found")
             ctx_folder = folder_uid
             if not ctx_folder:
                 folders = _kd.find_kd_folders_for_record(params, record_uid)

@@ -194,7 +194,7 @@ class KeeperDriveShareRecordCommand(Command):
         resolved_uid = _kd.resolve_kd_record_uid(params, record_arg)
         if not resolved_uid:
             raise CommandError('kd-share-record',
-                               f"Record '{record_arg}' not found in KeeperDrive cache")
+                               f"Record '{record_arg}' not found")
         return [resolved_uid]
 
     @staticmethod
@@ -228,8 +228,8 @@ class KeeperDriveRecordPermissionCommand(Command):
         return keeper_drive_record_permission_parser
 
     def execute(self, params, **kwargs):
-        from keepercommander.display import dump_report_data
-        from keepercommander.commands.base import user_choice, bcolors
+        from keepercommander.commands.base import dump_report_data, user_choice
+        from keepercommander.display import bcolors
 
         folder_name = kwargs.get('folder') or ''
         action = kwargs.get('action')
@@ -268,15 +268,22 @@ class KeeperDriveRecordPermissionCommand(Command):
             raise CommandError('kd-record-permission', f'Failed to fetch record accesses: {e}')
 
         # Step 3: Compute
-        updates, revokes = self._compute_changes(
+        updates, revokes, skipped = self._compute_changes(
             accesses_result, record_uids, params.user, action, role, role_map_pb)
         if not updates and not revokes:
-            logging.info('No permission changes are needed.')
+            if skipped:
+                logging.warning('No permission changes can be made. '
+                                'See skipped entries below (insufficient permissions).')
+                from keepercommander.commands.base import dump_report_data
+                from keepercommander.display import bcolors
+                self._print_plan([], [], skipped, kd_record_data, dump_report_data, bcolors)
+            else:
+                logging.info('No permission changes are needed.')
             return
 
         # Step 4: Display
         if dry_run or not force:
-            self._print_plan(updates, revokes, kd_record_data, dump_report_data, bcolors)
+            self._print_plan(updates, revokes, skipped, kd_record_data, dump_report_data, bcolors)
         if dry_run:
             return
 
@@ -334,7 +341,33 @@ class KeeperDriveRecordPermissionCommand(Command):
 
     @staticmethod
     def _compute_changes(accesses_result, record_uids, current_user, action, role, role_map_pb):
-        updates, revokes = [], []
+        """Classify every non-owner share into updates, revokes, or skipped.
+
+        A share is added to *skipped* when:
+          - The record UID appears in ``forbidden_records`` (current user cannot
+            read or modify its sharing at all), OR
+          - The current user's own access entry lacks ``can_update_access``
+            (the user can see the share list but cannot modify it — equivalent
+            to the classic ``has_record_share_permissions`` check).
+        """
+        updates, revokes, skipped = [], [], []
+
+        # Pre-flight: record UIDs the server refused to return access info for.
+        forbidden = set(accesses_result.get('forbidden_records', []))
+
+        # Index current-user's own access flags per record_uid for fast lookup.
+        owner_flags = {}  # record_uid -> can_update_access bool
+        for access in accesses_result.get('record_accesses', []):
+            if access.get('accessor_name', '') == current_user:
+                owner_flags[access.get('record_uid')] = access.get('can_update_access', False)
+
+        for rec_uid in record_uids:
+            if rec_uid in forbidden:
+                skipped.append({
+                    'record_uid': rec_uid, 'email': '', 'cur_role': '',
+                    'reason': 'No access — record is forbidden',
+                })
+
         for access in accesses_result.get('record_accesses', []):
             rec_uid = access.get('record_uid')
             if not rec_uid or rec_uid not in record_uids or access.get('owner'):
@@ -342,7 +375,18 @@ class KeeperDriveRecordPermissionCommand(Command):
             email = access.get('accessor_name', '')
             if not email or email == current_user:
                 continue
+
             cur_role = infer_role(access)
+
+            # Pre-flight: does the current user have permission to modify this share?
+            can_update = owner_flags.get(rec_uid, False)
+            if not can_update:
+                skipped.append({
+                    'record_uid': rec_uid, 'email': email, 'cur_role': cur_role,
+                    'reason': 'Insufficient permission (can_update_access is false)',
+                })
+                continue
+
             if action == 'grant':
                 if cur_role != role:
                     updates.append({
@@ -353,10 +397,11 @@ class KeeperDriveRecordPermissionCommand(Command):
             else:
                 if not role or cur_role == role:
                     revokes.append({'record_uid': rec_uid, 'email': email, 'cur_role': cur_role})
-        return updates, revokes
+
+        return updates, revokes, skipped
 
     @staticmethod
-    def _print_plan(updates, revokes, kd_record_data, dump_report_data, bcolors):
+    def _print_plan(updates, revokes, skipped, kd_record_data, dump_report_data, bcolors):
         def title_for(rec_uid):
             obj = kd_record_data.get(rec_uid, {})
             dj = obj.get('data_json', {}) if isinstance(obj, dict) else {}
@@ -378,39 +423,51 @@ class KeeperDriveRecordPermissionCommand(Command):
                              title=(bcolors.FAIL + ' REVOKE' + bcolors.ENDC + ' Record share(s)'),
                              row_number=True, group_by=0)
             logging.info('')
+        if skipped:
+            table = [[s['record_uid'], title_for(s['record_uid']),
+                       s['email'] or '—', s['cur_role'].upper() if s['cur_role'] else '—',
+                       s['reason']] for s in skipped]
+            dump_report_data(table,
+                             ['Record UID', 'Title', 'Email', 'Current Role', 'Reason'],
+                             title=(bcolors.WARNING + ' SKIP' + bcolors.ENDC
+                                    + ' (insufficient permissions — no changes will be made)'),
+                             row_number=True, group_by=0)
+            logging.info('')
 
     @staticmethod
     def _execute_changes(params, updates, revokes):
-        for u in updates:
-            try:
-                result = _kd.update_record_share_v3(
-                    params=params, record_uid=u['record_uid'],
-                    recipient_email=u['email'],
-                    access_role_type=u['access_role_type'],
-                    expiration_timestamp=None)
-                if result.get('success'):
-                    logging.info("'%s' for %s: %s -> %s",
-                                 u['record_uid'], u['email'],
-                                 u['cur_role'].upper(), u['new_role'].upper())
+        """Apply permission changes in batched REST calls (up to 200 per request)."""
+        if updates:
+            outcomes = _kd.batch_update_record_shares_v3(params, updates)
+            for item, result in outcomes:
+                if result.get('skipped'):
+                    logging.warning("Skipped update for '%s' / %s: %s",
+                                    item['record_uid'], item['email'],
+                                    result.get('message', 'could not build permission'))
+                elif result.get('success'):
+                    logging.info("Updated '%s' for %s: %s -> %s",
+                                 item['record_uid'], item['email'],
+                                 item['cur_role'].upper(), item['new_role'].upper())
                 else:
-                    msg = (result.get('results') or [{}])[0].get('message', 'Unknown error')
-                    logging.error("Failed '%s' for %s: %s", u['record_uid'], u['email'], msg)
-            except Exception as e:
-                logging.error("Error updating '%s' for %s: %s", u['record_uid'], u['email'], e)
+                    logging.error("Failed to update '%s' for %s: %s",
+                                  item['record_uid'], item['email'],
+                                  result.get('message', 'Unknown error'))
 
-        for r in revokes:
-            try:
-                result = _kd.unshare_record_v3(
-                    params=params, record_uid=r['record_uid'], recipient_email=r['email'])
-                if result.get('success'):
+        if revokes:
+            outcomes = _kd.batch_unshare_records_v3(params, revokes)
+            for item, result in outcomes:
+                if result.get('skipped'):
+                    logging.warning("Skipped revoke for '%s' / %s: %s",
+                                    item['record_uid'], item['email'],
+                                    result.get('message', 'could not build permission'))
+                elif result.get('success'):
                     logging.info("Revoked '%s' from %s (%s)",
-                                 r['record_uid'], r['email'], r['cur_role'].upper())
+                                 item['record_uid'], item['email'],
+                                 item['cur_role'].upper())
                 else:
-                    msg = (result.get('results') or [{}])[0].get('message', 'Unknown error')
                     logging.error("Failed to revoke '%s' from %s: %s",
-                                  r['record_uid'], r['email'], msg)
-            except Exception as e:
-                logging.error("Error revoking '%s' from %s: %s", r['record_uid'], r['email'], e)
+                                  item['record_uid'], item['email'],
+                                  result.get('message', 'Unknown error'))
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -435,7 +492,7 @@ class KeeperDriveTransferRecordCommand(Command):
                 record_uid = _kd.resolve_kd_record_uid(params, identifier)
                 if not record_uid:
                     raise CommandError('kd-transfer-record',
-                                       f"Record '{identifier}' not found in KeeperDrive cache")
+                                       f"Record '{identifier}' not found")
                 result = _kd.transfer_record_ownership_v3(
                     params=params, record_uid=record_uid, new_owner_email=new_owner_email)
                 check_result(result, 'kd-transfer-record')
