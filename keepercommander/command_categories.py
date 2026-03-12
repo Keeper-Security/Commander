@@ -112,10 +112,9 @@ COMMAND_CATEGORIES = {
     # KeeperDrive Commands
     'KeeperDrive Commands': {
         'kd-mkdir', 'kd-record-add', 'kd-record-update', 'kd-rndir', 'kd-list',
-        'kd-share-folder', 'kd-record-details', 'kd-record-access', 'kd-share-record',
-        'kd-record-permission', 'kd-transfer-record', 'kd-add-record-to-folder',
-        'kd-remove-record-from-folder', 'kd-ln', 'kd-folder-access', 'kd-rm',
-        'kd-rmdir', 'kd-shortcut', 'kd-get'
+        'kd-share-folder', 'kd-record-details', 'kd-share-record',
+        'kd-record-permission', 'kd-transfer-record',
+        'kd-ln', 'kd-rm', 'kd-rmdir', 'kd-shortcut', 'kd-get'
     },
 
     # Legacy Commands

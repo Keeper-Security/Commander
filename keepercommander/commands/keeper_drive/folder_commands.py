@@ -22,16 +22,15 @@ from ..base import Command
 from ...error import CommandError
 from ... import keeper_drive as _kd
 from .helpers import (
-    ROOT_FOLDER_UID, FOLDER_PERM_LABELS,
+    ROOT_FOLDER_UID,
     normalize_parent_uid, resolve_folder_uid, parse_expiration,
-    format_timestamp, command_error_handler, check_result,
+    command_error_handler, check_result,
 )
 from .parsers import (
     keeper_drive_mkdir_parser,
     keeper_drive_update_folder_parser,
     keeper_drive_list_parser,
     keeper_drive_share_folder_parser,
-    keeper_drive_get_folder_access_parser,
     kd_rmdir_parser,
 )
 
@@ -377,79 +376,6 @@ class KeeperDriveShareFolderCommand(Command):
             logging.warning('User %s not found', email)
         except Exception as e:
             raise CommandError('kd-share-folder', str(e))
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# kd-folder-access
-# ══════════════════════════════════════════════════════════════════════════
-
-class KeeperDriveGetFolderAccessCommand(Command):
-    """Retrieve accessors (users and teams) of Keeper Drive folders."""
-
-    def get_parser(self):
-        return keeper_drive_get_folder_access_parser
-
-    def execute(self, params, **kwargs):
-        from keepercommander.display import dump_report_data
-
-        folders = kwargs.get('folder_uids', [])
-        verbose = kwargs.get('verbose', False)
-
-        if not folders:
-            raise CommandError('kd-folder-access', 'At least one folder must be specified')
-        if len(folders) > 100:
-            raise CommandError('kd-folder-access', 'Maximum 100 folders can be queried at once')
-
-        with command_error_handler('kd-folder-access'):
-            result = _kd.get_folder_access_v3(params, folder_uids=folders)
-            for fr in result['results']:
-                folder_uid = fr['folder_uid']
-                label = getattr(params, 'keeper_drive_folders', {}).get(
-                    folder_uid, {}).get('name', folder_uid)
-
-                if not fr['success']:
-                    err = fr['error']
-                    logging.error("\nFolder '%s': %s — %s", label, err['status'], err['message'])
-                    continue
-
-                accessors = fr['accessors']
-                print(f"\n{'='*72}")
-                print(f"  Folder: {label}  [{folder_uid}]")
-                print(f"{'='*72}")
-
-                if not accessors:
-                    print("  No accessors found")
-                    continue
-
-                if not verbose:
-                    rows = [[a.get('username') or a['accessor_uid'],
-                             a.get('access_type', ''), a.get('role', ''),
-                             '\u2713' if a.get('inherited') else '']
-                            for a in accessors]
-                    dump_report_data(rows, ['Accessor', 'Type', 'Role', 'Inherited'],
-                                     title=None, row_number=True)
-                else:
-                    self._print_verbose(accessors)
-
-            print(f"\n{'='*72}\n")
-
-    @staticmethod
-    def _print_verbose(accessors):
-        for a in accessors:
-            label = a.get('username') or a['accessor_uid']
-            role = a.get('role', 'UNKNOWN')
-            print(f"\n  Accessor : {label}  [{a.get('access_type', '')}]")
-            print(f"  Role     : {role}" + ('  (inherited)' if a.get('inherited') else ''))
-            if a.get('date_created'):
-                print(f"  Created  : {format_timestamp(a['date_created'])}")
-            if a.get('last_modified'):
-                print(f"  Modified : {format_timestamp(a['last_modified'])}")
-            perms = a.get('permissions', {})
-            if perms:
-                print(f"  {'Permission':<26}  Value")
-                print(f"  {'-'*26}  -----")
-                for flag, lbl in FOLDER_PERM_LABELS:
-                    print(f"  {lbl:<26}  {'Y' if perms.get(flag) else 'N'}")
 
 
 # ══════════════════════════════════════════════════════════════════════════

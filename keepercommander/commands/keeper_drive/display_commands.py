@@ -29,7 +29,6 @@ from .helpers import (
 )
 from .parsers import (
     keeper_drive_get_record_details_parser,
-    keeper_drive_get_record_access_parser,
     kd_get_parser,
 )
 
@@ -78,78 +77,6 @@ class KeeperDriveGetRecordDetailsCommand(Command):
                     for uid in result['forbidden_records']:
                         logging.warning("  %s", uid)
                 logging.info("Total records retrieved: %d", len(result.get('data', [])))
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# kd-record-access
-# ══════════════════════════════════════════════════════════════════════════
-
-class KeeperDriveGetRecordAccessCommand(Command):
-    """Get record access information."""
-
-    def get_parser(self):
-        return keeper_drive_get_record_access_parser
-
-    def execute(self, params, **kwargs):
-        from keepercommander.display import dump_report_data
-
-        identifiers = kwargs.get('record_uids', [])
-        output_format = kwargs.get('format', 'table')
-        verbose = kwargs.get('verbose', False)
-
-        if not identifiers:
-            raise CommandError('kd-record-access', 'At least one record UID or title is required')
-
-        record_uids = []
-        for ident in identifiers:
-            uid = _kd.resolve_kd_record_uid(params, ident)
-            if not uid:
-                raise CommandError('kd-record-access',
-                                   f"Record '{ident}' not found")
-            record_uids.append(uid)
-
-        with command_error_handler('kd-record-access'):
-            result = _kd.get_record_accesses_v3(params, record_uids)
-
-            if output_format == 'json':
-                print(json.dumps(result, indent=2))
-                return
-
-            accesses = result['record_accesses']
-            if not accesses:
-                logging.info("No access entries found.")
-            elif not verbose:
-                rows = [[a['record_uid'],
-                         a.get('accessor_name', a.get('access_type_uid', '')),
-                         a.get('access_type', ''),
-                         get_access_role_label(a),
-                         '\u2713' if a.get('owner') else '']
-                        for a in accesses]
-                dump_report_data(rows,
-                                 ['Record UID', 'Accessor', 'Type', 'Role', 'Owner'],
-                                 title='Record Access (KeeperDrive)',
-                                 row_number=True, group_by=0)
-            else:
-                self._print_verbose(accesses)
-
-            if result.get('forbidden_records'):
-                logging.warning("Forbidden records (%d):", len(result['forbidden_records']))
-                for uid in result['forbidden_records']:
-                    logging.warning("  %s", uid)
-            logging.info("\nTotal entries: %d", len(accesses))
-
-    @staticmethod
-    def _print_verbose(accesses):
-        for a in accesses:
-            print(f"\n  Record : {a['record_uid']}")
-            print(f"  Accessor: {a.get('accessor_name', a.get('access_type_uid', ''))}"
-                  f"  [{a.get('access_type', '')}]")
-            print(f"  Role    : {get_access_role_label(a)}"
-                  + ('  (owner)' if a.get('owner') else ''))
-            print(f"  {'Permission':<20}  Value")
-            print(f"  {'-'*20}  -----")
-            for flag, lbl in RECORD_PERM_LABELS:
-                print(f"  {lbl:<20}  {'Y' if a.get(flag) else 'N'}")
 
 
 # ══════════════════════════════════════════════════════════════════════════
