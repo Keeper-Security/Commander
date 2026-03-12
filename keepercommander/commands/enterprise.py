@@ -85,6 +85,9 @@ def register_command_info(aliases, command_info):
     aliases['tu'] = 'transfer-user'
     aliases['dl'] = ('domain', 'list')
     aliases['dr'] = ('domain', 'reserve')
+    aliases['da'] = ('domain', 'alias')
+    aliases['dca'] = ('domain', 'create-alias')
+    aliases['dda'] = ('domain', 'delete-alias')
 
     for p in [enterprise_data_parser, enterprise_info_parser, enterprise_node_parser, enterprise_user_parser,
               enterprise_role_parser, enterprise_team_parser, transfer_user_parser,
@@ -289,7 +292,7 @@ domain_parser = argparse.ArgumentParser(prog='domain', description='Manage enter
 domain_parser.error = raise_parse_exception
 domain_parser.exit = suppress_exit
 
-domain_subparsers = domain_parser.add_subparsers(dest='subcommand', help='Domain subcommands', metavar='{list,reserve}')
+domain_subparsers = domain_parser.add_subparsers(dest='subcommand', help='Domain subcommands', metavar='{list,reserve,alias,create-alias,delete-alias}')
 
 domain_list_parser = domain_subparsers.add_parser('list', parents=[report_output_parser],
                                                    help='List all reserved domains for the enterprise',
@@ -317,6 +320,44 @@ domain_reserve_parser.add_argument('--force', dest='force', action='store_true',
                                     help='Skip confirmation prompt for delete action')
 domain_reserve_parser.error = raise_parse_exception
 domain_reserve_parser.exit = suppress_exit
+
+domain_alias_parser = domain_subparsers.add_parser('alias', parents=[report_output_parser],
+                                                    help='List domain aliases for the enterprise',
+                                                    description='List domain aliases for the enterprise.')
+domain_alias_parser.error = raise_parse_exception
+domain_alias_parser.exit = suppress_exit
+
+domain_create_alias_parser = domain_subparsers.add_parser('create-alias',
+                                                           formatter_class=argparse.RawTextHelpFormatter,
+                                                           help='Create domain aliases for the enterprise',
+                                                           description='Create aliases for domains owned by the enterprise.\n\n'
+                                                           'The enterprise must own the domain before an alias can be created.\n'
+                                                           'Requires Admin with "Manage Users" permission.')
+domain_create_alias_parser.add_argument('--domain', dest='domain', required=True,
+                                         help='Domain name to create alias for (must be owned by the enterprise)')
+domain_create_alias_parser.add_argument('--alias', dest='alias', required=True, action='append',
+                                         help='Alias to create for the domain (can be specified multiple times)')
+domain_create_alias_parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'],
+                                         default='text', help='Output format.')
+domain_create_alias_parser.error = raise_parse_exception
+domain_create_alias_parser.exit = suppress_exit
+
+domain_delete_alias_parser = domain_subparsers.add_parser('delete-alias',
+                                                           formatter_class=argparse.RawTextHelpFormatter,
+                                                           help='Delete domain aliases for the enterprise',
+                                                           description='Delete aliases for domains owned by the enterprise.\n\n'
+                                                           'Only previously created aliases can be deleted.\n'
+                                                           'Requires Admin with "Manage Users" permission.')
+domain_delete_alias_parser.add_argument('--domain', dest='domain', required=True,
+                                         help='Domain name whose alias to delete')
+domain_delete_alias_parser.add_argument('--alias', dest='alias', required=True, action='append',
+                                         help='Alias to delete (can be specified multiple times)')
+domain_delete_alias_parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'],
+                                         default='text', help='Output format.')
+domain_delete_alias_parser.add_argument('--force', dest='force', action='store_true',
+                                         help='Skip confirmation prompt')
+domain_delete_alias_parser.error = raise_parse_exception
+domain_delete_alias_parser.exit = suppress_exit
 
 
 _DEFAULT_PASSWORD_COMPLEXITY = """[
@@ -4429,6 +4470,9 @@ class DomainCommand(EnterpriseCommand):
         super().__init__()
         self.list_cmd = ListDomainsCommand()
         self.reserve_cmd = ReserveDomainCommand()
+        self.alias_cmd = GetDomainAliasCommand()
+        self.create_alias_cmd = CreateDomainAliasCommand()
+        self.delete_alias_cmd = DeleteDomainAliasCommand()
     
     def get_parser(self):
         return domain_parser
@@ -4477,6 +4521,12 @@ class DomainCommand(EnterpriseCommand):
             return self.list_cmd.execute(params, **kwargs)
         elif subcommand in ('reserve'):
             return self.reserve_cmd.execute(params, **kwargs)
+        elif subcommand in ('alias'):
+            return self.alias_cmd.execute(params, **kwargs)
+        elif subcommand in ('create-alias'):
+            return self.create_alias_cmd.execute(params, **kwargs)
+        elif subcommand in ('delete-alias'):
+            return self.delete_alias_cmd.execute(params, **kwargs)
         else:
             output_format = kwargs.get('format', 'text')
             DomainManagementHelper.handle_invalid_subcommand(subcommand, output_format)
@@ -4520,6 +4570,237 @@ class ListDomainsCommand(EnterpriseCommand):
                 return
             
             logging.error(f'Error listing domains: {e}')
+            raise
+
+
+class GetDomainAliasCommand(EnterpriseCommand):
+    def get_parser(self):
+        return domain_alias_parser
+
+    def execute(self, params, **kwargs):
+        try:
+            rs = api.communicate_rest(
+                params,
+                None,
+                'enterprise/get_domain_alias',
+                rs_type=enterprise_pb2.DomainAliasResponse
+            )
+
+            fmt = kwargs.get('format', '')
+
+            if not rs.domainAlias:
+                logging.info('No domain aliases found for this enterprise.')
+                return
+
+            if fmt == 'json':
+                aliases_list = [
+                    {'domain': da.domain, 'alias': da.alias}
+                    for da in rs.domainAlias
+                ]
+                print(json.dumps(aliases_list, indent=2))
+            else:
+                headers = ['Domain', 'Alias']
+                table = [[da.domain, da.alias] for da in rs.domainAlias]
+                return dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'))
+
+        except KeeperApiError as e:
+            error_code = e.result_code if hasattr(e, 'result_code') else 'Unknown'
+
+            if DomainManagementHelper.is_feature_unavailable(error_code):
+                result = DomainManagementHelper.handle_unavailable_feature(kwargs.get('format') or 'text')
+                if result:
+                    print(result)
+                return
+
+            if error_code == 'access_denied':
+                DomainManagementHelper.output_error(
+                    'Access denied: You must be an Admin with "Manage Users" permission to retrieve domain aliases.',
+                    kwargs.get('format') or 'text'
+                )
+                return
+
+            logging.error(f'Error retrieving domain aliases: {e}')
+            raise
+
+
+class CreateDomainAliasCommand(EnterpriseCommand):
+
+    STATUS_MESSAGES = {
+        0: 'Success',
+        1: 'Duplicate; already exists',
+        2: 'Not allowed; domain or alias not owned by the enterprise',
+    }
+
+    def get_parser(self):
+        return domain_create_alias_parser
+
+    def execute(self, params, **kwargs):
+        domain = kwargs.get('domain', '')
+        aliases = kwargs.get('alias', [])
+        output_format = kwargs.get('format', 'text')
+
+        if not domain:
+            DomainManagementHelper.output_error('Domain name is required.', output_format)
+            return
+        if not aliases:
+            DomainManagementHelper.output_error('At least one alias is required.', output_format)
+            return
+
+        is_valid, domain, error_msg = DomainManagementHelper.validate_domain(domain)
+        if not is_valid:
+            DomainManagementHelper.output_error(error_msg, output_format)
+            return
+
+        for alias_name in aliases:
+            valid, _, err = DomainManagementHelper.validate_domain(alias_name)
+            if not valid:
+                DomainManagementHelper.output_error(f'Invalid alias "{alias_name}": {err}', output_format)
+                return
+
+        try:
+            rq = enterprise_pb2.DomainAliasRequest()
+            for alias_name in aliases:
+                da = enterprise_pb2.DomainAlias()
+                da.domain = domain
+                da.alias = alias_name.strip().lower()
+                rq.domainAlias.append(da)
+
+            rs = api.communicate_rest(
+                params,
+                rq,
+                'enterprise/create_domain_alias',
+                rs_type=enterprise_pb2.DomainAliasResponse
+            )
+
+            if output_format == 'json':
+                results = []
+                for da in rs.domainAlias:
+                    results.append({
+                        'domain': da.domain,
+                        'alias': da.alias,
+                        'status': da.status,
+                        'status_message': self.STATUS_MESSAGES.get(da.status, f'Unknown status: {da.status}'),
+                    })
+                print(json.dumps(results, indent=2))
+            else:
+                headers = ['Domain', 'Alias', 'Status']
+                table = []
+                for da in rs.domainAlias:
+                    status_text = self.STATUS_MESSAGES.get(da.status, f'Unknown ({da.status})')
+                    table.append([da.domain, da.alias, status_text])
+                return dump_report_data(table, headers, fmt=output_format, filename=kwargs.get('output'))
+
+        except KeeperApiError as e:
+            error_code = e.result_code if hasattr(e, 'result_code') else 'Unknown'
+
+            if DomainManagementHelper.is_feature_unavailable(error_code):
+                result = DomainManagementHelper.handle_unavailable_feature(output_format)
+                if result:
+                    print(result)
+                return
+
+            if error_code == 'access_denied':
+                DomainManagementHelper.output_error(
+                    'Access denied: You must be an Admin with "Manage Users" permission to create domain aliases.',
+                    output_format
+                )
+                return
+
+            logging.error(f'Error creating domain aliases: {e}')
+            raise
+
+
+class DeleteDomainAliasCommand(EnterpriseCommand):
+
+    STATUS_MESSAGES = {
+        0: 'Success',
+        1: 'Not allowed or does not exist',
+    }
+
+    def get_parser(self):
+        return domain_delete_alias_parser
+
+    def execute(self, params, **kwargs):
+        domain = kwargs.get('domain', '')
+        aliases = kwargs.get('alias', [])
+        output_format = kwargs.get('format', 'text')
+        force = kwargs.get('force', False)
+
+        if not domain:
+            DomainManagementHelper.output_error('Domain name is required.', output_format)
+            return
+        if not aliases:
+            DomainManagementHelper.output_error('At least one alias is required.', output_format)
+            return
+
+        is_valid, domain, error_msg = DomainManagementHelper.validate_domain(domain)
+        if not is_valid:
+            DomainManagementHelper.output_error(error_msg, output_format)
+            return
+
+        for alias_name in aliases:
+            valid, _, err = DomainManagementHelper.validate_domain(alias_name)
+            if not valid:
+                DomainManagementHelper.output_error(f'Invalid alias "{alias_name}": {err}', output_format)
+                return
+
+        if not force:
+            alias_list_str = ', '.join(aliases)
+            confirm = input(f'Are you sure you want to delete alias(es) [{alias_list_str}] for domain "{domain}"? (y/N): ')
+            if confirm.lower() not in ('y', 'yes'):
+                logging.info('Delete cancelled.')
+                return
+
+        try:
+            rq = enterprise_pb2.DomainAliasRequest()
+            for alias_name in aliases:
+                da = enterprise_pb2.DomainAlias()
+                da.domain = domain
+                da.alias = alias_name.strip().lower()
+                rq.domainAlias.append(da)
+
+            rs = api.communicate_rest(
+                params,
+                rq,
+                'enterprise/delete_domain_alias',
+                rs_type=enterprise_pb2.DomainAliasResponse
+            )
+
+            if output_format == 'json':
+                results = []
+                for da in rs.domainAlias:
+                    results.append({
+                        'domain': da.domain,
+                        'alias': da.alias,
+                        'status': da.status,
+                        'status_message': self.STATUS_MESSAGES.get(da.status, f'Unknown status: {da.status}'),
+                    })
+                print(json.dumps(results, indent=2))
+            else:
+                headers = ['Domain', 'Alias', 'Status']
+                table = []
+                for da in rs.domainAlias:
+                    status_text = self.STATUS_MESSAGES.get(da.status, f'Unknown ({da.status})')
+                    table.append([da.domain, da.alias, status_text])
+                return dump_report_data(table, headers, fmt=output_format, filename=kwargs.get('output'))
+
+        except KeeperApiError as e:
+            error_code = e.result_code if hasattr(e, 'result_code') else 'Unknown'
+
+            if DomainManagementHelper.is_feature_unavailable(error_code):
+                result = DomainManagementHelper.handle_unavailable_feature(output_format)
+                if result:
+                    print(result)
+                return
+
+            if error_code == 'access_denied':
+                DomainManagementHelper.output_error(
+                    'Access denied: You must be an Admin with "Manage Users" permission to delete domain aliases.',
+                    output_format
+                )
+                return
+
+            logging.error(f'Error deleting domain aliases: {e}')
             raise
 
 
