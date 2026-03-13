@@ -1194,7 +1194,7 @@ class EnterpriseNodeCommand(EnterpriseCommand):
                 logging.warning('Node \'%s\' already exists: Skipping.', node['data'].get('displayname'))
 
             if not unmatched_nodes:
-                raise CommandError('enterprise-node', 'No nodes to add.')
+                return
 
             if parent_id is None:
                 for node in params.enterprise['nodes']:
