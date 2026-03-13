@@ -76,6 +76,7 @@ from .pam_debug.rotation_setting import PAMDebugRotationSettingsCommand
 from .pam_debug.vertex import PAMDebugVertexCommand
 from .pam_import.commands import PAMProjectCommand
 from .pam_launch.launch import PAMLaunchCommand
+from .workflow import PAMWorkflowCommand
 from .pam_service.list import PAMActionServiceListCommand
 from .pam_service.add import PAMActionServiceAddCommand
 from .pam_service.remove import PAMActionServiceRemoveCommand
@@ -186,6 +187,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('rbi', PAMRbiCommand(), 'Manage Remote Browser Isolation', 'b')
         self.register_command('project', PAMProjectCommand(), 'PAM Project Import/Export', 'p')
         self.register_command('launch', PAMLaunchCommand(), 'Launch a connection to a PAM resource', 'l')
+        self.register_command('workflow', PAMWorkflowCommand(), 'Manage PAM Workflows', 'w')
 
 
 class PAMGatewayCommand(GroupCommand):
