@@ -5,7 +5,7 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2024 Keeper Security Inc.
+# Copyright 2026 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -69,35 +69,31 @@ from .python_handler import create_python_handler
 if TYPE_CHECKING:
     from ...params import KeeperParams
 
+from ..pam_import.base import ConnectionProtocol
 
-# Protocol type constants
-class ProtocolType:
-    """Terminal protocol types supported by PAM Launch"""
-    SSH = 'ssh'
-    TELNET = 'telnet'
-    KUBERNETES = 'kubernetes'
-    MYSQL = 'mysql'
-    POSTGRESQL = 'postgresql'
-    SQLSERVER = 'sqlserver'
+# Protocol sets and defaults (ConnectionProtocol from pam_import.base)
+GRAPHICAL = {ConnectionProtocol.RDP.value, ConnectionProtocol.VNC.value}  # not supported by CLI
+ALL_TERMINAL = {
+    ConnectionProtocol.SSH.value,
+    ConnectionProtocol.TELNET.value,
+    ConnectionProtocol.KUBERNETES.value,
+    ConnectionProtocol.MYSQL.value,
+    ConnectionProtocol.POSTGRESQL.value,
+    ConnectionProtocol.SQLSERVER.value,
+}
+DATABASE = {
+    ConnectionProtocol.MYSQL.value,
+    ConnectionProtocol.POSTGRESQL.value,
+    ConnectionProtocol.SQLSERVER.value,
+}
 
-    # All supported terminal protocols
-    ALL_TERMINAL = {SSH, TELNET, KUBERNETES, MYSQL, POSTGRESQL, SQLSERVER}
-
-    # Database protocols
-    DATABASE = {MYSQL, POSTGRESQL, SQLSERVER}
-
-    # Machine protocols
-    MACHINE = {SSH, TELNET}
-
-
-# Default ports for protocols
 DEFAULT_PORTS = {
-    ProtocolType.SSH: 22,
-    ProtocolType.TELNET: 23,
-    ProtocolType.KUBERNETES: 443,
-    ProtocolType.MYSQL: 3306,
-    ProtocolType.POSTGRESQL: 5432,
-    ProtocolType.SQLSERVER: 1433,
+    ConnectionProtocol.SSH.value: 22,
+    ConnectionProtocol.TELNET.value: 23,
+    ConnectionProtocol.KUBERNETES.value: 443,
+    ConnectionProtocol.MYSQL.value: 3306,
+    ConnectionProtocol.POSTGRESQL.value: 5432,
+    ConnectionProtocol.SQLSERVER.value: 1433,
 }
 
 from .terminal_size import (
@@ -214,87 +210,78 @@ def _notify_gateway_connection_close(params, router_token, terminated=True):
 
 def detect_protocol(params: KeeperParams, record_uid: str) -> Optional[str]:
     """
-    Detect the terminal protocol from a PAM record.
+    Detect the connection protocol from a PAM record.
+
+    All machine types (pamMachine, pamDirectory, pamDatabase) allow any connection
+    type (ssh, telnet, rdp, vnc, kubernetes, mysql, etc.). Extraction follows:
+    first connection.protocol; for pamDatabase only, if still undetermined then
+    connection.databaseType, then infer from port.
 
     Args:
         params: KeeperParams instance
         record_uid: Record UID
 
     Returns:
-        Protocol string (ssh, telnet, kubernetes, mysql, postgresql, sqlserver) or None
-
-    Raises:
-        CommandError: If record type is not supported or protocol cannot be determined
+        Protocol string (ex. ssh, telnet, rdp, mysql, etc.) or None if
+        not present/undetermined. If connection.protocol is set to a value that
+        matches a ConnectionProtocol enum, returns that canonical value;
+        otherwise returns the raw string (lowercased).
     """
     record = vault.KeeperRecord.load(params, record_uid)
     if not isinstance(record, vault.TypedRecord):
-        raise CommandError('pam launch', f'Record {record_uid} is not a TypedRecord')
+        return None
 
     record_type = record.record_type
+    if record_type not in ('pamMachine', 'pamDirectory', 'pamDatabase'):
+        return None
 
-    # pamMachine -> SSH or Telnet
-    if record_type == 'pamMachine':
-        # Check if telnet is explicitly configured
-        # Look for telnet-specific fields or settings
-        pam_settings = record.get_typed_field('pamSettings')
-        if pam_settings:
-            settings_value = pam_settings.get_default_value(dict)
-            if settings_value:
-                connection = settings_value.get('connection', {})
-                if isinstance(connection, dict):
-                    # Check for telnet protocol indicator
-                    protocol_field = connection.get('protocol')
-                    if protocol_field and 'telnet' in str(protocol_field).lower():
-                        return ProtocolType.TELNET
+    # Map lowercase protocol string to canonical ConnectionProtocol.value
+    _protocol_values = {p.value.lower(): p.value for p in ConnectionProtocol}
 
-        # Default to SSH for pamMachine
-        return ProtocolType.SSH
+    pam_settings = record.get_typed_field('pamSettings')
+    if not pam_settings:
+        return None
 
-    # pamDirectory -> Kubernetes
-    elif record_type == 'pamDirectory':
-        return ProtocolType.KUBERNETES
+    settings_value = pam_settings.get_default_value(dict)
+    if not settings_value:
+        return None
 
-    # pamDatabase -> MySQL, PostgreSQL, or SQL Server
-    elif record_type == 'pamDatabase':
-        # Inspect the database type field
-        pam_settings = record.get_typed_field('pamSettings')
-        if pam_settings:
-            settings_value = pam_settings.get_default_value(dict)
-            if settings_value:
-                connection = settings_value.get('connection', {})
-                if isinstance(connection, dict):
-                    db_type = connection.get('databaseType', '').lower()
+    connection = settings_value.get('connection') or {}
+    if not isinstance(connection, dict):
+        return None
 
-                    if 'mysql' in db_type:
-                        return ProtocolType.MYSQL
-                    elif 'postgres' in db_type or 'postgresql' in db_type:
-                        return ProtocolType.POSTGRESQL
-                    elif 'sql server' in db_type or 'sqlserver' in db_type or 'mssql' in db_type:
-                        return ProtocolType.SQLSERVER
+    # 1) Try connection.protocol (same for all record types)
+    protocol_field = (connection.get('protocol') or '').strip()
+    if protocol_field:
+        protocol_lower = protocol_field.lower()
+        return _protocol_values.get(protocol_lower, protocol_lower)
 
-        # Try to infer from port if database type not specified
+    # 2) For pamDatabase only: connection.databaseType, then infer from port
+    if record_type == 'pamDatabase':
+        db_type = (connection.get('databaseType') or '').lower()
+        if 'mysql' in db_type:
+            return ConnectionProtocol.MYSQL.value
+        if 'postgres' in db_type or 'postgresql' in db_type:
+            return ConnectionProtocol.POSTGRESQL.value
+        if 'sql server' in db_type or 'sqlserver' in db_type or 'mssql' in db_type:
+            return ConnectionProtocol.SQLSERVER.value
+
         hostname_field = record.get_typed_field('pamHostname')
         if hostname_field:
             host_value = hostname_field.get_default_value(dict)
-            if host_value:
-                port = host_value.get('port')
-                if port:
-                    port_int = int(port) if isinstance(port, str) else port
-                    if port_int == 3306:
-                        return ProtocolType.MYSQL
-                    elif port_int == 5432:
-                        return ProtocolType.POSTGRESQL
-                    elif port_int == 1433:
-                        return ProtocolType.SQLSERVER
+            if host_value and host_value.get('port') is not None:
+                try:
+                    port_int = int(host_value['port'])
+                except (TypeError, ValueError):
+                    port_int = None
+                if port_int == 3306:
+                    return ConnectionProtocol.MYSQL.value
+                if port_int == 5432:
+                    return ConnectionProtocol.POSTGRESQL.value
+                if port_int == 1433:
+                    return ConnectionProtocol.SQLSERVER.value
 
-        # Default to MySQL if we can't determine
-        logging.warning(f"Could not determine database type for record {record_uid}, defaulting to MySQL")
-        return ProtocolType.MYSQL
-
-    else:
-        raise CommandError('pam launch', 
-                         f'Record type "{record_type}" is not supported for terminal connections. '
-                         f'Supported types: pamMachine, pamDirectory, pamDatabase')
+    return None
 
 
 def extract_terminal_settings(
@@ -411,13 +398,13 @@ def extract_terminal_settings(
                         logging.debug(f"Using userRecordUid from pamSettings: {settings['userRecordUid']}")
 
                 # Protocol-specific settings
-                if protocol == ProtocolType.SSH:
+                if protocol == ConnectionProtocol.SSH.value:
                     settings['protocol_specific'] = _extract_ssh_settings(connection)
-                elif protocol == ProtocolType.TELNET:
+                elif protocol == ConnectionProtocol.TELNET.value:
                     settings['protocol_specific'] = _extract_telnet_settings(connection)
-                elif protocol == ProtocolType.KUBERNETES:
+                elif protocol == ConnectionProtocol.KUBERNETES.value:
                     settings['protocol_specific'] = _extract_kubernetes_settings(connection)
-                elif protocol in ProtocolType.DATABASE:
+                elif protocol in DATABASE:
                     settings['protocol_specific'] = _extract_database_settings(connection, protocol)
 
             # allowSupplyHost is at top level of pamSettings value, not inside connection
@@ -483,11 +470,11 @@ def _extract_database_settings(connection: Dict[str, Any], protocol: str) -> Dic
     }
 
     # Add protocol-specific database settings
-    if protocol == ProtocolType.MYSQL:
+    if protocol == ConnectionProtocol.MYSQL.value:
         settings['useSSL'] = connection.get('useSSL', False)
-    elif protocol == ProtocolType.POSTGRESQL:
+    elif protocol == ConnectionProtocol.POSTGRESQL.value:
         settings['useSSL'] = connection.get('useSSL', False)
-    elif protocol == ProtocolType.SQLSERVER:
+    elif protocol == ConnectionProtocol.SQLSERVER.value:
         settings['useSSL'] = connection.get('useSSL', True)  # SQL Server typically uses SSL by default
 
     return settings
@@ -525,7 +512,7 @@ def create_connection_context(params: KeeperParams,
         'terminal': settings['terminal'],
         'recording': settings['recording'],
         'connectAs': connect_as,
-        'conversationType': _get_conversation_type(protocol),
+        'conversationType': str(protocol).lower(),
         # Credential supply flags
         'allowSupplyUser': settings.get('allowSupplyUser', False),
         'allowSupplyHost': settings.get('allowSupplyHost', False),
@@ -536,13 +523,13 @@ def create_connection_context(params: KeeperParams,
     logging.debug(f"DEBUG create_connection_context: userRecordUid={context.get('userRecordUid')}")
 
     # Add protocol-specific settings
-    if protocol == ProtocolType.SSH:
+    if protocol == ConnectionProtocol.SSH.value:
         context['ssh'] = settings['protocol_specific']
-    elif protocol == ProtocolType.TELNET:
+    elif protocol == ConnectionProtocol.TELNET.value:
         context['telnet'] = settings['protocol_specific']
-    elif protocol == ProtocolType.KUBERNETES:
+    elif protocol == ConnectionProtocol.KUBERNETES.value:
         context['kubernetes'] = settings['protocol_specific']
-    elif protocol in ProtocolType.DATABASE:
+    elif protocol in DATABASE:
         context['database'] = settings['protocol_specific']
         context['database']['type'] = protocol
 
@@ -625,20 +612,6 @@ def _get_launch_credential_uid(params: 'KeeperParams', record_uid: str) -> Optio
     except Exception as e:
         logging.debug(f"Error accessing DAG for launch credential: {e}")
         return None
-
-
-def _get_conversation_type(protocol: str) -> str:
-    """Map protocol to Guacamole conversation type"""
-    # Map our protocol names to Guacamole conversation types
-    mapping = {
-        ProtocolType.SSH: 'ssh',
-        ProtocolType.TELNET: 'telnet',
-        ProtocolType.KUBERNETES: 'kubernetes',
-        ProtocolType.MYSQL: 'mysql',
-        ProtocolType.POSTGRESQL: 'postgresql',
-        ProtocolType.SQLSERVER: 'sql-server',
-    }
-    return mapping.get(protocol, protocol)
 
 
 def _extract_user_record_credentials(
@@ -781,7 +754,7 @@ def _build_guacamole_connection_settings(
     # Build guacd parameters dictionary
     # These map to guacd's expected parameter names
     # The 'protocol' field is required for guacd to know which backend to use
-    guacd_protocol = _get_conversation_type(protocol)  # Convert to guacd protocol name (e.g., ssh, telnet)
+    guacd_protocol = str(protocol).lower()
     guacd_params = {
         'protocol': guacd_protocol,  # Required: tells guacd which protocol handler to use
         'hostname': settings.get('hostname', ''),
@@ -795,7 +768,7 @@ def _build_guacamole_connection_settings(
     # Add private key for SSH protocol if available
     # SSH authentication precedence: guacd/SSH tries private key first, then password
     # Both can be present simultaneously - this matches gateway behavior
-    if protocol == ProtocolType.SSH and private_key:
+    if protocol == ConnectionProtocol.SSH.value and private_key:
         guacd_params['private-key'] = private_key
         if passphrase:
             guacd_params['passphrase'] = passphrase
@@ -804,7 +777,7 @@ def _build_guacamole_connection_settings(
     # Add protocol-specific parameters
     protocol_specific = settings.get('protocol_specific', {})
 
-    if protocol == ProtocolType.SSH:
+    if protocol == ConnectionProtocol.SSH.value:
         # SSH-specific params
         if protocol_specific.get('publicHostKey'):
             guacd_params['host-key'] = protocol_specific['publicHostKey']
@@ -814,14 +787,14 @@ def _build_guacamole_connection_settings(
         if protocol_specific.get('sftpEnabled'):
             guacd_params['enable-sftp'] = 'true'
 
-    elif protocol == ProtocolType.TELNET:
+    elif protocol == ConnectionProtocol.TELNET.value:
         # Telnet-specific params
         if protocol_specific.get('usernameRegex'):
             guacd_params['username-regex'] = protocol_specific['usernameRegex']
         if protocol_specific.get('passwordRegex'):
             guacd_params['password-regex'] = protocol_specific['passwordRegex']
 
-    elif protocol == ProtocolType.KUBERNETES:
+    elif protocol == ConnectionProtocol.KUBERNETES.value:
         # Kubernetes-specific params
         if protocol_specific.get('namespace'):
             guacd_params['namespace'] = protocol_specific['namespace']
@@ -838,7 +811,7 @@ def _build_guacamole_connection_settings(
         if protocol_specific.get('ignoreServerCertificate'):
             guacd_params['ignore-cert'] = 'true'
 
-    elif protocol in ProtocolType.DATABASE:
+    elif protocol in DATABASE:
         # Database-specific params
         if protocol_specific.get('defaultDatabase'):
             guacd_params['database'] = protocol_specific['defaultDatabase']
@@ -1559,8 +1532,12 @@ def launch_terminal_connection(params: KeeperParams,
     try:
         # Step 1: Detect protocol
         protocol = detect_protocol(params, record_uid)
-        if not protocol:
-            raise CommandError('pam launch', f'Could not detect protocol for record {record_uid}')
+        if not protocol or protocol not in ALL_TERMINAL:
+            raise CommandError(
+                'pam launch',
+                f'Protocol {protocol!r} is not supported for record {record_uid}. '
+                'Only terminal protocols (ssh, telnet, kubernetes, mysql, postgresql, sql-server) are supported.'
+            )
 
         logging.debug(f"Detected protocol: {protocol}")
 
