@@ -1019,13 +1019,7 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                                 for k, v in enforcements.items():
                                     enforcement_type = constants.ENFORCEMENTS.get(k)
                                     if enforcement_type == 'two_factor_duration':
-                                        value = [x.strip() for x in v.split(',')]
-                                        value = ['login' if x == '0' else
-                                                 '12_hours' if x == '12' else
-                                                 '24_hours' if x == '24' else
-                                                 '30_days' if x == '30' else
-                                                 'forever' if x == '9999' else x for x in value]
-                                        formatted_enforcements[k] = ', '.join(value)
+                                        formatted_enforcements[k] = constants.format_two_factor_duration(v)
                                     else:
                                         formatted_enforcements[k] = v
                                 row.append(formatted_enforcements)
@@ -3085,13 +3079,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                         except:
                             v = 'Error'
                     elif enforcement_type == 'two_factor_duration':
-                        value = [x.strip() for x in v.split(',')]
-                        value = ['login' if x == '0' else
-                                 '12_hours' if x == '12' else
-                                 '24_hours' if x == '24' else
-                                 '30_days' if x == '30' else
-                                 'forever' if x == '9999' else x for x in value]
-                        v = ', '.join(value)
+                        v = constants.format_two_factor_duration(v)
 
                     ret['enforcements'][k] = v
         return ret
@@ -3210,13 +3198,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             except:
                                 value = 'Error'
                         elif value_type == 'two_factor_duration':
-                            value = [x.strip() for x in value.split(',')]
-                            value = ['login' if x == '0' else
-                                     '12_hours' if x == '12' else
-                                     '24_hours' if x == '24' else
-                                     '30_days' if x == '30' else
-                                     'forever' if x == '9999' else x for x in value]
-                            value = ', '.join(value)
+                            value = constants.format_two_factor_duration(value)
                         elif value_type == 'account_share':
                             try:
                                 role_id = int(value)
