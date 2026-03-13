@@ -19,7 +19,6 @@ MySQL, PostgreSQL, SQL Server) through Guacamole over WebRTC tunnels.
 from __future__ import annotations
 import logging
 import os
-import sys
 import base64
 import json
 import secrets
@@ -49,7 +48,6 @@ from ..tunnel.port_forward.tunnel_helpers import (
     TunnelSignalHandler,
     tunnel_encrypt,
     tunnel_decrypt,
-    get_tunnel_session,
     get_keeper_tokens,
     MAIN_NONCE_LENGTH,
     SYMMETRIC_KEY_LENGTH,
@@ -99,9 +97,6 @@ DEFAULT_PORTS = {
 from .terminal_size import (
     DEFAULT_TERMINAL_COLUMNS,
     DEFAULT_TERMINAL_ROWS,
-    DEFAULT_CELL_WIDTH_PX,
-    DEFAULT_CELL_HEIGHT_PX,
-    DEFAULT_SCREEN_DPI,
     _build_screen_info,
     get_terminal_size_pixels,
 )
