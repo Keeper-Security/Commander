@@ -1015,7 +1015,20 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         elif column == 'enforcements':
                             enforcements = role_enforcements.get(role_id, {})
                             if kwargs.get('format') == 'json':
-                                row.append(dict(enforcements))
+                                formatted_enforcements = {}
+                                for k, v in enforcements.items():
+                                    enforcement_type = constants.ENFORCEMENTS.get(k)
+                                    if enforcement_type == 'two_factor_duration':
+                                        value = [x.strip() for x in v.split(',')]
+                                        value = ['login' if x == '0' else
+                                                 '12_hours' if x == '12' else
+                                                 '24_hours' if x == '24' else
+                                                 '30_days' if x == '30' else
+                                                 'forever' if x == '9999' else x for x in value]
+                                        formatted_enforcements[k] = ', '.join(value)
+                                    else:
+                                        formatted_enforcements[k] = v
+                                row.append(formatted_enforcements)
                             else:
                                 row.append(list(enforcements.keys()))
                         elif column == 'managed_node_count':
@@ -3074,6 +3087,8 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     elif enforcement_type == 'two_factor_duration':
                         value = [x.strip() for x in v.split(',')]
                         value = ['login' if x == '0' else
+                                 '12_hours' if x == '12' else
+                                 '24_hours' if x == '24' else
                                  '30_days' if x == '30' else
                                  'forever' if x == '9999' else x for x in value]
                         v = ', '.join(value)
