@@ -54,6 +54,8 @@ from ..tunnel.port_forward.tunnel_helpers import (
     get_keeper_tokens,
     MAIN_NONCE_LENGTH,
     SYMMETRIC_KEY_LENGTH,
+    parse_keeper_webrtc_version_from_sdp,
+    set_remote_description_and_parse_version,
 )
 from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..pam.pam_dto import GatewayAction, GatewayActionWebRTCSession
@@ -113,6 +115,41 @@ except Exception:
     DEFAULT_SCREEN_INFO = _build_screen_info(DEFAULT_TERMINAL_COLUMNS, DEFAULT_TERMINAL_ROWS)
 
 MAX_MESSAGE_SIZE_LINE = "a=max-message-size:1073741823"
+
+# Minimum keeper-pam-webrtc-rs version that supports ConnectAs payload in OpenConnection.
+# Older Gateways (Rust module < this) do not parse connect_as_payload; omit it when not supported.
+CONNECT_AS_MIN_VERSION = "2.1.6"
+
+
+def _version_at_least(version: Optional[str], min_version: str) -> bool:
+    """
+    Compare semantic versions. Returns True if version >= min_version.
+
+    Args:
+        version: Parsed version (e.g. "2.1.4") or None (treated as unknown/old).
+        min_version: Minimum required version (e.g. "2.1.0").
+
+    Returns:
+        True if version is known and >= min_version; False if unknown or older.
+    """
+    if not version:
+        return False
+
+    def parse(v: str) -> tuple:
+        parts = []
+        for p in v.split(".")[:3]:  # major.minor.patch
+            try:
+                parts.append(int(p))
+            except ValueError:
+                parts.append(0)
+        while len(parts) < 3:
+            parts.append(0)
+        return tuple(parts[:3])
+
+    try:
+        return parse(version) >= parse(min_version)
+    except Exception:
+        return False
 
 
 def _ensure_max_message_size_attribute(sdp_offer: Optional[str]) -> Optional[str]:
@@ -1628,6 +1665,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                         raise Exception(f"Gateway error: {error_msg} Payload: {response_payload}")
 
                     # Decrypt and handle payload.data if present (contains SDP answer)
+                    remote_webrtc_version = None
                     if response_payload.get('is_ok') and response_payload.get('data'):
                         data_field = response_payload.get('data', '')
 
@@ -1652,37 +1690,36 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                                         data_text = bytes_to_string(decrypted_data).replace("'", '"')
                                         logging.debug(f"Successfully decrypted data for {conversation_id_original}, length: {len(data_text)}")
 
-                                        # Parse JSON
+                                        # Parse JSON; fallback to raw SDP if decrypted data is plain SDP
+                                        answer_sdp = None
+                                        data_json = None
                                         try:
                                             data_json = json.loads(data_text)
-
-                                            # Ensure data_json is a dictionary
                                             if isinstance(data_json, dict):
                                                 logging.debug(f"🔓 Decrypted payload type: {data_json.get('type', 'unknown')}, keys: {list(data_json.keys())}")
+                                                answer_sdp = data_json.get('answer') or data_json.get('sdp')
+                                        except (json.JSONDecodeError, TypeError):
+                                            if data_text.strip().startswith('v=') and 'm=' in data_text:
+                                                answer_sdp = data_text.strip()
+                                                logging.debug("Decrypted data appears to be raw SDP (not JSON), using as answer")
 
-                                                # Handle SDP answer
-                                                if "answer" in data_json:
-                                                    answer_sdp = data_json.get('answer')
-                                                    if answer_sdp:
-                                                        logging.debug(f"Found SDP answer in non-streaming response, sending to Rust for conversation: {conversation_id_original}")
-                                                        tube_registry.set_remote_description(commander_tube_id, answer_sdp, is_answer=True)
+                                        if answer_sdp:
+                                            logging.debug(f"Found SDP answer in non-streaming response, sending to Rust for conversation: {conversation_id_original}")
+                                            remote_webrtc_version = set_remote_description_and_parse_version(
+                                                tube_registry, commander_tube_id, answer_sdp, is_answer=True
+                                            )
 
-                                                        if hasattr(tunnel_session, "gateway_ready_event") and tunnel_session.gateway_ready_event is not None:
-                                                            tunnel_session.gateway_ready_event.set()
-                                                        logging.debug(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}SDP answer received, connecting...")
+                                            if hasattr(tunnel_session, "gateway_ready_event") and tunnel_session.gateway_ready_event is not None:
+                                                tunnel_session.gateway_ready_event.set()
+                                            logging.debug(f"{bcolors.OKBLUE}Connection state: {bcolors.ENDC}SDP answer received, connecting...")
 
-                                                        # Send any buffered local ICE candidates now that we have the answer
-                                                        if tunnel_session.buffered_ice_candidates:
-                                                            logging.debug(f"Sending {len(tunnel_session.buffered_ice_candidates)} buffered ICE candidates after answer")
-                                                            for candidate in tunnel_session.buffered_ice_candidates:
-                                                                signal_handler._send_ice_candidate_immediately(candidate, commander_tube_id)
-                                                            tunnel_session.buffered_ice_candidates.clear()
-                                                elif "offer" in data_json or (data_json.get("type") == "offer"):
-                                                    # Gateway is sending us an ICE restart offer (unlikely in non-streaming mode)
-                                                    logging.warning(f"Received ICE restart offer in non-streaming mode - this is unexpected")
-                                        except json.JSONDecodeError as e:
-                                            logging.error(f"Failed to parse decrypted data as JSON: {e}")
-                                            logging.debug(f"Data text: {data_text[:200]}...")
+                                            if tunnel_session.buffered_ice_candidates:
+                                                logging.debug(f"Sending {len(tunnel_session.buffered_ice_candidates)} buffered ICE candidates after answer")
+                                                for candidate in tunnel_session.buffered_ice_candidates:
+                                                    signal_handler._send_ice_candidate_immediately(candidate, commander_tube_id)
+                                                tunnel_session.buffered_ice_candidates.clear()
+                                        elif isinstance(data_json, dict) and ("offer" in data_json or data_json.get("type") == "offer"):
+                                            logging.warning(f"Received ICE restart offer in non-streaming mode - this is unexpected")
                                     else:
                                         logging.warning(f"Decryption returned None for conversation {conversation_id_original}")
                                 except Exception as e:
@@ -1712,6 +1749,7 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                     "use_python_handler": use_python_handler,
                     "user_record_uid": user_record_uid,  # For ConnectAs payload
                     "gateway_uid": gateway_uid,  # For ConnectAs payload
+                    "remote_webrtc_version": remote_webrtc_version,  # From SDP for ConnectAs capability
                 }
 
         except Exception as e:

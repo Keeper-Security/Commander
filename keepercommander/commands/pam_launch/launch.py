@@ -29,6 +29,8 @@ from .terminal_connection import (
     launch_terminal_connection,
     detect_protocol,
     ALL_TERMINAL,
+    CONNECT_AS_MIN_VERSION,
+    _version_at_least,
 )
 from .terminal_size import get_terminal_size_pixels, is_interactive_tty
 from .guac_cli.stdin_handler import StdinHandler
@@ -36,6 +38,7 @@ from ..base import Command
 from ..tunnel.port_forward.tunnel_helpers import (
     get_gateway_uid_from_record,
     get_config_uid_from_record,
+    get_tunnel_session,
     unregister_tunnel_session,
     unregister_conversation_key,
 )
@@ -822,7 +825,22 @@ class PAMLaunchCommand(Command):
                 _tunnel_settings.get('userRecordUid') if cli_user_override else None
             )
 
+            # Remote keeper-pam-webrtc-rs version: from tunnel (non-streaming) or session (streaming)
+            remote_webrtc_version = tunnel_result['tunnel'].get('remote_webrtc_version')
+            if remote_webrtc_version is None:
+                sess = get_tunnel_session(tube_id)
+                remote_webrtc_version = getattr(sess, 'remote_webrtc_version', None) if sess else None
+
+            connect_as_supported = _version_at_least(remote_webrtc_version, CONNECT_AS_MIN_VERSION)
+
             if cli_user_override and effective_credential_uid and gateway_uid:
+                if not connect_as_supported:
+                    raise CommandError(
+                        'pam launch',
+                        f'ConnectAs (--credential) requires Gateway with keeper-pam-webrtc-rs >= {CONNECT_AS_MIN_VERSION}. '
+                        f'Remote version: {remote_webrtc_version or "unknown"}. '
+                        'Please upgrade the Gateway to use --credential.'
+                    )
                 logging.debug(f"Building ConnectAs payload for credential: {effective_credential_uid}")
                 gateway_public_key = _retrieve_gateway_public_key(params, gateway_uid)
                 if gateway_public_key:
