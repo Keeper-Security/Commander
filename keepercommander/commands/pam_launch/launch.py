@@ -5,7 +5,7 @@
 #              |_|
 #
 # Keeper Commander
-# Copyright 2024 Keeper Security Inc.
+# Copyright 2026 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
 
@@ -21,7 +21,11 @@ from typing import TYPE_CHECKING, Dict, Any, Optional
 
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
-from .terminal_connection import launch_terminal_connection
+from .terminal_connection import (
+    launch_terminal_connection,
+    detect_protocol,
+    ALL_TERMINAL,
+)
 from .terminal_size import get_terminal_size_pixels, is_interactive_tty
 from .guac_cli.stdin_handler import StdinHandler
 from ..base import Command
@@ -95,9 +99,6 @@ class PAMLaunchCommand(Command):
 
         Returns:
             Record UID if found, None otherwise
-
-        Raises:
-            CommandError: If multiple records match
         """
         if not record_token:
             return None
@@ -108,13 +109,8 @@ class PAMLaunchCommand(Command):
         uid_pattern = re.compile(r'^[A-Za-z0-9_-]{22}$')
         if uid_pattern.match(record_token):
             if record_token in params.record_cache:
-                # Validate it's a PAM record type
-                if self._is_valid_pam_record(params, record_token):
-                    logging.debug(f"Found record by UID: {record_token}")
-                    return record_token
-                else:
-                    logging.debug(f"Record {record_token} found but is not a valid PAM record type")
-                    return None
+                logging.debug(f"Found record by UID: {record_token}")
+                return record_token
 
         # Step 2: Try path lookup
         record_uid = self._find_by_path(params, record_token)
@@ -132,15 +128,12 @@ class PAMLaunchCommand(Command):
         """
         Find record by path resolution.
 
-        Args:
-            params: KeeperParams instance
-            path: Path to the record
+        If exactly one record matches (any type), returns its UID. If two or more
+        match, filters to PAM types only: returns the single PAM UID if one,
+        else logs error (no PAM types vs multiple PAM matches) and returns None.
 
         Returns:
             Record UID if found, None otherwise
-
-        Raises:
-            CommandError: If multiple records match
         """
         rs = try_resolve_path(params, path)
         if rs is None:
@@ -154,21 +147,33 @@ class PAMLaunchCommand(Command):
         if folder_uid not in params.subfolder_record_cache:
             return None
 
-        # Find all records in the folder with matching title (only valid PAM types)
-        matched_uids = []
+        # All records in folder with matching title (any type)
+        all_matched = []
         for uid in params.subfolder_record_cache[folder_uid]:
             r = api.get_record(params, uid)
             if r and r.title and r.title.lower() == name.lower():
-                # Only include valid PAM record types
-                if self._is_valid_pam_record(params, uid):
-                    matched_uids.append(uid)
+                all_matched.append(uid)
 
-        if len(matched_uids) > 1:
-            raise CommandError('pam launch', f'Multiple valid PAM records found with path "{path}". Please use a unique identifier.')
+        if len(all_matched) == 1:
+            logging.debug(f"Found record by path: {path} -> {all_matched[0]}")
+            return all_matched[0]
 
-        if matched_uids:
-            logging.debug(f"Found record by path: {path} -> {matched_uids[0]}")
-            return matched_uids[0]
+        if len(all_matched) >= 2:
+            pam_matched = [uid for uid in all_matched if self._is_valid_pam_record(params, uid)]
+            if len(pam_matched) == 1:
+                logging.debug(f"Found record by path: {path} -> {pam_matched[0]} (1 PAM among {len(all_matched)} matches)")
+                return pam_matched[0]
+            if len(pam_matched) == 0:
+                logging.error(
+                    'pam launch: path "%s" matches %d record(s) but none are PAM types (pamMachine, pamDirectory, pamDatabase). Use UID or a path that resolves to a single PAM record.',
+                    path, len(all_matched),
+                )
+                return None
+            logging.error(
+                'pam launch: path "%s" matches %d PAM records. Please use a unique identifier (UID or full path).',
+                path, len(pam_matched),
+            )
+            return None
 
         return None
 
@@ -176,30 +181,39 @@ class PAMLaunchCommand(Command):
         """
         Find record by exact title match.
 
-        Args:
-            params: KeeperParams instance
-            title: Title to match
+        If exactly one record matches (any type), returns its UID. If two or more
+        match, filters to PAM types only: returns the single PAM UID if one,
+        else logs error (no PAM types vs multiple PAM matches) and returns None.
 
         Returns:
             Record UID if found, None otherwise
-
-        Raises:
-            CommandError: If multiple records match
         """
-        matched_uids = []
+        all_matched = []
         for record_uid in params.record_cache:
             record = vault.KeeperRecord.load(params, record_uid)
             if record and record.title and record.title.lower() == title.lower():
-                # Only include valid PAM record types
-                if self._is_valid_pam_record(params, record_uid):
-                    matched_uids.append(record_uid)
+                all_matched.append(record_uid)
 
-        if len(matched_uids) > 1:
-            raise CommandError('pam launch', f'Multiple valid PAM records found with title "{title}". Please use a unique identifier (UID or full path).')
+        if len(all_matched) == 1:
+            logging.debug(f"Found record by title: {title} -> {all_matched[0]}")
+            return all_matched[0]
 
-        if matched_uids:
-            logging.debug(f"Found record by title: {title} -> {matched_uids[0]}")
-            return matched_uids[0]
+        if len(all_matched) >= 2:
+            pam_matched = [uid for uid in all_matched if self._is_valid_pam_record(params, uid)]
+            if len(pam_matched) == 1:
+                logging.debug(f"Found record by title: {title} -> {pam_matched[0]} (1 PAM among {len(all_matched)} matches)")
+                return pam_matched[0]
+            if len(pam_matched) == 0:
+                logging.error(
+                    'pam launch: title "%s" matches %d record(s) but none are PAM types (pamMachine, pamDirectory, pamDatabase). Use UID or full path.',
+                    title, len(all_matched),
+                )
+                return None
+            logging.error(
+                'pam launch: title "%s" matches %d PAM records. Please use a unique identifier (UID or full path).',
+                title, len(pam_matched),
+            )
+            return None
 
         return None
 
@@ -284,15 +298,28 @@ class PAMLaunchCommand(Command):
 
             logging.debug(f"Found record: {record_uid}")
 
+            record = vault.KeeperRecord.load(params, record_uid)
+            if not isinstance(record, vault.TypedRecord):
+                raise CommandError('pam launch', f'Record {record_uid} is not a TypedRecord')
+
+            if not self._is_valid_pam_record(params, record_uid):
+                record_type = getattr(record, 'record_type', type(record).__name__)
+                raise CommandError('pam launch',f'Record {record_uid} of type "{record_type}" is not a machine record type (pamMachine, pamDirectory, pamDatabase)')
+
+            # Only terminal protocols are supported (SSH, Telnet, Kubernetes, databases).
+            protocol = detect_protocol(params, record_uid)
+            if protocol not in ALL_TERMINAL:
+                logging.error(
+                    "pam launch only supports terminal protocols (ssh, telnet, kubernetes, mysql, postgresql, sql-server). "
+                    "Protocol %r is not supported; use Web Vault for RDP/VNC/RBI etc.",
+                    protocol,
+                )
+                return
+
             # Validate --user and --host parameters against allowSupply flags
             # Note: cmdline options override record data when provided
             # launch_credential_uid = kwargs.get('launch_credential_uid')
             # custom_host = kwargs.get('custom_host')
-
-            # Load record to check allowSupply flags and existing values
-            # record = vault.KeeperRecord.load(params, record_uid)
-            # if not isinstance(record, vault.TypedRecord):
-            #     raise CommandError('pam launch', f'Record {record_uid} is not a TypedRecord')
 
             # pam_settings_field = record.get_typed_field('pamSettings')
             # allow_supply_user = False
