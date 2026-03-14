@@ -360,6 +360,29 @@ def detect_column_type(values):  # type: (Iterable[Any]) -> Optional[Callable[[A
     return None
 
 
+def _sanitize_csv_value(value):
+    """Prevent CSV formula injection by escaping leading formula characters."""
+    if isinstance(value, str) and value and value[0] in ('=', '+', '-', '@', '\t', '\r'):
+        return "'" + value
+    return value
+
+
+def _atomic_write_file(filename, write_fn):
+    """Write file atomically using temp file + rename."""
+    import tempfile
+    dir_name = os.path.dirname(os.path.abspath(filename))
+    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
+    os.close(fd)
+    try:
+        write_fn(tmp_path)
+        os.replace(tmp_path, filename)
+        os.chmod(filename, 0o600)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+
+
 def dump_report_data(data, headers, title=None, fmt='', filename=None, append=False, **kwargs):
     # type: (List[List], Sequence[str], Optional[str], Optional[str], Optional[str], bool, ...) -> Optional[str]
     # kwargs:
@@ -391,15 +414,41 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
             if not ext:
                 filename += '.csv'
             logging.info('Report path: %s', os.path.abspath(filename))
-        with open(filename, 'a' if append else 'w', newline='', encoding='utf-8') if filename else io.StringIO() as fd:
+
+        def _write_csv(target):
+            with open(target, 'a' if append else 'w', newline='', encoding='utf-8') as fd:
+                csv_writer = csv.writer(fd)
+                if title:
+                    csv_writer.writerow([])
+                    csv_writer.writerow([title])
+                    csv_writer.writerow([])
+                elif append:
+                    csv_writer.writerow([])
+
+                starting_column = 0
+                if headers:
+                    if headers[0] == '#':
+                        starting_column = 1
+                    csv_writer.writerow(headers[starting_column:])
+                for row in data:
+                    for i in range(len(row)):
+                        if isinstance(row[i], list):
+                            row[i] = '\n'.join(row[i])
+                        row[i] = _sanitize_csv_value(row[i])
+                    csv_writer.writerow(row[starting_column:])
+
+        if filename:
+            if append:
+                _write_csv(filename)
+            else:
+                _atomic_write_file(filename, _write_csv)
+        else:
+            fd = io.StringIO()
             csv_writer = csv.writer(fd)
             if title:
                 csv_writer.writerow([])
                 csv_writer.writerow([title])
                 csv_writer.writerow([])
-            elif append:
-                csv_writer.writerow([])
-
             starting_column = 0
             if headers:
                 if headers[0] == '#':
@@ -409,13 +458,13 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
                 for i in range(len(row)):
                     if isinstance(row[i], list):
                         row[i] = '\n'.join(row[i])
+                    row[i] = _sanitize_csv_value(row[i])
                 csv_writer.writerow(row[starting_column:])
-            if isinstance(fd, io.StringIO):
-                report = fd.getvalue()
-                if append:
-                    logging.info(report)
-                else:
-                    return report
+            report = fd.getvalue()
+            if append:
+                logging.info(report)
+            else:
+                return report
     elif fmt == 'json':
         data_list = []
         for row in data:
@@ -425,13 +474,30 @@ def dump_report_data(data, headers, title=None, fmt='', filename=None, append=Fa
                 if name != '#':
                     obj[name] = column
             data_list.append(obj)
+
+        # Wrap in metadata envelope when writing to file
+        import datetime as _dt
+        json_output = {
+            "generated": _dt.datetime.now().isoformat(timespec="seconds"),
+            "title": title or "",
+            "record_count": len(data_list),
+            "data": data_list,
+        }
+
         if filename:
             _, ext = os.path.splitext(filename)
             if not ext:
                 filename += '.json'
             logging.info('Report path: %s', os.path.abspath(filename))
-            with open(filename, 'a' if append else 'w') as fd:
-                json.dump(data_list, fd, indent=2, default=json_serialized)
+
+            def _write_json(target):
+                with open(target, 'a' if append else 'w') as fd:
+                    json.dump(json_output, fd, indent=2, default=json_serialized)
+
+            if append:
+                _write_json(filename)
+            else:
+                _atomic_write_file(filename, _write_json)
         else:
             report = json.dumps(data_list, indent=2, default=json_serialized)
             if append:
