@@ -11,17 +11,21 @@
 
 from __future__ import annotations
 import argparse
+import os
+import ipaddress
 import logging
 import re
 import shutil
 import signal
-import sys
 import time
-from typing import TYPE_CHECKING, Dict, Any, Optional
+from typing import TYPE_CHECKING, Dict, Any, Optional, Tuple
 
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
 from .terminal_connection import (
+    _build_connect_as_payload,
+    _retrieve_gateway_public_key,
+    _get_launch_credential_uid,
     launch_terminal_connection,
     detect_protocol,
     ALL_TERMINAL,
@@ -45,6 +49,152 @@ if TYPE_CHECKING:
     from ...params import KeeperParams
 
 
+def _parse_host_port(value: str) -> Tuple[str, int]:
+    """
+    Parse a 'host:port' or '[ipv6]:port' string into (host, port).
+
+    Supported formats:
+      - IPv4 / hostname:  192.168.1.1:22  or  server.example.com:3306
+      - IPv6:             [::1]:22         or  [2001:db8::1]:443
+
+    Raises:
+        CommandError: if the format is invalid or the port is out of range.
+    """
+    value = value.strip()
+    if value.startswith('['):
+        end_bracket = value.find(']')
+        if end_bracket == -1:
+            raise CommandError('pam launch',
+                f'Invalid host format {value!r}. Expected [ipv6]:port (e.g. [::1]:22).')
+        host = value[1:end_bracket]
+        rest = value[end_bracket + 1:]
+        if not rest.startswith(':'):
+            raise CommandError('pam launch',
+                f'Invalid host format {value!r}. Expected [ipv6]:port (e.g. [::1]:22).')
+        port_str = rest[1:]
+    elif ':' in value:
+        last_colon = value.rfind(':')
+        host = value[:last_colon]
+        port_str = value[last_colon + 1:]
+    else:
+        raise CommandError('pam launch',
+            f'Invalid host format {value!r}. Expected host:port (e.g. 192.168.1.1:22 or server.example.com:3306).')
+    try:
+        port = int(port_str)
+    except ValueError:
+        raise CommandError('pam launch',
+            f'Invalid port {port_str!r} in {value!r}. Port must be an integer 1-65535.')
+    _validate_host_port(host, port)
+    return host, port
+
+
+def _validate_host_port(host: str, port: int) -> None:
+    """
+    Validate host (non-empty, valid IPv4/IPv6 or hostname) and port (1-65535).
+    Raises CommandError if invalid.
+    """
+    if not host:
+        raise CommandError('pam launch', 'Host cannot be empty.')
+    if not (1 <= port <= 65535):
+        raise CommandError('pam launch', f'Port {port} is out of range (valid range: 1-65535).')
+    # Attempt strict IP validation; if it raises ValueError the host is treated as a hostname
+    # (any non-empty hostname string is accepted — the gateway does the DNS resolution).
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass  # Not an IP literal — treat as hostname, basic non-empty check above is sufficient
+
+
+def _iter_record_fields(record: Any):
+    """Yield every TypedField from both record.fields and record.custom."""
+    for field in list(getattr(record, 'fields', None) or []) + list(getattr(record, 'custom', None) or []):
+        yield field
+
+
+def _get_host_port_from_record(record: Any) -> Tuple[Optional[str], Optional[int]]:
+    """
+    Extract (hostName, port) from a record's pamHostname or host typed fields.
+
+    Enforces exactly one non-empty host field (hostName AND port both non-empty/valid).
+    Raises CommandError if more than one such field is found (ambiguous configuration).
+
+    Returns:
+        Tuple of (host, port) where either may be None if none found.
+    """
+    if not record:
+        return None, None
+
+    candidates: list = []
+    for field in _iter_record_fields(record):
+        if getattr(field, 'type', None) not in ('pamHostname', 'host'):
+            continue
+        value = field.get_default_value(dict) if hasattr(field, 'get_default_value') else {}
+        if not isinstance(value, dict):
+            continue
+        host = (value.get('hostName') or '').strip()
+        port_raw = value.get('port')
+        if not host or not port_raw:
+            continue
+        try:
+            p = int(port_raw)
+        except (ValueError, TypeError):
+            continue
+        if 1 <= p <= 65535:
+            candidates.append((host, p))
+
+    if len(candidates) > 1:
+        raise CommandError('pam launch',
+            f'Record has {len(candidates)} non-empty host/pamHostname fields with valid host and port '
+            '(expected exactly one). Clear the extra field before launching.')
+    if not candidates:
+        return None, None
+    return candidates[0]
+
+
+def _record_has_credentials(record: Any) -> bool:
+    """
+    Return True if the record has exactly one non-empty login field and exactly one non-empty
+    password field (value[0] != ''). Searches both fields[] and custom[].
+
+    Raises CommandError if multiple non-empty fields of the same type are found (ambiguous).
+    """
+    if not record:
+        return False
+
+    def _count_nonempty(field_type: str) -> int:
+        count = 0
+        for field in _iter_record_fields(record):
+            if getattr(field, 'type', None) == field_type:
+                val = field.get_default_value(str) if hasattr(field, 'get_default_value') else ''
+                if val:
+                    count += 1
+        return count
+
+    login_count = _count_nonempty('login')
+    if login_count > 1:
+        raise CommandError('pam launch',
+            f'Record has {login_count} non-empty login fields (expected exactly one). '
+            'Clear the extra login field before launching.')
+    if login_count == 0:
+        return False
+
+    password_count = _count_nonempty('password')
+    if password_count > 1:
+        raise CommandError('pam launch',
+            f'Record has {password_count} non-empty password fields (expected exactly one). '
+            'Clear the extra password field before launching.')
+    if password_count == 0:
+        return False
+
+    return True
+
+
+def _record_has_host_port(record: Any) -> bool:
+    """Return True if the record has exactly one non-empty host/pamHostname field with valid host and port."""
+    host, port = _get_host_port_from_record(record)
+    return bool(host) and port is not None
+
+
 class PAMLaunchCommand(Command):
     """PAM Launch command to launch a connection to a PAM resource"""
 
@@ -57,12 +207,14 @@ class PAMLaunchCommand(Command):
     parser.add_argument('--no-trickle-ice', '-nti', required=False, dest='no_trickle_ice', action='store_true',
                         help='Disable trickle ICE for WebRTC connections. By default, trickle ICE is enabled '
                              'for real-time candidate exchange.')
-    # parser.add_argument('--user', '-u', required=False, dest='launch_credential_uid', type=str,
-    #                     help='UID of pamUser record to use as launch credentials when allowSupplyUser is enabled. '
-    #                          'Fails if allowSupplyUser is not enabled or the specified record is not found.')
-    # parser.add_argument('--host', '-H', required=False, dest='custom_host', type=str,
-    #                     help='Hostname or IP address to connect to when allowSupplyHost is enabled. '
-    #                          'Fails if allowSupplyHost is not enabled.')
+    parser.add_argument('--credential', '-cr', required=False, dest='launch_credential', type=str,
+                        help='Record (UID, path, or title) for launch credentials')
+    parser.add_argument('--host', '-H', required=False, dest='custom_host', type=str,
+                        help='Host and port in format host:port (e.g. -H=192.168.1.1:22 or -H=[::1]:22 for IPv6). '
+                             'Requires allowSupplyHost. Mutually exclusive with --host-record.')
+    parser.add_argument('--host-record', '-hr', required=False, dest='host_record', type=str,
+                        help='Record (UID, path, or title) with a host or pamHostname field containing hostName and port. '
+                             'Requires allowSupplyHost. Mutually exclusive with --host.')
 
     def get_parser(self):
         return PAMLaunchCommand.parser
@@ -284,6 +436,12 @@ class PAMLaunchCommand(Command):
             root_logger.setLevel(logging.ERROR)
 
         try:
+            # TODO: Add JIT - note that allowSupplyHost overrides all other supply modes.
+            # When a PAM record has allowSupplyHost, allowSupplyUser, and JIT settings all enabled,
+            # the Web Vault (and this CLI) treat allowSupplyHost as the active mode and ignore the
+            # other two. Any validation logic below must reflect this precedence: if allowSupplyHost
+            # is True, treat the record as "host+credential supply" mode regardless of the other flags.
+
             record_token = kwargs.get('record')
 
             if not record_token:
@@ -316,89 +474,200 @@ class PAMLaunchCommand(Command):
                 )
                 return
 
-            # Validate --user and --host parameters against allowSupply flags
-            # Note: cmdline options override record data when provided
-            # launch_credential_uid = kwargs.get('launch_credential_uid')
-            # custom_host = kwargs.get('custom_host')
+            # Get DAG-linked credential UID early (needed for comparison and validation)
+            dag_linked_uid = _get_launch_credential_uid(params, record_uid)
+            if not dag_linked_uid:
+                # Fallback: first entry in pamSettings.connection.userRecords
+                _psf = record.get_typed_field('pamSettings')
+                if _psf:
+                    _psv = _psf.get_default_value(dict)
+                    if _psv:
+                        _conn = _psv.get('connection', {})
+                        if isinstance(_conn, dict):
+                            _ur = _conn.get('userRecords', [])
+                            if _ur:
+                                dag_linked_uid = _ur[0]
 
-            # pam_settings_field = record.get_typed_field('pamSettings')
-            # allow_supply_user = False
-            # allow_supply_host = False
-            # user_records_on_record = []
-            # hostname_on_record = None
+            # Read allowSupply flags from pamSettings
+            pam_settings_field = record.get_typed_field('pamSettings')
+            allow_supply_user = False
+            allow_supply_host = False
+            if pam_settings_field:
+                pam_settings_value = pam_settings_field.get_default_value(dict)
+                if pam_settings_value:
+                    allow_supply_host = pam_settings_value.get('allowSupplyHost', False)
+                    connection = pam_settings_value.get('connection', {})
+                    if isinstance(connection, dict):
+                        allow_supply_user = connection.get('allowSupplyUser', False)
 
-            # Get hostname from record
-            # hostname_field = record.get_typed_field('pamHostname')
-            # if hostname_field:
-            #     host_value = hostname_field.get_default_value(dict)
-            #     if host_value:
-            #         hostname_on_record = host_value.get('hostName')
+            # Get record host/port for fallback validation
+            hostname_on_record, port_on_record = _get_host_port_from_record(record)
 
-            # if pam_settings_field:
-            #     pam_settings_value = pam_settings_field.get_default_value(dict)
-            #     if pam_settings_value:
-            #         # allowSupplyHost is at top level of pamSettings value
-            #         allow_supply_host = pam_settings_value.get('allowSupplyHost', False)
-            #         # allowSupplyUser is inside connection
-            #         connection = pam_settings_value.get('connection', {})
-            #         if isinstance(connection, dict):
-            #             allow_supply_user = connection.get('allowSupplyUser', False)
-            #             user_records_on_record = connection.get('userRecords', [])
+            # --- Resolve --credential option ---
+            launch_credential = kwargs.get('launch_credential')
+            launch_credential_uid = None
+            if launch_credential:
+                # Reject early — before record resolution — when neither supply flag permits it.
+                # (With host options the flag requirement is checked later; here we only gate the
+                # case where -cr alone requires at least one supply flag to be meaningful.)
+                if not allow_supply_user and not allow_supply_host:
+                    raise CommandError('pam launch',
+                        '--credential requires allowSupplyUser or allowSupplyHost to be enabled on the record.')
+                launch_credential_uid = self.find_record(params, launch_credential)
+                if not launch_credential_uid:
+                    raise CommandError('pam launch', f'Credential record not found: {launch_credential}')
 
-            # Validation based on allowSupply flags
-            # if allow_supply_host and allow_supply_user:
-            #     # Both flags true: --user is required (no fallback to userRecords)
-            #     if not launch_credential_uid:
-            #         raise CommandError('pam launch',
-            #             f'Both allowSupplyUser and allowSupplyHost are enabled. '
-            #             f'You must provide --user to specify launch credentials.')
-            #     # --host required if no hostname on record
-            #     if not custom_host and not hostname_on_record:
-            #         raise CommandError('pam launch',
-            #             f'Both allowSupplyUser and allowSupplyHost are enabled and no hostname on record. '
-            #             f'You must provide --host to specify the target host.')
+            # --- Parse --host / --host-record (mutually exclusive) ---
+            raw_custom_host = kwargs.get('custom_host')
+            host_record_token = kwargs.get('host_record')
+            custom_host = None
+            custom_port = None
 
-            # elif allow_supply_user and not allow_supply_host:
-            #     # Only allowSupplyUser: use --user if provided, else userRecords, else error
-            #     if not launch_credential_uid and not user_records_on_record:
-            #         raise CommandError('pam launch',
-            #             f'allowSupplyUser is enabled but no credentials available. '
-            #             f'Use --user to specify a pamUser record or configure userRecords on the record.')
+            # All -H/-hr checks happen BEFORE any record resolution to give the right error first.
 
-            # elif allow_supply_host and not allow_supply_user:
-            #     # Only allowSupplyHost: --host required if no hostname on record
-            #     if not custom_host and not hostname_on_record:
-            #         raise CommandError('pam launch',
-            #             f'allowSupplyHost is enabled but no hostname available. '
-            #             f'Use --host to specify the target host or configure hostname on the record.')
+            # -H and -hr are mutually exclusive (conflicting options prevent execution).
+            if raw_custom_host and host_record_token:
+                raise CommandError('pam launch',
+                    'Cannot use both --host and --host-record. Use one to specify the target host.')
 
-            # Validate --user parameter if provided
-            # if launch_credential_uid:
-            #     if not allow_supply_user:
-            #         raise CommandError('pam launch',
-            #             f'--user parameter requires allowSupplyUser to be enabled on the record. '
-            #             f'allowSupplyUser is currently disabled for record {record_uid}.')
+            # Options conflict: -H/-hr require -cr (Web Vault: host and credentials supplied together).
+            if (raw_custom_host or host_record_token) and not launch_credential:
+                raise CommandError('pam launch',
+                    '--host / --host-record requires --credential (-cr) to also be provided. '
+                    'When allowSupplyHost is enabled, credentials and host must be supplied together.')
 
-            #     # Validate the launch credential record exists and is a pamUser
-            #     cred_record = vault.KeeperRecord.load(params, launch_credential_uid)
-            #     if not cred_record:
-            #         raise CommandError('pam launch',
-            #             f'Launch credential record not found: {launch_credential_uid}')
-            #     if not isinstance(cred_record, vault.TypedRecord) or cred_record.record_type != 'pamUser':
-            #         raise CommandError('pam launch',
-            #             f'Launch credential record {launch_credential_uid} must be a pamUser record. '
-            #             f'Found: {cred_record.record_type if isinstance(cred_record, vault.TypedRecord) else "non-typed"}')
+            # allowSupplyHost must be enabled to use -H/-hr at all.
+            if (raw_custom_host or host_record_token) and not allow_supply_host:
+                raise CommandError('pam launch',
+                    '--host / --host-record requires allowSupplyHost to be enabled on the record. '
+                    '(Web Vault: Record > Allow shared users to select their own host and credential)')
 
-            #     logging.debug(f"Using custom launch credential: {launch_credential_uid}")
+            if raw_custom_host:
+                custom_host, custom_port = _parse_host_port(raw_custom_host)
+                kwargs['custom_host'] = custom_host
+                kwargs['custom_port'] = custom_port
+                logging.debug(f"Parsed --host: {custom_host}:{custom_port}")
 
-            # Validate --host parameter if provided
-            # if custom_host:
-            #     if not allow_supply_host:
-            #         raise CommandError('pam launch',
-            #             f'--host parameter requires allowSupplyHost to be enabled on the record. '
-            #             f'allowSupplyHost is currently disabled for record {record_uid}.')
+            if host_record_token:
+                host_record_uid = self.find_record(params, host_record_token)
+                if not host_record_uid:
+                    raise CommandError('pam launch', f'Host record not found: {host_record_token}')
+                host_record = vault.KeeperRecord.load(params, host_record_uid)
+                if not host_record:
+                    raise CommandError('pam launch', f'Could not load host record: {host_record_uid}')
+                custom_host, custom_port = _get_host_port_from_record(host_record)
+                if not custom_host:
+                    raise CommandError('pam launch',
+                        f'Record {host_record_token} has no hostname. '
+                        'It must have a host or pamHostname field with hostName.')
+                if custom_port is None:
+                    raise CommandError('pam launch',
+                        f'Record {host_record_token} has no valid port (1-65535). '
+                        'It must have a host or pamHostname field with a port.')
+                kwargs['custom_host'] = custom_host
+                kwargs['custom_port'] = custom_port
+                logging.debug(f"Using host from record {host_record_uid}: {custom_host}:{custom_port}")
 
-            #     logging.debug(f"Using custom host: {custom_host}")
+            has_cli_host = custom_host is not None
+            has_cli_cred = launch_credential_uid is not None
+
+            # --credential record with no host options that matches DAG-linked -> treat as no --credential
+            if has_cli_cred and not has_cli_host and launch_credential_uid == dag_linked_uid:
+                logging.warning(
+                    '--credential %s matches linked Launch Credential; treating as if no --credential provided',
+                    launch_credential,
+                )
+                launch_credential_uid = None
+                has_cli_cred = False
+
+            # --host / --host-record require allowSupplyHost
+            if has_cli_host and not allow_supply_host:
+                raise CommandError('pam launch',
+                    '--host / --host-record requires allowSupplyHost to be enabled on the record. '
+                    '(Web Vault: Record > Allow shared users to select their own host and credential)')
+
+            if has_cli_cred:
+                # with host options -> allowSupplyHost; without -> allowSupplyUser or allowSupplyHost
+                if has_cli_host:
+                    if not allow_supply_host:
+                        raise CommandError('pam launch',
+                            '--credential with --host/--host-record requires allowSupplyHost to be enabled.')
+                else:
+                    if not allow_supply_user and not allow_supply_host:
+                        raise CommandError('pam launch',
+                            '--credential requires allowSupplyUser or allowSupplyHost to be enabled on the record.')
+
+                # Strictly validate --credential record has login and password
+                cred_record = vault.KeeperRecord.load(params, launch_credential_uid)
+                if not cred_record:
+                    raise CommandError('pam launch', f'Credential record not found: {launch_credential_uid}')
+                if not _record_has_credentials(cred_record):
+                    raise CommandError('pam launch',
+                        f'Credential record {launch_credential_uid} must have non-empty login and password fields.')
+
+                if allow_supply_host:
+                    # allowSupplyHost mode: host comes from -H/-hr (CLI) or from the --credential record.
+                    if has_cli_host:
+                        # -H/-hr provided: CLI host wins. Warn if --credential also has a host.
+                        if _record_has_host_port(cred_record):
+                            _cr_host, _ = _get_host_port_from_record(cred_record)
+                            logging.warning(
+                                '--host / --host-record (%s:%s) overrides host %r from --credential record %s; '
+                                'the credential record host will be ignored.',
+                                custom_host, custom_port, _cr_host, launch_credential_uid,
+                            )
+                    else:
+                        # no -H/-hr -> --credential record must supply host:port.
+                        if not _record_has_host_port(cred_record):
+                            raise CommandError('pam launch',
+                                f'Credential record {launch_credential_uid} must have a non-empty host and port '
+                                'when allowSupplyHost is enabled and no --host or --host-record is provided.')
+                        cred_host, cred_port = _get_host_port_from_record(cred_record)
+                        custom_host = cred_host
+                        custom_port = cred_port
+                        kwargs['custom_host'] = custom_host
+                        kwargs['custom_port'] = custom_port
+                        logging.debug(f"Using host from --credential record: {custom_host}:{custom_port}")
+
+                else:
+                    # allowSupplyUser mode: only login + password come from --credential.
+                    # Any host/pamHostname on the --credential record is intentionally ignored;
+                    # host and port always come from the PAM machine/connection record.
+                    if _record_has_host_port(cred_record):
+                        _cr_host, _ = _get_host_port_from_record(cred_record)
+                        logging.warning(
+                            'allowSupplyUser mode: host %r in --credential record %s is ignored; '
+                            'host and port will come from the PAM machine record.',
+                            _cr_host, launch_credential_uid,
+                        )
+
+                kwargs['launch_credential_uid'] = launch_credential_uid
+                logging.debug(f"Using --credential: {launch_credential_uid}")
+
+            else:
+                # No --credential: validate that the record itself provides what's needed
+                if not has_cli_host:
+                    # No CLI host -> must come from the PAM launch record
+                    if not hostname_on_record:
+                        if allow_supply_host:
+                            raise CommandError('pam launch',
+                                'allowSupplyHost is enabled but no hostname on record. '
+                                'Use --host, --host-record, or --credential with a host:port to specify.')
+                        else:
+                            raise CommandError('pam launch',
+                                f'No hostname configured for record {record_uid}.')
+
+                    # No CLI options at all -> validate DAG-linked credential has login + password
+                    if dag_linked_uid:
+                        dag_cred_record = vault.KeeperRecord.load(params, dag_linked_uid)
+                        if dag_cred_record and not _record_has_credentials(dag_cred_record):
+                            raise CommandError('pam launch',
+                                f'Linked credential record {dag_linked_uid} has empty login or password. '
+                                'Configure valid credentials or use --credential to override.')
+                    elif not allow_supply_user and not allow_supply_host:
+                        raise CommandError('pam launch',
+                            f'No credentials configured for record {record_uid}. '
+                            'Configure a linked credential or enable allowSupplyUser/allowSupplyHost.')
 
             # Find the gateway for this record
             gateway_info = self.find_gateway(params, record_uid)
@@ -435,7 +704,8 @@ class PAMLaunchCommand(Command):
                 logging.debug(f"Protocol: {result.get('protocol')}")
 
                 # Always start interactive CLI session
-                self._start_cli_session(result, params)
+                # Pass launch_credential_uid to know if ConnectAs payload is needed
+                self._start_cli_session(result, params, kwargs.get('launch_credential_uid'))
             else:
                 error_msg = result.get('error', 'Unknown error')
                 raise CommandError('pam launch', f'Failed to launch connection: {error_msg}')
@@ -443,7 +713,8 @@ class PAMLaunchCommand(Command):
             # Restore original root logger level
             root_logger.setLevel(original_level)
 
-    def _start_cli_session(self, tunnel_result: Dict[str, Any], params: KeeperParams):
+    def _start_cli_session(self, tunnel_result: Dict[str, Any], params: KeeperParams,
+                           launch_credential_uid: Optional[str] = None):
         """
         Start CLI session using PythonHandler protocol mode.
 
@@ -464,6 +735,7 @@ class PAMLaunchCommand(Command):
         Args:
             tunnel_result: Result from launch_terminal_connection
             params: KeeperParams instance
+            launch_credential_uid: Optional UID resolved from CLI --credential (UID, path, or title); triggers ConnectAs payload when set
         """
         shutdown_requested = False
 
@@ -526,21 +798,52 @@ class PAMLaunchCommand(Command):
             if not connected:
                 raise CommandError('pam launch', "WebRTC connection not established within timeout")
 
-            # Wait a brief moment for DataChannel to be ready after connection state becomes "connected"
-            # The connection state can be "connected" before the DataChannel is actually ready to send data
-            time.sleep(0.2)
+            # Wait for DataChannel to be ready and Gateway to wire the session.
+            # connection state "connected" can precede DataChannel readiness; Gateway also needs
+            # time to associate the WebRTC connection with the channel and prepare guacd.
+            # Configurable via PAM_OPEN_CONNECTION_DELAY (default 0.2s; use 2.0 if handshake never starts).
+            open_conn_delay = float(os.environ.get('PAM_OPEN_CONNECTION_DELAY', '0.2'))
+            time.sleep(open_conn_delay)
 
             # Send OpenConnection to Gateway to initiate guacd session
             # This is critical - without it, Gateway doesn't start guacd and no Guacamole traffic flows
             # Retry with exponential backoff if DataChannel isn't ready yet
             logging.debug(f"Sending OpenConnection to Gateway (conn_no=1, conversation_id={conversation_id})")
+
+            # Build ConnectAs payload when cliUserOverride is set — this covers both:
+            # (a) explicit -cr that differs from DAG-linked, and
+            # (b) implicit userRecords[0] fallback (no DAG link, allowSupply* enabled, no -cr given).
+            # In case (b) launch_credential_uid is None; use userRecordUid from settings instead.
+            connect_as_payload = None
+            gateway_uid = tunnel_result['tunnel'].get('gateway_uid')
+            _tunnel_settings = tunnel_result.get('settings', {})
+            cli_user_override = _tunnel_settings.get('cliUserOverride', False)
+            effective_credential_uid = launch_credential_uid or (
+                _tunnel_settings.get('userRecordUid') if cli_user_override else None
+            )
+
+            if cli_user_override and effective_credential_uid and gateway_uid:
+                logging.debug(f"Building ConnectAs payload for credential: {effective_credential_uid}")
+                gateway_public_key = _retrieve_gateway_public_key(params, gateway_uid)
+                if gateway_public_key:
+                    connect_as_payload = _build_connect_as_payload(params, effective_credential_uid, gateway_public_key)
+                    if connect_as_payload:
+                        logging.debug(f"ConnectAs payload built: {len(connect_as_payload)} bytes")
+                    else:
+                        logging.warning("Failed to build ConnectAs payload - credentials may not be passed to gateway")
+                else:
+                    logging.warning("Could not retrieve gateway public key - credentials may not be passed to gateway")
+
             max_retries = 5
             retry_delay = 0.1
             last_error = None
 
             for attempt in range(max_retries):
                 try:
-                    tube_registry.open_handler_connection(conversation_id, 1)
+                    # Pass ConnectAs payload when user supplied credentials via -cr (matches vault behavior)
+                    tube_registry.open_handler_connection(
+                        conversation_id, 1, connect_as_payload
+                    )
                     logging.debug("✓ OpenConnection sent successfully")
                     break
                 except Exception as e:
@@ -576,7 +879,8 @@ class PAMLaunchCommand(Command):
 
             guac_ready_timeout = 10.0  # Reduced from 30s - sync triggers readiness quickly
 
-            if python_handler.wait_for_ready(guac_ready_timeout):
+            guac_ready_result = python_handler.wait_for_ready(guac_ready_timeout)
+            if guac_ready_result:
                 logging.debug("* Guacamole connection ready!")
                 logging.debug("Terminal session active. Press Ctrl+C to exit.")
             else:

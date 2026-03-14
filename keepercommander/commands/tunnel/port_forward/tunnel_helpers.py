@@ -655,8 +655,10 @@ def get_keeper_tokens(params):
 
 def get_config_uid_from_record(params, vault, record_uid):
     record = vault.KeeperRecord.load(params, record_uid)
-    if not isinstance(record, vault.TypedRecord):
+    if record is None:
         raise CommandError('', f"{bcolors.FAIL}Record {record_uid} not found.{bcolors.ENDC}")
+    if not isinstance(record, vault.TypedRecord):
+        raise CommandError('', f"{bcolors.FAIL}Record {record_uid} is not v3/typed record.{bcolors.ENDC}")
     record_type = record.record_type
     if record_type not in "pamMachine pamDatabase pamDirectory pamRemoteBrowser".split():
         raise CommandError('', f"{bcolors.FAIL}This record's type is not supported for tunnels. "
