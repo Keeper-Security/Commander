@@ -142,6 +142,8 @@ def execute_rest(context, endpoint, payload, timeout=None):
         context.server_key_id = 7
 
     run_request = True
+    throttle_retries = 0
+    max_throttle_retries = 3
     while run_request:
         run_request = False
 
@@ -251,8 +253,25 @@ def execute_rest(context, endpoint, payload, timeout=None):
                             continue
                 elif rs.status_code == 403:
                     if failure.get('error') == 'throttled' and not context.fail_on_throttle:
-                        logging.debug('Throttled, retrying in 10 seconds')
-                        time.sleep(10)
+                        throttle_retries += 1
+                        if throttle_retries > max_throttle_retries:
+                            raise KeeperApiError(failure.get('error'), failure.get('message'))
+                        # Parse server's suggested wait time, default to exponential backoff
+                        wait_seconds = 60  # default: respect typical "try again in 1 minute"
+                        message = failure.get('message', '')
+                        import re as _re
+                        wait_match = _re.search(r'(\d+)\s*(second|minute)', message, _re.IGNORECASE)
+                        if wait_match:
+                            wait_val = int(wait_match.group(1))
+                            if 'minute' in wait_match.group(2).lower():
+                                wait_seconds = wait_val * 60
+                            else:
+                                wait_seconds = wait_val
+                        # Use the larger of server's suggestion or exponential backoff
+                        backoff = min(wait_seconds, 30 * (2 ** (throttle_retries - 1)))
+                        logging.warning('Throttled (attempt %d/%d), retrying in %d seconds',
+                                        throttle_retries, max_throttle_retries, backoff)
+                        time.sleep(backoff)
                         run_request = True
                         continue
                 elif rs.status_code in (400, 500) and context.qrc_key_id is not None:
