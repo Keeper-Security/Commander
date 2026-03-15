@@ -267,7 +267,8 @@ def execute_rest(context, endpoint, payload, timeout=None):
                                 wait_seconds = wait_val * 60
                             else:
                                 wait_seconds = wait_val
-                        # Wait at least the server's suggestion or exponential backoff, whichever is longer
+                        # Cap server suggestion at 5 minutes, then take the larger of suggestion vs backoff
+                        wait_seconds = min(wait_seconds, 300)
                         backoff = max(wait_seconds, 30 * (2 ** (throttle_retries - 1)))
                         logging.warning('Throttled (attempt %d/%d), retrying in %d seconds',
                                         throttle_retries, max_throttle_retries, backoff)
