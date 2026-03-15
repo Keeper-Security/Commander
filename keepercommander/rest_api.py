@@ -9,6 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
+import re
 import requests
 import os
 import json
@@ -256,19 +257,18 @@ def execute_rest(context, endpoint, payload, timeout=None):
                         throttle_retries += 1
                         if throttle_retries > max_throttle_retries:
                             raise KeeperApiError(failure.get('error'), failure.get('message'))
-                        # Parse server's suggested wait time, default to exponential backoff
-                        wait_seconds = 60  # default: respect typical "try again in 1 minute"
+                        # Parse server's suggested wait time, default to 60s
+                        wait_seconds = 60
                         message = failure.get('message', '')
-                        import re as _re
-                        wait_match = _re.search(r'(\d+)\s*(second|minute)', message, _re.IGNORECASE)
+                        wait_match = re.search(r'(\d+)\s*(second|minute)', message, re.IGNORECASE)
                         if wait_match:
                             wait_val = int(wait_match.group(1))
                             if 'minute' in wait_match.group(2).lower():
                                 wait_seconds = wait_val * 60
                             else:
                                 wait_seconds = wait_val
-                        # Use the larger of server's suggestion or exponential backoff
-                        backoff = min(wait_seconds, 30 * (2 ** (throttle_retries - 1)))
+                        # Wait at least the server's suggestion or exponential backoff, whichever is longer
+                        backoff = max(wait_seconds, 30 * (2 ** (throttle_retries - 1)))
                         logging.warning('Throttled (attempt %d/%d), retrying in %d seconds',
                                         throttle_retries, max_throttle_retries, backoff)
                         time.sleep(backoff)
