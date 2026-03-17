@@ -292,3 +292,12 @@ class GatewayActionIdpGroupList(GatewayAction):
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionIdpValidateDomain(GatewayAction):
+
+    def __init__(self, inputs: GatewayActionIdpInputs, conversation_id=None):
+        super().__init__('rm-validate-domain', inputs=inputs, conversation_id=conversation_id, is_scheduled=False)
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
