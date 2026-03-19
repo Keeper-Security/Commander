@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import os
+import threading
 import secrets
 import socket
 import string
@@ -113,7 +114,6 @@ VERIFY_SSL = bool(os.environ.get("VERIFY_SSL", "TRUE") == "TRUE")
 # ICE candidate buffering - store until SDP answer is received
 
 # Global conversation key management for multiple concurrent tunnels
-import threading
 _CONVERSATION_KEYS_LOCK = threading.Lock()
 _GLOBAL_CONVERSATION_KEYS = {}  # conversationId -> symmetric_key mapping
 
@@ -383,7 +383,6 @@ def _configure_rust_logger_levels(current_is_debug: bool, log_level: int):
         # CRITICAL: Ensure root logger has a handler
         # pyo3_log sends Rust logs to Python loggers, but if loggers have no handlers,
         # messages are lost even if propagate=True
-        import sys
         if not root_logger.handlers:
             # Add a console handler if none exists
             console_handler = logging.StreamHandler(sys.stderr)
@@ -1534,17 +1533,17 @@ class TunnelSignalHandler:
 
             # Detailed logging for specific states
             if new_state == 'disconnected':
-                logging.warning(f"Connection disconnected for tube {tube_id} - ICE restart may be attempted by Rust")
+                logging.debug(f"Connection disconnected for tube {tube_id} - ICE restart may be attempted by Rust")
 
             elif new_state == 'failed':
-                logging.error(f"Connection failed for tube {tube_id} - ICE restart may be attempted by Rust")
+                logging.debug(f"Connection failed for tube {tube_id} - ICE restart may be attempted by Rust")
 
             elif new_state == 'connected':
                 logging.debug(
                     f"Connection established/restored for tube {tube_id} "
                     f"(conversation_id={conversation_id_from_signal or self.conversation_id})"
                 )
-                logging.debug(f"Connection state: connected")
+                logging.debug("Connection state: connected")
 
                 # CRITICAL: Mark connection as connected - IMMEDIATELY stop sending ICE candidates
                 self.connection_connected = True
@@ -1651,9 +1650,9 @@ class TunnelSignalHandler:
                         logging.debug(f"Stopping dedicated WebSocket for tunnel {tube_id}")
                         session.websocket_stop_event.set()  # Signal WebSocket to close
                         # Give it a moment to close gracefully
-                        session.websocket_thread.join(timeout=2.0)
+                        session.websocket_thread.join(timeout=5.0)
                         if session.websocket_thread.is_alive():
-                            logging.warning(f"Dedicated WebSocket for tunnel {tube_id} did not close in time")
+                            logging.debug(f"Dedicated WebSocket for tunnel {tube_id} did not close in time")
                         else:
                             logging.debug(f"Dedicated WebSocket closed for tunnel {tube_id}")
 
@@ -1678,9 +1677,9 @@ class TunnelSignalHandler:
                         logging.debug(f"Stopping dedicated WebSocket for failed tunnel {tube_id}")
                         session.websocket_stop_event.set()  # Signal WebSocket to close
                         # Give it a moment to close gracefully
-                        session.websocket_thread.join(timeout=2.0)
+                        session.websocket_thread.join(timeout=5.0)
                         if session.websocket_thread.is_alive():
-                            logging.warning(f"Dedicated WebSocket for tunnel {tube_id} did not close in time")
+                            logging.debug(f"Dedicated WebSocket for tunnel {tube_id} did not close in time")
                         else:
                             logging.debug(f"Dedicated WebSocket closed for failed tunnel {tube_id}")
 
