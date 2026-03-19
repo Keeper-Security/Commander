@@ -42,6 +42,10 @@ from ..tunnel.port_forward.tunnel_helpers import (
     unregister_tunnel_session,
     unregister_conversation_key,
 )
+from .rust_log_filter import (
+    enter_pam_launch_terminal_rust_logging,
+    exit_pam_launch_terminal_rust_logging,
+)
 from ..pam.gateway_helper import get_all_gateways
 from ..pam.router_helper import router_get_connected_gateways
 from ... import api, vault
@@ -749,7 +753,9 @@ class PAMLaunchCommand(Command):
 
         original_handler = signal.signal(signal.SIGINT, signal_handler_fn)
 
+        rust_log_token = None
         try:
+            rust_log_token = enter_pam_launch_terminal_rust_logging()
             tube_id = tunnel_result['tunnel'].get('tube_id')
             if not tube_id:
                 raise CommandError('pam launch', 'No tube ID in tunnel result')
@@ -834,10 +840,18 @@ class PAMLaunchCommand(Command):
             connect_as_supported = _version_at_least(remote_webrtc_version, CONNECT_AS_MIN_VERSION)
 
             if cli_user_override and effective_credential_uid and gateway_uid:
+                # When using userRecords[0] fallback, include explanation in CommandError if ConnectAs fails
+                connect_as_fallback_msg = ''
+                if launch_credential_uid is None:
+                    connect_as_fallback_msg = (
+                        f'Using credential from userRecords[0] ({effective_credential_uid}) as ConnectAs fallback because '
+                        'no launch credential on record; ConnectAs is enabled but no --credential was given. '
+                    )
                 if not connect_as_supported:
                     raise CommandError(
                         'pam launch',
-                        f'ConnectAs (--credential) requires Gateway with keeper-pam-webrtc-rs >= {CONNECT_AS_MIN_VERSION}. '
+                        connect_as_fallback_msg
+                        + f'ConnectAs (--credential) requires Gateway with keeper-pam-webrtc-rs >= {CONNECT_AS_MIN_VERSION}. '
                         f'Remote version: {remote_webrtc_version or "unknown"}. '
                         'Please upgrade the Gateway to use --credential.'
                     )
@@ -1057,8 +1071,11 @@ class PAMLaunchCommand(Command):
 
                 logging.info("CLI session ended - cleanup complete")
 
+        except CommandError:
+            raise
         except Exception as e:
             logging.error(f"Error in PythonHandler CLI session: {e}")
             raise CommandError('pam launch', f'Failed to start CLI session: {e}')
         finally:
+            exit_pam_launch_terminal_rust_logging(rust_log_token)
             signal.signal(signal.SIGINT, original_handler)
