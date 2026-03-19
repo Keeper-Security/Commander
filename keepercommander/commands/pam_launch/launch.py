@@ -31,6 +31,7 @@ from .terminal_connection import (
     ALL_TERMINAL,
     CONNECT_AS_MIN_VERSION,
     _version_at_least,
+    _pam_settings_connection_port,
 )
 from .terminal_size import get_terminal_size_pixels, is_interactive_tty
 from .guac_cli.stdin_handler import StdinHandler
@@ -122,8 +123,11 @@ def _get_host_port_from_record(record: Any) -> Tuple[Optional[str], Optional[int
     """
     Extract (hostName, port) from a record's pamHostname or host typed fields.
 
-    Enforces exactly one non-empty host field (hostName AND port both non-empty/valid).
-    Raises CommandError if more than one such field is found (ambiguous configuration).
+    Requires a non-empty hostName on exactly one such field. Port comes from
+    pamSettings.connection.port when the record is pamMachine/pamDirectory/pamDatabase
+    and that port is set (overrides the field's port); otherwise from the field's port.
+
+    Raises CommandError if more than one qualifying host field is found (ambiguous).
 
     Returns:
         Tuple of (host, port) where either may be None if none found.
@@ -131,6 +135,7 @@ def _get_host_port_from_record(record: Any) -> Tuple[Optional[str], Optional[int
     if not record:
         return None, None
 
+    pam_override_port = _pam_settings_connection_port(record)
     candidates: list = []
     for field in _iter_record_fields(record):
         if getattr(field, 'type', None) not in ('pamHostname', 'host'):
@@ -139,8 +144,10 @@ def _get_host_port_from_record(record: Any) -> Tuple[Optional[str], Optional[int
         if not isinstance(value, dict):
             continue
         host = (value.get('hostName') or '').strip()
-        port_raw = value.get('port')
-        if not host or not port_raw:
+        if not host:
+            continue
+        port_raw = pam_override_port if pam_override_port is not None else value.get('port')
+        if not port_raw:
             continue
         try:
             p = int(port_raw)
