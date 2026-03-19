@@ -319,6 +319,38 @@ def detect_protocol(params: KeeperParams, record_uid: str) -> Optional[str]:
     return None
 
 
+_PAM_TYPES_WITH_CONNECTION_PORT = ['pamMachine', 'pamDatabase', 'pamDirectory']
+
+
+def _pam_settings_connection_port(record: Any) -> Optional[int]:
+    """
+    For PAM machine record types only, return a valid pamSettings.connection.port if set.
+    """
+    if getattr(record, 'record_type', None) not in _PAM_TYPES_WITH_CONNECTION_PORT:
+        return None
+    if not hasattr(record, 'get_typed_field'):
+        return None
+    psf = record.get_typed_field('pamSettings')
+    if not psf or not hasattr(psf, 'get_default_value'):
+        return None
+    pam_val = psf.get_default_value(dict)
+    if not isinstance(pam_val, dict):
+        return None
+    connection = pam_val.get('connection')
+    if not isinstance(connection, dict):
+        return None
+    conn_port = connection.get('port')
+    if conn_port is None or conn_port == '':
+        return None
+    try:
+        p = int(conn_port)
+    except (ValueError, TypeError):
+        return None
+    if 1 <= p <= 65535:
+        return p
+    return None
+
+
 def extract_terminal_settings(
     params: KeeperParams,
     record_uid: str,
@@ -370,20 +402,27 @@ def extract_terminal_settings(
     }
 
     # Extract hostname and port from record - enforce single non-empty host/pamHostname field.
-    # Collect all pamHostname/host fields with both hostName and port non-empty.
+    # Host requires non-empty hostName; port is pamSettings.connection.port (PAM types only)
+    # when set, else the field's port — same precedence as launch._get_host_port_from_record.
+    _pam_override_port = _pam_settings_connection_port(record)
     _host_candidates = []
     for _f in list(getattr(record, 'fields', None) or []) + list(getattr(record, 'custom', None) or []):
         if getattr(_f, 'type', None) in ('pamHostname', 'host'):
             _hv = _f.get_default_value(dict) if hasattr(_f, 'get_default_value') else {}
             _hn = ((_hv.get('hostName') or '').strip()) if isinstance(_hv, dict) else ''
-            _pr = _hv.get('port') if isinstance(_hv, dict) else None
-            if _hn and _pr:
-                try:
-                    _pp = int(_pr)
-                    if 1 <= _pp <= 65535:
-                        _host_candidates.append((_hn, _pp, _hv))
-                except (ValueError, TypeError):
-                    pass
+            if not _hn:
+                continue
+            _pr = _pam_override_port if _pam_override_port is not None else (
+                _hv.get('port') if isinstance(_hv, dict) else None
+            )
+            if not _pr:
+                continue
+            try:
+                _pp = int(_pr)
+                if 1 <= _pp <= 65535:
+                    _host_candidates.append((_hn, _pp, _hv))
+            except (ValueError, TypeError):
+                pass
     if len(_host_candidates) > 1:
         raise CommandError('pam launch',
             f'Record {record_uid} has {len(_host_candidates)} non-empty host/pamHostname fields '
@@ -397,8 +436,9 @@ def extract_terminal_settings(
         settings['hostname'] = custom_host
         logging.debug(f"Using custom host override: {custom_host}")
 
-    # Port precedence: CLI (custom_port) > record port > pamSettings.connection.port > DEFAULT
-    # pamSettings fallback is applied after the pamSettings block below.
+    # Port precedence: CLI (custom_port) > record (pamSettings.connection.port overrides host field
+    # on PAM types, else field port) > pamSettings.connection.port when record port still unset >
+    # protocol DEFAULT. pamSettings fallback runs in the pamSettings block below.
     if custom_port is not None:
         settings['port'] = custom_port
     elif _record_port_val is not None:
@@ -458,7 +498,7 @@ def extract_terminal_settings(
                         else:
                             logging.debug(f"Using userRecordUid from pamSettings: {fallback_uid}")
 
-                # pamSettings.connection.port fallback (applied when CLI and record port are absent)
+                # pamSettings.connection.port when CLI and host-derived port are still absent
                 if settings['port'] is None:
                     conn_port = connection.get('port')
                     if conn_port:
