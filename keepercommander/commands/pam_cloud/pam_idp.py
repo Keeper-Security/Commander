@@ -264,9 +264,19 @@ class PAMIdpUserProvisionCommand(Command):
             except Exception:
                 data = {}
 
-        user_name = data.get('name', username) if isinstance(data, dict) else username
-        user_password = data.get('password', '') if isinstance(data, dict) else ''
-        user_id = data.get('id', '') if isinstance(data, dict) else ''
+        if isinstance(data, dict):
+            # Handle different response formats (Azure returns 'name' as string, GCP returns dict)
+            raw_name = data.get('name', username)
+            if isinstance(raw_name, dict):
+                user_name = data.get('primaryEmail', username)
+            else:
+                user_name = raw_name
+            user_password = data.get('password', '')
+            user_id = data.get('id', '')
+        else:
+            user_name = username
+            user_password = ''
+            user_id = ''
 
         logging.info(f'User provisioned successfully.')
         print(f'  Username:     {user_name}')
@@ -282,7 +292,17 @@ class PAMIdpUserProvisionCommand(Command):
             record.fields.append(vault.TypedField.new_field('login', user_name))
             record.fields.append(vault.TypedField.new_field('password', user_password))
             if user_id:
-                record.custom.append(vault.TypedField.new_field('text', user_id, 'Azure User ID'))
+                idp_record = vault.KeeperRecord.load(params, idp_config_uid)
+                idp_type = idp_record.record_type if isinstance(idp_record, vault.TypedRecord) else ''
+                idp_label_map = {
+                    'pamAzureConfiguration': 'Azure User ID',
+                    'pamGcpConfiguration': 'GCP User ID',
+                    'pamOktaConfiguration': 'Okta User ID',
+                    'pamAwsConfiguration': 'AWS User ID',
+                    'pamDomainConfiguration': 'Domain User ID',
+                }
+                user_id_label = idp_label_map.get(idp_type, 'IdP User ID')
+                record.custom.append(vault.TypedField.new_field('text', user_id, user_id_label))
 
             folder_uid = kwargs.get('folder_uid')
             if not folder_uid:
@@ -351,7 +371,8 @@ class PAMIdpUserDeprovisionCommand(Command):
                     api.delete_record(params, record_uid)
                     logging.info(f'Deleted pamUser record {record_uid}.')
                 else:
-                    logging.warning(f'No pamUser record with matching Azure User ID found for "{username}".')
+                    logging.warning(f'No pamUser record with matching IdP User ID found for "{username}".')
+
             else:
                 record = vault.KeeperRecord.load(params, delete_record)
                 if record:
@@ -362,7 +383,7 @@ class PAMIdpUserDeprovisionCommand(Command):
 
 
 def _find_pam_user_record_by_azure_id(params, username):
-    """Find a pamUser record with an Azure User ID custom field matching the given username."""
+    """Find a pamUser record with an IdP User ID custom field matching the given username."""
     username_lower = username.lower()
     for record_uid in params.record_cache:
         record = vault.KeeperRecord.load(params, record_uid)
@@ -370,19 +391,23 @@ def _find_pam_user_record_by_azure_id(params, username):
             continue
         if record.type_name != 'pamUser':
             continue
-        # Check login matches
+        # Check login matches (exact or prefix match for username without domain)
         login_match = False
         for field in record.fields:
             if field.type == 'login':
                 values = list(field.get_external_value())
-                if values and values[0] and values[0].lower() == username_lower:
-                    login_match = True
-                    break
+                if values and values[0]:
+                    login_lower = values[0].lower()
+                    if login_lower == username_lower or login_lower.split('@')[0] == username_lower:
+                        login_match = True
+                        break
         if not login_match:
             continue
-        # Prefer records that have Azure User ID set
+        # Prefer records that have an IdP User ID custom field
+        idp_user_id_labels = {'Azure User ID', 'GCP User ID', 'Okta User ID', 'AWS User ID',
+                              'Domain User ID', 'IdP User ID'}
         for field in record.custom:
-            if field.label == 'Azure User ID':
+            if field.label in idp_user_id_labels:
                 values = list(field.get_external_value())
                 if values and values[0]:
                     return record_uid
