@@ -179,13 +179,59 @@ def is_private_key_name(name):     # type: (str) -> bool
     return False
 
 KEY_SIZE_MIN = 119 # Smallest possible size for ed25519 private key in PKCS#8 format
+# PEM bodies for large RSA keys (8192+) exceed 4K; keep a generous cap for sanity.
 KEY_SIZE_MAX = 4000
+PEM_TEXT_MAX = 256 * 1024
+
+
+def _normalize_typed_field_label(label):
+    # type: (Any) -> str
+    if not label or not isinstance(label, str):
+        return ''
+    return ''.join(c.lower() for c in label if c.isalnum())
+
+
+# Vault/PAM pamUser often stores PEM in a secret field labeled privatePEMKey (or similar).
+_PEM_SECRET_FIELD_LABELS = frozenset({
+    'privatepemkey',
+    'sshprivatekey',
+    'sshkeypem',
+})
+
+
+def _coerce_str_field_value(value):
+    # type: (Any) -> Optional[str]
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        try:
+            return value.decode('utf-8')
+        except Exception:
+            return None
+    if isinstance(value, str):
+        return value
+    return None
+
+
 def is_valid_key_value(value):
     return isinstance(value, str) and KEY_SIZE_MIN <= len(value) < KEY_SIZE_MAX
 
+
+def _is_plausible_pem_private_key_blob(text):
+    # type: (Optional[str]) -> bool
+    text = _coerce_str_field_value(text)
+    if not text:
+        return False
+    text = text.strip()
+    if len(text) < KEY_SIZE_MIN or len(text) > PEM_TEXT_MAX:
+        return False
+    header, _, _ = text.partition('\n')
+    return bool(is_private_key(header))
+
+
 def is_valid_key_file(file):
     try:
-        return KEY_SIZE_MIN <= file.size < KEY_SIZE_MAX
+        return KEY_SIZE_MIN <= file.size < PEM_TEXT_MAX
     except:
         return False
 
@@ -211,31 +257,41 @@ def try_extract_private_key(params, record_or_uid):
             if key_pair:
                 private_key = key_pair.get('privateKey')
 
+    # Explicit PEM secret fields (pamUser template: type secret, label privatePEMKey, etc.)
+    if not private_key and isinstance(record, vault.TypedRecord):
+        for fld in itertools.chain(record.fields, record.custom):
+            if _normalize_typed_field_label(getattr(fld, 'label', None)) not in _PEM_SECRET_FIELD_LABELS:
+                continue
+            candidate = _coerce_str_field_value(fld.get_default_value())
+            if _is_plausible_pem_private_key_blob(candidate):
+                private_key = candidate.strip()
+                break
+
     # check notes field
     if not private_key:
         if isinstance(record, (vault.PasswordRecord, vault.TypedRecord)):
-            if is_valid_key_value(record.notes):
-                header, _, _ = record.notes.partition('\n')
-                if is_private_key(header):
-                    private_key = record.notes
+            notes = getattr(record, 'notes', None)
+            if _is_plausible_pem_private_key_blob(notes):
+                private_key = notes.strip()
 
-    # check custom fields
+    # check typed fields / custom (text, multiline, secret, note)
     if not private_key:
         if isinstance(record, vault.TypedRecord):
-            try_values = (x.get_default_value() for x in itertools.chain(record.fields, record.custom) if x.type in ('text', 'multiline', 'secret', 'note'))
-            for value in (x for x in try_values if x):
-                if is_valid_key_value(value):
-                    header, _, _ = value.partition('\n')
-                    if is_private_key(header):
-                        private_key = value
-                        break
+            for x in itertools.chain(record.fields, record.custom):
+                if x.type not in ('text', 'multiline', 'secret', 'note'):
+                    continue
+                candidate = _coerce_str_field_value(x.get_default_value())
+                if _is_plausible_pem_private_key_blob(candidate):
+                    private_key = candidate.strip()
+                    break
         elif isinstance(record, vault.PasswordRecord):
-            for value in (x.value for x in record.custom if x.value):
-                if is_valid_key_value(value):
-                    header, _, _ = value.partition('\n')
-                    if is_private_key(header):
-                        private_key = value
-                        break
+            for cf in record.custom:
+                if not cf.value:
+                    continue
+                candidate = _coerce_str_field_value(cf.value[0] if isinstance(cf.value, list) and cf.value else cf.value)
+                if _is_plausible_pem_private_key_blob(candidate):
+                    private_key = candidate.strip()
+                    break
 
     # check for a single attachment
     if not private_key:
