@@ -3,14 +3,15 @@ from .edge import DAGEdge
 from .types import EdgeType, RefType
 from .crypto import generate_random_bytes, generate_uid_str, urlsafe_str_to_bytes
 from .exceptions import DAGDeletionException, DAGIllegalEdgeException, DAGVertexException, DAGKeyException
-from typing import Optional, Union, List, Any, Tuple, TYPE_CHECKING
+from typing import Optional, Union, List, Any, Tuple, TYPE_CHECKING, TypeVar, Type
 
 if TYPE_CHECKING:
     from .dag import DAG
     Content = Union[str, bytes, dict]
     QueryValue = Union[list, dict, str, float, int, bool]
-    import pydantic
-    from pydantic import BaseModel
+
+
+T = TypeVar('T')
 
 
 class DAGVertex:
@@ -489,8 +490,7 @@ class DAGVertex:
             return None
         return data_edge.content_as_str
 
-    def content_as_object(self,
-                          meta_class: pydantic._internal._model_construction.ModelMetaclass) -> Optional[BaseModel]:
+    def content_as_object(self, meta_class: Type[T]) -> Optional[T]:
         """
         Get the content as a pydantic based object.
 
@@ -798,7 +798,7 @@ class DAGVertex:
                 self.debug(f"  * vertex is root, cannot delete root", level=2)
                 return
 
-            self.debug(f"> checking vertex {vertex.uid}")
+            self.debug(f"> checking vertex {vertex.uid}", level=1)
 
             # Should we ignore a vertex?
             # If deleting an edge, we want to ignore the vertex that owns the edge.
@@ -821,7 +821,7 @@ class DAGVertex:
                 if e.edge_type != EdgeType.DATA and (prior_vertex is None or e.head_uid == prior_vertex.uid):
                     e.delete()
             if vertex.belongs_to_a_vertex is False:
-                self.debug(f"  * inactive vertex {vertex.uid}")
+                self.debug(f"  * inactive vertex {vertex.uid}", level=1)
                 vertex.active = False
 
         self.debug(f"DELETING vertex {self.uid}", level=3)
