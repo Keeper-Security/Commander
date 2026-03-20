@@ -578,15 +578,13 @@ class FolderMakeCommand(Command):
 
         api.communicate(params, request)
         params.sync_data = True
-        api.sync_down(params)
         params.environment_variables[LAST_FOLDER_UID] = folder_uid
         if request['folder_type'] == 'shared_folder':
             params.environment_variables[LAST_SHARED_FOLDER_UID] = folder_uid
-        path = get_folder_path(params, folder_uid) or name
-        if path and path.endswith('/'):
-            path = path[:-1]
+        parent_path = get_folder_path(params, base_folder.uid) if base_folder.uid else ''
+        path = f'{parent_path}{name}'
         response_data = {'folder_uid': folder_uid, 'name': name, 'path': path}
-        print(json.dumps(response_data))
+        logging.info(json.dumps(response_data))
         return folder_uid
 
 
