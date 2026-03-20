@@ -2,7 +2,7 @@ from __future__ import annotations
 from .utils import get_connection, make_agent
 from .types import JobContent, JobItem, Settings, DiscoveryDelta
 from ..keeper_dag import DAG, EdgeType
-from ..keeper_dag.types import PamGraphId, PamEndpoints
+from ..keeper_dag.types import PamGraphId
 import logging
 import os
 import base64
@@ -320,26 +320,12 @@ class Jobs:
                     # Get the job item from the job vertex DATA edge.
                     # Replace the one from the job history if we have it.
                     try:
-                        job = job_vertex.content_as_object(JobItem)
+                        found_job = job_vertex.content_as_object(JobItem)
+                        if found_job is not None:
+                            job = found_job
                     except Exception as err:
                         self.logger.debug(f"could not find job item on job vertex, use job histry entry: {err}")
 
-                    # If the job delta is None, check to see if it chunked as vertices.
-                    delta_lookup = {}
-                    vertices = job_vertex.has_vertices()
-                    self.logger.debug(f"found {len(vertices)} delta vertices")
-                    for vertex in vertices:
-                        edge = vertex.get_edge(job_vertex, edge_type=EdgeType.KEY)
-                        delta_lookup[int(edge.path)] = vertex
-
-                    json_value = ""
-                    # Sort numerically increasing and then append their content.
-                    # This will re-assemble the JSON
-                    for key in sorted(delta_lookup):
-                        json_value += delta_lookup[key].content_as_str
-                    if json_value != "":
-                        self.logger.debug(f"delta content length is {len(json_value)}")
-                        job.delta = DiscoveryDelta.model_validate_json(json_value)
                 else:
                     self.logger.debug("could not find job vertex")
 
