@@ -4,7 +4,7 @@ from .constants import PAM_USER
 from .types import DiscoveryObject
 from ..keeper_dag.vertex import DAGVertex
 from .__version__ import __version__
-from typing import List, Optional, Tuple, TYPE_CHECKING
+from typing import Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..keeper_dag.dag import DAG
@@ -65,61 +65,27 @@ def get_connection(**kwargs):
 
 def split_user_and_domain(user: str) -> Tuple[Optional[str], Optional[str]]:
 
+    """
+    If the username is a UPN, email, netbios\\username, break it apart into user and domain/netbios.
+    """
+
     if user is None:
         return None, None
 
     domain = None
 
-    if "\\" in user:
-        user_parts = user.split("\\", maxsplit=1)
+    if "@" in user:
+        user_parts = user.split("@", maxsplit=1)
         user = user_parts[0]
+        if "\\" in user:
+            _, user = user.split("\\")
         domain = user_parts[1]
-    elif "@" in user:
-        user_parts = user.split("@")
-        domain = user_parts.pop()
-        user = "@".join(user_parts)
+    elif "\\" in user:
+        user_parts = user.split("\\", maxsplit=1)
+        user = user_parts[1].replace("\\", "")
+        domain = user_parts[0]
 
     return user, domain
-
-
-def user_check_list(user: str, name: Optional[str] = None, source: Optional[str] = None) -> List[str]:
-    user, domain = split_user_and_domain(user)
-    user = user.lower()
-
-    # TODO: Add boolean for tasks to include `local users` patterns.
-    #       It appears that for task lists, directory users do not have domains.
-    #       A problem could arise where the customer uses a local user and directory with the same name.
-    check_list = [user, f".\\{user}"]
-    if name is not None:
-        name = name.lower()
-        check_list += [name, f".\\{name}"]
-    if source is not None:
-        source = source.lower()
-        check_list.append(f"{source[:15]}\\{user}")
-        check_list.append(f"{user}@{source}")
-        netbios_parts = source.split(".")
-        if len(netbios_parts) > 1:
-            check_list.append(f"{netbios_parts[0][:15]}\\{user}")
-            check_list.append(f"{user}@{netbios_parts[0]}")
-    if domain is not None:
-        domain = domain.lower()
-        check_list.append(f"{domain[:15]}\\{user}")
-        check_list.append(f"{user}@{domain}")
-        domain_parts = domain.split(".")
-        if len(domain_parts) > 1:
-            check_list.append(f"{domain_parts[0][:15]}\\{user}")
-            check_list.append(f"{user}@{domain_parts[0]}")
-
-    return list(set(check_list))
-
-
-def user_in_lookup(user: str, lookup: dict, name: Optional[str] = None, source: Optional[str] = None) -> bool:
-
-    for check_user in user_check_list(user, name, source):
-        if check_user in lookup:
-            return True
-    return False
-
 
 def find_user_vertex(graph: DAG, user: str, domain: Optional[str] = None) -> Optional[DAGVertex]:
 
