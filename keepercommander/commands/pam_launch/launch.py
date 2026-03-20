@@ -49,6 +49,7 @@ from .rust_log_filter import (
 )
 from ..pam.gateway_helper import get_all_gateways
 from ..pam.router_helper import router_get_connected_gateways
+from ..ssh_agent import try_extract_private_key
 from ... import api, vault
 from ...subfolder import try_resolve_path
 from ...error import CommandError
@@ -165,12 +166,14 @@ def _get_host_port_from_record(record: Any) -> Tuple[Optional[str], Optional[int
     return candidates[0]
 
 
-def _record_has_credentials(record: Any) -> bool:
+def _record_has_credentials(record: Any, params: Optional['KeeperParams'] = None) -> bool:
     """
-    Return True if the record has exactly one non-empty login field and exactly one non-empty
-    password field (value[0] != ''). Searches both fields[] and custom[].
+    Return True if the record has exactly one non-empty login field and at least one of:
+    - exactly one non-empty password field (fields[] and custom[]), or
+    - a usable SSH private key (same discovery as the launch path: keyPair, notes, custom fields,
+      attachments), when ``params`` is given so attachments can be resolved.
 
-    Raises CommandError if multiple non-empty fields of the same type are found (ambiguous).
+    Raises CommandError if multiple non-empty login or password fields are found (ambiguous).
     """
     if not record:
         return False
@@ -197,10 +200,16 @@ def _record_has_credentials(record: Any) -> bool:
         raise CommandError('pam launch',
             f'Record has {password_count} non-empty password fields (expected exactly one). '
             'Clear the extra password field before launching.')
-    if password_count == 0:
-        return False
+    if password_count == 1:
+        return True
 
-    return True
+    # No password: SSH (and similar) may authenticate with a private key only.
+    if password_count == 0 and params is not None:
+        key_result = try_extract_private_key(params, record)
+        if key_result and key_result[0]:
+            return True
+
+    return False
 
 
 def _record_has_host_port(record: Any) -> bool:
@@ -615,9 +624,10 @@ class PAMLaunchCommand(Command):
                 cred_record = vault.KeeperRecord.load(params, launch_credential_uid)
                 if not cred_record:
                     raise CommandError('pam launch', f'Credential record not found: {launch_credential_uid}')
-                if not _record_has_credentials(cred_record):
+                if not _record_has_credentials(cred_record, params):
                     raise CommandError('pam launch',
-                        f'Credential record {launch_credential_uid} must have non-empty login and password fields.')
+                        f'Credential record {launch_credential_uid} must have non-empty login and '
+                        'password, or login with an SSH private key.')
 
                 if allow_supply_host:
                     # allowSupplyHost mode: host comes from -H/-hr (CLI) or from the --credential record.
@@ -671,12 +681,13 @@ class PAMLaunchCommand(Command):
                             raise CommandError('pam launch',
                                 f'No hostname configured for record {record_uid}.')
 
-                    # No CLI options at all -> validate DAG-linked credential has login + password
+                    # No CLI options at all -> validate DAG-linked credential has login + password or SSH key
                     if dag_linked_uid:
                         dag_cred_record = vault.KeeperRecord.load(params, dag_linked_uid)
-                        if dag_cred_record and not _record_has_credentials(dag_cred_record):
+                        if dag_cred_record and not _record_has_credentials(dag_cred_record, params):
                             raise CommandError('pam launch',
-                                f'Linked credential record {dag_linked_uid} has empty login or password. '
+                                f'Linked credential record {dag_linked_uid} has no usable auth '
+                                '(need login and password, or login and SSH private key). '
                                 'Configure valid credentials or use --credential to override.')
                     elif not allow_supply_user and not allow_supply_host:
                         raise CommandError('pam launch',
