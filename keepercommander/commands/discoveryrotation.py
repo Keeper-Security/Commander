@@ -76,7 +76,7 @@ from .pam_debug.link import PAMDebugLinkCommand
 from .pam_debug.rotation_setting import PAMDebugRotationSettingsCommand
 from .pam_debug.vertex import PAMDebugVertexCommand
 from .pam_import.commands import PAMProjectCommand
-from keepercommander.commands.pam_cloud.pam_request_access import PAMRequestAccessCommand
+from keepercommander.commands.pam_cloud.pam_request_access import PAMRequestAccessCommand, PAMAccessStateCommand, PAMApprovalRequestsCommand, PAMApproveAccessCommand, PAMRevokeAccessCommand, PAMWorkflowConfigCommand
 from keepercommander.commands.pam_cloud.pam_idp import PAMIdpCommand
 from .pam_launch.launch import PAMLaunchCommand
 from .pam_service.list import PAMActionServiceListCommand
@@ -191,6 +191,16 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('launch', PAMLaunchCommand(), 'Launch a connection to a PAM resource', 'l')
         self.register_command('request-access', PAMRequestAccessCommand(),
                               'Request access for a shared record', 'cr')
+        self.register_command('access-state', PAMAccessStateCommand(),
+                              'List your active access requests and status', 'as')
+        self.register_command('approval-requests', PAMApprovalRequestsCommand(),
+                              'List pending workflow approval requests', 'ar')
+        self.register_command('approve-access', PAMApproveAccessCommand(),
+                              'Approve or deny a workflow access request', 'aa')
+        self.register_command('revoke-access', PAMRevokeAccessCommand(),
+                              'Revoke/end an active workflow access session', 'ra')
+        self.register_command('workflow-config', PAMWorkflowConfigCommand(),
+                              'Read or configure workflow settings for a resource', 'wc')
         self.register_command('idp', PAMIdpCommand(),
                               'Manage Identity Provider operations', 'i')
 

@@ -1,16 +1,17 @@
 import argparse
+import base64
 import json
 import logging
 
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
-from keepercommander.commands.base import Command, RecordMixin
+from keepercommander.commands.base import Command, RecordMixin, GroupCommand
 from keepercommander.commands.pam.pam_dto import (
     GatewayAction,
     GatewayActionIdpInputs,
     GatewayActionIdpValidateDomain,
 )
-from keepercommander.commands.pam.router_helper import router_send_action_to_gateway
+from keepercommander.commands.pam.router_helper import router_send_action_to_gateway, _post_request_to_router
 from keepercommander.commands.pam_cloud.pam_idp import resolve_idp_config
 from keepercommander.commands.tunnel.port_forward.tunnel_helpers import (
     get_config_uid_from_record,
@@ -18,7 +19,7 @@ from keepercommander.commands.tunnel.port_forward.tunnel_helpers import (
 )
 from keepercommander.error import CommandError
 from keepercommander import api, vault
-from keepercommander.proto import NotificationCenter_pb2, GraphSync_pb2, pam_pb2
+from keepercommander.proto import GraphSync_pb2, pam_pb2, workflow_pb2
 
 
 ELIGIBLE_RECORD_TYPES = {'pamRemoteBrowser', 'pamDatabase', 'pamMachine'}
@@ -107,33 +108,262 @@ class PAMRequestAccessCommand(Command):
                     error_msg = data.get('error', 'Domain validation failed')
                     raise CommandError('pam-request-access', error_msg)
 
-        # Domain validated — send approval notification to record owner
+        # Domain validated — submit workflow access request to krouter
         record_uid_bytes = url_safe_str_to_bytes(record.record_uid)
 
-        record_ref = GraphSync_pb2.GraphSyncRef()
-        record_ref.type = GraphSync_pb2.RFT_REC
-        record_ref.value = record_uid_bytes
-
-        owner_ref = GraphSync_pb2.GraphSyncRef()
-        owner_ref.type = GraphSync_pb2.RFT_USER
-        owner_ref.name = owner
-
-        notification = NotificationCenter_pb2.Notification()
-        notification.type = NotificationCenter_pb2.NT_APPROVAL_REQUEST
-        notification.category = NotificationCenter_pb2.NC_REQUEST
-        notification.refs.append(record_ref)
+        access_request = workflow_pb2.WorkflowAccessRequest()
+        access_request.resource.type = GraphSync_pb2.RFT_REC
+        access_request.resource.value = record_uid_bytes
 
         message = kwargs.get('message')
         if message:
-            notification.senderFullName = message
+            access_request.reason = message
 
-        send_rq = NotificationCenter_pb2.NotificationSendRequest()
-        send_rq.recipients.append(owner_ref)
-        send_rq.notification.CopyFrom(notification)
+        try:
+            _post_request_to_router(params, 'request_workflow_access', rq_proto=access_request)
+        except Exception as e:
+            raise CommandError('pam-request-access', f'Failed to submit access request: {e}')
 
-        batch_rq = NotificationCenter_pb2.NotificationsSendRequest()
-        batch_rq.notifications.append(send_rq)
+        logging.info(f'Access request submitted for record "{record.title}".')
 
-        api.communicate_rest(params, batch_rq, 'vault/notifications_send')
 
-        logging.info(f'Access request sent to {owner} for record "{record.title}".')
+class PAMAccessStateCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam access-state', description='List your active workflow access requests and their status')
+
+    def get_parser(self):
+        return PAMAccessStateCommand.parser
+
+    def execute(self, params, **kwargs):
+        stage_names = {
+            0: 'Ready to Start',
+            1: 'Started',
+            2: 'Needs Action',
+            3: 'Waiting',
+        }
+        condition_names = {
+            0: 'Approval',
+            1: 'Check-in',
+            2: 'MFA',
+            3: 'Time',
+            4: 'Reason',
+            5: 'Ticket',
+        }
+
+        try:
+            response = _post_request_to_router(
+                params, 'get_user_access_state',
+                rs_type=workflow_pb2.UserAccessState
+            )
+        except Exception as e:
+            raise CommandError('pam-access-state', f'Failed to get access state: {e}')
+
+        if not response or not response.workflows:
+            logging.info('No active access requests.')
+            return
+
+        for wf in response.workflows:
+            flow_uid = base64.urlsafe_b64encode(wf.flowUid).rstrip(b'=').decode()
+            resource_uid = base64.urlsafe_b64encode(wf.resource.value).rstrip(b'=').decode() if wf.resource.value else 'N/A'
+            stage = stage_names.get(wf.status.stage, str(wf.status.stage)) if wf.status else 'Unknown'
+            conditions = ', '.join(condition_names.get(c, str(c)) for c in wf.status.conditions) if wf.status and wf.status.conditions else 'None'
+            print(f'  Flow UID:     {flow_uid}')
+            print(f'  Resource UID: {resource_uid}')
+            print(f'  Stage:        {stage}')
+            print(f'  Conditions:   {conditions}')
+            print()
+
+
+class PAMApprovalRequestsCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam approval-requests', description='List pending workflow approval requests')
+
+    def get_parser(self):
+        return PAMApprovalRequestsCommand.parser
+
+    def execute(self, params, **kwargs):
+        try:
+            response = _post_request_to_router(
+                params, 'get_approval_requests',
+                rs_type=workflow_pb2.ApprovalRequests
+            )
+        except Exception as e:
+            raise CommandError('pam-approval-requests', f'Failed to get approval requests: {e}')
+
+        if not response or not response.workflows:
+            logging.info('No pending approval requests.')
+            return
+
+        for wf in response.workflows:
+            flow_uid = base64.urlsafe_b64encode(wf.flowUid).rstrip(b'=').decode()
+            resource_uid = base64.urlsafe_b64encode(wf.resource.value).rstrip(b'=').decode() if wf.resource.value else 'N/A'
+            reason = wf.reason.decode() if wf.reason else ''
+            print(f'  Flow UID:     {flow_uid}')
+            print(f'  User ID:      {wf.userId}')
+            print(f'  Resource UID: {resource_uid}')
+            if reason:
+                print(f'  Reason:       {reason}')
+            print()
+
+
+class PAMApproveAccessCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam approve-access', description='Approve a workflow access request')
+
+    parser.add_argument('flow_uid', action='store', help='Flow UID of the request to approve')
+    parser.add_argument('--deny', action='store_true', help='Deny instead of approve')
+    parser.add_argument('--reason', dest='denial_reason', action='store', help='Reason for denial')
+
+    def get_parser(self):
+        return PAMApproveAccessCommand.parser
+
+    def execute(self, params, **kwargs):
+        flow_uid_str = kwargs.get('flow_uid')
+        deny = kwargs.get('deny', False)
+
+        # Pad base64url if needed
+        padding = 4 - len(flow_uid_str) % 4
+        if padding != 4:
+            flow_uid_str += '=' * padding
+        flow_uid_bytes = base64.urlsafe_b64decode(flow_uid_str)
+
+        approval = workflow_pb2.WorkflowApprovalOrDenial()
+        approval.flowUid = flow_uid_bytes
+        approval.deny = deny
+
+        if deny and kwargs.get('denial_reason'):
+            approval.denialReason = kwargs['denial_reason']
+
+        endpoint = 'deny_workflow_access' if deny else 'approve_workflow_access'
+
+        try:
+            _post_request_to_router(params, endpoint, rq_proto=approval)
+        except Exception as e:
+            action = 'deny' if deny else 'approve'
+            raise CommandError('pam-approve-access', f'Failed to {action} access request: {e}')
+
+        if deny:
+            logging.info(f'Access request denied.')
+        else:
+            logging.info(f'Access request approved.')
+
+
+class PAMRevokeAccessCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam revoke-access', description='Revoke/end an active workflow access session')
+
+    parser.add_argument('flow_uid', action='store', help='Flow UID of the active access to revoke')
+
+    def get_parser(self):
+        return PAMRevokeAccessCommand.parser
+
+    def execute(self, params, **kwargs):
+        flow_uid_str = kwargs.get('flow_uid')
+
+        padding = 4 - len(flow_uid_str) % 4
+        if padding != 4:
+            flow_uid_str += '=' * padding
+        flow_uid_bytes = base64.urlsafe_b64decode(flow_uid_str)
+
+        ref = GraphSync_pb2.GraphSyncRef()
+        ref.type = GraphSync_pb2.RFT_WORKFLOW
+        ref.value = flow_uid_bytes
+
+        try:
+            _post_request_to_router(params, 'end_workflow', rq_proto=ref)
+        except Exception as e:
+            raise CommandError('pam-revoke-access', f'Failed to revoke access: {e}')
+
+        logging.info(f'Access revoked.')
+
+
+class PAMWorkflowConfigCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam workflow-config', description='Read or configure workflow settings for a resource')
+
+    parser.add_argument('record', action='store', help='Record UID of the resource')
+    parser.add_argument('--set', action='store_true', help='Create or update workflow config')
+    parser.add_argument('--approvals-needed', type=int, default=None, help='Number of approvals required')
+    parser.add_argument('--approver', action='append', dest='approvers', help='Approver email (can specify multiple)')
+    parser.add_argument('--start-on-approval', action='store_true', default=False, help='Auto-start access on approval')
+    parser.add_argument('--access-length', type=int, default=None, help='Access duration in seconds')
+
+    def get_parser(self):
+        return PAMWorkflowConfigCommand.parser
+
+    def execute(self, params, **kwargs):
+        record_uid = kwargs.get('record')
+        record_uid_bytes = url_safe_str_to_bytes(record_uid)
+
+        ref = GraphSync_pb2.GraphSyncRef()
+        ref.type = GraphSync_pb2.RFT_REC
+        ref.value = record_uid_bytes
+
+        if not kwargs.get('set'):
+            # Read current config
+            try:
+                config = _post_request_to_router(
+                    params, 'read_workflow_config',
+                    rq_proto=ref,
+                    rs_type=workflow_pb2.WorkflowConfig
+                )
+            except Exception as e:
+                raise CommandError('pam-workflow-config', f'Failed to read workflow config: {e}')
+
+            if not config or not config.parameters.approvalsNeeded:
+                print('  No workflow configuration found for this resource.')
+                return
+
+            p = config.parameters
+            print(f'  Approvals Needed:       {p.approvalsNeeded}')
+            print(f'  Checkout Needed:        {p.checkoutNeeded}')
+            print(f'  Start on Approval:      {p.startAccessOnApproval}')
+            print(f'  Require Reason:         {p.requireReason}')
+            print(f'  Require Ticket:         {p.requireTicket}')
+            print(f'  Require MFA:            {p.requireMFA}')
+            print(f'  Access Length:          {p.accessLength}s' if p.accessLength else '  Access Length:          unlimited')
+            if config.approvers:
+                print(f'  Approvers:')
+                for a in config.approvers:
+                    if a.user:
+                        print(f'    - {a.user}')
+                    elif a.userId:
+                        print(f'    - User ID: {a.userId}')
+            return
+
+        # Set/update config
+        wf_params = workflow_pb2.WorkflowParameters()
+        wf_params.resource.type = GraphSync_pb2.RFT_REC
+        wf_params.resource.value = record_uid_bytes
+
+        approvals = kwargs.get('approvals_needed')
+        if approvals is not None:
+            wf_params.approvalsNeeded = approvals
+        else:
+            wf_params.approvalsNeeded = 1
+
+        wf_params.startAccessOnApproval = kwargs.get('start_on_approval', False)
+
+        access_length = kwargs.get('access_length') or 3600
+        wf_params.accessLength = access_length
+
+        try:
+            _post_request_to_router(params, 'create_workflow_config', rq_proto=wf_params)
+            logging.info(f'Workflow config created (approvalsNeeded={wf_params.approvalsNeeded}).')
+        except Exception as e:
+            # Try update if create fails
+            try:
+                _post_request_to_router(params, 'update_workflow_config', rq_proto=wf_params)
+                logging.info(f'Workflow config updated (approvalsNeeded={wf_params.approvalsNeeded}).')
+            except Exception as e2:
+                raise CommandError('pam-workflow-config', f'Failed to set workflow config: {e2}')
+
+        # Add approvers if specified
+        approvers = kwargs.get('approvers')
+        if approvers:
+            wf_config = workflow_pb2.WorkflowConfig()
+            wf_config.parameters.CopyFrom(wf_params)
+            for approver_email in approvers:
+                a = wf_config.approvers.add()
+                a.user = approver_email
+
+            try:
+                _post_request_to_router(params, 'add_workflow_approvers', rq_proto=wf_config)
+                logging.info(f'Approvers added: {", ".join(approvers)}'  )
+            except Exception as e:
+                raise CommandError('pam-workflow-config', f'Failed to add approvers: {e}')
