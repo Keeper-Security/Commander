@@ -75,8 +75,6 @@ class TestFolder(TestCase):
             self.assertEqual(rq['command'], 'folder_add')
             self.assertEqual(rq['folder_type'], 'shared_folder_folder')
 
-        mock.patch('keepercommander.api.sync_down').start()
-
         KeeperApiHelper.communicate_expect([is_user_folder])
         cmd.execute(params, user_folder=True, folder='New Folder')
 
