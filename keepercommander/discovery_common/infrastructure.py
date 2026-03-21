@@ -5,7 +5,7 @@ from ..keeper_dag import DAG, EdgeType
 from ..keeper_dag.exceptions import DAGVertexException
 from ..keeper_dag.crypto import urlsafe_str_to_bytes
 from ..keeper_dag.types import PamGraphId
-from discovery_common.types import DiscoveryObject
+from .types import DiscoveryObject
 import os
 import importlib
 import time
