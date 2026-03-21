@@ -985,6 +985,12 @@ class MSPAddCommand(EnterpriseCommand):
             seats = 2147483647
 
         name = kwargs['name']
+        managed_companies = params.enterprise.get('managed_companies', [])
+        existing_mc = get_mc_by_name_or_id(managed_companies, name)
+        if existing_mc:
+            logging.warning('Managed company \'%s\' already exists: Skipping', name)
+            return
+
         tree_key = utils.generate_aes_key()
         rq = {
             'command': 'enterprise_registration_by_msp',
