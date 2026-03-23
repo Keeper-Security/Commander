@@ -207,7 +207,7 @@ class KeeperDriveShareRecordCommand(Command):
         else:
             print(f"[dry-run] Recipients: {', '.join(emails)}")
             if role:
-                print(f"[dry-run] Role      : {role.upper()}")
+                print(f"[dry-run] Role      : {role}")
             if expiration:
                 print(f"[dry-run] Expires   : {expiration} ms")
 
@@ -250,9 +250,9 @@ class KeeperDriveRecordPermissionCommand(Command):
         # Step 1: Resolve
         folder_uid, display_name = self._resolve_folder(kd_folders, folder_name, params)
 
-        if not force and not dry_run:
-            role_label = role.upper().replace('-', '_') if role else 'ALL'
-            logging.info('\nRequest to %s "%s" role permission(s) in "%s" folder %s',
+        if not force:
+            role_label = '"' + role + '"' if role else 'all'
+            logging.info('\nRequest to %s %s permission(s) in "%s" folder %s',
                          'GRANT' if action == 'grant' else 'REVOKE',
                          role_label, display_name,
                          'recursively' if recursive else 'only')
@@ -407,67 +407,102 @@ class KeeperDriveRecordPermissionCommand(Command):
             dj = obj.get('data_json', {}) if isinstance(obj, dict) else {}
             return (dj.get('title', '')[:32]) if isinstance(dj, dict) else ''
 
-        if updates:
-            table = [[u['record_uid'], title_for(u['record_uid']), u['email'],
-                       u['cur_role'].upper(), u['new_role'].upper()] for u in updates]
-            dump_report_data(table,
-                             ['Record UID', 'Title', 'Email', 'Current Role', 'New Role'],
-                             title=(bcolors.OKGREEN + ' GRANT' + bcolors.ENDC + ' Record permission(s)'),
-                             row_number=True, group_by=0)
-            logging.info('')
-        if revokes:
-            table = [[r['record_uid'], title_for(r['record_uid']), r['email'],
-                       r['cur_role'].upper()] for r in revokes]
-            dump_report_data(table,
-                             ['Record UID', 'Title', 'Email', 'Current Role'],
-                             title=(bcolors.FAIL + ' REVOKE' + bcolors.ENDC + ' Record share(s)'),
-                             row_number=True, group_by=0)
-            logging.info('')
         if skipped:
             table = [[s['record_uid'], title_for(s['record_uid']),
-                       s['email'] or '—', s['cur_role'].upper() if s['cur_role'] else '—',
+                       s['email'] or '—', s['cur_role'] if s['cur_role'] else '—',
                        s['reason']] for s in skipped]
+            title = (bcolors.FAIL + ' SKIP ' + bcolors.ENDC
+                     + 'Record permission(s). Not permitted')
             dump_report_data(table,
                              ['Record UID', 'Title', 'Email', 'Current Role', 'Reason'],
-                             title=(bcolors.WARNING + ' SKIP' + bcolors.ENDC
-                                    + ' (insufficient permissions — no changes will be made)'),
-                             row_number=True, group_by=0)
+                             title=title, row_number=True, group_by=0)
+            logging.info('')
+            logging.info('')
+
+        if updates:
+            table = []
+            for u in updates:
+                row = [u['record_uid'], title_for(u['record_uid']), u['email'],
+                       u['cur_role'],
+                       bcolors.BOLD + '   ' + u['new_role'] + bcolors.ENDC]
+                table.append(row)
+            title = (bcolors.OKGREEN + ' GRANT' + bcolors.ENDC
+                     + ' Record permission(s)')
+            dump_report_data(table,
+                             ['Record UID', 'Title', 'Email', 'Current Role', 'New Role'],
+                             title=title, row_number=True, group_by=0)
+            logging.info('')
+            logging.info('')
+
+        if revokes:
+            table = []
+            for r in revokes:
+                row = [r['record_uid'], title_for(r['record_uid']), r['email'],
+                       bcolors.BOLD + '   ' + r['cur_role'] + bcolors.ENDC]
+                table.append(row)
+            title = (bcolors.FAIL + ' REVOKE' + bcolors.ENDC
+                     + ' Record share(s)')
+            dump_report_data(table,
+                             ['Record UID', 'Title', 'Email', 'Current Role'],
+                             title=title, row_number=True, group_by=0)
+            logging.info('')
             logging.info('')
 
     @staticmethod
     def _execute_changes(params, updates, revokes):
         """Apply permission changes in batched REST calls (up to 200 per request)."""
+        from keepercommander.commands.base import dump_report_data
+        from keepercommander.display import bcolors
+
         if updates:
+            table = []
             outcomes = _kd.batch_update_record_shares_v3(params, updates)
             for item, result in outcomes:
+                record_uid = item['record_uid']
+                email = item['email']
                 if result.get('skipped'):
-                    logging.warning("Skipped update for '%s' / %s: %s",
-                                    item['record_uid'], item['email'],
-                                    result.get('message', 'could not build permission'))
+                    table.append([record_uid, email, 'skipped',
+                                  result.get('message', 'could not build permission')])
                 elif result.get('success'):
                     logging.info("Updated '%s' for %s: %s -> %s",
-                                 item['record_uid'], item['email'],
-                                 item['cur_role'].upper(), item['new_role'].upper())
+                                 record_uid, email,
+                                 item['cur_role'], item['new_role'])
                 else:
-                    logging.error("Failed to update '%s' for %s: %s",
-                                  item['record_uid'], item['email'],
-                                  result.get('message', 'Unknown error'))
+                    table.append([record_uid, email, 'error',
+                                  result.get('message', 'Unknown error')])
+
+            if table:
+                headers = ['Record UID', 'Email', 'Error Code', 'Message']
+                title = (bcolors.WARNING + 'Failed to GRANT' + bcolors.ENDC
+                         + ' Record permission(s)')
+                dump_report_data(table, headers, title=title, row_number=True)
+                logging.info('')
+                logging.info('')
 
         if revokes:
+            table = []
             outcomes = _kd.batch_unshare_records_v3(params, revokes)
             for item, result in outcomes:
+                record_uid = item['record_uid']
+                email = item['email']
                 if result.get('skipped'):
-                    logging.warning("Skipped revoke for '%s' / %s: %s",
-                                    item['record_uid'], item['email'],
-                                    result.get('message', 'could not build permission'))
+                    table.append([record_uid, email, 'skipped',
+                                  result.get('message', 'could not build permission')])
                 elif result.get('success'):
                     logging.info("Revoked '%s' from %s (%s)",
-                                 item['record_uid'], item['email'],
-                                 item['cur_role'].upper())
+                                 record_uid, email,
+                                 item['cur_role'])
                 else:
-                    logging.error("Failed to revoke '%s' from %s: %s",
-                                  item['record_uid'], item['email'],
-                                  result.get('message', 'Unknown error'))
+                    table.append([record_uid, email, 'error',
+                                  result.get('message', 'Unknown error')])
+
+            if table:
+                headers = ['Record UID', 'Email', 'Error Code', 'Message']
+                title = (bcolors.WARNING + 'Failed to REVOKE' + bcolors.ENDC
+                         + ' Record share(s)')
+                dump_report_data(table, headers, title=title, row_number=True)
+                logging.info('')
+                logging.info('')
 
 
 # ══════════════════════════════════════════════════════════════════════════

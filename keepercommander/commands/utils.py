@@ -2006,7 +2006,11 @@ class HelpCommand(Command):
         show_legacy = kwargs.get('legacy', False)
         if not help_commands:
             from ..cli import display_command_help
-            display_command_help(params.enterprise_ec_key, show_legacy=show_legacy)
+            display_command_help(
+                params.enterprise_ec_key,
+                show_legacy=show_legacy,
+                show_keeper_drive=not params.is_feature_disallowed('keeper_drive')
+            )
             return
 
         if isinstance(help_commands, list) and len(help_commands) > 0:

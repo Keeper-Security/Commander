@@ -162,7 +162,7 @@ class DriveRecord(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., revision: _Optional[int] = ..., version: _Optional[int] = ..., shared: _Optional[bool] = ..., clientModifiedTime: _Optional[int] = ..., fileSize: _Optional[int] = ..., thumbnailSize: _Optional[int] = ...) -> None: ...
 
 class KeeperDriveData(_message.Message):
-    __slots__ = ("folders", "folderKeys", "folderAccesses", "revokedFolderAccesses", "deniedFolderAccesses", "recordData", "nonSharedData", "recordAccesses", "revokedRecordAccesses", "recordSharingStates", "recordLinks", "removedRecordLinks", "breachWatchRecords", "securityScoreData", "breachWatchSecurityData", "removedFolderRecords", "folderRecords", "recordRotationData", "records", "rawDagData")
+    __slots__ = ("folders", "folderKeys", "folderAccesses", "revokedFolderAccesses", "deniedFolderAccesses", "recordData", "nonSharedData", "recordAccesses", "revokedRecordAccesses", "recordSharingStates", "recordLinks", "removedRecordLinks", "breachWatchRecords", "securityScoreData", "breachWatchSecurityData", "removedFolders", "removedFolderRecords", "folderRecords", "recordRotationData", "records", "rawDagData")
     FOLDERS_FIELD_NUMBER: _ClassVar[int]
     FOLDERKEYS_FIELD_NUMBER: _ClassVar[int]
     FOLDERACCESSES_FIELD_NUMBER: _ClassVar[int]
@@ -178,6 +178,7 @@ class KeeperDriveData(_message.Message):
     BREACHWATCHRECORDS_FIELD_NUMBER: _ClassVar[int]
     SECURITYSCOREDATA_FIELD_NUMBER: _ClassVar[int]
     BREACHWATCHSECURITYDATA_FIELD_NUMBER: _ClassVar[int]
+    REMOVEDFOLDERS_FIELD_NUMBER: _ClassVar[int]
     REMOVEDFOLDERRECORDS_FIELD_NUMBER: _ClassVar[int]
     FOLDERRECORDS_FIELD_NUMBER: _ClassVar[int]
     RECORDROTATIONDATA_FIELD_NUMBER: _ClassVar[int]
@@ -198,12 +199,13 @@ class KeeperDriveData(_message.Message):
     breachWatchRecords: _containers.RepeatedCompositeFieldContainer[BreachWatchRecord]
     securityScoreData: _containers.RepeatedCompositeFieldContainer[SecurityScoreData]
     breachWatchSecurityData: _containers.RepeatedCompositeFieldContainer[BreachWatchSecurityData]
+    removedFolders: _containers.RepeatedCompositeFieldContainer[_folder_pb2.FolderRemoved]
     removedFolderRecords: _containers.RepeatedCompositeFieldContainer[_record_pb2.FolderRecordKey]
     folderRecords: _containers.RepeatedCompositeFieldContainer[_folder_pb2.FolderRecord]
     recordRotationData: _containers.RepeatedCompositeFieldContainer[RecordRotation]
     records: _containers.RepeatedCompositeFieldContainer[DriveRecord]
     rawDagData: _containers.RepeatedCompositeFieldContainer[_dag_pb2.DebugData]
-    def __init__(self, folders: _Optional[_Iterable[_Union[_folder_pb2.FolderData, _Mapping]]] = ..., folderKeys: _Optional[_Iterable[_Union[_folder_pb2.FolderKey, _Mapping]]] = ..., folderAccesses: _Optional[_Iterable[_Union[_folder_pb2.FolderAccessData, _Mapping]]] = ..., revokedFolderAccesses: _Optional[_Iterable[_Union[_folder_pb2.RevokedAccess, _Mapping]]] = ..., deniedFolderAccesses: _Optional[_Iterable[_Union[_folder_pb2.DeniedAccess, _Mapping]]] = ..., recordData: _Optional[_Iterable[_Union[_folder_pb2.RecordData, _Mapping]]] = ..., nonSharedData: _Optional[_Iterable[_Union[NonSharedData, _Mapping]]] = ..., recordAccesses: _Optional[_Iterable[_Union[_folder_pb2.RecordAccessData, _Mapping]]] = ..., revokedRecordAccesses: _Optional[_Iterable[_Union[_record_sharing_pb2.RevokedAccess, _Mapping]]] = ..., recordSharingStates: _Optional[_Iterable[_Union[_record_sharing_pb2.RecordSharingState, _Mapping]]] = ..., recordLinks: _Optional[_Iterable[_Union[RecordLink, _Mapping]]] = ..., removedRecordLinks: _Optional[_Iterable[_Union[RecordLink, _Mapping]]] = ..., breachWatchRecords: _Optional[_Iterable[_Union[BreachWatchRecord, _Mapping]]] = ..., securityScoreData: _Optional[_Iterable[_Union[SecurityScoreData, _Mapping]]] = ..., breachWatchSecurityData: _Optional[_Iterable[_Union[BreachWatchSecurityData, _Mapping]]] = ..., removedFolderRecords: _Optional[_Iterable[_Union[_record_pb2.FolderRecordKey, _Mapping]]] = ..., folderRecords: _Optional[_Iterable[_Union[_folder_pb2.FolderRecord, _Mapping]]] = ..., recordRotationData: _Optional[_Iterable[_Union[RecordRotation, _Mapping]]] = ..., records: _Optional[_Iterable[_Union[DriveRecord, _Mapping]]] = ..., rawDagData: _Optional[_Iterable[_Union[_dag_pb2.DebugData, _Mapping]]] = ...) -> None: ...
+    def __init__(self, folders: _Optional[_Iterable[_Union[_folder_pb2.FolderData, _Mapping]]] = ..., folderKeys: _Optional[_Iterable[_Union[_folder_pb2.FolderKey, _Mapping]]] = ..., folderAccesses: _Optional[_Iterable[_Union[_folder_pb2.FolderAccessData, _Mapping]]] = ..., revokedFolderAccesses: _Optional[_Iterable[_Union[_folder_pb2.RevokedAccess, _Mapping]]] = ..., deniedFolderAccesses: _Optional[_Iterable[_Union[_folder_pb2.DeniedAccess, _Mapping]]] = ..., recordData: _Optional[_Iterable[_Union[_folder_pb2.RecordData, _Mapping]]] = ..., nonSharedData: _Optional[_Iterable[_Union[NonSharedData, _Mapping]]] = ..., recordAccesses: _Optional[_Iterable[_Union[_folder_pb2.RecordAccessData, _Mapping]]] = ..., revokedRecordAccesses: _Optional[_Iterable[_Union[_record_sharing_pb2.RevokedAccess, _Mapping]]] = ..., recordSharingStates: _Optional[_Iterable[_Union[_record_sharing_pb2.RecordSharingState, _Mapping]]] = ..., recordLinks: _Optional[_Iterable[_Union[RecordLink, _Mapping]]] = ..., removedRecordLinks: _Optional[_Iterable[_Union[RecordLink, _Mapping]]] = ..., breachWatchRecords: _Optional[_Iterable[_Union[BreachWatchRecord, _Mapping]]] = ..., securityScoreData: _Optional[_Iterable[_Union[SecurityScoreData, _Mapping]]] = ..., breachWatchSecurityData: _Optional[_Iterable[_Union[BreachWatchSecurityData, _Mapping]]] = ..., removedFolders: _Optional[_Iterable[_Union[_folder_pb2.FolderRemoved, _Mapping]]] = ..., removedFolderRecords: _Optional[_Iterable[_Union[_record_pb2.FolderRecordKey, _Mapping]]] = ..., folderRecords: _Optional[_Iterable[_Union[_folder_pb2.FolderRecord, _Mapping]]] = ..., recordRotationData: _Optional[_Iterable[_Union[RecordRotation, _Mapping]]] = ..., records: _Optional[_Iterable[_Union[DriveRecord, _Mapping]]] = ..., rawDagData: _Optional[_Iterable[_Union[_dag_pb2.DebugData, _Mapping]]] = ...) -> None: ...
 
 class UserFolder(_message.Message):
     __slots__ = ("folderUid", "parentUid", "userFolderKey", "keyType", "revision", "data")

@@ -198,6 +198,7 @@ class KeeperParams:
         self.enterprise = None
         self.automators = None
         self.is_enterprise_admin = False
+        self.disallowed_features = []    # type: list[str]
         self.enterprise_loader = None
         self.enterprise_id = 0
         self.msp_tree_key = None
@@ -286,6 +287,7 @@ class KeeperParams:
         self.settings = None
         self.enforcements = None
         self.is_enterprise_admin = False
+        self.disallowed_features = []
         self.enterprise = None
         self.automators = None
         self.enterprise_loader = None
@@ -358,6 +360,9 @@ class KeeperParams:
     proxy = property(__get_proxy, __set_proxy)
     server = property(__get_server, __set_server)
     rest_context = property(__get_rest_context)
+
+    def is_feature_disallowed(self, feature_name):    # type: (str) -> bool
+        return isinstance(self.disallowed_features, list) and feature_name in self.disallowed_features
 
     def get_share_account_timestamp(self):
         if isinstance(self.settings, dict):

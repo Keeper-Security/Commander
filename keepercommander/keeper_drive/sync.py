@@ -50,6 +50,7 @@ def create_accumulator():
         'revoked_record_accesses': [],
         'records': [],
         'folder_records': [],
+        'removed_folders': [],
         'removed_folder_records': [],
         'users': [],
         'record_sharing_states': [],
@@ -111,6 +112,8 @@ def collect_from_response(acc, response, resp_bw_recs, resp_sec_data_recs, resp_
         acc['records'].extend(kd_data.records)
     if len(kd_data.folderRecords) > 0:
         acc['folder_records'].extend(kd_data.folderRecords)
+    if len(kd_data.removedFolders) > 0:
+        acc['removed_folders'].extend(kd_data.removedFolders)
     if len(kd_data.removedFolderRecords) > 0:
         acc['removed_folder_records'].extend(kd_data.removedFolderRecords)
 
@@ -167,6 +170,7 @@ def process(params, acc):
         acc['record_accesses'],
         acc['revoked_record_accesses'],
         acc['folder_records'],
+        acc['removed_folders'],
         acc['removed_folder_records'],
         acc['users'],
         acc['record_sharing_states'],
@@ -179,7 +183,7 @@ def process(params, acc):
 def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, revoked_folder_accesses,
                                 denied_folder_accesses,
                                 records, record_data_list, record_keys, record_accesses, revoked_record_accesses,
-                                folder_records, removed_folder_records, users,
+                                folder_records, removed_folders, removed_folder_records, users,
                                 record_sharing_states, record_links, removed_record_links, raw_dag_data):
     """Process Keeper Drive atomic sync objects and store in caches."""
 
@@ -188,6 +192,7 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
     removed_record_links = removed_record_links or []
     raw_dag_data = raw_dag_data or []
     denied_folder_accesses = denied_folder_accesses or []
+    removed_folders = removed_folders or []
 
     # Store users in user_cache
     for user in users:
@@ -482,6 +487,19 @@ def _process_keeper_drive_sync(params, folders, folder_keys, folder_accesses, re
         record_uid = utils.base64_url_encode(rfr.record_uid)
         if folder_uid in params.keeper_drive_folder_records:
             params.keeper_drive_folder_records[folder_uid].discard(record_uid)
+
+    # Process removed folders — applied after all adds so that removals in the
+    # same sync batch take precedence over (stale) folder data.
+    for rf in removed_folders:
+        folder_uid = utils.base64_url_encode(rf.folder_uid)
+        logging.debug('Removing KeeperDrive folder from cache: %s', folder_uid)
+
+        params.keeper_drive_folders.pop(folder_uid, None)
+        params.keeper_drive_folder_keys.pop(folder_uid, None)
+        params.keeper_drive_folder_accesses.pop(folder_uid, None)
+        params.keeper_drive_folder_records.pop(folder_uid, None)
+        params.subfolder_cache.pop(folder_uid, None)
+        params.subfolder_record_cache.pop(folder_uid, None)
 
     # Purge orphaned records — records no longer present in any folder should
     # not appear in kd-list after a successful removal + sync_down.
