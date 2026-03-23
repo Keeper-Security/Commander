@@ -114,7 +114,7 @@ COMMAND_CATEGORIES = {
         'kd-mkdir', 'kd-record-add', 'kd-record-update', 'kd-rndir', 'kd-list',
         'kd-share-folder', 'kd-record-details', 'kd-share-record',
         'kd-record-permission', 'kd-transfer-record',
-        'kd-ln', 'kd-rm', 'kd-rmdir', 'kd-shortcut', 'kd-get'
+            'kd-ln', 'kd-rm', 'kd-rmdir', 'kd-shortcut', 'kd-get'
     },
 
     # Legacy Commands

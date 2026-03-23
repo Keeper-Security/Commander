@@ -76,7 +76,8 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
     resp_sec_data_recs = []      # type: List[SyncDown_pb2.BreachWatchSecurityData]
     resp_sec_scores = []         # type: List[SyncDown_pb2.SecurityScoreData]
     record_rotation_items = []   # type: List[record_pb2.RecordRotation]
-    kd_acc = keeper_drive_sync.create_accumulator()
+    kd_enabled = not params.is_feature_disallowed('keeper_drive')
+    kd_acc = keeper_drive_sync.create_accumulator() if kd_enabled else None
     
     request = SyncDown_pb2.SyncDownRequest()
     revision = params.revision
@@ -103,7 +104,8 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
             params.breach_watch_security_data.clear()
             params.breach_watch_records.clear()
             params.security_score_data.clear()
-            keeper_drive_sync.clear_caches(params)
+            if kd_enabled:
+                keeper_drive_sync.clear_caches(params)
 
         if len(response.removedRecords) > 0:
             logging.debug('Processing removed records')
@@ -567,10 +569,10 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
         if len(response.securityScoreData) > 0:
             resp_sec_scores.extend(response.securityScoreData)
 
-        # Collect Keeper Drive atomic sync objects
-        keeper_drive_sync.collect_from_response(
-            kd_acc, response, resp_bw_recs, resp_sec_data_recs, resp_sec_scores, record_rotation_items
-        )
+        if kd_enabled:
+            keeper_drive_sync.collect_from_response(
+                kd_acc, response, resp_bw_recs, resp_sec_data_recs, resp_sec_scores, record_rotation_items
+            )
 
         if len(response.removedUsers) > 0:
             for a_uid in response.removedUsers:
@@ -593,7 +595,8 @@ def sync_down(params, record_types=False):   # type: (KeeperParams, bool) -> Non
 
     params.revision = revision
 
-    keeper_drive_sync.process(params, kd_acc)
+    if kd_enabled:
+        keeper_drive_sync.process(params, kd_acc)
 
     for sf in params.shared_folder_cache.values():
         owner = sf.get('owner_username')

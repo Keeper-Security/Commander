@@ -778,6 +778,12 @@ class DeniedAccess(_message.Message):
     accessType: AccessType
     def __init__(self, folderUid: _Optional[bytes] = ..., actorUid: _Optional[bytes] = ..., accessType: _Optional[_Union[AccessType, str]] = ...) -> None: ...
 
+class FolderRemoved(_message.Message):
+    __slots__ = ("folder_uid",)
+    FOLDER_UID_FIELD_NUMBER: _ClassVar[int]
+    folder_uid: bytes
+    def __init__(self, folder_uid: _Optional[bytes] = ...) -> None: ...
+
 class RecordAccessData(_message.Message):
     __slots__ = ("accessTypeUid", "accessType", "recordUid", "accessRoleType", "owner", "inherited", "hidden", "deniedAccess", "can_view_title", "can_edit", "can_view", "can_list_access", "can_update_access", "can_delete", "can_change_ownership", "can_request_access", "can_approve_access", "dateCreated", "lastModified", "tlaProperties")
     ACCESSTYPEUID_FIELD_NUMBER: _ClassVar[int]
