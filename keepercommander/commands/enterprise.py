@@ -86,9 +86,9 @@ def register_command_info(aliases, command_info):
     aliases['tu'] = 'transfer-user'
     aliases['dl'] = ('domain', 'list')
     aliases['dr'] = ('domain', 'reserve')
-    aliases['da'] = ('domain', 'alias', 'list')
-    aliases['dca'] = ('domain', 'alias', 'create')
-    aliases['dda'] = ('domain', 'alias', 'delete')
+    aliases['dal'] = ('domain', 'alias', 'list')
+    aliases['dac'] = ('domain', 'alias', 'create')
+    aliases['dad'] = ('domain', 'alias', 'delete')
 
     for p in [enterprise_data_parser, enterprise_info_parser, enterprise_node_parser, enterprise_user_parser,
               enterprise_role_parser, enterprise_team_parser, transfer_user_parser,
@@ -4505,12 +4505,14 @@ class DomainManagementHelper:
         return rq
 
     @staticmethod
-    def render_alias_response(rs, output_format, kwargs, status_messages=None):
+    def render_alias_response(rs, output_format, kwargs, status_messages=None, action=None):
         """
         Render a DomainAliasResponse as text or JSON.
 
         When status_messages is None the response is treated as a listing
-        (domain + alias only).  When provided, a Status column is included.
+        (domain + alias only).  When provided, a simple message is shown per
+        alias for text format, or a status object for JSON format.
+        action should be 'create' or 'delete' when status_messages is provided.
         """
         if status_messages is not None:
             if output_format == 'json':
@@ -4525,12 +4527,17 @@ class DomainManagementHelper:
                 ]
                 print(json.dumps(results, indent=2))
             else:
-                headers = ['Domain', 'Alias', 'Status']
-                table = [
-                    [da.domain, da.alias, status_messages.get(da.status, f'Unknown ({da.status})')]
-                    for da in rs.domainAlias
-                ]
-                return dump_report_data(table, headers, fmt=output_format, filename=kwargs.get('output'))
+                for da in rs.domainAlias:
+                    status_msg = status_messages.get(da.status, f'Unknown ({da.status})')
+                    if da.status == 0:
+                        if action == 'create':
+                            logging.info(f"Created domain alias '{da.alias}' for domain '{da.domain}'")
+                        elif action == 'delete':
+                            logging.info(f"Deleted domain alias '{da.alias}' for domain '{da.domain}'")
+                        else:
+                            logging.info(f"Domain alias '{da.alias}' for domain '{da.domain}': {status_msg}")
+                    else:
+                        logging.error(f"Domain alias '{da.alias}' for domain '{da.domain}': {status_msg}")
         else:
             if output_format == 'json':
                 results = [{'domain': da.domain, 'alias': da.alias} for da in rs.domainAlias]
@@ -4782,7 +4789,8 @@ class CreateDomainAliasCommand(EnterpriseCommand):
             )
             return DomainManagementHelper.render_alias_response(
                 rs, output_format, kwargs,
-                status_messages=DomainManagementHelper.CREATE_ALIAS_STATUS_MESSAGES
+                status_messages=DomainManagementHelper.CREATE_ALIAS_STATUS_MESSAGES,
+                action='create'
             )
 
         except KeeperApiError as e:
@@ -4839,7 +4847,8 @@ class DeleteDomainAliasCommand(EnterpriseCommand):
             )
             return DomainManagementHelper.render_alias_response(
                 rs, output_format, kwargs,
-                status_messages=DomainManagementHelper.DELETE_ALIAS_STATUS_MESSAGES
+                status_messages=DomainManagementHelper.DELETE_ALIAS_STATUS_MESSAGES,
+                action='delete'
             )
 
         except KeeperApiError as e:
