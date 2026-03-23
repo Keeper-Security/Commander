@@ -78,7 +78,8 @@ def split_folder_path(path: str) -> list[str]:
     # ...yet again a``/b -> [a`/b] or [a`]/[b]
 
     # Note: using / as escape char and path delimiter: / <-> //
-    placeholder = "\x00"  # unlikely to appear in folder names
+    path = path.replace("\x00", "")  # Strip NUL bytes that would break placeholder logic
+    placeholder = "\x00"
     tmp = path.replace("//", placeholder).rstrip("/")
     parts = tmp.split("/")  # split on remaining single slashes
     res = [part.replace(placeholder, "/") for part in parts]
@@ -424,15 +425,18 @@ class PAMProjectExtendCommand(Command):
         if not (configuration and isinstance(configuration, vault.TypedRecord) and configuration.version == 6):
             raise CommandError("pam project extend", f"""PAM configuration not found: "{config_name}" """)
 
+        if file_name:
+            file_name = os.path.realpath(file_name)
         if not (file_name != "" and os.path.isfile(file_name)):
             raise CommandError("pam project extend", f"""PAM Import JSON file not found: "{file_name}" """)
 
-        data = {}
         try:
             with open(file_name, encoding="utf-8") as f:
                 data = json.load(f)
-        except Exception:
-            data = {}
+        except json.JSONDecodeError as e:
+            raise CommandError("pam project extend", f"Invalid JSON in import file: {e}")
+        except (PermissionError, OSError) as e:
+            raise CommandError("pam project extend", f"Cannot read import file: {e}")
 
         pam_data = data.get("pam_data") if isinstance(data, dict) else {}
         pam_data = pam_data if isinstance(pam_data, dict) else {}
