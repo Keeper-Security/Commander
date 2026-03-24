@@ -321,12 +321,13 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         filter_folder = kwargs.get('filter_folder')
         if filter_folder:
             if filter_folder == 'Personal Folders':
-                folder_ids = [1]
+                matched_folder_ids = [1]
             else:
-                folder_ids = [x['id'] for x in folders.values()
-                              if x['folderName'] == x['folderPath'] and x['folderName'].lower() == filter_folder.lower()]
-            if len(folder_ids) == 0:
+                matched_folder_ids = [x['id'] for x in folders.values()
+                                      if x['folderName'].lower() == filter_folder.lower()]
+            if len(matched_folder_ids) == 0:
                 logging.warning('Folder \"%s\" not found', filter_folder)
+            folder_ids = list(matched_folder_ids)
             pos = 0
             while pos < len(folder_ids):
                 folder_id = folder_ids[pos]
@@ -335,13 +336,8 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             folder_ids = set(folder_ids)
             folders = {i: x for i, x in folders.items() if i in folder_ids}
 
-        if filter_folder:
-            if filter_folder == 'Personal Folders':
-                root_folder_ids = [1]
-            else:
-                root_folder_ids = [x['id'] for x in folders.values() if x['folderName'] == x['folderPath']]
             secrets_ids = []
-            for folder_id in root_folder_ids:
+            for folder_id in matched_folder_ids:
                 query = f'/v1/secrets/lookup?filter.folderId={folder_id}&filter.includeSubFolders=true'
                 secrets_ids.extend([x['id'] for x in auth.thycotic_search(query)])
         else:
