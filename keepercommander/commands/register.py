@@ -1260,7 +1260,12 @@ class ShareReportCommand(Command):
                         if show_team_users:
                             share_info.append(f'{shared_record.owner} => Owner')
                         for p in permissions:
+                            is_direct_share = SharePermissions.SharePermissionsType.USER in p.types
+                            share_date = self.get_date_for_share(share_events, p.to_name) if is_direct_share \
+                                else self.get_date_for_share_folder_record(share_events, next(iter(shared_record.sf_shares.keys())))
                             share_info.append(f'{p.get_target(show_team_users)} => {p.permissions_text}')
+                            if share_date:
+                                share_info.append(share_date)
                             if p.expiration > 0:
                                 dt = datetime.datetime.fromtimestamp(p.expiration // 1000)
                                 share_info.append('\t(expires on {0})'.format(str(dt)))
