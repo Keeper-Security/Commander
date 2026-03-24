@@ -174,13 +174,15 @@ class _DummyTypedRecord:
 
 
 class TestBatchModeTargetHostPort(unittest.TestCase):
+    @mock.patch('keepercommander.commands.workflow.check_workflow_and_prompt_2fa',
+                return_value=(True, None), create=True)
     @mock.patch('keepercommander.commands.tunnel_and_connections.vault.TypedRecord', _DummyTypedRecord)
     @mock.patch('keepercommander.commands.tunnel_and_connections.find_open_port')
     @mock.patch('keepercommander.commands.tunnel_and_connections.get_or_create_tube_registry')
     @mock.patch('keepercommander.commands.tunnel_and_connections.api.sync_down')
     @mock.patch('keepercommander.commands.tunnel_and_connections.vault.KeeperRecord.load')
     def test_input_not_called_batch_missing_target_host(
-        self, mock_load, mock_sync, mock_tr, mock_fop,
+        self, mock_load, mock_sync, mock_tr, mock_fop, mock_wf,
     ):
         mock_tr.return_value = mock.MagicMock()
         mock_fop.return_value = 5432
@@ -189,6 +191,7 @@ class TestBatchModeTargetHostPort(unittest.TestCase):
         pam.get_default_value.return_value = {'allowSupplyHost': True, 'portForward': {'port': 22}}
         rec = _DummyTypedRecord()
         rec.record_uid = 'rec1'
+        rec.title = 'rec1-title'
         rec.get_typed_field = lambda name, *a, **kw: pam if name == 'pamSettings' else None
 
         mock_load.return_value = rec

@@ -37,11 +37,16 @@ logger = logging.getLogger(__name__)
 #: Parent poll allowance beyond the child's ``--timeout`` for ``--background`` (process startup).
 PARENT_GRACE_SECONDS = 10
 
+# Not thread-safe; concurrent first-access may double-clean (harmless, idempotent).
 _registry_dir_initialized = False
 
 
 def normalize_bind_host(host) -> str:
-    """Normalize host for duplicate local bind detection (best-effort)."""
+    """Normalize host for duplicate local bind detection (best-effort).
+
+    Only handles common aliases; ``0.0.0.0`` vs ``127.0.0.1`` conflicts
+    are caught at the OS bind level, not here.
+    """
     if host is None:
         return ''
     h = str(host).strip().lower()
@@ -113,11 +118,15 @@ def register_tunnel(
     try:
         p_int = int(port)
     except (TypeError, ValueError):
-        p_int = port
+        p_int = None
     for entry in existing:
         if entry.get('pid') == pid:
             continue
-        if normalize_bind_host(entry.get('host')) == nh and int(entry.get('port') or 0) == int(p_int):
+        try:
+            entry_port = int(entry.get('port') or 0)
+        except (TypeError, ValueError):
+            continue
+        if p_int is not None and normalize_bind_host(entry.get('host')) == nh and entry_port == p_int:
             raise CommandError(
                 'pam tunnel start',
                 f'Port {port} on {host} is already in use by tunnel PID {entry.get("pid")} '

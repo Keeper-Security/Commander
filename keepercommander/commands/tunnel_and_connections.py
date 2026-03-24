@@ -771,7 +771,7 @@ class PAMTunnelStartCommand(Command):
             bg_deadline = time.time() + connect_timeout + PARENT_GRACE_SECONDS
             bg_info = None
             while time.time() < bg_deadline:
-                for entry in list_registered_tunnels():
+                for entry in list_registered_tunnels(clean_stale=False):
                     if entry.get('pid') == bg_proc.pid and entry.get('record_uid') == record_uid:
                         bg_info = entry
                         break
@@ -816,6 +816,9 @@ class PAMTunnelStartCommand(Command):
                 print(f"    or:   kill -SIGTERM $(cat {pid_file})")
             print(f"{bcolors.OKBLUE}Use 'pam tunnel list' from any Commander session "
                   f"to see this tunnel.{bcolors.ENDC}")
+            if platform.system() == 'Windows':
+                print(f"{bcolors.WARNING}Note: On Windows, tunnel stop uses hard termination. "
+                      f"WebRTC cleanup is best-effort.{bcolors.ENDC}")
             return
 
         result = start_rust_tunnel(params, record_uid, gateway_uid, host, port, seed, target_host, target_port, socks, trickle_ice, record.title, allow_supply_host=allow_supply_host, two_factor_value=two_factor_value)
@@ -856,6 +859,9 @@ class PAMTunnelStartCommand(Command):
                     return
 
                 print(f"{bcolors.OKGREEN}Tunnel ready{bcolors.ENDC}  {host}:{port} -> {target_host}:{target_port}")
+                if platform.system() == 'Windows':
+                    print(f"{bcolors.WARNING}Note: On Windows, tunnel stop uses hard termination. "
+                          f"WebRTC cleanup is best-effort.{bcolors.ENDC}")
                 print(f"{bcolors.OKBLUE}Running:{bcolors.ENDC} {run_command}\n")
 
                 cmd_exit = 1
