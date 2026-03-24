@@ -130,6 +130,8 @@ class PAMRequestAccessCommand(Command):
 class PAMAccessStateCommand(Command):
     parser = argparse.ArgumentParser(prog='pam access-state', description='List your active workflow access requests and their status')
 
+    parser.add_argument('record', nargs='?', action='store', default=None, help='Optional: Record UID to check specific resource workflow state')
+
     def get_parser(self):
         return PAMAccessStateCommand.parser
 
@@ -149,19 +151,48 @@ class PAMAccessStateCommand(Command):
             5: 'Ticket',
         }
 
-        try:
-            response = _post_request_to_router(
-                params, 'get_user_access_state',
-                rs_type=workflow_pb2.UserAccessState
-            )
-        except Exception as e:
-            raise CommandError('pam-access-state', f'Failed to get access state: {e}')
+        record_uid = kwargs.get('record')
 
-        if not response or not response.workflows:
-            logging.info('No active access requests.')
-            return
+        if record_uid:
+            # Use get_workflow_state for a specific resource (more detailed, reads full state)
+            record_uid_bytes = url_safe_str_to_bytes(record_uid)
+            rq = workflow_pb2.WorkflowState()
+            rq.resource.type = GraphSync_pb2.RFT_REC
+            rq.resource.value = record_uid_bytes
+            try:
+                wf = _post_request_to_router(
+                    params, 'get_workflow_state',
+                    rq_proto=rq,
+                    rs_type=workflow_pb2.WorkflowState
+                )
+            except Exception as e:
+                raise CommandError('pam-access-state', f'Failed to get workflow state: {e}')
 
-        for wf in response.workflows:
+            if not wf:
+                logging.info('No active workflow for this resource.')
+                return
+
+            workflows = [wf]
+        else:
+            # Use get_user_access_state for all workflows
+            try:
+                response = _post_request_to_router(
+                    params, 'get_user_access_state',
+                    rs_type=workflow_pb2.UserAccessState
+                )
+            except Exception as e:
+                raise CommandError('pam-access-state', f'Failed to get access state: {e}')
+
+            if not response or not response.workflows:
+                logging.info('No active access requests.')
+                return
+
+            workflows = response.workflows
+
+        import time
+        now_ms = int(time.time() * 1000)
+
+        for wf in workflows:
             flow_uid = base64.urlsafe_b64encode(wf.flowUid).rstrip(b'=').decode()
             resource_uid = base64.urlsafe_b64encode(wf.resource.value).rstrip(b'=').decode() if wf.resource.value else 'N/A'
             stage = stage_names.get(wf.status.stage, str(wf.status.stage)) if wf.status else 'Unknown'
@@ -170,6 +201,20 @@ class PAMAccessStateCommand(Command):
             print(f'  Resource UID: {resource_uid}')
             print(f'  Stage:        {stage}')
             print(f'  Conditions:   {conditions}')
+            if wf.status and wf.status.startedOn:
+                from datetime import datetime
+                started = datetime.fromtimestamp(wf.status.startedOn / 1000)
+                print(f'  Started:      {started.strftime("%Y-%m-%d %H:%M:%S")}')
+            if wf.status and wf.status.expiresOn:
+                from datetime import datetime
+                expires = datetime.fromtimestamp(wf.status.expiresOn / 1000)
+                remaining_ms = wf.status.expiresOn - now_ms
+                if remaining_ms > 0:
+                    remaining_min = remaining_ms // 60000
+                    remaining_sec = (remaining_ms % 60000) // 1000
+                    print(f'  Expires:      {expires.strftime("%Y-%m-%d %H:%M:%S")} ({remaining_min}m {remaining_sec}s remaining)')
+                else:
+                    print(f'  Expires:      {expires.strftime("%Y-%m-%d %H:%M:%S")} (expired)')
             print()
 
 
@@ -316,7 +361,7 @@ class PAMWorkflowConfigCommand(Command):
             print(f'  Require Reason:         {p.requireReason}')
             print(f'  Require Ticket:         {p.requireTicket}')
             print(f'  Require MFA:            {p.requireMFA}')
-            print(f'  Access Length:          {p.accessLength}s' if p.accessLength else '  Access Length:          unlimited')
+            print(f'  Access Length:          {p.accessLength // 1000}s' if p.accessLength else '  Access Length:          unlimited')
             if config.approvers:
                 print(f'  Approvers:')
                 for a in config.approvers:
@@ -339,8 +384,8 @@ class PAMWorkflowConfigCommand(Command):
 
         wf_params.startAccessOnApproval = kwargs.get('start_on_approval', False)
 
-        access_length = kwargs.get('access_length') or 3600
-        wf_params.accessLength = access_length
+        access_length_sec = kwargs.get('access_length') or 3600
+        wf_params.accessLength = access_length_sec * 1000  # proto field is in milliseconds
 
         try:
             _post_request_to_router(params, 'create_workflow_config', rq_proto=wf_params)
