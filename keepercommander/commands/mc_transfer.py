@@ -306,10 +306,10 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
 
             rsa_key: Optional[RSAPublicKey] = None
             ec_key: Optional[EllipticCurvePublicKey] = None
-            if len(public_key_rs.enterprisePublicKey) > 0:
-                rsa_key = crypto.load_rsa_public_key(public_key_rs.enterprisePublicKey)
-            elif len(public_key_rs.enterpriseECCPublicKey):
+            if len(public_key_rs.enterpriseECCPublicKey):
                 ec_key = crypto.load_ec_public_key(public_key_rs.enterpriseECCPublicKey)
+            elif len(public_key_rs.enterprisePublicKey) > 0:
+                rsa_key = crypto.load_rsa_public_key(public_key_rs.enterprisePublicKey)
             else:
                 raise error.CommandError('mc-transfer perform', 'Failed to get transfer key')
 
