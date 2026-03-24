@@ -5,6 +5,7 @@ from typing import Union, List, Dict, Optional
 from urllib import parse
 
 from . import utils, crypto
+from .error import KeeperApiError
 from .params import KeeperParams
 from .proto import APIRequest_pb2, client_pb2, record_pb2
 from .utils import is_pw_strong
@@ -127,6 +128,31 @@ def needs_security_audit(params, record):  # type: (KeeperParams, KeeperRecord) 
     needs_alignment = current_password is not None and score_revision != sec_revision
     return score_changed_on_passkey or creds_removed or needs_alignment
 
+def _build_security_data_request(params, records):
+    # type: (KeeperParams, List[KeeperRecord]) -> APIRequest_pb2.SecurityDataRequest
+    rq = APIRequest_pb2.SecurityDataRequest()
+    rq.encryptionType = get_security_data_key_type(params)
+    sec_data_objs = (prep_security_data_update(params, rec) for rec in records)
+    score_data_objs = (prep_score_data_update(params, rec) for rec in records)
+    rq.recordSecurityData.extend(sd for sd in sec_data_objs if sd)
+    rq.recordSecurityScoreData.extend(sd for sd in score_data_objs if sd)
+    return rq
+
+def _update_records_individually(params, api_module, records):
+    # type: (KeeperParams, any, List[KeeperRecord]) -> List[KeeperRecord]
+    """Retry each record's security-data update one at a time.
+    Returns the list of records that still failed.
+    """
+    failed = []
+    for rec in records:
+        try:
+            rq = _build_security_data_request(params, [rec])
+            api_module.communicate_rest(params, rq, 'enterprise/update_security_data')
+        except Exception as e:
+            logging.debug('Could not update security data for record %s: %s', rec.record_uid, e)
+            failed.append(rec)
+    return failed
+
 def update_security_audit_data(params, records):   # type: (KeeperParams, List[KeeperRecord]) -> int
     if not params.enterprise_ec_key:
         return 0
@@ -138,15 +164,16 @@ def update_security_audit_data(params, records):   # type: (KeeperParams, List[K
     while records:
         chunk = records[:update_limit]
         records = records[update_limit:]
-        rq = APIRequest_pb2.SecurityDataRequest()
-        rq.encryptionType = get_security_data_key_type(params)
         try:
-            sec_data_objs = (prep_security_data_update(params, rec) for rec in chunk)
-            score_data_objs = (prep_score_data_update(params, rec) for rec in chunk)
-            rq.recordSecurityData.extend(sd for sd in sec_data_objs if sd)
-            rq.recordSecurityScoreData.extend(sd for sd in score_data_objs if sd)
-            rs = api.communicate_rest(params, rq, 'enterprise/update_security_data')
-        except:
+            rq = _build_security_data_request(params, chunk)
+            api.communicate_rest(params, rq, 'enterprise/update_security_data')
+        except KeeperApiError as kae:
+            if 'missing_security_data' in (kae.result_code or '').lower():
+                logging.warning('Missing security data encountered during batch update — retrying records individually')
+                failed_updates.extend(_update_records_individually(params, api, chunk))
+            else:
+                failed_updates.extend(chunk)
+        except Exception:
             failed_updates.extend(chunk)
 
     if failed_updates:
