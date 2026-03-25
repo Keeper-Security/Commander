@@ -45,15 +45,14 @@ from .pam.pam_dto import (
 
 from .pam.router_helper import router_send_action_to_gateway, print_router_response, \
     router_get_connected_gateways, router_set_record_rotation_information, router_get_rotation_schedules, \
-    get_router_url,
-    get_response_payload
+    get_router_url, get_response_payload
 from .record_edit import RecordEditMixin
 from .helpers.timeout import parse_timeout
 from .email_commands import find_email_config_record, load_email_config_from_record, update_oauth_tokens_in_record
 from ..email_service import EmailSender, build_onboarding_email
 from .tunnel.port_forward.TunnelGraph import TunnelDAG
 from .tunnel.port_forward.tunnel_helpers import get_config_uid, get_keeper_tokens
-from .. import api, utils, vault_extensions, crypto, vault, record_management, attachment, record_facades
+from .. import api, utils, vault_extensions, crypto, vault, record_management, attachment, record_facades, rest_api
 from ..display import bcolors
 from ..error import CommandError, KeeperApiError
 from ..params import KeeperParams, LAST_RECORD_UID
@@ -190,6 +189,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('launch', PAMLaunchCommand(), 'Launch a connection to a PAM resource', 'l')
         self.register_command('universal-sync-config', PAMUniversalSyncConfigCommand(), 'Configure Universal Sync', 'usc')
         self.register_command('universal-sync-run', PAMUniversalSyncRunCommand(), 'Run Universal Sync', 'usr')
+        self.register_command('universal-sync-status', PAMUniversalSyncStatusCommand(), 'Get Universal Sync Status', 'uss')
 
 
 class PAMGatewayCommand(GroupCommand):
@@ -200,6 +200,7 @@ class PAMGatewayCommand(GroupCommand):
         self.register_command('new', PAMCreateGatewayCommand(), 'Create new Gateway', 'n')
         self.register_command('remove', PAMGatewayRemoveCommand(), 'Remove Gateway', 'rm')
         self.register_command('set-max-instances', PAMSetMaxInstancesCommand(), 'Set maximum gateway instances', 'smi')
+        self.register_command('uss-config-get', PAMGatewayUssConfigGetCommand(), 'Get DAG leafs for a record', 'ucg')
         # self.register_command('connect', PAMConnect(), 'Connect')
         # self.register_command('disconnect', PAMDisconnect(), 'Disconnect')
         self.default_verb = 'list'
@@ -3467,6 +3468,112 @@ class PAMSetMaxInstancesCommand(Command):
             raise CommandError('', f'{bcolors.FAIL}Error setting max instances: {e}{bcolors.ENDC}')
 
 
+class PAMGatewayUssConfigGetCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam gateway uss-config-get')
+    parser.add_argument('--record', '-r', required=True, dest='record_uid',
+                        help='Record UID (USS configuration or network record)', action='store')
+    parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], default='table',
+                        help='Output format (table, json)')
+    parser.add_argument('--graph-id', '-g', dest='graph_id', type=int, default=0,
+                        help='Graph ID to query (default: 0 for USS config graph)')
+
+    def get_parser(self):
+        return PAMGatewayUssConfigGetCommand.parser
+
+    def execute(self, params, **kwargs):
+        from ..keeper_dag import DAG
+        from ..keeper_dag.connection.commander import Connection
+
+        record_uid = kwargs.get('record_uid')
+        format_type = kwargs.get('format', 'table')
+        graph_id = kwargs.get('graph_id', 0)
+
+        try:
+            # Load the record
+            record = vault.KeeperRecord.load(params, record_uid)
+            if not isinstance(record, vault.TypedRecord):
+                print(f"{bcolors.FAIL}Record {record_uid} not found or not accessible.{bcolors.ENDC}")
+                return
+
+            # Create DAG connection and load graph
+            conn = Connection(params=params)
+            dag = DAG(conn=conn, record=record, graph_id=graph_id, logger=logging)
+            dag.load(sync_point=0)
+
+            # Get root vertex
+            root = dag.get_root
+
+            # Look for universal_sync loop edge on root
+            universal_sync_edge = None
+            for edge in root.edges:
+                if edge.path == 'universal_sync' and edge.head_uid == root.uid:
+                    universal_sync_edge = edge
+                    break
+
+            if universal_sync_edge is None:
+                print(f"{bcolors.WARNING}No 'universal_sync' configuration found for record {record_uid} (graph_id={graph_id}){bcolors.ENDC}")
+                return
+
+            # Get the configuration data
+            config_data = universal_sync_edge.content_as_dict
+
+            if config_data is None:
+                print(f"{bcolors.WARNING}Universal sync configuration exists but has no data{bcolors.ENDC}")
+                return
+
+            # Find all vertices connected via universal_sync_folder edge
+            folder_uids = []
+            for vertex in root.has_vertices():
+                # Check if this vertex is connected via universal_sync_folder edge
+                for edge in vertex.edges:
+                    if edge.path == 'universal_sync_folder' and edge.head_uid == root.uid:
+                        folder_uids.append(vertex.uid)
+                        break
+
+            # Display results
+            if format_type == 'json':
+                result = {
+                    'config': config_data,
+                    'folders': folder_uids
+                }
+                print(json.dumps(result, indent=2))
+            else:
+                # Display as formatted output
+                print(f"\n{bcolors.OKBLUE}Universal Sync Configuration for Record: {bcolors.OKGREEN}{record.title} ({record_uid}){bcolors.ENDC}")
+                print(f"{bcolors.OKBLUE}Graph ID: {graph_id}{bcolors.ENDC}\n")
+
+                # Display configuration fields
+                print(f"{bcolors.BOLD}Configuration:{bcolors.ENDC}")
+                for key, value in config_data.items():
+                    # Format lists nicely
+                    if isinstance(value, list):
+                        print(f"  {bcolors.OKBLUE}{key}:{bcolors.ENDC}")
+                        for item in value:
+                            print(f"    - {item}")
+                    # Format nested dicts nicely
+                    elif isinstance(value, dict):
+                        print(f"  {bcolors.OKBLUE}{key}:{bcolors.ENDC}")
+                        for sub_key, sub_value in value.items():
+                            print(f"    {sub_key}: {sub_value}")
+                    # Simple values
+                    else:
+                        print(f"  {bcolors.OKBLUE}{key}:{bcolors.ENDC} {value}")
+                print()
+
+                # Display folders
+                if folder_uids:
+                    print(f"{bcolors.BOLD}Folders (connected via universal_sync_folder):{bcolors.ENDC}")
+                    for folder_uid in folder_uids:
+                        print(f"  {bcolors.OKGREEN}{folder_uid}{bcolors.ENDC}")
+                    print(f"\n{bcolors.OKBLUE}Total folders: {len(folder_uids)}{bcolors.ENDC}\n")
+                else:
+                    print(f"{bcolors.WARNING}No folders connected via universal_sync_folder edge{bcolors.ENDC}\n")
+
+        except Exception as e:
+            print(f"{bcolors.FAIL}Error reading DAG: {e}{bcolors.ENDC}")
+            logging.error(f"Error in uss-config-get: {e}", exc_info=True)
+
+
 class PAMUniversalSyncConfigCommand(Command):
     parser = argparse.ArgumentParser(prog='pam universal-sync-config')
     parser.add_argument('--network', '-n', required=True, dest='network', action='store',
@@ -3598,6 +3705,125 @@ class PAMUniversalSyncRunCommand(Command):
                 print_router_response(router_response, 'job_info', conversation_id)
         except Exception as e:
             raise CommandError('', f'{bcolors.FAIL}Error running universal sync: {e}{bcolors.ENDC}')
+
+
+class PAMUniversalSyncStatusCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam universal-sync-status')
+    parser.add_argument('--network', '-n', required=True, dest='network', action='store',
+                        help='Network UID or name to check universal sync status')
+    parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], default='table',
+                        help='Output format (table, json)')
+    parser.add_argument('--graph-id', '-g', dest='graph_id', type=int, default=0,
+                        help='Graph ID to query (default: 0 for USS config graph)')
+
+    def get_parser(self):
+        return PAMUniversalSyncStatusCommand.parser
+
+    def execute(self, params, **kwargs):
+        from ..keeper_dag import DAG
+        from ..keeper_dag.connection.commander import Connection
+
+        network_name = kwargs.get('network')
+        format_type = kwargs.get('format', 'table')
+        graph_id = kwargs.get('graph_id', 0)
+
+        if not network_name:
+            raise CommandError('', f'{bcolors.FAIL}Network is required{bcolors.ENDC}')
+
+        try:
+            # Load the network record
+            network = vault.KeeperRecord.load(params, network_name)
+            if not network:
+                raise CommandError('', f'{bcolors.FAIL}Network "{network_name}" not found{bcolors.ENDC}')
+
+            network_uid = network.record_uid
+
+            # Create DAG connection and load graph
+            conn = Connection(params=params)
+            dag = DAG(conn=conn, record=network, graph_id=graph_id, logger=logging)
+            dag.load(sync_point=0)
+
+            # Get root vertex
+            root = dag.get_root
+
+            # Find all vertices connected via universal_sync_folder edge
+            folder_vertices = []
+            for vertex in root.has_vertices():
+                # Check if this vertex is connected via universal_sync_folder edge
+                for edge in vertex.edges:
+                    if edge.path == 'universal_sync_folder' and edge.head_uid == root.uid:
+                        folder_vertices.append(vertex)
+                        break
+
+            if not folder_vertices:
+                print(f"{bcolors.WARNING}No folders connected via universal_sync_folder edge for network {network_uid}{bcolors.ENDC}")
+                return
+
+            # Get universal_sync_complete data from each folder
+            folder_status = []
+            for folder_vertex in folder_vertices:
+                folder_info = {
+                    'folder_uid': folder_vertex.uid,
+                    'status': None
+                }
+
+                # Look for universal_sync_complete loop edge
+                for edge in folder_vertex.edges:
+                    if edge.path == 'universal_sync_complete' and edge.head_uid == folder_vertex.uid:
+                        status_data = edge.content_as_dict
+                        folder_info['status'] = status_data
+                        break
+
+                folder_status.append(folder_info)
+
+            # Display results
+            if format_type == 'json':
+                result = {
+                    'network_uid': network_uid,
+                    'network_title': network.title if hasattr(network, 'title') else 'N/A',
+                    'folders': folder_status
+                }
+                print(json.dumps(result, indent=2))
+            else:
+                # Display as formatted output
+                print(f"\n{bcolors.OKBLUE}Universal Sync Status for Configuration: {bcolors.OKGREEN}{network.title if hasattr(network, 'title') else 'N/A'} ({network_uid}){bcolors.ENDC}\n")
+
+                for folder_info in folder_status:
+                    folder_uid = folder_info['folder_uid']
+                    status_data = folder_info['status']
+
+                    print(f"{bcolors.BOLD}Folder: {bcolors.OKGREEN}{folder_uid}{bcolors.ENDC}")
+
+                    if status_data:
+                        from datetime import datetime
+
+                        last_synced = status_data.get('lastSynced')
+                        status = f"{bcolors.OKGREEN}Success{bcolors.ENDC}" if status_data.get('success') else f"{bcolors.FAIL}Failed{bcolors.ENDC}"
+
+                        if last_synced:
+                            # Convert timestamp to human-readable format
+                            try:
+                                if isinstance(last_synced, (int, float)):
+                                    dt = datetime.fromtimestamp(last_synced / 1000 if last_synced > 10000000000 else last_synced)
+                                else:
+                                    dt = datetime.fromisoformat(last_synced.replace('Z', '+00:00'))
+                                human_date = dt.strftime('%Y-%m-%d %H:%M:%S')
+                            except Exception:
+                                human_date = str(last_synced)
+                            print(f"  Synced at: {human_date}")
+
+                        # Display status with color
+                        status_color = bcolors.OKGREEN if status.lower() == 'success' else bcolors.FAIL
+                        print(f"  Status: {status_color}{status}{bcolors.ENDC}")
+                    else:
+                        print(f"  {bcolors.WARNING}Folder is not synced{bcolors.ENDC}")
+                    print()
+
+                print(f"{bcolors.OKBLUE}Total folders: {len(folder_status)}{bcolors.ENDC}\n")
+
+        except Exception as e:
+            print(f"{bcolors.FAIL}Error reading universal sync status: {e}{bcolors.ENDC}")
+            logging.error(f"Error in universal-sync-status: {e}", exc_info=True)
 
 
 class PAMCreateGatewayCommand(Command):
