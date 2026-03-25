@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from . import base, enterprise_common
 from .helpers import report_utils
 from .. import api, error, crypto, utils
-from ..proto import MCTransfer_pb2, breachwatch_pb2
+from ..proto import MCTransfer_pb2, breachwatch_pb2, record_pb2
 
 
 def register_commands(commands):
@@ -200,9 +200,9 @@ class McTransferStatusCommand(enterprise_common.EnterpriseCommand, McTransferMix
             raise error.CommandError('mc-transfer status', 'Command is available to Regular, MSP, and MC enterprises')
 
         rq = MCTransfer_pb2.MCTransferRequest()
-        if enterprise_name:
+        if isinstance(enterprise_name, str):
             rq.enterpriseName = enterprise_name
-        if enterprise_email:
+        if isinstance(enterprise_email, str):
             rq.enterpriseContactEmail = enterprise_email
         transfer: Optional[MCTransfer_pb2.MCTransferState]
         transfer = api.communicate_rest(params, rq, 'enterprise/mc_transfer_status', rs_type=MCTransfer_pb2.MCTransferState)
@@ -290,6 +290,7 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
         rq.enterpriseContactEmail = enterprise_email
         transfer: Optional[MCTransfer_pb2.MCTransferState]
         transfer = api.communicate_rest(params, rq, 'enterprise/mc_transfer_status', rs_type=MCTransfer_pb2.MCTransferState)
+        assert transfer is not None
         if transfer.transferStatus != MCTransfer_pb2.MCTransferStatus.STATUS_APPROVED:
             raise error.CommandError('mc-transfer perform', 'The transfer has not been approved')
 
@@ -329,13 +330,14 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
                             if enterprise_tree_key:
                                 try:
                                     tree_key = crypto.decrypt_aes_v2(encrypted_tree_key, enterprise_tree_key)
-                                    if ec_key:
-                                        encrypted_tree_key = crypto.encrypt_ec(tree_key, ec_key)
-                                    else:
-                                        encrypted_tree_key = crypto.encrypt_rsa(tree_key, rsa_key)
                                     key = MCTransfer_pb2.MCTransferTreeKey()
                                     key.enterpriseId = id_mc
-                                    key.treeKey = encrypted_tree_key
+                                    if ec_key:
+                                        key.treeKeyTypeId = record_pb2.ENCRYPTED_BY_PUBLIC_KEY_ECC
+                                        key.treeKey = crypto.encrypt_ec(tree_key, ec_key)
+                                    else:
+                                        key.treeKeyTypeId = record_pb2.ENCRYPTED_BY_PUBLIC_KEY
+                                        key.treeKey = crypto.encrypt_rsa(tree_key, rsa_key)
                                     rq.mcTransferTreeKeys.append(key)
                                 except:
                                     logging.info(f'"{id_mc}" cannot decrypt encryption key')
@@ -347,13 +349,14 @@ class McTransferPerformCommand(enterprise_common.EnterpriseCommand, McTransferMi
 
             if transfer_self:
                 try:
-                    if ec_key:
-                        encrypted_tree_key = crypto.encrypt_ec(enterprise_tree_key, ec_key)
-                    else:
-                        encrypted_tree_key = crypto.encrypt_rsa(enterprise_tree_key, rsa_key)
                     key = MCTransfer_pb2.MCTransferTreeKey()
                     key.enterpriseId = params.enterprise_id
-                    key.treeKey = encrypted_tree_key
+                    if ec_key:
+                        key.treeKeyTypeId = record_pb2.ENCRYPTED_BY_PUBLIC_KEY_ECC
+                        key.treeKey = crypto.encrypt_ec(enterprise_tree_key, ec_key)
+                    else:
+                        key.treeKeyTypeId = record_pb2.ENCRYPTED_BY_PUBLIC_KEY
+                        key.treeKey = crypto.encrypt_rsa(enterprise_tree_key, rsa_key)
                     rq.mcTransferTreeKeys.append(key)
                 except:
                     logging.warning(f'Failed to encrypt enterprise key: ID: {transfer.movingEnterpriseId}, Name: {transfer.movingEnterpriseName}')

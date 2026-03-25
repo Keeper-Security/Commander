@@ -34,12 +34,14 @@ class MCTransferRequest(_message.Message):
     def __init__(self, enterpriseName: _Optional[str] = ..., enterpriseContactEmail: _Optional[str] = ..., mcTransferTreeKeys: _Optional[_Iterable[_Union[MCTransferTreeKey, _Mapping]]] = ...) -> None: ...
 
 class MCTransferTreeKey(_message.Message):
-    __slots__ = ["enterpriseId", "treeKey"]
+    __slots__ = ["enterpriseId", "treeKey", "treeKeyTypeId"]
     ENTERPRISEID_FIELD_NUMBER: _ClassVar[int]
     TREEKEY_FIELD_NUMBER: _ClassVar[int]
+    TREEKEYTYPEID_FIELD_NUMBER: _ClassVar[int]
     enterpriseId: int
     treeKey: bytes
-    def __init__(self, enterpriseId: _Optional[int] = ..., treeKey: _Optional[bytes] = ...) -> None: ...
+    treeKeyTypeId: int
+    def __init__(self, enterpriseId: _Optional[int] = ..., treeKey: _Optional[bytes] = ..., treeKeyTypeId: _Optional[int] = ...) -> None: ...
 
 class MCTransferApproveDenyRequest(_message.Message):
     __slots__ = ["enterpriseId", "message", "transferDate"]
