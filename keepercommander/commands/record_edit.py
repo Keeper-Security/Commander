@@ -848,9 +848,9 @@ class RecordAddCommand(Command, RecordEditMixin):
                 record_fields.append(parsed_field)
 
         if record_type in ('legacy', 'general'):
-            # raise CommandError('record-add', 'Legacy record type is not supported anymore.')
-            record = vault.PasswordRecord()
-            self.assign_legacy_fields(record, record_fields)
+            raise CommandError('record-add', 'Legacy record type is not supported.')
+            # record = vault.PasswordRecord()
+            # self.assign_legacy_fields(record, record_fields)
         else:
             rt_fields = self.get_record_type_fields(params, record_type)
             if not rt_fields:
@@ -1244,7 +1244,8 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
                 record_fields.append(parsed_field)
 
         if isinstance(record, vault.PasswordRecord):
-            self.assign_legacy_fields(record, record_fields)
+            raise CommandError('record-update', 'Legacy record type is not supported. Convert the record to login record type.')
+            # self.assign_legacy_fields(record, record_fields)
         elif isinstance(record, vault.TypedRecord):
             record_type = kwargs.get('record_type')
             if record_type:
