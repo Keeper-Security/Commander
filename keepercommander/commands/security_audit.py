@@ -228,7 +228,12 @@ class SecurityAuditReportCommand(EnterpriseCommand):
 
         nodes = kwargs.get('node') or []
         node_ids = [get_node_id(n) for n in nodes]
-        node_ids = [n for n in node_ids if n]
+        if nodes:
+            invalid_nodes = [n for n, nid in zip(nodes, node_ids) if not nid]
+            if invalid_nodes:
+                logging.error('Node(s) not found: %s', ', '.join(invalid_nodes))
+                return
+            node_ids = [n for n in node_ids if n]
         score_type = kwargs.get('score_type', 'default')
         save_report = kwargs.get('save') or attempt_fix
         show_updated = save_report or kwargs.get('show_updated')
