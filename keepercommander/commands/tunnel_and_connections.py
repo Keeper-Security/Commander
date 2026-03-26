@@ -1579,7 +1579,9 @@ class PAMConnectionEditCommand(Command):
                         f'{bcolors.FAIL}Launch user record must be a pamUser record type.{bcolors.ENDC}')
                 launch_uid = launch_rec.record_uid
                 if record_type in ("pamDatabase", "pamDirectory", "pamMachine"):
+                    tdag.clear_launch_credential_for_resource(record_uid, exclude_user_uid=launch_uid)
                     tdag.link_user_to_resource(launch_uid, record_uid, is_launch_credential=True, belongs_to=True)
+                    tdag.upgrade_resource_meta_to_v1(record_uid)
 
             # Print out PAM Settings
             if not kwargs.get("silent", False): tdag.print_tunneling_config(record_uid, record.get_typed_field('pamSettings'), config_uid)

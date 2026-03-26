@@ -458,6 +458,39 @@ class TunnelDAG:
                     return user_vertex.uid
         return False
 
+    def clear_launch_credential_for_resource(self, resource_uid, exclude_user_uid=None):
+        """Remove is_launch_credential from all users on a resource except exclude_user_uid."""
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        if resource_vertex is None:
+            return
+        dirty = False
+        for user_vertex in resource_vertex.has_vertices(EdgeType.ACL):
+            if exclude_user_uid and user_vertex.uid == exclude_user_uid:
+                continue
+            acl_edge = user_vertex.get_edge(resource_vertex, EdgeType.ACL)
+            if not acl_edge:
+                continue
+            edge_content = acl_edge.content_as_dict
+            if edge_content and edge_content.get('is_launch_credential'):
+                edge_content = dict(edge_content)
+                edge_content.pop('is_launch_credential')
+                user_vertex.belongs_to(resource_vertex, EdgeType.ACL, content=edge_content)
+                dirty = True
+        if dirty:
+            self.linking_dag.save()
+
+    def upgrade_resource_meta_to_v1(self, resource_uid):
+        """Ensure resource vertex meta has version >= 1 so vault reads ACL launch credentials."""
+        resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        if resource_vertex is None:
+            return
+        content = get_vertex_content(resource_vertex)
+        if content and content.get('version', 0) >= RESOURCE_META_VERSION_V1:
+            return
+        upgraded = ensure_resource_meta_v1(content)
+        resource_vertex.add_data(content=upgraded, path='meta', needs_encryption=False)
+        self.linking_dag.save()
+
     def check_if_resource_allowed(self, resource_uid, setting):
         resource_vertex = self.linking_dag.get_vertex(resource_uid)
         content = get_vertex_content(resource_vertex)
