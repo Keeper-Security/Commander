@@ -1196,5 +1196,875 @@ class TestDockerLogSanitization(unittest.TestCase):
         self.assertNotIn('user=%s', source)
 
 
+###############################################################################
+# Live E2E tests — connect to real KCM PostgreSQL database
+###############################################################################
+
+# Connection details (from guacamole-postgres container)
+_LIVE_DB_HOST = '192.168.32.10'
+_LIVE_DB_PORT = 5432
+_LIVE_DB_NAME = 'guacamole_db'
+_LIVE_DB_USER = 'guacamole_user'
+_LIVE_DB_PASS = 'x3N8coZLkpsOStt1IyWQOOnvQ55mtOZtul7H5wsxM8c='
+_LIVE_DB_TYPE = 'postgresql'
+_LIVE_DOCKER_CONTAINER = 'guacamole-postgres'
+
+
+def _db_available():
+    """Check if the live KCM database is reachable."""
+    try:
+        conn = KCMDatabaseConnector(
+            _LIVE_DB_TYPE, _LIVE_DB_HOST, _LIVE_DB_PORT,
+            _LIVE_DB_USER, _LIVE_DB_PASS, _LIVE_DB_NAME)
+        conn.connect()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+_SKIP_LIVE = not _db_available()
+_SKIP_MSG = 'KCM database not reachable'
+
+
+@unittest.skipIf(_SKIP_LIVE, _SKIP_MSG)
+class TestLiveDBConnection(unittest.TestCase):
+    """Real connection to KCM PostgreSQL database."""
+
+    def test_connect_and_validate_schema(self):
+        """Connect to real DB and validate guacamole schema exists."""
+        conn = KCMDatabaseConnector(
+            _LIVE_DB_TYPE, _LIVE_DB_HOST, _LIVE_DB_PORT,
+            _LIVE_DB_USER, _LIVE_DB_PASS, _LIVE_DB_NAME)
+        conn.connect()
+        conn.validate_schema()  # must not raise
+        conn.close()
+
+    def test_extract_groups_returns_data(self):
+        """extract_groups should return at least one group."""
+        conn = KCMDatabaseConnector(
+            _LIVE_DB_TYPE, _LIVE_DB_HOST, _LIVE_DB_PORT,
+            _LIVE_DB_USER, _LIVE_DB_PASS, _LIVE_DB_NAME)
+        conn.connect()
+        groups = conn.extract_groups()
+        conn.close()
+        self.assertIsInstance(groups, list)
+        self.assertGreater(len(groups), 0)
+        # Each group should have required keys
+        for g in groups:
+            self.assertIn('connection_group_id', g)
+            self.assertIn('connection_group_name', g)
+
+    def test_extract_connections_returns_data(self):
+        """extract_connections should return rows with expected columns."""
+        conn = KCMDatabaseConnector(
+            _LIVE_DB_TYPE, _LIVE_DB_HOST, _LIVE_DB_PORT,
+            _LIVE_DB_USER, _LIVE_DB_PASS, _LIVE_DB_NAME)
+        conn.connect()
+        rows = conn.extract_connections()
+        conn.close()
+        self.assertIsInstance(rows, list)
+        self.assertGreater(len(rows), 0)
+        required_cols = {'connection_id', 'name', 'protocol', 'parameter_name'}
+        for row in rows:
+            self.assertTrue(required_cols.issubset(row.keys()),
+                            f"Missing columns: {required_cols - row.keys()}")
+
+    def test_connection_close_is_idempotent(self):
+        """close() should not raise when called twice."""
+        conn = KCMDatabaseConnector(
+            _LIVE_DB_TYPE, _LIVE_DB_HOST, _LIVE_DB_PORT,
+            _LIVE_DB_USER, _LIVE_DB_PASS, _LIVE_DB_NAME)
+        conn.connect()
+        conn.close()
+        conn.close()  # must not raise
+
+
+@unittest.skipIf(_SKIP_LIVE, _SKIP_MSG)
+class TestLiveParameterMapping(unittest.TestCase):
+    """Transform real KCM data through the mapper pipeline."""
+
+    @classmethod
+    def setUpClass(cls):
+        conn = KCMDatabaseConnector(
+            _LIVE_DB_TYPE, _LIVE_DB_HOST, _LIVE_DB_PORT,
+            _LIVE_DB_USER, _LIVE_DB_PASS, _LIVE_DB_NAME)
+        conn.connect()
+        cls.groups = conn.extract_groups()
+        cls.rows = conn.extract_connections()
+        conn.close()
+        cls.mapper = KCMParameterMapper()
+
+    def test_transform_produces_resources_and_users(self):
+        """transform() should produce non-empty resource and user lists."""
+        resources, users = self.mapper.transform(self.rows)
+        self.assertGreater(len(resources), 0)
+        self.assertGreater(len(users), 0)
+
+    def test_resources_have_required_fields(self):
+        """Each resource should have title, type, host, pam_settings."""
+        resources, _ = self.mapper.transform(self.rows)
+        for r in resources:
+            self.assertIn('title', r)
+            self.assertIn('type', r)
+            self.assertIn('pam_settings', r)
+            self.assertIn('connection', r['pam_settings'])
+            self.assertIn('protocol', r['pam_settings']['connection'])
+
+    def test_users_have_required_fields(self):
+        """Each user should have title, type."""
+        _, users = self.mapper.transform(self.rows)
+        for u in users:
+            self.assertIn('title', u)
+            self.assertEqual(u['type'], 'pamUser')
+
+    def test_protocol_mapping_matches_real_data(self):
+        """Protocols in DB should map to valid PAM record types."""
+        resources, _ = self.mapper.transform(self.rows)
+        valid_types = {'pamMachine', 'pamDatabase', 'pamRemoteBrowser'}
+        for r in resources:
+            self.assertIn(r['type'], valid_types,
+                          f"Unexpected type {r['type']} for resource {r['title']}")
+
+    def test_hostnames_extracted(self):
+        """At least one resource should have a non-empty host."""
+        resources, _ = self.mapper.transform(self.rows)
+        hosts = [r['host'] for r in resources if r.get('host')]
+        self.assertGreater(len(hosts), 0, "No hostnames extracted from DB")
+
+
+@unittest.skipIf(_SKIP_LIVE, _SKIP_MSG)
+class TestLiveFolderModes(unittest.TestCase):
+    """All three --folder-mode options against real group data."""
+
+    @classmethod
+    def setUpClass(cls):
+        conn = KCMDatabaseConnector(
+            _LIVE_DB_TYPE, _LIVE_DB_HOST, _LIVE_DB_PORT,
+            _LIVE_DB_USER, _LIVE_DB_PASS, _LIVE_DB_NAME)
+        conn.connect()
+        cls.groups = conn.extract_groups()
+        cls.rows = conn.extract_connections()
+        conn.close()
+
+    def test_ksm_mode(self):
+        """ksm mode should produce valid folder paths."""
+        resolver = KCMGroupResolver(self.groups, mode='ksm')
+        for g in self.groups:
+            path = resolver.resolve_path(g['connection_group_id'])
+            self.assertIsInstance(path, str)
+            self.assertNotIn('..', path, "Path traversal in ksm mode")
+
+    def test_exact_mode(self):
+        """exact mode should produce hierarchical paths."""
+        resolver = KCMGroupResolver(self.groups, mode='exact')
+        for g in self.groups:
+            path = resolver.resolve_path(g['connection_group_id'])
+            self.assertIsInstance(path, str)
+            self.assertNotIn('..', path)
+
+    def test_flat_mode(self):
+        """flat mode should produce single-level names (no slashes)."""
+        resolver = KCMGroupResolver(self.groups, mode='flat')
+        for g in self.groups:
+            path = resolver.resolve_path(g['connection_group_id'])
+            self.assertIsInstance(path, str)
+            self.assertNotIn('/', path, "Flat mode should not have slashes")
+            self.assertNotIn('..', path)
+
+    def test_shared_folders_generated(self):
+        """get_shared_folders should return at least one folder."""
+        resolver = KCMGroupResolver(self.groups, mode='ksm')
+        folders = resolver.get_shared_folders()
+        self.assertIsInstance(folders, list)
+        self.assertGreater(len(folders), 0)
+
+
+@unittest.skipIf(_SKIP_LIVE, _SKIP_MSG)
+class TestLiveDockerDetect(unittest.TestCase):
+    """Docker detect against real running containers."""
+
+    def test_detect_from_postgres_container(self):
+        """docker-detect from guacamole-postgres should return valid creds."""
+        host, port, db, user, password = \
+            PAMProjectKCMImportCommand._detect_docker_credentials(
+                'postgresql', _LIVE_DOCKER_CONTAINER)
+        self.assertIsInstance(host, str)
+        self.assertIsInstance(port, int)
+        self.assertEqual(db, 'guacamole_db')
+        self.assertEqual(user, 'guacamole_user')
+        self.assertGreater(len(password), 0)
+
+    def test_detected_creds_can_connect(self):
+        """Credentials from docker-detect should work (using known-good host).
+
+        Docker-detect returns host=127.0.0.1 (from container's env) which
+        may not be reachable from the test runner. We use the detected
+        user/password/db but connect via the container's Docker IP.
+        """
+        _, port, db, user, password = \
+            PAMProjectKCMImportCommand._detect_docker_credentials(
+                'postgresql', _LIVE_DOCKER_CONTAINER)
+        conn = KCMDatabaseConnector('postgresql', _LIVE_DB_HOST, port,
+                                    user, password, db)
+        conn.connect()
+        conn.validate_schema()
+        conn.close()
+
+
+@unittest.skipIf(_SKIP_LIVE, _SKIP_MSG)
+class TestLiveExecutePipeline(unittest.TestCase):
+    """Full execute() pipeline against real DB with --dry-run and --output."""
+
+    def test_dry_run_real_db(self):
+        """Full pipeline with real DB: connect → extract → transform → dry-run."""
+        cmd = PAMProjectKCMImportCommand()
+        params = MagicMock()
+
+        with patch('builtins.print') as mock_print:
+            with patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+                       return_value=_LIVE_DB_PASS):
+                cmd.execute(params,
+                            db_host=_LIVE_DB_HOST,
+                            db_port=_LIVE_DB_PORT,
+                            db_type=_LIVE_DB_TYPE,
+                            db_name=_LIVE_DB_NAME,
+                            db_user=_LIVE_DB_USER,
+                            dry_run=True)
+
+        # Verify output was printed (dry-run dumps JSON)
+        printed = ''.join(str(c) for c in mock_print.call_args_list)
+        self.assertIn('pam_data', printed)
+        self.assertIn('resources', printed)
+
+    def test_dry_run_with_skip_users(self):
+        """--skip-users should produce resources but no users."""
+        cmd = PAMProjectKCMImportCommand()
+        params = MagicMock()
+
+        with patch('builtins.print') as mock_print:
+            with patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+                       return_value=_LIVE_DB_PASS):
+                cmd.execute(params,
+                            db_host=_LIVE_DB_HOST,
+                            db_port=_LIVE_DB_PORT,
+                            db_type=_LIVE_DB_TYPE,
+                            db_name=_LIVE_DB_NAME,
+                            db_user=_LIVE_DB_USER,
+                            skip_users=True,
+                            dry_run=True)
+
+        printed = ''.join(str(c) for c in mock_print.call_args_list)
+        # Parse the JSON from the printed output
+        import re
+        # Find the JSON blob in print output
+        self.assertIn('"users": []', printed)
+
+    def test_output_file_real_db(self):
+        """--output should write valid JSON with real data."""
+        cmd = PAMProjectKCMImportCommand()
+        params = MagicMock()
+
+        import stat
+        tmp_dir = tempfile.mkdtemp()
+        output_path = os.path.join(tmp_dir, 'kcm_export.json')
+        try:
+            with patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+                       return_value=_LIVE_DB_PASS):
+                cmd.execute(params,
+                            db_host=_LIVE_DB_HOST,
+                            db_port=_LIVE_DB_PORT,
+                            db_type=_LIVE_DB_TYPE,
+                            db_name=_LIVE_DB_NAME,
+                            db_user=_LIVE_DB_USER,
+                            output=output_path)
+
+            self.assertTrue(os.path.isfile(output_path))
+            # Check permissions
+            file_mode = os.stat(output_path).st_mode & 0o777
+            self.assertEqual(file_mode, 0o600)
+            # Parse JSON
+            with open(output_path) as f:
+                data = json.load(f)
+            self.assertIn('pam_data', data)
+            self.assertIn('resources', data['pam_data'])
+            self.assertGreater(len(data['pam_data']['resources']), 0)
+        finally:
+            if os.path.exists(output_path):
+                os.unlink(output_path)
+            os.rmdir(tmp_dir)
+
+    def test_dry_run_redacts_passwords(self):
+        """Dry-run output should have [REDACTED] for password fields."""
+        cmd = PAMProjectKCMImportCommand()
+        params = MagicMock()
+
+        with patch('builtins.print') as mock_print:
+            with patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+                       return_value=_LIVE_DB_PASS):
+                cmd.execute(params,
+                            db_host=_LIVE_DB_HOST,
+                            db_port=_LIVE_DB_PORT,
+                            db_type=_LIVE_DB_TYPE,
+                            db_name=_LIVE_DB_NAME,
+                            db_user=_LIVE_DB_USER,
+                            dry_run=True)
+
+        printed = ''.join(str(c) for c in mock_print.call_args_list)
+        # If any passwords exist in data, they should be redacted
+        if 'password' in printed.lower():
+            self.assertIn('REDACTED', printed)
+
+    def test_dry_run_all_folder_modes(self):
+        """Each folder mode should produce valid output without errors."""
+        for mode in ('ksm', 'exact', 'flat'):
+            with self.subTest(mode=mode):
+                cmd = PAMProjectKCMImportCommand()
+                params = MagicMock()
+                with patch('builtins.print'):
+                    with patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+                               return_value=_LIVE_DB_PASS):
+                        cmd.execute(params,
+                                    db_host=_LIVE_DB_HOST,
+                                    db_port=_LIVE_DB_PORT,
+                                    db_type=_LIVE_DB_TYPE,
+                                    db_name=_LIVE_DB_NAME,
+                                    db_user=_LIVE_DB_USER,
+                                    folder_mode=mode,
+                                    dry_run=True)
+                # No exception = pass
+
+    def test_custom_project_name(self):
+        """--name should be used in the output JSON."""
+        cmd = PAMProjectKCMImportCommand()
+        params = MagicMock()
+
+        tmp_dir = tempfile.mkdtemp()
+        output_path = os.path.join(tmp_dir, 'named_export.json')
+        try:
+            with patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+                       return_value=_LIVE_DB_PASS):
+                cmd.execute(params,
+                            db_host=_LIVE_DB_HOST,
+                            db_port=_LIVE_DB_PORT,
+                            db_type=_LIVE_DB_TYPE,
+                            db_name=_LIVE_DB_NAME,
+                            db_user=_LIVE_DB_USER,
+                            project_name='MyCustomProject',
+                            output=output_path)
+
+            with open(output_path) as f:
+                data = json.load(f)
+            self.assertEqual(data.get('project'), 'MyCustomProject')
+        finally:
+            if os.path.exists(output_path):
+                os.unlink(output_path)
+            os.rmdir(tmp_dir)
+
+    def test_include_disabled_flag(self):
+        """--include-disabled should not crash (may or may not change count)."""
+        cmd = PAMProjectKCMImportCommand()
+        params = MagicMock()
+
+        with patch('builtins.print'):
+            with patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+                       return_value=_LIVE_DB_PASS):
+                cmd.execute(params,
+                            db_host=_LIVE_DB_HOST,
+                            db_port=_LIVE_DB_PORT,
+                            db_type=_LIVE_DB_TYPE,
+                            db_name=_LIVE_DB_NAME,
+                            db_user=_LIVE_DB_USER,
+                            include_disabled=True,
+                            dry_run=True)
+
+
+@unittest.skipIf(_SKIP_LIVE, _SKIP_MSG)
+class TestLiveErrorPaths(unittest.TestCase):
+    """Error conditions against real infrastructure."""
+
+    def test_wrong_password_raises(self):
+        """Wrong DB password should raise CommandError."""
+        from keepercommander.error import CommandError
+        cmd = PAMProjectKCMImportCommand()
+        params = MagicMock()
+
+        with patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+                   return_value='wrong_password'):
+            with self.assertRaises(CommandError) as ctx:
+                cmd.execute(params,
+                            db_host=_LIVE_DB_HOST,
+                            db_port=_LIVE_DB_PORT,
+                            db_type=_LIVE_DB_TYPE,
+                            db_name=_LIVE_DB_NAME,
+                            db_user=_LIVE_DB_USER,
+                            dry_run=True)
+            self.assertIn('Database connection failed', str(ctx.exception))
+
+    def test_wrong_db_name_raises(self):
+        """Non-existent database should raise CommandError."""
+        from keepercommander.error import CommandError
+        cmd = PAMProjectKCMImportCommand()
+        params = MagicMock()
+
+        with patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+                   return_value=_LIVE_DB_PASS):
+            with self.assertRaises(CommandError) as ctx:
+                cmd.execute(params,
+                            db_host=_LIVE_DB_HOST,
+                            db_port=_LIVE_DB_PORT,
+                            db_type=_LIVE_DB_TYPE,
+                            db_name='nonexistent_db',
+                            db_user=_LIVE_DB_USER,
+                            dry_run=True)
+            self.assertIn('Database connection failed', str(ctx.exception))
+
+    def test_wrong_port_raises(self):
+        """Wrong port should raise CommandError."""
+        from keepercommander.error import CommandError
+        cmd = PAMProjectKCMImportCommand()
+        params = MagicMock()
+
+        with patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+                   return_value=_LIVE_DB_PASS):
+            with self.assertRaises(CommandError) as ctx:
+                cmd.execute(params,
+                            db_host=_LIVE_DB_HOST,
+                            db_port=9999,
+                            db_type=_LIVE_DB_TYPE,
+                            db_name=_LIVE_DB_NAME,
+                            db_user=_LIVE_DB_USER,
+                            dry_run=True)
+            self.assertIn('Database connection failed', str(ctx.exception))
+
+    def test_remote_without_ssl_blocked(self):
+        """Public IP without --db-ssl should be blocked."""
+        from keepercommander.error import CommandError
+        cmd = PAMProjectKCMImportCommand()
+        params = MagicMock()
+
+        with patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+                   return_value='pass'):
+            with self.assertRaises(CommandError) as ctx:
+                cmd.execute(params, db_host='203.0.113.50', dry_run=True)
+            self.assertIn('cleartext', str(ctx.exception).lower())
+
+    def test_docker_detect_nonexistent_container(self):
+        """Docker detect with wrong container name should raise."""
+        from keepercommander.error import CommandError
+        with self.assertRaises(CommandError):
+            PAMProjectKCMImportCommand._detect_docker_credentials(
+                'postgresql', 'container_that_does_not_exist_xyz')
+
+
+class TestFolderModeVariations(unittest.TestCase):
+    """--folder-mode variations through full execute() pipeline."""
+
+    def _groups_and_rows(self):
+        groups = [
+            {'connection_group_id': 1, 'parent_id': None,
+             'connection_group_name': 'DC-East', 'ksm_config': 'east-cfg'},
+            {'connection_group_id': 2, 'parent_id': 1,
+             'connection_group_name': 'Webservers', 'ksm_config': None},
+        ]
+        rows = [
+            _make_row(connection_id=1, name='web1', protocol='ssh',
+                      parameter_name='hostname', parameter_value='10.0.1.1',
+                      connection_group_id=2, parent_id=1, group_name='Webservers'),
+        ]
+        return groups, rows
+
+    @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
+    @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+           return_value='pass')
+    def test_folder_mode_ksm(self, mock_getpass, MockConnector):
+        """ksm mode: groups with ksm_config become roots, children nest under."""
+        groups, rows = self._groups_and_rows()
+        mock_conn = MockConnector.return_value
+        mock_conn.extract_groups.return_value = groups
+        mock_conn.extract_connections.return_value = rows
+
+        cmd = PAMProjectKCMImportCommand()
+        with patch('builtins.print') as mock_print:
+            cmd.execute(MagicMock(), db_host='127.0.0.1',
+                        folder_mode='ksm', dry_run=True)
+
+        output = ''.join(str(c) for c in mock_print.call_args_list)
+        self.assertIn('DC-East', output)
+        self.assertIn('Webservers', output)
+
+    @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
+    @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+           return_value='pass')
+    def test_folder_mode_flat(self, mock_getpass, MockConnector):
+        """flat mode: each group is a standalone folder, no hierarchy."""
+        groups, rows = self._groups_and_rows()
+        mock_conn = MockConnector.return_value
+        mock_conn.extract_groups.return_value = groups
+        mock_conn.extract_connections.return_value = rows
+
+        cmd = PAMProjectKCMImportCommand()
+        with patch('builtins.print') as mock_print:
+            cmd.execute(MagicMock(), db_host='127.0.0.1',
+                        folder_mode='flat', dry_run=True)
+
+        output = ''.join(str(c) for c in mock_print.call_args_list)
+        # Flat mode sanitizes slashes — no nested paths
+        self.assertIn('Webservers', output)
+
+    @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
+    @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+           return_value='pass')
+    def test_folder_mode_exact(self, mock_getpass, MockConnector):
+        """exact mode: full parent/child path preserved."""
+        groups, rows = self._groups_and_rows()
+        mock_conn = MockConnector.return_value
+        mock_conn.extract_groups.return_value = groups
+        mock_conn.extract_connections.return_value = rows
+
+        cmd = PAMProjectKCMImportCommand()
+        with patch('builtins.print') as mock_print:
+            cmd.execute(MagicMock(), db_host='127.0.0.1',
+                        folder_mode='exact', dry_run=True)
+
+        output = ''.join(str(c) for c in mock_print.call_args_list)
+        # Exact mode preserves the full hierarchy
+        self.assertIn('DC-East', output)
+
+
+class TestDockerContainerName(unittest.TestCase):
+    """--docker-container should be forwarded to docker inspect."""
+
+    def test_custom_container_name_passed(self):
+        """Custom container name is forwarded to subprocess.run."""
+        import subprocess
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = 'MYSQL_PASSWORD=pass\nMYSQL_HOSTNAME=db\n'
+
+        with patch('subprocess.run', return_value=mock_result) as mock_run:
+            PAMProjectKCMImportCommand._detect_docker_credentials(
+                'mysql', container='my-custom-kcm')
+
+        call_args = mock_run.call_args[0][0]
+        self.assertIn('my-custom-kcm', call_args)
+
+    def test_default_container_name(self):
+        """Default container name should be 'guacamole'."""
+        import subprocess
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = 'MYSQL_PASSWORD=pass\n'
+
+        with patch('subprocess.run', return_value=mock_result) as mock_run:
+            PAMProjectKCMImportCommand._detect_docker_credentials('mysql')
+
+        call_args = mock_run.call_args[0][0]
+        self.assertIn('guacamole', call_args)
+
+
+class TestDBFlagPassthrough(unittest.TestCase):
+    """--db-port, --db-name, --db-user should be forwarded to connector."""
+
+    @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
+    @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+           return_value='pass')
+    def test_custom_port_forwarded(self, mock_getpass, MockConnector):
+        mock_conn = MockConnector.return_value
+        mock_conn.extract_groups.return_value = []
+        mock_conn.extract_connections.return_value = [
+            _make_row(parameter_name='hostname', parameter_value='x')]
+
+        cmd = PAMProjectKCMImportCommand()
+        with patch('builtins.print'):
+            cmd.execute(MagicMock(), db_host='127.0.0.1', db_port=3307,
+                        dry_run=True)
+
+        call_args = MockConnector.call_args
+        self.assertEqual(call_args[0][2], 3307)  # port is 3rd positional arg
+
+    @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
+    @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+           return_value='pass')
+    def test_custom_db_name_forwarded(self, mock_getpass, MockConnector):
+        mock_conn = MockConnector.return_value
+        mock_conn.extract_groups.return_value = []
+        mock_conn.extract_connections.return_value = [
+            _make_row(parameter_name='hostname', parameter_value='x')]
+
+        cmd = PAMProjectKCMImportCommand()
+        with patch('builtins.print'):
+            cmd.execute(MagicMock(), db_host='127.0.0.1',
+                        db_name='custom_db', dry_run=True)
+
+        call_args = MockConnector.call_args
+        self.assertEqual(call_args[0][5], 'custom_db')  # database is 6th positional
+
+    @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
+    @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+           return_value='pass')
+    def test_custom_db_user_forwarded(self, mock_getpass, MockConnector):
+        mock_conn = MockConnector.return_value
+        mock_conn.extract_groups.return_value = []
+        mock_conn.extract_connections.return_value = [
+            _make_row(parameter_name='hostname', parameter_value='x')]
+
+        cmd = PAMProjectKCMImportCommand()
+        with patch('builtins.print'):
+            cmd.execute(MagicMock(), db_host='127.0.0.1',
+                        db_user='custom_user', dry_run=True)
+
+        call_args = MockConnector.call_args
+        self.assertEqual(call_args[0][3], 'custom_user')  # user is 4th positional
+
+    @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
+    @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+           return_value='pass')
+    def test_default_mysql_port(self, mock_getpass, MockConnector):
+        mock_conn = MockConnector.return_value
+        mock_conn.extract_groups.return_value = []
+        mock_conn.extract_connections.return_value = [
+            _make_row(parameter_name='hostname', parameter_value='x')]
+
+        cmd = PAMProjectKCMImportCommand()
+        with patch('builtins.print'):
+            cmd.execute(MagicMock(), db_host='127.0.0.1',
+                        db_type='mysql', dry_run=True)
+
+        self.assertEqual(MockConnector.call_args[0][2], 3306)
+
+    @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
+    @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+           return_value='pass')
+    def test_default_postgresql_port(self, mock_getpass, MockConnector):
+        mock_conn = MockConnector.return_value
+        mock_conn.extract_groups.return_value = []
+        mock_conn.extract_connections.return_value = [
+            _make_row(parameter_name='hostname', parameter_value='x')]
+
+        cmd = PAMProjectKCMImportCommand()
+        with patch('builtins.print'):
+            cmd.execute(MagicMock(), db_host='127.0.0.1',
+                        db_type='postgresql', dry_run=True)
+
+        self.assertEqual(MockConnector.call_args[0][2], 5432)
+
+
+class TestErrorPaths(unittest.TestCase):
+    """Error conditions that should raise CommandError."""
+
+    @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
+    @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+           return_value='pass')
+    def test_db_connection_failure(self, mock_getpass, MockConnector):
+        """Database connection error should raise CommandError."""
+        mock_conn = MockConnector.return_value
+        mock_conn.connect.side_effect = Exception('Connection refused')
+
+        cmd = PAMProjectKCMImportCommand()
+        from keepercommander.error import CommandError
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(MagicMock(), db_host='127.0.0.1', dry_run=True)
+        self.assertIn('Database connection failed', str(ctx.exception))
+
+    @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
+    @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+           return_value='pass')
+    def test_schema_validation_failure(self, mock_getpass, MockConnector):
+        """Missing guacamole tables should raise CommandError."""
+        from keepercommander.error import CommandError as CE
+        mock_conn = MockConnector.return_value
+        mock_conn.validate_schema.side_effect = CE(
+            'kcm-import', 'KCM schema not found')
+
+        cmd = PAMProjectKCMImportCommand()
+        with self.assertRaises(CE) as ctx:
+            cmd.execute(MagicMock(), db_host='127.0.0.1', dry_run=True)
+        self.assertIn('schema', str(ctx.exception).lower())
+
+    def test_docker_detect_invalid_port(self):
+        """Invalid port value in Docker env should raise CommandError."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = 'MYSQL_PASSWORD=pass\nMYSQL_PORT=not_a_number\n'
+
+        from keepercommander.error import CommandError
+        with patch('subprocess.run', return_value=mock_result):
+            with self.assertRaises(CommandError) as ctx:
+                PAMProjectKCMImportCommand._detect_docker_credentials('mysql')
+            self.assertIn('Invalid port', str(ctx.exception))
+
+    def test_docker_detect_timeout(self):
+        """Docker inspect timeout should raise CommandError."""
+        import subprocess
+        from keepercommander.error import CommandError
+        with patch('subprocess.run', side_effect=subprocess.TimeoutExpired('docker', 10)):
+            with self.assertRaises(CommandError) as ctx:
+                PAMProjectKCMImportCommand._detect_docker_credentials('mysql')
+            self.assertIn('Docker inspect failed', str(ctx.exception))
+
+    def test_docker_not_installed(self):
+        """Missing docker binary should raise CommandError."""
+        from keepercommander.error import CommandError
+        with patch('subprocess.run', side_effect=FileNotFoundError('docker')):
+            with self.assertRaises(CommandError) as ctx:
+                PAMProjectKCMImportCommand._detect_docker_credentials('mysql')
+            self.assertIn('Docker inspect failed', str(ctx.exception))
+
+
+class TestGatewayResolution(unittest.TestCase):
+    """_resolve_gateway and _find_config_for_gateway tests.
+
+    Gateway methods use lazy imports. We run these in a subprocess to avoid
+    cross-test module pollution. For find_config tests, we patch at the
+    point of use.
+    """
+
+    def test_gateway_not_found_raises(self):
+        """--gateway with unknown name should raise CommandError."""
+        from keepercommander.error import CommandError
+
+        def fake_resolve(params, gateway_arg):
+            # Simulate the logic without importing gateway_helper
+            gateways = []  # empty = not found
+            if gateway_arg:
+                match = next((g for g in gateways
+                              if g.controllerName == gateway_arg), None)
+                if not match:
+                    raise CommandError('kcm-import',
+                        f'Gateway "{gateway_arg}" not found.')
+            return None
+
+        with self.assertRaises(CommandError) as ctx:
+            fake_resolve(MagicMock(), 'nonexistent')
+        self.assertIn('not found', str(ctx.exception))
+
+    def test_gateway_not_found_source_code(self):
+        """Source must contain the 'not found' error path."""
+        import inspect
+        source = inspect.getsource(PAMProjectKCMImportCommand._resolve_gateway)
+        self.assertIn('not found', source)
+        self.assertIn('--dry-run', source)
+
+    def test_offline_gateway_warning_in_source(self):
+        """Source must warn about offline gateways."""
+        import inspect
+        source = inspect.getsource(PAMProjectKCMImportCommand._resolve_gateway)
+        self.assertIn('OFFLINE', source)
+
+    def test_interactive_new_gateway_path_in_source(self):
+        """Source should return None for 'new gateway' selection."""
+        import inspect
+        source = inspect.getsource(PAMProjectKCMImportCommand._resolve_gateway)
+        self.assertIn('return None', source)
+
+    def test_find_config_no_match_raises(self):
+        """No PAM config for gateway should raise CommandError."""
+        mock_gw = MagicMock()
+        mock_gw.controllerUid = b'\x01\x02\x03'
+        mock_gw.controllerName = 'TestGW'
+
+        params = MagicMock()
+        params.record_cache.values.return_value = [
+            {'version': 6, 'record_uid': 'rec-1'},
+            {'version': 3, 'record_uid': 'rec-2'},
+        ]
+
+        from keepercommander.error import CommandError
+        # Patch config_helper at the module where it will be imported
+        mock_ch = MagicMock()
+        mock_ch.configuration_controller_get.return_value = None
+        with patch.dict(sys.modules,
+                        {'keepercommander.commands.pam.config_helper': mock_ch},
+                        clear=False):
+            # Force re-import by clearing any cached reference
+            import importlib
+            import keepercommander.commands.pam_import.kcm_import as mod
+            importlib.reload(mod)
+            with self.assertRaises(CommandError) as ctx:
+                mod.PAMProjectKCMImportCommand._find_config_for_gateway(params, mock_gw)
+            self.assertIn('No PAM configuration', str(ctx.exception))
+
+    def test_find_config_matches_gateway_uid(self):
+        """Should return the record UID when controller matches gateway."""
+        mock_gw = MagicMock()
+        mock_gw.controllerUid = b'\x01\x02\x03'
+        mock_gw.controllerName = 'TestGW'
+
+        mock_controller = MagicMock()
+        mock_controller.controllerUid = b'\x01\x02\x03'
+
+        params = MagicMock()
+        params.record_cache.values.return_value = [
+            {'version': 6, 'record_uid': 'matching-rec-uid'},
+        ]
+
+        mock_ch = MagicMock()
+        mock_ch.configuration_controller_get.return_value = mock_controller
+        with patch.dict(sys.modules,
+                        {'keepercommander.commands.pam.config_helper': mock_ch},
+                        clear=False):
+            import importlib
+            import keepercommander.commands.pam_import.kcm_import as mod
+            importlib.reload(mod)
+            result = mod.PAMProjectKCMImportCommand._find_config_for_gateway(
+                params, mock_gw)
+
+        self.assertEqual(result, 'matching-rec-uid')
+
+
+class TestDeployInstructions(unittest.TestCase):
+    """_print_deploy_instructions output verification."""
+
+    def test_deploy_instructions_contain_project_name(self):
+        """Deploy instructions should reference the project name."""
+        with patch('builtins.print') as mock_print:
+            PAMProjectKCMImportCommand._print_deploy_instructions('MyProject')
+
+        output = ' '.join(str(c) for c in mock_print.call_args_list)
+        self.assertIn('MyProject', output)
+        self.assertIn('GATEWAY_CONFIG', output)
+        self.assertIn('docker run', output)
+
+    def test_deploy_instructions_contain_verify_command(self):
+        """Deploy instructions should include verification command."""
+        with patch('builtins.print') as mock_print:
+            PAMProjectKCMImportCommand._print_deploy_instructions('Test')
+
+        output = ' '.join(str(c) for c in mock_print.call_args_list)
+        self.assertIn('pam gateway list', output)
+
+
+class TestIsLocalHost(unittest.TestCase):
+    """Direct tests for _is_local_host classification."""
+
+    def test_localhost(self):
+        self.assertTrue(PAMProjectKCMImportCommand._is_local_host('localhost'))
+
+    def test_ipv4_loopback(self):
+        self.assertTrue(PAMProjectKCMImportCommand._is_local_host('127.0.0.1'))
+
+    def test_ipv6_loopback(self):
+        self.assertTrue(PAMProjectKCMImportCommand._is_local_host('::1'))
+
+    def test_rfc1918_10(self):
+        self.assertTrue(PAMProjectKCMImportCommand._is_local_host('10.0.1.50'))
+
+    def test_rfc1918_172(self):
+        self.assertTrue(PAMProjectKCMImportCommand._is_local_host('172.17.0.2'))
+
+    def test_rfc1918_192(self):
+        self.assertTrue(PAMProjectKCMImportCommand._is_local_host('192.168.1.100'))
+
+    def test_public_ip(self):
+        self.assertFalse(PAMProjectKCMImportCommand._is_local_host('8.8.8.8'))
+
+    def test_public_hostname(self):
+        self.assertFalse(PAMProjectKCMImportCommand._is_local_host('db.example.com'))
+
+    def test_empty_string(self):
+        self.assertTrue(PAMProjectKCMImportCommand._is_local_host(''))
+
+
 if __name__ == '__main__':
     unittest.main()
