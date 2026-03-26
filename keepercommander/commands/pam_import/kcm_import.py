@@ -593,6 +593,7 @@ class PAMProjectKCMImportCommand(Command):
         # Output or import
         if output_file:
             fd = os.open(output_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            os.fchmod(fd, 0o600)
             with os.fdopen(fd, 'w') as f:
                 json.dump(pam_json, f, indent=2)
             logging.warning('JSON written to %s (%d resources, %d users)',
