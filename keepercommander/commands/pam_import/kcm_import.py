@@ -454,8 +454,13 @@ class PAMProjectKCMImportCommand(Command):
         # Resolve DB credentials
         if docker_detect:
             container_name = kwargs.get('docker_container', 'guacamole')
-            db_host, db_port, db_name, db_user, db_password = \
+            det_host, det_port, det_name, det_user, db_password = \
                 self._detect_docker_credentials(db_type, container_name)
+            # Explicit CLI flags override docker-detected values
+            db_host = db_host or det_host
+            db_port = kwargs.get('db_port') or det_port
+            db_name = kwargs.get('db_name') or det_name
+            db_user = kwargs.get('db_user') or det_user
         else:
             db_password = self._resolve_db_password(params, kwargs)
 
