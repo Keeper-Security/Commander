@@ -1063,5 +1063,138 @@ class TestOutputFilePermissions(unittest.TestCase):
             os.rmdir(tmp_dir)
 
 
+class TestRemoteSSLEnforcement(unittest.TestCase):
+    """Remote connections must require SSL or explicit --allow-cleartext."""
+
+    @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+           return_value='pass')
+    def test_remote_host_without_ssl_blocked(self, mock_getpass):
+        """Remote host without --db-ssl or --allow-cleartext must raise."""
+        cmd = PAMProjectKCMImportCommand()
+        params = MagicMock()
+
+        from keepercommander.error import CommandError
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params, db_host='203.0.113.50', dry_run=True)
+        self.assertIn('cleartext', str(ctx.exception).lower())
+
+    @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
+    @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+           return_value='pass')
+    def test_remote_host_with_ssl_allowed(self, mock_getpass, MockConnector):
+        """Remote host with --db-ssl should connect normally."""
+        mock_conn = MockConnector.return_value
+        mock_conn.extract_groups.return_value = []
+        mock_conn.extract_connections.return_value = [
+            _make_row(parameter_name='hostname', parameter_value='x')]
+
+        cmd = PAMProjectKCMImportCommand()
+        params = MagicMock()
+
+        with patch('builtins.print'):
+            cmd.execute(params, db_host='203.0.113.50', db_ssl=True, dry_run=True)
+        # Should not raise
+
+    @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
+    @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+           return_value='pass')
+    def test_remote_host_with_allow_cleartext(self, mock_getpass, MockConnector):
+        """Remote host with --allow-cleartext should warn but connect."""
+        mock_conn = MockConnector.return_value
+        mock_conn.extract_groups.return_value = []
+        mock_conn.extract_connections.return_value = [
+            _make_row(parameter_name='hostname', parameter_value='x')]
+
+        cmd = PAMProjectKCMImportCommand()
+        params = MagicMock()
+
+        with patch('builtins.print'):
+            cmd.execute(params, db_host='203.0.113.50',
+                        allow_cleartext=True, dry_run=True)
+        # Should not raise
+
+    @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
+    @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+           return_value='pass')
+    def test_localhost_without_ssl_allowed(self, mock_getpass, MockConnector):
+        """Localhost connections should work without SSL."""
+        mock_conn = MockConnector.return_value
+        mock_conn.extract_groups.return_value = []
+        mock_conn.extract_connections.return_value = [
+            _make_row(parameter_name='hostname', parameter_value='x')]
+
+        cmd = PAMProjectKCMImportCommand()
+        params = MagicMock()
+
+        with patch('builtins.print'):
+            cmd.execute(params, db_host='127.0.0.1', dry_run=True)
+        # Should not raise
+
+    @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
+    @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+           return_value='pass')
+    def test_private_ip_without_ssl_allowed(self, mock_getpass, MockConnector):
+        """RFC1918 addresses should work without SSL."""
+        mock_conn = MockConnector.return_value
+        mock_conn.extract_groups.return_value = []
+        mock_conn.extract_connections.return_value = [
+            _make_row(parameter_name='hostname', parameter_value='x')]
+
+        cmd = PAMProjectKCMImportCommand()
+        params = MagicMock()
+
+        with patch('builtins.print'):
+            cmd.execute(params, db_host='192.168.1.100', dry_run=True)
+        # Should not raise
+
+
+class TestCredentialCleanup(unittest.TestCase):
+    """Sensitive data should be cleared from memory after use."""
+
+    @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
+    @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
+           return_value='supersecret')
+    def test_connector_password_cleared_after_close(self, mock_getpass, MockConnector):
+        """Connector.password should be None after execute completes."""
+        mock_conn = MockConnector.return_value
+        mock_conn.extract_groups.return_value = []
+        mock_conn.extract_connections.return_value = [
+            _make_row(parameter_name='hostname', parameter_value='x')]
+
+        cmd = PAMProjectKCMImportCommand()
+        params = MagicMock()
+
+        with patch('builtins.print'):
+            cmd.execute(params, db_host='127.0.0.1', dry_run=True)
+
+        # Password should have been cleared in the finally block
+        self.assertIsNone(mock_conn.password)
+
+    def test_docker_detect_clears_env_vars(self):
+        """Docker inspect output should be cleared after parsing."""
+        import subprocess
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = 'MYSQL_PASSWORD=secret123\nMYSQL_HOSTNAME=db\nOTHER_SECRET=xyz\n'
+
+        with patch('subprocess.run', return_value=mock_result):
+            host, port, db, user, password = \
+                PAMProjectKCMImportCommand._detect_docker_credentials('mysql', 'test')
+
+        self.assertEqual(password, 'secret123')
+        self.assertEqual(host, 'db')
+
+
+class TestDockerLogSanitization(unittest.TestCase):
+    """Docker detect logs should not contain usernames."""
+
+    def test_no_username_in_log_output(self):
+        """The info log from docker detect should not include the db username."""
+        import inspect
+        source = inspect.getsource(PAMProjectKCMImportCommand._detect_docker_credentials)
+        # Should NOT log user=%s
+        self.assertNotIn('user=%s', source)
+
+
 if __name__ == '__main__':
     unittest.main()

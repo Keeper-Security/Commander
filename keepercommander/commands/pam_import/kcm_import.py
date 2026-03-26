@@ -397,6 +397,9 @@ class PAMProjectKCMImportCommand(Command):
     parser.add_argument('--db-ssl', dest='db_ssl', action='store_true',
                         default=False,
                         help='Require SSL/TLS for database connection')
+    parser.add_argument('--allow-cleartext', dest='allow_cleartext',
+                        action='store_true', default=False,
+                        help='Allow unencrypted connection to remote database (not recommended)')
 
     # Import options
     parser.add_argument('--name', '-n', dest='project_name', action='store',
@@ -458,11 +461,16 @@ class PAMProjectKCMImportCommand(Command):
 
         # Connect and extract
         db_ssl = kwargs.get('db_ssl', False)
+        allow_cleartext = kwargs.get('allow_cleartext', False)
         if not db_ssl and not self._is_local_host(db_host):
+            if not allow_cleartext:
+                raise CommandError('kcm-import',
+                    f'Refusing to connect to remote host {db_host} without SSL/TLS. '
+                    f'Credentials and data would transit in cleartext. '
+                    f'Use --db-ssl to encrypt, or --allow-cleartext to override.')
             logging.warning(
                 'WARNING: Connecting to remote database %s without SSL/TLS. '
-                'Credentials and extracted data will transit in cleartext. '
-                'Use --db-ssl to encrypt the connection.', db_host)
+                'Credentials and extracted data will transit in cleartext.', db_host)
         connector = KCMDatabaseConnector(
             db_type, db_host, db_port, db_user, db_password, db_name, ssl=db_ssl
         )
@@ -480,9 +488,12 @@ class PAMProjectKCMImportCommand(Command):
             raise
         except Exception as e:
             logging.debug('Database error details: %s', e)
-            raise CommandError('kcm-import', f'Database connection failed: {type(e).__name__}')
+            raise CommandError('kcm-import', f'Database connection failed: {e.__class__.__name__}')
         finally:
             connector.close()
+            # Clear credentials from memory (best effort — Python strings are immutable)
+            connector.password = None
+            db_password = None  # noqa: F841
 
         logging.info('Extracted %d group(s), %d connection row(s)',
                      len(groups), len(connection_rows))
@@ -852,6 +863,8 @@ class PAMProjectKCMImportCommand(Command):
             if '=' in line:
                 k, v = line.split('=', 1)
                 env_vars[k] = v
+        # Clear raw docker output — contains all container env vars including secrets
+        result = None
 
         password = env_vars.get(f'{env_prefix}_PASSWORD')
         if not password:
@@ -869,8 +882,10 @@ class PAMProjectKCMImportCommand(Command):
             raise CommandError('kcm-import',
                 f'Invalid port value from Docker: {port_str}')
 
-        logging.info('Docker auto-detected: host=%s, port=%d, db=%s, user=%s',
-                     host, port, database, user)
+        logging.info('Docker auto-detected: host=%s, port=%d, db=%s',
+                     host, port, database)
+        # Clear parsed env vars — only keep what we need
+        env_vars.clear()
         return host, port, database, user, password
 
     @staticmethod
