@@ -1240,6 +1240,8 @@ class ShareReportCommand(Command):
             aram_enabled = True
             if shared_records:
                 headers = ['record_owner', 'record_uid', 'record_title', 'shared_with', 'folder_path']
+                if include_share_date:
+                    headers.append('share_date')
                 table = []
                 for uid, shared_record in shared_records.items():
                     share_events = include_share_date and aram_enabled and self.get_record_share_activities(params, uid)
@@ -1270,7 +1272,10 @@ class ShareReportCommand(Command):
 
                         share_info = '\n'.join(share_info)
 
-                    table.append([shared_record.owner, shared_record.uid, shared_record.name, share_info, folder_paths])
+                    row = [shared_record.owner, shared_record.uid, shared_record.name, share_info, folder_paths]
+                    if include_share_date:
+                        row.append(self.get_record_share_date(share_events))
+                    table.append(row)
                 if output_format != 'json':
                     headers = [field_to_title(x) for x in headers]
                 return dump_report_data(
@@ -1399,6 +1404,18 @@ class ShareReportCommand(Command):
         date_formatted = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(activity_created_ms))
 
         return '\t(shared on {0})'.format(date_formatted)
+
+    @staticmethod
+    def get_record_share_date(share_events):
+        if not share_events:
+            return ''
+        share_types = ('share', 'record_share_outside_user', 'folder_add_record')
+        relevant = [e for e in share_events if e.get('audit_event_type') in share_types]
+        if not relevant:
+            return ''
+        earliest = min(relevant, key=lambda e: e['created'])
+        created = earliest['created']
+        return time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(created // 1000))
 
 
 class RecordPermissionCommand(Command):
