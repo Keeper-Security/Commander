@@ -1200,14 +1200,19 @@ class TestDockerLogSanitization(unittest.TestCase):
 # Live E2E tests — connect to real KCM PostgreSQL database
 ###############################################################################
 
-# Connection details (from guacamole-postgres container)
-_LIVE_DB_HOST = '192.168.32.10'
-_LIVE_DB_PORT = 5432
-_LIVE_DB_NAME = 'guacamole_db'
-_LIVE_DB_USER = 'guacamole_user'
-_LIVE_DB_PASS = 'x3N8coZLkpsOStt1IyWQOOnvQ55mtOZtul7H5wsxM8c='
-_LIVE_DB_TYPE = 'postgresql'
-_LIVE_DOCKER_CONTAINER = 'guacamole-postgres'
+# Connection details from environment variables (no hardcoded credentials).
+# Set these env vars to enable live tests:
+#   KCM_TEST_DB_HOST, KCM_TEST_DB_PORT, KCM_TEST_DB_NAME,
+#   KCM_TEST_DB_USER, KCM_TEST_DB_PASS, KCM_TEST_DB_TYPE,
+#   KCM_TEST_DOCKER_CONTAINER
+# Or use --docker-detect to auto-populate from a running container.
+_LIVE_DB_HOST = os.environ.get('KCM_TEST_DB_HOST', '')
+_LIVE_DB_PORT = int(os.environ.get('KCM_TEST_DB_PORT', '5432'))
+_LIVE_DB_NAME = os.environ.get('KCM_TEST_DB_NAME', 'guacamole_db')
+_LIVE_DB_USER = os.environ.get('KCM_TEST_DB_USER', 'guacamole_user')
+_LIVE_DB_PASS = os.environ.get('KCM_TEST_DB_PASS', '')
+_LIVE_DB_TYPE = os.environ.get('KCM_TEST_DB_TYPE', 'postgresql')
+_LIVE_DOCKER_CONTAINER = os.environ.get('KCM_TEST_DOCKER_CONTAINER', 'guacamole')
 
 
 def _db_available():
