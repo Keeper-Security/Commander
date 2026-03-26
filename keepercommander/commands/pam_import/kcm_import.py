@@ -623,12 +623,8 @@ class PAMProjectKCMImportCommand(Command):
                             num_resources, num_users)
             return
 
-        # Gateway selection (only for new project imports, not extend mode)
+        # Gateway selection
         gateway_arg = kwargs.get('gateway') or ''
-        if not config_uid:
-            resolved_config = self._resolve_gateway(params, gateway_arg)
-            if resolved_config:
-                config_uid = resolved_config
 
         # Write to temp file and delegate to import/extend
         tmp_fd, tmp_path = tempfile.mkstemp(suffix='.json')
@@ -637,6 +633,7 @@ class PAMProjectKCMImportCommand(Command):
                 json.dump(pam_json, tmp, indent=2)
 
             if config_uid:
+                # Extend mode: user explicitly passed --config
                 from .extend import PAMProjectExtendCommand
                 cmd = PAMProjectExtendCommand()
                 cmd.execute(params,
@@ -644,6 +641,11 @@ class PAMProjectKCMImportCommand(Command):
                             file_name=tmp_path,
                             dry_run=False)
             else:
+                # New project: always use import path (creates folders,
+                # KSM app, gateway, PAM config, then records).
+                # Gateway selection is handled interactively by the
+                # import engine; skip _resolve_gateway to avoid
+                # accidentally switching to extend mode.
                 from .edit import PAMProjectImportCommand
                 cmd = PAMProjectImportCommand()
                 cmd.execute(params,
