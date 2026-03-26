@@ -10,10 +10,17 @@
 #
 
 import argparse
+import datetime
+import http.client
 import logging
 import os
+import socket
+import ssl
+import struct
 import sys
-from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes
+import time
+from typing import List, Optional, Tuple
+from keeper_secrets_manager_core.utils import bytes_to_base64, base64_to_bytes, url_safe_str_to_bytes
 
 from .base import Command, GroupCommand, dump_report_data, RecordMixin
 from .tunnel.port_forward.TunnelGraph import TunnelDAG
@@ -650,12 +657,15 @@ class PAMTunnelStartCommand(Command):
 
 
 class PAMTunnelDiagnoseCommand(Command):
-    pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel diagnose', 
-                                           description='Diagnose network connectivity to krelay server. '
-                                                       'Tests DNS resolution, TCP/UDP connectivity, AWS infrastructure, '
-                                                       'and WebRTC peer connection setup for IT troubleshooting.')
-    pam_cmd_parser.add_argument('record', type=str, action='store', 
-                                help='The Record UID of the PAM resource record to test connectivity for')
+    # ── parser ────────────────────────────────────────────────────────────────
+    pam_cmd_parser = argparse.ArgumentParser(
+        prog='pam tunnel diagnose',
+        description='Diagnose network connectivity for KeeperPAM. '
+                    'When run without a record the command tests connectivity using only the '
+                    'logged-in session (krelay server, HTTPS API, WebSocket, UDP port range). '
+                    'When a record is supplied the full WebRTC peer connection test is also run.')
+    pam_cmd_parser.add_argument('record', type=str, nargs='?', default=None,
+                                help='Optional: Record UID of a PAM resource for the full WebRTC peer connection test')
     pam_cmd_parser.add_argument('--timeout', '-t', required=False, dest='timeout', action='store',
                                 type=int, default=30,
                                 help='Test timeout in seconds (default: 30)')
@@ -665,134 +675,657 @@ class PAMTunnelDiagnoseCommand(Command):
                                 choices=['table', 'json'], default='table',
                                 help='Output format: table (human-readable) or json (machine-readable)')
     pam_cmd_parser.add_argument('--test', required=False, dest='test_filter', action='store',
-                                help='Comma-separated list of specific tests to run. Available: '
+                                help='Comma-separated list of specific WebRTC tests to run. Available: '
                                      'dns_resolution,aws_connectivity,tcp_connectivity,udp_binding,'
                                      'ice_configuration,webrtc_peer_connection')
 
     def get_parser(self):
         return PAMTunnelDiagnoseCommand.pam_cmd_parser
 
+    # ── ANSI helpers ──────────────────────────────────────────────────────────
+    @staticmethod
+    def _use_color() -> bool:
+        return sys.stdout.isatty() and os.environ.get('NO_COLOR') is None
+
+    @staticmethod
+    def _c(code: str, text: str) -> str:
+        return f'\033[{code}m{text}\033[0m' if PAMTunnelDiagnoseCommand._use_color() else text
+
+    @classmethod
+    def _green(cls, t: str) -> str:  return cls._c('92', t)
+    @classmethod
+    def _bright(cls, t: str) -> str: return cls._c('1;92', t)
+    @classmethod
+    def _dim(cls, t: str) -> str:    return cls._c('2;32', t)
+    @classmethod
+    def _red(cls, t: str) -> str:    return cls._c('1;91', t)
+    @classmethod
+    def _check(cls) -> str:          return cls._bright('\u2713')
+    @classmethod
+    def _cross(cls) -> str:          return cls._red('\u2717')
+    @classmethod
+    def _bullet(cls) -> str:         return cls._bright('\u25ba')
+    @classmethod
+    def _sep(cls, w: int = 76) -> str:   return cls._dim('\u2500' * w)
+    @classmethod
+    def _dsep(cls, w: int = 78) -> str:  return cls._dim('\u2550' * w)
+
+    # ── output helpers ────────────────────────────────────────────────────────
+    _W = 80  # output width
+
+    @classmethod
+    def _print_header(cls):
+        title = 'KeeperPAM  \u00b7  Gateway Network Readiness Tester'
+        inner = cls._W - 2
+        pad_l = (inner - len(title)) // 2
+        pad_r = inner - len(title) - pad_l
+        print(cls._bright('\u2554' + '\u2550' * inner + '\u2557'))
+        print(cls._bright('\u2551' + ' ' * pad_l + title + ' ' * pad_r + '\u2551'))
+        print(cls._bright('\u255a' + '\u2550' * inner + '\u255d'))
+
+    @classmethod
+    def _print_result(cls, name: str, passed: bool, detail: str, ms: int, indent: int = 4):
+        icon = cls._check() if passed else cls._cross()
+        ms_str = cls._dim(f'  {ms}ms')
+        body = f'{cls._green(name)}  \u00b7  {cls._green(detail)}' if detail else cls._green(name)
+        print(f'{" " * indent}{icon}  {body}{ms_str}')
+
+    # ── STUN ──────────────────────────────────────────────────────────────────
+    _MAGIC_COOKIE = 0x2112A442
+    _STUN_PORT = 3478
+    _UDP_SAMPLE_PORTS = [49152, 50000, 52000, 55000, 58000, 61000, 63000, 65535]
+
+    @classmethod
+    def _stun_request(cls, msg_type: int = 0x0001) -> bytes:
+        return struct.pack('!HHI12s', msg_type, 0, cls._MAGIC_COOKIE, os.urandom(12))
+
+    @classmethod
+    def _recv_stun(cls, sock: socket.socket, timeout: float = 5.0) -> bytes:
+        buf = b''
+        deadline = time.monotonic() + timeout
+        try:
+            if sock.type == socket.SOCK_DGRAM:
+                sock.settimeout(max(0.1, deadline - time.monotonic()))
+                buf, _ = sock.recvfrom(2048)
+            else:
+                while len(buf) < 20:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    sock.settimeout(remaining)
+                    chunk = sock.recv(2048)
+                    if not chunk:
+                        break
+                    buf += chunk
+        except (socket.timeout, OSError):
+            pass
+        return buf
+
+    @classmethod
+    def _parse_stun(cls, data: bytes) -> dict:
+        out: dict = {}
+        if len(data) < 20:
+            return out
+        msg_type, _msg_len, magic = struct.unpack('!HHI', data[:8])
+        if magic != cls._MAGIC_COOKIE:
+            return out
+        msg_class = ((msg_type >> 7) & 0x2) | ((msg_type >> 4) & 0x1)
+        out['is_success'] = msg_class == 2
+        out['is_error'] = msg_class == 3
+        offset = 20
+        while offset + 4 <= len(data):
+            attr_type, attr_len = struct.unpack('!HH', data[offset:offset + 4])
+            offset += 4
+            attr = data[offset:offset + attr_len]
+            if attr_type == 0x0020 and len(attr) >= 8 and attr[1] == 0x01:
+                xip = struct.unpack('!I', attr[4:8])[0] ^ cls._MAGIC_COOKIE
+                out['ext_ip'] = socket.inet_ntoa(struct.pack('!I', xip))
+            elif attr_type == 0x0001 and len(attr) >= 8 and attr[1] == 0x01:
+                out.setdefault('ext_ip', socket.inet_ntoa(attr[4:8]))
+            elif attr_type == 0x0009 and len(attr) >= 4:
+                out['error_code'] = (attr[2] & 0x07) * 100 + attr[3]
+            offset += (attr_len + 3) & ~3
+        return out
+
+    # ── individual Python-side tests ──────────────────────────────────────────
+    @classmethod
+    def _test_https(cls, hostname: str, port: int = 443) -> Tuple[bool, str, int]:
+        """Returns (passed, detail, ms)."""
+        t0 = time.monotonic()
+        conn = None
+        try:
+            ctx = ssl.create_default_context()
+            conn = http.client.HTTPSConnection(hostname, port=port, context=ctx, timeout=10)
+            conn.request('GET', '/', headers={'User-Agent': 'keeper-pam-diagnose/1.0'})
+            resp = conn.getresponse()
+            ms = int((time.monotonic() - t0) * 1000)
+            return 100 <= resp.status < 600, f'HTTP {resp.status}  (reachable)', ms
+        except Exception as exc:
+            return False, str(exc)[:60], int((time.monotonic() - t0) * 1000)
+        finally:
+            if conn:
+                try: conn.close()
+                except Exception: pass
+
+    @classmethod
+    def _test_websocket(cls, hostname: str, port: int = 443) -> Tuple[bool, str, int]:
+        """HTTP Upgrade probe — any 4xx means the server is reachable."""
+        t0 = time.monotonic()
+        conn = None
+        try:
+            ctx = ssl.create_default_context()
+            conn = http.client.HTTPSConnection(hostname, port=port, context=ctx, timeout=10)
+            conn.request('GET', '/', headers={
+                'Upgrade': 'websocket',
+                'Connection': 'Upgrade',
+                'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+                'Sec-WebSocket-Version': '13',
+                'User-Agent': 'keeper-pam-diagnose/1.0',
+            })
+            resp = conn.getresponse()
+            ms = int((time.monotonic() - t0) * 1000)
+            return 100 <= resp.status < 600, f'HTTP {resp.status}', ms
+        except Exception as exc:
+            return False, str(exc)[:60], int((time.monotonic() - t0) * 1000)
+        finally:
+            if conn:
+                try: conn.close()
+                except Exception: pass
+
+    @classmethod
+    def _test_tcp_stun(cls, hostname: str) -> Tuple[bool, str, int, Optional[str]]:
+        """Returns (passed, detail, ms, ext_ip)."""
+        t0 = time.monotonic()
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(10)
+            sock.connect((hostname, cls._STUN_PORT))
+            sock.sendall(cls._stun_request(0x0001))
+            parsed = cls._parse_stun(cls._recv_stun(sock))
+            ms = int((time.monotonic() - t0) * 1000)
+            ext_ip = parsed.get('ext_ip')
+            detail = f'external IP  {ext_ip}' if ext_ip else 'TCP connected'
+            return True, detail, ms, ext_ip
+        except Exception as exc:
+            return False, str(exc)[:60], int((time.monotonic() - t0) * 1000), None
+        finally:
+            if sock:
+                try: sock.close()
+                except Exception: pass
+
+    @classmethod
+    def _test_udp_stun(cls, hostname: str) -> Tuple[bool, str, int, Optional[str]]:
+        """Returns (passed, detail, ms, ext_ip)."""
+        t0 = time.monotonic()
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(5)
+            sock.sendto(cls._stun_request(0x0001), (hostname, cls._STUN_PORT))
+            parsed = cls._parse_stun(cls._recv_stun(sock))
+            ms = int((time.monotonic() - t0) * 1000)
+            ext_ip = parsed.get('ext_ip')
+            if ext_ip:
+                return True, f'external IP  {ext_ip}', ms, ext_ip
+            return False, 'no STUN response', ms, None
+        except Exception as exc:
+            return False, str(exc)[:60], int((time.monotonic() - t0) * 1000), None
+        finally:
+            if sock:
+                try: sock.close()
+                except Exception: pass
+
+    @classmethod
+    def _test_turn(cls, hostname: str) -> Tuple[bool, str, int]:
+        """Send unauthenticated TURN Allocate; expect 401 = reachable."""
+        t0 = time.monotonic()
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(10)
+            sock.connect((hostname, cls._STUN_PORT))
+            sock.sendall(cls._stun_request(0x0003))  # Allocate
+            parsed = cls._parse_stun(cls._recv_stun(sock))
+            ms = int((time.monotonic() - t0) * 1000)
+            if parsed.get('is_error') and parsed.get('error_code') == 401:
+                detail = 'reachable  \u00b7  auth required'
+            elif parsed.get('is_success') or parsed.get('is_error'):
+                detail = 'reachable'
+            else:
+                detail = 'TCP connected'
+            return True, detail, ms
+        except Exception as exc:
+            return False, str(exc)[:60], int((time.monotonic() - t0) * 1000)
+        finally:
+            if sock:
+                try: sock.close()
+                except Exception: pass
+
+    @classmethod
+    def _test_udp_port(cls, ip: str, port: int, timeout: float = 1.5) -> Tuple[bool, int]:
+        """Returns (reachable, ms). Timeout = no ICMP unreachable = assumed open."""
+        import errno as _errno
+        t0 = time.monotonic()
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(timeout)
+            sock.sendto(cls._stun_request(0x0001), (ip, port))
+            try:
+                sock.recvfrom(512)
+            except socket.timeout:
+                pass  # no response = assume open
+            except OSError as oserr:
+                ms = int((time.monotonic() - t0) * 1000)
+                if oserr.errno in (_errno.ECONNREFUSED, _errno.ENETUNREACH, _errno.EHOSTUNREACH):
+                    return False, ms
+            return True, int((time.monotonic() - t0) * 1000)
+        except Exception:
+            return False, int((time.monotonic() - t0) * 1000)
+        finally:
+            if sock:
+                try: sock.close()
+                except Exception: pass
+
+    # ── execute ───────────────────────────────────────────────────────────────
     def execute(self, params, **kwargs):
         record_name = kwargs.get('record')
         timeout = kwargs.get('timeout', 30)
         verbose = kwargs.get('verbose', False)
         output_format = kwargs.get('format', 'table')
         test_filter = kwargs.get('test_filter')
-        
-        if not record_name:
-            raise CommandError('pam tunnel diagnose', '"record" parameter is required.')
 
-        # Check for Rust WebRTC library availability
-        # Logger initialization is handled by get_or_create_tube_registry()
+        server = params.server  # e.g. "keepersecurity.com"
+        krelay_server = os.environ.get('KRELAY_URL') or f'krelay.{server}'
+        connect_host = f'connect.{server}'
+
+        # ── header ────────────────────────────────────────────────────────────
+        self._print_header()
+        print()
+        now = datetime.datetime.utcnow()
+        region_label = 'US' if server == 'keepersecurity.com' else server.split('.')[0].upper()
+        print(self._green(f'  Region  {region_label}  \u00b7  {server}'))
+        print(self._green(f'  Date    {now.strftime("%Y-%m-%d  %H:%M")} UTC'))
+        if record_name:
+            print(self._green(f'  Record  {record_name}'))
+        print()
+
+        t_overall_start = time.monotonic()
+        all_passed: List[bool] = []
+        blocked_names: List[str] = []
+        public_ip: Optional[str] = None
+
+        def _record(name: str, passed: bool, detail: str, ms: int):
+            all_passed.append(passed)
+            if not passed:
+                blocked_names.append(name)
+            self._print_result(name, passed, detail, ms)
+
+        # ── section 1: DNS & cloud connectivity ───────────────────────────────
+        print(f'{self._bullet()}  {self._bright("DNS & Cloud Connectivity")}')
+        print(f'  {self._sep()}')
+
+        # DNS
+        t0 = time.monotonic()
+        try:
+            infos = socket.getaddrinfo(server, None, socket.AF_INET)
+            ips = list(dict.fromkeys(a[4][0] for a in infos))
+            ms = int((time.monotonic() - t0) * 1000)
+            extra = f'(+{len(ips) - 1} addr)' if len(ips) > 1 else ''
+            _record(f'DNS  {server}', True, f'\u2192  {ips[0]}  {extra}'.strip(), ms)
+        except Exception as exc:
+            _record(f'DNS  {server}', False, str(exc)[:60], int((time.monotonic() - t0) * 1000))
+
+        passed, detail, ms = self._test_https(server)
+        _record(f'HTTPS  {server}:443', passed, detail, ms)
+
+        passed, detail, ms = self._test_websocket(connect_host)
+        _record(f'WebSocket  {connect_host}:443', passed, detail, ms)
+
+        print()
+
+        # ── section 2: STUN / TURN ────────────────────────────────────────────
+        print(f'{self._bullet()}  {self._bright("STUN / TURN")}  \u00b7  {self._green(krelay_server)}')
+        print(f'  {self._sep()}')
+
+        passed, detail, ms, ext_ip = self._test_tcp_stun(krelay_server)
+        _record(f'TCP STUN  {krelay_server}:{self._STUN_PORT}', passed, detail, ms)
+        if ext_ip:
+            public_ip = ext_ip
+
+        passed, detail, ms, ext_ip = self._test_udp_stun(krelay_server)
+        _record(f'UDP STUN  {krelay_server}:{self._STUN_PORT}', passed, detail, ms)
+        if ext_ip and not public_ip:
+            public_ip = ext_ip
+
+        passed, detail, ms = self._test_turn(krelay_server)
+        _record(f'TURN relay  {krelay_server}:{self._STUN_PORT}', passed, detail, ms)
+
+        print()
+
+        # ── section 3: WebRTC media ports ─────────────────────────────────────
+        try:
+            krelay_ip = socket.gethostbyname(krelay_server)
+        except Exception:
+            krelay_ip = krelay_server
+
+        udp_range_label = "UDP 49152\u201365535"
+        print(f'{self._bullet()}  {self._bright("WebRTC Media Ports")}  \u00b7  {self._green(udp_range_label)}')
+        print(f'  {self._sep()}')
+
+        udp_timeout = min(float(timeout), 1.5)
+        port_results: List[Tuple[int, bool, int]] = []
+        for port in self._UDP_SAMPLE_PORTS:
+            ok, ms = self._test_udp_port(krelay_ip, port, timeout=udp_timeout)
+            port_results.append((port, ok, ms))
+            all_passed.append(ok)
+            if not ok:
+                blocked_names.append(f'UDP:{port}')
+
+        row = '    '
+        for port, ok, _ in port_results:
+            row += f'{self._check() if ok else self._cross()} {self._green(str(port))}   '
+        print(row.rstrip())
+
+        passed_ports = sum(1 for _, ok, _ in port_results if ok)
+        print(f'    {self._check()}  {self._green(str(passed_ports))}/{len(port_results)} sampled ports reachable')
+        print()
+
+        # ── section 4: WebRTC connectivity (Rust library) ─────────────────────
         tube_registry = get_or_create_tube_registry(params)
-        if not tube_registry:
-            print(f"{bcolors.FAIL}This command requires the Rust WebRTC library (keeper_pam_webrtc_rs).{bcolors.ENDC}")
-            print(f"{bcolors.OKBLUE}Please ensure the keeper_pam_webrtc_rs module is installed and available.{bcolors.ENDC}")
-            return 1
+        rust_results = None
 
-        # Resolve and validate the record
-        api.sync_down(params)
-        record = RecordMixin.resolve_single_record(params, record_name)
-        if not record:
-            print(f"{bcolors.FAIL}Record '{record_name}' not found.{bcolors.ENDC}")
-            return 1
-        if not isinstance(record, vault.TypedRecord):
-            print(f"{bcolors.FAIL}Record '{record_name}' cannot be used for tunneling.{bcolors.ENDC}")
-            return 1
+        if tube_registry:
+            print(f'{self._bullet()}  {self._bright("WebRTC Connectivity")}  \u00b7  {self._green("STUN/TURN/ICE/Peer")}')
+            print(f'  {self._sep()}')
 
-        record_uid = record.record_uid
-        record_type = record.record_type
-        if record_type not in ("pamMachine pamDatabase pamDirectory pamNetworkConfiguration pamAwsConfiguration "
-                               "pamRemoteBrowser pamAzureConfiguration").split():
-            print(f"{bcolors.FAIL}Record type '{record_type}' is not supported for tunneling.{bcolors.ENDC}")
-            print(f"Supported types: pamMachine, pamDatabase, pamDirectory, pamRemoteBrowser, "
-                  f"pamNetworkConfiguration, pamAwsConfiguration, pamAzureConfiguration")
-            return 1
+            # Resolve optional record for pam_config_uid
+            if record_name:
+                try:
+                    api.sync_down(params)
+                    record = RecordMixin.resolve_single_record(params, record_name)
+                    if record and isinstance(record, vault.TypedRecord):
+                        encrypted_session_token, encrypted_transmission_key, _ = get_keeper_tokens(params)
+                        pam_config_uid = get_config_uid(params, encrypted_session_token,
+                                                        encrypted_transmission_key, record.record_uid)
+                        if not pam_config_uid:
+                            print(f'    {self._cross()}  {self._red(f"No PAM config found for record {record_name}")}')
+                except Exception as exc:
+                    logging.debug(f'Record lookup failed: {exc}', exc_info=True)
 
-        # Get the krelay server from the PAM configuration
-        try:
-            encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
-            pam_config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
-            
-            if not pam_config_uid:
-                print(f"{bcolors.FAIL}No PAM Configuration found for record '{record_name}'.{bcolors.ENDC}")
-                print(f"Please configure the record with: {bcolors.OKBLUE}pam tunnel edit {record_uid} --config [ConfigUID]{bcolors.ENDC}")
-                return 1
+            # Get TURN credentials
+            turn_username = turn_password = None
+            try:
+                from .pam.router_helper import router_get_relay_access_creds
+                creds = router_get_relay_access_creds(params, expire_sec=60000000)
+                turn_username = creds.username
+                turn_password = creds.password
+            except Exception as exc:
+                logging.debug(f'Could not get TURN credentials: {exc}', exc_info=True)
 
-            # The krelay server hostname is constructed from the params.server
-            krelay_server = f"krelay.{params.server}"
-            
-        except Exception as e:
-            print(f"{bcolors.FAIL}Failed to get PAM configuration: {e}{bcolors.ENDC}")
-            return 1
-
-        # Build test settings
-        settings = {
-            "use_turn": True,
-            "turn_only": False
-        }
-
-        # Parse test filter if provided
-        if test_filter:
-            allowed_tests = {'dns_resolution', 'aws_connectivity', 'tcp_connectivity', 
+            settings = {'use_turn': True, 'turn_only': False}
+            if test_filter:
+                allowed = {'dns_resolution', 'aws_connectivity', 'tcp_connectivity',
                            'udp_binding', 'ice_configuration', 'webrtc_peer_connection'}
-            requested_tests = set(test.strip() for test in test_filter.split(','))
-            invalid_tests = requested_tests - allowed_tests
-            if invalid_tests:
-                print(f"{bcolors.FAIL}Invalid test names: {', '.join(invalid_tests)}{bcolors.ENDC}")
-                print(f"Available tests: {', '.join(sorted(allowed_tests))}")
-                return 1
-            settings["test_filter"] = list(requested_tests)
-
-        print(f"{bcolors.OKBLUE}Starting network connectivity diagnosis for krelay server: {krelay_server}{bcolors.ENDC}")
-        print(f"Record: {record.title} ({record_uid})")
-        print(f"Timeout: {timeout}s")
-        print("")
-
-        # Get TURN credentials for the connectivity test
-        try:
-            webrtc_settings = create_rust_webrtc_settings(
-                params, host="127.0.0.1", port=0, 
-                target_host="test", target_port=22, 
-                socks=False, nonce=os.urandom(32)
-            )
-            turn_username = webrtc_settings.get("turn_username")
-            turn_password = webrtc_settings.get("turn_password")
-        except Exception as e:
-            print(f"{bcolors.WARNING}Could not get TURN credentials: {e}{bcolors.ENDC}")
-            turn_username = None
-            turn_password = None
-
-        # Run the connectivity test
-        try:
-            results = tube_registry.test_webrtc_connectivity(
-                krelay_server=krelay_server,
-                settings=settings,
-                timeout_seconds=timeout,
-                username=turn_username,
-                password=turn_password
-            )
-            
-            if output_format == 'json':
-                import json
-                print(json.dumps(results, indent=2))
-                return 0
-            else:
-                # Use the built-in formatter for human-readable output
-                formatted_output = tube_registry.format_connectivity_results(results, detailed=verbose)
-                print(formatted_output)
-                
-                # Return appropriate exit code
-                overall_result = results.get('overall_result', {})
-                if overall_result.get('success', False):
-                    return 0
-                else:
+                requested = {t.strip() for t in test_filter.split(',')}
+                invalid = requested - allowed
+                if invalid:
+                    print(f"{bcolors.FAIL}Invalid test names: {', '.join(invalid)}{bcolors.ENDC}")
                     return 1
-                    
-        except Exception as e:
-            print(f"{bcolors.FAIL}Network connectivity test failed: {e}{bcolors.ENDC}")
-            logging.debug(f"Full error details: {e}", exc_info=True)
-            return 1
+                settings['test_filter'] = list(requested)
+
+            try:
+                rust_results = tube_registry.test_webrtc_connectivity(
+                    krelay_server=krelay_server,
+                    settings=settings,
+                    timeout_seconds=timeout,
+                    username=turn_username,
+                    password=turn_password,
+                )
+                if output_format == 'json':
+                    import json
+                    print(json.dumps(rust_results, indent=2))
+                    return 0
+
+                # Fold Rust test results into the unified pass/fail accounting
+                for test in rust_results.get('test_results', []):
+                    name = test.get('test_name', '?')
+                    ok = test.get('success', False)
+                    ms = int(test.get('duration_ms', 0))
+                    msg = test.get('message', '')
+                    _record(name.replace('_', ' ').title(), ok, msg, ms)
+
+            except Exception as exc:
+                print(f'    {self._cross()}  {self._red(f"WebRTC test failed: {exc}")}')
+                all_passed.append(False)
+                blocked_names.append('webrtc')
+                logging.debug('WebRTC test error', exc_info=True)
+
+            print()
+        else:
+            logging.debug('keeper_pam_webrtc_rs not available; skipping WebRTC section')
+
+        # ── section 5: PAM configuration graph (record-specific) ────────────
+        if record_name:
+            print(f'{self._bullet()}  {self._bright("PAM Configuration")}  \u00b7  {self._green(record_name)}')
+            print(f'  {self._sep()}')
+
+            try:
+                # Ensure vault is synced so the config record is in the local cache
+                api.sync_down(params)
+                record_obj = RecordMixin.resolve_single_record(params, record_name)
+                record_uid = record_obj.record_uid if record_obj else record_name
+
+                _supported_types = ('pamMachine', 'pamDatabase', 'pamDirectory', 'pamRemoteBrowser')
+                rec_type_early = record_obj.record_type if record_obj and isinstance(record_obj, vault.TypedRecord) else None
+                if rec_type_early and rec_type_early not in _supported_types:
+                    print(f'    {self._cross()}  {self._red("Record type")}  {self._green(rec_type_early)}  '
+                          f'{self._red("is not a PAM resource — skipping configuration checks")}')
+                    print(f'    {self._dim("Supported types: " + ", ".join(_supported_types))}')
+                    print()
+                    # Skip to Technical Details
+                    raise StopIteration
+
+                # 1. Config linked — find the PAM config that owns this record
+                enc_session_token, enc_transmission_key, _tx_key = get_keeper_tokens(params)
+                config_uid = get_config_uid(params, enc_session_token, enc_transmission_key, record_uid)
+                if config_uid:
+                    _record('Config linked', True, config_uid, 0)
+                else:
+                    _record('Config linked', False, 'record not found in any PAM config graph', 0)
+
+                if config_uid:
+                    # 2. DAG loaded — fresh tokens required; TunnelDAG's Connection
+                    #    needs its own key pair separate from the get_config_uid call,
+                    #    and transmission_key must be passed so it can decrypt the response
+                    enc_st2, enc_tk2, tx_key2 = get_keeper_tokens(params)
+                    tdag = TunnelDAG(params, enc_st2, enc_tk2, config_uid, is_config=True,
+                                     transmission_key=tx_key2)
+                    dag_ok = tdag.linking_dag.has_graph
+                    vertex_count = len(tdag.linking_dag._vertices) if dag_ok else 0
+                    _record('DAG loaded', dag_ok,
+                            '{} vertices'.format(vertex_count) if dag_ok else 'graph empty — config may be unconfigured',
+                            0)
+
+                    if dag_ok:
+                        # 3. Resource linked — LINK edge from config → resource present
+                        linked = tdag.resource_belongs_to_config(record_uid)
+                        _record('Resource linked', linked,
+                                'LINK edge present' if linked else 'resource not linked to config', 0)
+
+                        rec_type = record_obj.record_type if record_obj else ''
+                        is_rbi = rec_type == 'pamRemoteBrowser'
+
+                        # 4. Config-level settings
+                        con_config = tdag.check_tunneling_enabled_config(enable_connections=True)
+                        _record('Connections at config', con_config,
+                                'connections enabled' if con_config else 'connections disabled at config', 0)
+
+                        if not is_rbi:
+                            tun_config = tdag.check_tunneling_enabled_config(enable_tunneling=True)
+                            _record('Tunneling at config', tun_config,
+                                    'portForwards enabled' if tun_config else 'portForwards disabled at config', 0)
+
+                        # 5. Resource-level settings
+                        con_resource = tdag.check_if_resource_allowed(record_uid, 'connections')
+                        _record('Connections at resource', con_resource,
+                                'connections enabled' if con_resource else 'connections disabled at resource', 0)
+
+                        if not is_rbi:
+                            tun_resource = tdag.check_if_resource_allowed(record_uid, 'portForwards')
+                            _record('Tunneling at resource', tun_resource,
+                                    'portForwards enabled' if tun_resource else 'portForwards disabled at resource', 0)
+
+                        # verbose: dump allowedSettings for config and resource
+                        if verbose:
+                            from .tunnel.port_forward.TunnelGraph import get_vertex_content
+                            _setting_keys = [
+                                ('connections',            'Connections'),
+                                ('portForwards',           'Port Forwards'),
+                                ('rotation',               'Rotation'),
+                                ('sessionRecording',       'Session Recording'),
+                                ('typescriptRecording',    'Typescript Recording'),
+                                ('remoteBrowserIsolation', 'Remote Browser Isolation'),
+                            ]
+                            config_vertex   = tdag.linking_dag.get_vertex(tdag.record.record_uid)
+                            resource_vertex = tdag.linking_dag.get_vertex(record_uid)
+                            cfg_content     = get_vertex_content(config_vertex) or {}
+                            res_content     = get_vertex_content(resource_vertex) or {}
+                            cfg_settings    = cfg_content.get('allowedSettings', {})
+                            res_settings    = res_content.get('allowedSettings', {})
+
+                            _yes = self._bright('on ')
+                            _no  = self._dim('off')
+                            _def = self._dim('---')
+
+                            def _fmt_bool(d, key):
+                                v = d.get(key)
+                                if v is True:  return _yes
+                                if v is False: return _no
+                                return _def
+
+                            print()
+                            print(f'      {self._dim("DAG allowedSettings"):<28}'
+                                  f'{self._dim("Config"):<12}{self._dim("Resource")}')
+                            print(f'      {self._dim("-" * 52)}')
+                            for key, label in _setting_keys:
+                                print(f'      {self._green(label):<28}'
+                                      f'{_fmt_bool(cfg_settings, key):<12}'
+                                      f'{_fmt_bool(res_settings, key)}')
+
+                            # typed field on the vault record — field name differs by record type
+                            def _val(v):
+                                if v is None:  return self._dim('---')
+                                if v is True:  return self._bright('true')
+                                if v is False: return self._dim('false')
+                                return self._green(str(v))
+
+                            print()
+                            if is_rbi:
+                                rbs_field = record_obj.get_typed_field('pamRemoteBrowserSettings') if record_obj else None
+                                rbs = {}
+                                if rbs_field and rbs_field.value:
+                                    rbs = rbs_field.value[0] if isinstance(rbs_field.value[0], dict) else {}
+                                cn = rbs.get('connection', {}) or {}
+                                print(f'      {self._dim("Record pamRemoteBrowserSettings")}')
+                                print(f'      {self._dim("-" * 52)}')
+                                print(f'      {self._green("connection.protocol"):<36}{_val(cn.get("protocol"))}')
+                                print(f'      {self._green("connection.httpCredentialsUid"):<36}{_val(cn.get("httpCredentialsUid") or None)}')
+                                print(f'      {self._green("connection.recordingIncludeKeys"):<36}{_val(cn.get("recordingIncludeKeys"))}')
+                            else:
+                                pam_settings_field = record_obj.get_typed_field('pamSettings') if record_obj else None
+                                ps = {}
+                                if pam_settings_field and pam_settings_field.value:
+                                    ps = pam_settings_field.value[0] if isinstance(pam_settings_field.value[0], dict) else {}
+                                pf = ps.get('portForward', {}) or {}
+                                cn = ps.get('connection', {}) or {}
+                                print(f'      {self._dim("Record pamSettings")}')
+                                print(f'      {self._dim("-" * 52)}')
+                                print(f'      {self._green("portForward.port"):<36}{_val(pf.get("port"))}')
+                                print(f'      {self._green("connection.port"):<36}{_val(cn.get("port"))}')
+                                print(f'      {self._green("connection.protocol"):<36}{_val(cn.get("protocol"))}')
+                                print(f'      {self._green("connection.allowKeeperDBProxy"):<36}{_val(cn.get("allowKeeperDBProxy"))}')
+                                print(f'      {self._green("connection.recordingIncludeKeys"):<36}{_val(cn.get("recordingIncludeKeys"))}')
+                                print(f'      {self._green("allowSupplyHost"):<36}{_val(ps.get("allowSupplyHost"))}')
+                                if ps.get('configUid'):
+                                    print(f'      {self._green("configUid"):<36}{_val(ps.get("configUid"))}')
+
+                # 6. Gateway registered — a controller UID is associated with this config
+                gateway_uid = get_gateway_uid_from_record(params, vault, record_uid)
+                if gateway_uid:
+                    _record('Gateway registered', True, gateway_uid, 0)
+                else:
+                    _record('Gateway registered', False, 'no gateway registered for this config', 0)
+
+                # 7. Gateway online — that gateway is currently connected to krouter
+                if gateway_uid:
+                    try:
+                        from .pam.router_helper import router_get_connected_gateways
+                        online_controllers = router_get_connected_gateways(params)
+                        if online_controllers:
+                            gw_bytes = url_safe_str_to_bytes(gateway_uid)
+                            connected_uids = [c.controllerUid for c in online_controllers.controllers]
+                            gw_online = gw_bytes in connected_uids
+                            _record('Gateway online', gw_online,
+                                    'connected to krouter' if gw_online else 'gateway offline or unreachable', 0)
+                        else:
+                            _record('Gateway online', False, 'could not retrieve connected gateways', 0)
+                    except Exception as exc:
+                        _record('Gateway online', False, str(exc)[:60], 0)
+
+            except StopIteration:
+                pass  # unsupported record type — already printed, skip gracefully
+            except Exception as exc:
+                print(f'    {self._cross()}  {self._red("PAM graph check failed: " + str(exc)[:70])}')
+                all_passed.append(False)
+                blocked_names.append('pam-graph')
+                logging.debug('PAM graph check error', exc_info=True)
+
+            print()
+
+        # ── section 6: technical details ──────────────────────────────────────
+        print(f'{self._bullet()}  {self._bright("Technical Details")}')
+        print(f'  {self._sep()}')
+
+        try:
+            fqdn = socket.getfqdn()
+            local_ip = socket.gethostbyname(socket.gethostname())
+        except Exception:
+            fqdn = socket.gethostname()
+            local_ip = '?'
+
+        passed_total = sum(1 for v in all_passed if v)
+        total_checks = len(all_passed)
+        duration_s = time.monotonic() - t_overall_start
+        blocked_str = 'none \u2013 all paths open' if not blocked_names else ', '.join(blocked_names)
+
+        col = 10
+        print(f'  {self._dim("Machine"):<{col}}{self._green(fqdn)}  \u00b7  {self._green(local_ip)}')
+        if public_ip:
+            print(f'  {self._dim("Public IP"):<{col}}{self._green(public_ip)} {self._dim("via STUN")}')
+        print(f'  {self._dim("Duration"):<{col}}{self._green(f"{duration_s:.1f}s")}  \u00b7  '
+              f'{self._green(f"{passed_total}/{total_checks} checks")}')
+        print(f'  {self._dim("Blocked"):<{col}}{self._green(blocked_str)}')
+
+        print()
+        print(f'  {self._dsep()}')
+        print()
+
+        if passed_total == total_checks:
+            summary = "GATEWAY READY  \u00b7  {} / {} checks passed".format(passed_total, total_checks)
+            print(f'  {self._check()}  {self._bright(summary)}')
+        else:
+            summary = "GATEWAY NOT READY  \u00b7  {} / {} checks passed".format(passed_total, total_checks)
+            print(f'  {self._cross()}  {self._red(summary)}')
+            for name in blocked_names:
+                print(f'       {self._red(name)}')
+
+        print()
+        print(f'  {self._dsep()}')
+        print()
+
+        return 0 if passed_total == total_checks else 1
 
 
 class PAMConnectionEditCommand(Command):
@@ -1046,7 +1579,9 @@ class PAMConnectionEditCommand(Command):
                         f'{bcolors.FAIL}Launch user record must be a pamUser record type.{bcolors.ENDC}')
                 launch_uid = launch_rec.record_uid
                 if record_type in ("pamDatabase", "pamDirectory", "pamMachine"):
+                    tdag.clear_launch_credential_for_resource(record_uid, exclude_user_uid=launch_uid)
                     tdag.link_user_to_resource(launch_uid, record_uid, is_launch_credential=True, belongs_to=True)
+                    tdag.upgrade_resource_meta_to_v1(record_uid)
 
             # Print out PAM Settings
             if not kwargs.get("silent", False): tdag.print_tunneling_config(record_uid, record.get_typed_field('pamSettings'), config_uid)

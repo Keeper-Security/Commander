@@ -232,14 +232,17 @@ class StdinHandler:
                     break
 
             # Regular character - send as stdin
-            # But first check if it's a control character that might be part of an escape sequence
-            if byte < 32 and byte != 0x1B:  # Control char but not ESC
-                # Send control characters as-is (they might be Ctrl+key combinations)
+            # Normalize line endings: send \n for Enter so remote sees one newline (avoids double
+            # newlines when terminal sends \r or \r\n and remote echoes + app sends newline).
+            if byte == 0x0D:  # \r (Enter on some terminals)
+                self.stdin_callback(b'\n')
+                if i + 1 < len(data) and data[i + 1] == 0x0A:  # skip trailing \n in \r\n
+                    i += 1
+            elif byte < 32 and byte != 0x1B:  # Other control chars as-is (e.g. Ctrl+key)
                 self.stdin_callback(bytes([byte]))
             elif byte >= 32:  # Printable character
                 self.stdin_callback(bytes([byte]))
             else:
-                # Shouldn't reach here, but send anyway
                 self.stdin_callback(bytes([byte]))
             i += 1
 
