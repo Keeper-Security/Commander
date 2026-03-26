@@ -722,10 +722,20 @@ class PAMProjectKCMImportCommand(Command):
           'new' choice          → return None (import engine creates new gateway)
         """
         from ..pam import gateway_helper
-        from ..pam.config_helper import pam_configurations_get_all
+        from ..pam.router_helper import router_get_connected_gateways
 
         gateways = gateway_helper.get_all_gateways(params)
-        online = [g for g in gateways if g.isOnline]
+
+        # Determine online status by cross-referencing with router
+        online_uids = set()
+        try:
+            connected = router_get_connected_gateways(params)
+            if connected and connected.controllers:
+                online_uids = {c.controllerUid for c in connected.controllers}
+        except Exception:
+            logging.debug('Could not reach router to check online gateways')
+
+        online = [g for g in gateways if g.controllerUid in online_uids]
 
         # If --gateway flag provided, find it directly
         if gateway_arg:
@@ -738,7 +748,7 @@ class PAMProjectKCMImportCommand(Command):
             if not match:
                 raise CommandError('kcm-import',
                     f'Gateway "{gateway_arg}" not found. Use --dry-run to preview without a gateway.')
-            if not match.isOnline:
+            if match.controllerUid not in online_uids:
                 logging.warning('Gateway "%s" is OFFLINE — connections will not work until it is started.',
                                 match.controllerName)
             return PAMProjectKCMImportCommand._find_config_for_gateway(params, match)
@@ -750,7 +760,7 @@ class PAMProjectKCMImportCommand(Command):
             print(f'  Found {len(online)} online gateway(s):\n')
             for i, g in enumerate(online, 1):
                 uid_str = utils.base64_url_encode(g.controllerUid)
-                print(f'  [{i}] {g.controllerName}  ({uid_str})  v{g.version}')
+                print(f'  [{i}] {g.controllerName}  ({uid_str})')
             print(f'\n  [N] Create a new gateway')
             print()
             choice = input('  Select gateway [N]: ').strip()
