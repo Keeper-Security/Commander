@@ -84,6 +84,7 @@ from .pam_saas.user import PAMActionSaasUserCommand
 from .pam_saas.remove import PAMActionSaasRemoveCommand
 from .pam_saas.config import PAMActionSaasConfigCommand
 from .pam_saas.update import PAMActionSaasUpdateCommand
+from .pam.cnapp_commands import CnappCommand
 from .tunnel_and_connections import PAMTunnelCommand, PAMConnectionCommand, PAMRbiCommand, PAMSplitCommand
 
 
@@ -186,6 +187,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('rbi', PAMRbiCommand(), 'Manage Remote Browser Isolation', 'b')
         self.register_command('project', PAMProjectCommand(), 'PAM Project Import/Export', 'p')
         self.register_command('launch', PAMLaunchCommand(), 'Launch a connection to a PAM resource', 'l')
+        self.register_command('cnapp', CnappCommand(), 'Manage CNAPP integrations')
 
 
 class PAMGatewayCommand(GroupCommand):
