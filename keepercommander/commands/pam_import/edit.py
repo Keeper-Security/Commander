@@ -186,10 +186,16 @@ class PAMProjectImportCommand(Command):
             "shared_folder_users_uid": project["folders"].get("users_folder_uid", ""),
             "note": "Ensure that the team or users have role permission to access connections or tunnels"
         }
+        logging.warning('The following output contains a gateway bootstrap token. '
+                        'Store it securely and do not share or log it.')
         print(json.dumps(res, indent=2))
         print("Follow the official Keeper documentation on how to use "
               "the access_token during a Gateway install or reconfiguration: "
               "https://docs.keeper.io/en/keeperpam/privileged-access-manager/getting-started/gateways")
+
+        # Clear sensitive token data after display
+        project["gateway"]["gateway_token"] = ""
+        project["gateway"]["gateway_device_token"] = ""
 
     PAM_ROOT_FOLDER_NAME = "PAM Environments"
 
@@ -234,8 +240,9 @@ class PAMProjectImportCommand(Command):
         res["project_folder"] = res["project_folder_target"]
         if res["root_folder_uid"]:
             START_INDEX: int = 1
+            MAX_ITERATIONS: int = 1000
             n: int = START_INDEX
-            while True:
+            while n <= MAX_ITERATIONS:
                 folder_name = res["project_folder_target"] if n <= START_INDEX else f"""{res["project_folder_target"]} #{n}"""
                 folders = self.find_folders(params, res["root_folder_uid"], folder_name, False)
                 folders = [x for x in folders if x.type == x.UserFolderType]
@@ -268,6 +275,9 @@ class PAMProjectImportCommand(Command):
                     self.add_folder_permissions(params, res["resources_folder_uid"], rperm)
                     self.add_folder_permissions(params, res["users_folder_uid"], uperm)
                 break
+            else:
+                raise CommandError('pam project import',
+                    f'Could not find unique project folder name after {MAX_ITERATIONS} attempts')
 
         if project["options"].get("dry_run", False) is True:
             if res["root_folder_uid"]:
