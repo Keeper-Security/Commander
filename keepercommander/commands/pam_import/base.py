@@ -483,7 +483,7 @@ class PamRotationScheduleObject():
                 try:
                     parsed_cron = vault.TypedField.import_schedule_field(obj.cron)
                 except json.JSONDecodeError as e:
-                    logging.error(f"CRON field contains invalid JSON: {e.msg} at pos {e.pos}. Value: {obj.cron!r}")
+                    logging.error(f"CRON field contains invalid JSON: {e.msg} at line {e.lineno}, col {e.colno}. Value: {obj.cron!r}")
                     parsed_cron = {}
                 except (ValueError, KeyError) as e:
                     logging.error(f"CRON field has unexpected structure ({e.__class__.__name__}): {e}. Value: {obj.cron!r}")
