@@ -46,7 +46,7 @@ class TestFolderNameLoopGuard(unittest.TestCase):
         # We test the loop guard by simulating the condition
         with self.assertRaises(CommandError) as ctx:
             START_INDEX = 1
-            MAX_ITERATIONS = 1000
+            MAX_ITERATIONS = 100
             n = START_INDEX
             while n <= MAX_ITERATIONS:
                 folder_name = res["project_folder_target"] if n <= START_INDEX else f'{res["project_folder_target"]} #{n}'
@@ -60,7 +60,7 @@ class TestFolderNameLoopGuard(unittest.TestCase):
                 raise CommandError('pam project import',
                     f'Could not find unique project folder name after {MAX_ITERATIONS} attempts')
 
-        self.assertIn('1000', str(ctx.exception))
+        self.assertIn('100', str(ctx.exception))
 
     def test_loop_finds_name_on_first_try(self):
         """If the first name is available, loop exits immediately."""
@@ -68,7 +68,7 @@ class TestFolderNameLoopGuard(unittest.TestCase):
         cmd.find_folders = MagicMock(return_value=[])
 
         START_INDEX = 1
-        MAX_ITERATIONS = 1000
+        MAX_ITERATIONS = 100
         n = START_INDEX
         found_name = None
         while n <= MAX_ITERATIONS:
@@ -93,7 +93,7 @@ class TestFolderNameLoopGuard(unittest.TestCase):
         )
 
         START_INDEX = 1
-        MAX_ITERATIONS = 1000
+        MAX_ITERATIONS = 100
         n = START_INDEX
         found_name = None
         while n <= MAX_ITERATIONS:

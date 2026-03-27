@@ -196,6 +196,7 @@ class PAMProjectImportCommand(Command):
         # Clear sensitive token data after display
         project["gateway"]["gateway_token"] = ""
         project["gateway"]["gateway_device_token"] = ""
+        res["access_token"] = ""
 
     PAM_ROOT_FOLDER_NAME = "PAM Environments"
 
@@ -240,7 +241,7 @@ class PAMProjectImportCommand(Command):
         res["project_folder"] = res["project_folder_target"]
         if res["root_folder_uid"]:
             START_INDEX: int = 1
-            MAX_ITERATIONS: int = 1000
+            MAX_ITERATIONS: int = 100
             n: int = START_INDEX
             while n <= MAX_ITERATIONS:
                 folder_name = res["project_folder_target"] if n <= START_INDEX else f"""{res["project_folder_target"]} #{n}"""
