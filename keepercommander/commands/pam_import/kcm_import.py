@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -606,6 +607,10 @@ class PAMProjectKCMImportCommand(Command):
             db_user = db_user or 'guacamole_user'
             db_password = self._resolve_db_password(params, kwargs)
 
+        # Validate port range
+        if not (1 <= db_port <= 65535):
+            raise CommandError('kcm-import', f'Invalid database port: {db_port} (must be 1-65535)')
+
         # Connect and extract
         db_ssl = kwargs.get('db_ssl', False)
         allow_cleartext = kwargs.get('allow_cleartext', False)
@@ -802,6 +807,10 @@ class PAMProjectKCMImportCommand(Command):
         if gateway_arg:
             # ── REUSE EXISTING GATEWAY ──
             pam_config_uid = self._resolve_gateway(params, gateway_arg)
+            if not pam_config_uid:
+                raise CommandError('kcm-import',
+                    f'Could not resolve PAM config for gateway "{gateway_arg}". '
+                    'Verify the gateway exists with: pam gateway list')
             logging.info('Using existing gateway, PAM config: %s', pam_config_uid)
             tmp_fd, tmp_path = tempfile.mkstemp(suffix='.json')
             try:
@@ -951,7 +960,7 @@ class PAMProjectKCMImportCommand(Command):
         from ..pam import gateway_helper
         gateways = gateway_helper.get_all_gateways(params)
         gw_name = f'{project_name} Gateway'
-        match = next((g for g in gateways if g.controllerName.startswith(project_name)), None)
+        match = next((g for g in gateways if g.controllerName == gw_name), None)
         if match:
             try:
                 from ...proto import pam_pb2
@@ -972,7 +981,7 @@ class PAMProjectKCMImportCommand(Command):
         try:
             # Check if container name already in use
             result = subprocess.run(
-                ['docker', 'inspect', container_name],
+                ['docker', 'inspect', '--', container_name],
                 capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
                 logging.warning('Docker container "%s" already exists. '
@@ -981,15 +990,27 @@ class PAMProjectKCMImportCommand(Command):
                 return False
 
             logging.info('Deploying gateway as Docker container "%s"...', container_name)
-            result = subprocess.run(
-                ['docker', 'run', '-d',
-                 '--name', container_name,
-                 '-e', f'GATEWAY_CONFIG={token}',
-                 '-e', 'ACCEPT_EULA=Y',
-                 '--shm-size=2g',
-                 '--restart', 'unless-stopped',
-                 image],
-                capture_output=True, text=True, timeout=120)
+            # Write token to temp env-file (0o600) instead of -e flag
+            # so it's not visible in ps aux / docker inspect
+            env_fd, env_file = tempfile.mkstemp(prefix='gw_env_', suffix='.env')
+            try:
+                os.fchmod(env_fd, 0o600)
+                with os.fdopen(env_fd, 'w') as ef:
+                    ef.write(f'GATEWAY_CONFIG={token}\n')
+                    ef.write('ACCEPT_EULA=Y\n')
+                result = subprocess.run(
+                    ['docker', 'run', '-d',
+                     '--name', container_name,
+                     '--env-file', env_file,
+                     '--shm-size=2g',
+                     '--restart', 'unless-stopped',
+                     image],
+                    capture_output=True, text=True, timeout=120)
+            finally:
+                try:
+                    os.unlink(env_file)
+                except OSError:
+                    pass
 
             if result.returncode == 0:
                 container_id = result.stdout.strip()[:12]
@@ -1169,21 +1190,25 @@ class PAMProjectKCMImportCommand(Command):
                         return val
             raise CommandError('kcm-import',
                 f'Record {record_uid} has no password field')
+        if not sys.stdin.isatty():
+            raise CommandError('kcm-import',
+                'No password available and stdin is not a terminal. '
+                'Use --db-password-record or pipe password via --db-password.')
         return getpass.getpass('KCM Database Password: ')
 
     @staticmethod
     def _is_local_host(host):
         """Check if host is a local/private address (no SSL warning needed)."""
-        if host in ('localhost', '127.0.0.1', '::1', ''):
+        if not host:
+            return False
+        if host in ('localhost', '127.0.0.1', '::1'):
             return True
-        # Docker bridge and private RFC1918 ranges
-        for prefix in ('10.', '172.16.', '172.17.', '172.18.', '172.19.',
-                        '172.20.', '172.21.', '172.22.', '172.23.', '172.24.',
-                        '172.25.', '172.26.', '172.27.', '172.28.', '172.29.',
-                        '172.30.', '172.31.', '192.168.'):
-            if host.startswith(prefix):
-                return True
-        return False
+        import ipaddress
+        try:
+            addr = ipaddress.ip_address(host)
+            return addr.is_loopback or addr.is_private
+        except ValueError:
+            return False
 
     @staticmethod
     def _filter_excluded_groups(groups, connection_rows, exclude_str):
@@ -1290,14 +1315,14 @@ class PAMProjectKCMImportCommand(Command):
 
     @staticmethod
     def _detect_docker_credentials(db_type, container='guacamole'):
-        env_prefix = 'MYSQL' if db_type == 'mysql' else 'POSTGRES'
+        env_prefix = 'MYSQL' if db_type == 'mysql' else 'POSTGRESQL'
         default_port = 3306 if db_type == 'mysql' else 5432
 
         # Single docker inspect call, parse all env vars at once
         try:
             result = subprocess.run(
                 ['docker', 'inspect', '--format',
-                 '{{range .Config.Env}}{{println .}}{{end}}', container],
+                 '{{range .Config.Env}}{{println .}}{{end}}', '--', container],
                 capture_output=True, text=True, timeout=10
             )
         except (subprocess.TimeoutExpired, FileNotFoundError) as e:
@@ -1344,8 +1369,7 @@ class PAMProjectKCMImportCommand(Command):
     def _redact_for_display(pam_json):
         """Deep-copy JSON and replace password values with [REDACTED]."""
         redacted = copy.deepcopy(pam_json)
-        sensitive_keys = {'password', 'private_pem_key', 'private_key',
-                          'sftp-password', 'otp'}
+        sensitive_keys = {'password', 'private_pem_key', 'private_key', 'otp'}
         def _walk(obj):
             if isinstance(obj, dict):
                 for k, v in obj.items():

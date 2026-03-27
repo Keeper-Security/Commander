@@ -678,11 +678,11 @@ class TestE2EDockerDetect(unittest.TestCase):
 
     @patch('keepercommander.commands.pam_import.kcm_import.subprocess.run')
     def test_docker_detect_postgresql(self, mock_run):
-        """PostgreSQL mode uses POSTGRES_ prefix."""
+        """PostgreSQL mode uses POSTGRESQL_ prefix (Guacamole convention)."""
         mock_run.return_value = MagicMock(
             returncode=0,
-            stdout='POSTGRES_HOSTNAME=pg.local\nPOSTGRES_USER=pguser\n'
-                   'POSTGRES_PASSWORD=pgpass\nPOSTGRES_DATABASE=guac_pg\n',
+            stdout='POSTGRESQL_HOSTNAME=pg.local\nPOSTGRESQL_USER=pguser\n'
+                   'POSTGRESQL_PASSWORD=pgpass\nPOSTGRESQL_DATABASE=guac_pg\n',
             stderr=''
         )
         host, port, db, user, password = \
@@ -1090,7 +1090,7 @@ class TestRemoteSSLEnforcement(unittest.TestCase):
 
         from keepercommander.error import CommandError
         with self.assertRaises(CommandError) as ctx:
-            cmd.execute(params, db_host='203.0.113.50', dry_run=True)
+            cmd.execute(params, db_host='93.184.216.34', dry_run=True)
         self.assertIn('cleartext', str(ctx.exception).lower())
 
     @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
@@ -1107,7 +1107,7 @@ class TestRemoteSSLEnforcement(unittest.TestCase):
         params = MagicMock()
 
         with patch('builtins.print'):
-            cmd.execute(params, db_host='203.0.113.50', db_ssl=True, dry_run=True)
+            cmd.execute(params, db_host='93.184.216.34', db_ssl=True, dry_run=True)
         # Should not raise
 
     @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
@@ -1124,7 +1124,7 @@ class TestRemoteSSLEnforcement(unittest.TestCase):
         params = MagicMock()
 
         with patch('builtins.print'):
-            cmd.execute(params, db_host='203.0.113.50',
+            cmd.execute(params, db_host='93.184.216.34',
                         allow_cleartext=True, dry_run=True)
         # Should not raise
 
@@ -1666,7 +1666,7 @@ class TestLiveErrorPaths(unittest.TestCase):
         with patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
                    return_value='pass'):
             with self.assertRaises(CommandError) as ctx:
-                cmd.execute(params, db_host='203.0.113.50', dry_run=True)
+                cmd.execute(params, db_host='93.184.216.34', dry_run=True)
             self.assertIn('cleartext', str(ctx.exception).lower())
 
     def test_docker_detect_nonexistent_container(self):
@@ -2083,7 +2083,7 @@ class TestIsLocalHost(unittest.TestCase):
         self.assertFalse(PAMProjectKCMImportCommand._is_local_host('db.example.com'))
 
     def test_empty_string(self):
-        self.assertTrue(PAMProjectKCMImportCommand._is_local_host(''))
+        self.assertFalse(PAMProjectKCMImportCommand._is_local_host(''))
 
 
 if __name__ == '__main__':
