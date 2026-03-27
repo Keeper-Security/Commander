@@ -336,7 +336,7 @@ class PamScriptsObject():
     def load(cls, data: Optional[Union[str, list]]) -> PamScriptsObject:
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"Pam Scripts failed to load from: {str(data)[:80]}...")
+        except json.JSONDecodeError as e: logging.error(f"Pam Scripts: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not(data and isinstance(data, list)): return obj
 
         for s in data:
@@ -368,7 +368,7 @@ class PamScriptObject():
     def load(cls, data: Union[str, dict]) -> PamScriptObject:
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"PAM script failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"PAM script: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         # TUI:  "script": { "script_command": "pwsh.exe", "file": "path/file.ext", "additional_credentials": ["admin1", "user2"] },
@@ -400,7 +400,7 @@ class PamAttachmentsObject():
     def load(cls, data: Optional[Union[str, list]]) -> PamAttachmentsObject:
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"PAM Attachments failed to load from: {str(data)[:80]}...")
+        except json.JSONDecodeError as e: logging.error(f"PAM Attachments: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not(data and isinstance(data, list)): return obj
 
         for a in data:
@@ -431,7 +431,7 @@ class PamAttachmentObject():
     def load(cls, data: Union[str, dict]) -> PamAttachmentObject:
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"Failed to load file attachment from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"Failed to load file attachment: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if isinstance(data, str): data = {"file": data}
         if not isinstance(data, dict): return obj
 
@@ -463,7 +463,7 @@ class PamRotationScheduleObject():
         schedule_types = ("on-demand", "cron")
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"Failed to load rotation schedule from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"Failed to load rotation schedule: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         type = data.get("type", None)
@@ -478,7 +478,11 @@ class PamRotationScheduleObject():
             if obj.cron:  # validate
                 try:
                     parsed_cron = vault.TypedField.import_schedule_field(obj.cron)
-                except:
+                except json.JSONDecodeError as e:
+                    logging.error(f"CRON field contains invalid JSON: {e.msg} at pos {e.pos}. Value: {obj.cron!r}")
+                    parsed_cron = {}
+                except (ValueError, KeyError) as e:
+                    logging.error(f"CRON field has unexpected structure ({type(e).__name__}): {e}. Value: {obj.cron!r}")
                     parsed_cron = {}
                 if not (parsed_cron and parsed_cron.get("time", "")):
                     logging.error(f"Failed to load CRON from: {obj.cron}")
@@ -517,7 +521,7 @@ class PamRotationSettingsObject():
                 data = profile
 
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"Failed to load rotation settings from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"Failed to load rotation settings: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         rotation = data.get("rotation", None)
@@ -590,7 +594,7 @@ class DagSettingsObject():
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"DAG settings failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"DAG settings: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         val = data.get("resource", None)
@@ -638,8 +642,8 @@ class DagJitSettingsObject():
         obj = cls()
         try:
             data = json.loads(data) if isinstance(data, str) else data
-        except:
-            logging.error(f"JIT settings failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e:
+            logging.error(f"JIT settings: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
             return None
 
         if not isinstance(data, dict):
@@ -744,8 +748,8 @@ class DagAiSettingsObject():
         obj = cls()
         try:
             data = json.loads(data) if isinstance(data, str) else data
-        except:
-            logging.error(f"AI settings failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e:
+            logging.error(f"AI settings: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
             return None
 
         if not isinstance(data, dict):
@@ -856,7 +860,7 @@ class PamUserObject():
     def load(cls, data: Union[str, dict], rotation_params: Optional[PamRotationParams] = None):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"PAM User failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"PAM User: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         dtype = str(data["type"]) if "type" in data else "pamUser"
@@ -967,7 +971,7 @@ class LoginUserObject():
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"Record type `login` failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"Record type `login`: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         dtype = str(data["type"]) if "type" in data else "login"
@@ -1070,7 +1074,7 @@ class PamBaseMachineParser():
 
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"""Record type "{record_type}" failed to load from: {str(data)[:80]}""")
+        except json.JSONDecodeError as e: logging.error(f"""Record type "{record_type}": invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}""")
         if not isinstance(data, dict): return obj
 
         dtype = str(data.get("type", None))
@@ -1181,7 +1185,7 @@ class PamMachineObject():
     def load(cls, data: Union[str, dict], rotation_params: Optional[PamRotationParams] = None):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"""Record type "pamMachine" failed to load from: {str(data)[:80]}""")
+        except json.JSONDecodeError as e: logging.error(f"""Record type "pamMachine": invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}""")
         if not isinstance(data, dict): return obj
 
         bmp = PamBaseMachineParser.load("pamMachine", data)
@@ -1386,7 +1390,7 @@ class PamDatabaseObject():
     def load(cls, data: Union[str, dict], rotation_params: Optional[PamRotationParams] = None):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"""Record type "pamDatabase" failed to load from: {str(data)[:80]}""")
+        except json.JSONDecodeError as e: logging.error(f"""Record type "pamDatabase": invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}""")
         if not isinstance(data, dict): return obj
 
         bmp = PamBaseMachineParser.load("pamDatabase", data)
@@ -1527,7 +1531,7 @@ class PamDirectoryObject():
     def load(cls, data: Union[str, dict], rotation_params: Optional[PamRotationParams] = None):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"""Record type "pamDirectory" failed to load from: {str(data)[:80]}""")
+        except json.JSONDecodeError as e: logging.error(f"""Record type "pamDirectory": invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}""")
         if not isinstance(data, dict): return obj
 
         bmp = PamBaseMachineParser.load("pamDirectory", data)
@@ -1665,7 +1669,7 @@ class PamRemoteBrowserObject():
     def load(cls, data: Union[str, dict], rotation_params: Optional[PamRotationParams] = None):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"""Record type "pamRemoteBrowser" failed to load from: {str(data)[:80]}""")
+        except json.JSONDecodeError as e: logging.error(f"""Record type "pamRemoteBrowser": invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}""")
         if not isinstance(data, dict): return obj
 
         dtype = data.get("type", None)
@@ -1826,7 +1830,7 @@ class ClipboardConnectionSettings:
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"Clipboard Connection Settings failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"Clipboard Connection Settings: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         obj.disableCopy = utils.value_to_boolean(data.get("disable_copy", None))
@@ -1857,7 +1861,7 @@ class SFTPRootDirectorySettings:
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"SFTP Root Directory Settings failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"SFTP Root Directory Settings: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         obj.enableSftp = utils.value_to_boolean(data.get("enable_sftp", None))
@@ -1896,7 +1900,7 @@ class SFTPConnectionSettings(SFTPRootDirectorySettings):
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"SFTP Connection Settings failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"SFTP Connection Settings: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         rds = SFTPRootDirectorySettings.load(data)
@@ -1957,7 +1961,7 @@ class TerminalDisplayConnectionSettings:
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"Terminal Display Connection Settings failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"Terminal Display Connection Settings: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         val = data.get("color_scheme", None)
@@ -1987,7 +1991,7 @@ class BaseConnectionSettings:
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"Base Connection Settings failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"Base Connection Settings: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         val = data.get("port", None)  # Override port from host
@@ -2043,7 +2047,7 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"Connection Settings RDP failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"Connection Settings RDP: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         bcs = BaseConnectionSettings.load(data)
@@ -2173,7 +2177,7 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"Connection Settings HTTP failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"Connection Settings HTTP: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         bcs = BaseConnectionSettings.load(data)
@@ -2262,7 +2266,7 @@ class ConnectionSettingsVNC(BaseConnectionSettings, ClipboardConnectionSettings)
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"Connection Settings VNC failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"Connection Settings VNC: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         bcs = BaseConnectionSettings.load(data)
@@ -2355,7 +2359,7 @@ class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettin
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"Connection Settings Telnet failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"Connection Settings Telnet: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         bcs = BaseConnectionSettings.load(data)
@@ -2455,7 +2459,7 @@ class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings,
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"Connection Settings SSH failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"Connection Settings SSH: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         bcs = BaseConnectionSettings.load(data)
@@ -2559,7 +2563,7 @@ class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnec
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"Connection Settings K8S failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"Connection Settings K8S: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         bcs = BaseConnectionSettings.load(data)
@@ -2654,7 +2658,7 @@ class BaseDatabaseConnectionSettings(BaseConnectionSettings, ClipboardConnection
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"Database Connection Settings failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"Database Connection Settings: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         bcs = BaseConnectionSettings.load(data)
@@ -2733,7 +2737,7 @@ class ConnectionSettingsSqlServer(BaseDatabaseConnectionSettings):
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"SQLServer Connection Settings failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"SQLServer Connection Settings: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         bdcs = BaseDatabaseConnectionSettings.load(data)
@@ -2779,7 +2783,7 @@ class ConnectionSettingsPostgreSQL(BaseDatabaseConnectionSettings):
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"PostgreSQL Connection Settings failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"PostgreSQL Connection Settings: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         bdcs = BaseDatabaseConnectionSettings.load(data)
@@ -2825,7 +2829,7 @@ class ConnectionSettingsMySQL(BaseDatabaseConnectionSettings):
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"MySQL Connection Settings failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"MySQL Connection Settings: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         bdcs = BaseDatabaseConnectionSettings.load(data)
@@ -2871,7 +2875,7 @@ class PamPortForwardSettings:
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"Port Forward Settings failed to load from: {str(data)[:80]}")
+        except json.JSONDecodeError as e: logging.error(f"Port Forward Settings: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         obj.port = data.get("port", None)
@@ -2904,7 +2908,7 @@ class PamRemoteBrowserSettings:
     def load(cls, data: Optional[Union[str, dict]]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"PAM RBI Settings field failed to load from: {str(data)[:80]}...")
+        except json.JSONDecodeError as e: logging.error(f"PAM RBI Settings: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         options = DagSettingsObject.load(data.get("options", {}))
@@ -2984,7 +2988,7 @@ class PamSettingsFieldData:
     def load(cls, data: Union[str, dict]):
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
-        except: logging.error(f"PAM Settings Field failed to load from: {str(data)[:80]}...")
+        except json.JSONDecodeError as e: logging.error(f"PAM Settings Field: invalid JSON at line {e.lineno}, col {e.colno} — {e.msg}. Input (truncated): {str(data)[:80]}")
         if not isinstance(data, dict): return obj
 
         obj.allowSupplyHost = utils.value_to_boolean(data.get("allow_supply_host", None))

@@ -12,6 +12,7 @@
 import logging
 import shutil
 from configparser import RawConfigParser
+import os
 from os.path import expandvars, expanduser, isfile
 
 from botocore.exceptions import ClientError
@@ -134,8 +135,14 @@ class Rotator(AWSRotator):
             cp.set(sync_profile, AWS_CREDS_FILE_KEY_ID_OPTION, self.new_key_id)
             cp.set(sync_profile, AWS_CREDS_FILE_KEY_SECRET_OPTION, self.new_secret)
             backup_file = f'{creds_filename}{AWS_CREDS_FILE_BACKUP_EXTENSION}'
-            shutil.copy2(creds_filename, backup_file)
-            with open(creds_filename, 'w') as f:
+            old_umask = os.umask(0o077)
+            try:
+                shutil.copy2(creds_filename, backup_file)
+            finally:
+                os.umask(old_umask)
+            fd = os.open(creds_filename, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, 'w') as f:
                 cp.write(f)
             logging.info(
                 f'Synced AWS key rotation with AWS credential file "{creds_filename}"'

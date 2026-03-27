@@ -115,7 +115,7 @@ def rotate_ssh(host, port, user, old_password, new_password, timeout=5, revert=F
                     ia.send('passwd')
                     answer = ia.expect([r'(?i).*current.*password.*', r'(?i).*old.*password.*', r'(?i).*new.*password.*'])
                     result = ia.current_output
-                    logging.debug('Output from passwd command: \"%s\"', result)
+                    logging.debug('Rotation command responded (%d bytes)', len(result))
                     if answer < 0:
                         logging.debug('Unexpected response from the passwd command. Old password is assumed.')
                     if answer < 2:
@@ -123,19 +123,19 @@ def rotate_ssh(host, port, user, old_password, new_password, timeout=5, revert=F
                         logging.debug('Old Password sent')
                         ia.expect(r'(?i).*new.*password.*')
                         result = ia.current_output
-                        logging.debug('Output from Old Password: \"%s\"', result)
+                        logging.debug('Old credential prompt responded (%d bytes)', len(result))
                     ia.send(new_password)
                     logging.debug('New Password sent')
                     ia.expect(r'(?i).*new.*password.*')
                     result = ia.current_output
-                    logging.debug('Output from New Password: \"%s\"', result)
+                    logging.debug('New credential prompt responded (%d bytes)', len(result))
                     try:
                         ia.send(new_password)
                         logging.debug('New Password Again sent')
                         time.sleep(0.2)
                         ia.expect('.+')
                         result = ia.current_output
-                        logging.debug('Output from New Password Again: \"%s\"', result)
+                        logging.debug('Credential confirmation responded (%d bytes)', len(result))
                         results = []
                         lines = [x for x in result.splitlines() if x]
                         has_prompt = False
