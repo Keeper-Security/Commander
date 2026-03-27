@@ -302,6 +302,7 @@ class X11Keysym:
     RETURN = 0xFF0D
     ESCAPE = 0xFF1B
     DELETE = 0xFFFF
+    INSERT = 0xFF63
 
     # Cursor movement
     HOME = 0xFF50
@@ -338,13 +339,29 @@ class X11Keysym:
     ALT_L = 0xFFE9
     ALT_R = 0xFFEA
 
-    # ASCII printable range (0x20-0x7E) maps directly
-    # For example: 'A' = 0x41, 'a' = 0x61, '0' = 0x30
+    # ASCII / Latin-1 (U+0000–U+00FF): keysym equals code point (legacy X11 Latin-1 keysyms).
+    # Unicode outside that range: Guacamole / X11 use U+01000000 | codepoint (see Guacamole
+    # Keyboard.js keysym_from_unicode; X11 keysym Unicode extension).
+    _GUAC_UNICODE_KEYSYM_OFFSET = 0x01000000
+
+    @staticmethod
+    def keysym_from_unicode_codepoint(codepoint: int) -> int:
+        """
+        Map a Unicode scalar to the X11 keysym value sent on the Guacamole ``key`` instruction.
+
+        Code points U+0000-U+00FF use the direct keysym (ASCII + ISO 8859-1).  U+0100 and
+        above (Cyrillic, Greek, CJK, emoji, etc.) use ``0x01000000 | codepoint``.
+        """
+        if codepoint < 0 or codepoint > 0x10FFFF:
+            return 0
+        if codepoint <= 0xFF:
+            return codepoint
+        return X11Keysym._GUAC_UNICODE_KEYSYM_OFFSET | codepoint
 
     @staticmethod
     def from_char(ch: str) -> int:
-        """Convert a single character to X11 keysym"""
+        """Convert a single character to X11 keysym (same rules as keysym_from_unicode_codepoint)."""
         if len(ch) == 1:
-            return ord(ch)
+            return X11Keysym.keysym_from_unicode_codepoint(ord(ch))
         return 0
 
