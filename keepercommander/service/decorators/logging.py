@@ -115,13 +115,13 @@ def debug_decorator(fn: Callable) -> Callable:
             args_repr = [repr(a) for a in args]
             kwargs_repr = [f"{k}={v!r}" for k, v in kwargs.items()]
             signature = ", ".join(args_repr + kwargs_repr)
-            logger.debug(f"Call: {fn.__name__}({signature})")
-        
+            logger.debug(f"Call: {fn.__name__}({sanitize_debug_data(signature)})")
+
         value = fn(*args, **kwargs)
-        
+
         if logger._logger.isEnabledFor(logging.INFO):
-            logger.debug(f"Return: {fn.__name__} → {value!r}")
-        
+            logger.debug(f"Return: {fn.__name__} → {sanitize_debug_data(repr(value))}")
+
         return value
     return wrapper
 
@@ -144,13 +144,19 @@ def sanitize_debug_data(data: str) -> str:
     
     sanitized = data
     
-    # Sanitize common password patterns
+    # Sanitize sensitive data patterns
     patterns = [
         (r'"password"\s*:\s*"[^"]*"', '"password": "***"'),
-        (r'"login"\s*:\s*"[^"]*"', '"login": "***"'),  
+        (r'"login"\s*:\s*"[^"]*"', '"login": "***"'),
         (r'"secret"\s*:\s*"[^"]*"', '"secret": "***"'),
         (r'"token"\s*:\s*"[^"]*"', '"token": "***"'),
         (r'"key"\s*:\s*"[^"]*"', '"key": "***"'),
+        (r'"private_pem_key"\s*:\s*"[^"]*"', '"private_pem_key": "***"'),
+        (r'"device_token"\s*:\s*"[^"]*"', '"device_token": "***"'),
+        (r'"access_token"\s*:\s*"[^"]*"', '"access_token": "***"'),
+        (r'"gateway_token"\s*:\s*"[^"]*"', '"gateway_token": "***"'),
+        (r'"session_token"\s*:\s*"[^"]*"', '"session_token": "***"'),
+        (r'"data_key"\s*:\s*"[^"]*"', '"data_key": "***"'),
         (r'password=[^\s]*', 'password=***'),
         (r'login=[^\s]*', 'login=***'),
         # Sanitize email addresses in logs to protect PII

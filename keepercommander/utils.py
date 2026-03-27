@@ -91,63 +91,70 @@ def generate_aes_key():         # type: () -> bytes
 def set_file_permissions(file_path):     # type: (str) -> None
     """
     Set secure file permissions (600) for configuration files containing sensitive data.
-    This ensures only the owner can read and write the file.
+    Uses fd-based operations on Unix to prevent TOCTOU symlink race conditions.
     """
     file_path = os.path.abspath(file_path)
-    
+
     try:
-        if os.path.islink(file_path):
-            logging.warning(f'Skipping permission setting on symbolic link: {file_path}')
-            return
-        
         if platform.system() != 'Windows':
-            file_stat = os.stat(file_path)
-            if file_stat.st_uid != os.getuid():
-                logging.warning(f'Skipping permission setting on file not owned by current user: {file_path}')
+            # Open with O_NOFOLLOW to atomically reject symlinks
+            try:
+                fd = os.open(file_path, os.O_RDONLY | os.O_NOFOLLOW)
+            except OSError:
+                logging.warning(f'Skipping permission setting (symlink or inaccessible): {file_path}')
                 return
-            
-            os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
-            logging.debug(f'Set secure permissions (600) for file: {file_path}')
+            try:
+                file_stat = os.fstat(fd)
+                if file_stat.st_uid != os.getuid():
+                    logging.warning(f'Skipping permission setting on file not owned by current user: {file_path}')
+                    return
+                os.fchmod(fd, stat.S_IRUSR | stat.S_IWUSR)
+                logging.debug(f'Set secure permissions (600) for file: {file_path}')
+            finally:
+                os.close(fd)
         else:
             username = os.getlogin()
             subprocess.run(["icacls", file_path, "/inheritance:r"], check=True, capture_output=True)
             subprocess.run(["icacls", file_path, "/remove", "NT AUTHORITY\\SYSTEM", "BUILTIN\\Administrators"], check=False, capture_output=True)
             subprocess.run(["icacls", file_path, "/grant", f"{username}:RW"], check=True, capture_output=True)
             logging.debug(f'Set secure permissions (owner RW only) for Windows file: {file_path}')
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         logging.warning(f'Failed to set file permissions for {file_path}')
 
 
 def ensure_config_permissions(file_path):     # type: (str) -> None
     """
     Check and fix file permissions for existing configuration files.
-    If the file has overly permissive permissions, log a warning and fix them.
+    Uses fd-based operations on Unix to prevent TOCTOU symlink race conditions.
     """
     file_path = os.path.abspath(file_path)
-    
-    if not os.path.exists(file_path):
-        return
-    
+
     try:
-        if os.path.islink(file_path):
-            logging.warning(f'Skipping permission check on symbolic link: {file_path}')
-            return
-        
         if platform.system() != 'Windows':
-            file_stat = os.stat(file_path)
-            if file_stat.st_uid != os.getuid():
-                logging.warning(f'Skipping permission check on file not owned by current user: {file_path} (owner: {file_stat.st_uid}, current: {os.getuid()})')
+            # Open with O_NOFOLLOW to atomically reject symlinks
+            try:
+                fd = os.open(file_path, os.O_RDONLY | os.O_NOFOLLOW)
+            except OSError:
+                # File doesn't exist or is a symlink — either way, skip
                 return
-            
-            current_permissions = file_stat.st_mode & 0o777
-            if current_permissions != 0o600:
-                logging.warning(f'Configuration file {file_path} has insecure permissions '
-                              f'{oct(current_permissions)}. Setting to secure permissions (600).')
-                set_file_permissions(file_path)
+            try:
+                file_stat = os.fstat(fd)
+                if file_stat.st_uid != os.getuid():
+                    logging.warning(f'Skipping permission check on file not owned by current user: {file_path}')
+                    return
+                current_permissions = file_stat.st_mode & 0o777
+                if current_permissions & 0o177:  # any bits beyond owner rw
+                    logging.warning(f'Configuration file {file_path} has insecure permissions '
+                                  f'{oct(current_permissions)}. Setting to secure permissions (600).')
+                    os.fchmod(fd, stat.S_IRUSR | stat.S_IWUSR)
+            finally:
+                os.close(fd)
         else:
+            if not os.path.exists(file_path):
+                return
             logging.debug(f'Checking Windows file permissions for: {file_path}')
             set_file_permissions(file_path)
-            
+
     except OSError:
         logging.warning(f'Failed to check file permissions for {file_path}')
 
