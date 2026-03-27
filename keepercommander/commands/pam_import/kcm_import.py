@@ -151,10 +151,10 @@ class KCMDatabaseConnector:
             if not self.cursor.fetchone():
                 raise CommandError('kcm-import',
                     'KCM schema not found: guacamole_connection table does not exist')
+        except CommandError:
+            raise
         except Exception as e:
-            if isinstance(e, CommandError):
-                raise
-            raise CommandError('kcm-import', f'Schema validation failed: {e}')
+            raise CommandError('kcm-import', f'Schema validation failed: {e}') from e
 
     def extract_groups(self):
         self.cursor.execute(SQL_GROUPS)
@@ -171,6 +171,13 @@ class KCMDatabaseConnector:
             self.cursor.close()
         if self.conn:
             self.conn.close()
+
+    def __enter__(self):
+        self.connect()
+        return self
+
+    def __exit__(self, *args):
+        self.close()
 
 
 def _set_nested(d, dotted_path, value):
@@ -207,8 +214,11 @@ class KCMParameterMapper:
             if cid in disabled_ids:
                 continue
             name = row['name'] or ''
-            # Sanitize connection name — strip control chars and null bytes
+            # Sanitize connection name — strip control chars, path separators, enforce length
             name = ''.join(c for c in name if c >= ' ' and c != '\x7f')
+            name = name.replace('/', '_').replace('\\', '_').replace('..', '_')
+            if len(name) > 200:
+                name = name[:200]
             if not name:
                 name = f'unnamed-{cid}'
             protocol = row['protocol']
@@ -287,6 +297,7 @@ class KCMParameterMapper:
         if mapping == 'ignore':
             return
         if mapping == 'log':
+            logging.debug('Unmapped KCM parameter: %s (value: %s)', mapping, value)
             return
         if mapping is None:
             return
@@ -337,9 +348,8 @@ class KCMGroupResolver:
     def _sanitize(name):
         if not name:
             return '_unnamed_'
-        # Strip null bytes and control characters
+        # Strip control characters (includes null bytes since \x00 < ' ')
         name = ''.join(c for c in name if c >= ' ' and c != '\x7f')
-        name = name.replace('\x00', '')
         # Path traversal prevention
         name = name.replace('/', '_').replace('\\', '_').replace('..', '_')
         name = name.strip('. ')
@@ -494,12 +504,12 @@ class PAMProjectKCMImportCommand(Command):
     parser.add_argument('--db-port', dest='db_port', type=int, action='store',
                         help='Database port (default: 3306 mysql, 5432 postgresql)')
     parser.add_argument('--db-name', dest='db_name', action='store',
-                        default='guacamole_db', help='Database name')
+                        default=None, help='Database name (default: guacamole_db)')
     parser.add_argument('--db-type', dest='db_type', action='store',
                         choices=['mysql', 'postgresql'], default='mysql',
                         help='Database type')
     parser.add_argument('--db-user', dest='db_user', action='store',
-                        default='guacamole_user', help='Database username')
+                        default=None, help='Database username (default: guacamole_user)')
     parser.add_argument('--db-password-record', dest='db_password_record',
                         action='store',
                         help='Keeper record UID containing DB password')
@@ -571,8 +581,8 @@ class PAMProjectKCMImportCommand(Command):
 
         db_type = kwargs.get('db_type', 'mysql')
         db_port = kwargs.get('db_port') or (3306 if db_type == 'mysql' else 5432)
-        db_name = kwargs.get('db_name', 'guacamole_db')
-        db_user = kwargs.get('db_user', 'guacamole_user')
+        db_name = kwargs.get('db_name')
+        db_user = kwargs.get('db_user')
         folder_mode = kwargs.get('folder_mode', 'ksm')
         output_file = kwargs.get('output') or ''
         dry_run = kwargs.get('dry_run', False)
@@ -589,9 +599,11 @@ class PAMProjectKCMImportCommand(Command):
             # Explicit CLI flags override docker-detected values
             db_host = db_host or det_host
             db_port = kwargs.get('db_port') or det_port
-            db_name = kwargs.get('db_name') or det_name
-            db_user = kwargs.get('db_user') or det_user
+            db_name = db_name or det_name or 'guacamole_db'
+            db_user = db_user or det_user or 'guacamole_user'
         else:
+            db_name = db_name or 'guacamole_db'
+            db_user = db_user or 'guacamole_user'
             db_password = self._resolve_db_password(params, kwargs)
 
         # Connect and extract
@@ -622,8 +634,8 @@ class PAMProjectKCMImportCommand(Command):
         except CommandError:
             raise
         except Exception as e:
-            logging.debug('Database error details: %s', e)
-            raise CommandError('kcm-import', f'Database connection failed: {e.__class__.__name__}')
+            logging.debug('Database error details', exc_info=True)
+            raise CommandError('kcm-import', f'Database connection failed: {e.__class__.__name__}: {e}') from e
         finally:
             connector.close()
             # Clear credentials from memory (best effort — Python strings are immutable)
@@ -781,6 +793,12 @@ class PAMProjectKCMImportCommand(Command):
         deploy_gateway = kwargs.get('deploy_gateway', False)
         gateway_token = None
 
+        # Warn about flags that are ignored in reuse/extend mode
+        if (gateway_arg or config_uid) and deploy_gateway:
+            logging.warning('--deploy-gateway is ignored when --gateway or --config is specified')
+        if (gateway_arg or config_uid) and kwargs.get('max_instances', 0) > 0:
+            logging.warning('--max-instances is ignored when --gateway or --config is specified')
+
         if gateway_arg:
             # ── REUSE EXISTING GATEWAY ──
             pam_config_uid = self._resolve_gateway(params, gateway_arg)
@@ -794,8 +812,10 @@ class PAMProjectKCMImportCommand(Command):
                 cmd.execute(params, config=pam_config_uid,
                             file_name=tmp_path, dry_run=False)
             finally:
-                if os.path.exists(tmp_path):
+                try:
                     os.unlink(tmp_path)
+                except OSError:
+                    pass
 
         elif config_uid:
             # ── EXTEND MODE (explicit --config) ──
@@ -808,8 +828,10 @@ class PAMProjectKCMImportCommand(Command):
                 cmd.execute(params, config=config_uid,
                             file_name=tmp_path, dry_run=False)
             finally:
-                if os.path.exists(tmp_path):
+                try:
                     os.unlink(tmp_path)
+                except OSError:
+                    pass
 
         else:
             # ── NEW PROJECT (Phase 1 + Phase 2) ──
@@ -936,7 +958,7 @@ class PAMProjectKCMImportCommand(Command):
                 api.communicate_rest(params, rq, 'pam/set_controller_max_instance_count')
                 logging.warning('Gateway pool size set to %d instances.', max_instances)
             except Exception as e:
-                logging.warning('Could not set pool size: %s', type(e).__name__)
+                logging.warning('Could not set pool size: %s: %s', type(e).__name__, e)
         else:
             logging.warning('Could not find gateway "%s" to set pool size.', gw_name)
 
@@ -1043,8 +1065,8 @@ class PAMProjectKCMImportCommand(Command):
             connected = router_get_connected_gateways(params)
             if connected and connected.controllers:
                 online_uids = {c.controllerUid for c in connected.controllers}
-        except Exception:
-            logging.debug('Could not reach router to check online gateways')
+        except Exception as e:
+            logging.debug('Could not reach router to check online gateways: %s', e)
 
         online = [g for g in gateways if g.controllerUid in online_uids]
 
@@ -1082,7 +1104,7 @@ class PAMProjectKCMImportCommand(Command):
                         selected = online[idx]
                         logging.info('Using existing gateway: %s', selected.controllerName)
                         return PAMProjectKCMImportCommand._find_config_for_gateway(params, selected)
-                except (ValueError, IndexError):
+                except ValueError:
                     pass
                 logging.warning('Invalid selection — creating new gateway.')
         else:
@@ -1114,7 +1136,8 @@ class PAMProjectKCMImportCommand(Command):
                     logging.info('Found PAM config "%s" for gateway "%s"',
                                  rec_uid, gateway.controllerName)
                     return rec_uid
-            except Exception:
+            except Exception as e:
+                logging.debug('Skipping record %s during config scan: %s', rec_uid, e)
                 continue
 
         raise CommandError('kcm-import',
