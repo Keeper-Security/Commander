@@ -211,6 +211,12 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             logging.info(security_audit_report_description)
             return
 
+        # Validate --siem flag combinations before expensive API calls
+        if kwargs.get('siem') and kwargs.get('record_details'):
+            raise CommandError('security-audit', '--siem and --record-details cannot be used together')
+        if kwargs.get('siem') and kwargs.get('format') and kwargs['format'] != 'table':
+            raise CommandError('security-audit', '--siem produces NDJSON output exclusively and cannot be combined with --format')
+
         self.enterprise_private_rsa_key = None
         self._node_map = None  # Reset node cache for correct MC context
         self.params = params
@@ -485,12 +491,6 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         if save_report:
             self.save_updated_security_reports(params, updated_security_reports)
 
-        # Reject incompatible flag combinations early
-        if kwargs.get('siem') and kwargs.get('record_details'):
-            raise CommandError('security-audit', '--siem and --record-details cannot be used together')
-        if kwargs.get('siem') and kwargs.get('format') and kwargs['format'] != 'table':
-            raise CommandError('security-audit', '--siem produces NDJSON output exclusively and cannot be combined with --format')
-
         if record_details:
             if not has_incremental_data:
                 logging.warning('No incremental security data available for record detail output.')
@@ -535,7 +535,7 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         ndjson_lines = []
 
         # Fields containing PII — mask to avoid clear-text sensitive data in SIEM output
-        _sensitive_fields = frozenset({'email', 'name'})
+        _sensitive_fields = frozenset({'email', 'name', 'node'})
 
         def _mask_pii(field_name, value):
             if field_name not in _sensitive_fields or not value or not isinstance(value, str):
