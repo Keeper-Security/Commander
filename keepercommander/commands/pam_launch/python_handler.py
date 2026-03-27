@@ -62,7 +62,7 @@ import threading
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Any
 
 from .guacamole import Parser, to_instruction
-from .guac_cli.instructions import create_instruction_router
+from .guac_cli.instructions import create_instruction_router, is_stdout_pipe_stream_name
 
 if TYPE_CHECKING:
     pass
@@ -112,6 +112,7 @@ class GuacamoleHandler:
                 - audio_mimetypes: List of supported audio types (optional)
                 - image_mimetypes: List of supported image types (optional)
                 - guacd_params: Additional guacd parameters dict (optional)
+                - clipboard: Optional {disableCopy, disablePaste} from PAM (optional)
             on_ready: Optional callback when Guacamole connection is ready
             on_disconnect: Optional callback when connection is closed (receives reason)
         """
@@ -125,12 +126,21 @@ class GuacamoleHandler:
         self.connection_settings = connection_settings or {}
         self.handshake_sent = False  # Track if we've responded to 'args'
 
+        _clip = self.connection_settings.get('clipboard') or {}
+        # Block remote → local OS clipboard (PAM disableCopy); still ack Guacamole blobs.
+        self._clipboard_disable_copy = bool(_clip.get('disableCopy'))
+
         # Guacamole protocol parser (using new guacamole module)
         self.parser = Parser()
 
         # STDOUT stream tracking for pipe/blob/end pattern (plaintext SSH/TTY)
         # Server sends pipe with name "STDOUT", then blobs with base64 terminal output
         self.stdout_stream_index: int = -1
+
+        # Inbound clipboard stream (guacd → client): clipboard,<index>,<mimetype> then blob/end
+        self.remote_clipboard_stream_index: int = -1
+        self._remote_clipboard_mimetype: Optional[str] = None
+        self._remote_clipboard_acc = bytearray()
 
         # Feature detection for CLI pipe mode
         # STDOUT pipe: if the server supports plaintext SSH/TTY mode, it sends a STDOUT pipe
@@ -151,6 +161,7 @@ class GuacamoleHandler:
                 'error': self._on_error,
                 'ack': self._on_ack,  # Custom ack handler for STDIN failure detection
                 'pipe': self._on_pipe,  # Custom pipe handler for STDOUT detection
+                'clipboard': self._on_remote_clipboard_instruction,
             },
             send_ack_callback=self._send_ack,
             stdout_stream_tracker=self,
@@ -180,6 +191,17 @@ class GuacamoleHandler:
         self.bytes_received = 0
         self.messages_sent = 0
         self.bytes_sent = 0
+
+        # Clipboard stream counter — starts at 200 to avoid collision with
+        # image streams (1–99) and named pipe streams (100–101).
+        self._clipboard_stream_index: int = 200
+
+        # Count `pipe` opcodes from guacd (diagnostics when STDOUT never binds).
+        self._guac_pipe_instruction_count: int = 0
+
+    def note_guac_pipe_instruction(self) -> None:
+        """Incremented by the instruction router for each well-formed pipe from guacd."""
+        self._guac_pipe_instruction_count += 1
 
     def start(self):
         """Start the handler."""
@@ -523,8 +545,8 @@ class GuacamoleHandler:
         When the server supports plaintext SSH/TTY mode, it sends a pipe with name "STDOUT".
         If this pipe never opens, the feature is not supported by the gateway/connection.
 
-        Note: The instruction router handles STDOUT ack and blob decode before calling this.
-        This handler just sets the event to signal that STDOUT pipe was opened.
+        Note: The instruction router handles STDOUT ack, blob decode, and stdout_pipe_opened
+        when the pipe is treated as terminal output (STDOUT name or text/* fallback).
 
         Args:
             args: [stream_index, mimetype, name]
@@ -532,12 +554,6 @@ class GuacamoleHandler:
         if len(args) >= 3:
             stream_index, mimetype, name = args[0], args[1], args[2]
             logging.debug(f"[PIPE] stream={stream_index}, type={mimetype}, name={name}")
-
-            if name == 'STDOUT':
-                # Signal that STDOUT pipe was opened - CLI pipe mode is supported
-                # Note: stream_index and ack are already handled by instruction router
-                self.stdout_pipe_opened.set()
-                logging.debug(f"STDOUT pipe opened on stream {stream_index} - CLI pipe mode supported")
         else:
             logging.debug(f"[PIPE] {args}")
 
@@ -567,6 +583,90 @@ class GuacamoleHandler:
                     )
         else:
             logging.debug(f"[ACK] {args}")
+
+    def _on_remote_clipboard_instruction(self, args: List[str]) -> None:
+        """Open inbound clipboard stream from guacd; ack and prepare for blob/end."""
+        if len(args) < 2:
+            logging.debug(f"[CLIPBOARD] unexpected args: {args}")
+            return
+        stream, mimetype = args[0], args[1]
+        try:
+            idx = int(stream)
+        except ValueError:
+            logging.debug(f"[CLIPBOARD] bad stream index: {stream!r}")
+            return
+        self.remote_clipboard_stream_index = idx
+        self._remote_clipboard_mimetype = mimetype
+        self._remote_clipboard_acc.clear()
+        try:
+            self._send_ack(stream, 'OK', '0')
+        except Exception as e:
+            logging.error(f"Clipboard stream ack failed: {e}")
+        logging.debug(f"[CLIPBOARD] inbound stream={stream}, type={mimetype}")
+
+    def handle_remote_clipboard_blob(self, stream_index: str, b64_data: str) -> bool:
+        """
+        Called by the instruction router for blob instructions.
+        Returns True if this blob belonged to the active inbound clipboard stream.
+        """
+        if self.remote_clipboard_stream_index < 0:
+            return False
+        try:
+            if int(stream_index) != self.remote_clipboard_stream_index:
+                return False
+        except ValueError:
+            return False
+        try:
+            if not self._clipboard_disable_copy:
+                self._remote_clipboard_acc.extend(base64.b64decode(b64_data))
+            self._send_ack(stream_index, 'OK', '0')
+        except Exception as e:
+            logging.error(f"Inbound clipboard blob error: {e}")
+            try:
+                self._send_ack(stream_index, 'OK', '0')
+            except Exception:
+                pass
+        return True
+
+    def handle_remote_clipboard_end(self, stream_index: str) -> bool:
+        """
+        Called by the instruction router for end instructions.
+        Returns True if this ended the active inbound clipboard stream.
+        """
+        if self.remote_clipboard_stream_index < 0:
+            return False
+        try:
+            if int(stream_index) != self.remote_clipboard_stream_index:
+                return False
+        except ValueError:
+            return False
+        try:
+            if (
+                not self._clipboard_disable_copy
+                and self._remote_clipboard_acc
+                and (self._remote_clipboard_mimetype or '').lower().startswith('text/')
+            ):
+                text = self._remote_clipboard_acc.decode('utf-8', errors='replace')
+                try:
+                    import pyperclip  # type: ignore[import]
+
+                    pyperclip.copy(text)
+                except ImportError:
+                    logging.warning(
+                        'Remote clipboard data received but pyperclip is not installed; '
+                        'cannot copy to the local clipboard. Run: pip install pyperclip'
+                    )
+                except Exception as e:
+                    logging.warning(f'Could not copy remote clipboard to local OS: {e}')
+                else:
+                    logging.debug(
+                        'Remote clipboard copied to local OS (%d chars)', len(text)
+                    )
+        finally:
+            self.remote_clipboard_stream_index = -1
+            self._remote_clipboard_mimetype = None
+            self._remote_clipboard_acc.clear()
+        return True
 
     def _format_instruction(self, *elements) -> bytes:
         """Format elements into a Guacamole instruction."""
@@ -672,7 +772,12 @@ class GuacamoleHandler:
         except Exception as e:
             logging.error(f"Error sending stdin: {e}")
 
-    def check_stdout_pipe_support(self, timeout: float = 10.0) -> bool:
+    def check_stdout_pipe_support(
+        self,
+        timeout: float = 10.0,
+        *,
+        pam_clipboard_record_policy: bool = False,
+    ) -> bool:
         """
         Check if STDOUT pipe is supported with a timeout.
 
@@ -682,6 +787,8 @@ class GuacamoleHandler:
 
         Args:
             timeout: Seconds to wait for STDOUT pipe (default 10.0)
+            pam_clipboard_record_policy: PAM record disables copy/paste; gateway may still
+                force guacd clipboard off after the Commander handshake (no STDOUT pipe).
 
         Returns:
             True if STDOUT pipe opened, False if timeout expired
@@ -694,11 +801,25 @@ class GuacamoleHandler:
                 f"STDOUT pipe did not open within {timeout}s. "
                 f"CLI pipe mode may not be supported by this gateway/connection."
             )
+            n_pipe = self._guac_pipe_instruction_count
             print(
                 "\nNo STDOUT stream has been received since the connection was opened. "
                 "This may indicate the gateway/guacd does not support CLI mode. "
                 "You can continue waiting, or press Ctrl+C to cancel."
             )
+            if pam_clipboard_record_policy:
+                if n_pipe == 0:
+                    logging.error(
+                        "This record disables clipboard copy or paste in PAM. Some KCM builds may "
+                        "omit the terminal pipe entirely. Commander requests enable-pipe in the offer "
+                        "- if pipes still never appear use Web Vault or temporarily allow "
+                        "clipboard on the record for CLI sesions.\n"
+                    )
+                else:
+                    print(
+                        f"\nThis record disables PAM clipboard; guacd sent {n_pipe} pipe instruction(s) "
+                        "but none were accepted as terminal STDOUT (unexpected).\n"
+                    )
             return False
 
     def is_stdin_supported(self) -> bool:
@@ -784,23 +905,49 @@ class GuacamoleHandler:
         except Exception as e:
             logging.error(f"Error sending size: {e}")
 
-    def send_clipboard(self, text: str):
+    def send_clipboard_stream(self, text: str) -> None:
         """
-        Send clipboard data to guacd.
+        Send clipboard text using the Web Vault-equivalent stream protocol.
 
-        Only sends if session is active (running and data flowing).
+        Mirrors GuacamoleClipboard.setRemoteClipboard:
+            createClipboardStream(mimetype)  →  clipboard instruction
+            StringWriter.sendText(data)      →  blob instruction (base64)
+            StringWriter.sendEnd()           →  end instruction
+
+        Wire format:
+            clipboard,<stream_id>,text/plain;
+            blob,<stream_id>,<base64_text>;
+            end,<stream_id>;
+
+        Never uses send_stdin for clipboard data.
 
         Args:
-            text: Clipboard text
+            text: Clipboard text to send
         """
         if not self.running or not self.data_flowing.is_set():
             return
 
         try:
-            instruction = self._format_instruction('clipboard', 'text/plain', text)
-            self._send_to_gateway(instruction)
-        except Exception as e:
-            logging.error(f"Error sending clipboard: {e}")
+            stream_id = str(self._clipboard_stream_index)
+            self._clipboard_stream_index += 1
+
+            data_b64 = base64.b64encode(text.encode('utf-8')).decode('ascii')
+
+            self._send_to_gateway(
+                self._format_instruction('clipboard', stream_id, 'text/plain')
+            )
+            self._send_to_gateway(
+                self._format_instruction('blob', stream_id, data_b64)
+            )
+            self._send_to_gateway(
+                self._format_instruction('end', stream_id)
+            )
+
+            logging.debug(
+                'Clipboard stream sent: %d chars, stream_id=%s', len(text), stream_id
+            )
+        except Exception as exc:
+            logging.error(f"Error sending clipboard stream: {exc}")
 
     def wait_for_ready(self, timeout: float = 10.0) -> bool:
         """
