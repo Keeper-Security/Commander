@@ -237,7 +237,15 @@ class TestRecord(TestCase):
         params = get_synced_params()
         cmd = record_edit.RecordAppendNotesCommand()
 
-        record_uid = next(iter(params.subfolder_record_cache['']))
+        # Fixture mixes legacy (Record 1) and typed login (Record 2) in root; append-notes
+        # uses RecordUpdateCommand, which rejects legacy PasswordRecord.
+        record_uid = None
+        for uid in params.subfolder_record_cache['']:
+            rec = vault.KeeperRecord.load(params, uid)
+            if isinstance(rec, vault.TypedRecord):
+                record_uid = uid
+                break
+        self.assertIsNotNone(record_uid)
         with mock.patch('keepercommander.record_management.update_record'):
             cmd.execute(params, notes='notes', record=record_uid)
 
