@@ -2086,5 +2086,127 @@ class TestIsLocalHost(unittest.TestCase):
         self.assertFalse(PAMProjectKCMImportCommand._is_local_host(''))
 
 
+class TestESXiDetection(unittest.TestCase):
+    """ESXi auto-detection: identify ESXi/vSphere SSH connections."""
+
+    def _make_resource(self, title='KCM Resource - TestBox', host='10.0.0.1',
+                       protocol='ssh', port='22'):
+        return {
+            'title': title,
+            'host': host,
+            'folder_path': 'MyProject - Resources/Servers',
+            'pam_settings': {
+                'options': {'rotation': 'off', 'connections': 'on',
+                            'tunneling': 'off', 'graphical_session_recording': 'off'},
+                'connection': {'protocol': protocol, 'port': port,
+                               'launch_credentials': 'KCM User - TestBox'}
+            }
+        }
+
+    def _make_user(self, title='KCM User - TestBox'):
+        return {
+            'title': title,
+            'type': 'pamUser',
+            'folder_path': 'MyProject - Users/Servers',
+            'rotation_settings': {}
+        }
+
+    # ── _is_esxi_connection tests ──
+
+    def test_esxi_in_title(self):
+        r = self._make_resource(title='KCM Resource - esxi-prod-01')
+        self.assertTrue(PAMProjectKCMImportCommand._is_esxi_connection(r))
+
+    def test_vmhost_in_title(self):
+        r = self._make_resource(title='KCM Resource - vmhost-rack3')
+        self.assertTrue(PAMProjectKCMImportCommand._is_esxi_connection(r))
+
+    def test_vsphere_in_title(self):
+        r = self._make_resource(title='KCM Resource - vSphere Node A')
+        self.assertTrue(PAMProjectKCMImportCommand._is_esxi_connection(r))
+
+    def test_esxi_in_hostname(self):
+        r = self._make_resource(host='esxi01.lab.local')
+        self.assertTrue(PAMProjectKCMImportCommand._is_esxi_connection(r))
+
+    def test_vmware_in_title(self):
+        r = self._make_resource(title='KCM Resource - VMware Host 5')
+        self.assertTrue(PAMProjectKCMImportCommand._is_esxi_connection(r))
+
+    def test_regular_ssh_not_detected(self):
+        r = self._make_resource(title='KCM Resource - web-server-01',
+                                host='10.0.0.50')
+        self.assertFalse(PAMProjectKCMImportCommand._is_esxi_connection(r))
+
+    def test_rdp_not_detected(self):
+        r = self._make_resource(title='KCM Resource - esxi-desktop',
+                                protocol='rdp')
+        self.assertFalse(PAMProjectKCMImportCommand._is_esxi_connection(r))
+
+    def test_database_not_detected(self):
+        r = self._make_resource(title='KCM Resource - esxi-db',
+                                protocol='mysql')
+        self.assertFalse(PAMProjectKCMImportCommand._is_esxi_connection(r))
+
+    # ── _enrich_esxi_resources tests ──
+
+    def test_enrich_moves_to_subfolder(self):
+        r = self._make_resource(title='KCM Resource - esxi-host-1')
+        u = self._make_user(title='KCM User - esxi-host-1')
+        count = PAMProjectKCMImportCommand._enrich_esxi_resources([r], [u], 'Test')
+        self.assertEqual(count, 1)
+        self.assertIn('/ESXi Hosts', r['folder_path'])
+        self.assertIn('/ESXi Hosts', u['folder_path'])
+
+    def test_enrich_adds_text_recording(self):
+        r = self._make_resource(title='KCM Resource - esxi-host-1')
+        PAMProjectKCMImportCommand._enrich_esxi_resources([r], [], 'Test')
+        opts = r['pam_settings']['options']
+        self.assertEqual(opts['text_session_recording'], 'on')
+
+    def test_enrich_tags_title(self):
+        r = self._make_resource(title='KCM Resource - esxi-host-1')
+        PAMProjectKCMImportCommand._enrich_esxi_resources([r], [], 'Test')
+        self.assertIn('[ESXi]', r['title'])
+
+    def test_enrich_skips_non_esxi(self):
+        r = self._make_resource(title='KCM Resource - web-server')
+        u = self._make_user(title='KCM User - web-server')
+        original_folder = r['folder_path']
+        count = PAMProjectKCMImportCommand._enrich_esxi_resources([r], [u], 'Test')
+        self.assertEqual(count, 0)
+        self.assertEqual(r['folder_path'], original_folder)
+
+    def test_enrich_mixed(self):
+        """Mix of ESXi and non-ESXi — only ESXi ones are enriched."""
+        r1 = self._make_resource(title='KCM Resource - esxi-prod')
+        r2 = self._make_resource(title='KCM Resource - web-app')
+        u1 = self._make_user(title='KCM User - esxi-prod')
+        u2 = self._make_user(title='KCM User - web-app')
+        count = PAMProjectKCMImportCommand._enrich_esxi_resources(
+            [r1, r2], [u1, u2], 'Test')
+        self.assertEqual(count, 1)
+        self.assertIn('/ESXi Hosts', r1['folder_path'])
+        self.assertNotIn('/ESXi Hosts', r2['folder_path'])
+        self.assertIn('/ESXi Hosts', u1['folder_path'])
+        self.assertNotIn('/ESXi Hosts', u2['folder_path'])
+
+    def test_no_double_subfolder(self):
+        """Running enrichment twice doesn't double the subfolder."""
+        r = self._make_resource(title='KCM Resource - esxi-host-1')
+        PAMProjectKCMImportCommand._enrich_esxi_resources([r], [], 'Test')
+        folder1 = r['folder_path']
+        PAMProjectKCMImportCommand._enrich_esxi_resources([r], [], 'Test')
+        self.assertEqual(r['folder_path'], folder1)
+
+    def test_vcenter_hostname_detected(self):
+        r = self._make_resource(host='vcenter.corp.local')
+        self.assertTrue(PAMProjectKCMImportCommand._is_esxi_connection(r))
+
+    def test_hypervisor_in_title(self):
+        r = self._make_resource(title='KCM Resource - Hypervisor-Node-3')
+        self.assertTrue(PAMProjectKCMImportCommand._is_esxi_connection(r))
+
+
 if __name__ == '__main__':
     unittest.main()

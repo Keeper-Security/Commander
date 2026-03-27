@@ -18,6 +18,7 @@ import getpass
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -82,6 +83,14 @@ PROTOCOL_TYPE_MAP = {
     'postgres': 'pamDatabase',
     'sql-server': 'pamDatabase',
 }
+
+# ESXi host detection patterns (case-insensitive)
+_ESXI_NAME_PATTERNS = re.compile(
+    r'(?:^|\b)(?:esxi?|vmhost|vsphere|hypervisor|vcenter|vmware)(?:\b|[-_\d])',
+    re.IGNORECASE)
+_ESXI_HOST_PATTERNS = re.compile(
+    r'(?:^|\.)(?:esxi?|vmhost|vsphere|vcenter)[-_.\d]',
+    re.IGNORECASE)
 
 
 class KCMDatabaseConnector:
@@ -698,6 +707,11 @@ class PAMProjectKCMImportCommand(Command):
                 folder_path += '/' + kcm_path
             item['folder_path'] = folder_path
 
+        # Detect and enrich ESXi connections
+        esxi_count = self._enrich_esxi_resources(resources, users, project_name)
+        if esxi_count:
+            logging.info('Detected %d ESXi/vSphere host(s) — moved to ESXi Hosts subfolder', esxi_count)
+
         # Finalize TOTP
         KCMParameterMapper.finalize_totp(users)
 
@@ -917,6 +931,8 @@ class PAMProjectKCMImportCommand(Command):
         print(f'  Project:      {project_name}')
         print(f'  Folder mode:  {folder_mode}')
         print(f'  Resources:    {num_resources}')
+        if esxi_count:
+            print(f'    ESXi hosts: {esxi_count}')
         print(f'  Users:        {num_users}')
         print(f'  Total:        {total_records} records')
         print(f'  Elapsed:      {elapsed:.1f}s')
@@ -1249,6 +1265,61 @@ class PAMProjectKCMImportCommand(Command):
             logging.info('Excluded %d group(s) and %d connection row(s)',
                          excluded_count, row_count)
         return filtered_groups, filtered_rows
+
+    @staticmethod
+    def _is_esxi_connection(resource):
+        """Detect whether a resource looks like an ESXi/vSphere host."""
+        protocol = (resource.get('pam_settings', {})
+                    .get('connection', {}).get('protocol', ''))
+        if protocol != 'ssh':
+            return False
+        title = resource.get('title', '')
+        host = resource.get('host', '')
+        if _ESXI_NAME_PATTERNS.search(title):
+            return True
+        if host and _ESXI_HOST_PATTERNS.search(host):
+            return True
+        return False
+
+    @staticmethod
+    def _enrich_esxi_resources(resources, users, project_name):
+        """Tag ESXi resources, move to dedicated subfolder, add ESXi PAM settings.
+
+        Returns the count of ESXi resources detected.
+        """
+        esxi_count = 0
+        for i, resource in enumerate(resources):
+            if not PAMProjectKCMImportCommand._is_esxi_connection(resource):
+                continue
+            esxi_count += 1
+
+            # 1. Move to ESXi Hosts subfolder
+            folder = resource.get('folder_path', '')
+            if '/ESXi Hosts' not in folder:
+                resource['folder_path'] = folder + '/ESXi Hosts'
+
+            # 2. Enable text session recording (ESXi is CLI-based)
+            pam_opts = resource.setdefault('pam_settings', {}).setdefault('options', {})
+            pam_opts['text_session_recording'] = 'on'
+
+            # 3. Tag resource title for clarity
+            if 'ESXi' not in resource.get('title', ''):
+                resource['title'] = resource['title'].replace(
+                    'KCM Resource - ', 'KCM Resource - [ESXi] ', 1)
+
+            # Move corresponding user to ESXi subfolder too
+            res_label = resource['title'].replace('KCM Resource - ', '', 1)
+            for user in users:
+                user_label = user.get('title', '').replace('KCM User - ', '', 1)
+                # Match by stripping the [ESXi] tag for comparison
+                clean_res = res_label.replace('[ESXi] ', '', 1)
+                if user_label == clean_res:
+                    ufolder = user.get('folder_path', '')
+                    if '/ESXi Hosts' not in ufolder:
+                        user['folder_path'] = ufolder + '/ESXi Hosts'
+                    break
+
+        return esxi_count
 
     @staticmethod
     def _preview_group_tree(groups, resolver, connection_rows, project_name):
