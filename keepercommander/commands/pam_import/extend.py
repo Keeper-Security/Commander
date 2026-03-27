@@ -78,8 +78,10 @@ def split_folder_path(path: str) -> list[str]:
     # ...yet again a``/b -> [a`/b] or [a`]/[b]
 
     # Note: using / as escape char and path delimiter: / <-> //
-    path = path.replace("\x00", "")  # Strip NUL bytes that would break placeholder logic
-    placeholder = "\x00"
+    if "\x00" in path:
+        logging.warning('Folder path contains NUL bytes (stripped): %r', path)
+        path = path.replace("\x00", "")
+    placeholder = "\x00"  # Safe as placeholder now that any input NULs are stripped
     tmp = path.replace("//", placeholder).rstrip("/")
     parts = tmp.split("/")  # split on remaining single slashes
     res = [part.replace(placeholder, "/") for part in parts]
@@ -433,10 +435,11 @@ class PAMProjectExtendCommand(Command):
         try:
             with open(file_name, encoding="utf-8") as f:
                 data = json.load(f)
-        except json.JSONDecodeError as e:
-            raise CommandError("pam project extend", f"Invalid JSON in import file: {e}")
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            raise CommandError("pam project extend", f"Invalid content in import file: {e}")
         except (PermissionError, OSError) as e:
-            raise CommandError("pam project extend", f"Cannot read import file: {e}")
+            logging.debug('File read error: %s', e)
+            raise CommandError("pam project extend", f"Cannot read import file: {file_name}")
 
         pam_data = data.get("pam_data") if isinstance(data, dict) else {}
         pam_data = pam_data if isinstance(pam_data, dict) else {}
