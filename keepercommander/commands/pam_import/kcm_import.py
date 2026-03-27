@@ -285,19 +285,19 @@ class KCMParameterMapper:
         # User mappings
         if value and arg in self.mappings['users']:
             mapping = self.mappings['users'][arg]
-            self._apply_single_mapping(mapping, value, user)
+            self._apply_single_mapping(arg, mapping, value, user)
             return
 
         # Resource mappings
         if arg in self.mappings['resources']:
             mapping = self.mappings['resources'][arg]
-            self._apply_single_mapping(mapping, value, resource)
+            self._apply_single_mapping(arg, mapping, value, resource)
 
-    def _apply_single_mapping(self, mapping, value, target):
+    def _apply_single_mapping(self, param_name, mapping, value, target):
         if mapping == 'ignore':
             return
         if mapping == 'log':
-            logging.debug('Unmapped KCM parameter: %s (value: %s)', mapping, value)
+            logging.debug('Unmapped KCM parameter: %s (value present)', param_name)
             return
         if mapping is None:
             return
@@ -856,8 +856,10 @@ class PAMProjectKCMImportCommand(Command):
                                                   file_name=tmp_path1,
                                                   dry_run=False)
             finally:
-                if os.path.exists(tmp_path1):
+                try:
                     os.unlink(tmp_path1)
+                except OSError:
+                    pass
 
             # Capture gateway token and PAM config UID from Phase 1
             pam_config_uid = None
@@ -887,8 +889,10 @@ class PAMProjectKCMImportCommand(Command):
                                    file_name=tmp_path2,
                                    dry_run=False)
             finally:
-                if os.path.exists(tmp_path2):
+                try:
                     os.unlink(tmp_path2)
+                except OSError:
+                    pass
 
         # Import statistics
         t_end = time.monotonic()
