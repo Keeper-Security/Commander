@@ -35,6 +35,8 @@ from .terminal_connection import (
 )
 from .terminal_size import get_terminal_size_pixels, is_interactive_tty
 from .guac_cli.stdin_handler import StdinHandler
+from .guac_cli.input import InputHandler
+from .guac_cli.session_input import CtrlCCoordinator, PasteOrchestrator
 from ..base import Command
 from ..tunnel.port_forward.tunnel_helpers import (
     get_gateway_uid_from_record,
@@ -53,9 +55,44 @@ from ..ssh_agent import try_extract_private_key
 from ... import api, vault
 from ...subfolder import try_resolve_path
 from ...error import CommandError
+from ...utils import value_to_boolean
 
 if TYPE_CHECKING:
     from ...params import KeeperParams
+
+
+def _pam_connection_clipboard_bool(v: Any) -> bool:
+    """True if a PAM connection clipboard flag is enabled; coerces JSON/string booleans."""
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return False
+    b = value_to_boolean(v)
+    return b is True
+
+
+def _pam_connection_font_size_int(raw: Any) -> Optional[int]:
+    """Parse pamSettings.connection.fontSize to int, or None if unset or not parseable as an integer size."""
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float):
+        return int(raw) if raw.is_integer() else None
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return None
+        try:
+            return int(s)
+        except ValueError:
+            return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 def _parse_host_port(value: str) -> Tuple[str, int]:
@@ -238,6 +275,10 @@ class PAMLaunchCommand(Command):
     parser.add_argument('--host-record', '-hr', required=False, dest='host_record', type=str,
                         help='Record (UID, path, or title) with a host or pamHostname field containing hostName and port. '
                              'Requires allowSupplyHost. Mutually exclusive with --host.')
+    parser.add_argument('--stdin', required=False, dest='use_stdin', action='store_true',
+                        help='Send typed input via stdin pipe bytes (pipe/blob/end, kcm-cli style) instead of '
+                             'the default Guacamole key-event mode. Paste and Ctrl+C double-tap behave the '
+                             'same in both modes.')
 
     def get_parser(self):
         return PAMLaunchCommand.parser
@@ -511,10 +552,11 @@ class PAMLaunchCommand(Command):
                             if _ur:
                                 dag_linked_uid = _ur[0]
 
-            # Read allowSupply flags from pamSettings
+            # Read allowSupply flags and other connection settings from pamSettings
             pam_settings_field = record.get_typed_field('pamSettings')
             allow_supply_user = False
             allow_supply_host = False
+            pam_connection_font_size: Any = None
             if pam_settings_field:
                 pam_settings_value = pam_settings_field.get_default_value(dict)
                 if pam_settings_value:
@@ -522,6 +564,48 @@ class PAMLaunchCommand(Command):
                     connection = pam_settings_value.get('connection', {})
                     if isinstance(connection, dict):
                         allow_supply_user = connection.get('allowSupplyUser', False)
+                        pam_connection_font_size = connection.get('fontSize')
+                        if _pam_connection_clipboard_bool(connection.get('readOnly')):
+                            raise CommandError(
+                                'pam launch',
+                                f'Record {record_uid} has connection.readOnly:true. That setting is only '
+                                'meaningful when joining an existing session; starting a new session from '
+                                'Commander is not a read-only join flow. Set readOnly:false on the record '
+                                'for CLI launch, or use Web Vault when joining a session read-only.',
+                            )
+                        if connection.get('disableCopy'):
+                            raise CommandError(
+                                'pam launch',
+                                f'Record {record_uid} has disableCopy:true and KCM blocks terminal STDOUT '
+                                'in that configuration, so Commander cannot run a CLI session. '
+                                'Use Web Vault or another client, or set disableCopy:false on the record '
+                                'if CLI terminal access is required.',
+                            )
+                        if _pam_connection_clipboard_bool(connection.get('disablePaste')):
+                            raise CommandError(
+                                'pam launch',
+                                f'Record {record_uid} has disablePaste:true and a terminal session cannot '
+                                'reliably distinguish pasted text from normal keystrokes, so Commander '
+                                'cannot run a CLI session. Use Web Vault or another client, or set '
+                                'disablePaste:false on the record if CLI terminal access is required.',
+                            )
+                        # If we want to ignore disablePaste - uncomment below (still need --stdin check)
+                        # disablePaste is incompatible with --stdin (pipe mode)
+                        # if connection.get('disablePaste') and kwargs.get('use_stdin'):
+                        #     raise CommandError(
+                        #         'pam launch',
+                        #         f'Record {record_uid} has disablePaste:true and KCM does not expose the '
+                        #         'STDIN pipe that --stdin requires. Run pam launch without --stdin to use '
+                        #         'default key-event driven input mode, or set disablePaste:false on the record.',
+                        #     )
+                        # Do not remove:
+                        # There's no reliable way to detect pasted text from typed input alone
+                        # so either disable this command or ignore disablePaste i.e. allow paste.
+                        # - Paste is impossible to detect/block in CLI mode - all characters are received/read as console input. 
+                        # - Capturing raw key events is platform dependent and usually require admin access.
+                        # - Python modules like keyboard/pyinput capture global keys (not per window/terminal) 
+                        # and often need admin/root privileges to work (driver level event capture).
+                        # - Burst detection is unreliable and eating typed characters during auto-repeat/fast typing.
 
             # Get record host/port for fallback validation
             hostname_on_record, port_on_record = _get_host_port_from_record(record)
@@ -710,27 +794,68 @@ class PAMLaunchCommand(Command):
                     connected_gateway_uids = [x.controllerUid for x in connected_gateways.controllers]
                     gateway_uid_bytes = url_safe_str_to_bytes(gateway_info['gateway_uid'])
                     if gateway_uid_bytes not in connected_gateway_uids:
-                        logging.warning(
+                        # Root logger is ERROR when not DEBUG; use logging.error so this is visible.
+                        logging.error(
                             'Gateway "%s" (%s) seems offline - trying to connect anyway.',
-                            gateway_info['gateway_name'], gateway_info['gateway_uid']
+                            gateway_info['gateway_name'],
+                            gateway_info['gateway_uid'],
                         )
                     else:
-                        logging.debug(f"✓ Gateway is online and connected")
+                        logging.debug("✓ Gateway is online and connected")
                 else:
-                    logging.warning('Gateway seems offline - trying to connect anyway.')
+                    logging.error('Gateway seems offline - trying to connect anyway.')
             except Exception as e:
                 logging.debug('Could not verify gateway status: %s. Continuing...', e)
+
+            if pam_connection_font_size is not None and str(pam_connection_font_size).strip() != '':
+                fs_int = _pam_connection_font_size_int(pam_connection_font_size)
+                if fs_int != 12:
+                    fs_disp = fs_disp = str(fs_int) if fs_int is not None else str(pam_connection_font_size).strip()
+                    logging.warning(
+                        'Record %s sets connection.fontSize=%s (guacd default is 12); session recordings '
+                        'may look different from this Commander terminal session.',
+                        record_uid,
+                        fs_disp,
+                    )
+                    print(
+                        f'Warning: This record sets fontSize={fs_disp}; session recordings may look '
+                        'different from this Commander terminal session.',
+                    )
 
             # Launch terminal connection
             result = launch_terminal_connection(params, record_uid, gateway_info, **kwargs)
 
             if result.get('success'):
-                logging.debug(f"Terminal connection launched successfully")
+                logging.debug("Terminal connection launched successfully")
                 logging.debug(f"Protocol: {result.get('protocol')}")
+
+                # Warn early: clipboard policy + gateway risk before the terminal session starts.
+                _clip = result.get('settings', {}).get('clipboard', {})
+                if _clip.get('disablePaste') or _clip.get('disableCopy'):
+                    print('Warning: This record disables clipboard copy and/or paste in PAM settings.')
+                    logging.debug(
+                        '\nWarning: This record disables clipboard copy and/or paste in PAM. '
+                        'Commander enforces that in the client; guacd also receives disable-paste/'
+                        'disable-copy when the record requires it. Some gateways never emit a '
+                        'Guacamole terminal `pipe` in that configuration — `pam launch` may show no '
+                        'shell output. Workarounds: use Web Vault for this machine, temporarily allow '
+                        'clipboard on the record for CLI (enable-pipe is still requested in the offer).\n'
+                    )
+                if _clip.get('disablePaste'):
+                    logging.debug(
+                        'disablePaste: local clipboard paste is off; paste chords send key events '
+                        '(remote session clipboard / TTY paste).\n'
+                    )
+                if _clip.get('disableCopy'):
+                    logging.debug('Copy is disabled (disableCopy): remote text will not be placed on the local clipboard.\n')
 
                 # Always start interactive CLI session
                 # Pass launch_credential_uid to know if ConnectAs payload is needed
-                self._start_cli_session(result, params, kwargs.get('launch_credential_uid'))
+                self._start_cli_session(
+                    result, params,
+                    kwargs.get('launch_credential_uid'),
+                    use_stdin=kwargs.get('use_stdin', False),
+                )
             else:
                 error_msg = result.get('error', 'Unknown error')
                 raise CommandError('pam launch', f'Failed to launch connection: {error_msg}')
@@ -738,8 +863,13 @@ class PAMLaunchCommand(Command):
             # Restore original root logger level
             root_logger.setLevel(original_level)
 
-    def _start_cli_session(self, tunnel_result: Dict[str, Any], params: KeeperParams,
-                           launch_credential_uid: Optional[str] = None):
+    def _start_cli_session(
+        self,
+        tunnel_result: Dict[str, Any],
+        params: KeeperParams,
+        launch_credential_uid: Optional[str] = None,
+        use_stdin: bool = False,
+    ):
         """
         Start CLI session using PythonHandler protocol mode.
 
@@ -757,11 +887,38 @@ class PAMLaunchCommand(Command):
         4. Python responds with 'connect', 'size', 'audio', 'image'
         5. guacd sends 'ready', terminal session begins
 
+        Input modes
+        -----------
+        Default (key-event):
+            InputHandler maps every keystroke to a Guacamole `key` instruction
+            (press + release), matching Web Vault behaviour.
+        --stdin (pipe mode):
+            StdinHandler sends typed bytes via the pipe/blob/end STDIN stream,
+            matching kcm-cli behaviour.
+        Both modes share the same paste (Ctrl+V / Shift+Insert → Vault clipboard
+        stream) and Ctrl+C double-tap (400 ms → local exit) logic.
+
         Args:
             tunnel_result: Result from launch_terminal_connection
             params: KeeperParams instance
-            launch_credential_uid: Optional UID resolved from CLI --credential (UID, path, or title); triggers ConnectAs payload when set
+            launch_credential_uid: Optional UID resolved from CLI --credential;
+                triggers ConnectAs payload when set.
+            use_stdin: When True use StdinHandler (pipe/byte mode) instead of
+                the default InputHandler (key-event mode).
         """
+        import sys as _sys
+
+        # Non-interactive stdin guard: key-event mode requires a real TTY.
+        # --stdin (pipe mode) is fine with redirected stdin, but key mode is not —
+        # tty.setraw() will raise and character-at-a-time mapping makes no sense
+        # for piped/scripted input.
+        if not use_stdin and not _sys.stdin.isatty():
+            raise CommandError(
+                'pam launch',
+                'Interactive (key-event) mode requires a TTY. '
+                'stdin is not a terminal — scripted/piped input is not supported. '
+                'If you need to drive pam launch non-interactively use --stdin.',
+            )
         shutdown_requested = False
 
         def signal_handler_fn(signum, frame):
@@ -932,28 +1089,93 @@ class PAMLaunchCommand(Command):
             guac_ready_result = python_handler.wait_for_ready(guac_ready_timeout)
             if guac_ready_result:
                 logging.debug("* Guacamole connection ready!")
-                logging.debug("Terminal session active. Press Ctrl+C to exit.")
+                logging.debug(
+                    'Terminal session active. Ctrl+C → remote interrupt; double Ctrl+C (<400 ms) to exit.',
+                )
             else:
                 logging.warning(f"Guacamole did not report ready within {guac_ready_timeout}s")
                 logging.warning("Terminal may still work if data is flowing.")
 
             # Check for STDOUT pipe support (feature detection)
             # This warns the user if CLI pipe mode is not supported by the gateway
-            python_handler.check_stdout_pipe_support(timeout=10.0)
-
-            # Create stdin handler for pipe/blob/end input pattern
-            # StdinHandler reads raw stdin and sends via send_stdin (base64-encoded)
-            # This matches kcm-cli's implementation for plaintext SSH/TTY streams
-            stdin_handler = StdinHandler(
-                stdin_callback=lambda data: python_handler.send_stdin(data),
-                key_callback=lambda keysym, pressed: python_handler.send_key(keysym, pressed)
+            _clipboard_pol = tunnel_result.get('settings', {}).get('clipboard', {})
+            _pam_clipboard = (
+                _pam_connection_clipboard_bool(_clipboard_pol.get('disablePaste'))
+                or _pam_connection_clipboard_bool(_clipboard_pol.get('disableCopy'))
+            )
+            python_handler.check_stdout_pipe_support(
+                timeout=45.0 if _pam_clipboard else 10.0,
+                pam_clipboard_record_policy=_pam_clipboard,
             )
 
-            # Main event loop with stdin input
+            # Shared input coordinators:
+            # Both InputHandler (key mode) and StdinHandler (--stdin mode) use
+            # the same CtrlCCoordinator and PasteOrchestrator so paste and
+            # Ctrl+C double-tap behave identically in both modes.
+
+            def _request_exit():
+                nonlocal shutdown_requested
+                shutdown_requested = True
+
+            disable_paste = _pam_connection_clipboard_bool(_clipboard_pol.get('disablePaste'))
+
+            if use_stdin:
+                # Pipe mode: remote interrupt = raw Ctrl+C byte via send_stdin
+                ctrl_c_coord = CtrlCCoordinator(
+                    remote_interrupt_fn=lambda: python_handler.send_stdin(b'\x03'),
+                    local_exit_fn=_request_exit,
+                )
+            else:
+                # Key-event mode: remote interrupt = send_key(ETX) press+release
+                def _remote_key_ctrl_c() -> None:
+                    python_handler.send_key(3, True)
+                    python_handler.send_key(3, False)
+
+                ctrl_c_coord = CtrlCCoordinator(
+                    remote_interrupt_fn=_remote_key_ctrl_c,
+                    local_exit_fn=_request_exit,
+                )
+
+            # No PasteOrchestrator when PAM disables paste — only Guacamole key chords (no pyperclip).
+            paste_orch: Optional[PasteOrchestrator] = None
+            if not disable_paste:
+                paste_orch = PasteOrchestrator(
+                    send_clipboard_fn=python_handler.send_clipboard_stream,
+                    disable_paste=False,
+                )
+
+            # Build the appropriate input handler:
+            if use_stdin:
+                input_handler = StdinHandler(
+                    stdin_callback=lambda data: python_handler.send_stdin(data),
+                    key_callback=lambda keysym, pressed: python_handler.send_key(keysym, pressed),
+                    ctrl_c_coordinator=ctrl_c_coord,
+                    paste_orchestrator=paste_orch,
+                )
+                logging.debug('Input mode: --stdin (pipe/blob/end, StdinHandler)')
+            else:
+                input_handler = InputHandler(
+                    key_callback=lambda keysym, pressed: python_handler.send_key(keysym, pressed),
+                    ctrl_c_coordinator=ctrl_c_coord,
+                    paste_orchestrator=paste_orch,
+                    disable_paste=disable_paste,
+                )
+                logging.debug('Input mode: key-event (InputHandler, default)')
+
+            # Main event loop with input handler
             try:
-                # Start stdin handler (runs in background thread)
-                stdin_handler.start()
-                logging.debug("STDIN handler started")  # (pipe/blob/end mode)
+                # Start input handler (runs in background thread)
+                input_handler.start()
+                # Ctrl+C → byte 0x03 in the input thread (CtrlCCoordinator). Windows clears
+                # ENABLE_PROCESSED_INPUT in the stdin readers so the key is delivered; SIG_IGN had
+                # blocked ReadConsoleInput/msvcrt from seeing Ctrl+C on Win11.
+                mode_label = '--stdin (pipe)' if use_stdin else 'key-event (default)'
+                logging.debug(
+                    'Input handler started [mode=%s]. '
+                    'Ctrl+C → remote interrupt; press Ctrl+C twice quickly (<400 ms) to exit. '
+                    'Paste chords → Guacamole clipboard stream, or key events when disablePaste.',
+                    mode_label,
+                )
 
                 # --- Terminal resize tracking ---
                 # Resize polling is skipped entirely in non-interactive (piped)
@@ -1050,12 +1272,12 @@ class PAMLaunchCommand(Command):
                 logging.debug("\n\nExiting CLI terminal mode...")
 
             finally:
-                # Stop stdin handler first (restores terminal)
-                logging.debug("Stopping stdin handler...")
+                # Stop input handler first (restores terminal)
+                logging.debug("Stopping input handler...")
                 try:
-                    stdin_handler.stop()
+                    input_handler.stop()
                 except Exception as e:
-                    logging.debug(f"Error stopping stdin handler: {e}")
+                    logging.debug(f"Error stopping input handler: {e}")
 
                 # Cleanup - check if connection is already closed to avoid deadlock
                 logging.debug("Stopping Python handler...")

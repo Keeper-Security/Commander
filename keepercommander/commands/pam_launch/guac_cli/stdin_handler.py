@@ -34,32 +34,47 @@ import sys
 import threading
 from typing import Callable, Optional
 
+from .session_input import CtrlCCoordinator, PasteOrchestrator
+from .win_console_input import (
+    win_stdin_disable_ctrl_c_process_input,
+    win_stdin_restore_console_mode,
+)
+
 
 class StdinHandler:
     """
-    Handles stdin input for plaintext SSH/TTY sessions.
+    Handles stdin input for plaintext SSH/TTY sessions (--stdin / pipe mode).
 
-    Reads raw stdin in non-buffered mode and sends data via callback.
-    Uses pipe/blob/end pattern matching kcm-cli implementation.
+    Reads raw stdin in non-buffered mode and sends typed bytes via
+    stdin_callback (pipe/blob/end pattern, matching kcm-cli).
 
-    Enhanced to detect escape sequences (arrow keys, function keys) and
-    send them as X11 key events instead of raw bytes.
+    Escape sequences (arrow keys, function keys) are converted to X11 key
+    events via key_callback when provided.
+
+    Paste chords (Ctrl+V byte 0x16, Shift+Insert ESC[2~) and Ctrl+C double-tap
+    are handled via the shared CtrlCCoordinator / PasteOrchestrator helpers so
+    behaviour is identical to key-event mode (InputHandler).
     """
 
-    def __init__(self, stdin_callback: Callable[[bytes], None],
-                 key_callback: Optional[Callable[[int, bool], None]] = None):
+    def __init__(
+        self,
+        stdin_callback: Callable[[bytes], None],
+        key_callback: Optional[Callable[[int, bool], None]] = None,
+        ctrl_c_coordinator: Optional[CtrlCCoordinator] = None,
+        paste_orchestrator: Optional[PasteOrchestrator] = None,
+    ):
         """
-        Initialize the stdin handler.
-
         Args:
-            stdin_callback: Callback function(data: bytes) to send stdin data.
-                           Should call GuacamoleHandler.send_stdin()
-            key_callback: Optional callback function(keysym: int, pressed: bool)
-                         to send key events. Should call GuacamoleHandler.send_key()
-                         If provided, escape sequences will be converted to key events.
+            stdin_callback: Sends typed bytes via GuacamoleHandler.send_stdin().
+            key_callback:   Sends key events via GuacamoleHandler.send_key().
+                            Required for escape-sequence → keysym conversion.
+            ctrl_c_coordinator: Shared double-tap Ctrl+C handler.
+            paste_orchestrator: Shared paste handler (clipboard → Guac stream).
         """
         self.stdin_callback = stdin_callback
         self.key_callback = key_callback
+        self.ctrl_c_coordinator = ctrl_c_coordinator
+        self.paste_orchestrator = paste_orchestrator
         self.running = False
         self.thread: Optional[threading.Thread] = None
         self.raw_mode_active = False
@@ -170,9 +185,13 @@ class StdinHandler:
                 self._escape_buffer += bytes([byte])
                 keysym = self._detect_escape_sequence()
                 if keysym is not None:
-                    # Found a complete escape sequence - send as key event
+                    # Found a complete escape sequence.
+                    # INSERT (ESC[2~) is a paste chord in both modes.
                     logging.debug(f"Detected escape sequence: {self._escape_buffer.hex()} -> keysym 0x{keysym:04X}")
-                    self._send_key(keysym)
+                    if keysym == 0xFF63 and self.paste_orchestrator:  # INSERT → paste
+                        self.paste_orchestrator.paste()
+                    else:
+                        self._send_key(keysym)
                     self._escape_buffer = b''
                     i += 1
                     continue
@@ -231,14 +250,24 @@ class StdinHandler:
                     # End of data, wait for next read
                     break
 
-            # Regular character - send as stdin
+            # Regular character - send as stdin.
             # Normalize line endings: send \n for Enter so remote sees one newline (avoids double
             # newlines when terminal sends \r or \r\n and remote echoes + app sends newline).
             if byte == 0x0D:  # \r (Enter on some terminals)
                 self.stdin_callback(b'\n')
                 if i + 1 < len(data) and data[i + 1] == 0x0A:  # skip trailing \n in \r\n
                     i += 1
-            elif byte < 32 and byte != 0x1B:  # Other control chars as-is (e.g. Ctrl+key)
+            elif byte == 0x03:  # Ctrl+C — double-tap coordinator
+                if self.ctrl_c_coordinator:
+                    self.ctrl_c_coordinator.handle()
+                else:
+                    self.stdin_callback(bytes([byte]))
+            elif byte == 0x16:  # Ctrl+V — paste chord
+                if self.paste_orchestrator:
+                    self.paste_orchestrator.paste()
+                else:
+                    self.stdin_callback(bytes([byte]))
+            elif byte < 32 and byte != 0x1B:  # Other control chars as-is
                 self.stdin_callback(bytes([byte]))
             elif byte >= 32:  # Printable character
                 self.stdin_callback(bytes([byte]))
@@ -567,7 +596,7 @@ class _WindowsStdinReader:
     """Windows stdin reader using msvcrt for console input."""
 
     def __init__(self):
-        self.old_mode = None
+        self._win_saved_console_mode: Optional[int] = None
 
     def set_raw_mode(self):
         """Set console to raw mode on Windows."""
@@ -578,24 +607,19 @@ class _WindowsStdinReader:
             sys.stdout.flush()
             sys.stderr.flush()
 
-            # Windows console is already suitable for getch-style reading
-            # No explicit raw mode needed for msvcrt, but we still flush and delay
-            # to prevent visual glitches when entering CLI mode
-
             # Small delay to allow console to process any pending output
-            # This helps prevent visual glitches where lines appear to be deleted
             time.sleep(0.01)  # 10ms delay
 
-            # Flush again after the delay
             sys.stdout.flush()
             sys.stderr.flush()
+            # Ctrl+C as input (not SIGINT) so CtrlCCoordinator can handle double-tap.
+            self._win_saved_console_mode = win_stdin_disable_ctrl_c_process_input()
         except Exception as e:
             logging.warning(f"Failed to set raw mode on Windows: {e}")
 
     def restore(self):
-        """Restore console mode."""
-        # Nothing to restore for basic msvcrt usage
-        pass
+        win_stdin_restore_console_mode(self._win_saved_console_mode)
+        self._win_saved_console_mode = None
 
     def read(self, timeout: Optional[float] = None) -> Optional[bytes]:
         """
