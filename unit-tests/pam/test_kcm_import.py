@@ -399,16 +399,16 @@ class TestE2EExecuteDryRun(unittest.TestCase):
             if 'password' in user and user['password']:
                 self.assertEqual(user['password'], '[REDACTED]')
 
-        # Verify folder paths use ksm mode (Production has config → root)
+        # Verify folder paths use project_name prefix with ksm mode
         web_resource = next(r for r in resources
                            if r['title'] == 'KCM Resource - WebServer')
         self.assertEqual(web_resource['folder_path'],
-                         'KCM Resources - Production/Linux')
+                         'E2E Test - Resources/Production/Linux')
 
         db_resource = next(r for r in resources
                            if r['title'] == 'KCM Resource - AppDB')
         self.assertEqual(db_resource['folder_path'],
-                         'KCM Resources - Production')
+                         'E2E Test - Resources/Production')
 
         # Verify host extraction
         self.assertEqual(web_resource['host'], '10.0.1.10')
@@ -534,7 +534,7 @@ class TestE2EExecuteDryRun(unittest.TestCase):
     @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
            return_value='testdbpass')
     def test_import_mode_delegates(self, mock_getpass, MockConnector, mock_gw):
-        """E2E: no --config delegates to PAMProjectImportCommand."""
+        """E2E: no --config uses two-phase import (edit for infra, extend for records)."""
         groups, rows = self._mock_db_data()
 
         mock_conn = MockConnector.return_value
@@ -544,23 +544,38 @@ class TestE2EExecuteDryRun(unittest.TestCase):
         cmd = PAMProjectKCMImportCommand()
         params = MagicMock()
 
-        # Mock the lazy import inside execute() to avoid importing
-        # the real edit module (which pulls in pydantic on 3.7)
+        # Phase 1 mock: edit module returns project dict with pam_config UID
         mock_import_cmd = MagicMock()
+        mock_import_cmd.execute.return_value = {
+            'pam_config': {'pam_config_uid': 'test-pam-config-uid-123'}
+        }
         mock_import_class = MagicMock(return_value=mock_import_cmd)
         mock_edit_module = MagicMock(PAMProjectImportCommand=mock_import_class)
 
-        with patch.dict('sys.modules',
-                        {'keepercommander.commands.pam_import.edit': mock_edit_module}):
+        # Phase 2 mock: extend module
+        mock_extend_cmd = MagicMock()
+        mock_extend_class = MagicMock(return_value=mock_extend_cmd)
+        mock_extend_module = MagicMock(PAMProjectExtendCommand=mock_extend_class)
+
+        with patch.dict('sys.modules', {
+                'keepercommander.commands.pam_import.edit': mock_edit_module,
+                'keepercommander.commands.pam_import.extend': mock_extend_module}):
             cmd.execute(params,
                         db_host='127.0.0.1',
                         db_type='mysql',
                         project_name='Import Test')
 
+        # Phase 1: edit called with infrastructure only (empty resources/users)
         mock_import_cmd.execute.assert_called_once()
-        call_kwargs = mock_import_cmd.execute.call_args
-        self.assertEqual(call_kwargs[1]['project_name'], 'Import Test')
-        self.assertTrue(call_kwargs[1]['file_name'].endswith('.json'))
+        edit_kwargs = mock_import_cmd.execute.call_args
+        self.assertEqual(edit_kwargs[1]['project_name'], 'Import Test')
+        self.assertTrue(edit_kwargs[1]['file_name'].endswith('.json'))
+
+        # Phase 2: extend called with records and pam_config_uid
+        mock_extend_cmd.execute.assert_called_once()
+        extend_kwargs = mock_extend_cmd.execute.call_args
+        self.assertEqual(extend_kwargs[1]['config'], 'test-pam-config-uid-123')
+        self.assertTrue(extend_kwargs[1]['file_name'].endswith('.json'))
 
     def test_no_db_host_raises(self):
         """Execute without --db-host or --docker-detect raises CommandError."""

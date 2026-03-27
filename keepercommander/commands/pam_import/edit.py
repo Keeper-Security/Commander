@@ -191,6 +191,8 @@ class PAMProjectImportCommand(Command):
               "the access_token during a Gateway install or reconfiguration: "
               "https://docs.keeper.io/en/keeperpam/privileged-access-manager/getting-started/gateways")
 
+        return project
+
     PAM_ROOT_FOLDER_NAME = "PAM Environments"
 
     def process_folders(self, params, project: dict) -> dict:

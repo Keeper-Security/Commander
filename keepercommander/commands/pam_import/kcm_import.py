@@ -20,6 +20,7 @@ import logging
 import os
 import subprocess
 import tempfile
+import time
 
 from typing import Dict, List, Tuple
 
@@ -205,7 +206,11 @@ class KCMParameterMapper:
             cid = row['connection_id']
             if cid in disabled_ids:
                 continue
-            name = row['name']
+            name = row['name'] or ''
+            # Sanitize connection name — strip control chars and null bytes
+            name = ''.join(c for c in name if c >= ' ' and c != '\x7f')
+            if not name:
+                name = f'unnamed-{cid}'
             protocol = row['protocol']
 
             if cid not in connections:
@@ -320,51 +325,155 @@ class KCMParameterMapper:
 class KCMGroupResolver:
     """Builds folder hierarchy from KCM connection groups."""
 
-    def __init__(self, groups, mode='ksm'):
+    def __init__(self, groups, mode='ksm', strip_root=False, max_depth=0):
         self.groups = {g['connection_group_id']: g for g in groups}
         self.mode = mode
+        self.strip_root = strip_root
+        self.max_depth = max_depth
         self.paths = {}  # type: Dict[int, str]
         self._resolve_all()
+
+    @staticmethod
+    def _sanitize(name):
+        if not name:
+            return '_unnamed_'
+        # Strip null bytes and control characters
+        name = ''.join(c for c in name if c >= ' ' and c != '\x7f')
+        name = name.replace('\x00', '')
+        # Path traversal prevention
+        name = name.replace('/', '_').replace('\\', '_').replace('..', '_')
+        name = name.strip('. ')
+        if not name:
+            return '_unnamed_'
+        # Length limit — Keeper folder names max ~255 chars
+        if len(name) > 200:
+            name = name[:200]
+        return name
 
     def _resolve_all(self):
         for gid in self.groups:
             if self.mode == 'flat':
                 raw = self.groups[gid]['connection_group_name']
-                self.paths[gid] = raw.replace('/', '_').replace('\\', '_').replace('..', '_')
+                self.paths[gid] = self._sanitize(raw)
+            elif self.mode == 'qualified':
+                self._resolve_qualified(gid)
             else:
                 self._resolve_path(gid)
+        # Apply depth limiting after full paths are built
+        if self.max_depth > 0 and self.mode not in ('flat', 'qualified'):
+            self._apply_depth_limit()
+
+    def _get_depth(self, group_id, _seen=None):
+        """Compute absolute tree depth (root children = 1)."""
+        if _seen is None:
+            _seen = set()
+        if group_id is None or group_id in _seen:
+            return 0
+        _seen.add(group_id)
+        group = self.groups.get(group_id)
+        if not group:
+            return 0
+        pid = group.get('parent_id')
+        if pid is None or pid not in self.groups:
+            return 1
+        return self._get_depth(pid, _seen) + 1
+
+    def _find_ancestor_at_depth(self, group_id, target_depth, _seen=None):
+        """Walk up the tree to find the ancestor at exactly target_depth."""
+        if _seen is None:
+            _seen = set()
+        if group_id in _seen:
+            return group_id
+        _seen.add(group_id)
+        group = self.groups.get(group_id)
+        if not group:
+            return group_id
+        depth = self._get_depth(group_id)
+        if depth <= target_depth:
+            return group_id
+        pid = group.get('parent_id')
+        if pid is None or pid not in self.groups:
+            return group_id
+        return self._find_ancestor_at_depth(pid, target_depth, _seen)
+
+    def _apply_depth_limit(self):
+        """Collapse groups deeper than max_depth into their ancestor."""
+        for gid in list(self.paths.keys()):
+            depth = self._get_depth(gid)
+            if depth > self.max_depth:
+                ancestor_id = self._find_ancestor_at_depth(gid, self.max_depth)
+                if ancestor_id in self.paths:
+                    self.paths[gid] = self.paths[ancestor_id]
 
     def _resolve_path(self, group_id, _seen=None):
         if group_id is None:
-            return 'ROOT'
+            return '' if self.strip_root else 'ROOT'
         if group_id in self.paths:
             return self.paths[group_id]
         if _seen is None:
             _seen = set()
         if group_id in _seen:
-            return 'ROOT'
+            return '' if self.strip_root else 'ROOT'
         _seen.add(group_id)
         group = self.groups.get(group_id)
         if not group:
-            return 'ROOT'
-        # Sanitize group name: strip path separators to prevent traversal
-        safe_name = group['connection_group_name'].replace('/', '_').replace('\\', '_').replace('..', '_')
+            return '' if self.strip_root else 'ROOT'
+        safe_name = self._sanitize(group['connection_group_name'])
         if self.mode == 'ksm' and group.get('ksm_config'):
             self.paths[group_id] = safe_name
             return safe_name
         parent_path = self._resolve_path(group.get('parent_id'), _seen)
-        full_path = f"{parent_path}/{safe_name}"
+        if parent_path:
+            full_path = f"{parent_path}/{safe_name}"
+        else:
+            full_path = safe_name
         self.paths[group_id] = full_path
         return full_path
 
+    def _resolve_qualified(self, group_id):
+        """Build parent-qualified flat name to avoid collisions."""
+        if group_id in self.paths:
+            return self.paths[group_id]
+        group = self.groups.get(group_id)
+        if not group:
+            self.paths[group_id] = ''
+            return ''
+        safe_name = self._sanitize(group['connection_group_name'])
+        parent_id = group.get('parent_id')
+        parent = self.groups.get(parent_id) if parent_id else None
+        if parent:
+            parent_name = self._sanitize(parent['connection_group_name'])
+            qualified = f"{parent_name} - {safe_name}"
+        else:
+            qualified = safe_name
+        # Collision check — qualify further if needed
+        existing_names = set(self.paths.values())
+        if qualified in existing_names and parent:
+            grandparent_id = parent.get('parent_id')
+            grandparent = self.groups.get(grandparent_id) if grandparent_id else None
+            if grandparent:
+                gp_name = self._sanitize(grandparent['connection_group_name'])
+                qualified = f"{gp_name} - {parent_name} - {safe_name}"
+        # Final fallback: numeric suffix if still colliding
+        if qualified in existing_names:
+            base = qualified
+            counter = 2
+            while qualified in existing_names:
+                qualified = f"{base} ({counter})"
+                counter += 1
+        self.paths[group_id] = qualified
+        return qualified
+
     def resolve_path(self, group_id):
         if group_id is None:
-            return 'ROOT'
-        return self.paths.get(group_id, 'ROOT')
+            return '' if self.strip_root else 'ROOT'
+        return self.paths.get(group_id, '' if self.strip_root else 'ROOT')
 
     def get_shared_folders(self):
         folders = set()
         for path in self.paths.values():
+            if not path:
+                continue
             root = path.split('/')[0]
             folders.add(root)
         return sorted(folders)
@@ -407,10 +516,21 @@ class PAMProjectKCMImportCommand(Command):
     parser.add_argument('--config', '-c', dest='config', action='store',
                         help='Existing PAM config UID or title (extend mode)')
     parser.add_argument('--folder-mode', dest='folder_mode', action='store',
-                        choices=['ksm', 'exact', 'flat'], default='ksm',
+                        choices=['ksm', 'exact', 'flat', 'qualified'], default='ksm',
                         help='Connection group mapping mode')
     parser.add_argument('--output', '-o', dest='output', action='store',
                         help='Save JSON to file instead of importing')
+    parser.add_argument('--strip-root', dest='strip_root', action='store_true',
+                        default=False,
+                        help='Remove ROOT/ prefix from folder paths (use with exact mode)')
+    parser.add_argument('--preview-groups', dest='preview_groups', action='store_true',
+                        default=False,
+                        help='Show group-to-folder mapping tree and exit (no vault changes)')
+    parser.add_argument('--exclude-groups', dest='exclude_groups', action='store',
+                        default='',
+                        help='Comma-separated group names or IDs to exclude from import')
+    parser.add_argument('--group-depth', dest='group_depth', type=int, default=0,
+                        help='Max folder nesting depth (0=unlimited)')
 
     # Gateway options
     parser.add_argument('--gateway', '-g', dest='gateway', action='store',
@@ -418,6 +538,15 @@ class PAMProjectKCMImportCommand(Command):
     parser.add_argument('--max-instances', dest='max_instances', type=int,
                         default=0,
                         help='Set gateway pool size (0 = skip, requires new gateway)')
+    parser.add_argument('--deploy-gateway', dest='deploy_gateway', action='store_true',
+                        default=False,
+                        help='Auto-deploy gateway via Docker after creation')
+    parser.add_argument('--gateway-name', dest='gateway_docker_name', action='store',
+                        default='keeper-gateway',
+                        help='Docker container name for --deploy-gateway (default: keeper-gateway)')
+    parser.add_argument('--gateway-image', dest='gateway_image', action='store',
+                        default='keeper/gateway:latest',
+                        help='Docker image for --deploy-gateway')
 
     # Flags
     parser.add_argument('--dry-run', '-d', dest='dry_run', action='store_true',
@@ -432,6 +561,7 @@ class PAMProjectKCMImportCommand(Command):
         return PAMProjectKCMImportCommand.parser
 
     def execute(self, params, **kwargs):
+        t_start = time.monotonic()
         db_host = kwargs.get('db_host') or ''
         docker_detect = kwargs.get('docker_detect', False)
 
@@ -500,11 +630,34 @@ class PAMProjectKCMImportCommand(Command):
             connector.password = None
             db_password = None  # noqa: F841
 
-        logging.info('Extracted %d group(s), %d connection row(s)',
-                     len(groups), len(connection_rows))
+        t_extract = time.monotonic()
+        logging.info('Extracted %d group(s), %d connection row(s) in %.1fs',
+                     len(groups), len(connection_rows), t_extract - t_start)
+
+        # Filter excluded groups
+        exclude_groups = kwargs.get('exclude_groups') or ''
+        if exclude_groups:
+            groups, connection_rows = self._filter_excluded_groups(
+                groups, connection_rows, exclude_groups)
 
         # Build group hierarchy
-        resolver = KCMGroupResolver(groups, mode=folder_mode)
+        strip_root = kwargs.get('strip_root', False)
+        group_depth = kwargs.get('group_depth', 0)
+        if group_depth < 0:
+            raise CommandError('kcm-import', '--group-depth must be >= 0')
+        resolver = KCMGroupResolver(groups, mode=folder_mode,
+                                    strip_root=strip_root, max_depth=group_depth)
+
+        # Resolve project name early (needed for folder_path naming and preview)
+        if not project_name:
+            ts = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+            project_name = f'KCM-Import-{ts}'
+
+        # Preview mode — show tree and exit
+        preview_groups = kwargs.get('preview_groups', False)
+        if preview_groups:
+            self._preview_group_tree(groups, resolver, connection_rows, project_name)
+            return
 
         # Transform parameters
         mapper = KCMParameterMapper()
@@ -512,38 +665,39 @@ class PAMProjectKCMImportCommand(Command):
                                             include_disabled=include_disabled)
 
         # Assign folder paths
-        shared_folders = set()
         for item in resources:
             group_id = item.pop('_group_id', None)
             kcm_path = resolver.resolve_path(group_id)
-            folder_array = kcm_path.split('/')
-            shared_folders.add(folder_array[0])
-            folder_path = f'KCM Resources - {folder_array[0]}'
-            if len(folder_array) > 1:
-                folder_path += '/' + '/'.join(folder_array[1:])
+            folder_path = f'{project_name} - Resources'
+            if kcm_path:
+                folder_path += '/' + kcm_path
             item['folder_path'] = folder_path
 
         for item in users:
             group_id = item.pop('_group_id', None)
             kcm_path = resolver.resolve_path(group_id)
-            folder_array = kcm_path.split('/')
-            folder_path = f'KCM Users - {folder_array[0]}'
-            if len(folder_array) > 1:
-                folder_path += '/' + '/'.join(folder_array[1:])
+            folder_path = f'{project_name} - Users'
+            if kcm_path:
+                folder_path += '/' + kcm_path
             item['folder_path'] = folder_path
 
         # Finalize TOTP
         KCMParameterMapper.finalize_totp(users)
 
         # Handle SFTP sub-resources
+        # Use parent connection title to derive unique SFTP names,
+        # stripping the "KCM Resource - " prefix for brevity.
         sftp_resources = []
         sftp_users = []
         for resource in resources:
             sftp = resource.get('pam_settings', {}).get('connection', {}).get('sftp')
             if sftp:
+                res_label = resource['title'].replace('KCM Resource - ', '', 1)
+                sftp_res_title = f'SFTP connection for {res_label}'
+                sftp_usr_title = f'SFTP credentials for {res_label}'
                 sftp_resource = {
                     'folder_path': resource['folder_path'] + '/SFTP Resources',
-                    'title': f'SFTP connection for resource {resource["host"]}',
+                    'title': sftp_res_title,
                     'type': 'pamMachine',
                     'host': sftp.get('host', ''),
                     'port': sftp.get('port', ''),
@@ -556,17 +710,17 @@ class PAMProjectKCMImportCommand(Command):
                         },
                         'connection': {
                             'protocol': 'ssh',
-                            'launch_credentials': f'SFTP credentials for resource {resource["host"]}'
+                            'launch_credentials': sftp_usr_title
                         }
                     }
                 }
                 sftp_resources.append(sftp_resource)
 
                 user_folder = resource['folder_path'].replace(
-                    'KCM Resources - ', 'KCM Users - ', 1)
+                    f'{project_name} - Resources', f'{project_name} - Users', 1)
                 sftp_user = {
                     'folder_path': f'{user_folder}/SFTP Users',
-                    'title': f'SFTP credentials for resource {resource["host"]}',
+                    'title': sftp_usr_title,
                     'type': 'pamUser',
                     'login': sftp.get('login', ''),
                     'password': sftp.get('password', ''),
@@ -575,17 +729,15 @@ class PAMProjectKCMImportCommand(Command):
                 }
                 sftp_users.append(sftp_user)
 
-                sftp['sftp_resource'] = f'SFTP connection for resource {resource["host"]}'
-                sftp['sftp_user_credentials'] = f'SFTP credentials for resource {resource["host"]}'
+                sftp['sftp_resource'] = sftp_res_title
+                sftp['sftp_user_credentials'] = sftp_usr_title
 
         resources.extend(sftp_resources)
         if not skip_users:
             users.extend(sftp_users)
 
         # Build shared folder list
-        sf_list = []
-        for folder in sorted(shared_folders):
-            sf_list.extend([f'KCM Users - {folder}', f'KCM Resources - {folder}'])
+        sf_list = [f'{project_name} - Resources', f'{project_name} - Users']
 
         # Build PAM JSON
         pam_json = {
@@ -595,10 +747,6 @@ class PAMProjectKCMImportCommand(Command):
                 'users': users if not skip_users else [],
             }
         }
-
-        if not project_name:
-            ts = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
-            project_name = f'KCM-Import-{ts}'
 
         if not config_uid:
             pam_json['project'] = project_name
@@ -614,6 +762,8 @@ class PAMProjectKCMImportCommand(Command):
                 json.dump(pam_json, f, indent=2)
             logging.warning('JSON written to %s (%d resources, %d users)',
                             output_file, num_resources, num_users)
+            logging.warning('WARNING: Output file contains plaintext credentials. '
+                            'Secure or delete %s after use.', output_file)
             return
 
         if dry_run:
@@ -623,50 +773,151 @@ class PAMProjectKCMImportCommand(Command):
                             num_resources, num_users)
             return
 
-        # Gateway selection
+        # Gateway handling — three modes:
+        # 1. --gateway <name/uid>  → reuse existing gateway, skip Phase 1
+        # 2. --config <uid>        → extend mode, no gateway creation
+        # 3. (default)             → new project: Phase 1 + Phase 2
         gateway_arg = kwargs.get('gateway') or ''
+        deploy_gateway = kwargs.get('deploy_gateway', False)
+        gateway_token = None
 
-        # Write to temp file and delegate to import/extend
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix='.json')
-        try:
-            with os.fdopen(tmp_fd, 'w') as tmp:
-                json.dump(pam_json, tmp, indent=2)
-
-            if config_uid:
-                # Extend mode: user explicitly passed --config
+        if gateway_arg:
+            # ── REUSE EXISTING GATEWAY ──
+            pam_config_uid = self._resolve_gateway(params, gateway_arg)
+            logging.info('Using existing gateway, PAM config: %s', pam_config_uid)
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix='.json')
+            try:
+                with os.fdopen(tmp_fd, 'w') as tmp:
+                    json.dump(pam_json, tmp, indent=2)
                 from .extend import PAMProjectExtendCommand
                 cmd = PAMProjectExtendCommand()
-                cmd.execute(params,
-                            config=config_uid,
-                            file_name=tmp_path,
-                            dry_run=False)
-            else:
-                # New project: always use import path (creates folders,
-                # KSM app, gateway, PAM config, then records).
-                # Gateway selection is handled interactively by the
-                # import engine; skip _resolve_gateway to avoid
-                # accidentally switching to extend mode.
+                cmd.execute(params, config=pam_config_uid,
+                            file_name=tmp_path, dry_run=False)
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+
+        elif config_uid:
+            # ── EXTEND MODE (explicit --config) ──
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix='.json')
+            try:
+                with os.fdopen(tmp_fd, 'w') as tmp:
+                    json.dump(pam_json, tmp, indent=2)
+                from .extend import PAMProjectExtendCommand
+                cmd = PAMProjectExtendCommand()
+                cmd.execute(params, config=config_uid,
+                            file_name=tmp_path, dry_run=False)
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+
+        else:
+            # ── NEW PROJECT (Phase 1 + Phase 2) ──
+            # Phase 1: Create infrastructure (shared folders, KSM app, gateway, PAM config)
+            infra_json = {
+                'pam_data': {
+                    'shared_folders': sf_list,
+                    'resources': [],
+                    'users': [],
+                },
+                'project': project_name
+            }
+            tmp_fd1, tmp_path1 = tempfile.mkstemp(suffix='.json')
+            try:
+                with os.fdopen(tmp_fd1, 'w') as tmp:
+                    json.dump(infra_json, tmp, indent=2)
+
                 from .edit import PAMProjectImportCommand
-                cmd = PAMProjectImportCommand()
-                cmd.execute(params,
-                            project_name=project_name,
-                            file_name=tmp_path,
-                            dry_run=False)
+                edit_cmd = PAMProjectImportCommand()
+                project_result = edit_cmd.execute(params,
+                                                  project_name=project_name,
+                                                  file_name=tmp_path1,
+                                                  dry_run=False)
+            finally:
+                if os.path.exists(tmp_path1):
+                    os.unlink(tmp_path1)
 
-            logging.warning('KCM import complete: %d resources, %d users',
-                            num_resources, num_users)
+            # Capture gateway token and PAM config UID from Phase 1
+            pam_config_uid = None
+            if project_result and isinstance(project_result, dict):
+                gw_data = project_result.get('gateway') or {}
+                gateway_token = gw_data.get('gateway_token', '')
+                pam_config_uid = (project_result.get('pam_config') or {}).get('pam_config_uid', '')
 
-            # Set max instances for gateway pooling
+            if not pam_config_uid:
+                # Fallback: search for the config by title
+                pam_config_uid = self._find_pam_config_by_title(params, project_name)
+
+            if not pam_config_uid:
+                raise CommandError('kcm-import',
+                                   'Failed to retrieve PAM configuration UID after infrastructure creation')
+
+            # Phase 2: Import records with proper subfolders via extend
+            tmp_fd2, tmp_path2 = tempfile.mkstemp(suffix='.json')
+            try:
+                with os.fdopen(tmp_fd2, 'w') as tmp:
+                    json.dump(pam_json, tmp, indent=2)
+
+                from .extend import PAMProjectExtendCommand
+                extend_cmd = PAMProjectExtendCommand()
+                extend_cmd.execute(params,
+                                   config=pam_config_uid,
+                                   file_name=tmp_path2,
+                                   dry_run=False)
+            finally:
+                if os.path.exists(tmp_path2):
+                    os.unlink(tmp_path2)
+
+        # Import statistics
+        t_end = time.monotonic()
+        elapsed = t_end - t_start
+        total_records = num_resources + num_users
+        rate = total_records / elapsed if elapsed > 0 else 0
+
+        logging.warning('KCM import complete: %d resources, %d users',
+                        num_resources, num_users)
+        print(f'\n{"=" * 60}')
+        print(f'Import Statistics')
+        print(f'{"=" * 60}')
+        print(f'  Project:      {project_name}')
+        print(f'  Folder mode:  {folder_mode}')
+        print(f'  Resources:    {num_resources}')
+        print(f'  Users:        {num_users}')
+        print(f'  Total:        {total_records} records')
+        print(f'  Elapsed:      {elapsed:.1f}s')
+        if total_records > 0:
+            print(f'  Throughput:   {rate:.1f} records/s  ({elapsed/total_records:.1f}s per record)')
+        print(f'{"=" * 60}')
+
+        # Gateway post-import (only when we created a new gateway)
+        if not config_uid and not gateway_arg:
             max_instances = kwargs.get('max_instances', 0)
-            if max_instances > 0 and not config_uid:
+            if max_instances > 0:
                 self._set_gateway_pool_size(params, project_name, max_instances)
 
-            # Print deployment instructions for new gateways
-            if not config_uid:
-                self._print_deploy_instructions(project_name)
-        finally:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+            if deploy_gateway and gateway_token:
+                self._deploy_gateway_docker(
+                    gateway_token,
+                    kwargs.get('gateway_docker_name', 'keeper-gateway'),
+                    kwargs.get('gateway_image', 'keeper/gateway:latest'))
+            else:
+                self._print_deploy_instructions(project_name, gateway_token)
+
+    @staticmethod
+    def _find_pam_config_by_title(params, project_name):
+        """Find PAM configuration record UID by project name (fallback)."""
+        from ... import api
+        from ...vault_extensions import find_records as vault_find_records
+        api.sync_down(params)
+        expected_title = f'{project_name} PAM Configuration'
+        for rec in vault_find_records(params, record_version=6):
+            if rec.title and rec.title == expected_title:
+                return rec.record_uid
+        # Fallback: exact project name match
+        for rec in vault_find_records(params, record_version=6):
+            if rec.title and rec.title == project_name:
+                return rec.record_uid
+        return None
 
     @staticmethod
     def _set_gateway_pool_size(params, project_name, max_instances):
@@ -690,34 +941,87 @@ class PAMProjectKCMImportCommand(Command):
             logging.warning('Could not find gateway "%s" to set pool size.', gw_name)
 
     @staticmethod
-    def _print_deploy_instructions(project_name):
+    def _deploy_gateway_docker(token, container_name, image):
+        """Deploy gateway via Docker using the access token."""
+        try:
+            # Check if container name already in use
+            result = subprocess.run(
+                ['docker', 'inspect', container_name],
+                capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                logging.warning('Docker container "%s" already exists. '
+                                'Remove it first or use --gateway-name to pick a different name.',
+                                container_name)
+                return False
+
+            logging.info('Deploying gateway as Docker container "%s"...', container_name)
+            result = subprocess.run(
+                ['docker', 'run', '-d',
+                 '--name', container_name,
+                 '-e', f'GATEWAY_CONFIG={token}',
+                 '-e', 'ACCEPT_EULA=Y',
+                 '--shm-size=2g',
+                 '--restart', 'unless-stopped',
+                 image],
+                capture_output=True, text=True, timeout=120)
+
+            if result.returncode == 0:
+                container_id = result.stdout.strip()[:12]
+                print(f'\n{"=" * 60}')
+                print(f'Gateway Deployed')
+                print(f'{"=" * 60}')
+                print(f'  Container:  {container_name} ({container_id})')
+                print(f'  Image:      {image}')
+                print(f'  Status:     Running')
+                print(f'\n  Verify:  pam gateway list')
+                print(f'{"=" * 60}')
+                return True
+            else:
+                logging.warning('Docker deploy failed (exit %d): %s',
+                                result.returncode, result.stderr.strip())
+                return False
+        except FileNotFoundError:
+            logging.warning('Docker not found on this system. Deploy the gateway manually:')
+            PAMProjectKCMImportCommand._print_deploy_instructions('', token)
+            return False
+        except subprocess.TimeoutExpired:
+            logging.warning('Docker deploy timed out (120s). Check: docker ps')
+            return False
+
+    @staticmethod
+    def _print_deploy_instructions(project_name, gateway_token=None):
         """Print Docker deployment one-liner after gateway creation."""
-        print('\n' + '─' * 60)
+        token_display = gateway_token if gateway_token else '<access_token>'
+        print('\n' + '=' * 60)
         print('Gateway Deployment')
-        print('─' * 60)
-        print()
-        print('Copy the access_token from above and deploy:')
+        print('=' * 60)
+        if gateway_token:
+            print(f'\n  Gateway token captured. Deploy with:')
+        else:
+            print(f'\n  Copy the access_token from above and deploy:')
         print()
         print('  # Docker (single instance)')
-        print('  docker run -d --name keeper-gateway \\')
-        print('    -e GATEWAY_CONFIG="<access_token>" \\')
-        print('    -e ACCEPT_EULA=Y \\')
-        print('    --shm-size=2g \\')
-        print('    --restart unless-stopped \\')
-        print('    keeper/gateway:latest')
+        print(f'  docker run -d --name keeper-gateway \\')
+        print(f'    -e GATEWAY_CONFIG="{token_display}" \\')
+        print(f'    -e ACCEPT_EULA=Y \\')
+        print(f'    --shm-size=2g \\')
+        print(f'    --restart unless-stopped \\')
+        print(f'    keeper/gateway:latest')
+        print()
+        print('  # Or auto-deploy next time with:')
+        print(f'  # pam project kcm-import ... --deploy-gateway')
         print()
         print('  # Docker Compose (HA pool)')
         print('  # Set GATEWAY_CONFIG in .env, then:')
         print('  # docker compose up -d')
         print()
         print('  # Kubernetes')
-        print('  # Use the base64 config as a Secret:')
         print('  # kubectl create secret generic gateway-config \\')
-        print('  #   --from-literal=GATEWAY_CONFIG="<access_token>"')
+        print(f'  #   --from-literal=GATEWAY_CONFIG="{token_display}"')
         print()
         print(f'  # Verify (after deployment):')
         print(f'  pam gateway list  # should show "{project_name} Gateway" as ONLINE')
-        print('─' * 60)
+        print('=' * 60)
 
     @staticmethod
     def _resolve_gateway(params, gateway_arg):
@@ -855,6 +1159,109 @@ class PAMProjectKCMImportCommand(Command):
         return False
 
     @staticmethod
+    def _filter_excluded_groups(groups, connection_rows, exclude_str):
+        """Remove excluded groups and their descendant connections."""
+        excludes = {x.strip() for x in exclude_str.split(',') if x.strip()}
+        # Track which exclude tokens were matched
+        matched_excludes = set()
+        excluded_ids = set()
+        for g in groups:
+            gid_str = str(g['connection_group_id'])
+            gname = g['connection_group_name']
+            if gid_str in excludes:
+                excluded_ids.add(g['connection_group_id'])
+                matched_excludes.add(gid_str)
+            elif gname in excludes:
+                excluded_ids.add(g['connection_group_id'])
+                matched_excludes.add(gname)
+        unmatched = excludes - matched_excludes
+        if unmatched:
+            logging.warning('--exclude-groups: no match found for: %s',
+                            ', '.join(sorted(unmatched)))
+        # Cascade to descendants
+        changed = True
+        while changed:
+            changed = False
+            for g in groups:
+                if g['connection_group_id'] not in excluded_ids:
+                    if g.get('parent_id') in excluded_ids:
+                        excluded_ids.add(g['connection_group_id'])
+                        changed = True
+        filtered_groups = [g for g in groups
+                           if g['connection_group_id'] not in excluded_ids]
+        filtered_rows = [r for r in connection_rows
+                         if r.get('connection_group_id') not in excluded_ids]
+        excluded_count = len(groups) - len(filtered_groups)
+        row_count = len(connection_rows) - len(filtered_rows)
+        if excluded_count:
+            logging.info('Excluded %d group(s) and %d connection row(s)',
+                         excluded_count, row_count)
+        return filtered_groups, filtered_rows
+
+    @staticmethod
+    def _preview_group_tree(groups, resolver, connection_rows, project_name):
+        """Print group-to-folder mapping tree and exit."""
+        # Count unique connections per group
+        conn_per_group = {}
+        for row in connection_rows:
+            gid = row.get('connection_group_id')
+            cid = row.get('connection_id')
+            conn_per_group.setdefault(gid, set()).add(cid)
+        counts = {gid: len(cids) for gid, cids in conn_per_group.items()}
+
+        # Build parent->children map
+        group_map = {g['connection_group_id']: g for g in groups}
+        children = {}
+        for g in groups:
+            pid = g.get('parent_id')
+            children.setdefault(pid, []).append(g)
+
+        # Find top-level groups
+        top_level = [g for g in groups
+                     if g.get('parent_id') is None
+                     or g.get('parent_id') not in group_map]
+
+        def fmt_path(gid):
+            p = resolver.resolve_path(gid)
+            base = f'{project_name} - Resources'
+            return f'{base}/{p}' if p else base
+
+        visited = set()
+
+        def print_node(group, indent=0):
+            gid = group['connection_group_id']
+            if gid in visited:
+                return
+            visited.add(gid)
+            name = group['connection_group_name']
+            count = counts.get(gid, 0)
+            path = fmt_path(gid)
+            pad = '    ' * indent
+            cnt = f' [{count}]' if count else ''
+            print(f'{pad}+-- {name}{cnt}')
+            print(f'{pad}|   -> {path}')
+            for child in sorted(children.get(gid, []),
+                                key=lambda x: x['connection_group_name']):
+                print_node(child, indent + 1)
+
+        root_count = counts.get(None, 0)
+        total = sum(counts.values())
+
+        print(f'\n{"=" * 60}')
+        print(f'KCM Connection Groups -> Vault Folder Mapping')
+        print(f'Project: {project_name}   Mode: {resolver.mode}')
+        print(f'{"=" * 60}')
+        if root_count:
+            rpath = fmt_path(None)
+            print(f'ROOT [{root_count} ungrouped]')
+            print(f'|   -> {rpath}')
+        for g in sorted(top_level, key=lambda x: x['connection_group_name']):
+            print_node(g, 0)
+        print(f'{"=" * 60}')
+        print(f'Groups: {len(groups)}   Connections: {total}')
+        print(f'{"=" * 60}')
+
+    @staticmethod
     def _detect_docker_credentials(db_type, container='guacamole'):
         env_prefix = 'MYSQL' if db_type == 'mysql' else 'POSTGRES'
         default_port = 3306 if db_type == 'mysql' else 5432
@@ -876,34 +1283,35 @@ class PAMProjectKCMImportCommand(Command):
                 f'Docker inspect failed for container "{container}" (exit code {result.returncode})')
 
         env_vars = {}
-        for line in result.stdout.strip().splitlines():
-            if '=' in line:
-                k, v = line.split('=', 1)
-                env_vars[k] = v
-        # Clear raw docker output — contains all container env vars including secrets
-        result = None
-
-        password = env_vars.get(f'{env_prefix}_PASSWORD')
-        if not password:
-            raise CommandError('kcm-import',
-                f'Could not detect {env_prefix}_PASSWORD from Docker container "{container}"')
-
-        host = env_vars.get(f'{env_prefix}_HOSTNAME', '127.0.0.1')
-        user = env_vars.get(f'{env_prefix}_USER') or env_vars.get(
-            f'{env_prefix}_USERNAME', 'guacamole_user')
-        database = env_vars.get(f'{env_prefix}_DATABASE', 'guacamole_db')
-        port_str = env_vars.get(f'{env_prefix}_PORT')
         try:
-            port = int(port_str) if port_str else default_port
-        except ValueError:
-            raise CommandError('kcm-import',
-                f'Invalid port value from Docker: {port_str}')
+            for line in result.stdout.strip().splitlines():
+                if '=' in line:
+                    k, v = line.split('=', 1)
+                    env_vars[k] = v
 
-        logging.info('Docker auto-detected: host=%s, port=%d, db=%s',
-                     host, port, database)
-        # Clear parsed env vars — only keep what we need
-        env_vars.clear()
-        return host, port, database, user, password
+            password = env_vars.get(f'{env_prefix}_PASSWORD')
+            if not password:
+                raise CommandError('kcm-import',
+                    f'Could not detect {env_prefix}_PASSWORD from Docker container "{container}"')
+
+            host = env_vars.get(f'{env_prefix}_HOSTNAME', '127.0.0.1')
+            user = env_vars.get(f'{env_prefix}_USER') or env_vars.get(
+                f'{env_prefix}_USERNAME', 'guacamole_user')
+            database = env_vars.get(f'{env_prefix}_DATABASE', 'guacamole_db')
+            port_str = env_vars.get(f'{env_prefix}_PORT')
+            try:
+                port = int(port_str) if port_str else default_port
+            except ValueError:
+                raise CommandError('kcm-import',
+                    f'Invalid port value from Docker: {port_str}')
+
+            logging.info('Docker auto-detected: host=%s, port=%d, db=%s',
+                         host, port, database)
+            return host, port, database, user, password
+        finally:
+            # Always clear secrets from memory regardless of success/failure
+            result = None  # noqa: F841
+            env_vars.clear()
 
     @staticmethod
     def _redact_for_display(pam_json):

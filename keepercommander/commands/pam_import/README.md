@@ -23,47 +23,6 @@ Adding new PAM resources and users to an existing PAM configuration from an impo
 - If the command reports errors, run it again with **`--dry-run`** for more detailed error messages.
 
 
-Import directly from a KCM/Guacamole database. Connects to the KCM database, extracts connections/users/groups, maps 150+ parameters, and feeds the result into the existing import engine.
-`pam project kcm-import --db-host=HOST [OPTIONS]`
-
-**Database (one of `--db-host` or `--docker-detect` required):**
-- `--db-host HOST` → KCM database hostname.
-- `--docker-detect` → Auto-detect credentials from Docker container (`guacamole`).
-- `--db-port PORT` → Database port _(default: 3306 mysql, 5432 postgresql)_.
-- `--db-name NAME` → Database name _(default: guacamole\_db)_.
-- `--db-type {mysql,postgresql}` → Database type _(default: mysql)_.
-- `--db-user USER` → Database username _(default: guacamole\_user)_.
-- `--db-password-record UID` → Keeper record UID containing DB password. If omitted, prompts interactively.
-
-**Import:**
-- `--name`, `-n` → Project name _(default: KCM-Import-TIMESTAMP)_.
-- `--config`, `-c` → Existing PAM config UID or title to extend (skip project creation).
-- `--folder-mode {ksm,exact,flat}` → Connection group mapping _(default: ksm)_.
-- `--output`, `-o` → Save JSON to file for review before importing.
-
-**Flags:**
-- `--dry-run`, `-d` → Preview without vault changes (credentials redacted).
-- `--skip-users` → Import connections only.
-- `--include-disabled` → Include disabled KCM connections.
-
-**Examples:**
-```bash
-# Dry-run preview from a MySQL KCM database
-pam project kcm-import --db-host 127.0.0.1 --name "KCM Migration" --dry-run
-
-# Import using password from vault record
-pam project kcm-import --db-host db.example.com --db-password-record RECORD_UID --name "Prod KCM"
-
-# Extend existing PAM config from PostgreSQL
-pam project kcm-import --db-host pg.example.com --db-type postgresql --config "Existing Config"
-
-# Auto-detect from Docker and save JSON for review
-pam project kcm-import --docker-detect --output /tmp/kcm-review.json
-```
-
-**Security:** DB passwords are never accepted as CLI arguments. Use `--db-password-record` (vault) or respond to the interactive prompt. Dry-run output redacts all credentials.
-
-
 ### JSON format details
 Text UI (TUI) elements (a.k.a. JSON Keys) match their Web UI counterparts so you can create the correponding record type in your web vault to help you visualize all options and possible values.
 
@@ -929,3 +888,305 @@ JIT and KeeperAI settings below are shared across all resource types (pamMachine
 }
 ```
 </details>
+
+---
+
+## KCM Import (`pam project kcm-import`)
+
+Import connections from a KCM (Keeper Connection Manager / Apache Guacamole) database directly into Keeper Vault as PAM records. Supports Docker auto-detection, multiple folder hierarchy modes, group filtering, and depth limiting.
+
+### Quick Start
+
+```bash
+# Docker auto-detect (most common)
+pam project kcm-import --docker-detect --docker-container guacamole-1 \
+  --db-type postgresql --name "My KCM Project"
+
+# Manual database connection
+pam project kcm-import --db-host 10.0.0.5 --db-type postgresql \
+  --db-ssl --name "My KCM Project"
+
+# Preview what will be imported (no vault changes)
+pam project kcm-import --docker-detect --docker-container guacamole-1 \
+  --db-type postgresql --preview-groups --folder-mode exact --strip-root
+
+# Export to JSON for review before importing
+pam project kcm-import --docker-detect --docker-container guacamole-1 \
+  --db-type postgresql --folder-mode qualified \
+  --output /tmp/kcm-export.json --name "My KCM Project"
+```
+
+### Command Line Options
+
+#### Database Connection
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--db-host` | KCM database hostname | _(required unless --docker-detect)_ |
+| `--db-type` | Database type: `mysql` or `postgresql` | `mysql` |
+| `--db-port` | Database port | 3306 (mysql) / 5432 (postgresql) |
+| `--db-name` | Database name | `guacamole_db` |
+| `--db-user` | Database username | `guacamole_user` |
+| `--db-password-record` | Vault record UID containing DB password | _(prompts if not set)_ |
+| `--db-ssl` | Require SSL/TLS for database connection | `false` |
+| `--allow-cleartext` | Allow unencrypted remote connection | `false` |
+| `--docker-detect` | Auto-detect credentials from Docker container | `false` |
+| `--docker-container` | Docker container name for auto-detect | `guacamole` |
+
+#### Folder Hierarchy (Tested & Verified)
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--folder-mode` | Group mapping mode (see below) | `ksm` |
+| `--strip-root` | Remove `ROOT/` prefix (use with `exact` mode) | `false` |
+| `--group-depth` | Max folder nesting depth (0=unlimited) | `0` |
+
+**Folder modes:**
+- **`ksm`** — Uses KSM config attributes on groups as folder anchors. Groups without `ksm-config` attributes are flattened into their nearest configured ancestor. Best for KSM-managed hierarchies.
+- **`exact`** — Full path hierarchy: `ROOT/Parent/Child/Grandchild`. Mirrors the exact KCM group tree. Combine with `--strip-root` to remove the `ROOT/` prefix.
+- **`flat`** — All groups become top-level folders. Simple but may collide if sibling groups under different parents share names.
+- **`qualified`** — Parent-qualified flat names: `"Parent - Child"`. Avoids collisions without deep nesting. Auto-qualifies further (grandparent prefix or numeric suffix) if collisions persist.
+
+#### Group Filtering (Tested & Verified)
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--exclude-groups` | Comma-separated group names or IDs to exclude | _(none)_ |
+| `--preview-groups` | Show group-to-folder mapping tree and exit | `false` |
+
+`--exclude-groups` cascades to descendants: excluding a parent group automatically excludes all its child groups and their connections. Warns if any specified names/IDs don't match existing groups.
+
+#### Import Options
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--name`, `-n` | Project name | `KCM-Import-<timestamp>` |
+| `--config`, `-c` | Existing PAM config UID (extend mode) | _(creates new)_ |
+| `--output`, `-o` | Save JSON to file instead of importing | _(imports to vault)_ |
+| `--gateway`, `-g` | Existing gateway UID or name | _(creates new)_ |
+| `--max-instances` | Gateway pool size (0=skip) | `0` |
+| `--dry-run`, `-d` | Preview without vault changes | `false` |
+| `--skip-users` | Import resources only, skip user records | `false` |
+| `--include-disabled` | Include disabled KCM connections | `false` |
+
+### E2E Tested Scenarios
+
+All scenarios below were tested against a live KCM (Keeper Connection Manager) PostgreSQL database with 216 connections across 42 connection groups, importing into a production Keeper Vault. All commands are full working examples.
+
+#### 1. Preview Group-to-Folder Mapping (all modes)
+
+Preview the folder structure before importing — no vault changes are made.
+
+```bash
+# Preview with each folder mode
+keeper pam project kcm-import \
+  --docker-detect --docker-container kcm-setup-guacamole-1 \
+  --db-type postgresql --db-host 192.168.64.5 --allow-cleartext \
+  --preview-groups --folder-mode ksm
+
+keeper pam project kcm-import \
+  --docker-detect --docker-container kcm-setup-guacamole-1 \
+  --db-type postgresql --db-host 192.168.64.5 --allow-cleartext \
+  --preview-groups --folder-mode exact --strip-root
+
+keeper pam project kcm-import \
+  --docker-detect --docker-container kcm-setup-guacamole-1 \
+  --db-type postgresql --db-host 192.168.64.5 --allow-cleartext \
+  --preview-groups --folder-mode flat
+
+keeper pam project kcm-import \
+  --docker-detect --docker-container kcm-setup-guacamole-1 \
+  --db-type postgresql --db-host 192.168.64.5 --allow-cleartext \
+  --preview-groups --folder-mode qualified
+```
+
+#### 2. Full Import — Exact Mode with Strip Root (Tested & Verified: 290 resources, 290 users)
+
+The recommended mode for preserving the full KCM group hierarchy without the `ROOT/` prefix.
+
+```bash
+keeper pam project kcm-import \
+  --docker-detect --docker-container kcm-setup-guacamole-1 \
+  --db-type postgresql --db-host 192.168.64.5 --allow-cleartext \
+  --folder-mode exact --strip-root \
+  --name "KCM-Full-Import"
+```
+
+#### 3. Export to JSON — Qualified Mode (Tested & Verified: 290 resources, 290 users)
+
+Export to JSON for manual review or later import via `pam project extend`.
+
+```bash
+keeper pam project kcm-import \
+  --docker-detect --docker-container kcm-setup-guacamole-1 \
+  --db-type postgresql --db-host 192.168.64.5 --allow-cleartext \
+  --folder-mode qualified \
+  --output /tmp/kcm-qualified.json --name "KCM-Qualified"
+
+# Verify exported JSON
+python3 -c "
+import json
+d = json.load(open('/tmp/kcm-qualified.json'))
+print(f'Resources: {len(d[\"pam_data\"][\"resources\"])}')
+print(f'Users: {len(d[\"pam_data\"][\"users\"])}')
+paths = sorted(set(r['folder_path'] for r in d['pam_data']['resources']))
+for p in paths: print(f'  {p}')
+"
+```
+
+#### 4. Exclude Specific Groups (Tested & Verified: 42→40 groups, 216→184 connections)
+
+Exclude groups by name or ID. Cascades to all child groups.
+
+```bash
+keeper pam project kcm-import \
+  --docker-detect --docker-container kcm-setup-guacamole-1 \
+  --db-type postgresql --db-host 192.168.64.5 --allow-cleartext \
+  --preview-groups --folder-mode qualified \
+  --exclude-groups "Your Linux Boxes,Your Windows Boxes"
+```
+
+#### 5. Depth-Limited Import (Tested & Verified)
+
+Collapse groups deeper than N levels into their nearest ancestor folder.
+
+```bash
+# Preview depth-limited hierarchy (max 2 levels)
+keeper pam project kcm-import \
+  --docker-detect --docker-container kcm-setup-guacamole-1 \
+  --db-type postgresql --db-host 192.168.64.5 --allow-cleartext \
+  --preview-groups --folder-mode exact --strip-root --group-depth 2
+```
+
+#### 6. Dry Run — Preview Records (Tested & Verified)
+
+Show what would be imported with credentials redacted.
+
+```bash
+keeper pam project kcm-import \
+  --docker-detect --docker-container kcm-setup-guacamole-1 \
+  --db-type postgresql --db-host 192.168.64.5 --allow-cleartext \
+  --folder-mode exact --strip-root --dry-run \
+  --name "DryRunTest"
+```
+
+#### 7. Extend Existing PAM Configuration (Tested & Verified)
+
+Add new connections to an existing PAM environment without creating new infrastructure.
+
+```bash
+# First export the new connections
+keeper pam project kcm-import \
+  --docker-detect --docker-container kcm-setup-guacamole-1 \
+  --db-type postgresql --db-host 192.168.64.5 --allow-cleartext \
+  --folder-mode exact --strip-root \
+  --output /tmp/kcm-extend.json --name "ExistingProject"
+
+# Then extend
+keeper pam project extend \
+  --config "<existing-pam-config-uid>" \
+  --filename /tmp/kcm-extend.json
+```
+
+#### 8. Reuse Existing Gateway (Tested & Verified)
+
+Import into an existing PAM environment using an already-deployed gateway. Skips gateway creation entirely.
+
+```bash
+# Use existing gateway by name
+keeper pam project kcm-import \
+  --docker-detect --docker-container kcm-setup-guacamole-1 \
+  --db-type postgresql --db-host 192.168.64.5 --allow-cleartext \
+  --folder-mode qualified \
+  --gateway "The Lab Gateway" \
+  --output /tmp/gw-reuse.json --name "GW-Reuse-Test"
+
+# Or by gateway UID
+keeper pam project kcm-import \
+  --docker-detect --docker-container kcm-setup-guacamole-1 \
+  --db-type postgresql --db-host 192.168.64.5 --allow-cleartext \
+  --folder-mode exact --strip-root \
+  --gateway "SBs-l-KdS7CbHN18MzCxQQ" \
+  --name "GW-By-UID"
+```
+
+#### 9. Auto-Deploy Gateway via Docker
+
+Automatically deploy the gateway as a Docker container after import. The command captures the access token from Phase 1 and runs `docker run` for you.
+
+```bash
+keeper pam project kcm-import \
+  --docker-detect --docker-container kcm-setup-guacamole-1 \
+  --db-type postgresql --db-host 192.168.64.5 --allow-cleartext \
+  --folder-mode exact --strip-root \
+  --deploy-gateway --gateway-name "kcm-gateway" \
+  --name "Auto-Deploy-Test"
+
+# With custom image
+keeper pam project kcm-import \
+  --docker-detect --docker-container kcm-setup-guacamole-1 \
+  --db-type postgresql --db-host 192.168.64.5 --allow-cleartext \
+  --folder-mode exact --strip-root \
+  --deploy-gateway --gateway-name "my-gw" \
+  --gateway-image "keeper/gateway:1.8.0" \
+  --name "Custom-Image-Deploy"
+```
+
+#### 10. Import with SSL and Password from Vault Record
+
+Secure production import using SSL and password stored in a Keeper record.
+
+```bash
+keeper pam project kcm-import \
+  --db-host kcm-db.example.com --db-type postgresql --db-ssl \
+  --db-password-record "<vault-record-uid>" \
+  --folder-mode qualified --name "Production-KCM"
+```
+
+### Gateway Options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--gateway`, `-g` | Existing gateway UID or name (skips creation) | _(creates new)_ |
+| `--deploy-gateway` | Auto-deploy gateway via Docker after creation | `false` |
+| `--gateway-name` | Docker container name for auto-deploy | `keeper-gateway` |
+| `--gateway-image` | Docker image for auto-deploy | `keeper/gateway:latest` |
+| `--max-instances` | Gateway pool size (HA, 0=skip) | `0` |
+
+**Gateway flow:**
+- **No `--gateway` flag** (default): Phase 1 creates a new gateway + KSM app. Access token is captured and shown in deployment instructions. Use `--deploy-gateway` to auto-run `docker run`.
+- **`--gateway <name/uid>`**: Finds the existing gateway, resolves its PAM config, and imports directly via extend mode. No new gateway or KSM app is created.
+- **`--config <uid>`**: Extend mode — adds records to an existing PAM configuration. No gateway creation.
+
+### What Gets Imported
+
+Each KCM connection produces:
+- **1 Resource record** (`pamMachine`, `pamDatabase`, or `pamRemoteBrowser`) with full connection settings
+- **1 User record** (`pamUser`) with credentials and TOTP (if configured)
+- **1 SFTP sub-resource + 1 SFTP user** (for SSH connections with SFTP enabled)
+
+**Parameter migration** from KCM/Guacamole:
+- 33 parameters actively mapped (recording settings, security, SFTP, UI options, etc.)
+- 19 parameters dropped (Guacamole-specific with no Keeper equivalent)
+- 4 parameters ignored (internal KCM state)
+- Protocol mapping: `ssh`, `rdp`, `vnc`, `telnet`, `kubernetes` -> `pamMachine`; `http` -> `pamRemoteBrowser`; `mysql`, `postgres`, `sql-server` -> `pamDatabase`
+
+### Two-Phase Import Architecture
+
+1. **Phase 1 (Infrastructure):** Creates shared folders (`<Project> - Resources`, `<Project> - Users`), KSM application, gateway, and PAM configuration via `pam project import`
+2. **Phase 2 (Records):** Imports all resource and user records into the correct subfolders via `pam project extend`
+
+### Import Statistics
+
+The command displays timing and throughput statistics after import completion:
+- Total elapsed time
+- Records per second throughput
+- Average time per record
+
+### Security Notes
+
+- Database passwords are cleared from memory after use (best effort)
+- Docker environment variables are cleared after credential extraction via `try/finally`
+- Output JSON files are created with `0600` permissions and a warning about plaintext credentials
+- Connection names are sanitized (null bytes, control characters stripped)
+- Folder paths are sanitized against traversal attacks (`/`, `\`, `..` replaced; length-limited to 200 chars)
+- Remote database connections require `--db-ssl` or explicit `--allow-cleartext`
+- The `--dry-run` mode redacts passwords, private keys, and TOTP secrets
+- PAM config lookup uses exact title match to prevent ambiguous matches
+- Cycle detection in group tree traversal prevents infinite loops from malformed data
