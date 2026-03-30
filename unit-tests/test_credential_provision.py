@@ -460,54 +460,44 @@ class TestAccountSectionValidation(unittest.TestCase):
 
 
 class TestPAMSectionValidation(unittest.TestCase):
-    """Test PAM section validation."""
+    """Test rotation section validation."""
 
     def setUp(self):
         """Set up test fixtures."""
         self.cmd = CredentialProvisionCommand()
 
     def test_valid_pam_section(self):
-        """Test that valid PAM section passes validation."""
-        pam = {
-            'rotation': {
-                'rotate_immediately': True,
-                'schedule': '0 0 3 * * ?',
-                'password_complexity': '32,5,5,5,5',
-            },
-            'pam_user_title': 'PAM: John Doe',
-            'login_record_title': 'John Doe Login',
+        """Test that valid rotation section passes validation."""
+        rotation = {
+            'schedule': '0 0 3 * * ?',
+            'password_complexity': '32,5,5,5,5',
         }
-        errors = self.cmd._validate_pam_section(pam)
-        self.assertEqual(len(errors), 0, 'Valid PAM section should have no errors')
+        errors = self.cmd._validate_rotation_section(rotation)
+        self.assertEqual(len(errors), 0, 'Valid rotation section should have no errors')
 
     def test_missing_rotation_section(self):
-        """Test detection of missing rotation section."""
-        pam = {}
-        errors = self.cmd._validate_pam_section(pam)
-        self.assertGreater(len(errors), 0, 'Should detect missing rotation')
-        self.assertIn('rotation', ' '.join(errors))
+        """Test detection of missing rotation fields."""
+        rotation = {}
+        errors = self.cmd._validate_rotation_section(rotation)
+        self.assertGreater(len(errors), 0, 'Should detect missing rotation fields')
 
     def test_invalid_cron_schedule(self):
         """Test detection of invalid CRON schedule."""
-        pam = {
-            'rotation': {
-                'schedule': 'invalid cron',  # Invalid
-                'password_complexity': '32,5,5,5,5',
-            }
+        rotation = {
+            'schedule': 'invalid cron',  # Invalid
+            'password_complexity': '32,5,5,5,5',
         }
-        errors = self.cmd._validate_pam_section(pam)
+        errors = self.cmd._validate_rotation_section(rotation)
         self.assertGreater(len(errors), 0, 'Should detect invalid CRON')
         self.assertIn('CRON', ' '.join(errors))
 
     def test_invalid_complexity_format(self):
         """Test detection of invalid complexity format."""
-        pam = {
-            'rotation': {
-                'schedule': '0 0 3 * * ?',
-                'password_complexity': 'invalid',  # Invalid
-            }
+        rotation = {
+            'schedule': '0 0 3 * * ?',
+            'password_complexity': 'invalid',  # Invalid
         }
-        errors = self.cmd._validate_pam_section(pam)
+        errors = self.cmd._validate_rotation_section(rotation)
         self.assertGreater(len(errors), 0, 'Should detect invalid complexity')
         self.assertIn('complexity', ' '.join(errors).lower())
 
@@ -579,11 +569,9 @@ class TestComprehensiveValidation(unittest.TestCase):
                 'username': 'john.doe',
                 'pam_config_uid': 'test-uid',
             },
-            'pam': {
-                'rotation': {
-                    'schedule': '0 0 3 * * ?',
-                    'password_complexity': '32,5,5,5,5',
-                }
+            'rotation': {
+                'schedule': '0 0 3 * * ?',
+                'password_complexity': '32,5,5,5,5',
             },
             'email': {
                 'config_name': 'Test Config',
@@ -597,14 +585,13 @@ class TestComprehensiveValidation(unittest.TestCase):
         """Test detection of missing required sections."""
         config = {
             'user': {'first_name': 'John'},
-            # Missing account, pam, email sections
+            # Missing account, rotation sections
         }
         errors = self.cmd._validate_config(self.mock_params, config)
         self.assertGreater(len(errors), 0, 'Should detect missing sections')
         error_text = ' '.join(errors)
         self.assertIn('account', error_text)
-        self.assertIn('pam', error_text)
-        self.assertIn('email', error_text)
+        self.assertIn('rotation', error_text)
 
     def test_multiple_validation_errors(self):
         """Test that multiple errors are collected (not fail-fast)."""
@@ -616,19 +603,14 @@ class TestComprehensiveValidation(unittest.TestCase):
             'account': {
                 # Missing username and pam_config_uid
             },
-            'pam': {
-                'rotation': {
-                    'schedule': 'invalid',  # Invalid CRON
-                    'password_complexity': 'invalid',  # Invalid format
-                }
+            'rotation': {
+                'schedule': 'invalid',  # Invalid CRON
+                'password_complexity': 'invalid',  # Invalid format
             },
-            'email': {
-                # Missing config_name
-            }
         }
         errors = self.cmd._validate_config(self.mock_params, config)
         # Should have multiple errors from different sections
-        self.assertGreater(len(errors), 5, 'Should collect multiple errors')
+        self.assertGreater(len(errors), 3, 'Should collect multiple errors')
 
 
 class TestPasswordGeneration(unittest.TestCase):
