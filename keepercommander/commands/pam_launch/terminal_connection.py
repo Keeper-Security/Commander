@@ -843,6 +843,9 @@ def _build_guacamole_connection_settings(
         if protocol_specific.get('defaultDatabase'):
             guacd_params['database'] = protocol_specific['defaultDatabase']
 
+    # CLI mode: named pipe for terminal STDOUT (guacr terminal handlers; not graphical RDP/VNC)
+    guacd_params['enable-pipe'] = 'true'
+
     # Terminal display settings
     terminal_settings = settings.get('terminal', {})
     if terminal_settings.get('colorScheme'):
@@ -850,12 +853,12 @@ def _build_guacamole_connection_settings(
     if terminal_settings.get('fontSize'):
         guacd_params['font-size'] = terminal_settings['fontSize']
 
-    # Clipboard settings
-    clipboard_settings = settings.get('clipboard', {})
-    if clipboard_settings.get('disableCopy'):
-        guacd_params['disable-copy'] = 'true'
-    if clipboard_settings.get('disablePaste'):
+    # PAM clipboard → guacd: only pass disable-* when the record sets them (guacd "true" = on).
+    _pam_clip = settings.get('clipboard') or {}
+    if _pam_clip.get('disablePaste'):
         guacd_params['disable-paste'] = 'true'
+    if _pam_clip.get('disableCopy'):
+        guacd_params['disable-copy'] = 'true'
 
     # Build final connection settings
     connection_settings = {
@@ -870,6 +873,8 @@ def _build_guacamole_connection_settings(
         'audio_mimetypes': [],  # No audio for terminal
         'video_mimetypes': [],  # No video for terminal
         'image_mimetypes': ['image/png', 'image/jpeg', 'image/webp'],
+        # PAM clipboard policy (also in guacd_params as disable-* only when record disables)
+        'clipboard': dict(settings.get('clipboard') or {}),
     }
 
     logging.debug(f"Built Guacamole connection settings for {protocol}: "
@@ -1249,6 +1254,23 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         else:
             offer_payload = offer_sdp
 
+        # Gateway may configure guacd from this map before Python's `connect`.
+        offer_guacd_params: Dict[str, Any] = {'enable-pipe': 'true'}
+        _offer_clip = settings.get('clipboard') or {}
+        if use_python_handler:
+            _cs_gp = connection_settings.get('guacd_params') or {}
+            for _k, _v in _cs_gp.items():
+                if _k in ('disable-paste', 'disable-copy'):
+                    continue
+                offer_guacd_params[_k] = _v
+        if _offer_clip.get('disablePaste'):
+            offer_guacd_params['disable-paste'] = 'true'
+        if _offer_clip.get('disableCopy'):
+            offer_guacd_params['disable-copy'] = 'true'
+
+        _offer_disable_copy = bool(_offer_clip.get('disableCopy'))
+        _offer_disable_paste = bool(_offer_clip.get('disablePaste'))
+
         offer_data = {
             "offer": offer_payload,
             "audio": ["audio/L8", "audio/L16"],  # Supported audio codecs
@@ -1259,7 +1281,18 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
             "host": {
                 "hostName": settings['hostname'],
                 "port": settings['port']
-            }
+            },
+            # enable-pipe + optional disable-paste/disable-copy from PAM (see offer_guacd_params)
+            "guacd_params": offer_guacd_params,
+            "terminalSettings": {
+                "disableCopy": _offer_disable_copy,
+                "disablePaste": _offer_disable_paste,
+            },
+            # Alternate shape (PAM record uses connection.clipboard)
+            "clipboard": {
+                "disableCopy": _offer_disable_copy,
+                "disablePaste": _offer_disable_paste,
+            },
             # these are not sent by webvault during open connection for terminal connections
             # "protocol": protocol,
             # "terminalSettings": {
@@ -1272,13 +1305,9 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
         # if 'protocol_specific' in settings and settings['protocol_specific']:
         #     offer_data["protocolSettings"] = settings['protocol_specific']
 
-        # Log what we're sending in the initial offer
         logging.debug(f"Sending initial offer with connection parameters: {json.dumps(offer_data, indent=2)}")
-
-        string_data = json.dumps(offer_data)
-        logging.debug(f"payload.inputs.data JSON before encryption: {string_data}")
-        bytes_data = string_to_bytes(string_data)
-        encrypted_data = tunnel_encrypt(symmetric_key, bytes_data)
+        data_bytes = string_to_bytes(json.dumps(offer_data))
+        encrypted_data = tunnel_encrypt(symmetric_key, data_bytes)
 
         # Get userRecordUid and credential flags from context (extracted in extract_terminal_settings)
         user_record_uid = context.get('userRecordUid')
@@ -1407,6 +1436,9 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 logging.debug(f"{bcolors.OKGREEN}Offer sent to gateway (non-streaming mode){bcolors.ENDC}")
                 logging.debug(f"Router response: {router_response}")
 
+                # Must be defined before return below; only refined inside `if router_response`.
+                remote_webrtc_version = None
+
                 # Handle immediate response
                 if router_response and router_response.get('response'):
                     response_dict = router_response['response']
@@ -1509,6 +1541,14 @@ def _open_terminal_webrtc_tunnel(params: KeeperParams,
                 }
 
         except Exception as e:
+            # Stop dedicated WebSocket before Rust/tube cleanup so we do not process a late
+            # channel_closed after the CLI has already returned (avoids stray ERROR after prompt).
+            try:
+                if tunnel_session.websocket_stop_event and tunnel_session.websocket_thread:
+                    tunnel_session.websocket_stop_event.set()
+                    tunnel_session.websocket_thread.join(timeout=3.0)
+            except Exception:
+                logging.debug("Stopping WebSocket after HTTP offer failure", exc_info=True)
             signal_handler.cleanup()
             unregister_tunnel_session(commander_tube_id)
             unregister_conversation_key(conversation_id)
