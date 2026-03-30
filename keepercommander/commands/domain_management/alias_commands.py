@@ -155,6 +155,15 @@ class DeleteDomainAliasCommand(EnterpriseCommand):
         if normalized_aliases is None:
             return
 
+        existing_aliases = self._get_existing_aliases(params)
+        not_found = [a for a in normalized_aliases if (domain, a) not in existing_aliases]
+        if not_found:
+            for alias in not_found:
+                DomainManagementHelper.output_error(
+                    f"Domain alias '{alias}' for domain '{domain}' does not exist.", output_format,
+                )
+            return
+
         if not force:
             alias_list_str = ', '.join(normalized_aliases)
             try:
@@ -182,3 +191,15 @@ class DeleteDomainAliasCommand(EnterpriseCommand):
 
         except KeeperApiError as e:
             DomainManagementHelper.handle_alias_api_error(e, output_format, 'deleting')
+
+    @staticmethod
+    def _get_existing_aliases(params):
+        """Fetch current domain aliases and return as a set of (domain, alias) tuples."""
+        try:
+            rs = api.communicate_rest(
+                params, None, API_ENDPOINTS['get_domain_alias'],
+                rs_type=enterprise_pb2.DomainAliasResponse,
+            )
+            return {(da.domain, da.alias) for da in rs.domainAlias} if rs.domainAlias else set()
+        except KeeperApiError:
+            return set()

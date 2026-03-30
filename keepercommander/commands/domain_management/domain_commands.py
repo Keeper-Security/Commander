@@ -44,13 +44,9 @@ class ListDomainsCommand(EnterpriseCommand):
                 logging.info('No reserved domains found for this enterprise.')
                 return
 
-            if fmt == 'json':
-                domains_list = list(rs.domain)
-                print(json.dumps(domains_list, indent=2))
-            else:
-                headers = ['Domain Name']
-                table = [[domain] for domain in rs.domain]
-                return dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'))
+            headers = ['Domain Name']
+            table = [[domain] for domain in rs.domain]
+            return dump_report_data(table, headers, fmt=fmt, filename=kwargs.get('output'))
 
         except KeeperApiError as e:
             error_code = e.result_code if hasattr(e, 'result_code') else 'Unknown'

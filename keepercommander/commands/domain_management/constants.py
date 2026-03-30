@@ -55,4 +55,5 @@ CREATE_ALIAS_STATUS_MESSAGES = {
 DELETE_ALIAS_STATUS_MESSAGES = {
     0: 'Success',
     1: 'Not allowed or does not exist',
+    2: 'does not exist',
 }

@@ -219,15 +219,16 @@ class DomainManagementHelper:
                         else:
                             logging.info(f"Domain alias '{da.alias}' for domain '{da.domain}': {status_msg}")
                     else:
-                        logging.error(f"Domain alias '{da.alias}' for domain '{da.domain}': {status_msg}")
+                        if action == 'delete':
+                            logging.error(f"Failed to delete domain alias '{da.alias}' for domain '{da.domain}': {status_msg}")
+                        elif action == 'create':
+                            logging.error(f"Failed to create domain alias '{da.alias}' for domain '{da.domain}': {status_msg}")
+                        else:
+                            logging.error(f"Domain alias '{da.alias}' for domain '{da.domain}': {status_msg}")
         else:
-            if output_format == 'json':
-                results = [{'domain': da.domain, 'alias': da.alias} for da in rs.domainAlias]
-                print(json.dumps(results, indent=2))
-            else:
-                headers = ['Domain', 'Alias']
-                table = [[da.domain, da.alias] for da in rs.domainAlias]
-                return dump_report_data(table, headers, fmt=output_format, filename=kwargs.get('output'))
+            headers = ['Domain', 'Alias']
+            table = [[da.domain, da.alias] for da in rs.domainAlias]
+            return dump_report_data(table, headers, fmt=output_format, filename=kwargs.get('output'))
 
     @staticmethod
     def handle_alias_api_error(e, output_format, operation):

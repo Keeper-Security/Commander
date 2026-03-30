@@ -132,7 +132,7 @@ domain_alias_delete_parser.add_argument(
     default='text', help='Output format.',
 )
 domain_alias_delete_parser.add_argument(
-    '--force', dest='force', action='store_true',
+    '-f', '--force', dest='force', action='store_true',
     help='Skip confirmation prompt',
 )
 domain_alias_delete_parser.error = raise_parse_exception
