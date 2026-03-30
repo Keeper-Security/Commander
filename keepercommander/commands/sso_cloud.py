@@ -291,6 +291,15 @@ class SsoCloudMixin(object):
         raise CommandError('sso-cloud', f'SSO Service Provider "{target}" not found.')
 
     @staticmethod
+    def ensure_cloud_sso(svc, target=''):
+        # type: (dict, str) -> None
+        """Warn if the SP doesn't appear as Cloud SSO in cached enterprise data."""
+        if not svc.get('is_cloud'):
+            logging.debug('SSO Service Provider "%s" is_cloud flag is not set in enterprise cache. '
+                          'Proceeding anyway — the server will enforce if invalid.',
+                          svc.get('name', target))
+
+    @staticmethod
     def get_node_name(params, node_id):
         # type: (KeeperParams, int) -> str
         """Resolve a node ID to its display name."""
@@ -477,11 +486,7 @@ class SsoCloudGetCommand(EnterpriseCommand, SsoCloudMixin):
         target = kwargs.get('target')
         svc = self.find_sso_service(params, target)
         sp_id = svc['sso_service_provider_id']
-
-        if not svc.get('is_cloud'):
-            logging.warning('SSO Service Provider "%s" is not a Cloud SSO provider. '
-                            'Only Cloud SSO configurations can be managed.', svc.get('name', target))
-            return
+        self.ensure_cloud_sso(svc, target)
 
         config_rs = self.get_selected_configuration(params, sp_id, config_target=kwargs.get('config'))
         self.dump_configuration(config_rs, fmt=kwargs.get('format'), filename=kwargs.get('output'))
@@ -534,14 +539,14 @@ class SsoCloudCreateCommand(EnterpriseCommand, SsoCloudMixin):
 
         existing = params.enterprise.get('sso_services', [])
         for svc in existing:
-            if svc.get('node_id') == node_id and svc.get('is_cloud'):
+            if svc.get('node_id') == node_id:
                 raise CommandError('sso-cloud',
-                                   f'Node already has a Cloud SSO service provider: '
+                                   f'Node already has an SSO service provider: '
                                    f'"{svc.get("name")}" (ID: {svc.get("sso_service_provider_id")})')
 
         # Step 1: Create SSO service provider via legacy JSON v2 API
         sp_data_key = crypto.get_random_bytes(32)
-        encrypted_sp_data_key = crypto.encrypt_aes_v2(sp_data_key, params.enterprise['unencrypted_tree_key'])
+        encrypted_sp_data_key = crypto.encrypt_aes_v1(sp_data_key, params.enterprise['unencrypted_tree_key'])
 
         rq = {
             'command': 'sso_service_provider_add',
@@ -550,6 +555,7 @@ class SsoCloudCreateCommand(EnterpriseCommand, SsoCloudMixin):
             'name': name,
             'sp_data_key': utils.base64_url_encode(encrypted_sp_data_key),
             'invite_new_users': True,
+            'is_cloud': True,
         }
         rs = api.communicate(params, rq)
         sp_id = rs.get('sso_service_provider_id') or rq['sso_service_provider_id']
@@ -609,10 +615,7 @@ class SsoCloudUploadMetadataCommand(EnterpriseCommand, SsoCloudMixin):
         target = kwargs.get('target')
         svc = self.find_sso_service(params, target)
         sp_id = svc['sso_service_provider_id']
-
-        if not svc.get('is_cloud'):
-            raise CommandError('sso-cloud',
-                               f'SSO Service Provider "{svc.get("name", target)}" is not a Cloud SSO provider.')
+        self.ensure_cloud_sso(svc, target)
 
         filepath = kwargs.get('file', '')
         filepath = os.path.expanduser(filepath)
@@ -661,10 +664,7 @@ class SsoCloudDownloadMetadataCommand(EnterpriseCommand, SsoCloudMixin):
         target = kwargs.get('target')
         svc = self.find_sso_service(params, target)
         sp_id = svc['sso_service_provider_id']
-
-        if not svc.get('is_cloud'):
-            raise CommandError('sso-cloud',
-                               f'SSO Service Provider "{svc.get("name", target)}" is not a Cloud SSO provider.')
+        self.ensure_cloud_sso(svc, target)
 
         server_base = params.rest_context.server_base
         if server_base.endswith('/'):
@@ -696,10 +696,7 @@ class SsoCloudSetCommand(EnterpriseCommand, SsoCloudMixin):
         target = kwargs.get('target')
         svc = self.find_sso_service(params, target)
         sp_id = svc['sso_service_provider_id']
-
-        if not svc.get('is_cloud'):
-            raise CommandError('sso-cloud',
-                               f'SSO Service Provider "{svc.get("name", target)}" is not a Cloud SSO provider.')
+        self.ensure_cloud_sso(svc, target)
 
         settings_to_set = kwargs.get('setting') or []
         settings_to_reset = kwargs.get('reset') or []
@@ -768,10 +765,7 @@ class SsoCloudValidateCommand(EnterpriseCommand, SsoCloudMixin):
         target = kwargs.get('target')
         svc = self.find_sso_service(params, target)
         sp_id = svc['sso_service_provider_id']
-
-        if not svc.get('is_cloud'):
-            raise CommandError('sso-cloud',
-                               f'SSO Service Provider "{svc.get("name", target)}" is not a Cloud SSO provider.')
+        self.ensure_cloud_sso(svc, target)
 
         config_rs = self.get_selected_configuration(params, sp_id, config_target=kwargs.get('config'))
         config_id = config_rs.ssoSpConfigurationId
@@ -808,10 +802,7 @@ class SsoCloudDeleteCommand(EnterpriseCommand, SsoCloudMixin):
         target = kwargs.get('target')
         svc = self.find_sso_service(params, target)
         sp_id = svc['sso_service_provider_id']
-
-        if not svc.get('is_cloud'):
-            raise CommandError('sso-cloud',
-                               f'SSO Service Provider "{svc.get("name", target)}" is not a Cloud SSO provider.')
+        self.ensure_cloud_sso(svc, target)
 
         config_rs = self.get_selected_configuration(params, sp_id, config_target=kwargs.get('config'))
         config_id = config_rs.ssoSpConfigurationId
