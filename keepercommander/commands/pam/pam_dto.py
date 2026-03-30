@@ -228,3 +228,84 @@ class GatewayActionWebRTCSession(GatewayAction):
 
     def toJSON(self):
         return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+# REMOTE MANAGEMENT ACTIONS (KC-1035)
+
+class GatewayActionRmCreateUserInputs:
+
+    def __init__(self, configuration_uid, user, password=None, resource_uid=None, meta=None, connect_info=None):
+        self.configurationUid = configuration_uid
+        self.user = user
+        if password is not None:
+            self.password = password
+        if resource_uid is not None:
+            self.resourceUid = resource_uid
+        if meta is not None:
+            self.meta = meta
+        if connect_info is not None:
+            self.connect_info = connect_info
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionRmCreateUser(GatewayAction):
+
+    def __init__(self, inputs, conversation_id=None, gateway_destination=None):
+        super().__init__('rm-create-user', inputs=inputs, conversation_id=conversation_id,
+                         gateway_destination=gateway_destination, is_scheduled=False)
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionRmAddUserToGroupInputs:
+
+    def __init__(self, configuration_uid, user, group_id, resource_uid=None, connect_info=None):
+        self.configurationUid = configuration_uid
+        self.user = user
+        self.groupId = group_id
+        if resource_uid is not None:
+            self.resourceUid = resource_uid
+        if connect_info is not None:
+            self.connect_info = connect_info
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionRmAddUserToGroup(GatewayAction):
+
+    def __init__(self, inputs, conversation_id=None, gateway_destination=None):
+        super().__init__('rm-add-user-to-group', inputs=inputs, conversation_id=conversation_id,
+                         gateway_destination=gateway_destination, is_scheduled=False)
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionRmDeleteUserInputs:
+
+    def __init__(self, configuration_uid, user, resource_uid=None, meta=None, connect_info=None):
+        self.configurationUid = configuration_uid
+        self.user = user
+        if resource_uid is not None:
+            self.resourceUid = resource_uid
+        if meta is not None:
+            self.meta = meta
+        if connect_info is not None:
+            self.connect_info = connect_info
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
+
+
+class GatewayActionRmDeleteUser(GatewayAction):
+
+    def __init__(self, inputs, conversation_id=None, gateway_destination=None):
+        super().__init__('rm-delete-user', inputs=inputs, conversation_id=conversation_id,
+                         gateway_destination=gateway_destination, is_scheduled=False)
+
+    def toJSON(self):
+        return json.dumps(self, default=lambda o: o.__dict__, sort_keys=True, indent=4)
