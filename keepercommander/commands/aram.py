@@ -143,10 +143,10 @@ aging_report_parser.error = raise_parse_exception
 aging_report_parser.exit = suppress_exit
 
 action_report_parser = argparse.ArgumentParser(prog='action-report', description='Run an action based on user activity', parents=[report_output_parser])
-action_report_target_statuses = ['no-logon', 'no-update', 'locked', 'invited', 'no-recovery']
+action_report_target_statuses = ['all','no-logon', 'no-update', 'locked', 'invited', 'no-recovery']
 action_report_parser.add_argument('--target', '-t', dest='target_user_status', action='store',
-                                  choices=action_report_target_statuses, default='no-logon',
-                                  help='user status to report on')
+                                  choices=action_report_target_statuses, default='all',
+                                  help='user status to report on')                                 
 action_report_parser.add_argument('--days-since', '-d', dest='days_since', action='store', type=int,
                                   help='number of days since event of interest (e.g., login, record add/update, lock)')
 action_report_columns = {'name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count', 'roles',
@@ -156,16 +156,20 @@ columns_help = re.sub('\'', '', columns_help)
 action_report_parser.add_argument('--columns',  dest='columns', action='store', type=str,
                                   help=columns_help)
 action_report_parser.add_argument('--apply-action', '-a', dest='apply_action', action='store',
-                                  choices=['lock', 'delete', 'transfer', 'none'], default='none',
+                                  choices=['lock', 'delete', 'transfer', 'move', 'none'], default='none',
                                   help='admin action to apply to each user in the report')
 target_user_help = 'username/email of account to transfer users to when --apply-action=transfer is specified'
 action_report_parser.add_argument('--target-user', action='store', help=target_user_help)
+target_node_help = 'Node name/ID to move users to when --apply-action=move is specified'
+action_report_parser.add_argument('--target-node', action='store', help=target_node_help)
 action_report_parser.add_argument('--dry-run', '-n', dest='dry_run', default=False, action='store_true',
                                   help='flag to enable dry-run mode')
 force_action_help = 'skip confirmation prompt when applying irreversible admin actions (e.g., delete, transfer)'
 action_report_parser.add_argument('--force', '-f', action='store_true', help=force_action_help)
 node_filter_help = 'filter users by node (node name or ID)'
 action_report_parser.add_argument('--node', dest='node', action='store', help=node_filter_help)
+recursive_help = 'Search in node and subnodes when --node is specified'
+action_report_parser.add_argument('--recursive', action='store_true', help=recursive_help)
 
 syslog_templates = None  # type: Optional[List[str]]
 
@@ -2264,14 +2268,14 @@ class ActionReportCommand(EnterpriseCommand):
 
         def apply_admin_action(targets, status='no-update', action='none', dryrun=False):
             # type: (List[Dict[str, Any]], Optional[str], Optional[str], Optional[bool]) -> str
-            default_allowed = {'none'}
+            default_allowed = {'none', 'move'}
             status_actions = {
                 'no-logon':     {*default_allowed, 'lock'},
                 'no-update':    {*default_allowed},
                 'locked':       {*default_allowed, 'delete', 'transfer'},
                 'invited':      {*default_allowed, 'delete'},
                 'no-recovery': default_allowed,
-                'blocked':      {*default_allowed, 'delete'}
+                'all': default_allowed
             }
 
             actions_allowed = status_actions.get(status)
@@ -2285,12 +2289,15 @@ class ActionReportCommand(EnterpriseCommand):
             action_handlers = {
                 'none': partial(run_cmd, targets, None, None, dryrun),
                 'lock': partial(run_cmd, targets,
-                                lambda: exec_fn(params, email=emails, lock=True, force=True, return_results=True),
-                                'lock', dryrun),
+                    lambda: exec_fn(params, email=emails, lock=True, force=True, return_results=True),
+                    'lock', dryrun),
                 'delete': partial(run_cmd, targets,
-                                  lambda: exec_fn(params, email=emails, delete=True, force=True, return_results=True),
-                                  'delete', dryrun),
-                'transfer': partial(transfer_accounts, targets, kwargs.get('target_user'), dryrun)
+                    lambda: exec_fn(params, email=emails, delete=True, force=True, return_results=True),
+                    'delete', dryrun),
+                'transfer': partial(transfer_accounts, targets, kwargs.get('target_user'), dryrun),
+                'move': partial(run_cmd, targets, 
+                    lambda: exec_fn(params, email=emails, node=kwargs.get('target_node'), force=True, return_results=True), 
+                    'move', dryrun)
             }
 
             if action in ('delete', 'transfer') and not dryrun and not kwargs.get('force') and targets:
@@ -2356,11 +2363,11 @@ class ActionReportCommand(EnterpriseCommand):
                 logging.warning(f'More than one node "{node_name}" found. Use Node ID.')
                 return
             
-            target_node_id = nodes[0]['node_id']
+            node_id = nodes[0]['node_id']
             
-            # Validate target_node_id
-            if not isinstance(target_node_id, int) or target_node_id <= 0:
-                logging.warning(f'Invalid node ID: {target_node_id}')
+            # Validate node_id
+            if not isinstance(node_id, int) or node_id <= 0:
+                logging.warning(f'Invalid node ID: {node_id}')
                 return
             
             # Build parent-child lookup dictionary once to avoid deep recursion
@@ -2386,7 +2393,7 @@ class ActionReportCommand(EnterpriseCommand):
                             queue.append(child_id)
                 return descendants
             
-            target_nodes = get_descendant_nodes(target_node_id)
+            target_nodes = get_descendant_nodes(node_id) if kwargs.get('recursive') else [node_id]
             filtered_user_ids = {user['enterprise_user_id'] for user in params.enterprise.get('users', [])
                             if user.get('node_id') in target_nodes}
             
@@ -2397,9 +2404,10 @@ class ActionReportCommand(EnterpriseCommand):
         target_status = kwargs.get('target_user_status', 'no-logon')
         days = kwargs.get('days_since')
         if days is None:
-            days = 90 if target_status == 'locked' else 30
+            days = 90 if target_status == 'locked' else 0 if target_status == 'all' else 30
 
         args_by_status = {
+            'all': [active+locked+invited,days,[]],
             'no-logon': [active, days, ['login', 'login_console', 'chat_login', 'accept_invitation']],
             'no-update': [active, days, ['record_add', 'record_update']],
             'locked': [locked, days, ['lock_user'], 'to_username'],
@@ -2413,7 +2421,7 @@ class ActionReportCommand(EnterpriseCommand):
             logging.warning(f'Invalid target_user_status \'{target_status}\': value must be one of {valid_targets}')
             return
 
-        target_users = get_no_action_users(*args)
+        target_users = args[0]
         usernames = {user['username'] for user in target_users}
 
         columns_arg = kwargs.get('columns')
