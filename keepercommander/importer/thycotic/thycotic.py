@@ -323,8 +323,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             if filter_folder == 'Personal Folders':
                 matched_folder_ids = [1]
             else:
-                matched_folder_ids = [x['id'] for x in folders.values()
-                                      if x['folderName'].lower() == filter_folder.lower()]
+                matched_folder_ids = [x['id'] for x in folders.values() if x['folderName'].lower() == filter_folder.lower()]
             if len(matched_folder_ids) == 0:
                 logging.warning('Folder \"%s\" not found', filter_folder)
             folder_ids = list(matched_folder_ids)
