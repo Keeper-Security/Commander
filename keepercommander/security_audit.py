@@ -153,14 +153,46 @@ def _update_records_individually(params, api_module, records):
             failed.append(rec)
     return failed
 
-def update_security_audit_data(params, records):   # type: (KeeperParams, List[KeeperRecord]) -> int
+# def update_security_audit_data(params, records):   # type: (KeeperParams, List[KeeperRecord]) -> int
+#     if not params.enterprise_ec_key:
+#         return 0
+
+#     from . import api
+#     update_limit = 1000
+#     total_updates = len(records)
+#     failed_updates = []
+#     while records:
+#         chunk = records[:update_limit]
+#         records = records[update_limit:]
+#         try:
+#             rq = _build_security_data_request(params, chunk)
+#             api.communicate_rest(params, rq, 'enterprise/update_security_data')
+#         except KeeperApiError as kae:
+#             if 'missing_security_data' in (kae.result_code or '').lower():
+#                 logging.warning('Missing security data encountered during batch update — retrying records individually')
+#                 failed_updates.extend(_update_records_individually(params, api, chunk))
+#             else:
+#                 failed_updates.extend(chunk)
+#         except Exception:
+#             failed_updates.extend(chunk)
+
+#     if failed_updates:
+#         logging.error(f'Could not update security data for {len(failed_updates)} records')
+
+#     return total_updates - len(failed_updates)
+
+def update_security_audit_data(params, records, return_details=False):
+    # type: (KeeperParams, List[KeeperRecord], bool) -> Union[int, Dict[str, List[str]]]
     if not params.enterprise_ec_key:
+        if return_details:
+            return {'attempted': [], 'updated': [], 'failed': []}
         return 0
 
     from . import api
     update_limit = 1000
-    total_updates = len(records)
-    failed_updates = []
+    all_records = list(records)
+    failed_updates = []   # type: List[KeeperRecord]
+
     while records:
         chunk = records[:update_limit]
         records = records[update_limit:]
@@ -179,7 +211,18 @@ def update_security_audit_data(params, records):   # type: (KeeperParams, List[K
     if failed_updates:
         logging.error(f'Could not update security data for {len(failed_updates)} records')
 
-    return total_updates - len(failed_updates)
+    failed_uids = {r.record_uid for r in failed_updates if r}
+    attempted_uids = [r.record_uid for r in all_records if r]
+    updated_uids = [uid for uid in attempted_uids if uid not in failed_uids]
+
+    if return_details:
+        return {
+            'attempted': attempted_uids,
+            'updated': updated_uids,
+            'failed': [uid for uid in attempted_uids if uid in failed_uids],
+        }
+
+    return len(updated_uids)
 
 def attach_security_data(params, record, rq_param):
     # type: (KeeperParams, Union[str, Dict[str, any], KeeperRecord], Union[record_pb2.RecordUpdate, record_pb2.RecordAdd]) -> Union[record_pb2.RecordUpdate, record_pb2.RecordAdd]

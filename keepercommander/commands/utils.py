@@ -424,6 +424,8 @@ record_name_help = 'Path or UID of record whose security data is to be updated. 
 sync_security_data_parser.add_argument('record', type=str, action='store', nargs="+", help=record_name_help)
 sync_security_data_parser.add_argument('--force', '-f', action='store_true', help='force update of security data (ignore existing security data timestamp)')
 sync_security_data_parser.add_argument('--quiet', '-q', action='store_true', help='run command w/ minimal output')
+sync_security_data_parser.add_argument('--show-records', action='store_true',
+                                       help='display attempted/updated/failed record UIDs')
 sync_security_data_parser.error = raise_parse_exception
 sync_security_data_parser.exit = suppress_exit
 
@@ -2361,6 +2363,57 @@ class ResetPasswordCommand(Command):
             logging.info('Master Password has been changed')
 
 
+def _log_security_audit_diagnostic(params, record):
+    """Log the per-record revision/password state that determines needs_security_audit."""
+    from ..security_audit import _get_pass, get_security_score
+    score_entry = params.security_score_data.get(record.record_uid, {})
+    sec_entry   = params.breach_watch_security_data.get(record.record_uid, {})
+    score_data  = score_entry.get('data', {})
+    score_rev   = score_entry.get('revision')
+    sec_rev     = sec_entry.get('revision')
+    has_password      = bool(_get_pass(record))
+    password_changed  = _get_pass(record) != score_data.get('password')
+    stored_score      = score_data.get('score', 0)
+    current_score     = get_security_score(record) or 0
+    revisions_aligned = score_rev == sec_rev
+    logging.info(
+        '  %s (%s): has_password=%s  password_changed=%s  '
+        'score_rev=%s  sec_rev=%s  revisions_aligned=%s  '
+        'stored_score=%s  current_score=%s',
+        record.record_uid, getattr(record, 'title', '?'),
+        has_password, password_changed,
+        score_rev, sec_rev, revisions_aligned,
+        stored_score, current_score,
+    )
+
+
+def _log_missing_security_data_conditions():
+    """
+    Explains under what conditions the server returns missing_security_data and
+    why it cannot be triggered through the normal sync-security-data flow.
+    """
+    logging.info(
+        'Conditions that trigger the missing_security_data KeeperApiError:\n'
+        '  1. A record\'s security data was deleted server-side '
+        '(e.g. via "security-audit sync --hard")\n'
+        '  2. sync_down returns the stale security-data entry anyway '
+        '(server-side bug — stale cache)\n'
+        '  3. The client tries to remove that security data '
+        '(record has no password → empty data field in the request)\n'
+        '  4. The server rejects it because the entry no longer exists\n'
+        '\n'
+        'Why it cannot be triggered naturally here:\n'
+        '  - sync-security-data always calls sync_down first, which refreshes the\n'
+        '    local cache before any update is attempted — eliminating the stale state\n'
+        '  - The server treats update requests as upserts (create-if-missing) for\n'
+        '    records that still have a password, so those succeed without error\n'
+        '  - Only removal requests (no-password records) on already-deleted data fail\n'
+        '\n'
+        'The mock-based reproducer (reproduce_ka_error.py) demonstrates this reliably\n'
+        'by injecting the error on the batch call and comparing old vs fixed behaviour.'
+    )
+
+
 class SyncSecurityDataCommand(Command):
     def get_parser(self):
         return sync_security_data_parser
@@ -2370,26 +2423,60 @@ class SyncSecurityDataCommand(Command):
             msg = 'Command not allowed -- This command is limited to enterprise users only.'
             raise CommandError('sync-security-data', msg)
 
-        def parse_input_records():  # type: () -> Set[str]
-            names = kwargs.get('record',[])
-            do_all = '@all' in names
-            return params.record_cache.keys() if do_all \
-                else itertools.chain.from_iterable(get_ruids(params, n) for n in names)
-
+        names = kwargs.get('record', [])
+        do_all = '@all' in names
         force_update = kwargs.get('force', False)
+        show_records = kwargs.get('show_records', False)
+        quiet = kwargs.get('quiet', False)
+
         api.sync_down(params)
-        recs = [KeeperRecord.load(params, r) for r in parse_input_records()]
+
+        # Resolve names → UIDs, tracking any that couldn't be found
+        if do_all:
+            all_uids = list(params.record_cache.keys())
+            not_found_names = []
+        else:
+            resolved = {name: list(get_ruids(params, name)) for name in names}
+            not_found_names = [name for name, uids in resolved.items() if not uids]
+            all_uids = list(itertools.chain.from_iterable(resolved.values()))
+
+        if not_found_names and not quiet:
+            for name in not_found_names:
+                logging.warning('Record not found: %s', name)
+
+        recs = [r for r in (KeeperRecord.load(params, uid) for uid in all_uids) if r]
         should_update = lambda r: force_update or bool(needs_security_audit(params, r))
-        recs_to_update = [r for r in recs if should_update(r)]
+        recs_to_update  = [r for r in recs if should_update(r)]
+        recs_up_to_date = [r for r in recs if not should_update(r)]
         num_to_update = len(recs_to_update)
-        num_updated = update_security_audit_data(params, recs_to_update)
+
+        update_result = update_security_audit_data(params, recs_to_update, return_details=True)
+        attempted_uids = update_result.get('attempted', [])
+        updated_uids   = update_result.get('updated', [])
+        failed_uids    = update_result.get('failed', [])
+        num_updated = len(updated_uids)
+
         if num_updated:
             BreachWatch.save_reused_pw_count(params)
             api.sync_down(params)
-        if not kwargs.get('quiet'):
+
+        if not quiet:
             if num_updated:
                 logging.info(f'Updated security data for {num_updated} {"record" if num_updated == 1 else "records"}')
-            elif not kwargs.get('suppress_no_op') and not num_to_update:
+                if show_records:
+                    logging.info('Updated record UIDs: %s', ', '.join(updated_uids))
+                    if failed_uids:
+                        logging.info('Failed record UIDs: %s', ', '.join(failed_uids))
+
+            if show_records and recs_up_to_date:
+                logging.info('%d record(s) already up to date:', len(recs_up_to_date))
+                for r in recs_up_to_date:
+                    _log_security_audit_diagnostic(params, r)
+
+            if show_records and (not recs or not_found_names):
+                _log_missing_security_data_conditions()
+
+            if not kwargs.get('suppress_no_op') and not num_to_update and not not_found_names:
                 logging.info('No records requiring security-data updates found')
 
 
