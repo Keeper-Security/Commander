@@ -129,7 +129,10 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
     ]
     domain_subcommands = [
         ('domain list (dl)', 'List all reserved domains for the enterprise'),
-        ('domain reserve (dr)', 'Reserve, delete, or generate token for a domain'),
+        ('domain reserve (dr)', 'Reserve, delete or generate token for a domain'),
+        ('domain alias list (dal)', 'List domain aliases for the enterprise'),
+        ('domain alias create (dac)', 'Create a domain alias for the enterprise'),
+        ('domain alias delete (dad)', 'Delete a domain alias for the enterprise'),
     ]
 
     for category in get_category_order():
