@@ -147,7 +147,7 @@ class PAMRequestAccessCommand(Command):
 
 
 class PAMAccessStateCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam access-state', description='List your active workflow access requests and their status')
+    parser = argparse.ArgumentParser(prog='pam workflow status', description='List your active workflow access requests and their status')
 
     parser.add_argument('record', nargs='?', action='store', default=None, help='Optional: Record UID to check specific resource workflow state')
 
@@ -238,7 +238,7 @@ class PAMAccessStateCommand(Command):
 
 
 class PAMApprovalRequestsCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam approval-requests', description='List pending workflow approval requests')
+    parser = argparse.ArgumentParser(prog='pam workflow requests', description='List pending workflow approval requests')
 
     def get_parser(self):
         return PAMApprovalRequestsCommand.parser
@@ -269,7 +269,7 @@ class PAMApprovalRequestsCommand(Command):
 
 
 class PAMApproveAccessCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam approve-access', description='Approve a workflow access request')
+    parser = argparse.ArgumentParser(prog='pam workflow approve', description='Approve a workflow access request')
 
     parser.add_argument('flow_uid', action='store', help='Flow UID of the request to approve')
     parser.add_argument('--deny', action='store_true', help='Deny instead of approve')
@@ -310,7 +310,7 @@ class PAMApproveAccessCommand(Command):
 
 
 class PAMRevokeAccessCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam revoke-access', description='Revoke/end an active workflow access session')
+    parser = argparse.ArgumentParser(prog='pam workflow revoke', description='Revoke/end an active workflow access session')
 
     parser.add_argument('flow_uid', action='store', help='Flow UID of the active access to revoke')
 
@@ -338,7 +338,7 @@ class PAMRevokeAccessCommand(Command):
 
 
 class PAMWorkflowConfigCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam workflow-config', description='Read or configure workflow settings for a resource')
+    parser = argparse.ArgumentParser(prog='pam workflow config', description='Read or configure workflow settings for a resource')
 
     parser.add_argument('record', action='store', help='Record UID of the resource')
     parser.add_argument('--set', action='store_true', help='Create or update workflow config')

@@ -192,7 +192,7 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('workflow', PAMPrivilegedWorkflowCommand(),
                               'Manage workflow access operations', 'wf')
         self.register_command('access', PAMPrivilegedAccessCommand(),
-                              'Manage privileged cloud access operations', 'i')
+                              'Manage privileged cloud access operations', 'ac')
 
 
 class PAMGatewayCommand(GroupCommand):
