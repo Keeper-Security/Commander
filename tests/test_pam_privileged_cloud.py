@@ -2,7 +2,7 @@
 
 import json
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 from keepercommander.commands.pam.pam_dto import (
     GatewayActionIdpInputs,
@@ -12,13 +12,15 @@ from keepercommander.commands.pam.pam_dto import (
     GatewayActionIdpRemoveUserFromGroup,
     GatewayActionIdpGroupList,
 )
-from keepercommander.commands.pam_cloud.pam_idp import (
-    resolve_idp_config,
-    VALID_IDP_CONFIG_TYPES,
-    PAMIdpCommand,
-    PAMIdpUserCommand,
-    PAMIdpGroupCommand,
+
+from keepercommander.commands.pam_cloud.pam_privileged_access import (
+    resolve_pam_idp_config,
+    VALID_CONFIG_TYPES,
+    PAMPrivilegedAccessCommand,
+    PAMAccessUserCommand,
+    PAMAccessGroupCommand,
 )
+
 from keepercommander.error import CommandError
 
 
@@ -34,7 +36,7 @@ class TestGatewayActionIdpInputs(unittest.TestCase):
         self.assertEqual(data['user'], 'john')
 
     def test_inputs_self_managing(self):
-        """idpConfigUid omitted when same as configurationUid."""
+        """idpConfigUid omitted when matching configurationUid."""
         inputs = GatewayActionIdpInputs('config-123', 'config-123', user='john')
         data = json.loads(inputs.toJSON())
         self.assertEqual(data['configurationUid'], 'config-123')
@@ -121,7 +123,7 @@ class TestResolveIdpConfig(unittest.TestCase):
     """Test resolve_idp_config() helper."""
 
     def _make_mock_record(self, record_type, idp_uid=None):
-        """Create a mock TypedRecord with optional identityProviderUid custom field."""
+        """Create a mock TypedRecord with an optional identityProviderUid custom field."""
         from keepercommander import vault
         record = MagicMock(spec=vault.TypedRecord)
         record.record_type = record_type
@@ -144,7 +146,7 @@ class TestResolveIdpConfig(unittest.TestCase):
         mock_load.return_value = record
         params = MagicMock()
 
-        result = resolve_idp_config(params, 'azure-123')
+        result = resolve_pam_idp_config(params, 'azure-123')
         self.assertEqual(result, 'azure-123')
 
     @patch('keepercommander.commands.pam_cloud.pam_idp.vault.KeeperRecord.load')
@@ -163,7 +165,7 @@ class TestResolveIdpConfig(unittest.TestCase):
         mock_load.side_effect = load_side_effect
         params = MagicMock()
 
-        result = resolve_idp_config(params, 'net-123')
+        result = resolve_pam_idp_config(params, 'net-123')
         self.assertEqual(result, 'azure-456')
 
     @patch('keepercommander.commands.pam_cloud.pam_idp.vault.KeeperRecord.load')
@@ -173,17 +175,17 @@ class TestResolveIdpConfig(unittest.TestCase):
         params = MagicMock()
 
         with self.assertRaises(CommandError):
-            resolve_idp_config(params, 'nonexistent')
+            resolve_pam_idp_config(params, 'nonexistent')
 
     @patch('keepercommander.commands.pam_cloud.pam_idp.vault.KeeperRecord.load')
     def test_non_idp_type_without_ref(self, mock_load):
-        """Raises error for non-IdP config type without identityProviderUid."""
+        """Raises error for a non-IdP config type without identityProviderUid."""
         record = self._make_mock_record('pamNetworkConfiguration')
         mock_load.return_value = record
         params = MagicMock()
 
         with self.assertRaises(CommandError) as ctx:
-            resolve_idp_config(params, 'net-123')
+            resolve_pam_idp_config(params, 'net-123')
         self.assertIn('No Identity Provider available', str(ctx.exception))
 
     @patch('keepercommander.commands.pam_cloud.pam_idp.vault.KeeperRecord.load')
@@ -200,12 +202,12 @@ class TestResolveIdpConfig(unittest.TestCase):
         params = MagicMock()
 
         with self.assertRaises(CommandError) as ctx:
-            resolve_idp_config(params, 'net-123')
+            resolve_pam_idp_config(params, 'net-123')
         self.assertIn('not found', str(ctx.exception))
 
     @patch('keepercommander.commands.pam_cloud.pam_idp.vault.KeeperRecord.load')
     def test_referenced_config_invalid_type(self, mock_load):
-        """Raises error when referenced config type doesn't support IdP."""
+        """Raises error when a referenced config type doesn't support IdP."""
         net_record = self._make_mock_record('pamNetworkConfiguration', idp_uid='other-456')
         other_record = self._make_mock_record('pamLocalConfiguration')
 
@@ -220,7 +222,7 @@ class TestResolveIdpConfig(unittest.TestCase):
         params = MagicMock()
 
         with self.assertRaises(CommandError) as ctx:
-            resolve_idp_config(params, 'net-123')
+            resolve_pam_idp_config(params, 'net-123')
         self.assertIn('does not support identity provider', str(ctx.exception))
 
 
@@ -228,40 +230,40 @@ class TestValidIdpConfigTypes(unittest.TestCase):
     """Test VALID_IDP_CONFIG_TYPES constant."""
 
     def test_azure_is_valid(self):
-        self.assertIn('pamAzureConfiguration', VALID_IDP_CONFIG_TYPES)
+        self.assertIn('pamAzureConfiguration', VALID_CONFIG_TYPES)
 
     def test_okta_is_valid(self):
-        self.assertIn('pamOktaConfiguration', VALID_IDP_CONFIG_TYPES)
+        self.assertIn('pamOktaConfiguration', VALID_CONFIG_TYPES)
 
     def test_domain_is_valid(self):
-        self.assertIn('pamDomainConfiguration', VALID_IDP_CONFIG_TYPES)
+        self.assertIn('pamDomainConfiguration', VALID_CONFIG_TYPES)
 
     def test_aws_is_valid(self):
-        self.assertIn('pamAwsConfiguration', VALID_IDP_CONFIG_TYPES)
+        self.assertIn('pamAwsConfiguration', VALID_CONFIG_TYPES)
 
     def test_gcp_is_valid(self):
-        self.assertIn('pamGcpConfiguration', VALID_IDP_CONFIG_TYPES)
+        self.assertIn('pamGcpConfiguration', VALID_CONFIG_TYPES)
 
     def test_network_is_not_valid(self):
-        self.assertNotIn('pamNetworkConfiguration', VALID_IDP_CONFIG_TYPES)
+        self.assertNotIn('pamNetworkConfiguration', VALID_CONFIG_TYPES)
 
 
 class TestCommandGroupStructure(unittest.TestCase):
     """Test command group hierarchy."""
 
     def test_idp_has_user_and_group_subgroups(self):
-        cmd = PAMIdpCommand()
+        cmd = PAMPrivilegedAccessCommand()
         self.assertIn('user', cmd.subcommands)
         self.assertIn('group', cmd.subcommands)
 
     def test_user_has_provision_deprovision_list(self):
-        cmd = PAMIdpUserCommand()
+        cmd = PAMAccessUserCommand()
         self.assertIn('provision', cmd.subcommands)
         self.assertIn('deprovision', cmd.subcommands)
         self.assertIn('list', cmd.subcommands)
 
     def test_group_has_add_remove_list(self):
-        cmd = PAMIdpGroupCommand()
+        cmd = PAMAccessGroupCommand()
         self.assertIn('add-user', cmd.subcommands)
         self.assertIn('remove-user', cmd.subcommands)
         self.assertIn('list', cmd.subcommands)

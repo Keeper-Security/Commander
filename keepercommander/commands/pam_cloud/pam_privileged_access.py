@@ -23,7 +23,7 @@ from keepercommander.subfolder import find_parent_top_folder
 logger = logging.getLogger(__name__)
 
 
-VALID_IDP_CONFIG_TYPES = {
+VALID_CONFIG_TYPES = {
     'pamAzureConfiguration',
     'pamOktaConfiguration',
     'pamDomainConfiguration',
@@ -32,7 +32,7 @@ VALID_IDP_CONFIG_TYPES = {
 }
 
 
-def resolve_idp_config(params, config_uid):
+def resolve_pam_idp_config(params, config_uid):
     """Resolve the Identity Provider config UID from a PAM configuration.
 
     Reads the 'identityProviderUid' custom text field on the PAM config record.
@@ -41,9 +41,9 @@ def resolve_idp_config(params, config_uid):
     """
     record = vault.KeeperRecord.load(params, config_uid)
     if not record:
-        raise CommandError('pam-idp', f'PAM configuration "{config_uid}" not found.')
+        raise CommandError('pam-privileged-access', f'PAM configuration "{config_uid}" not found.')
     if not isinstance(record, vault.TypedRecord):
-        raise CommandError('pam-idp', 'Only typed PAM configuration records are supported.')
+        raise CommandError('pam-privileged-access', 'Only typed PAM configuration records are supported.')
 
     # Check custom field for identityProviderUid
     for field in record.custom:
@@ -53,20 +53,20 @@ def resolve_idp_config(params, config_uid):
                 idp_uid = values[0]
                 idp_record = vault.KeeperRecord.load(params, idp_uid)
                 if not idp_record:
-                    raise CommandError('pam-idp',
-                                       f'Identity Provider config "{idp_uid}" not found.')
+                    raise CommandError('pam-privileged-access',
+                                       f'PAM Identity Provider config "{idp_uid}" not found.')
                 if isinstance(idp_record, vault.TypedRecord):
-                    if idp_record.record_type not in VALID_IDP_CONFIG_TYPES:
-                        raise CommandError('pam-idp',
+                    if idp_record.record_type not in VALID_CONFIG_TYPES:
+                        raise CommandError('pam-privileged-access',
                                            f'Referenced config type "{idp_record.record_type}" '
                                            f'does not support identity provider operations.')
                 return idp_uid
 
     # Self-managing — verify config type supports IdP
-    if record.record_type in VALID_IDP_CONFIG_TYPES:
+    if record.record_type in VALID_CONFIG_TYPES:
         return config_uid
 
-    raise CommandError('pam-idp',
+    raise CommandError('pam-privileged-access',
                        f'No Identity Provider available for config type "{record.record_type}". '
                        f'Link one with: pam config edit {config_uid} --identity-provider <idp-uid>')
 
@@ -75,7 +75,7 @@ def _get_record_key(params, config_uid):
     """Get the record key for a PAM config record."""
     record = vault.KeeperRecord.load(params, config_uid)
     if not record or not record.record_key:
-        raise CommandError('pam-idp', 'Record key unavailable for config record.')
+        raise CommandError('pam-privileged-access', 'Record key unavailable for config record.')
     return record.record_key
 
 
@@ -130,23 +130,23 @@ def _dispatch_idp_action(params, gateway_action, gateway_uid=None):
     )
 
     if not router_response:
-        raise CommandError('pam-idp', 'No response received from gateway.')
+        raise CommandError('pam-privileged-access', 'No response received from gateway.')
 
     response = router_response.get('response', {})
     payload_str = response.get('payload')
     if not payload_str:
-        raise CommandError('pam-idp', 'Empty response payload from gateway.')
+        raise CommandError('pam-privileged-access', 'Empty response payload from gateway.')
 
     payload = json.loads(payload_str)
 
     if not (payload.get('is_ok') or payload.get('isOk')):
         error_msg = payload.get('error', payload.get('message', 'Unknown gateway error'))
-        raise CommandError('pam-idp', f'Gateway error: {error_msg}')
+        raise CommandError('pam-privileged-access', f'Gateway error: {error_msg}')
 
     data = payload.get('data', {})
     if isinstance(data, dict) and not data.get('success', True):
         error_msg = data.get('error', 'Unknown error')
-        raise CommandError('pam-idp', _friendly_error(error_msg))
+        raise CommandError('pam-privileged-access', _friendly_error(error_msg))
 
     return payload
 
@@ -154,60 +154,60 @@ def _dispatch_idp_action(params, gateway_action, gateway_uid=None):
 # --- Command Groups ---
 
 
-class PAMIdpCommand(GroupCommand):
+class PAMPrivilegedAccessCommand(GroupCommand):
     def __init__(self):
         super().__init__()
-        self.register_command('user', PAMIdpUserCommand(), 'Manage Identity Provider users')
-        self.register_command('group', PAMIdpGroupCommand(), 'Manage Identity Provider groups')
+        self.register_command('user', PAMAccessUserCommand(), 'Manage privileged IdP users')
+        self.register_command('group', PAMAccessGroupCommand(), 'Manage privileged IdP groups')
 
 
-class PAMIdpUserCommand(GroupCommand):
+class PAMAccessUserCommand(GroupCommand):
     def __init__(self):
         super().__init__()
-        self.register_command('provision', PAMIdpUserProvisionCommand(),
-                              'Provision a user in the Identity Provider')
-        self.register_command('deprovision', PAMIdpUserDeprovisionCommand(),
-                              'Deprovision a user from the Identity Provider')
-        self.register_command('list', PAMIdpUserListCommand(),
+        self.register_command('provision', PAMAccessUserProvisionCommand(),
+                              'Provision a privileged user in the Identity Provider')
+        self.register_command('deprovision', PAMAccessUserDeprovisionCommand(),
+                              'Deprovision a privileged user from the Identity Provider')
+        self.register_command('list', PAMAccessUserListCommand(),
                               'List users in the Identity Provider')
 
 
-class PAMIdpGroupCommand(GroupCommand):
+class PAMAccessGroupCommand(GroupCommand):
     def __init__(self):
         super().__init__()
-        self.register_command('add-user', PAMIdpGroupAddUserCommand(),
-                              'Add a user to a group')
-        self.register_command('remove-user', PAMIdpGroupRemoveUserCommand(),
-                              'Remove a user from a group')
-        self.register_command('list', PAMIdpGroupListCommand(),
+        self.register_command('add-user', PAMAccessGroupAddUserCommand(),
+                              'Add a user to a privileged group in the Identity Provider')
+        self.register_command('remove-user', PAMAccessGroupRemoveUserCommand(),
+                              'Remove a user from privileged group in the Identity Provider')
+        self.register_command('list', PAMAccessGroupListCommand(),
                               'List groups in the Identity Provider')
 
 
 # --- User Commands ---
 
 
-class PAMIdpUserProvisionCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam idp user provision',
-                                     description='Provision a user in the Identity Provider')
+class PAMAccessUserProvisionCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam access user provision',
+                                     description='Provision a privileged user in the Identity Provider')
     parser.add_argument('--config', '-c', required=True, dest='config_uid',
                         help='PAM configuration UID')
     parser.add_argument('--username', '-u', required=True, dest='username',
                         help='Username to create (e.g. testuser or testuser@domain.com)')
-    parser.add_argument('--domain', dest='domain',
-                        help='Domain for the user (e.g. company.onmicrosoft.com)')
-    parser.add_argument('--display-name', '-d', dest='display_name',
-                        help='Display name (defaults to username)')
+    parser.add_argument('--domain', '-d', dest='domain',
+                        help='Domain for the user (e.g. domain.com, if not included in --username)')
+    parser.add_argument('--display-name', '-n', dest='display_name',
+                        help='Display name (defaults to --username)')
     parser.add_argument('--password', '-p', dest='password',
                         help='Initial password (auto-generated if omitted)')
     parser.add_argument('--save-record', '-s', dest='save_record', action='store_true',
                         help='Save provisioned credentials as a pamUser record')
-    parser.add_argument('--folder', dest='folder_uid',
+    parser.add_argument('--folder', '-f', dest='folder_uid',
                         help='Folder UID to save the record in (used with --save-record)')
     parser.add_argument('--gateway', '-g', dest='gateway',
                         help='Gateway UID or name')
 
     def get_parser(self):
-        return PAMIdpUserProvisionCommand.parser
+        return PAMAccessUserProvisionCommand.parser
 
     def execute(self, params, **kwargs):
         config_uid = kwargs['config_uid']
@@ -220,10 +220,10 @@ class PAMIdpUserProvisionCommand(Command):
         elif domain:
             username = f'{username}@{domain}'
         else:
-            raise CommandError('pam-idp',
+            raise CommandError('pam-privileged-access',
                                'Username must include domain (e.g. user@domain.com), '
                                'or use --domain to specify one.')
-        idp_config_uid = resolve_idp_config(params, config_uid)
+        idp_config_uid = resolve_pam_idp_config(params, config_uid)
         record_key = _get_record_key(params, config_uid)
 
         meta = {}
@@ -253,7 +253,7 @@ class PAMIdpUserProvisionCommand(Command):
 
         if isinstance(response_data, dict) and not response_data.get('success', True):
             error = response_data.get('error', 'Unknown error')
-            raise CommandError('pam-idp', f'Gateway reported failure: {error}')
+            raise CommandError('pam-privileged-access', f'Gateway reported failure: {error}')
 
         # Decrypt the response data if encrypted
         data = {}
@@ -317,9 +317,9 @@ class PAMIdpUserProvisionCommand(Command):
             logging.info(f'Credentials saved as pamUser record.')
 
 
-class PAMIdpUserDeprovisionCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam idp user deprovision',
-                                     description='Deprovision a user from the Identity Provider')
+class PAMAccessUserDeprovisionCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam access user deprovision',
+                                     description='Deprovision a privileged user from the Identity Provider')
     parser.add_argument('--config', '-c', required=True, dest='config_uid',
                         help='PAM configuration UID')
     parser.add_argument('--username', '-u', required=True, dest='username',
@@ -334,12 +334,12 @@ class PAMIdpUserDeprovisionCommand(Command):
                         help='Gateway UID or name')
 
     def get_parser(self):
-        return PAMIdpUserDeprovisionCommand.parser
+        return PAMAccessUserDeprovisionCommand.parser
 
     def execute(self, params, **kwargs):
         config_uid = kwargs['config_uid']
         username = kwargs['username']
-        idp_config_uid = resolve_idp_config(params, config_uid)
+        idp_config_uid = resolve_pam_idp_config(params, config_uid)
         record_key = _get_record_key(params, config_uid)
 
         if not kwargs.get('force'):
@@ -366,7 +366,7 @@ class PAMIdpUserDeprovisionCommand(Command):
         delete_record = kwargs.get('delete_record')
         if delete_record:
             if delete_record == 'auto':
-                record_uid = _find_pam_user_record_by_azure_id(params, username)
+                record_uid = _find_pam_user_record_by_user_id(params, username)
                 if record_uid:
                     api.delete_record(params, record_uid)
                     logging.info(f'Deleted pamUser record {record_uid}.')
@@ -382,7 +382,7 @@ class PAMIdpUserDeprovisionCommand(Command):
                     logging.warning(f'Record "{delete_record}" not found.')
 
 
-def _find_pam_user_record_by_azure_id(params, username):
+def _find_pam_user_record_by_user_id(params, username):
     """Find a pamUser record with an IdP User ID custom field matching the given username."""
     username_lower = username.lower()
     for record_uid in params.record_cache:
@@ -414,8 +414,8 @@ def _find_pam_user_record_by_azure_id(params, username):
     return None
 
 
-class PAMIdpUserListCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam idp user list',
+class PAMAccessUserListCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam access user list',
                                      description='List users in the Identity Provider')
     parser.add_argument('--config', '-c', required=True, dest='config_uid',
                         help='PAM configuration UID')
@@ -423,10 +423,10 @@ class PAMIdpUserListCommand(Command):
                         help='Gateway UID or name')
 
     def get_parser(self):
-        return PAMIdpUserListCommand.parser
+        return PAMAccessUserListCommand.parser
 
     def execute(self, params, **kwargs):
-        raise CommandError('pam-idp',
+        raise CommandError('pam-privileged-access',
                            'User listing is not yet implemented. '
                            'Use "pam idp group list" to list groups, or check the IdP portal directly.')
 
@@ -434,8 +434,8 @@ class PAMIdpUserListCommand(Command):
 # --- Group Commands ---
 
 
-class PAMIdpGroupListCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam idp group list',
+class PAMAccessGroupListCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam access group list',
                                      description='List groups in the Identity Provider')
     parser.add_argument('--config', '-c', required=True, dest='config_uid',
                         help='PAM configuration UID')
@@ -445,11 +445,11 @@ class PAMIdpGroupListCommand(Command):
                         help='Gateway UID or name')
 
     def get_parser(self):
-        return PAMIdpGroupListCommand.parser
+        return PAMAccessGroupListCommand.parser
 
     def execute(self, params, **kwargs):
         config_uid = kwargs['config_uid']
-        idp_config_uid = resolve_idp_config(params, config_uid)
+        idp_config_uid = resolve_pam_idp_config(params, config_uid)
 
         inputs = GatewayActionIdpInputs(
             configuration_uid=config_uid,
@@ -470,7 +470,7 @@ class PAMIdpGroupListCommand(Command):
 
         if not isinstance(response_data, dict) or not response_data.get('success'):
             error = response_data.get('error', 'Unknown error') if isinstance(response_data, dict) else str(response_data)
-            raise CommandError('pam-idp', f'Gateway reported failure: {error}')
+            raise CommandError('pam-privileged-access', f'Gateway reported failure: {error}')
 
         # Decrypt the inner encrypted data using the config record key
         encrypted_content = response_data.get('data')
@@ -503,9 +503,9 @@ class PAMIdpGroupListCommand(Command):
         dump_report_data(table, headers=headers)
 
 
-class PAMIdpGroupAddUserCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam idp group add-user',
-                                     description='Add a user to a group in the Identity Provider')
+class PAMAccessGroupAddUserCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam access group add-user',
+                                     description='Add a user to a privileged group in the Identity Provider')
     parser.add_argument('--config', '-c', required=True, dest='config_uid',
                         help='PAM configuration UID')
     parser.add_argument('--username', '-u', required=True, dest='username',
@@ -516,13 +516,13 @@ class PAMIdpGroupAddUserCommand(Command):
                         help='Gateway UID or name')
 
     def get_parser(self):
-        return PAMIdpGroupAddUserCommand.parser
+        return PAMAccessGroupAddUserCommand.parser
 
     def execute(self, params, **kwargs):
         config_uid = kwargs['config_uid']
         username = kwargs['username']
         group_id = kwargs['group_id']
-        idp_config_uid = resolve_idp_config(params, config_uid)
+        idp_config_uid = resolve_pam_idp_config(params, config_uid)
         record_key = _get_record_key(params, config_uid)
 
         inputs = GatewayActionIdpInputs(
@@ -538,9 +538,9 @@ class PAMIdpGroupAddUserCommand(Command):
         logging.info(f'User "{username}" added to group "{group_id}".')
 
 
-class PAMIdpGroupRemoveUserCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam idp group remove-user',
-                                     description='Remove a user from a group in the Identity Provider')
+class PAMAccessGroupRemoveUserCommand(Command):
+    parser = argparse.ArgumentParser(prog='pam access group remove-user',
+                                     description='Remove a user from a privileged group in the Identity Provider')
     parser.add_argument('--config', '-c', required=True, dest='config_uid',
                         help='PAM configuration UID')
     parser.add_argument('--username', '-u', required=True, dest='username',
@@ -551,13 +551,13 @@ class PAMIdpGroupRemoveUserCommand(Command):
                         help='Gateway UID or name')
 
     def get_parser(self):
-        return PAMIdpGroupRemoveUserCommand.parser
+        return PAMAccessGroupRemoveUserCommand.parser
 
     def execute(self, params, **kwargs):
         config_uid = kwargs['config_uid']
         username = kwargs['username']
         group_id = kwargs['group_id']
-        idp_config_uid = resolve_idp_config(params, config_uid)
+        idp_config_uid = resolve_pam_idp_config(params, config_uid)
         record_key = _get_record_key(params, config_uid)
 
         inputs = GatewayActionIdpInputs(

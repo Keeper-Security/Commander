@@ -12,7 +12,7 @@ from keepercommander.commands.pam.pam_dto import (
     GatewayActionIdpValidateDomain,
 )
 from keepercommander.commands.pam.router_helper import router_send_action_to_gateway, _post_request_to_router
-from keepercommander.commands.pam_cloud.pam_idp import resolve_idp_config
+from keepercommander.commands.pam_cloud.pam_privileged_access import resolve_pam_idp_config
 from keepercommander.commands.tunnel.port_forward.tunnel_helpers import (
     get_config_uid_from_record,
     get_gateway_uid_from_record,
@@ -22,11 +22,30 @@ from keepercommander import api, vault
 from keepercommander.proto import GraphSync_pb2, pam_pb2, workflow_pb2
 
 
-ELIGIBLE_RECORD_TYPES = {'pamRemoteBrowser', 'pamDatabase', 'pamMachine'}
+ELIGIBLE_RECORD_TYPES = {'pamRemoteBrowser', 'pamDatabase', 'pamMachine', 'pamCloudAccess'}
+
+
+# --- Command Groups ---
+
+class PAMPrivilegedWorkflowCommand(GroupCommand):
+    def __init__(self):
+        super().__init__()
+        self.register_command('request', PAMRequestAccessCommand(),
+                              'Request access for a shared record')
+        self.register_command('status', PAMAccessStateCommand(),
+                              'List your active access requests and statuses')
+        self.register_command('requests', PAMApprovalRequestsCommand(),
+                              'List pending workflow approval requests')
+        self.register_command('approve', PAMApproveAccessCommand(),
+                              'Approve or deny a workflow access request')
+        self.register_command('revoke', PAMRevokeAccessCommand(),
+                              'Revoke/end an active workflow access session')
+        self.register_command('config', PAMWorkflowConfigCommand(),
+                              'Read or configure workflow settings for a resource')
 
 
 class PAMRequestAccessCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam request-access', description='Request access to a shared PAM record')
+    parser = argparse.ArgumentParser(prog='pam workflow request', description='Request access to a shared PAM record')
 
     parser.add_argument('record', action='store', help='Record UID or title of the shared PAM record')
     parser.add_argument('--message', '-m', dest='message', action='store',
@@ -40,14 +59,14 @@ class PAMRequestAccessCommand(Command):
         record = RecordMixin.resolve_single_record(params, record_name)
 
         if not record:
-            raise CommandError('pam-request-access', f'Record "{record_name}" not found.')
+            raise CommandError('pam-workflow-request-access', f'Record "{record_name}" not found.')
 
         if not isinstance(record, vault.TypedRecord):
-            raise CommandError('pam-request-access', 'Only typed records are supported.')
+            raise CommandError('pam-workflow-request-access', 'Only typed records are supported.')
 
         if record.record_type not in ELIGIBLE_RECORD_TYPES:
             allowed = ', '.join(sorted(ELIGIBLE_RECORD_TYPES))
-            raise CommandError('pam-request-access',
+            raise CommandError('pam-workflow-request-access',
                                f'Record type "{record.record_type}" is not eligible. Allowed types: {allowed}')
 
         # Load share info to find the record owner
@@ -55,28 +74,28 @@ class PAMRequestAccessCommand(Command):
 
         rec_cached = params.record_cache.get(record.record_uid)
         if not rec_cached:
-            raise CommandError('pam-request-access', 'Record not found in cache.')
+            raise CommandError('pam-workflow-request-access', 'Record not found in cache.')
 
         shares = rec_cached.get('shares', {})
         user_perms = shares.get('user_permissions', [])
 
         owner = next((up.get('username') for up in user_perms if up.get('owner')), None)
         if not owner:
-            raise CommandError('pam-request-access', 'Could not determine record owner.')
+            raise CommandError('pam-workflow-request-access', 'Could not determine record owner.')
 
         if owner == params.user:
-            raise CommandError('pam-request-access', 'You are the owner of this record.')
+            raise CommandError('pam-workflow-request-access', 'You are the owner of this record.')
 
         # Resolve PAM config and IdP config for this resource
         config_uid = get_config_uid_from_record(params, vault, record.record_uid)
         if not config_uid:
-            raise CommandError('pam-request-access', 'Could not resolve PAM configuration for this resource.')
+            raise CommandError('pam-workflow-request-access', 'Could not resolve PAM configuration for this resource.')
 
         gateway_uid = get_gateway_uid_from_record(params, vault, record.record_uid)
 
         # Validate the requesting user's domain against the IdP
         try:
-            idp_config_uid = resolve_idp_config(params, config_uid)
+            idp_config_uid = resolve_pam_idp_config(params, config_uid)
         except CommandError:
             idp_config_uid = config_uid
 
@@ -106,7 +125,7 @@ class PAMRequestAccessCommand(Command):
                 data = payload.get('data', {})
                 if isinstance(data, dict) and not data.get('success', True):
                     error_msg = data.get('error', 'Domain validation failed')
-                    raise CommandError('pam-request-access', error_msg)
+                    raise CommandError('pam-workflow-request-access', error_msg)
 
         # Domain validated — submit workflow access request to krouter
         record_uid_bytes = url_safe_str_to_bytes(record.record_uid)
