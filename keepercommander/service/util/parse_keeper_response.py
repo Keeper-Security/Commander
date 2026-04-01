@@ -79,6 +79,7 @@ class KeeperResponseParser:
             'enterprise-push': '_parse_enterprise_push_command',
             'search record': '_parse_search_record_command',
             'search folder': '_parse_search_folder_command',
+            'policy add': '_parse_epm_policy_add_command',
         }
         
         for pattern, method_name in substring_patterns.items():
@@ -132,17 +133,21 @@ class KeeperResponseParser:
         if not response_str:
             return KeeperResponseParser._handle_empty_response(command)
         
-        # If from log output, use logging-based parsing directly
-        if is_from_log:
-            return KeeperResponseParser._parse_logging_based_command(command, response_str)
-        
-        # Find and call the appropriate parser method
+        # Find the appropriate parser method (used for both log and non-log paths)
         parser_method_name = KeeperResponseParser._find_parser_method(command)
+
+        # If from log output, use command-specific parser if available, else generic logging parser
+        if is_from_log:
+            if parser_method_name != '_parse_logging_based_command':
+                parser_method = getattr(KeeperResponseParser, parser_method_name)
+                return parser_method(command, response_str)
+            return KeeperResponseParser._parse_logging_based_command(command, response_str)
         parser_method = getattr(KeeperResponseParser, parser_method_name)
         
         # Call the parser method with appropriate arguments
         if parser_method_name in ['_parse_generate_command', '_parse_json_format_command', 
-                                '_parse_pam_project_import_command', '_parse_enterprise_push_command']:
+                                '_parse_pam_project_import_command', '_parse_enterprise_push_command',
+                                '_parse_epm_policy_add_command']:
             return parser_method(command, response_str)
         else:
             return parser_method(response_str) if parser_method_name != '_parse_logging_based_command' else parser_method(command, response_str)
@@ -922,6 +927,35 @@ class KeeperResponseParser:
                 "message": "Command executed successfully but produced no output",
                 "data": None
             }
+
+    @staticmethod
+    def _parse_epm_policy_add_command(command: str, response_str: str) -> Dict[str, Any]:
+        """Parse 'epm policy add' command output to extract policy ID and name."""
+        response_str = KeeperResponseParser._filter_login_messages(response_str.strip())
+
+        result = {
+            "status": "success",
+            "command": "epm policy add",
+            "message": response_str,
+            "data": {}
+        }
+
+        policy_match = re.search(
+            r'Successfully created policy "([^"]*)" with Policy ID:\s*(\S+)',
+            response_str
+        )
+        if policy_match:
+            result["data"]["policy_name"] = policy_match.group(1)
+            result["data"]["policy_id"] = policy_match.group(2)
+        else:
+            response_lower = response_str.lower()
+            if any(kw in response_lower for kw in ["error", "failed", "not supported"]):
+                result["status"] = "error"
+                result["error"] = response_str
+                del result["data"]
+                del result["message"]
+
+        return result
 
     @staticmethod
     def _parse_enterprise_push_command(command: str, response_str: str) -> Dict[str, Any]:

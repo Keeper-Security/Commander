@@ -1346,13 +1346,18 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
         parser.add_argument('--policy-name', dest='policy_name', action='store',
                             help='Policy name')
         parser.add_argument('--control', dest='control', action='append',
-                            choices=['allow', 'deny', 'audit', 'notify', 'mfa', 'justify', 'approval'],
+                            choices=['audit', 'notify', 'mfa', 'justify', 'approval'],
                             help='Policy controls')
         parser.add_argument('--status', dest='status', action='store',
                             choices=['enforce', 'monitor', 'monitor_and_notify'],
                             help='Policy Status')
         parser.add_argument('--enable', dest='enable', action='store', choices=['on', 'off'],
                             help='Enables or disables policy')
+        parser.add_argument('--message', dest='notification_message', action='store',
+                            help='Notification message (only for monitor_and_notify status)')
+        parser.add_argument('--require-acknowledgement', dest='require_acknowledgement',
+                            action='store', choices=['on', 'off'], default=None,
+                            help='Require policy acknowledgement (only for monitor_and_notify status)')
 
         super().__init__(parser)
 
@@ -1441,10 +1446,20 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
         else:
             policy_data['Status'] = 'enforce'
 
+        notification_message = kwargs.get('notification_message')
+        require_ack = kwargs.get('require_acknowledgement')
+        if notification_message is not None or require_ack is not None:
+            if policy_data['Status'] != 'monitor_and_notify':
+                raise base.CommandError('--message and --require-acknowledgement are only valid when --status is monitor_and_notify')
+        if notification_message is not None:
+            policy_data['NotificationMessage'] = notification_message
+        if require_ack is not None:
+            policy_data['NotificationRequiresAcknowledge'] = require_ack == 'on'
+
         disabled: bool = False
         arg_enable = kwargs.get('enable')
         if isinstance(arg_enable, str):
-            disabled = True if arg_enable == 'off' else False
+            disabled = arg_enable == 'off'
 
         policy_key = utils.generate_aes_key()
         add_policy = admin_types.PedmPolicy(
@@ -1455,21 +1470,29 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
             if isinstance(status, admin_types.EntityStatus) and not status.success:
                 raise base.CommandError(f'Failed to add policy "{status.entity_uid}": {status.message}')
 
+        policy_name = policy_data.get('PolicyName') or ''
+        logging.info('Successfully created policy "%s" with Policy ID: %s', policy_name, policy_uid)
+
 
 class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
     def __init__(self):
         parser = argparse.ArgumentParser(prog='edit', description='Edit EPM policy', parents=[PedmPolicyMixin.policy_filter])
-        parser.add_argument('policy', help='Policy UID')
+        parser.add_argument('policy', help='Policy UID or name')
         parser.add_argument('--policy-name', dest='policy_name', action='store',
                             help='Policy name')
         parser.add_argument('--control', dest='control', action='append',
-                            choices=['allow', 'deny', 'audit', 'notify', 'mfa', 'justify', 'approval'],
+                            choices=['audit', 'notify', 'mfa', 'justify', 'approval'],
                             help='Policy controls')
         parser.add_argument('--status', dest='status', action='store',
                             choices=['enforce', 'monitor', 'monitor_and_notify'],
                             help='Policy Status')
         parser.add_argument('--enable', dest='enable', action='store', choices=['on', 'off'],
                             help='Enables or disables policy')
+        parser.add_argument('--message', dest='notification_message', action='store',
+                            help='Notification message (only for monitor_and_notify status)')
+        parser.add_argument('--require-acknowledgement', dest='require_acknowledgement',
+                            action='store', choices=['on', 'off'], default=None,
+                            help='Require policy acknowledgement (only for monitor_and_notify status)')
         super().__init__(parser)
 
     def execute(self, context: KeeperParams, **kwargs) -> None:
@@ -1502,10 +1525,21 @@ class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
         if isinstance(arg_status, str):
             policy_data['Status'] = arg_status
 
+        effective_status = policy_data.get('Status', '')
+        notification_message = kwargs.get('notification_message')
+        require_ack = kwargs.get('require_acknowledgement')
+        if notification_message is not None or require_ack is not None:
+            if effective_status != 'monitor_and_notify':
+                raise base.CommandError('--message and --require-acknowledgement are only valid when status is monitor_and_notify')
+        if notification_message is not None:
+            policy_data['NotificationMessage'] = notification_message
+        if require_ack is not None:
+            policy_data['NotificationRequiresAcknowledge'] = require_ack == 'on'
+
         disabled: Optional[bool] = None
         arg_enable = kwargs.get('enable')
         if isinstance(arg_enable, str):
-            disabled = True if arg_enable == 'off' else False
+            disabled = arg_enable == 'off'
 
         pu = admin_types.PedmUpdatePolicy(policy_uid=policy.policy_uid, data=policy_data, disabled=disabled)
 
@@ -1514,6 +1548,9 @@ class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
             status = rs.update[0]
             if isinstance(status, admin_types.EntityStatus) and not status.success:
                 raise base.CommandError(f'Failed to update policy "{status.entity_uid}": {status.message}')
+
+        updated_name = policy_data.get('PolicyName') or policy.policy_uid
+        logging.info('Successfully updated policy "%s" (Policy ID: %s)', updated_name, policy.policy_uid)
 
 
 class PedmPolicyViewCommand(base.ArgparseCommand):
