@@ -233,6 +233,7 @@ class BaseFolderNode:
     UserFolderType = 'user_folder'
     SharedFolderType = 'shared_folder'
     SharedFolderFolderType = 'shared_folder_folder'
+    KeeperDriveFolderType = 'keeper_drive_folder'
 
     """ Folder Common Fields"""
     def __init__(self, type):
@@ -252,6 +253,8 @@ class BaseFolderNode:
             return 'Shared Folder'
         elif self.type == BaseFolderNode.SharedFolderFolderType:
             return 'Subfolder in Shared Folder'
+        elif self.type == BaseFolderNode.KeeperDriveFolderType:
+            return 'KeeperDrive Folder'
         return ''
 
     def __repr__(self):
@@ -265,18 +268,27 @@ class BaseFolderNode:
 
     def display(self):
         print('')
-        print('{0:>20s}: {1:<20s}'.format('Folder UID', self.uid))
-        print('{0:>20s}: {1:<20s}'.format('Folder Type', self.get_folder_type()))
-        print('{0:>20s}: {1}'.format('Name', self.name))
+        if self.type == BaseFolderNode.KeeperDriveFolderType:
+            uid_label = 'KeeperDrive Folder UID'
+        else:
+            uid_label = 'Folder UID'
+        print('{0:>25s}: {1:<20s}'.format(uid_label, self.uid))
+        print('{0:>25s}: {1:<20s}'.format('Folder Type', self.get_folder_type()))
+        print('{0:>25s}: {1}'.format('Name', self.name))
         if self.parent_uid:
-            print('{0:>20s}: {1:<20s}'.format('Parent Folder UID', self.parent_uid))
+            print('{0:>25s}: {1:<20s}'.format('Parent Folder UID', self.parent_uid))
         if isinstance(self, SharedFolderFolderNode):
-            print('{0:>20s}: {1:<20s}'.format('Shared Folder UID', self.shared_folder_uid))
+            print('{0:>25s}: {1:<20s}'.format('Shared Folder UID', self.shared_folder_uid))
 
 
 class UserFolderNode(BaseFolderNode):
     def __init__(self):
         BaseFolderNode.__init__(self, BaseFolderNode.UserFolderType)
+
+
+class KeeperDriveFolderNode(BaseFolderNode):
+    def __init__(self):
+        BaseFolderNode.__init__(self, BaseFolderNode.KeeperDriveFolderType)
 
 
 class SharedFolderFolderNode(BaseFolderNode):

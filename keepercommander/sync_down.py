@@ -20,7 +20,7 @@ from .keeper_drive import sync as keeper_drive_sync
 from .display import bcolors, Spinner
 from .params import KeeperParams, RecordOwner
 from .proto import SyncDown_pb2, record_pb2, client_pb2, breachwatch_pb2, folder_pb2
-from .subfolder import RootFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, BaseFolderNode
+from .subfolder import RootFolderNode, UserFolderNode, SharedFolderNode, SharedFolderFolderNode, BaseFolderNode, KeeperDriveFolderNode
 from .vault import KeeperRecord
 
 
@@ -1074,10 +1074,12 @@ def prepare_folder_tree(params):    # type: (KeeperParams) -> None
         folder_uid = None
         if sf['type'] == 'user_folder':
             folder_uid = sf['folder_uid']
-            uf = UserFolderNode()
+            if sf.get('source') == 'keeper_drive':
+                uf = KeeperDriveFolderNode()
+            else:
+                uf = UserFolderNode()
             uf.uid = folder_uid
             uf.parent_uid = sf.get('parent_uid')
-            # Set name from subfolder_cache entry if available (e.g., Keeper Drive folders)
             if sf.get('name'):
                 uf.name = sf['name']
             params.folder_cache[uf.uid] = uf
