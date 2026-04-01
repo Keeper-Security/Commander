@@ -678,6 +678,23 @@ class PAMTunnelDiagnoseCommand(Command):
                                 help='Comma-separated list of specific WebRTC tests to run. Available: '
                                      'dns_resolution,aws_connectivity,tcp_connectivity,udp_binding,'
                                      'ice_configuration,webrtc_peer_connection')
+    pam_cmd_parser.add_argument('--turn-test', required=False, dest='turn_test', action='store_true',
+                                help='Run an end-to-end TURN relay probe through the gateway. '
+                                     'Establishes a real WebRTC/TURN connection without proxying any traffic, '
+                                     'reproducing the full ICE negotiation path. Requires a record argument.')
+    pam_cmd_parser.add_argument('--probe-duration', required=False, dest='probe_duration', type=int, default=30,
+                                help='How long (seconds) to hold the TURN probe connection open after it connects. '
+                                     'Default 30s. Use 360+ to trigger a TURN permission refresh cycle (~300s TTL) '
+                                     'and verify the connection survives it. Requires --turn-test.')
+    pam_cmd_parser.add_argument('--probe-count', required=False, dest='probe_count', type=int, default=1,
+                                help='Number of simultaneous TURN probes to run. Use >1 to reproduce the '
+                                     '"35 concurrent connections" CreatePermission failure scenario. '
+                                     'Requires --turn-test.')
+    pam_cmd_parser.add_argument('--stress-test', required=False, dest='stress_test', action='store_true',
+                                help='Full WebRTC stress test through the TURN relay: connection cycling '
+                                     '(open→data→close repeated), throughput across 64B/8KB/64KB/256KB '
+                                     'frame sizes, and concurrent connection load. Implies --turn-test. '
+                                     'Requires a record.')
 
     def get_parser(self):
         return PAMTunnelDiagnoseCommand.pam_cmd_parser
@@ -697,6 +714,8 @@ class PAMTunnelDiagnoseCommand(Command):
     def _bright(cls, t: str) -> str: return cls._c('1;92', t)
     @classmethod
     def _dim(cls, t: str) -> str:    return cls._c('2;32', t)
+    @classmethod
+    def _yellow(cls, t: str) -> str: return cls._c('1;93', t)
     @classmethod
     def _red(cls, t: str) -> str:    return cls._c('1;91', t)
     @classmethod
@@ -727,7 +746,8 @@ class PAMTunnelDiagnoseCommand(Command):
     def _print_result(cls, name: str, passed: bool, detail: str, ms: int, indent: int = 4):
         icon = cls._check() if passed else cls._cross()
         ms_str = cls._dim(f'  {ms}ms')
-        body = f'{cls._green(name)}  \u00b7  {cls._green(detail)}' if detail else cls._green(name)
+        _color = cls._green if passed else cls._red
+        body = f'{_color(name)}  \u00b7  {_color(detail)}' if detail else _color(name)
         print(f'{" " * indent}{icon}  {body}{ms_str}')
 
     # ── STUN ──────────────────────────────────────────────────────────────────
@@ -935,6 +955,18 @@ class PAMTunnelDiagnoseCommand(Command):
         verbose = kwargs.get('verbose', False)
         output_format = kwargs.get('format', 'table')
         test_filter = kwargs.get('test_filter')
+        turn_test = kwargs.get('turn_test', False)
+        stress_test = kwargs.get('stress_test', False)
+        if stress_test:
+            turn_test = True  # --stress-test implies --turn-test
+        probe_duration = kwargs.get('probe_duration', 30)
+        probe_count = kwargs.get('probe_count', 1)
+        probe_turn_only = turn_test  # --turn-test always forces TURN-only ICE
+
+        if (turn_test or stress_test) and not record_name:
+            raise CommandError('pam tunnel diagnose',
+                               '--turn-test requires a record argument: '
+                               'pam tunnel diagnose <pamMachine-or-pamDirectory-UID> --turn-test')
 
         server = params.server  # e.g. "keepersecurity.com"
         krelay_server = os.environ.get('KRELAY_URL') or f'krelay.{server}'
@@ -1284,7 +1316,597 @@ class PAMTunnelDiagnoseCommand(Command):
 
             print()
 
-        # ── section 6: technical details ──────────────────────────────────────
+        # ── section 6: TURN end-to-end probe ──────────────────────────────────
+        if turn_test:
+            print(f'{self._bullet()}  {self._bright("TURN End-to-End Probe")}  '
+                  f'({probe_count} connection{"s" if probe_count > 1 else ""}, '
+                  f'hold {probe_duration}s)')
+            print(f'  {self._sep()}')
+            try:
+                probe_registry = get_or_create_tube_registry(params)
+                if not probe_registry:
+                    raise RuntimeError('Rust WebRTC library not available')
+
+                api.sync_down(params)
+                probe_record_obj = RecordMixin.resolve_single_record(params, record_name)
+                probe_record_uid = probe_record_obj.record_uid if probe_record_obj else record_name
+                probe_record = vault.KeeperRecord.load(params, probe_record_uid)
+                if probe_record is None:
+                    raise RuntimeError(
+                        f'Record "{record_name}" not found in vault — '
+                        f'run "sync-down" first, or pass the record UID directly'
+                    )
+                if not isinstance(probe_record, vault.TypedRecord):
+                    raise RuntimeError(
+                        f'Record "{record_name}" is a legacy v2 record (type: {type(probe_record).__name__}) — '
+                        f'--turn-test requires a PAM typed record (pamMachine, pamDirectory, etc.)'
+                    )
+
+                seed_field = probe_record.get_typed_field('trafficEncryptionSeed')
+                if not seed_field:
+                    raise RuntimeError(
+                        f'Record "{record_name}" (type: {probe_record.record_type}) has no '
+                        f'trafficEncryptionSeed field — '
+                        f'pass a PAM resource record (pamMachine / pamDirectory / pamUser), '
+                        f'not a pamConfiguration record'
+                    )
+                probe_seed = base64_to_bytes(seed_field.get_default_value(str).encode('utf-8'))
+
+                probe_gateway_uid = get_gateway_uid_from_record(params, vault, probe_record.record_uid)
+                if not probe_gateway_uid:
+                    raise RuntimeError(
+                        f'No gateway linked to record "{record_name}" — '
+                        f'the record must be in a PAM config that has an active gateway'
+                    )
+
+                # --- Launch probe_count tunnels concurrently ---
+                import concurrent.futures as _cf
+
+                def _run_one_probe(probe_idx):
+                    """Launch one probe tunnel and return a result dict."""
+                    probe_port = find_open_port(tried_ports=[], host='127.0.0.1')
+                    if not probe_port:
+                        return {'idx': probe_idx, 'success': False, 'error': 'no open port'}
+                    t0 = time.monotonic()
+                    result = start_rust_tunnel(
+                        params=params,
+                        record_uid=probe_record.record_uid,
+                        gateway_uid=probe_gateway_uid,
+                        host='127.0.0.1',
+                        port=probe_port,
+                        seed=probe_seed,
+                        target_host='127.0.0.1',
+                        target_port=1,
+                        socks=False,
+                        trickle_ice=True,
+                        record_title=probe_record.title,
+                        kind='probe',
+                        probe_duration=probe_duration,
+                        probe_turn_only=probe_turn_only,
+                    )
+                    offer_ms = int((time.monotonic() - t0) * 1000)
+                    if not result or not result.get('success'):
+                        return {'idx': probe_idx, 'success': False,
+                                'error': (result or {}).get('error', 'offer failed'), 'offer_ms': offer_ms}
+                    return {'idx': probe_idx, 'success': True, 'offer_ms': offer_ms,
+                            'tube_id': result['tube_id'], 'registry': result['tube_registry'],
+                            'signal_handler': result.get('signal_handler'), 't0': t0,
+                            'port': result.get('local_port', probe_port)}
+
+                t_all = time.monotonic()
+                with _cf.ThreadPoolExecutor(max_workers=min(probe_count, 20)) as pool:
+                    probe_futures = [pool.submit(_run_one_probe, i) for i in range(probe_count)]
+                    probe_launches = [f.result() for f in _cf.as_completed(probe_futures)]
+                launch_ms = int((time.monotonic() - t_all) * 1000)
+
+                launched_ok = [p for p in probe_launches if p['success']]
+                launched_fail = [p for p in probe_launches if not p['success']]
+
+                _record(
+                    f'Probe offer{"s" if probe_count > 1 else ""} sent',
+                    len(launched_fail) == 0,
+                    f'{len(launched_ok)}/{probe_count} sent in {launch_ms}ms'
+                    + (f' — failed: {[p["error"] for p in launched_fail]}' if launched_fail else ''),
+                    launch_ms,
+                )
+
+                if not launched_ok:
+                    raise RuntimeError('All probes failed to launch')
+
+                # --- Wait for each probe to reach Connected ---
+                connect_deadline = time.monotonic() + timeout
+                for p in launched_ok:
+                    p['connected_ms'] = None
+                    p['final_state'] = 'pending'
+
+                while time.monotonic() < connect_deadline:
+                    pending = [p for p in launched_ok if p['connected_ms'] is None
+                               and p['final_state'] not in ('failed', 'closed', 'timeout')]
+                    if not pending:
+                        break
+                    for p in pending:
+                        try:
+                            state = p['registry'].get_connection_state(p['tube_id'])
+                        except Exception:
+                            state = 'closed'
+                        state_l = (state or '').lower()
+                        if state_l == 'connected':
+                            p['connected_ms'] = int((time.monotonic() - p['t0']) * 1000)
+                            p['final_state'] = 'connected'
+                        elif state_l in ('failed', 'closed'):
+                            p['final_state'] = state_l
+                    time.sleep(0.2)
+
+                for p in launched_ok:
+                    if p['connected_ms'] is None and p['final_state'] == 'pending':
+                        p['final_state'] = 'timeout'
+
+                connected_probes = [p for p in launched_ok if p['connected_ms'] is not None]
+                failed_probes    = [p for p in launched_ok if p['connected_ms'] is None]
+                avg_connect_ms   = int(sum(p['connected_ms'] for p in connected_probes) / len(connected_probes)) \
+                                   if connected_probes else 0
+
+                _record(
+                    'TURN relay connected',
+                    len(failed_probes) == 0,
+                    f'{len(connected_probes)}/{len(launched_ok)} connected'
+                    + (f', avg {avg_connect_ms}ms' if connected_probes else '')
+                    + (f' — not connected: {[p["final_state"] for p in failed_probes]}' if failed_probes else ''),
+                    avg_connect_ms,
+                )
+
+                # --- Hold phase: monitor state transitions for probe_duration seconds ---
+                if connected_probes and probe_duration > 0:
+                    print(f'    Holding {len(connected_probes)} connection{"s" if len(connected_probes) > 1 else ""} '
+                          f'for {probe_duration}s to monitor TURN stability...')
+
+                    # --- Throughput test: RTT + bulk throughput via the echo tunnel ---
+                    for p in connected_probes:
+                        p['throughput_mbps'] = None
+                        p['rtt_ms'] = None
+                        local_port = p.get('port')
+                        logging.debug(f'Throughput test: probe-{p["idx"]} port={local_port} keys={list(p.keys())}')
+                        if not local_port:
+                            logging.warning(f'Throughput test: probe-{p["idx"]} has no local port — skipping')
+                            continue
+                        try:
+                            import socket as _socket
+                            # The Rust TCP listener binds after the data channel opens,
+                            # which can lag the ICE 'connected' state by a short window.
+                            # Retry a few times with a brief pause before giving up.
+                            sock = None
+                            for _attempt in range(5):
+                                try:
+                                    s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+                                    s.settimeout(5)
+                                    s.connect(('127.0.0.1', local_port))
+                                    sock = s
+                                    break
+                                except OSError:
+                                    s.close()
+                                    if _attempt < 4:
+                                        time.sleep(0.5)
+                            if sock is None:
+                                logging.warning(
+                                    f'Throughput test: probe-{p["idx"]} could not connect to '
+                                    f'127.0.0.1:{local_port} after 5 attempts — '
+                                    f'Rust listener may not be ready'
+                                )
+                                continue
+
+                            sock.settimeout(15)  # 15s: 256 KB at ~17 KB/s minimum
+
+                            # RTT: single small ping
+                            t_rtt = time.monotonic()
+                            sock.sendall(b'PING')
+                            sock.recv(4)
+                            p['rtt_ms'] = int((time.monotonic() - t_rtt) * 1000)
+
+                            # Throughput: 256 KB in 8 KB chunks.
+                            # Each sendall matches MAX_READ_SIZE so it maps to one WebRTC message.
+                            # At the minimum passing threshold (50 KB/s) this completes in ~5s,
+                            # leaving 10s of headroom before the 15s timeout.
+                            chunk = b'X' * 8192
+                            total_bytes = 256 * 1024
+                            sent = 0
+                            t_start = time.monotonic()
+                            while sent < total_bytes:
+                                sock.sendall(chunk)
+                                sent += len(chunk)
+                            recv = 0
+                            while recv < total_bytes:
+                                data = sock.recv(65536)
+                                if not data:
+                                    break
+                                recv += len(data)
+                            elapsed = time.monotonic() - t_start
+                            p['throughput_mbps'] = round((recv / elapsed) / 1_000_000, 2)
+                            sock.close()
+                        except Exception as tput_err:
+                            logging.warning(f'Throughput test error for probe-{p["idx"]} (port={local_port}): {tput_err}', exc_info=True)
+
+                    # Report throughput results
+                    tput_results = [p for p in connected_probes if p['throughput_mbps'] is not None]
+                    if tput_results:
+                        avg_tput = round(sum(p['throughput_mbps'] for p in tput_results) / len(tput_results), 2)
+                        avg_rtt  = int(sum(p['rtt_ms'] for p in tput_results if p['rtt_ms']) / len(tput_results))
+                        # Fixed floor: the probe sends 256 KB from a cold SCTP association,
+                        # so measured throughput is dominated by slow-start, not RTT.
+                        # An RTT-aware formula would demand higher throughput at low RTT,
+                        # producing false failures on fast paths.  0.03 MB/s (30 KB/s) is
+                        # achievable even during SCTP ramp-up at 400ms RTT, and any relay
+                        # delivering less than that is genuinely broken.
+                        _tput_threshold = 0.03
+                        _record(
+                            'TURN throughput',
+                            avg_tput >= _tput_threshold,
+                            f'{avg_tput} MB/s avg over TURN relay  ·  RTT {avg_rtt}ms',
+                            int(avg_tput * 1000),
+                        )
+                    else:
+                        print(f'    (throughput test skipped — no data returned from echo path)')
+
+                    # Base hold_end on connection time, not throughput-test completion.
+                    # The gateway auto-closes probe_duration seconds after the probe STARTED,
+                    # so align the monitoring window to the first connected probe's t0.
+                    earliest_t0 = min(p['t0'] for p in connected_probes)
+                    hold_end = earliest_t0 + probe_duration + (avg_connect_ms / 1000)
+                    # Per-probe tracking: count disconnects and reconnects
+                    for p in connected_probes:
+                        p['disconnects'] = 0
+                        p['reconnects'] = 0
+                        p['last_state'] = 'connected'
+                        p['died'] = False
+
+                    while time.monotonic() < hold_end:
+                        for p in connected_probes:
+                            if p['died']:
+                                continue
+                            try:
+                                state = p['registry'].get_connection_state(p['tube_id'])
+                            except Exception:
+                                state = 'closed'
+                            state_l = (state or '').lower()
+
+                            if state_l != p['last_state']:
+                                elapsed = int((time.monotonic() - p['t0']))
+                                if state_l == 'disconnected':
+                                    p['disconnects'] += 1
+                                    print(f'      [{elapsed}s] probe-{p["idx"]}: '
+                                          f'{self._yellow("DISCONNECTED")} — ICE restart should fire')
+                                elif state_l == 'connected' and p['last_state'] == 'disconnected':
+                                    p['reconnects'] += 1
+                                    print(f'      [{elapsed}s] probe-{p["idx"]}: '
+                                          f'{self._green("RECONNECTED")} via ICE restart')
+                                elif state_l == 'failed':
+                                    p['died'] = True
+                                    print(f'      [{elapsed}s] probe-{p["idx"]}: '
+                                          f'{self._red("DIED")} (state=failed) — '
+                                          f'ICE failed, tube removed from registry')
+                                elif state_l == 'closed':
+                                    # 'closed' is the normal probe auto-close at probe_duration.
+                                    # Only count as death if it fired well before the deadline.
+                                    remaining = hold_end - time.monotonic()
+                                    if remaining > 10:
+                                        p['died'] = True
+                                        print(f'      [{elapsed}s] probe-{p["idx"]}: '
+                                              f'{self._red("DIED")} (state=closed, {int(remaining)}s early) — '
+                                              f'tube removed unexpectedly')
+                                    else:
+                                        print(f'      [{elapsed}s] probe-{p["idx"]}: '
+                                              f'{self._green("CLOSED")} (probe auto-close)')
+                                p['last_state'] = state_l
+                        time.sleep(1.0)
+
+                    # Summarise hold phase
+                    survived   = [p for p in connected_probes if not p['died']]
+                    died       = [p for p in connected_probes if p['died']]
+                    total_disc = sum(p['disconnects'] for p in connected_probes)
+                    total_rec  = sum(p['reconnects'] for p in connected_probes)
+
+                    _record(
+                        f'TURN stability ({probe_duration}s hold)',
+                        len(died) == 0,
+                        f'{len(survived)}/{len(connected_probes)} survived'
+                        + (f', {total_disc} disconnect(s), {total_rec} ICE restart(s)' if total_disc else ', no interruptions')
+                        + (f' — {len(died)} died permanently' if died else ''),
+                        probe_duration * 1000,
+                    )
+
+                    if total_disc > 0 and total_rec == total_disc:
+                        print(f'    {self._green("ICE restart fix working:")} all disconnects recovered automatically')
+                    elif total_disc > 0 and total_rec < total_disc:
+                        print(f'    {self._red("ICE restart fix incomplete:")} {total_disc - total_rec} disconnect(s) did not recover')
+
+                # --- Clean up all probes ---
+                for p in probe_launches:
+                    if not p['success']:
+                        continue
+                    try:
+                        p['registry'].close_tube(p['tube_id'])
+                    except Exception:
+                        pass
+                    sh = p.get('signal_handler')
+                    if sh:
+                        try:
+                            sh.cleanup()
+                        except Exception:
+                            pass
+
+            except Exception as exc:
+                _record('TURN probe', False, str(exc)[:70], 0)
+                logging.debug('TURN probe error', exc_info=True)
+
+            print()
+
+        # ── section 7: stress test ────────────────────────────────────────────
+        if stress_test:
+            print(f'{self._bullet()}  {self._bright("WebRTC Stress Test")}  (TURN relay)')
+            print(f'  {self._sep()}')
+            if not record_name:
+                print(f'    {self._cross()}  {self._red("--stress-test requires a record argument")}')
+            else:
+                import socket as _sock
+                import concurrent.futures as _cf2
+
+                def _one_stress_probe(sp=None):
+                    """Single connected probe for stress use — returns (port, registry, tube_id, sh) or None.
+                    Pass sp to use a pre-allocated port (for concurrent calls); omit for sequential use.
+                    """
+                    if sp is None:
+                        sp = find_open_port(tried_ports=[], host='127.0.0.1')
+                    if not sp:
+                        return None
+                    r = start_rust_tunnel(
+                        params=params,
+                        record_uid=probe_record.record_uid,
+                        gateway_uid=probe_gateway_uid,
+                        host='127.0.0.1', port=sp,
+                        seed=probe_seed, target_host='127.0.0.1', target_port=1,
+                        socks=False, trickle_ice=True,
+                        record_title=probe_record.title,
+                        kind='probe', probe_duration=120, probe_turn_only=probe_turn_only,
+                    )
+                    if not r or not r.get('success'):
+                        return None
+                    deadline = time.monotonic() + 20
+                    reg = r['tube_registry']
+                    tid = r['tube_id']
+                    while time.monotonic() < deadline:
+                        if (reg.get_connection_state(tid) or '').lower() == 'connected':
+                            return sp, reg, tid, r.get('signal_handler')
+                        time.sleep(0.2)
+                    try:
+                        reg.close_tube(tid)
+                    except Exception: pass
+
+                    return None
+
+                def _tput_via_port(port):
+                    """Connect to local tunnel port, measure RTT and aggregate throughput.
+                    Sends 256 KB as 32 × 8 KB messages — matching the Rust channel's
+                    MAX_READ_SIZE exactly so the measurement reflects real wire behaviour.
+                    Returns (mbps, rtt_ms) or (None, None) on failure.
+                    """
+                    try:
+                        s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                        s.settimeout(15)
+                        s.connect(('127.0.0.1', port))
+                        # Warmup ping — also gives us RTT for the threshold formula.
+                        _t_rtt = time.monotonic()
+                        s.sendall(b'\x00' * 64)
+                        s.recv(64)
+                        rtt_ms = int((time.monotonic() - _t_rtt) * 1000)
+                        # Bulk: 256 KB in 8 KB chunks so each send maps to one WebRTC
+                        # message (RECEIVE_MTU = 8 KB in webrtc-data).  More chunks =
+                        # more frames in-flight = better pipelining signal.
+                        total = 256 * 1024
+                        chunk = b'\x01' * 8192
+                        t0 = time.monotonic()
+                        sent = 0
+                        while sent < total:
+                            s.sendall(chunk)
+                            sent += len(chunk)
+                        got = 0
+                        while got < total:
+                            d = s.recv(65536)
+                            if not d:
+                                break
+                            got += len(d)
+                        elapsed = time.monotonic() - t0
+                        s.close()
+                        return round(got / elapsed / 1_000_000, 3), rtt_ms
+                    except Exception as e:
+                        logging.debug(f'Stress tput error: {e}')
+                        return None, None
+
+                CYCLES      = 5
+                CONCURRENCY = 5
+
+                # --- 1. Cycle test: open → data → close, repeated ---
+                print(f'    {self._bright("1. Connection cycling")} ({CYCLES} open/data/close cycles)')
+                cycle_ok = 0
+                for cycle in range(CYCLES):
+                    info = _one_stress_probe()
+                    if info:
+                        sp, reg, tid, sh = info
+                        try:
+                            reg.close_tube(tid)
+                            if sh: sh.tube_close_initiated = True
+                        except Exception: pass
+                        if sh:
+                            try: sh.cleanup()
+                            except Exception: pass
+                        cycle_ok += 1
+                _record('Cycle open/close', cycle_ok == CYCLES,
+                        f'{cycle_ok}/{CYCLES} cycles completed', cycle_ok * 1000)
+
+                # --- 2. Throughput ---
+                print(f'    {self._bright("2. Throughput")} (32 × 8 KB messages over TURN relay)')
+                info = _one_stress_probe()
+                if info:
+                    sp, reg, tid, sh = info
+                    mbps, rtt_ms = _tput_via_port(sp)
+                    if mbps is not None:
+                        # RTT-aware threshold: same formula as TURN probe section.
+                        # 32 × 8 KB in-flight; SCTP window / RTT gives the pipelining ceiling.
+                        _rtt = max(rtt_ms or 1000, 1)
+                        _threshold = max(0.05, round(65536 / _rtt * 0.5 / 1000, 3))
+                        _record('TURN throughput',
+                                mbps >= _threshold,
+                                f'{mbps} MB/s  ·  RTT {rtt_ms}ms',
+                                int(mbps * 1000))
+                    else:
+                        _record('TURN throughput', False, 'could not connect for throughput test', 0)
+                    try:
+                        reg.close_tube(tid)
+                        if sh: sh.tube_close_initiated = True
+                    except Exception: pass
+                    if sh:
+                        try: sh.cleanup()
+                        except Exception: pass
+                else:
+                    _record('TURN throughput', False, 'could not connect for throughput test', 0)
+
+                # --- 3. Concurrent connections ---
+                # Pre-allocate all ports sequentially so no two workers race on find_open_port.
+                print(f'    {self._bright(f"3. Concurrent connections")} ({CONCURRENCY} simultaneous)')
+                conc_ports, tried = [], []
+                for _ in range(CONCURRENCY):
+                    p = find_open_port(tried_ports=tried, host='127.0.0.1')
+                    if p:
+                        conc_ports.append(p)
+                        tried.append(p)
+                with _cf2.ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
+                    conc_futures = [pool.submit(_one_stress_probe, p) for p in conc_ports]
+                    conc_results = [f.result() for f in _cf2.as_completed(conc_futures)]
+                conc_ok = sum(1 for r in conc_results if r is not None)
+                for r in conc_results:
+                    if r:
+                        sp, reg, tid, sh = r
+                        try:
+                            reg.close_tube(tid)
+                            if sh: sh.tube_close_initiated = True
+                        except Exception: pass
+                        if sh:
+                            try: sh.cleanup()
+                            except Exception: pass
+
+                _record(f'Concurrent {CONCURRENCY}x', conc_ok == CONCURRENCY,
+                        f'{conc_ok}/{CONCURRENCY} connected simultaneously', conc_ok * 1000)
+
+                # --- 4. Interactive latency under bulk load ---
+                # Two TCP connections to the same probe port = two conn_no streams
+                # on the same WebRTC data channel.  conn_no=1 sends 512 KB bulk;
+                # conn_no=2 sends 64-byte pings every 200ms and measures RTT.
+                # This tests whether the EventDrivenSender saw-tooth fix allows
+                # interactive frames to interleave with bulk frames.
+                print(f'    {self._bright("4. Interactive latency under load")}')
+                import threading as _threading
+                info = _one_stress_probe()
+                if info:
+                    sp, reg, tid, sh = info
+                    rtt_under_load: list = []
+                    _bulk_done = _threading.Event()
+
+                    # Baseline: single ping before bulk starts
+                    _baseline_rtt = None
+                    try:
+                        _bs = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                        _bs.settimeout(5)
+                        _bs.connect(('127.0.0.1', sp))
+                        _t0 = time.monotonic()
+                        _bs.sendall(b'B' * 64)
+                        _bs.recv(64)
+                        _baseline_rtt = int((time.monotonic() - _t0) * 1000)
+                        _bs.close()
+                    except Exception as _e:
+                        logging.debug(f'Latency baseline error: {_e}')
+
+                    def _bulk_sender():
+                        try:
+                            s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                            s.settimeout(30)
+                            s.connect(('127.0.0.1', sp))
+                            total = 512 * 1024
+                            chunk = b'\x02' * 8192
+                            sent = 0
+                            while sent < total:
+                                s.sendall(chunk)
+                                sent += len(chunk)
+                            got = 0
+                            while got < total:
+                                d = s.recv(65536)
+                                if not d:
+                                    break
+                                got += len(d)
+                            s.close()
+                        except Exception as _e:
+                            logging.debug(f'Bulk sender error: {_e}')
+                        finally:
+                            _bulk_done.set()
+
+                    def _latency_sampler():
+                        try:
+                            s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                            s.settimeout(5)
+                            s.connect(('127.0.0.1', sp))
+                            while not _bulk_done.is_set():
+                                try:
+                                    _t = time.monotonic()
+                                    s.sendall(b'P' * 64)
+                                    s.recv(64)
+                                    rtt_under_load.append(
+                                        int((time.monotonic() - _t) * 1000)
+                                    )
+                                except OSError:
+                                    break
+                                time.sleep(0.2)
+                            s.close()
+                        except Exception as _e:
+                            logging.debug(f'Latency sampler error: {_e}')
+
+                    _bt = _threading.Thread(target=_bulk_sender, daemon=True)
+                    _lt = _threading.Thread(target=_latency_sampler, daemon=True)
+                    _lt.start()
+                    _bt.start()
+                    _bt.join(timeout=30)
+                    _bulk_done.set()
+                    _lt.join(timeout=2)
+
+                    try:
+                        reg.close_tube(tid)
+                        if sh: sh.tube_close_initiated = True
+                    except Exception: pass
+                    if sh:
+                        try: sh.cleanup()
+                        except Exception: pass
+
+                    if rtt_under_load and _baseline_rtt:
+                        _avg = int(sum(rtt_under_load) / len(rtt_under_load))
+                        _max = max(rtt_under_load)
+                        # Pass if average latency under load stays within 5× baseline.
+                        # With the 50-frame drain batch, interactive frames interleave
+                        # between bursts; with the old 2000-frame batch the multiplier
+                        # could reach 100× or more at TURN relay speeds.
+                        _ok = _avg <= _baseline_rtt * 5
+                        _record(
+                            'Latency under load',
+                            _ok,
+                            f'avg {_avg}ms, max {_max}ms  ·  baseline {_baseline_rtt}ms'
+                            f'  ·  {len(rtt_under_load)} samples',
+                            _avg,
+                        )
+                    elif not rtt_under_load:
+                        _record('Latency under load', False, 'no samples collected', 0)
+                    else:
+                        _record('Latency under load', False, 'baseline RTT unavailable', 0)
+                else:
+                    _record('Latency under load', False, 'could not connect probe', 0)
+
+            print()
+
+        # ── section 8: technical details ──────────────────────────────────────
         print(f'{self._bullet()}  {self._bright("Technical Details")}')
         print(f'  {self._sep()}')
 
