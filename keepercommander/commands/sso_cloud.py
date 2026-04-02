@@ -68,8 +68,8 @@ sso_cloud_create_parser.add_argument('--node', dest='node', required=True,
 sso_cloud_create_parser.add_argument('--config-name', dest='config_name', action='store',
                                      default='Default',
                                      help='Name for the SAML2 configuration (default: "Default").')
-sso_cloud_create_parser.add_argument('--idp-type', dest='idp_type', action='store',
-                                     choices=IDP_TYPE_CHOICES, default=None,
+sso_cloud_create_parser.add_argument('--idp-type', dest='idp_type', action='store', required=True,
+                                     choices=IDP_TYPE_CHOICES,
                                      help='Identity provider type (e.g. okta, azure, auth0, generic).')
 
 sso_cloud_upload_parser = argparse.ArgumentParser(
@@ -110,10 +110,10 @@ sso_cloud_log_clear_parser = argparse.ArgumentParser(
 sso_cloud_log_clear_parser.add_argument('target', help='SSO Service Provider ID or Name.')
 
 sso_cloud_delete_parser = argparse.ArgumentParser(
-    prog='sso-cloud-delete', description='Delete an SSO Cloud configuration.')
+    prog='sso-cloud-delete', description='Delete an SSO Cloud service provider or a single configuration.')
 sso_cloud_delete_parser.add_argument('target', help='SSO Service Provider ID or Name.')
 sso_cloud_delete_parser.add_argument('--config', dest='config', action='store',
-                                     help='Configuration ID or Name. Defaults to active configuration.')
+                                     help='Configuration ID or Name to delete (only that config, not the SP).')
 sso_cloud_delete_parser.add_argument('--force', '-f', dest='force', action='store_true',
                                      help='Delete without confirmation.')
 
@@ -234,6 +234,71 @@ class SsoCloudCommand(GroupCommand):
                               'List configurations for an SSO service provider.')
         self.default_verb = 'list'
 
+
+IDP_SETUP_GUIDANCE = {
+    'auth0': {
+        'portal': 'Auth0 Admin Portal',
+        'steps': [
+            'Go to Applications > Create Application > Regular Web App',
+            'Enable Addons > SAML2 WEB APP',
+            'Paste ACS Endpoint into "Application Callback URL"',
+            'Set "audience" to Entity ID in the SAML2 JSON config',
+            'Set attribute mappings: email->Email, given_name->First, family_name->Last',
+            'Save, then go to Usage tab > Download IdP Metadata XML',
+        ],
+        'fields': 'Entity ID (audience), ACS Endpoint (Callback URL)',
+    },
+    'azure': {
+        'portal': 'Azure Entra Admin Center',
+        'steps': [
+            'Go to Enterprise Applications > New Application > Create your own application',
+            'Select "Integrate any other application" > Create',
+            'Go to Single sign-on > SAML',
+            'In Basic SAML Configuration: paste Entity ID into "Identifier (Entity ID)"',
+            'Paste ACS Endpoint into "Reply URL (Assertion Consumer Service URL)"',
+            'Paste Login Endpoint into "Sign on URL"',
+            'In Attributes & Claims: verify email, first name, last name mappings',
+            'Download Federation Metadata XML from SAML Signing Certificates',
+        ],
+        'fields': 'Entity ID (Identifier), ACS Endpoint (Reply URL), Login Endpoint (Sign on URL)',
+    },
+    'okta': {
+        'portal': 'Okta Admin Console',
+        'steps': [
+            'Go to Applications > Create App Integration > SAML 2.0',
+            'Paste ACS Endpoint into "Single sign-on URL"',
+            'Paste Entity ID into "Audience URI (SP Entity ID)"',
+            'Set Name ID format to EmailAddress',
+            'Configure attribute statements: Email, First, Last',
+            'Finish setup, then go to Sign On tab > Download IdP Metadata',
+        ],
+        'fields': 'Entity ID (Audience URI), ACS Endpoint (Single sign-on URL)',
+    },
+    'google': {
+        'portal': 'Google Workspace Admin Console',
+        'steps': [
+            'Go to Apps > Web and mobile apps > Add App > Add custom SAML app',
+            'Download IdP Metadata from the Google IdP Information step',
+            'Paste ACS Endpoint into "ACS URL"',
+            'Paste Entity ID into "Entity ID"',
+            'Set Name ID format to EMAIL',
+            'Add attribute mappings for email, first name, last name',
+        ],
+        'fields': 'Entity ID, ACS Endpoint (ACS URL)',
+    },
+    'jumpcloud': {
+        'portal': 'JumpCloud Admin Console',
+        'steps': [
+            'Go to SSO Applications > Add New Application > Custom SAML App',
+            'Paste ACS Endpoint into "ACS URL"',
+            'Paste Entity ID into "SP Entity ID"',
+            'Set SAMLSubject NameID to email',
+            'Configure attribute mappings for email, first name, last name',
+            'Activate the application, then download IdP Metadata',
+        ],
+        'fields': 'Entity ID (SP Entity ID), ACS Endpoint (ACS URL)',
+    },
+}
 
 IDP_TYPE_NAME_TO_ENUM = {
     'generic': ssocloud.GENERIC,
@@ -374,6 +439,49 @@ class SsoCloudMixin(object):
         return value
 
     @staticmethod
+    def show_idp_guidance(config_rs):
+        # type: (ssocloud.SsoCloudConfigurationResponse) -> None
+        """Show IdP-specific setup guidance based on the sso_idp_type_id setting."""
+        idp_type_name = None
+        for sv in config_rs.ssoCloudSettingValue:
+            if sv.settingName == 'sso_idp_type_id' and sv.value:
+                try:
+                    idp_type_id = int(sv.value)
+                    idp_type_name = IDP_TYPE_NAMES.get(idp_type_id, '').lower()
+                except (ValueError, TypeError):
+                    pass
+                break
+        if not idp_type_name:
+            return
+        guidance = IDP_SETUP_GUIDANCE.get(idp_type_name)
+        if not guidance:
+            return
+
+        entity_id = ''
+        acs_endpoint = ''
+        login_endpoint = ''
+        for sv in config_rs.ssoCloudSettingValue:
+            if sv.settingName == 'sso_sp_entity_id':
+                entity_id = sv.value or ''
+            elif sv.settingName == 'sso_sp_acs_endpoint':
+                acs_endpoint = sv.value or ''
+            elif sv.settingName == 'sso_sp_login_endpoint':
+                login_endpoint = sv.value or ''
+
+        logging.info('--- %s Setup Guide ---', guidance['portal'])
+        logging.info('Required fields: %s', guidance['fields'])
+        if entity_id:
+            logging.info('  Entity ID:        %s', entity_id)
+        if acs_endpoint:
+            logging.info('  ACS Endpoint:     %s', acs_endpoint)
+        if login_endpoint and idp_type_name in ('azure', 'okta'):
+            logging.info('  Login Endpoint:   %s', login_endpoint)
+        logging.info('')
+        for i, step in enumerate(guidance['steps'], 1):
+            logging.info('  %d. %s', i, step)
+        logging.info('')
+
+    @staticmethod
     def dump_configuration(config_rs, fmt=None, filename=None):
         # type: (ssocloud.SsoCloudConfigurationResponse, Optional[str], Optional[str]) -> None
         """Display configuration details."""
@@ -491,6 +599,9 @@ class SsoCloudGetCommand(EnterpriseCommand, SsoCloudMixin):
         config_rs = self.get_selected_configuration(params, sp_id, config_target=kwargs.get('config'))
         self.dump_configuration(config_rs, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
+        if kwargs.get('format') != 'json':
+            self.show_idp_guidance(config_rs)
+
 
 class SsoCloudConfigListCommand(EnterpriseCommand, SsoCloudMixin):
     def get_parser(self):
@@ -575,35 +686,46 @@ class SsoCloudCreateCommand(EnterpriseCommand, SsoCloudMixin):
         config_id = config_rs.ssoSpConfigurationId
         logging.info('SAML2 Configuration created: "%s" (ID: %s)', config_name, config_id)
 
-        # Step 3: Set IdP type if specified
-        idp_type_name = kwargs.get('idp_type')
-        if idp_type_name:
-            idp_type_enum = IDP_TYPE_NAME_TO_ENUM.get(idp_type_name.lower())
-            if idp_type_enum is not None:
-                setting_rq = ssocloud.SsoCloudConfigurationRequest()
-                setting_rq.ssoServiceProviderId = sp_id
-                setting_rq.ssoSpConfigurationId = config_id
-                action = ssocloud.SsoCloudSettingAction()
-                action.settingName = 'sso_idp_type_id'
-                action.operation = ssocloud.SET
-                action.value = str(idp_type_enum)
-                setting_rq.ssoCloudSettingAction.append(action)
-                api.communicate_rest(
-                    params, setting_rq, 'sso/config/sso_cloud_configuration_setting_set',
-                    rs_type=ssocloud.SsoCloudConfigurationResponse)
-                logging.info('IdP type set to: %s', IDP_TYPE_NAMES.get(idp_type_enum, idp_type_name))
+        # Step 3: Set IdP type (now required)
+        idp_type_name = kwargs['idp_type']
+        idp_type_enum = IDP_TYPE_NAME_TO_ENUM.get(idp_type_name.lower())
+        if idp_type_enum is not None:
+            setting_rq = ssocloud.SsoCloudConfigurationRequest()
+            setting_rq.ssoServiceProviderId = sp_id
+            setting_rq.ssoSpConfigurationId = config_id
+            action = ssocloud.SsoCloudSettingAction()
+            action.settingName = 'sso_idp_type_id'
+            action.operation = ssocloud.SET
+            action.value = str(idp_type_enum)
+            setting_rq.ssoCloudSettingAction.append(action)
+            api.communicate_rest(
+                params, setting_rq, 'sso/config/sso_cloud_configuration_setting_set',
+                rs_type=ssocloud.SsoCloudConfigurationResponse)
+            logging.info('IdP type set to: %s', IDP_TYPE_NAMES.get(idp_type_enum, idp_type_name))
 
         # Refresh enterprise data to pick up the new SP
         api.query_enterprise(params, force=True)
 
-        # Show the new configuration
+        # Show IdP-specific next steps
         logging.info('')
         logging.info('--- Next Steps ---')
-        logging.info('1. Run: sso-cloud get "%s"  to view SP endpoints (Entity ID, ACS Endpoint)', name)
-        logging.info('2. Configure your IdP with those endpoints')
-        logging.info('3. Download IdP metadata XML from your IdP')
-        logging.info('4. Run: sso-cloud upload "%s" --file <metadata.xml>  to upload IdP metadata', name)
-        logging.info('5. Run: sso-cloud validate "%s"  to validate the configuration', name)
+        logging.info('1. Run: sso-cloud get "%s"  to view SP endpoints', name)
+
+        guidance = IDP_SETUP_GUIDANCE.get(idp_type_name.lower())
+        if guidance:
+            logging.info('')
+            logging.info('   %s Configuration (%s):', guidance['portal'], guidance['fields'])
+            for i, step in enumerate(guidance['steps'], 1):
+                logging.info('   %d. %s', i, step)
+            logging.info('')
+        else:
+            logging.info('2. Configure your IdP with Entity ID and ACS Endpoint from the get output')
+            logging.info('3. Download IdP metadata XML from your IdP')
+
+        logging.info('Then upload IdP metadata:')
+        logging.info('   sso-cloud upload "%s" --file <metadata.xml>', name)
+        logging.info('Finally validate:')
+        logging.info('   sso-cloud validate "%s"', name)
 
 
 class SsoCloudUploadMetadataCommand(EnterpriseCommand, SsoCloudMixin):
@@ -802,13 +924,23 @@ class SsoCloudDeleteCommand(EnterpriseCommand, SsoCloudMixin):
         target = kwargs.get('target')
         svc = self.find_sso_service(params, target)
         sp_id = svc['sso_service_provider_id']
+        sp_name = svc.get('name', target)
         self.ensure_cloud_sso(svc, target)
 
-        config_rs = self.get_selected_configuration(params, sp_id, config_target=kwargs.get('config'))
+        config_target = kwargs.get('config')
+        if config_target:
+            self._delete_configuration(params, sp_id, config_target, kwargs.get('force'))
+        else:
+            self._delete_service_provider(params, sp_id, sp_name, kwargs.get('force'))
+
+    @staticmethod
+    def _delete_configuration(params, sp_id, config_target, force):
+        # type: (KeeperParams, int, str, bool) -> None
+        config_rs = SsoCloudMixin.get_selected_configuration(params, sp_id, config_target=config_target)
         config_id = config_rs.ssoSpConfigurationId
         config_name = config_rs.name
 
-        if not kwargs.get('force'):
+        if not force:
             answer = user_choice(
                 f'Are you sure you want to delete configuration "{config_name}" (ID: {config_id})?',
                 'yn', default='n')
@@ -825,6 +957,26 @@ class SsoCloudDeleteCommand(EnterpriseCommand, SsoCloudMixin):
             rs_type=ssocloud.SsoCloudConfigurationResponse)
 
         logging.info('Configuration "%s" (ID: %s) deleted.', config_name, config_id)
+        api.query_enterprise(params, force=True)
+
+    @staticmethod
+    def _delete_service_provider(params, sp_id, sp_name, force):
+        # type: (KeeperParams, int, str, bool) -> None
+        if not force:
+            answer = user_choice(
+                f'Are you sure you want to delete SSO Service Provider "{sp_name}" (ID: {sp_id}) '
+                f'and ALL its configurations?', 'yn', default='n')
+            if answer.lower() != 'y':
+                logging.info('Delete cancelled.')
+                return
+
+        rq = {
+            'command': 'sso_service_provider_delete',
+            'sso_service_provider_id': sp_id,
+        }
+        api.communicate(params, rq)
+
+        logging.info('SSO Service Provider "%s" (ID: %s) deleted.', sp_name, sp_id)
         api.query_enterprise(params, force=True)
 
 
