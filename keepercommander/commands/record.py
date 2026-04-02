@@ -657,15 +657,18 @@ class RecordGetUidCommand(Command):
                 elif len(matched_folders) == 1:
                     uid = matched_folders[0].uid
                     f = params.folder_cache[uid]
+                    sf_uid = f.uid if isinstance(f, subfolder.SharedFolderNode) else \
+                        (f.shared_folder_uid if isinstance(f, subfolder.SharedFolderFolderNode) else None)
+                    if sf_uid and api.is_shared_folder(params, sf_uid):
+                        return self.execute(params, uid=sf_uid, format=fmt, unmask=kwargs.get('unmask'), legacy=kwargs.get('legacy'))
                     if fmt == 'json':
                         fo = {
                             'folder_uid': f.uid,
                             'type': f.type,
                             'name': f.name
                         }
-                        if isinstance(f, (subfolder.SharedFolderFolderNode, subfolder.SharedFolderNode)):
-                            fo['shared_folder_uid'] = f.shared_folder_uid if isinstance(f, subfolder.SharedFolderFolderNode) \
-                                else f.uid
+                        if sf_uid:
+                            fo['shared_folder_uid'] = sf_uid
                         if f.parent_uid:
                             fo['parent_folder_uid'] = f.parent_uid
                         print(json.dumps(fo, indent=2))
