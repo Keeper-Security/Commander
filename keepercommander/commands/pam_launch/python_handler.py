@@ -62,7 +62,7 @@ import threading
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Any
 
 from .guacamole import Parser, to_instruction
-from .guac_cli.instructions import create_instruction_router, is_stdout_pipe_stream_name
+from .guac_cli.instructions import create_instruction_router
 
 if TYPE_CHECKING:
     pass
@@ -813,7 +813,7 @@ class GuacamoleHandler:
                         "This record disables clipboard copy or paste in PAM. Some KCM builds may "
                         "omit the terminal pipe entirely. Commander requests enable-pipe in the offer "
                         "- if pipes still never appear use Web Vault or temporarily allow "
-                        "clipboard on the record for CLI sesions.\n"
+                        "clipboard on the record for CLI sessions.\n"
                     )
                 else:
                     print(

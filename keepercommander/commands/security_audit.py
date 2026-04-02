@@ -1,7 +1,9 @@
 import argparse
 import base64
+import datetime
 import json
 import logging
+import os
 from json import JSONDecodeError
 from typing import Dict, List, Optional, Any
 
@@ -9,6 +11,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa, ec
 
 from .helpers.enterprise import get_enterprise_key, try_enterprise_decrypt
 from .. import api, crypto, utils
+from ..error import CommandError
 from ..breachwatch import BreachWatch
 from .base import GroupCommand, field_to_title, dump_report_data, report_output_parser
 from .enterprise_common import EnterpriseCommand
@@ -30,6 +33,8 @@ def register_command_info(aliases, command_info):
 
 report_parser = argparse.ArgumentParser(prog='security-audit-report', description='Run a security audit report.',
                                         parents=[report_output_parser])
+report_parser.add_argument('--siem', dest='siem', action='store_true',
+                           help='output in SIEM-ready NDJSON format (one event per line)')
 report_parser.add_argument('--syntax-help', dest='syntax_help', action='store_true', help='display help')
 node_filter_help = 'name(s) or UID(s) of node(s) to filter results of the report by'
 report_parser.add_argument('-n', '--node', action='append', help=node_filter_help)
@@ -205,6 +210,12 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         if kwargs.get('syntax_help'):
             logging.info(security_audit_report_description)
             return
+
+        # Validate --siem flag combinations before expensive API calls
+        if kwargs.get('siem') and kwargs.get('record_details'):
+            raise CommandError('security-audit', '--siem and --record-details cannot be used together')
+        if kwargs.get('siem') and kwargs.get('format') and kwargs['format'] != 'table':
+            raise CommandError('security-audit', '--siem produces NDJSON output exclusively and cannot be combined with --format')
 
         self.enterprise_private_rsa_key = None
         self._node_map = None  # Reset node cache for correct MC context
@@ -497,12 +508,17 @@ class SecurityAuditReportCommand(EnterpriseCommand):
         fields = ('email', 'name', 'sync_pending', 'at_risk', 'passed', 'ignored') if show_breachwatch else \
             ('email', 'name', 'sync_pending', 'weak', 'fair', 'medium', 'strong', 'reused', 'unique', 'securityScore',
              'twoFactorChannel', 'node')
-        field_descriptions = fields
 
+        report_title = f'Security Audit Report{" (BreachWatch)" if show_breachwatch else ""}'
+
+        # SIEM-ready NDJSON output
+        if kwargs.get('siem'):
+            return self._export_siem(params, rows, fields, show_breachwatch, out)
+
+        field_descriptions = fields
         if fmt == 'table':
             field_descriptions = (field_to_title(x) for x in fields)
 
-        report_title = f'Security Audit Report{" (BreachWatch)" if show_breachwatch else ""}'
         table = []
         for raw in rows:
             row = []
@@ -510,6 +526,70 @@ class SecurityAuditReportCommand(EnterpriseCommand):
                 row.append(raw[f])
             table.append(row)
         return dump_report_data(table, field_descriptions, fmt=fmt, filename=out, title=report_title)
+
+    @staticmethod
+    def _export_siem(params, rows, fields, show_breachwatch, filename):
+        """Export security audit as NDJSON (one JSON event per line).
+
+        Each line is a self-contained JSON object that SIEMs can ingest
+        independently. Compatible with Splunk HEC, Elastic Filebeat,
+        Datadog log pipelines, and any NDJSON consumer.
+        """
+        now = datetime.datetime.now(tz=datetime.timezone.utc).isoformat(timespec='seconds')
+        server = params.server if hasattr(params, 'server') else ''
+        ndjson_lines = []
+
+        # Fields containing PII — mask to avoid clear-text sensitive data in SIEM output
+        _sensitive_fields = frozenset({'email', 'name'})
+
+        def _mask_pii(field_name, value):
+            if field_name not in _sensitive_fields or not value or not isinstance(value, str):
+                return value
+            if field_name == 'email' and '@' in value:
+                local, domain = value.rsplit('@', 1)
+                return f'{local[0]}***@{domain}' if local else f'***@{domain}'
+            return f'{value[0]}***' if len(value) > 1 else '***'
+
+        for raw in rows:
+            user_data = {f: _mask_pii(f, raw.get(f)) for f in fields}
+
+            # Collect risk factors from the data — no hardcoded thresholds
+            risk_factors = []
+            if not show_breachwatch:
+                if raw.get('weak', 0) > 0:
+                    risk_factors.append('weak_passwords')
+                if raw.get('reused', 0) > 0:
+                    risk_factors.append('reused_passwords')
+                two_fa = raw.get('twoFactorChannel', '')
+                if not two_fa or two_fa == 'Off':
+                    risk_factors.append('no_2fa')
+            else:
+                if raw.get('at_risk', 0) > 0:
+                    risk_factors.append('breach_exposure')
+
+            event = {
+                'event_type': 'keeper.security_audit',
+                'timestamp': now,
+                'source': server,
+                'user': user_data,
+                'risk_factors': risk_factors,
+            }
+            if not show_breachwatch:
+                event['security_score'] = raw.get('securityScore', 0)
+            ndjson_lines.append(json.dumps(event, default=str))
+
+        report = ('\n'.join(ndjson_lines) + '\n') if ndjson_lines else ''
+
+        if filename:
+            if not os.path.splitext(filename)[1]:
+                filename += '.ndjson'
+            logging.info('SIEM report path: %s', os.path.abspath(filename))
+            fd = os.open(filename, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, 'w') as f:
+                f.write(report)
+            if hasattr(os, 'chmod'):
+                os.chmod(filename, 0o600)
+        return report
 
     def get_updated_security_report_row(self, sr, rsa_key, ec_key, last_saved_data):
         # type: (APIRequest_pb2.SecurityReport, rsa.RSAPrivateKey, ec.EllipticCurvePrivateKey, Dict[str, int]) -> Dict[str, int]

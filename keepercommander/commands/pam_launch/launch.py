@@ -811,7 +811,7 @@ class PAMLaunchCommand(Command):
             if pam_connection_font_size is not None and str(pam_connection_font_size).strip() != '':
                 fs_int = _pam_connection_font_size_int(pam_connection_font_size)
                 if fs_int != 12:
-                    fs_disp = fs_disp = str(fs_int) if fs_int is not None else str(pam_connection_font_size).strip()
+                    fs_disp = str(fs_int) if fs_int is not None else str(pam_connection_font_size).strip()
                     logging.warning(
                         'Record %s sets connection.fontSize=%s (guacd default is 12); session recordings '
                         'may look different from this Commander terminal session.',
