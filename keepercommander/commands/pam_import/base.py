@@ -125,6 +125,7 @@ class PamConfigEnvironment():
         self.attachments = None # PamAttachmentsObject
 
         # common settings (shared across all config types)
+        self.identity_provider_uid: str = ""  # optional, text:identityProviderUid
         self.pam_resources = {} # {"folderUid": "", "controllerUid": ""} - "resourceRef": unused/legacy
 
         # Local environment: pamNetworkConfiguration
@@ -244,6 +245,9 @@ class PamConfigEnvironment():
 
         self.scripts = PamScriptsObject.load(settings.get("scripts", None))
         self.attachments = PamAttachmentsObject.load(settings.get("attachments", None))
+
+        val = settings.get("identity_provider_uid", None)
+        if isinstance(val, str): self.identity_provider_uid = val
 
         # Local Network
         if environment_type == "local":
