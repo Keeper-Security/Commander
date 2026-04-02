@@ -183,8 +183,10 @@ $<ACTION>[:<PARAMS>, <PARAMS>]   executes an action that returns a field value
 Value                   Field type         Description                      Example
 ====================    ===============    ===================              ==============
 $GEN:[alg],[n]          password           Generates a random password      $GEN:dice,5
-                                           Default algorith is rand         alg: [rand | dice | crypto]
-                                           Optional: password length
+                                           Default algorithm is rand        alg: [rand | dice | crypto]
+                                           rand length: 8-200 (default 20) $GEN or $GEN:rand,24
+                                           Includes upper, lower,
+                                           digits, and symbols
 $GEN                    oneTimeCode        Generates TOTP URL
 $GEN:[alg,][enc]        keyPair            Generates a key pair and         $GEN:ec,enc
                                            optional passcode                alg: [rsa | ec | ed25519], enc
@@ -205,8 +207,8 @@ pam gateway new --name=gateway1 --application=gwapp1 --config-init=b64 --return_
 pam config new --environment=local --title=config1 --gateway=gateway1 -sf=SHARED_FOLDER_UID \
     --connections=on --tunneling=on --rotation=on --remote-browser-isolation=on
 
-record-add --folder=SHARED_FOLDER_UID --title=admin1 -rt=pamUser login=admin1 password="$GEN:rand,16"
-record-add --folder=SHARED_FOLDER_UID --title=user1  -rt=pamUser login=user1  password="$GEN:rand,16"
+record-add --folder=SHARED_FOLDER_UID --title=admin1 -rt=pamUser login=admin1 password="$GEN"
+record-add --folder=SHARED_FOLDER_UID --title=user1  -rt=pamUser login=user1  password="$GEN"
 record-add --folder=SHARED_FOLDER_UID --title=machine1 -rt=pamMachine \
   pamHostname="$JSON:{\"hostName\": \"127.0.0.1\", \"port\": \"22\"}"
 
@@ -416,9 +418,11 @@ class RecordEditMixin:
             gen = generator.DicewarePasswordGenerator(length)
         else:
             if isinstance(length, int):
-                if length < 4:
-                    length = 4
+                if length < 8:
+                    logging.warning('Password length %d is below minimum 8. Using 8.', length)
+                    length = 8
                 elif length > 200:
+                    logging.warning('Password length %d exceeds maximum 200. Using 200.', length)
                     length = 200
             else:
                 length = 20
