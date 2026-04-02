@@ -18,6 +18,8 @@ import os.path
 from itertools import chain
 from typing import Any, Dict, Optional, List, Union
 
+MAX_ITERATIONS = 1000
+
 from .keeper_ai_settings import set_resource_jit_settings, set_resource_keeper_ai_settings, refresh_meta_to_latest, refresh_link_to_config_to_latest
 from .base import (
     PAM_RESOURCES_RECORD_TYPES,
@@ -186,10 +188,18 @@ class PAMProjectImportCommand(Command):
             "shared_folder_users_uid": project["folders"].get("users_folder_uid", ""),
             "note": "Ensure that the team or users have role permission to access connections or tunnels"
         }
+        logging.warning('The following output contains a gateway bootstrap token. '
+                        'Store it securely and do not share or log it.')
         print(json.dumps(res, indent=2))
         print("Follow the official Keeper documentation on how to use "
               "the access_token during a Gateway install or reconfiguration: "
               "https://docs.keeper.io/en/keeperpam/privileged-access-manager/getting-started/gateways")
+
+        # Clear sensitive token data after display
+        project["gateway"]["gateway_token"] = ""
+        project["gateway"]["gateway_device_token"] = ""
+        res["access_token"] = ""
+        res["device_uid"] = ""
 
     PAM_ROOT_FOLDER_NAME = "PAM Environments"
 
@@ -235,7 +245,7 @@ class PAMProjectImportCommand(Command):
         if res["root_folder_uid"]:
             START_INDEX: int = 1
             n: int = START_INDEX
-            while True:
+            while n <= MAX_ITERATIONS:
                 folder_name = res["project_folder_target"] if n <= START_INDEX else f"""{res["project_folder_target"]} #{n}"""
                 folders = self.find_folders(params, res["root_folder_uid"], folder_name, False)
                 folders = [x for x in folders if x.type == x.UserFolderType]
@@ -268,6 +278,9 @@ class PAMProjectImportCommand(Command):
                     self.add_folder_permissions(params, res["resources_folder_uid"], rperm)
                     self.add_folder_permissions(params, res["users_folder_uid"], uperm)
                 break
+            else:
+                raise CommandError('pam project import',
+                    f'Could not find unique project folder name after {MAX_ITERATIONS} attempts')
 
         if project["options"].get("dry_run", False) is True:
             if res["root_folder_uid"]:
@@ -307,6 +320,9 @@ class PAMProjectImportCommand(Command):
         while app_name in app_titles:
             n += 1
             app_name = f"""{res["app_name_target"]} #{n}"""
+            if n > MAX_ITERATIONS:
+                raise CommandError('pam project import',
+                    f'Could not find unique KSM app name after {MAX_ITERATIONS} attempts')
         res["app_name"] = app_name
 
         if project["options"].get("dry_run", False) is True:
@@ -347,6 +363,9 @@ class PAMProjectImportCommand(Command):
         while gw_name in gw_names:
             n += 1
             gw_name = f"""{res["gateway_name_target"]} #{n}"""
+            if n > MAX_ITERATIONS:
+                raise CommandError('pam project import',
+                    f'Could not find unique gateway name after {MAX_ITERATIONS} attempts')
         res["gateway_name"] = gw_name
 
         if project["options"].get("dry_run", False) is True:
@@ -402,6 +421,9 @@ class PAMProjectImportCommand(Command):
         while pam_name in pam_names:
             n += 1
             pam_name = f"""{res["pam_config_name_target"]} #{n}"""
+            if n > MAX_ITERATIONS:
+                raise CommandError('pam project import',
+                    f'Could not find unique PAM config name after {MAX_ITERATIONS} attempts')
         res["pam_config_name"] = pam_name
 
         if project["options"].get("dry_run", False) is True:
