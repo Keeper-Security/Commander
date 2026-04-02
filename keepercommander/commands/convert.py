@@ -14,11 +14,14 @@ import fnmatch
 import json
 import logging
 import re
+import shutil
+import sys
+import time
 from collections import OrderedDict
 from typing import Optional, Tuple, Dict
 
 from ..utils import is_url, is_email
-from .base import raise_parse_exception, suppress_exit, Command
+from .base import raise_parse_exception, suppress_exit, user_choice, Command
 from .folder import get_folder_path
 from .. import api, crypto, loginv3, utils
 from ..params import KeeperParams
@@ -28,10 +31,13 @@ from ..subfolder import try_resolve_path, find_parent_top_folder
 
 def register_commands(commands):
     commands['convert'] = ConvertCommand()
+    commands['convert-all'] = ConvertAllCommand()
 
 
 def register_command_info(aliases, command_info):
+    aliases['ca'] = 'convert-all'
     command_info[convert_parser.prog] = convert_parser.description
+    command_info[convert_all_parser.prog] = convert_all_parser.description
 
 
 convert_parser = argparse.ArgumentParser(prog='convert', description='Convert record(s) to use record types')
@@ -63,6 +69,34 @@ convert_parser.add_argument(
 )
 convert_parser.error = raise_parse_exception
 convert_parser.exit = suppress_exit
+
+convert_all_parser = argparse.ArgumentParser(
+    prog='convert-all',
+    description='Convert all legacy General records in the vault to a typed record format'
+)
+convert_all_parser.add_argument(
+    '-t', '--record-type', '--record_type', dest='record_type', action='store',
+    help='Target record type (default: login)'
+)
+convert_all_parser.add_argument(
+    '-ia', '--include-attachments', dest='include_attachments', action='store_true',
+    help='Include records with file attachments. '
+         'Note: file attachments may not be decrypted by Keeper clients after conversion.'
+)
+convert_all_parser.add_argument(
+    '-f', '--force', dest='force', action='store_true',
+    help='Skip confirmation prompt'
+)
+convert_all_parser.add_argument(
+    '-n', '--dry-run', dest='dry_run', action='store_true',
+    help='Preview records that would be converted without making changes'
+)
+convert_all_parser.add_argument(
+    '-io', '--ignore-ownership', dest='ignore_owner', action='store_true',
+    help='Include records not owned by the current user'
+)
+convert_all_parser.error = raise_parse_exception
+convert_all_parser.exit = suppress_exit
 
 
 def get_matching_records_from_folder(params, folder_uid, regex, url_regex, attachments=False, ignore_owner=False):
@@ -396,3 +430,288 @@ class ConvertCommand(Command):
 
         file_info = extra.get('files') or []
         return v3_data, file_info
+
+
+class ConvertAllCommand(Command):
+    def get_parser(self):
+        return convert_all_parser
+
+    def execute(self, params, **kwargs):
+        if params.settings and isinstance(params.settings.get('record_types_enabled'), bool):
+            v3_enabled = params.settings.get('record_types_enabled')
+        else:
+            v3_enabled = False
+        if not v3_enabled:
+            logging.warning('Cannot convert records: record types is not enabled for this account.')
+            return
+
+        record_type = kwargs.get('record_type') or 'login'
+        available_types = [json.loads(x) for x in params.record_type_cache.values()]
+        type_info = next((x for x in available_types if x.get('$id') == record_type), None)
+        if type_info is None:
+            logging.warning(
+                'Specified record type "%s" is not valid. Valid types are:\n%s',
+                record_type, ', '.join(sorted(x.get('$id') for x in available_types))
+            )
+            return
+
+        include_attachments = kwargs.get('include_attachments', False)
+        ignore_owner = kwargs.get('ignore_owner', False)
+        dry_run = kwargs.get('dry_run', False)
+        force = kwargs.get('force', False)
+
+        api.sync_down(params)
+
+        all_v2 = self._collect_v2_records(params, include_attachments=True, ignore_owner=ignore_owner)
+        if not all_v2:
+            logging.info('No General-type records found in the vault. Nothing to convert.')
+            return
+
+        if include_attachments:
+            record_uids = all_v2
+            attachment_uids = [
+                uid for uid in record_uids
+                if (lambda r: r and r.attachments)(api.get_record(params, uid))
+            ]
+            skipped_attachment_count = 0
+        else:
+            record_uids = [
+                uid for uid in all_v2
+                if not (lambda r: r and r.attachments)(api.get_record(params, uid))
+            ]
+            attachment_uids = []
+            skipped_attachment_count = len(all_v2) - len(record_uids)
+
+        if not record_uids:
+            logging.info(
+                'All %d General-type record(s) have attachments. '
+                'Use -ia to include them.', len(all_v2)
+            )
+            return
+
+        logging.info('Found %d General-type record(s) to convert to "%s".', len(record_uids), record_type)
+        if attachment_uids:
+            logging.warning(
+                '  %d record(s) have file attachments. '
+                'Note: file attachments may not be decrypted by Keeper clients after conversion.',
+                len(attachment_uids)
+            )
+        if skipped_attachment_count > 0:
+            logging.info(
+                '%d record(s) with attachments were skipped. Use -ia to include them.',
+                skipped_attachment_count
+            )
+
+        if dry_run:
+            self._print_dry_run(params, record_uids)
+            return
+
+        if not force:
+            if params.batch_mode:
+                logging.warning('Confirmation required. Use --force (-f) to skip in batch mode.')
+                return
+            answer = user_choice(
+                f'Convert {len(record_uids)} General record(s) to "{record_type}"?',
+                'yn', default='n'
+            )
+            if answer.lower() != 'y':
+                logging.info('Operation cancelled.')
+                return
+
+        self._execute_conversion(params, record_uids, type_info, record_type)
+
+    @staticmethod
+    def _collect_v2_records(params, include_attachments, ignore_owner):
+        """Collect all version-2 (General) record UIDs from the vault."""
+        record_uids = []
+        for uid in params.record_cache:
+            record_data = params.record_cache[uid]
+            version = record_data.get('version', 0)
+            if version != 2:
+                continue
+            if not ignore_owner:
+                if uid not in params.record_owner_cache:
+                    continue
+                own = params.record_owner_cache[uid]
+                if not own.owner is True:
+                    continue
+            if not include_attachments:
+                record = api.get_record(params, uid)
+                if record and record.attachments:
+                    continue
+            record_uids.append(uid)
+        return record_uids
+
+    @staticmethod
+    def _print_dry_run(params, record_uids):
+        logging.info('The following %d record(s) would be converted:\n', len(record_uids))
+        for uid in record_uids:
+            record = api.get_record(params, uid)
+            title = record.title if record else ''
+            logging.info('  %s  %s', uid, title)
+
+    @staticmethod
+    def _render_progress(current, total, start_time, bar_width=30):
+        elapsed = time.time() - start_time
+        avg = elapsed / current if current > 0 else 0
+        filled = int(bar_width * current / total) if total > 0 else bar_width
+        bar = '#' * filled + '-' * (bar_width - filled)
+        try:
+            term_width = shutil.get_terminal_size().columns
+        except Exception:
+            term_width = 80
+        line = f'\r  [{bar}] {current}/{total}  ({avg:.1f}s avg)'
+        line = line[:term_width]
+        sys.stderr.write(line)
+        sys.stderr.flush()
+
+    def _execute_conversion(self, params, record_uids, type_info, record_type):
+        start_time = time.time()
+        converted_count = 0
+        failed_count = 0
+        failed_records = []
+
+        records_to_send = []
+        record_names = {}
+
+        logging.info('Preparing %d record(s) for conversion...', len(record_uids))
+
+        for i, record_uid in enumerate(record_uids, 1):
+            record = api.get_record(params, record_uid)
+            title = record.title if record else record_uid
+            record_names[record_uid] = title
+
+            convert_result = ConvertCommand.convert_to_record_type_data(record_uid, params, type_info)
+            if not convert_result:
+                failed_count += 1
+                failed_records.append((record_uid, title, 'Field conversion failed'))
+                continue
+
+            v3_data, file_info = convert_result
+            record_key = params.record_cache[record_uid]['record_key_unencrypted']
+
+            rc = record_pb2.RecordConvertToV3()
+            rc.record_uid = loginv3.CommonHelperMethods.url_safe_str_to_bytes(record_uid)
+            rc.client_modified_time = api.current_milli_time()
+            rc.revision = record.revision
+
+            if file_info:
+                file_ref = next((x for x in v3_data['fields'] if x.get('type') == 'fileRef'), None)
+                if file_ref is None:
+                    file_ref = {'type': 'fileRef'}
+                    v3_data['fields'].append(file_ref)
+                if not isinstance(file_ref.get('value'), list):
+                    file_ref['value'] = []
+                for f_info in file_info:
+                    file_uid = utils.generate_uid()
+                    file_ref['value'].append(file_uid)
+                    file_key = utils.base64_url_decode(f_info['key'])
+                    data = {k: f_info[k] for k in ('name', 'size', 'title', 'lastModified', 'type')}
+                    rf = record_pb2.RecordFileForConversion()
+                    rf.record_uid = utils.base64_url_decode(file_uid)
+                    rf.file_file_id = f_info['id']
+                    if 'thumbs' in f_info:
+                        thumbs = f_info['thumbs']
+                        if len(thumbs) > 0:
+                            thumb = next((x for x in thumbs if isinstance(x, dict)), None)
+                            if thumb:
+                                rf.thumb_file_id = thumbs[0]['id']
+                    rf.data = crypto.encrypt_aes_v2(json.dumps(data).encode('utf-8'), file_key)
+                    rf.record_key = crypto.encrypt_aes_v2(file_key, params.data_key)
+                    rf.link_key = crypto.encrypt_aes_v2(file_key, record_key)
+                    rc.record_file.append(rf)
+
+            rc.data = crypto.encrypt_aes_v2(api.get_record_data_json_bytes(v3_data), record_key)
+
+            shared_folders = find_parent_top_folder(params, record_uid)
+            for shared_folder in shared_folders:
+                sf = params.shared_folder_cache[shared_folder.uid]
+                folder_key = record_pb2.RecordFolderForConversion()
+                folder_key.folder_uid = utils.base64_url_decode(shared_folder.uid)
+                folder_key.record_folder_key = crypto.encrypt_aes_v2(
+                    record_key, sf['shared_folder_key_unencrypted']
+                )
+                rc.folder_key.append(folder_key)
+
+            if params.enterprise_ec_key:
+                audit_data = {
+                    'title': record.title or '',
+                    'record_type': v3_data['type'],
+                }
+                if record.login_url:
+                    audit_data['url'] = utils.url_strip(record.login_url)
+                rc.audit.data = crypto.encrypt_ec(
+                    json.dumps(audit_data).encode('utf-8'), params.enterprise_ec_key
+                )
+
+            records_to_send.append(rc)
+
+        if not records_to_send:
+            logging.warning('No records were successfully prepared for conversion.')
+            if failed_records:
+                self._print_failures(failed_records)
+            return
+
+        total_to_send = len(records_to_send)
+        batch_num = 0
+        sent_count = 0
+
+        logging.info('Converting %d record(s)...', total_to_send)
+
+        while records_to_send:
+            batch = records_to_send[:999]
+            records_to_send = records_to_send[999:]
+            batch_num += 1
+
+            rq = record_pb2.RecordsConvertToV3Request()
+            rq.records.extend(batch)
+            rq.client_time = api.current_milli_time()
+            params.sync_data = True
+
+            try:
+                rs = api.communicate_rest(
+                    params, rq, 'vault/records_convert3',
+                    rs_type=record_pb2.RecordsModifyResponse
+                )
+                for r in rs.records:
+                    uid = loginv3.CommonHelperMethods.bytes_to_url_safe_str(r.record_uid)
+                    sent_count += 1
+                    if r.status == record_pb2.RS_SUCCESS:
+                        converted_count += 1
+                    else:
+                        failed_count += 1
+                        failed_records.append((uid, record_names.get(uid, uid), r.message))
+                    self._render_progress(sent_count, total_to_send, start_time)
+            except Exception as e:
+                for rc_item in batch:
+                    uid = loginv3.CommonHelperMethods.bytes_to_url_safe_str(rc_item.record_uid)
+                    failed_count += 1
+                    failed_records.append((uid, record_names.get(uid, uid), str(e)))
+                    sent_count += 1
+                    self._render_progress(sent_count, total_to_send, start_time)
+
+        sys.stderr.write('\n')
+        sys.stderr.flush()
+
+        elapsed = time.time() - start_time
+        total_processed = converted_count + failed_count
+
+        logging.info('')
+        logging.info('Conversion complete.')
+        logging.info('  Converted: %d', converted_count)
+        if failed_count > 0:
+            logging.warning('  Failed:    %d', failed_count)
+        logging.info('  Total:     %d', total_processed)
+        logging.info('  Time:      %.1fs', elapsed)
+        if total_processed > 0:
+            logging.info('  Average:   %.2fs per record', elapsed / total_processed)
+
+        if failed_records:
+            self._print_failures(failed_records)
+
+    @staticmethod
+    def _print_failures(failed_records):
+        logging.warning('')
+        logging.warning('Failed records:')
+        for uid, title, message in failed_records:
+            logging.warning('  %s  %s  —  %s', uid, title, message)

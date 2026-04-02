@@ -23,7 +23,7 @@ COMMAND_CATEGORIES = {
     
     # Record Type Commands
     'Record Type Commands': {
-        'record-type-info', 'record-type', 'convert'
+        'record-type-info', 'record-type', 'convert', 'convert-all'
     },
     
     # Import and Exporting Data
