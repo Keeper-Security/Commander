@@ -10,6 +10,7 @@
 #
 import argparse
 import fnmatch
+import itertools
 import json
 import logging
 import os.path
@@ -18,7 +19,6 @@ import time
 from datetime import datetime
 from typing import Dict, Optional, Any, Set, List
 from urllib.parse import urlparse, urlunparse
-
 
 import requests
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
@@ -75,6 +75,8 @@ from .pam_debug.link import PAMDebugLinkCommand
 from .pam_debug.rotation_setting import PAMDebugRotationSettingsCommand
 from .pam_debug.vertex import PAMDebugVertexCommand
 from .pam_import.commands import PAMProjectCommand
+from keepercommander.commands.pam_cloud.pam_privileged_workflow import PAMPrivilegedWorkflowCommand
+from keepercommander.commands.pam_cloud.pam_privileged_access import PAMPrivilegedAccessCommand
 from .pam_launch.launch import PAMLaunchCommand
 from .pam_service.list import PAMActionServiceListCommand
 from .pam_service.add import PAMActionServiceAddCommand
@@ -85,7 +87,6 @@ from .pam_saas.remove import PAMActionSaasRemoveCommand
 from .pam_saas.config import PAMActionSaasConfigCommand
 from .pam_saas.update import PAMActionSaasUpdateCommand
 from .tunnel_and_connections import PAMTunnelCommand, PAMConnectionCommand, PAMRbiCommand, PAMSplitCommand
-
 
 # These characters are based on the Vault
 PAM_DEFAULT_SPECIAL_CHAR = '''!@#$%^?();',.=+[]<>{}-_/\\*&:"`~|'''
@@ -105,6 +106,7 @@ def validate_cron_field(field, min_val, max_val):
     parts = re.split(r'[,\-/]', field)
     return all(part == '*' or part in ('L', 'LW') or is_valid_number(part) for part in parts if part != '*')
 
+
 def validate_cron_expression(expr, for_rotation=False):
     parts = expr.strip().split()
 
@@ -113,11 +115,13 @@ def validate_cron_expression(expr, for_rotation=False):
     if for_rotation is True:
         if len(parts) != 6:
             return False, f"CRON: Rotation schedules require all 6 parts incl. seconds - ex. Daily at 04:00:00 cron: 0 0 4 * * ? got {len(parts)} parts"
-        if not(parts[3] == '?' or parts[5] == "?"):
-            logging.warning("CRON: Rotation schedule CRON format - must use ? character in one of these fields: day-of-week, day-of-month")
+        if not (parts[3] == '?' or parts[5] == "?"):
+            logging.warning(
+                "CRON: Rotation schedule CRON format - must use ? character in one of these fields: day-of-week, day-of-month")
         parts[3] = '*' if parts[3] == '?' else parts[3]
         parts[5] = '*' if parts[5] == '?' else parts[5]
-        logging.debug("WARNING! Validating CRON expression for rotation - if you get 500 type errors make sure to validate your CRON using web vault UI")
+        logging.debug(
+            "WARNING! Validating CRON expression for rotation - if you get 500 type errors make sure to validate your CRON using web vault UI")
 
     if len(parts) not in [5, 6]:
         return False, f"CRON: Expected 5 or 6 fields, got {len(parts)}"
@@ -143,11 +147,12 @@ def validate_cron_expression(expr, for_rotation=False):
 
     return True, "Valid cron expression"
 
+
 def parse_schedule_data(kwargs):
     schedule_json_data = kwargs.get('schedule_json_data')
     schedule_cron_data = kwargs.get('schedule_cron_data')
     schedule_on_demand = kwargs.get('on_demand') is True
-    schedule_data = None   # type: Optional[List]
+    schedule_data = None  # type: Optional[List]
     if isinstance(schedule_json_data, list):
         schedule_data = [json.loads(x) for x in schedule_json_data]
     elif isinstance(schedule_cron_data, list):
@@ -155,9 +160,9 @@ def parse_schedule_data(kwargs):
         if schedule_cron_data and isinstance(schedule_cron_data[0], str):
             valid, err = validate_cron_expression(schedule_cron_data[0], for_rotation=True)
             if valid:
-               schedule_data = [{"type": "CRON", "cron": schedule_cron_data[0], "tz": "Etc/UTC"}]
+                schedule_data = [{"type": "CRON", "cron": schedule_cron_data[0], "tz": "Etc/UTC"}]
             else:
-               logging.error('', f'Invalid CRON "{schedule_cron_data[0]}" Error: {err}')
+                logging.error('', f'Invalid CRON "{schedule_cron_data[0]}" Error: {err}')
     elif schedule_on_demand is True:
         schedule_data = []
     return schedule_data
@@ -186,6 +191,10 @@ class PAMControllerCommand(GroupCommand):
         self.register_command('rbi', PAMRbiCommand(), 'Manage Remote Browser Isolation', 'b')
         self.register_command('project', PAMProjectCommand(), 'PAM Project Import/Export', 'p')
         self.register_command('launch', PAMLaunchCommand(), 'Launch a connection to a PAM resource', 'l')
+        self.register_command('workflow', PAMPrivilegedWorkflowCommand(),
+                              'Manage workflow access operations', 'wf')
+        self.register_command('access', PAMPrivilegedAccessCommand(),
+                              'Manage privileged cloud access operations', 'ac')
 
 
 class PAMGatewayCommand(GroupCommand):
@@ -217,7 +226,7 @@ class PAMRotationCommand(GroupCommand):
 
     def __init__(self):
         super(PAMRotationCommand, self).__init__()
-        self.register_command('edit',  PAMCreateRecordRotationCommand(), 'Edits Record Rotation configuration', 'new')
+        self.register_command('edit', PAMCreateRecordRotationCommand(), 'Edits Record Rotation configuration', 'new')
         self.register_command('list', PAMListRecordRotationCommand(), 'List Record Rotation configuration', 'l')
         self.register_command('info', PAMRouterGetRotationInfo(), 'Get Rotation Info', 'i')
         self.register_command('script', PAMRouterScriptCommand(), 'Add, delete, or edit script field')
@@ -230,8 +239,10 @@ class PAMDiscoveryCommand(GroupCommand):
         super(PAMDiscoveryCommand, self).__init__()
         self.register_command('start', PAMGatewayActionDiscoverJobStartCommand(), 'Start a discovery process', 's')
         self.register_command('status', PAMGatewayActionDiscoverJobStatusCommand(), 'Status of discovery jobs', 'st')
-        self.register_command('remove', PAMGatewayActionDiscoverJobRemoveCommand(), 'Cancel or remove of discovery jobs', 'r')
-        self.register_command('process', PAMGatewayActionDiscoverResultProcessCommand(), 'Process discovered items', 'p')
+        self.register_command('remove', PAMGatewayActionDiscoverJobRemoveCommand(),
+                              'Cancel or remove of discovery jobs', 'r')
+        self.register_command('process', PAMGatewayActionDiscoverResultProcessCommand(), 'Process discovered items',
+                              'p')
         self.register_command('rule', PAMDiscoveryRuleCommand(), 'Manage discovery rules')
 
         self.default_verb = 'status'
@@ -316,8 +327,10 @@ class PAMDebugCommand(GroupCommand):
 
 
 class PAMLegacyCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam legacy', description="Toggle PAM Legacy mode: ON/OFF - PAM Legacy commands are obsolete")
-    parser.add_argument('--status', '-s', required=False, dest='status', action='store_true', help='Show the current status - Legacy mode: ON/OFF')
+    parser = argparse.ArgumentParser(prog='pam legacy',
+                                     description="Toggle PAM Legacy mode: ON/OFF - PAM Legacy commands are obsolete")
+    parser.add_argument('--status', '-s', required=False, dest='status', action='store_true',
+                        help='Show the current status - Legacy mode: ON/OFF')
 
     def get_parser(self):
         return PAMLegacyCommand.parser
@@ -333,7 +346,7 @@ class PAMLegacyCommand(Command):
             if legacy:
                 print("PAM Legacy mode: ON")
             else:
-                print ("PAM Legacy mode: OFF")
+                print("PAM Legacy mode: OFF")
             return
         toggle_pam_legacy_commands(not legacy)
 
@@ -382,7 +395,8 @@ class PAMCreateRecordRotationCommand(Command):
                         choices=['general', 'iam_user', 'scripts_only'],
                         help='Rotation profile type: general (resource-based), iam_user (IAM/Azure user), '
                              'scripts_only (run PAM scripts only)')
-    parser.add_argument('--resource', '-rs', dest='resource', action='store', help='UID or path of the resource record.')
+    parser.add_argument('--resource', '-rs', dest='resource', action='store',
+                        help='UID or path of the resource record.')
     schedule_group = parser.add_mutually_exclusive_group()
     schedule_group.add_argument('--schedulejson', '-sj', required=False, dest='schedule_json_data',
                                 action='append', help='JSON of the scheduler. Example: -sj \'{"type": "WEEKLY", '
@@ -396,7 +410,7 @@ class PAMCreateRecordRotationCommand(Command):
                                 action='store_true', help='Schedule from Configuration')
     parser.add_argument('--schedule-only', '-so', dest='schedule_only', action='store_true',
                         help='Only update the rotation schedule without changing other settings')
-    parser.add_argument('--complexity',   '-x',  required=False, dest='pwd_complexity', action='store',
+    parser.add_argument('--complexity', '-x', required=False, dest='pwd_complexity', action='store',
                         help='Password complexity: length, upper, lower, digits, symbols. Ex. 32,5,5,5,5[,SPECIAL CHARS]')
     parser.add_argument('--admin-user', '-a', required=False, dest='admin', action='store',
                         help='UID or path for the PAMUser record to configure the admin credential on the PAM Resource as the Admin when rotating')
@@ -432,7 +446,7 @@ class PAMCreateRecordRotationCommand(Command):
             if not _dag.resource_belongs_to_config(target_record.record_uid):
                 # Change DAG to this new configuration.
                 resource_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key,
-                                             target_record.record_uid, transmission_key=transmission_key)
+                                         target_record.record_uid, transmission_key=transmission_key)
                 _dag.link_resource_to_config(target_record.record_uid)
 
             admin = kwargs.get('admin')
@@ -447,7 +461,7 @@ class PAMCreateRecordRotationCommand(Command):
 
             if _rotation_enabled is not None:
                 _dag.set_resource_allowed(target_record.record_uid, rotation=_rotation_enabled,
-                                                    allowed_settings_name="rotation")
+                                          allowed_settings_name="rotation")
 
             if resource_dag is not None and resource_dag.linking_dag.has_graph:
                 # TODO: Make sure this doesn't remove everything from the new dag too
@@ -462,7 +476,8 @@ class PAMCreateRecordRotationCommand(Command):
 
             # Handle schedule-only operations first to avoid unnecessary resource validation
             if schedule_only:
-                if kwargs.get('folder_name') and (not current_record_rotation or current_record_rotation.get('disabled')):
+                if kwargs.get('folder_name') and (
+                        not current_record_rotation or current_record_rotation.get('disabled')):
                     skipped_records.append([target_record.record_uid, target_record.title,
                                             'Rotation not enabled', 'Skipped'])
                     return
@@ -480,7 +495,8 @@ class PAMCreateRecordRotationCommand(Command):
                         record_schedule_data = json.loads(cs) if cs else []
                     except:
                         record_schedule_data = []
-                pwd_complexity_rule_list_encrypted = utils.base64_url_decode(current_record_rotation.get('pwd_complexity', ''))
+                pwd_complexity_rule_list_encrypted = utils.base64_url_decode(
+                    current_record_rotation.get('pwd_complexity', ''))
                 record_resource_uid = current_record_rotation.get('resource_uid')
                 # IAM users have resource_uid == config_uid; should be empty to preserve rotation profile
                 if record_resource_uid == record_config_uid:
@@ -494,7 +510,8 @@ class PAMCreateRecordRotationCommand(Command):
                 complexity = ''
                 if pwd_complexity_rule_list_encrypted:
                     try:
-                        decrypted_complexity = crypto.decrypt_aes_v2(pwd_complexity_rule_list_encrypted, target_record.record_key)
+                        decrypted_complexity = crypto.decrypt_aes_v2(pwd_complexity_rule_list_encrypted,
+                                                                     target_record.record_key)
                         c = json.loads(decrypted_complexity.decode())
                         complexity = f"{c.get('length', 0)},{c.get('caps', 0)},{c.get('lowercase', 0)},{c.get('digits', 0)},{c.get('special', 0)},{c.get('specialChars', PAM_DEFAULT_SPECIAL_CHAR)}"
                     except Exception:
@@ -559,17 +576,20 @@ class PAMCreateRecordRotationCommand(Command):
                     record_config_uid = current_record_rotation.get('configuration_uid')
                     pc = vault.KeeperRecord.load(params, record_config_uid)
                     if pc is None:
-                        skipped_records.append([target_record.record_uid, target_record.title, 'PAM Configuration was deleted',
-                                                'Specify a configuration UID parameter [--config]'])
+                        skipped_records.append(
+                            [target_record.record_uid, target_record.title, 'PAM Configuration was deleted',
+                             'Specify a configuration UID parameter [--config]'])
                         return
                     if not isinstance(pc, vault.TypedRecord) or pc.version != 6:
-                        skipped_records.append([target_record.record_uid, target_record.title, 'PAM Configuration is invalid',
-                                                'Specify a configuration UID parameter [--config]'])
+                        skipped_records.append(
+                            [target_record.record_uid, target_record.title, 'PAM Configuration is invalid',
+                             'Specify a configuration UID parameter [--config]'])
                         return
                     record_pam_config = pc
                 else:
-                    skipped_records.append([target_record.record_uid, target_record.title, 'No current PAM Configuration',
-                                            'Specify a configuration UID parameter [--config]'])
+                    skipped_records.append(
+                        [target_record.record_uid, target_record.title, 'No current PAM Configuration',
+                         'Specify a configuration UID parameter [--config]'])
                     return
 
             # 2. Schedule
@@ -591,7 +611,8 @@ class PAMCreateRecordRotationCommand(Command):
             # 3. Password complexity
             if pwd_complexity_rule_list is None:
                 if current_record_rotation:
-                    pwd_complexity_rule_list_encrypted = utils.base64_url_decode(current_record_rotation['pwd_complexity'])
+                    pwd_complexity_rule_list_encrypted = utils.base64_url_decode(
+                        current_record_rotation['pwd_complexity'])
                 else:
                     pwd_complexity_rule_list_encrypted = b''
             else:
@@ -624,9 +645,11 @@ class PAMCreateRecordRotationCommand(Command):
             disabled = False
             # 5. Enable rotation
             if kwargs.get('enable'):
-                _dag.set_resource_allowed(target_iam_aad_config_uid, rotation=True, is_config=bool(target_iam_aad_config_uid))
+                _dag.set_resource_allowed(target_iam_aad_config_uid, rotation=True,
+                                          is_config=bool(target_iam_aad_config_uid))
             elif kwargs.get('disable'):
-                _dag.set_resource_allowed(target_iam_aad_config_uid, rotation=False, is_config=bool(target_iam_aad_config_uid))
+                _dag.set_resource_allowed(target_iam_aad_config_uid, rotation=False,
+                                          is_config=bool(target_iam_aad_config_uid))
                 disabled = True
 
             schedule = 'On-Demand'
@@ -636,18 +659,20 @@ class PAMCreateRecordRotationCommand(Command):
             complexity = ''
             if pwd_complexity_rule_list_encrypted:
                 try:
-                    decrypted_complexity = crypto.decrypt_aes_v2(pwd_complexity_rule_list_encrypted, target_record.record_key)
+                    decrypted_complexity = crypto.decrypt_aes_v2(pwd_complexity_rule_list_encrypted,
+                                                                 target_record.record_key)
                     c = json.loads(decrypted_complexity.decode())
-                    complexity = f"{c.get('length', 0)},"\
-                                 f"{c.get('caps', 0)},"\
-                                 f"{c.get('lowercase', 0)},"\
-                                 f"{c.get('digits', 0)},"\
-                                 f"{c.get('special', 0)},"\
+                    complexity = f"{c.get('length', 0)}," \
+                                 f"{c.get('caps', 0)}," \
+                                 f"{c.get('lowercase', 0)}," \
+                                 f"{c.get('digits', 0)}," \
+                                 f"{c.get('special', 0)}," \
                                  f"{c.get('specialChars', PAM_DEFAULT_SPECIAL_CHAR)}"
                 except:
                     pass
             valid_records.append(
-                [target_record.record_uid, target_record.title, not disabled, record_config_uid, record_resource_uid, schedule,
+                [target_record.record_uid, target_record.title, not disabled, record_config_uid, record_resource_uid,
+                 schedule,
                  complexity])
 
             # 6. Construct Request object for IAM: empty resourceUid and noop=False
@@ -669,7 +694,8 @@ class PAMCreateRecordRotationCommand(Command):
 
             # Handle schedule-only operations first to avoid unnecessary resource validation
             if schedule_only:
-                if kwargs.get('folder_name') and (not current_record_rotation or current_record_rotation.get('disabled')):
+                if kwargs.get('folder_name') and (
+                        not current_record_rotation or current_record_rotation.get('disabled')):
                     skipped_records.append([target_record.record_uid, target_record.title,
                                             'Rotation not enabled', 'Skipped'])
                     return
@@ -687,7 +713,8 @@ class PAMCreateRecordRotationCommand(Command):
                         record_schedule_data = json.loads(cs) if cs else []
                     except:
                         record_schedule_data = []
-                pwd_complexity_rule_list_encrypted = utils.base64_url_decode(current_record_rotation.get('pwd_complexity', ''))
+                pwd_complexity_rule_list_encrypted = utils.base64_url_decode(
+                    current_record_rotation.get('pwd_complexity', ''))
                 record_resource_uid = current_record_rotation.get('resource_uid')
                 # IAM users have resource_uid == config_uid; should be empty to preserve rotation profile
                 if record_resource_uid == record_config_uid:
@@ -701,7 +728,8 @@ class PAMCreateRecordRotationCommand(Command):
                 complexity = ''
                 if pwd_complexity_rule_list_encrypted:
                     try:
-                        decrypted_complexity = crypto.decrypt_aes_v2(pwd_complexity_rule_list_encrypted, target_record.record_key)
+                        decrypted_complexity = crypto.decrypt_aes_v2(pwd_complexity_rule_list_encrypted,
+                                                                     target_record.record_key)
                         c = json.loads(decrypted_complexity.decode())
                         complexity = f"{c.get('length', 0)},{c.get('caps', 0)},{c.get('lowercase', 0)},{c.get('digits', 0)},{c.get('special', 0)},{c.get('specialChars', PAM_DEFAULT_SPECIAL_CHAR)}"
                     except Exception:
@@ -804,24 +832,24 @@ class PAMCreateRecordRotationCommand(Command):
                             return
                         else:
                             raise CommandError('', f'{bcolors.FAIL}Record "{target_record.record_uid}" is '
-                                                f'associated with multiple resources so you must supply '
-                                                f'{bcolors.OKBLUE}"--resource/-rs RESOURCE".{bcolors.ENDC}')
+                                                   f'associated with multiple resources so you must supply '
+                                                   f'{bcolors.OKBLUE}"--resource/-rs RESOURCE".{bcolors.ENDC}')
                     elif len(resource_uids) == 0:
                         raise CommandError('',
-                                        f'{bcolors.FAIL}Record "{target_record.record_uid}" is not associated with'
-                                        f' any resource. Please use {bcolors.OKBLUE}"pam rotation user '
-                                        f'{target_record.record_uid} --resource RESOURCE" {bcolors.FAIL}to associate '
-                                        f'it.{bcolors.ENDC}')
+                                           f'{bcolors.FAIL}Record "{target_record.record_uid}" is not associated with'
+                                           f' any resource. Please use {bcolors.OKBLUE}"pam rotation user '
+                                           f'{target_record.record_uid} --resource RESOURCE" {bcolors.FAIL}to associate '
+                                           f'it.{bcolors.ENDC}')
                     target_resource_uid = resource_uids[0]
 
                 if not _dag.resource_belongs_to_config(target_resource_uid):
                     # some rotations (iam_user/noop) link straight to pamConfiguration
                     if target_resource_uid != _dag.record.record_uid:
                         raise CommandError('',
-                            f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated with the '
-                            f'configuration of the user "{target_record.record_uid}". To associated the resources '
-                            f'to this config run {bcolors.OKBLUE}"pam rotation resource {target_resource_uid} '
-                            f'--config {_dag.record.record_uid}"{bcolors.ENDC}')
+                                           f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated with the '
+                                           f'configuration of the user "{target_record.record_uid}". To associated the resources '
+                                           f'to this config run {bcolors.OKBLUE}"pam rotation resource {target_resource_uid} '
+                                           f'--config {_dag.record.record_uid}"{bcolors.ENDC}')
                 if not _dag.user_belongs_to_resource(target_record.record_uid, target_resource_uid):
                     old_resource_uid = _dag.get_resource_uid(target_record.record_uid)
                     if old_resource_uid is not None and old_resource_uid != target_resource_uid:
@@ -841,17 +869,20 @@ class PAMCreateRecordRotationCommand(Command):
                     record_config_uid = current_record_rotation.get('configuration_uid')
                     pc = vault.KeeperRecord.load(params, record_config_uid)
                     if pc is None:
-                        skipped_records.append([target_record.record_uid, target_record.title, 'PAM Configuration was deleted',
-                                                'Specify a configuration UID parameter [--config]'])
+                        skipped_records.append(
+                            [target_record.record_uid, target_record.title, 'PAM Configuration was deleted',
+                             'Specify a configuration UID parameter [--config]'])
                         return
                     if not isinstance(pc, vault.TypedRecord) or pc.version != 6:
-                        skipped_records.append([target_record.record_uid, target_record.title, 'PAM Configuration is invalid',
-                                                'Specify a configuration UID parameter [--config]'])
+                        skipped_records.append(
+                            [target_record.record_uid, target_record.title, 'PAM Configuration is invalid',
+                             'Specify a configuration UID parameter [--config]'])
                         return
                     record_pam_config = pc
                 else:
-                    skipped_records.append([target_record.record_uid, target_record.title, 'No current PAM Configuration',
-                                            'Specify a configuration UID parameter [--config]'])
+                    skipped_records.append(
+                        [target_record.record_uid, target_record.title, 'No current PAM Configuration',
+                         'Specify a configuration UID parameter [--config]'])
                     return
 
             # 2. Schedule
@@ -875,7 +906,8 @@ class PAMCreateRecordRotationCommand(Command):
             # 3. Password complexity
             if pwd_complexity_rule_list is None:
                 if current_record_rotation:
-                    pwd_complexity_rule_list_encrypted = utils.base64_url_decode(current_record_rotation['pwd_complexity'])
+                    pwd_complexity_rule_list_encrypted = utils.base64_url_decode(
+                        current_record_rotation['pwd_complexity'])
                 else:
                     pwd_complexity_rule_list_encrypted = b''
             else:
@@ -929,18 +961,20 @@ class PAMCreateRecordRotationCommand(Command):
             complexity = ''
             if pwd_complexity_rule_list_encrypted:
                 try:
-                    decrypted_complexity = crypto.decrypt_aes_v2(pwd_complexity_rule_list_encrypted, target_record.record_key)
+                    decrypted_complexity = crypto.decrypt_aes_v2(pwd_complexity_rule_list_encrypted,
+                                                                 target_record.record_key)
                     c = json.loads(decrypted_complexity.decode())
-                    complexity = f"{c.get('length', 0)},"\
-                                 f"{c.get('caps', 0)},"\
-                                 f"{c.get('lowercase', 0)},"\
-                                 f"{c.get('digits', 0)},"\
+                    complexity = f"{c.get('length', 0)}," \
+                                 f"{c.get('caps', 0)}," \
+                                 f"{c.get('lowercase', 0)}," \
+                                 f"{c.get('digits', 0)}," \
                                  f"{c.get('special', 0)}," \
                                  f"{c.get('specialChars', PAM_DEFAULT_SPECIAL_CHAR)}"
                 except:
                     pass
             valid_records.append(
-                [target_record.record_uid, target_record.title, not disabled, record_config_uid, record_resource_uid, schedule,
+                [target_record.record_uid, target_record.title, not disabled, record_config_uid, record_resource_uid,
+                 schedule,
                  complexity])
 
             # 6. Construct Request object
@@ -959,7 +993,7 @@ class PAMCreateRecordRotationCommand(Command):
             r_requests.append(rq)
 
         # Main execute() logic starts here
-        record_uids = set()   # type: Set[str]
+        record_uids = set()  # type: Set[str]
 
         folder_uids = set()
         record_pattern = ''
@@ -994,7 +1028,7 @@ class PAMCreateRecordRotationCommand(Command):
                     folder, record_title = rs
                     if not record_title:
 
-                        def add_folders(sub_folder):   # type: (BaseFolderNode) -> None
+                        def add_folders(sub_folder):  # type: (BaseFolderNode) -> None
                             folder_uids.add(sub_folder.uid or '')
 
                         if isinstance(folder, BaseFolderNode):
@@ -1025,7 +1059,7 @@ class PAMCreateRecordRotationCommand(Command):
                                     continue
                                 record_uids.add(record_uid)
 
-        pam_records = []    # type: List[vault.TypedRecord]
+        pam_records = []  # type: List[vault.TypedRecord]
         valid_record_types = ['pamDatabase', 'pamDirectory', 'pamMachine', 'pamUser', 'pamRemoteBrowser']
         for record_uid in record_uids:
             record = vault.KeeperRecord.load(params, record_uid)
@@ -1039,14 +1073,15 @@ class PAMCreateRecordRotationCommand(Command):
             if not kwargs.get('silent'):
                 logging.info('Selected %d PAM record(s) for rotation', len(pam_records))
 
-        pam_configurations = {x.record_uid: x for x in vault_extensions.find_records(params, record_version=6) if isinstance(x, vault.TypedRecord)}
+        pam_configurations = {x.record_uid: x for x in vault_extensions.find_records(params, record_version=6) if
+                              isinstance(x, vault.TypedRecord)}
 
         config_uid = kwargs.get('config')
         cfg_rec = RecordMixin.resolve_single_record(params, kwargs.get('config', None))
         if cfg_rec and cfg_rec.version == 6 and cfg_rec.record_uid in pam_configurations:
             config_uid = cfg_rec.record_uid
 
-        pam_config = None   # type: Optional[vault.TypedRecord]
+        pam_config = None  # type: Optional[vault.TypedRecord]
         if config_uid:
             if config_uid in pam_configurations:
                 pam_config = pam_configurations[config_uid]
@@ -1057,7 +1092,7 @@ class PAMCreateRecordRotationCommand(Command):
         schedule_data = parse_schedule_data(kwargs)
 
         pwd_complexity = kwargs.get("pwd_complexity")
-        pwd_complexity_rule_list = None     # type: Optional[dict]
+        pwd_complexity_rule_list = None  # type: Optional[dict]
         if pwd_complexity is not None:
             if pwd_complexity:
                 pwd_complexity_list = [s.strip() for s in pwd_complexity.split(',', maxsplit=5)]
@@ -1093,10 +1128,11 @@ class PAMCreateRecordRotationCommand(Command):
 
         skipped_header = ['record_uid', 'record_title', 'problem', 'description']
         skipped_records = []
-        valid_header = ['record_uid', 'record_title', 'enabled', 'configuration_uid', 'resource_uid', 'schedule', 'complexity']
+        valid_header = ['record_uid', 'record_title', 'enabled', 'configuration_uid', 'resource_uid', 'schedule',
+                        'complexity']
         valid_records = []
 
-        r_requests = []   # type: List[router_pb2.RouterRecordRotationRequest]
+        r_requests = []  # type: List[router_pb2.RouterRecordRotationRequest]
 
         # Note: --folder, -fd FOLDER_NAME sets up General rotation
         # use --schedule-only, -so to preserve individual setups (General, IAM, NOOP)
@@ -1129,9 +1165,10 @@ class PAMCreateRecordRotationCommand(Command):
                                 effective_config_uid = current_rotation.get('configuration_uid')
                         if not effective_config_uid:
                             raise CommandError('', 'IAM user rotation requires a PAM Configuration. '
-                                                 'Use --config or --iam-aad-config to specify one.')
+                                                   'Use --config or --iam-aad-config to specify one.')
                         if effective_config_uid not in pam_configurations:
-                            raise CommandError('', f'Record uid {effective_config_uid} is not a PAM Configuration record.')
+                            raise CommandError('',
+                                               f'Record uid {effective_config_uid} is not a PAM Configuration record.')
                         config_iam_aad_user(tmp_dag, _record, effective_config_uid)
                     elif rotation_profile == 'scripts_only':
                         # Set noop flag for scripts_only profile
@@ -1376,10 +1413,11 @@ class PAMGatewayListCommand(Command):
             if format_type == 'json':
                 return json.dumps({"gateways": [], "message": "This Enterprise does not have Gateways yet."})
             else:
-                print(f"{bcolors.OKBLUE}\nThis Enterprise does not have Gateways yet. To create new Gateway, use command "
-                      f"`{bcolors.ENDC}{bcolors.OKGREEN}pam gateway new{bcolors.ENDC}{bcolors.OKBLUE}`\n\n"
-                      f"NOTE: If you have added new Gateway, you might still need to initialize it before it is "
-                      f"listed.{bcolors.ENDC}")
+                print(
+                    f"{bcolors.OKBLUE}\nThis Enterprise does not have Gateways yet. To create new Gateway, use command "
+                    f"`{bcolors.ENDC}{bcolors.OKGREEN}pam gateway new{bcolors.ENDC}{bcolors.OKBLUE}`\n\n"
+                    f"NOTE: If you have added new Gateway, you might still need to initialize it before it is "
+                    f"listed.{bcolors.ENDC}")
             return
 
         table = []
@@ -1388,8 +1426,8 @@ class PAMGatewayListCommand(Command):
         if format_type == 'json':
             headers = ['ksm_app_name_uid', 'gateway_name', 'gateway_uid', 'status', 'gateway_version']
             if is_verbose:
-                headers.extend(['device_name', 'device_token', 'created_on', 'last_modified', 'node_id', 
-                               'os', 'os_release', 'machine_type', 'os_version'])
+                headers.extend(['device_name', 'device_token', 'created_on', 'last_modified', 'node_id',
+                                'os', 'os_release', 'machine_type', 'os_version'])
         else:
             headers = []
             headers.append('KSM Application Name (UID)')
@@ -1502,7 +1540,8 @@ class PAMGatewayListCommand(Command):
                             row_color = bcolors.OKGREEN
 
                     row = []
-                    row.append(f'{row_color if ksm_app_accessible else bcolors.WHITE}{ksm_app_info_plain}{bcolors.ENDC}')
+                    row.append(
+                        f'{row_color if ksm_app_accessible else bcolors.WHITE}{ksm_app_info_plain}{bcolors.ENDC}')
                     row.append(f'{row_color}{c.controllerName}{bcolors.ENDC}')
                     row.append(f'{row_color}{gateway_uid_str}{bcolors.ENDC}')
                     row.append(f'{row_color}{status}{bcolors.ENDC}')
@@ -1570,7 +1609,8 @@ class PAMGatewayListCommand(Command):
                             "device_name": c.deviceName,
                             "device_token": c.deviceToken,
                             "created_on": datetime.fromtimestamp(c.created / 1000).strftime('%Y-%m-%d %H:%M:%S'),
-                            "last_modified": datetime.fromtimestamp(c.lastModified / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+                            "last_modified": datetime.fromtimestamp(c.lastModified / 1000).strftime(
+                                '%Y-%m-%d %H:%M:%S'),
                             "node_id": c.nodeId
                         })
 
@@ -1581,7 +1621,8 @@ class PAMGatewayListCommand(Command):
 
                     # Parent gateway row
                     row = []
-                    row.append(f'{row_color if ksm_app_accessible else bcolors.WHITE}{ksm_app_info_plain}{bcolors.ENDC}')
+                    row.append(
+                        f'{row_color if ksm_app_accessible else bcolors.WHITE}{ksm_app_info_plain}{bcolors.ENDC}')
                     row.append(f'{row_color}{c.controllerName}{bcolors.ENDC}')
                     row.append(f'{row_color}{gateway_uid_str}{bcolors.ENDC}')
                     row.append(f'{row_color}{overall_status}{bcolors.ENDC}')
@@ -1609,7 +1650,8 @@ class PAMGatewayListCommand(Command):
                             version = version_parts[0] if version_parts else instance.version
 
                         ip_address = instance.ipAddress if hasattr(instance, 'ipAddress') else ""
-                        connected_on = datetime.fromtimestamp(instance.connectedOn / 1000).strftime('%Y-%m-%d %H:%M:%S') if hasattr(instance, 'connectedOn') else ""
+                        connected_on = datetime.fromtimestamp(instance.connectedOn / 1000).strftime(
+                            '%Y-%m-%d %H:%M:%S') if hasattr(instance, 'connectedOn') else ""
 
                         instance_row = []
                         instance_row.append('')  # Empty KSM app column
@@ -1626,7 +1668,8 @@ class PAMGatewayListCommand(Command):
 
                             instance_row.append('')
                             instance_row.append('')
-                            instance_row.append(f'{row_color}{datetime.fromtimestamp(instance.connectedOn / 1000) if hasattr(instance, "connectedOn") else ""}{bcolors.ENDC}')
+                            instance_row.append(
+                                f'{row_color}{datetime.fromtimestamp(instance.connectedOn / 1000) if hasattr(instance, "connectedOn") else ""}{bcolors.ENDC}')
                             instance_row.append('')
                             instance_row.append('')
                             instance_row.append(f'{row_color}{os_name}{bcolors.ENDC}')
@@ -1639,7 +1682,7 @@ class PAMGatewayListCommand(Command):
         if format_type == 'json':
             # Sort JSON data by status and app name
             gateways_data.sort(key=lambda x: (x['status'], (x['ksm_app_name'] or '').lower()))
-            
+
             if is_verbose:
                 krouter_host = get_router_url(params)
                 result = {
@@ -1648,7 +1691,7 @@ class PAMGatewayListCommand(Command):
                 }
             else:
                 result = {"gateways": gateways_data}
-            
+
             return json.dumps(result, indent=2)
         else:
             # Separate rows into groups: each parent with its instances
@@ -1703,7 +1746,8 @@ class PAMConfigurationListCommand(Command):
             if format_type == 'json' and result:
                 return result
         else:  # Print element configs (config that is not a root)
-            result = PAMConfigurationListCommand.print_pam_configuration_details(params, pam_configuration_uid, is_verbose, format_type)
+            result = PAMConfigurationListCommand.print_pam_configuration_details(params, pam_configuration_uid,
+                                                                                 is_verbose, format_type)
             if format_type == 'json' and result:
                 return result
 
@@ -1734,12 +1778,12 @@ class PAMConfigurationListCommand(Command):
 
         facade = PamConfigurationRecordFacade()
         facade.record = configuration
-        
+
         folder_uid = facade.folder_uid
         sf = None
         if folder_uid in params.shared_folder_cache:
             sf = api.get_shared_folder(params, folder_uid)
-        
+
         if format_type == 'json':
             config_data = {
                 "uid": configuration.record_uid,
@@ -1753,8 +1797,8 @@ class PAMConfigurationListCommand(Command):
                 "resource_record_uids": facade.resource_ref,
                 "fields": {}
             }
-            
-            for field in configuration.fields:
+
+            for field in itertools.chain(configuration.fields, configuration.custom):
                 if field.type in ('pamResources', 'fileRef'):
                     continue
                 values = list(field.get_external_value())
@@ -1763,9 +1807,9 @@ class PAMConfigurationListCommand(Command):
                 field_name = field.get_field_name()
                 if field.type == 'schedule':
                     field_name = 'Default Schedule'
-                
+
                 config_data["fields"][field_name] = values
-            
+
             return json.dumps(config_data, indent=2)
         else:
             table = []
@@ -1777,7 +1821,7 @@ class PAMConfigurationListCommand(Command):
             table.append(['Gateway UID', facade.controller_uid])
             table.append(['Resource Record UIDs', facade.resource_ref])
 
-            for field in configuration.fields:
+            for field in itertools.chain(configuration.fields, configuration.custom):
                 if field.type in ('pamResources', 'fileRef'):
                     continue
                 values = list(field.get_external_value())
@@ -1794,10 +1838,10 @@ class PAMConfigurationListCommand(Command):
     def print_root_rotation_setting(params, is_verbose=False, format_type='table'):
         configurations = list(vault_extensions.find_records(params, record_version=6))
         facade = PamConfigurationRecordFacade()
-        
+
         configs_data = []
         table = []
-        
+
         if format_type == 'json':
             headers = ['uid', 'config_name', 'config_type', 'shared_folder', 'gateway_uid', 'resource_record_uids']
             if is_verbose:
@@ -1808,12 +1852,13 @@ class PAMConfigurationListCommand(Command):
                 headers.append('Fields')
 
         for c in configurations:  # type: vault.TypedRecord
-            if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamGcpConfiguration', 'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration'):
+            if c.record_type in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamGcpConfiguration',
+                                 'pamDomainConfiguration', 'pamNetworkConfiguration', 'pamOciConfiguration'):
                 facade.record = c
                 shared_folder_parents = find_parent_top_folder(params, c.record_uid)
                 if shared_folder_parents:
                     sf = shared_folder_parents[0]
-                    
+
                     if format_type == 'json':
                         config_data = {
                             "uid": c.record_uid,
@@ -1829,7 +1874,7 @@ class PAMConfigurationListCommand(Command):
 
                         if is_verbose:
                             fields = {}
-                            for field in c.fields:
+                            for field in itertools.chain(c.fields, c.custom):
                                 if field.type in ('pamResources', 'fileRef'):
                                     continue
                                 value = ', '.join(field.get_external_value())
@@ -1844,7 +1889,7 @@ class PAMConfigurationListCommand(Command):
 
                         if is_verbose:
                             fields = []
-                            for field in c.fields:
+                            for field in itertools.chain(c.fields, c.custom):
                                 if field.type in ('pamResources', 'fileRef'):
                                     continue
                                 value = ', '.join(field.get_external_value())
@@ -1876,8 +1921,11 @@ common_parser.add_argument('--gateway', '-g', dest='gateway_uid', action='store'
 common_parser.add_argument('--shared-folder', '-sf', dest='shared_folder_uid', action='store',
                            help='Share Folder where this PAM Configuration is stored. Should be one of the folders to '
                                 'which the gateway has access to.')
-common_parser.add_argument('--schedule', '-sc', dest='default_schedule', action='store', help='Default Schedule: Use CRON syntax')
+common_parser.add_argument('--schedule', '-sc', dest='default_schedule', action='store',
+                           help='Default Schedule: Use CRON syntax')
 common_parser.add_argument('--port-mapping', '-pm', dest='port_mapping', action='append', help='Port Mapping')
+common_parser.add_argument('--identity-provider', '-idp', dest='identity_provider_uid',
+                           action='store', help='Identity Provider UID')
 network_group = common_parser.add_argument_group('network', 'Local network configuration')
 network_group.add_argument('--network-id', dest='network_id', action='store', help='Network ID')
 network_group.add_argument('--network-cidr', dest='network_cidr', action='store', help='Network CIDR')
@@ -1898,25 +1946,32 @@ domain_group = common_parser.add_argument_group('domain', 'Domain configuration'
 domain_group.add_argument('--domain-id', dest='domain_id', action='store', help='Domain ID')
 domain_group.add_argument('--domain-hostname', dest='domain_hostname', action='store', help='Domain hostname')
 domain_group.add_argument('--domain-port', dest='domain_port', action='store', help='Domain port')
-domain_group.add_argument('--domain-use-ssl', dest='domain_use_ssl', choices=['true', 'false'], help='Domain use SSL flag')
-domain_group.add_argument('--domain-scan-dc-cidr', dest='domain_scan_dc_cidr', choices=['true', 'false'], help='Domain scan DC CIDR flag')
-domain_group.add_argument('--domain-network-cidr', dest='domain_network_cidr', action='store', help='Domain Network CIDR')
-domain_group.add_argument('--domain-admin', dest='domain_administrative_credential', action='store', help='Domain administrative credential')
+domain_group.add_argument('--domain-use-ssl', dest='domain_use_ssl', choices=['true', 'false'],
+                          help='Domain use SSL flag')
+domain_group.add_argument('--domain-scan-dc-cidr', dest='domain_scan_dc_cidr', choices=['true', 'false'],
+                          help='Domain scan DC CIDR flag')
+domain_group.add_argument('--domain-network-cidr', dest='domain_network_cidr', action='store',
+                          help='Domain Network CIDR')
+domain_group.add_argument('--domain-admin', dest='domain_administrative_credential', action='store',
+                          help='Domain administrative credential')
 oci_group = common_parser.add_argument_group('oci', 'OCI configuration')
 oci_group.add_argument('--oci-id', dest='oci_id', action='store', help='OCI ID')
 oci_group.add_argument('--oci-admin-id', dest='oci_admin_id', action='store', help='OCI Admin ID')
-oci_group.add_argument('--oci-admin-public-key', dest='oci_admin_public_key', action='store', help='OCI admin public key')
-oci_group.add_argument('--oci-admin-private-key', dest='oci_admin_private_key', action='store', help='OCI admin private key')
+oci_group.add_argument('--oci-admin-public-key', dest='oci_admin_public_key', action='store',
+                       help='OCI admin public key')
+oci_group.add_argument('--oci-admin-private-key', dest='oci_admin_private_key', action='store',
+                       help='OCI admin private key')
 oci_group.add_argument('--oci-tenancy', dest='oci_tenancy', action='store', help='OCI tenancy')
 oci_group.add_argument('--oci-region', dest='oci_region', action='store', help='OCI region')
 
 gcp_group = common_parser.add_argument_group('gcp', 'GCP configuration')
 gcp_group.add_argument('--gcp-id', dest='gcp_id', action='store', help='GCP Id')
 gcp_group.add_argument('--service-account-key', dest='service_account_key', action='store',
-                         help='Service Account Key (JSON format)')
+                       help='Service Account Key (JSON format)')
 gcp_group.add_argument('--google-admin-email', dest='google_admin_email', action='store',
-                         help='Google Workspace Administrator Email Address')
+                       help='Google Workspace Administrator Email Address')
 gcp_group.add_argument('--gcp-region', dest='region_names', action='append', help='GCP Region Names')
+
 
 class PamConfigurationEditMixin(RecordEditMixin):
     pam_record_types = None
@@ -2014,7 +2069,8 @@ class PamConfigurationEditMixin(RecordEditMixin):
             value['resourceRef'] = list(record_uids)
 
     @staticmethod
-    def resolve_single_record(params, record_name, rec_type=''): # type: (KeeperParams, str, str) -> Optional[vault.KeeperRecord]
+    def resolve_single_record(params, record_name,
+                              rec_type=''):  # type: (KeeperParams, str, str) -> Optional[vault.KeeperRecord]
         rec = RecordMixin.resolve_single_record(params, record_name)
         if not rec:
             recs = []
@@ -2040,9 +2096,14 @@ class PamConfigurationEditMixin(RecordEditMixin):
             if not valid:
                 raise CommandError('', f'Invalid CRON "{schedule}" Error: {err}')
         if schedule:
-            extra_properties.append(f'schedule.defaultRotationSchedule=$JSON:{{"type": "CRON", "cron": "{schedule}", "tz": "Etc/UTC"}}')
+            extra_properties.append(
+                f'schedule.defaultRotationSchedule=$JSON:{{"type": "CRON", "cron": "{schedule}", "tz": "Etc/UTC"}}')
         else:
             extra_properties.append('schedule.defaultRotationSchedule=On-Demand')
+
+        identity_provider_uid = kwargs.get('identity_provider_uid')
+        if identity_provider_uid:
+            extra_properties.append(f'text.identityProviderUid={identity_provider_uid}')
 
         if record.record_type == 'pamNetworkConfiguration':
             network_id = kwargs.get('network_id')
@@ -2192,7 +2253,8 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
                         help='Set TypeScript recording permissions for the resource')
     parser.add_argument('--ai-threat-detection', dest='ai_threat_detection', choices=choices,
                         help='Set AI threat detection permissions')
-    parser.add_argument('--ai-terminate-session-on-detection', dest='ai_terminate_session_on_detection', choices=choices,
+    parser.add_argument('--ai-terminate-session-on-detection', dest='ai_terminate_session_on_detection',
+                        choices=choices,
                         help='Set AI session termination on threat detection permissions')
 
     def __init__(self):
@@ -2221,7 +2283,7 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
             record_type = 'pamOciConfiguration'
         else:
             raise CommandError('pam-config-new', f'--environment {config_type} is not supported'
-                               ' - supported options: local, aws, azure, gcp, domain, oci')
+                                                 ' - supported options: local, aws, azure, gcp, domain, oci')
 
         title = kwargs.get('title')
         if not title:
@@ -2378,6 +2440,10 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
                 if rt_fields:
                     RecordEditMixin.adjust_typed_record_fields(configuration, rt_fields)
 
+        rt_fields = RecordEditMixin.get_record_type_fields(params, configuration.record_type)
+        if rt_fields:
+            RecordEditMixin.adjust_typed_record_fields(configuration, rt_fields)
+
         title = kwargs.get('title')
         if title:
             configuration.title = title
@@ -2412,7 +2478,8 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
             shared_folder_uid = value.get('folderUid') or ''
             if shared_folder_uid != orig_shared_folder_uid:
                 FolderMoveCommand().execute(params, src=configuration.record_uid, dst=shared_folder_uid)
-            if configuration.type_name == 'pamDomainConfiguration' and not kwargs.get('force_domain_admin', False) is True:
+            if configuration.type_name == 'pamDomainConfiguration' and not kwargs.get('force_domain_admin',
+                                                                                      False) is True:
                 # pamUser must exist or "403 Insufficient PAM access to perform this operation"
                 admin_cred_ref = value.get('adminCredentialRef') or ''
 
@@ -2425,7 +2492,7 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
         _typescript_recording = kwargs.get('typescriptrecording', None)
 
         if (_connections is not None or _tunneling is not None or _rotation is not None or _rbi is not None or
-            _recording is not None or _typescript_recording is not None or orig_admin_cred_ref != admin_cred_ref):
+                _recording is not None or _typescript_recording is not None or orig_admin_cred_ref != admin_cred_ref):
             encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
             tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key,
                                 configuration.record_uid, is_config=True, transmission_key=transmission_key)
@@ -2498,8 +2565,10 @@ class PAMRouterGetRotationInfo(Command):
             print(f'PAM Config UID: {bcolors.OKBLUE}{configuration_uid}{bcolors.ENDC}')
             print(f'Node ID: {bcolors.OKBLUE}{rri.nodeId}{bcolors.ENDC}')
 
-            print(f"Gateway Name where the rotation will be performed: {bcolors.OKBLUE}{(rri.controllerName if rri.controllerName else '-')}{bcolors.ENDC}")
-            print(f"Gateway Uid: {bcolors.OKBLUE}{(utils.base64_url_encode(rri.controllerUid) if rri.controllerUid else '-') } {bcolors.ENDC}")
+            print(
+                f"Gateway Name where the rotation will be performed: {bcolors.OKBLUE}{(rri.controllerName if rri.controllerName else '-')}{bcolors.ENDC}")
+            print(
+                f"Gateway Uid: {bcolors.OKBLUE}{(utils.base64_url_encode(rri.controllerUid) if rri.controllerUid else '-')} {bcolors.ENDC}")
 
             def is_resource_ok(resource_id, params, configuration_uid):
                 if resource_id not in params.record_cache:
@@ -2533,7 +2602,8 @@ class PAMRouterGetRotationInfo(Command):
                 try:
                     record = params.record_cache.get(record_uid)
                     if record:
-                        complexity = crypto.decrypt_aes_v2(utils.base64_url_decode(rri.pwdComplexity), record['record_key_unencrypted'])
+                        complexity = crypto.decrypt_aes_v2(utils.base64_url_decode(rri.pwdComplexity),
+                                                           record['record_key_unencrypted'])
                         c = json.loads(complexity.decode())
                         print(f"Password Complexity Data: {bcolors.OKBLUE}"
                               f"Length: {c.get('length')}; Lowercase: {c.get('lowercase')}; "
@@ -2547,7 +2617,7 @@ class PAMRouterGetRotationInfo(Command):
                 print(f"Password Complexity: {bcolors.OKGREEN}[not set]{bcolors.ENDC}")
 
             print(f"Is Rotation Disabled: {bcolors.OKGREEN}{rri.disabled}{bcolors.ENDC}")
-            
+
             # Get schedule information
             rq = pam_pb2.PAMGenericUidsRequest()
             schedules_proto = router_get_rotation_schedules(params, rq)
@@ -2568,7 +2638,7 @@ class PAMRouterGetRotationInfo(Command):
                                     schedule_str = s.scheduleData
                                 print(f"Schedule: {bcolors.OKBLUE}{schedule_str}{bcolors.ENDC}")
                         break
-            
+
             print(f"\nCommand to manually rotate: {bcolors.OKGREEN}pam action rotate -r {record_uid}{bcolors.ENDC}")
         else:
             print(f'{bcolors.WARNING}Rotation Status: Not ready to rotate ({rri_status_name}){bcolors.ENDC}')
@@ -2873,28 +2943,31 @@ class PAMGatewayActionJobCommand(Command):
             destination_gateway_uid_str=gateway_uid
         )
 
-        print_router_response(router_response, 'job_info', original_conversation_id=conversation_id, gateway_uid=gateway_uid)
+        print_router_response(router_response, 'job_info', original_conversation_id=conversation_id,
+                              gateway_uid=gateway_uid)
 
 
 class PAMGatewayActionRotateCommand(Command):
     parser = argparse.ArgumentParser(prog='pam action rotate')
     parser.add_argument('--record-uid', '-r', dest='record_uid', action='store', help='Record UID to rotate')
-    parser.add_argument('--folder', '-f', dest='folder', action='store', help='Shared folder UID or title pattern to rotate')
+    parser.add_argument('--folder', '-f', dest='folder', action='store',
+                        help='Shared folder UID or title pattern to rotate')
     # parser.add_argument('--recursive', '-a', dest='recursive', default=False, action='store', help='Enable recursion to rotate sub-folders too')
     # parser.add_argument('--record-pattern', '-p', dest='pattern', action='store', help='Record title match pattern')
-    parser.add_argument('--dry-run', '-n', dest='dry_run', default=False, action='store_true', help='Enable dry-run mode')
+    parser.add_argument('--dry-run', '-n', dest='dry_run', default=False, action='store_true',
+                        help='Enable dry-run mode')
     # parser.add_argument('--config', '-c', dest='configuration_uid', action='store', help='Rotation configuration UID')
 
     # Email and share link arguments
     parser.add_argument('--self-destruct', dest='self_destruct', action='store',
-                       metavar='<NUMBER>[(m)inutes|(h)ours|(d)ays]',
-                       help='Create one-time share link that expires after duration')
+                        metavar='<NUMBER>[(m)inutes|(h)ours|(d)ays]',
+                        help='Create one-time share link that expires after duration')
     parser.add_argument('--email-config', dest='email_config', action='store',
-                       help='Email configuration name to use for sending (required with --send-email)')
+                        help='Email configuration name to use for sending (required with --send-email)')
     parser.add_argument('--send-email', dest='send_email', action='store',
-                       help='Email address to send credentials after rotation')
+                        help='Email address to send credentials after rotation')
     parser.add_argument('--email-message', dest='email_message', action='store',
-                       help='Custom message to include in email')
+                        help='Custom message to include in email')
 
     def get_parser(self):
         return PAMGatewayActionRotateCommand.parser
@@ -2915,7 +2988,8 @@ class PAMGatewayActionRotateCommand(Command):
         # Validate email setup early (before rotation) to avoid rotating password without being able to send email
         if self.send_email:
             if not self.email_config:
-                raise CommandError('pam action rotate', '--send-email requires --email-config to specify email configuration')
+                raise CommandError('pam action rotate',
+                                   '--send-email requires --email-config to specify email configuration')
 
             # Find and load email config to validate provider and dependencies
             try:
@@ -2937,7 +3011,8 @@ class PAMGatewayActionRotateCommand(Command):
 
         # record, folder or pattern - at least one required
         if not record_uid and not folder:
-            print(f'the following arguments are required: {bcolors.OKBLUE}--record-uid/-r{bcolors.ENDC} or {bcolors.OKBLUE}--folder/-f{bcolors.ENDC}')
+            print(
+                f'the following arguments are required: {bcolors.OKBLUE}--record-uid/-r{bcolors.ENDC} or {bcolors.OKBLUE}--folder/-f{bcolors.ENDC}')
             return
 
         # single record UID - ignore all folder options
@@ -2989,7 +3064,7 @@ class PAMGatewayActionRotateCommand(Command):
                             path.append(child)
                             child = params.folder_cache[child].parent_uid
                         path.append(child)  # add root shf
-                        path = path[1:] if path else [] # skip child uid
+                        path = path[1:] if path else []  # skip child uid
                         if not set(path) & fldrset:  # no intersect
                             uniq.append(fldr)
             folders = list(set(uniq))
@@ -3041,14 +3116,14 @@ class PAMGatewayActionRotateCommand(Command):
                 except Exception as e:
                     msg = str(e)  # what is considered a throttling error...
                     if re.search(r"throttle", msg, re.IGNORECASE):
-                        delay = (delay+10) % 100  # reset every 1.5 minutes
+                        delay = (delay + 10) % 100  # reset every 1.5 minutes
                         logging.debug(f'Record UID: {record_uid} was throttled (retry in {delay} sec)')
-                        time.sleep(1+delay)
+                        time.sleep(1 + delay)
                     else:
                         logging.error(f'Record UID: {record_uid} skipped: non-throttling, non-recoverable error: {msg}')
                         break
 
-    def record_rotate(self, params, record_uid, slient:bool = False):
+    def record_rotate(self, params, record_uid, slient: bool = False):
         record = vault.KeeperRecord.load(params, record_uid)
         if not isinstance(record, vault.TypedRecord):
             print(f'{bcolors.FAIL}Record [{record_uid}] is not available.{bcolors.ENDC}')
@@ -3068,7 +3143,8 @@ class PAMGatewayActionRotateCommand(Command):
                 'digits': 1,
                 'special': 1,
             }
-            ri_pwd_complexity_encrypted = utils.base64_url_encode(router_helper.encrypt_pwd_complexity(rule_list_dict, record.record_key))
+            ri_pwd_complexity_encrypted = utils.base64_url_encode(
+                router_helper.encrypt_pwd_complexity(rule_list_dict, record.record_key))
         # else:
         #     rule_list_json = crypto.decrypt_aes_v2(utils.base64_url_decode(ri_pwd_complexity_encrypted), record.record_key)
         #     complexity = json.loads(rule_list_json.decode())
@@ -3218,7 +3294,8 @@ class PAMGatewayActionRotateCommand(Command):
                     expire_seconds = int(expiration_period.total_seconds())
 
                     if expire_seconds <= 0:
-                        logging.warning(f'{bcolors.WARNING}Invalid --self-destruct value. Skipping share link.{bcolors.ENDC}')
+                        logging.warning(
+                            f'{bcolors.WARNING}Invalid --self-destruct value. Skipping share link.{bcolors.ENDC}')
                         return
 
                     # Calculate human-readable expiration text
@@ -3248,7 +3325,8 @@ class PAMGatewayActionRotateCommand(Command):
                     # Extract hostname from params.server
                     parsed = urlparse(params.server)
                     server_netloc = parsed.netloc if parsed.netloc else parsed.path
-                    share_url = urlunparse(('https', server_netloc, '/vault/share', None, None, utils.base64_url_encode(client_key)))
+                    share_url = urlunparse(
+                        ('https', server_netloc, '/vault/share', None, None, utils.base64_url_encode(client_key)))
                     logging.info(f'{bcolors.OKGREEN}Share link created successfully{bcolors.ENDC}')
                 except Exception as e:
                     logging.warning(f'{bcolors.WARNING}Failed to create share link: {e}{bcolors.ENDC}')
@@ -3261,7 +3339,8 @@ class PAMGatewayActionRotateCommand(Command):
                     logging.info(f'Loading email configuration: {self.email_config}')
                     config_uid = find_email_config_record(params, self.email_config)
                     if not config_uid:
-                        logging.warning(f'{bcolors.WARNING}Email configuration "{self.email_config}" not found. Skipping email.{bcolors.ENDC}')
+                        logging.warning(
+                            f'{bcolors.WARNING}Email configuration "{self.email_config}" not found. Skipping email.{bcolors.ENDC}')
                         return
 
                     # Load the email configuration
@@ -3313,10 +3392,11 @@ class PAMGatewayActionRotateCommand(Command):
         text = str(text)
         try:
             pattern = re.compile(text, re.IGNORECASE)
-        except: # re.error: yet maybe TypeError, MemoryError, RecursionError etc.
+        except:  # re.error: yet maybe TypeError, MemoryError, RecursionError etc.
             pattern = re.compile(re.escape(text), re.IGNORECASE)
             logging.debug(f"regex pattern {text} failed to compile (using it as plaintext pattern)")
         return pattern
+
 
 class PAMGatewayActionServerInfoCommand(Command):
     parser = argparse.ArgumentParser(prog='dr-info-command')
@@ -3337,11 +3417,11 @@ class PAMGatewayActionServerInfoCommand(Command):
             destination_gateway_uid_str=destination_gateway_uid_str
         )
 
-        print_router_response(router_response, 'gateway_info', is_verbose=is_verbose, gateway_uid=destination_gateway_uid_str)
+        print_router_response(router_response, 'gateway_info', is_verbose=is_verbose,
+                              gateway_uid=destination_gateway_uid_str)
 
 
 class PAMGatewayActionDiscoverCommandBase(Command):
-
     """
     The discover command base.
 

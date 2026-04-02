@@ -1566,8 +1566,8 @@ class SuperShellApp(App):
             # Only fetch DAG data for pamUser records (requires PAM infrastructure)
             if is_pam_user:
                 try:
-                    from .tunnel.port_forward.tunnel_helpers import get_keeper_tokens
-                    from .tunnel.port_forward.TunnelGraph import TunnelDAG
+                    from keepercommander.commands.tunnel.port_forward.tunnel_helpers import get_keeper_tokens
+                    from keepercommander.commands.tunnel.port_forward.TunnelGraph import TunnelDAG
                     from keeper_dag.edge import EdgeType
 
                     encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(self.params)
@@ -2641,8 +2641,9 @@ class SuperShellApp(App):
         t = self.theme_colors
         
         try:
-            from ...proto import APIRequest_pb2, enterprise_pb2
-            from .. import api, utils
+            from keepercommander.proto import APIRequest_pb2, enterprise_pb2
+            from keepercommander import api
+            from keepercommander.commands import utils
             import json
             
             record = self.records[app_uid]
@@ -3859,7 +3860,7 @@ class SuperShellApp(App):
 
             # Run enterprise-down if available (enterprise users)
             try:
-                from .enterprise import EnterpriseDownCommand
+                from keepercommander.commands.enterprise import EnterpriseDownCommand
                 EnterpriseDownCommand().execute(self.params)
             except Exception:
                 pass  # Not an enterprise user or command not available
