@@ -1475,9 +1475,19 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
 
 
 class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
+    POLICY_TYPE_MAP = {
+        'elevation': 'PrivilegeElevation',
+        'file_access': 'FileAccess',
+        'command': 'CommandLine',
+        'least_privilege': 'LeastPrivilege',
+    }
+
     def __init__(self):
         parser = argparse.ArgumentParser(prog='edit', description='Edit EPM policy', parents=[PedmPolicyMixin.policy_filter])
         parser.add_argument('policy', help='Policy UID or name')
+        parser.add_argument('--policy-type', dest='policy_type', action='store',
+                            choices=['elevation', 'file_access', 'command', 'least_privilege'],
+                            help='Change policy type')
         parser.add_argument('--policy-name', dest='policy_name', action='store',
                             help='Policy name')
         parser.add_argument('--control', dest='control', action='append',
@@ -1501,7 +1511,17 @@ class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
         policy = PedmUtils.resolve_single_policy(plugin, kwargs.get('policy'))
 
         policy_data = copy.deepcopy(policy.data or {})
-        policy_type = policy_data.get('PolicyType') or 'Unknown'
+
+        p_type = kwargs.get('policy_type')
+        if p_type:
+            new_policy_type = PedmPolicyEditCommand.POLICY_TYPE_MAP.get(p_type)
+            if not new_policy_type:
+                raise base.CommandError(f'"policy-type: {p_type}" is not supported')
+            policy_data['PolicyType'] = new_policy_type
+            policy_type = new_policy_type
+        else:
+            policy_type = policy_data.get('PolicyType') or 'Unknown'
+
         controls = PedmPolicyMixin.get_policy_controls(policy_type, **kwargs)
         if isinstance(controls, list):
             actions = policy_data.get('Actions')
