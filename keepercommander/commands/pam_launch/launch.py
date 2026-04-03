@@ -34,6 +34,7 @@ from .terminal_connection import (
     _pam_settings_connection_port,
 )
 from .terminal_size import get_terminal_size_pixels, is_interactive_tty
+from .terminal_reset import reset_local_terminal_after_pam_session
 from .guac_cli.stdin_handler import StdinHandler
 from .guac_cli.input import InputHandler
 from .guac_cli.session_input import CtrlCCoordinator, PasteOrchestrator
@@ -1074,14 +1075,17 @@ class PAMLaunchCommand(Command):
             # Wait for Guacamole ready
             print("Waiting for Guacamole connection...")
 
-            # Clear screen by printing terminal height worth of newlines
-            # This prevents raw mode from overwriting existing screen lines
+            # Clear screen by printing terminal height worth of newlines.
+            # This prevents raw mode from overwriting existing screen lines.
+            # Keep in sync: terminal_reset uses max(current rows, this) at exit.
+            pam_session_start_rows = None
             terminal_height = 24
             try:
                 terminal_size = shutil.get_terminal_size()
                 terminal_height = terminal_size.lines
             except Exception:
                 terminal_height = 24
+            pam_session_start_rows = terminal_height
             print("\n" * terminal_height, end='', flush=True)
 
             guac_ready_timeout = 10.0  # Reduced from 30s - sync triggers readiness quickly
@@ -1278,6 +1282,15 @@ class PAMLaunchCommand(Command):
                     input_handler.stop()
                 except Exception as e:
                     logging.debug(f"Error stopping input handler: {e}")
+
+                # Fullscreen TUIs (nano, mcedit, etc.) may leave alternate screen /
+                # cursor modes in the outer terminal; restore after raw mode is back.
+                try:
+                    reset_local_terminal_after_pam_session(
+                        session_start_rows=pam_session_start_rows,
+                    )
+                except Exception as e:
+                    logging.debug(f"Terminal reset after pam session: {e}")
 
                 # Cleanup - check if connection is already closed to avoid deadlock
                 logging.debug("Stopping Python handler...")
