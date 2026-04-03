@@ -1,9 +1,17 @@
-from unittest import TestCase, mock
+import os
+import tempfile
+from unittest import TestCase, mock, skipUnless
 
 from data_vault import get_synced_params, get_connected_params
 from helper import KeeperApiHelper
 from keepercommander import vault
 from keepercommander.importer import importer, commands
+
+try:
+    from keepercommander.importer.keepass.keepass import KeepassExporter, PyKeePass
+except ImportError:
+    KeepassExporter = None
+    PyKeePass = None
 
 
 class TestImporterUtils(TestCase):
@@ -71,6 +79,40 @@ class TestImporterUtils(TestCase):
             }
             with mock.patch('os.path.isfile', return_value=True):
                 cmd_import.execute(param_import, format='json', name='json')
+
+    @skipUnless(KeepassExporter and PyKeePass, 'pykeepass is not installed')
+    def test_keepass_export_sanitizes_xml_invalid_characters(self):
+        record = importer.Record()
+        record.title = 'bad\x10title'
+        record.login = 'user\x10name'
+        record.password = 'pass\x10word'
+        record.login_url = 'https://example.com/\x10path'
+        record.notes = 'note\x10body'
+
+        folder = importer.Folder()
+        folder.path = 'group\x10name'
+        record.folders = [folder]
+
+        record.fields.append(importer.RecordField('text', 'custom\x10label', 'value\x10data'))
+
+        with tempfile.NamedTemporaryFile(suffix='.kdbx', delete=False) as temp_file:
+            file_name = temp_file.name
+
+        try:
+            KeepassExporter().do_export(file_name, [record], file_password='password')
+            with PyKeePass(file_name, password='password') as kdb:
+                self.assertEqual(len(kdb.entries), 1)
+                entry = kdb.entries[0]
+                self.assertEqual(entry.title, 'badtitle')
+                self.assertEqual(entry.username, 'username')
+                self.assertEqual(entry.password, 'password')
+                self.assertEqual(entry.url, 'https://example.com/path')
+                self.assertEqual(entry.notes, 'notebody')
+                self.assertEqual(entry.group.name, 'groupname')
+                self.assertEqual(entry.custom_properties.get('$text:customlabel'), 'valuedata')
+        finally:
+            if os.path.exists(file_name):
+                os.unlink(file_name)
 
     def test_host_serialization(self):
         host = {

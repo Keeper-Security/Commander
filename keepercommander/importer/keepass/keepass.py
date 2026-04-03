@@ -35,6 +35,22 @@ _REFERENCE = r'\{REF:([TUPAN])@([IT]):([^\}]+)\}'
 
 class XmlUtils(object):
     @staticmethod
+    def is_valid_xml_char(char):    # type: (str) -> bool
+        code_point = ord(char)
+        return code_point in {0x09, 0x0A, 0x0D} or \
+            0x20 <= code_point <= 0xD7FF or \
+            0xE000 <= code_point <= 0xFFFD or \
+            0x10000 <= code_point <= 0x10FFFF
+
+    @staticmethod
+    def sanitize_xml_text(value):   # type: (any) -> str
+        if not isinstance(value, str):
+            value = str(value) if value else ''
+        if not value:
+            return ''
+        return ''.join((char for char in value if XmlUtils.is_valid_xml_char(char)))
+
+    @staticmethod
     def escape_string(plain):   # type: (str) -> str
         if not plain:
             return ''
@@ -261,9 +277,12 @@ class KeepassExporter(BaseExporter, XmlUtils):
         if isinstance(keeper_value, list):
             return ','.join((KeepassExporter.to_keepass_value(x) for x in keeper_value))
         elif isinstance(keeper_value, dict):
-            return ';\n'.join((f'{k}:{KeepassExporter.to_keepass_value(v)}' for k, v in keeper_value.items()))
+            return ';\n'.join((
+                f'{XmlUtils.sanitize_xml_text(k)}:{KeepassExporter.to_keepass_value(v)}'
+                for k, v in keeper_value.items()
+            ))
         else:
-            return str(keeper_value)
+            return XmlUtils.sanitize_xml_text(keeper_value)
 
     def do_export(self, filename, records, file_password=None, **kwargs):
         master_password = file_password
@@ -302,44 +321,57 @@ class KeepassExporter(BaseExporter, XmlUtils):
                             if path:
                                 comps = list(path_components(path))
                                 for i in range(len(comps)):
-                                    comp = comps[i]
+                                    comp = self.sanitize_xml_text(comps[i])
+                                    if not comp:
+                                        continue
                                     sub_node = next((x for x in node.subgroups if x.name == comp), None)
                                     if sub_node is None:
                                         sub_node = kdb.add_group(node, comp)
                                     node = sub_node
+                    entry_title = self.to_keepass_value(r.title)
+                    entry_login = self.to_keepass_value(r.login)
+                    entry_password = self.to_keepass_value(r.password)
+                    entry_url = self.to_keepass_value(r.login_url)
+                    entry_notes = self.to_keepass_value(r.notes)
                     entry = None
                     entries = node.entries
                     for en in entries:
-                        if en.title == r.title and en.username == r.login and en.password == r.password:
+                        if en.title == entry_title and en.username == entry_login and en.password == entry_password:
                             entry = en
                             break
 
                     if entry is None:
-                        entry = kdb.add_entry(node, title=r.title or '', username=r.login or '',
-                                              password=r.password or '', url=r.login_url or '',
-                                              notes=r.notes or '')
+                        entry = kdb.add_entry(node, title=entry_title, username=entry_login,
+                                              password=entry_password, url=entry_url,
+                                              notes=entry_notes)
                         if r.uid:
                             entry.UUID = uuid.UUID(bytes=utils.base64_url_decode(r.uid))
                     if r.type:
-                        entry.set_custom_property('$type', r.type)
+                        entry.set_custom_property('$type', self.to_keepass_value(r.type))
                     if r.fields:
                         custom_names = {}   # type: Dict[str, int]
                         for cf in r.fields:
                             if cf.type == 'oneTimeCode':
-                                entry.otp = cf.value
+                                otp_value = self.to_keepass_value(cf.value)
+                                entry.otp = otp_value
                                 # Set custom fields for Pleasant Password TOTP compatibility
-                                totp_props = parse_totp_uri(cf.value)
+                                totp_props = parse_totp_uri(otp_value)
                                 for key in ['secret', 'period', 'issuer', 'digits']:
                                     val = totp_props.get(key)
-                                    val and entry.set_custom_property(f'TOTP{key.capitalize()}', str(val))
+                                    val and entry.set_custom_property(
+                                        f'TOTP{key.capitalize()}',
+                                        self.to_keepass_value(val)
+                                    )
 
                                 continue
-                            if cf.type and cf.label:
-                                title = f'${cf.type}:{cf.label}'
-                            elif cf.type:
-                                title = f'${cf.type}'
+                            field_type = self.sanitize_xml_text(cf.type)
+                            field_label = self.sanitize_xml_text(cf.label)
+                            if field_type and field_label:
+                                title = f'${field_type}:{field_label}'
+                            elif field_type:
+                                title = f'${field_type}'
                             else:
-                                title = cf.label or ''
+                                title = field_label or ''
                             if title in custom_names:
                                 no = custom_names[title]
                                 no += 1
@@ -367,7 +399,7 @@ class KeepassExporter(BaseExporter, XmlUtils):
 
                                 if binary:
                                     binary_id = kdb.add_binary(binary, compressed=True, protected=False)
-                                    entry.add_attachment(binary_id, atta.name)
+                                    entry.add_attachment(binary_id, self.to_keepass_value(atta.name))
                             else:
                                 scale = ''
                                 msize = self.max_size
