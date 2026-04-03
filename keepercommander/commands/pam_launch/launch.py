@@ -1214,13 +1214,20 @@ class PAMLaunchCommand(Command):
                         state = tube_registry.get_connection_state(tube_id)
                         if state and state.lower() in ('closed', 'disconnected', 'failed'):
                             logging.debug(f"Tube/connection closed (state: {state}) - exiting")
-                            python_handler.running = False
+                            # Do not set python_handler.running = False here: the input thread would
+                            # still read stdin and send_key/send_stdin would drop bytes (first key
+                            # "eaten" after return to Commander). Stopping order is input_handler
+                            # first in finally, then python_handler.stop() clears running.
+                            shutdown_requested = True
                             break
                     except Exception:
                         # If we can't check state, continue (tube might be closing)
                         pass
                     time.sleep(0.1)
                     elapsed += 0.1
+                    # SIGINT may set shutdown_requested during sleep; exit before resize/status work.
+                    if shutdown_requested or not python_handler.running:
+                        break
 
                     # --- Resize polling (Phase 1: cheap cols/rows check) ---
                     # Check every _RESIZE_POLL_EVERY iterations AND at least
@@ -1245,6 +1252,8 @@ class PAMLaunchCommand(Command):
                                 # Phase 2: size changed - apply debounce then
                                 # fetch exact pixels and send.
                                 if _now - _last_resize_send_time >= _RESIZE_DEBOUNCE:
+                                    if shutdown_requested or not python_handler.running:
+                                        break
                                     try:
                                         _si = get_terminal_size_pixels(_cur_cols, _cur_rows)
                                         python_handler.send_size(
@@ -1273,7 +1282,13 @@ class PAMLaunchCommand(Command):
                         logging.debug(f"[{int(elapsed)}s] Session active (rx={rx}, tx={tx}, syncs={syncs})")
 
             except KeyboardInterrupt:
+                shutdown_requested = True
                 logging.debug("\n\nExiting CLI terminal mode...")
+
+            except Exception as e:
+                shutdown_requested = True
+                logging.debug(f"CLI session loop ended abnormally: {e}")
+                raise
 
             finally:
                 # Stop input handler first (restores terminal)

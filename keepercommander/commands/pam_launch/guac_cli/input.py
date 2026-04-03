@@ -30,6 +30,7 @@ Ctrl+Shift+V are detected with modifier state and mapped to paste.
 from __future__ import annotations
 
 import collections
+import os
 import sys
 import logging
 import threading
@@ -49,6 +50,11 @@ _PASTE_BYTE = '\x16'
 _CHORD_CTRL_SHIFT_V = '\x17'
 _CHORD_SHIFT_INSERT = '\x18'
 _CHORD_CTRL_INSERT = '\x19'
+
+# Wake the input loop periodically so stop() can join without a keystroke; Unix
+# path uses select() with this timeout and only reads stdin while running so
+# bytes are not consumed after teardown (they stay for the Commander REPL).
+_INPUT_POLL_SEC = 0.1
 
 
 class InputHandler:
@@ -93,7 +99,7 @@ class InputHandler:
 
     def _get_stdin_reader(self):
         if sys.platform == 'win32':
-            return WindowsStdinReader()
+            return WindowsStdinReader(should_continue=lambda: self.running)
         return UnixStdinReader()
 
     def start(self):
@@ -114,14 +120,46 @@ class InputHandler:
             self.stdin_reader.restore()
             self.raw_mode_active = False
         if self.thread:
-            self.thread.join(timeout=1.0)
+            for _ in range(50):
+                self.thread.join(timeout=0.1)
+                if not self.thread.is_alive():
+                    break
         logging.debug('InputHandler stopped')
 
     def _input_loop(self):
+        import select
+
         while self.running:
             try:
-                ch = self.stdin_reader.read_char()
-                if ch:
+                if sys.platform == 'win32':
+                    ch = self.stdin_reader.read_char(timeout=_INPUT_POLL_SEC)
+                    if not ch:
+                        continue
+                    if not self.running:
+                        break
+                    self._process_input(ch)
+                else:
+                    ready, _, _ = select.select(
+                        [sys.stdin], [], [], _INPUT_POLL_SEC
+                    )
+                    if not self.running:
+                        break
+                    if not ready:
+                        continue
+                    if not self.running:
+                        break
+                    # Read exactly 1 byte at the fd level, bypassing Python's
+                    # BufferedReader (which would call os.read(fd, 8192) and
+                    # consume the whole escape sequence in one shot, leaving
+                    # the fd empty so subsequent select() calls in
+                    # _read_escape_sequence return not-ready and the remaining
+                    # bytes get injected later as stray characters).
+                    raw = os.read(sys.stdin.fileno(), 1)
+                    if not raw:
+                        continue
+                    ch = raw.decode('utf-8', 'replace')
+                    if not self.running:
+                        break
                     self._process_input(ch)
             except Exception as exc:
                 logging.error(f'Error in input loop: {exc}')
@@ -134,6 +172,8 @@ class InputHandler:
         Process a single character (or the first character of a buffered
         sequence) from stdin and emit the appropriate key event(s).
         """
+        if not self.running:
+            return
         if not ch:
             return
 
@@ -326,7 +366,14 @@ class UnixStdinReader:
             if not ready:
                 return None
         try:
-            return sys.stdin.read(1)
+            # Use os.read for exactly-1-byte fd-level reads so that select()
+            # and the actual read operate at the same kernel-buffer level.
+            # sys.stdin.read(1) goes through Python's 8192-byte BufferedReader
+            # which can consume the entire escape sequence (\x1b[A) in one
+            # os.read() call, leaving the fd empty and breaking subsequent
+            # select() calls in _read_escape_sequence.
+            raw = os.read(sys.stdin.fileno(), 1)
+            return raw.decode('utf-8', 'replace') if raw else None
         except Exception:
             return None
 
@@ -383,7 +430,8 @@ class WindowsStdinReader:
     the queue transparently.
     """
 
-    def __init__(self):
+    def __init__(self, should_continue: Optional[Callable[[], bool]] = None):
+        self._should_continue = should_continue
         self._queue: collections.deque = collections.deque()
         self._hstdin = None
         self._input_record_type = None
@@ -465,6 +513,9 @@ class WindowsStdinReader:
                 if result != 0:       # WAIT_OBJECT_0 = 0
                     return None
 
+            if self._should_continue is not None and not self._should_continue():
+                return None
+
             record = self._InputRecord()
             n_read = wintypes.DWORD(0)
             ok = self._ReadConsoleInputW(
@@ -524,6 +575,8 @@ class WindowsStdinReader:
             start = time.time()
             while True:
                 if timeout is not None and (time.time() - start) >= timeout:
+                    return None
+                if self._should_continue is not None and not self._should_continue():
                     return None
                 if msvcrt.kbhit():
                     ch = msvcrt.getch()
