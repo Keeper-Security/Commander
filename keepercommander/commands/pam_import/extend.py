@@ -71,7 +71,7 @@ from ...recordv3 import RecordV3
 from ...subfolder import BaseFolderNode
 
 def split_folder_path(path: str) -> list[str]:
-    """Split folder path using path deilmiter / (escape: / -> //)"""
+    """Split folder path using path delimiter / (escape: / -> //)"""
 
     # Escape char / confusion: a///b -> [a/]/[b] or [a]/[/b]
     # Escape char ` or ^ (since \ is hard to put in strings and JSON)
