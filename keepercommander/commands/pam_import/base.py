@@ -341,7 +341,7 @@ def _validate_file_path(file_path):
     valid = isinstance(file_path, str) and bool(file_path)
     if valid:
         resolved = Path(file_path).resolve()
-        valid = resolved.exists() and '..' not in Path(file_path).parts
+        valid = resolved.is_file() and '..' not in Path(file_path).parts
     return valid
 
 
