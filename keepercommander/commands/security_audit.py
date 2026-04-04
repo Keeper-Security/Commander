@@ -216,6 +216,8 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             raise CommandError('security-audit', '--siem and --record-details cannot be used together')
         if kwargs.get('siem') and kwargs.get('format') and kwargs['format'] != 'table':
             raise CommandError('security-audit', '--siem produces NDJSON output exclusively and cannot be combined with --format')
+        if kwargs.get('siem') and kwargs.get('debug'):
+            raise CommandError('security-audit', '--siem and --debug cannot be used together')
 
         self.enterprise_private_rsa_key = None
         self._node_map = None  # Reset node cache for correct MC context
@@ -509,12 +511,11 @@ class SecurityAuditReportCommand(EnterpriseCommand):
             ('email', 'name', 'sync_pending', 'weak', 'fair', 'medium', 'strong', 'reused', 'unique', 'securityScore',
              'twoFactorChannel', 'node')
 
-        report_title = f'Security Audit Report{" (BreachWatch)" if show_breachwatch else ""}'
-
         # SIEM-ready NDJSON output
         if kwargs.get('siem'):
             return self._export_siem(params, rows, fields, show_breachwatch, out)
 
+        report_title = f'Security Audit Report{" (BreachWatch)" if show_breachwatch else ""}'
         field_descriptions = fields
         if fmt == 'table':
             field_descriptions = (field_to_title(x) for x in fields)

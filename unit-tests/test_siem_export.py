@@ -60,7 +60,7 @@ class TestSiemExport(unittest.TestCase):
         """Each line should be valid JSON."""
         result = SecurityAuditReportCommand._export_siem(
             self._make_params(), self._sample_rows(), self._fields(),
-            show_breachwatch=False, filename=None        )
+            show_breachwatch=False, filename=None)
         lines = result.strip().split('\n')
         self.assertEqual(len(lines), 2)
         for line in lines:
@@ -74,14 +74,14 @@ class TestSiemExport(unittest.TestCase):
         """Empty rows should produce empty string, not a blank line."""
         result = SecurityAuditReportCommand._export_siem(
             self._make_params(), [], self._fields(),
-            show_breachwatch=False, filename=None        )
+            show_breachwatch=False, filename=None)
         self.assertEqual(result, '')
 
     def test_trailing_newline(self):
         """Non-empty output should end with exactly one newline."""
         result = SecurityAuditReportCommand._export_siem(
             self._make_params(), self._sample_rows(), self._fields(),
-            show_breachwatch=False, filename=None        )
+            show_breachwatch=False, filename=None)
         self.assertTrue(result.endswith('\n'))
         self.assertFalse(result.endswith('\n\n'))
 
@@ -89,7 +89,7 @@ class TestSiemExport(unittest.TestCase):
         """Email in SIEM output should be masked."""
         result = SecurityAuditReportCommand._export_siem(
             self._make_params(), self._sample_rows(), self._fields(),
-            show_breachwatch=False, filename=None        )
+            show_breachwatch=False, filename=None)
         event = json.loads(result.strip().split('\n')[0])
         email = event['user']['email']
         self.assertNotEqual(email, 'alice@example.com')
@@ -100,7 +100,7 @@ class TestSiemExport(unittest.TestCase):
         """Name in SIEM output should be masked."""
         result = SecurityAuditReportCommand._export_siem(
             self._make_params(), self._sample_rows(), self._fields(),
-            show_breachwatch=False, filename=None        )
+            show_breachwatch=False, filename=None)
         event = json.loads(result.strip().split('\n')[0])
         name = event['user']['name']
         self.assertNotEqual(name, 'Alice Smith')
@@ -110,7 +110,7 @@ class TestSiemExport(unittest.TestCase):
         """Users with weak > 0 should have weak_passwords risk factor."""
         result = SecurityAuditReportCommand._export_siem(
             self._make_params(), self._sample_rows(), self._fields(),
-            show_breachwatch=False, filename=None        )
+            show_breachwatch=False, filename=None)
         alice = json.loads(result.strip().split('\n')[0])
         self.assertIn('weak_passwords', alice['risk_factors'])
 
@@ -118,7 +118,7 @@ class TestSiemExport(unittest.TestCase):
         """Users with reused > 0 should have reused_passwords risk factor."""
         result = SecurityAuditReportCommand._export_siem(
             self._make_params(), self._sample_rows(), self._fields(),
-            show_breachwatch=False, filename=None        )
+            show_breachwatch=False, filename=None)
         alice = json.loads(result.strip().split('\n')[0])
         self.assertIn('reused_passwords', alice['risk_factors'])
 
@@ -126,7 +126,7 @@ class TestSiemExport(unittest.TestCase):
         """Users with 2FA off should have no_2fa risk factor."""
         result = SecurityAuditReportCommand._export_siem(
             self._make_params(), self._sample_rows(), self._fields(),
-            show_breachwatch=False, filename=None        )
+            show_breachwatch=False, filename=None)
         alice = json.loads(result.strip().split('\n')[0])
         self.assertIn('no_2fa', alice['risk_factors'])
 
@@ -134,7 +134,7 @@ class TestSiemExport(unittest.TestCase):
         """Users with strong passwords and 2FA should have no risk factors."""
         result = SecurityAuditReportCommand._export_siem(
             self._make_params(), self._sample_rows(), self._fields(),
-            show_breachwatch=False, filename=None        )
+            show_breachwatch=False, filename=None)
         bob = json.loads(result.strip().split('\n')[1])
         self.assertEqual(bob['risk_factors'], [])
         self.assertEqual(bob['security_score'], 100)
@@ -143,7 +143,7 @@ class TestSiemExport(unittest.TestCase):
         """Security score should be in the event when not BreachWatch."""
         result = SecurityAuditReportCommand._export_siem(
             self._make_params(), self._sample_rows(), self._fields(),
-            show_breachwatch=False, filename=None        )
+            show_breachwatch=False, filename=None)
         event = json.loads(result.strip().split('\n')[0])
         self.assertIn('security_score', event)
         self.assertEqual(event['security_score'], 72)
@@ -155,7 +155,7 @@ class TestSiemExport(unittest.TestCase):
                      'at_risk': 3, 'passed': 10, 'ignored': 1}]
         result = SecurityAuditReportCommand._export_siem(
             self._make_params(), bw_rows, bw_fields,
-            show_breachwatch=True, filename=None        )
+            show_breachwatch=True, filename=None)
         event = json.loads(result.strip())
         self.assertIn('breach_exposure', event['risk_factors'])
         self.assertNotIn('security_score', event)
@@ -166,7 +166,7 @@ class TestSiemExport(unittest.TestCase):
             filepath = os.path.join(tmpdir, 'report')
             SecurityAuditReportCommand._export_siem(
                 self._make_params(), self._sample_rows(), self._fields(),
-                show_breachwatch=False, filename=filepath            )
+                show_breachwatch=False, filename=filepath)
             actual_path = filepath + '.ndjson'
             self.assertTrue(os.path.isfile(actual_path))
             mode = os.stat(actual_path).st_mode
@@ -178,7 +178,7 @@ class TestSiemExport(unittest.TestCase):
             filepath = os.path.join(tmpdir, 'report')
             SecurityAuditReportCommand._export_siem(
                 self._make_params(), self._sample_rows(), self._fields(),
-                show_breachwatch=False, filename=filepath            )
+                show_breachwatch=False, filename=filepath)
             self.assertTrue(os.path.isfile(filepath + '.ndjson'))
 
     def test_file_output_keeps_existing_extension(self):
@@ -187,7 +187,7 @@ class TestSiemExport(unittest.TestCase):
             filepath = os.path.join(tmpdir, 'report.json')
             SecurityAuditReportCommand._export_siem(
                 self._make_params(), self._sample_rows(), self._fields(),
-                show_breachwatch=False, filename=filepath            )
+                show_breachwatch=False, filename=filepath)
             self.assertTrue(os.path.isfile(filepath))
 
     def test_file_content_valid_ndjson(self):
@@ -196,7 +196,7 @@ class TestSiemExport(unittest.TestCase):
             filepath = os.path.join(tmpdir, 'report.ndjson')
             SecurityAuditReportCommand._export_siem(
                 self._make_params(), self._sample_rows(), self._fields(),
-                show_breachwatch=False, filename=filepath            )
+                show_breachwatch=False, filename=filepath)
             with open(filepath) as f:
                 content = f.read()
             lines = content.strip().split('\n')
@@ -208,7 +208,7 @@ class TestSiemExport(unittest.TestCase):
         """Source field should come from params.server."""
         result = SecurityAuditReportCommand._export_siem(
             self._make_params('https://my.keeper.io'), self._sample_rows(),
-            self._fields(), show_breachwatch=False, filename=None        )
+            self._fields(), show_breachwatch=False, filename=None)
         event = json.loads(result.strip().split('\n')[0])
         self.assertEqual(event['source'], 'https://my.keeper.io')
 
@@ -259,7 +259,7 @@ class TestPiiMasking(unittest.TestCase):
                   'twoFactorChannel', 'node')
         result = SecurityAuditReportCommand._export_siem(
             MagicMock(server='test'), rows, fields,
-            show_breachwatch=False, filename=None        )
+            show_breachwatch=False, filename=None)
         event = json.loads(result.strip())
         return event['user'][field_name]
 
@@ -316,7 +316,7 @@ class TestPiiMasking(unittest.TestCase):
                   'twoFactorChannel', 'node')
         result = SecurityAuditReportCommand._export_siem(
             MagicMock(server='test'), rows, fields,
-            show_breachwatch=False, filename=None        )
+            show_breachwatch=False, filename=None)
         event = json.loads(result.strip())
         self.assertEqual(event['user']['weak'], 5)
         self.assertEqual(event['user']['securityScore'], 50)
