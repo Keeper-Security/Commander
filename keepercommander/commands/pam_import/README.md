@@ -23,6 +23,47 @@ Adding new PAM resources and users to an existing PAM configuration from an impo
 - If the command reports errors, run it again with **`--dry-run`** for more detailed error messages.
 
 
+Import directly from a KCM/Guacamole database. Connects to the KCM database, extracts connections/users/groups, maps 150+ parameters, and feeds the result into the existing import engine.
+`pam project kcm-import --db-host=HOST [OPTIONS]`
+
+**Database (one of `--db-host` or `--docker-detect` required):**
+- `--db-host HOST` → KCM database hostname.
+- `--docker-detect` → Auto-detect credentials from Docker container (`guacamole`).
+- `--db-port PORT` → Database port _(default: 3306 mysql, 5432 postgresql)_.
+- `--db-name NAME` → Database name _(default: guacamole\_db)_.
+- `--db-type {mysql,postgresql}` → Database type _(default: mysql)_.
+- `--db-user USER` → Database username _(default: guacamole\_user)_.
+- `--db-password-record UID` → Keeper record UID containing DB password. If omitted, prompts interactively.
+
+**Import:**
+- `--name`, `-n` → Project name _(default: KCM-Import-TIMESTAMP)_.
+- `--config`, `-c` → Existing PAM config UID or title to extend (skip project creation).
+- `--folder-mode {ksm,exact,flat}` → Connection group mapping _(default: ksm)_.
+- `--output`, `-o` → Save JSON to file for review before importing.
+
+**Flags:**
+- `--dry-run`, `-d` → Preview without vault changes (credentials redacted).
+- `--skip-users` → Import connections only.
+- `--include-disabled` → Include disabled KCM connections.
+
+**Examples:**
+```bash
+# Dry-run preview from a MySQL KCM database
+pam project kcm-import --db-host 127.0.0.1 --name "KCM Migration" --dry-run
+
+# Import using password from vault record
+pam project kcm-import --db-host db.example.com --db-password-record RECORD_UID --name "Prod KCM"
+
+# Extend existing PAM config from PostgreSQL
+pam project kcm-import --db-host pg.example.com --db-type postgresql --config "Existing Config"
+
+# Auto-detect from Docker and save JSON for review
+pam project kcm-import --docker-detect --output /tmp/kcm-review.json
+```
+
+**Security:** DB passwords are never accepted as CLI arguments. Use `--db-password-record` (vault) or respond to the interactive prompt. Dry-run output redacts all credentials.
+
+
 ### JSON format details
 Text UI (TUI) elements (a.k.a. JSON Keys) match their Web UI counterparts so you can create the correponding record type in your web vault to help you visualize all options and possible values.
 
