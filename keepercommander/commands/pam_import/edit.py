@@ -18,8 +18,6 @@ import os.path
 from itertools import chain
 from typing import Any, Dict, Optional, List, Union
 
-MAX_ITERATIONS = 1000
-
 from .keeper_ai_settings import set_resource_jit_settings, set_resource_keeper_ai_settings, refresh_meta_to_latest, refresh_link_to_config_to_latest
 from .base import (
     PAM_RESOURCES_RECORD_TYPES,
@@ -67,6 +65,8 @@ from ...params import LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ...proto import record_pb2, APIRequest_pb2, enterprise_pb2
 from ...recordv3 import RecordV3
 from ...subfolder import BaseFolderNode
+
+MAX_ITERATIONS = 1000
 
 
 class PAMProjectImportCommand(Command):
@@ -245,11 +245,14 @@ class PAMProjectImportCommand(Command):
         if res["root_folder_uid"]:
             START_INDEX: int = 1
             n: int = START_INDEX
-            while n <= MAX_ITERATIONS:
+            while True:
                 folder_name = res["project_folder_target"] if n <= START_INDEX else f"""{res["project_folder_target"]} #{n}"""
                 folders = self.find_folders(params, res["root_folder_uid"], folder_name, False)
                 folders = [x for x in folders if x.type == x.UserFolderType]
                 n += 1
+                if n > MAX_ITERATIONS:
+                    raise CommandError('pam project import',
+                        f'Could not find unique project folder name after {MAX_ITERATIONS} attempts')
                 if len(folders) > 0:
                     continue
                 res["project_folder"] = folder_name
@@ -278,9 +281,6 @@ class PAMProjectImportCommand(Command):
                     self.add_folder_permissions(params, res["resources_folder_uid"], rperm)
                     self.add_folder_permissions(params, res["users_folder_uid"], uperm)
                 break
-            else:
-                raise CommandError('pam project import',
-                    f'Could not find unique project folder name after {MAX_ITERATIONS} attempts')
 
         if project["options"].get("dry_run", False) is True:
             if res["root_folder_uid"]:
