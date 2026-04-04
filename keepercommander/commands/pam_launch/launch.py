@@ -34,6 +34,7 @@ from .terminal_connection import (
     _pam_settings_connection_port,
 )
 from .terminal_size import get_terminal_size_pixels, is_interactive_tty
+from .terminal_reset import reset_local_terminal_after_pam_session
 from .guac_cli.stdin_handler import StdinHandler
 from .guac_cli.input import InputHandler
 from .guac_cli.session_input import CtrlCCoordinator, PasteOrchestrator
@@ -1074,14 +1075,17 @@ class PAMLaunchCommand(Command):
             # Wait for Guacamole ready
             print("Waiting for Guacamole connection...")
 
-            # Clear screen by printing terminal height worth of newlines
-            # This prevents raw mode from overwriting existing screen lines
+            # Clear screen by printing terminal height worth of newlines.
+            # This prevents raw mode from overwriting existing screen lines.
+            # Keep in sync: terminal_reset uses max(current rows, this) at exit.
+            pam_session_start_rows = None
             terminal_height = 24
             try:
                 terminal_size = shutil.get_terminal_size()
                 terminal_height = terminal_size.lines
             except Exception:
                 terminal_height = 24
+            pam_session_start_rows = terminal_height
             print("\n" * terminal_height, end='', flush=True)
 
             guac_ready_timeout = 10.0  # Reduced from 30s - sync triggers readiness quickly
@@ -1210,13 +1214,20 @@ class PAMLaunchCommand(Command):
                         state = tube_registry.get_connection_state(tube_id)
                         if state and state.lower() in ('closed', 'disconnected', 'failed'):
                             logging.debug(f"Tube/connection closed (state: {state}) - exiting")
-                            python_handler.running = False
+                            # Do not set python_handler.running = False here: the input thread would
+                            # still read stdin and send_key/send_stdin would drop bytes (first key
+                            # "eaten" after return to Commander). Stopping order is input_handler
+                            # first in finally, then python_handler.stop() clears running.
+                            shutdown_requested = True
                             break
                     except Exception:
                         # If we can't check state, continue (tube might be closing)
                         pass
                     time.sleep(0.1)
                     elapsed += 0.1
+                    # SIGINT may set shutdown_requested during sleep; exit before resize/status work.
+                    if shutdown_requested or not python_handler.running:
+                        break
 
                     # --- Resize polling (Phase 1: cheap cols/rows check) ---
                     # Check every _RESIZE_POLL_EVERY iterations AND at least
@@ -1241,6 +1252,8 @@ class PAMLaunchCommand(Command):
                                 # Phase 2: size changed - apply debounce then
                                 # fetch exact pixels and send.
                                 if _now - _last_resize_send_time >= _RESIZE_DEBOUNCE:
+                                    if shutdown_requested or not python_handler.running:
+                                        break
                                     try:
                                         _si = get_terminal_size_pixels(_cur_cols, _cur_rows)
                                         python_handler.send_size(
@@ -1269,7 +1282,13 @@ class PAMLaunchCommand(Command):
                         logging.debug(f"[{int(elapsed)}s] Session active (rx={rx}, tx={tx}, syncs={syncs})")
 
             except KeyboardInterrupt:
+                shutdown_requested = True
                 logging.debug("\n\nExiting CLI terminal mode...")
+
+            except Exception as e:
+                shutdown_requested = True
+                logging.debug(f"CLI session loop ended abnormally: {e}")
+                raise
 
             finally:
                 # Stop input handler first (restores terminal)
@@ -1278,6 +1297,15 @@ class PAMLaunchCommand(Command):
                     input_handler.stop()
                 except Exception as e:
                     logging.debug(f"Error stopping input handler: {e}")
+
+                # Fullscreen TUIs (nano, mcedit, etc.) may leave alternate screen /
+                # cursor modes in the outer terminal; restore after raw mode is back.
+                try:
+                    reset_local_terminal_after_pam_session(
+                        session_start_rows=pam_session_start_rows,
+                    )
+                except Exception as e:
+                    logging.debug(f"Terminal reset after pam session: {e}")
 
                 # Cleanup - check if connection is already closed to avoid deadlock
                 logging.debug("Stopping Python handler...")
