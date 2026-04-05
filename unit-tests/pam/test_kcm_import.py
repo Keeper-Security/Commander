@@ -2766,28 +2766,6 @@ class TestGatewayResolution(unittest.TestCase):
         self.assertEqual(result, 'matching-rec-uid')
 
 
-class TestDeployInstructions(unittest.TestCase):
-    """_print_deploy_instructions output verification."""
-
-    def test_deploy_instructions_contain_project_name(self):
-        """Deploy instructions should reference the project name."""
-        with patch('builtins.print') as mock_print:
-            PAMProjectKCMImportCommand._print_deploy_instructions('MyProject')
-
-        output = ' '.join(str(c) for c in mock_print.call_args_list)
-        self.assertIn('MyProject', output)
-        self.assertIn('GATEWAY_CONFIG', output)
-        self.assertIn('docker run', output)
-
-    def test_deploy_instructions_contain_verify_command(self):
-        """Deploy instructions should include verification command."""
-        with patch('builtins.print') as mock_print:
-            PAMProjectKCMImportCommand._print_deploy_instructions('Test')
-
-        output = ' '.join(str(c) for c in mock_print.call_args_list)
-        self.assertIn('pam gateway list', output)
-
-
 class TestIsLocalHost(unittest.TestCase):
     """Direct tests for _is_local_host classification."""
 

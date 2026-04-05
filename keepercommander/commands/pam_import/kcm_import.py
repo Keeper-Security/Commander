@@ -29,6 +29,7 @@ import time
 from typing import Dict, List, Tuple
 
 from ..base import Command
+from ...display import bcolors
 from ...error import CommandError
 from ... import vault, utils
 
@@ -260,9 +261,9 @@ class KCMParameterMapper:
                 }
 
             param_name = row.get('parameter_name')
-            param_value = row.get('parameter_value') or ''
+            param_value = row.get('parameter_value') if row.get('parameter_value') is not None else ''
             attr_name = row.get('attribute_name')
-            attr_value = row.get('attribute_value') or ''
+            attr_value = row.get('attribute_value') if row.get('attribute_value') is not None else ''
 
             if param_name:
                 self._apply_mapping(cid, param_name, param_value,
@@ -511,6 +512,10 @@ class AdaptiveThrottler:
     CALLS_PER_USER = 8        # External login record (measured avg 8.0)
     SECS_PER_CALL = 0.6       # ~100 calls/min = 1 call per 0.6s
 
+    # Probe thresholds
+    PROBE_RTT_THRESHOLD = 30.0     # seconds — RTT above this stops probing
+    PROBE_COOLDOWN_MULTIPLIER = 5  # cooldown = max(10, base_rtt * this)
+
     # Adaptation parameters
     CLEAN_BATCHES_TO_RECOVER = 3   # consecutive clean batches before speeding up
     MIN_DELAY = 3.0                # never go below 3s delay
@@ -578,17 +583,21 @@ class AdaptiveThrottler:
         probe_delays = [8.0, 4.0, 1.0]  # decreasing delays between probes
         probe_was_throttled = False
 
-        logging.warning('[Probe] Measuring server response (3 probe batches)...')
+        logging.warning(f'{bcolors.OKBLUE}[Probe]{bcolors.ENDC} Measuring server response (3 probe batches)...')
 
         for i, probe_delay in enumerate(probe_delays):
             # Build minimal batch JSON (pam_data only to avoid extend "extra data" warning)
-            batch_json = {'pam_data': copy.deepcopy(pam_json['pam_data'])}
+            shared_folders = pam_json['pam_data'].get('shared_folders', [])
             if is_user_probe:
-                batch_json['pam_data']['resources'] = []
-                batch_json['pam_data']['users'] = probe_items
+                batch_json = {'pam_data': {
+                    'shared_folders': shared_folders,
+                    'resources': [], 'users': probe_items,
+                }}
             else:
-                batch_json['pam_data']['resources'] = probe_items
-                batch_json['pam_data']['users'] = []
+                batch_json = {'pam_data': {
+                    'shared_folders': shared_folders,
+                    'resources': probe_items, 'users': [],
+                }}
 
             tmp_fd, tmp_path = tempfile.mkstemp(suffix='.json')
             try:
@@ -607,7 +616,7 @@ class AdaptiveThrottler:
 
                 # Check for throttle signature: RTT > 30s suggests server
                 # injected a backoff (rest_api.py sleeps 30-120s on 403)
-                if rtt > 30.0:
+                if rtt > self.PROBE_RTT_THRESHOLD:
                     probe_was_throttled = True
                     logging.warning('[Probe] Throttle detected at probe %d '
                                     '(RTT=%.1fs > 30s threshold)', i + 1, rtt)
@@ -634,7 +643,7 @@ class AdaptiveThrottler:
             return {'skipped': True, 'reason': 'all probes failed'}
 
         # Compute baseline RTT (median, excluding throttled values)
-        clean_rtts = [r for r in self.probe_rtts if r < 30.0]
+        clean_rtts = [r for r in self.probe_rtts if r < self.PROBE_RTT_THRESHOLD]
         if clean_rtts:
             sorted_rtts = sorted(clean_rtts)
             mid = len(sorted_rtts) // 2
@@ -671,7 +680,8 @@ class AdaptiveThrottler:
 
         # Let the rate window clear after probe before real import starts.
         # The probe's API calls are still in the server's sliding window.
-        cooldown = max(10, int(self.base_rtt * 5)) if not probe_was_throttled else 30
+        cooldown = (max(10, int(self.base_rtt * self.PROBE_COOLDOWN_MULTIPLIER))
+                   if not probe_was_throttled else 30)
         logging.warning('[Probe] Cooldown %ds (clearing rate window)...', cooldown)
         time.sleep(cooldown)
 
@@ -862,7 +872,38 @@ class PAMProjectKCMImportCommand(Command):
         ipaddress.ip_network('192.168.0.0/16'),
     )
 
-    parser = argparse.ArgumentParser(prog='pam project kcm-import')
+    parser = argparse.ArgumentParser(
+        prog='pam project kcm-import',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  # Auto-detect everything from Docker (simplest)
+  pam project kcm-import --docker-detect --name "My KCM Migration"
+
+  # List available connection groups before importing
+  pam project kcm-import --docker-detect --list-groups
+
+  # Import only specific groups
+  pam project kcm-import --docker-detect --groups "Production*,Staging*" --name "Prod"
+
+  # Exclude groups from import
+  pam project kcm-import --docker-detect --exclude-groups "Incomplete*,Test*"
+
+  # Dry-run preview (no vault changes)
+  pam project kcm-import --docker-detect --dry-run --output /tmp/review.json
+
+  # Manual database connection
+  pam project kcm-import --db-host 10.0.0.5 --db-type postgresql --name "Manual"
+
+  # Use password from vault record
+  pam project kcm-import --db-host db.local --db-password-record "KCM DB Creds"
+
+  # Extend an existing PAM project
+  pam project kcm-import --docker-detect --config "Existing Config" --groups "NewGroup*"
+
+  # Non-interactive batch mode
+  pam project kcm-import --docker-detect --name "Auto Import" --yes
+        ''')
 
     # Database options
     parser.add_argument('--db-host', dest='db_host', action='store',
@@ -977,13 +1018,28 @@ class PAMProjectKCMImportCommand(Command):
         db_name = kwargs.get('db_name')
         db_user = kwargs.get('db_user')
 
+        # Validate container name if provided
+        container_arg = kwargs.get('docker_container')
+        if container_arg and not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_.-]*$', container_arg):
+            raise CommandError('kcm-import',
+                f'Invalid container name "{container_arg}". '
+                f'Must match Docker naming rules: [a-zA-Z0-9][a-zA-Z0-9_.-]*')
+
+        # Validate batch parameters
+        batch_size = kwargs.get('batch_size')
+        if batch_size is not None and batch_size < 1:
+            raise CommandError('kcm-import', '--batch-size must be >= 1')
+        batch_delay = kwargs.get('batch_delay')
+        if batch_delay is not None and batch_delay < 0:
+            raise CommandError('kcm-import', '--batch-delay must be >= 0')
+
         # Resolve DB credentials — CLI flags override docker-detected values
         if docker_detect:
             # Auto-discover container if not specified
             container_name = kwargs.get('docker_container')
             if container_name is None:
                 container_name = self._discover_docker_container()
-                logging.warning('Auto-discovered Docker container: %s',
+                logging.warning(f'{bcolors.OKGREEN}Auto-discovered Docker container:{bcolors.ENDC} %s',
                                 container_name)
             else:
                 logging.warning('Using specified Docker container: %s',
@@ -992,7 +1048,7 @@ class PAMProjectKCMImportCommand(Command):
             db_type_explicit = kwargs.get('db_type')
             if db_type_explicit is None:
                 db_type = self._detect_db_type_from_docker(container_name)
-                logging.warning('Auto-detected database type: %s', db_type)
+                logging.warning(f'{bcolors.OKGREEN}Auto-detected database type:{bcolors.ENDC} %s', db_type)
             else:
                 db_type = db_type_explicit
             conn_info, db_password = \
@@ -1012,7 +1068,7 @@ class PAMProjectKCMImportCommand(Command):
         db_user = db_user or 'guacamole_user'
 
         # Connection target for log messages (not a credential)
-        log_target = '{}:{}'.format(db_host, db_port)
+        log_target = f'{db_host}:{db_port}'
 
         # Connect and extract
         db_ssl = kwargs.get('db_ssl', False)
@@ -1263,7 +1319,7 @@ class PAMProjectKCMImportCommand(Command):
         # Validate data before import
         warnings = self._validate_import_data(resources, users, skip_users)
         for w in warnings:
-            logging.warning('Validation: %s', w)
+            logging.warning(f'{bcolors.WARNING}Validation:{bcolors.ENDC} %s', w)
 
         # Pre-import summary + confirmation
         auto_confirm = kwargs.get('auto_confirm', False)
@@ -1282,7 +1338,7 @@ class PAMProjectKCMImportCommand(Command):
         if not config_uid:
             if gateway_arg:
                 resolved_config = self._resolve_gateway(params, gateway_arg)
-            elif not getattr(params, 'batch_mode', False):
+            elif not auto_confirm and not getattr(params, 'batch_mode', False):
                 # Interactive: show gateway picker
                 resolved_config = self._resolve_gateway(params, '')
             if resolved_config:
@@ -1291,17 +1347,23 @@ class PAMProjectKCMImportCommand(Command):
                     params, resolved_config)
                 existing_project = actual_res.rsplit(' - Resources', 1)[0] if actual_res else '(unknown)'
                 gw_label = gateway_arg or 'Selected gateway'
-                print(f'\n{gw_label} belongs to project "{existing_project}".')
-                print(f'  [1] Create a NEW project with its own folders and gateway (recommended)')
-                print(f'  [2] Add records into "{existing_project}" existing folders')
-                print(f'  [3] Cancel import')
-                choice = input('\n  Select [1]: ').strip()
-                if choice == '2':
-                    config_uid = resolved_config
-                    is_new_project = False
-                elif choice == '3':
-                    raise CommandError('kcm-import', 'Import cancelled by user.')
-                # Default (1 or empty): create new project
+                if auto_confirm or getattr(params, 'batch_mode', False):
+                    # --yes or batch mode: default to new project
+                    logging.warning('Gateway "%s" belongs to project "%s" '
+                                    '— creating new project (auto-confirm)',
+                                    gw_label, existing_project)
+                else:
+                    print(f'\n{gw_label} belongs to project "{existing_project}".')
+                    print(f'  [1] Create a NEW project with its own folders and gateway (recommended)')
+                    print(f'  [2] Add records into "{existing_project}" existing folders')
+                    print(f'  [3] Cancel import')
+                    choice = input('\n  Select [1]: ').strip()
+                    if choice == '2':
+                        config_uid = resolved_config
+                        is_new_project = False
+                    elif choice == '3':
+                        raise CommandError('kcm-import', 'Import cancelled by user.')
+                    # Default (1 or empty): create new project
 
         # Phase 1: Create project skeleton if no existing config
         gateway_token = ''
@@ -1379,7 +1441,6 @@ class PAMProjectKCMImportCommand(Command):
                          if all_resources else 0)
         usr_batches_n = ((len(all_users) + usr_batch - 1) // usr_batch
                          if all_users else 0)
-        total_phases = usr_batches_n + res_batches_n
         throttle_mode = 'adaptive' if auto_throttle else 'fixed'
         logging.warning(
             '[Phase 2] Import plan (%s): %d users in %d batches '
@@ -1392,7 +1453,7 @@ class PAMProjectKCMImportCommand(Command):
         try:
             # Phase 2a: External users (RBI login records)
             if all_users:
-                logging.warning('[Phase 2a] Importing %d external users...',
+                logging.warning(f'{bcolors.OKBLUE}[Phase 2a]{bcolors.ENDC} Importing %d external users...',
                                 len(all_users))
                 ui = 0  # user index pointer
                 ub = 0  # batch counter
@@ -1400,9 +1461,11 @@ class PAMProjectKCMImportCommand(Command):
                     batch_size = throttler.usr_batch_size
                     batch_users = all_users[ui:ui + batch_size]
 
-                    batch_json = {'pam_data': copy.deepcopy(pam_json['pam_data'])}
-                    batch_json['pam_data']['resources'] = []
-                    batch_json['pam_data']['users'] = batch_users
+                    batch_json = {'pam_data': {
+                        'shared_folders': pam_json['pam_data'].get('shared_folders', []),
+                        'resources': [],
+                        'users': batch_users,
+                    }}
 
                     if tmp_path and os.path.exists(tmp_path):
                         os.unlink(tmp_path)
@@ -1432,7 +1495,7 @@ class PAMProjectKCMImportCommand(Command):
                                 retries += 1
                                 wait = 60 * retries
                                 logging.warning(
-                                    '  [Throttle] %s — waiting %ds before '
+                                    f'  {bcolors.FAIL}[Throttle]{bcolors.ENDC} %s — waiting %ds before '
                                     'retry %d/3', e, wait, retries)
                                 time.sleep(wait)
                                 throttler.record_batch(
@@ -1460,7 +1523,7 @@ class PAMProjectKCMImportCommand(Command):
                         time.sleep(throttler.usr_delay)
 
                 logging.warning(
-                    '[Phase 2a] Complete: %d users imported in %d batches '
+                    f'{bcolors.OKGREEN}[Phase 2a] Complete{bcolors.ENDC}: %d users imported in %d batches '
                     '[%.0fs]',
                     len(all_users), ub, time.time() - import_start)
 
@@ -1476,9 +1539,11 @@ class PAMProjectKCMImportCommand(Command):
                     batch_size = throttler.res_batch_size
                     batch_resources = all_resources[ri:ri + batch_size]
 
-                    batch_json = {'pam_data': copy.deepcopy(pam_json['pam_data'])}
-                    batch_json['pam_data']['resources'] = batch_resources
-                    batch_json['pam_data']['users'] = []
+                    batch_json = {'pam_data': {
+                        'shared_folders': pam_json['pam_data'].get('shared_folders', []),
+                        'resources': batch_resources,
+                        'users': [],
+                    }}
 
                     if tmp_path and os.path.exists(tmp_path):
                         os.unlink(tmp_path)
@@ -1545,7 +1610,7 @@ class PAMProjectKCMImportCommand(Command):
                         time.sleep(throttler.res_delay)
 
                 logging.warning(
-                    '[Phase 2b] Complete: %d resources imported in %d batches '
+                    f'{bcolors.OKGREEN}[Phase 2b] Complete{bcolors.ENDC}: %d resources imported in %d batches '
                     '[%.0fs]',
                     len(all_resources), rb, time.time() - import_start)
 
@@ -1592,9 +1657,12 @@ class PAMProjectKCMImportCommand(Command):
             )
 
             # Print report to console
-            print(report_text)
+            try:
+                print(report_text)
+            except (BrokenPipeError, OSError):
+                pass
 
-            # Save report as vault record
+            # Save report as vault record (always attempt, even if console broken)
             try:
                 res_sf_name = assets.get('res_sf_name', '')
                 self._create_summary_record(
@@ -1636,9 +1704,12 @@ class PAMProjectKCMImportCommand(Command):
             sys.stdout = original_stdout
             batch_output = stdout_trap.getvalue()
 
-        # Echo captured output
+        # Echo captured output (safe against broken pipes)
         if batch_output:
-            print(batch_output, end='')
+            try:
+                print(batch_output, end='')
+            except (BrokenPipeError, OSError):
+                pass
 
         post_cache = set(params.record_cache.keys())
         new_uids = post_cache - pre_cache
@@ -1843,8 +1914,6 @@ class PAMProjectKCMImportCommand(Command):
                         g2id = g2['connection_group_id']
                         res_n += group_res.get(g2id, 0)
                         usr_n += group_usr.get(g2id, 0)
-                # Also count direct items
-                res_n += group_res.get(gid, 0) - group_res.get(gid, 0)  # already counted
                 if res_n > 0 or usr_n > 0:
                     top_groups.append((name, res_n, usr_n))
 
@@ -1960,7 +2029,7 @@ class PAMProjectKCMImportCommand(Command):
         total = len(resources) + len(users)
         skipped = total - kept
         if skipped > 0:
-            logging.warning('Group filter: keeping %d of %d items '
+            logging.warning(f'{bcolors.WARNING}Group filter:{bcolors.ENDC} keeping %d of %d items '
                             '(%d excluded)', kept, total, skipped)
 
         return filtered_res, filtered_usr
@@ -2155,14 +2224,9 @@ class PAMProjectKCMImportCommand(Command):
                             f'User "{launch_cred}" has no login '
                             f'(required for {protocol})')
                         break
-                # Warn if private key exists but passphrase was dropped
-                for u in matched_users:
-                    if u.get('private_pem_key') and not u.get('passphrase'):
-                        issues.append(
-                            f'User "{launch_cred}" has a private key but '
-                            f'its passphrase was not imported (if the key '
-                            f'is encrypted, authentication will fail)')
-                        break
+                # Note: SSH keys without a passphrase are valid and common.
+                # We don't flag missing passphrase as an issue — the key
+                # may simply be unencrypted.
 
             if not issues:
                 continue
@@ -2526,42 +2590,42 @@ class PAMProjectKCMImportCommand(Command):
             assets = {}
 
         # --- Find the project folder ---
+        # folder_cache contains BaseFolderNode objects with .name and .parent_uid
         target_folder_uid = None
 
-        # Strategy 1: Find the project folder by name
+        # Strategy 1: Find the project folder by name in folder_cache
         if project_name:
-            for folder_uid, folder in params.subfolder_cache.items():
-                name = folder.get('name_unencrypted', '')
-                if name == project_name:
+            for folder_uid, folder in params.folder_cache.items():
+                if getattr(folder, 'name', '') == project_name:
                     target_folder_uid = folder_uid
                     break
 
         # Strategy 2: Walk up from the Resources shared folder
         if not target_folder_uid:
-            for sf_uid, sf in params.shared_folder_cache.items():
-                if sf.get('name_unencrypted', '') == res_folder_name:
-                    sf_folder = params.subfolder_cache.get(sf_uid)
-                    if sf_folder:
-                        parent_uid = sf_folder.get('parent_uid', '')
-                        if parent_uid:
-                            target_folder_uid = parent_uid
+            for folder_uid, folder in params.folder_cache.items():
+                if getattr(folder, 'name', '') == res_folder_name:
+                    parent = getattr(folder, 'parent_uid', '')
+                    if parent:
+                        target_folder_uid = parent
                     break
 
         # Strategy 3: Search PAM Environments root
         if not target_folder_uid and project_name:
-            for folder_uid, folder in params.subfolder_cache.items():
-                name = folder.get('name_unencrypted', '')
-                if name == 'PAM Environments':
-                    for child_uid, child in params.subfolder_cache.items():
-                        child_name = child.get('name_unencrypted', '')
-                        if (child_name == project_name
-                                and child.get('parent_uid') == folder_uid):
-                            target_folder_uid = child_uid
-                            break
+            pam_root_uid = None
+            for folder_uid, folder in params.folder_cache.items():
+                if getattr(folder, 'name', '') == 'PAM Environments':
+                    pam_root_uid = folder_uid
                     break
+            if pam_root_uid:
+                for folder_uid, folder in params.folder_cache.items():
+                    if (getattr(folder, 'name', '') == project_name
+                            and getattr(folder, 'parent_uid', '') == pam_root_uid):
+                        target_folder_uid = folder_uid
+                        break
 
         if not target_folder_uid:
-            logging.debug('Could not find project folder for summary record')
+            logging.warning('Could not find project folder "%s" for report record',
+                            project_name)
             return
 
         # --- Build record with copyable fields ---
@@ -2611,12 +2675,19 @@ class PAMProjectKCMImportCommand(Command):
             fields.append(f'c.text.Project Name={project_name}')
 
         try:
+            # Strip gateway token from notes — it's in a dedicated custom
+            # field and shouldn't be duplicated in the notes text.
+            notes_text = report_text
+            if gw_token:
+                field_ref = '(see "Gateway Access Token" field on this record)'
+                notes_text = notes_text.replace(gw_token, field_ref)
+
             args = {
                 'force': True,
                 'folder': target_folder_uid,
                 'record_type': 'encryptedNotes',
                 'title': title,
-                'notes': report_text,
+                'notes': notes_text,
             }
             if fields:
                 args['fields'] = fields
@@ -2625,7 +2696,7 @@ class PAMProjectKCMImportCommand(Command):
                 logging.warning('Could not create summary record')
                 return
 
-            logging.warning('Import report saved to record: %s (%s)',
+            logging.warning(f'{bcolors.OKGREEN}Import report saved to record:{bcolors.ENDC} %s (%s)',
                             title, uid)
 
             # Attach the full report as a file
@@ -2642,7 +2713,7 @@ class PAMProjectKCMImportCommand(Command):
                         upload_task.title = 'KCM Import Report'
                         upload_task.mime_type = 'text/markdown'
                         att.upload_attachments(params, record, [upload_task])
-                        logging.warning('Report file attached: %s',
+                        logging.warning(f'{bcolors.OKGREEN}Report file attached:{bcolors.ENDC} %s',
                                         upload_task.name)
                     finally:
                         if os.path.exists(tmp_path):
@@ -2652,36 +2723,6 @@ class PAMProjectKCMImportCommand(Command):
 
         except Exception as e:
             logging.warning('Could not create summary record: %s', e)
-
-    @staticmethod
-    def _print_deploy_instructions(project_name):
-        """Print Docker deployment one-liner after gateway creation."""
-        print('\n' + '─' * 60)
-        print('Gateway Deployment')
-        print('─' * 60)
-        print()
-        print('Copy the access_token from above and deploy:')
-        print()
-        print('  # Docker (single instance)')
-        print('  docker run -d --name keeper-gateway \\')
-        print('    -e GATEWAY_CONFIG="<access_token>" \\')
-        print('    -e ACCEPT_EULA=Y \\')
-        print('    --shm-size=2g \\')
-        print('    --restart unless-stopped \\')
-        print('    keeper/gateway:latest')
-        print()
-        print('  # Docker Compose (HA pool)')
-        print('  # Set GATEWAY_CONFIG in .env, then:')
-        print('  # docker compose up -d')
-        print()
-        print('  # Kubernetes')
-        print('  # Use the base64 config as a Secret:')
-        print('  # kubectl create secret generic gateway-config \\')
-        print('  #   --from-literal=GATEWAY_CONFIG="<access_token>"')
-        print()
-        print(f'  # Verify (after deployment):')
-        print(f'  pam gateway list  # should show "{project_name} Gateway" as ONLINE')
-        print('─' * 60)
 
     @staticmethod
     def _resolve_gateway(params, gateway_arg):
@@ -2822,7 +2863,10 @@ class PAMProjectKCMImportCommand(Command):
 
             # Echo the captured output so user still sees it
             if captured_output:
-                print(captured_output, end='')
+                try:
+                    print(captured_output, end='')
+                except (BrokenPipeError, OSError):
+                    pass
 
         finally:
             if os.path.exists(tmp_path):
@@ -3391,7 +3435,20 @@ class PAMProjectKCMCleanupCommand(Command):
         pam project kcm-cleanup --config <PAM_CONFIG_UID>
     """
 
-    parser = argparse.ArgumentParser(prog='pam project kcm-cleanup')
+    parser = argparse.ArgumentParser(
+        prog='pam project kcm-cleanup',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  # Preview what would be deleted
+  pam project kcm-cleanup --name "KCM Migration" --dry-run
+
+  # Delete by project name
+  pam project kcm-cleanup --name "KCM Migration" --yes
+
+  # Delete by PAM config UID
+  pam project kcm-cleanup --config VxANFEPLi8E9gdtlDmfBvw --yes
+        ''')
     parser.add_argument('--name', '-n', dest='project_name', action='store',
                         help='Project name (matches PAM config title prefix)')
     parser.add_argument('--config', '-c', dest='config_uid', action='store',
@@ -3465,11 +3522,11 @@ class PAMProjectKCMCleanupCommand(Command):
         ksm_app_uid = None
         ksm_app_name = None
         if gw_match and gw_match.applicationUid:
-                ksm_app_uid = utils.base64_url_encode(gw_match.applicationUid)
-                # Find app name from shared_folder_cache or record_cache
-                app_rec = vault.KeeperRecord.load(params, ksm_app_uid)
-                if app_rec:
-                    ksm_app_name = getattr(app_rec, 'title', ksm_app_uid)
+            ksm_app_uid = utils.base64_url_encode(gw_match.applicationUid)
+            # Find app name from shared_folder_cache or record_cache
+            app_rec = vault.KeeperRecord.load(params, ksm_app_uid)
+            if app_rec:
+                ksm_app_name = getattr(app_rec, 'title', ksm_app_uid)
 
         # Step 4: Find shared folders
         sf_names = []

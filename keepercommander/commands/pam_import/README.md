@@ -28,28 +28,53 @@ Import directly from a KCM/Guacamole database. Connects to the KCM database, ext
 
 **Database (one of `--db-host` or `--docker-detect` required):**
 - `--db-host HOST` → KCM database hostname.
-- `--docker-detect` → Auto-detect credentials from Docker container (`guacamole`).
+- `--docker-detect` → Auto-detect credentials from Docker container. Discovers the KCM database container automatically, detects database type (mysql/postgresql), and resolves the container IP.
+- `--docker-container NAME` → Specify Docker container name _(auto-discovered if omitted)_.
 - `--db-port PORT` → Database port _(default: 3306 mysql, 5432 postgresql)_.
 - `--db-name NAME` → Database name _(default: guacamole\_db)_.
-- `--db-type {mysql,postgresql}` → Database type _(default: mysql)_.
+- `--db-type {mysql,postgresql}` → Database type _(auto-detected with `--docker-detect`)_.
 - `--db-user USER` → Database username _(default: guacamole\_user)_.
-- `--db-password-record UID` → Keeper record UID containing DB password. If omitted, prompts interactively.
+- `--db-password-record UID` → Keeper record UID or title containing DB password. If omitted, searches vault for candidates or prompts interactively.
 
 **Import:**
 - `--name`, `-n` → Project name _(default: KCM-Import-TIMESTAMP)_.
-- `--config`, `-c` → Existing PAM config UID or title to extend (skip project creation).
+- `--config`, `-c` → Existing PAM config UID or name to extend (skip project creation).
 - `--folder-mode {ksm,exact,flat}` → Connection group mapping _(default: ksm)_.
 - `--output`, `-o` → Save JSON to file for review before importing.
+- `--gateway`, `-g` → Existing gateway UID or name _(interactive picker if omitted)_.
+- `--max-instances N` → Set gateway pool size _(0 = skip, requires new gateway)_.
+
+**Group Filtering:**
+- `--list-groups` → List available KCM connection groups with resource/user counts, then exit.
+- `--groups "Pattern1,Pattern2"` → Import only connections in matching groups. Supports fnmatch wildcards (`*`, `?`). Matches group name, full path, or any path segment.
+- `--exclude-groups "Pattern1,Pattern2"` → Exclude connections in matching groups. Same wildcard support.
 
 **Flags:**
 - `--dry-run`, `-d` → Preview without vault changes (credentials redacted).
 - `--skip-users` → Import connections only.
 - `--include-disabled` → Include disabled KCM connections.
+- `--include-credentials` → Include passwords in `--output` JSON _(redacted by default)_.
+- `--yes`, `-y` → Skip confirmation prompt.
+- `--estimate` → Show migration size estimate without importing.
+
+**Throttling:**
+- `--auto-throttle` / `--no-auto-throttle` → Enable/disable adaptive throttling with probe _(default: on)_.
+- `--batch-size N` → Override records per batch.
+- `--batch-delay N` → Override seconds between batches.
 
 **Examples:**
 ```bash
-# Dry-run preview from a MySQL KCM database
-pam project kcm-import --db-host 127.0.0.1 --name "KCM Migration" --dry-run
+# Full auto-detect from Docker (discovers container, db type, IP, credentials)
+pam project kcm-import --docker-detect --dry-run
+
+# List available connection groups before importing
+pam project kcm-import --docker-detect --list-groups
+
+# Import only specific connection groups
+pam project kcm-import --docker-detect --groups "Production*,Staging*" --name "Prod Migration"
+
+# Exclude groups from import
+pam project kcm-import --db-host 10.0.0.5 --exclude-groups "Incomplete*,Test*"
 
 # Import using password from vault record
 pam project kcm-import --db-host db.example.com --db-password-record RECORD_UID --name "Prod KCM"
@@ -59,9 +84,26 @@ pam project kcm-import --db-host pg.example.com --db-type postgresql --config "E
 
 # Auto-detect from Docker and save JSON for review
 pam project kcm-import --docker-detect --output /tmp/kcm-review.json
+
+# Specify Docker container and save with credentials
+pam project kcm-import --docker-detect --docker-container kcm-db-1 --output /tmp/full.json --include-credentials
 ```
 
 **Security:** DB passwords are never accepted as CLI arguments. Use `--db-password-record` (vault) or respond to the interactive prompt. Dry-run output redacts all credentials.
+
+**Interactive Features:** When running interactively (no `--yes`):
+- **Group picker** — shows connection groups with counts, lets you select by number
+- **Gateway picker** — shows online gateways or create new
+- **Password search** — searches vault for records matching "guacamole"/"kcm"
+- **Import confirmation** — shows summary before proceeding
+
+**Import Report:** After import, a structured report is printed to console and saved as a vault record at the project's top-level folder (alongside Resources/Users). The record includes:
+- **Copyable custom fields**: `Deploy Gateway (copy & paste)` with full docker command, Gateway Token, Config UID, Gateway UID, KSM App UID, folder names
+- `KCM-Import-Report.md` file attachment with the full report
+- Per-record pass/fail breakdown by type (including nested users)
+- Failed/skipped records with reasons
+- Throttle statistics
+- Redacted CLI command for reproducibility
 
 
 ### JSON format details
