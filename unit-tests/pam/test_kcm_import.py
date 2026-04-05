@@ -545,13 +545,17 @@ class TestE2EExecuteDryRun(unittest.TestCase):
         self.assertEqual(len(result['pam_data']['resources']), 3)
 
     @patch('keepercommander.api.sync_down')
+    @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._create_summary_record')
+    @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._get_project_assets',
+           return_value={})
     @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._discover_shared_folder_names',
            return_value=(None, None))
     @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
     @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
            return_value='testdbpass')
     def test_extend_mode_delegates(self, mock_getpass, MockConnector,
-                                   mock_discover, mock_sync):
+                                   mock_discover, mock_assets,
+                                   mock_summary, mock_sync):
         """E2E: --config delegates to PAMProjectExtendCommand."""
         groups, rows = self._mock_db_data()
 
@@ -602,17 +606,21 @@ class TestE2EExecuteDryRun(unittest.TestCase):
         self.assertNotIn('project', captured_data['json'])
 
     @patch('keepercommander.api.sync_down')
+    @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._create_summary_record')
+    @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._get_project_assets',
+           return_value={})
     @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._discover_shared_folder_names',
            return_value=(None, None))
     @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._create_project_skeleton',
-           return_value='skeleton-config-uid')
+           return_value=('skeleton-config-uid', ''))
     @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._resolve_gateway',
            return_value=None)
     @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
     @patch('keepercommander.commands.pam_import.kcm_import.getpass.getpass',
            return_value='testdbpass')
     def test_import_mode_delegates(self, mock_getpass, MockConnector, mock_gw,
-                                   mock_skeleton, mock_discover, mock_sync):
+                                   mock_skeleton, mock_discover,
+                                   mock_assets, mock_summary, mock_sync):
         """E2E: no --config uses 2-phase (skeleton + extend)."""
         groups, rows = self._mock_db_data()
 
@@ -1100,7 +1108,7 @@ class TestE2ETempFileCleanup(unittest.TestCase):
     @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._discover_shared_folder_names',
            return_value=(None, None))
     @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._create_project_skeleton',
-           return_value='skeleton-cfg-uid')
+           return_value=('skeleton-cfg-uid', ''))
     @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._resolve_gateway',
            return_value=None)
     @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
@@ -1559,7 +1567,7 @@ class TestImportConfirmation(unittest.TestCase):
     @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._discover_shared_folder_names',
            return_value=(None, None))
     @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._create_project_skeleton',
-           return_value='skeleton-cfg')
+           return_value=('skeleton-cfg', ''))
     @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._resolve_gateway',
            return_value=None)
     @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
@@ -1588,10 +1596,13 @@ class TestImportConfirmation(unittest.TestCase):
         mock_skeleton.assert_not_called()
 
     @patch('keepercommander.api.sync_down')
+    @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._create_summary_record')
+    @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._get_project_assets',
+           return_value={})
     @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._discover_shared_folder_names',
            return_value=(None, None))
     @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._create_project_skeleton',
-           return_value='skeleton-cfg')
+           return_value=('skeleton-cfg', ''))
     @patch('keepercommander.commands.pam_import.kcm_import.PAMProjectKCMImportCommand._resolve_gateway',
            return_value=None)
     @patch('keepercommander.commands.pam_import.kcm_import.KCMDatabaseConnector')
@@ -1599,7 +1610,7 @@ class TestImportConfirmation(unittest.TestCase):
            return_value='pass')
     def test_yes_flag_skips_prompt(self, mock_getpass, MockConnector,
                                    mock_gw, mock_skeleton, mock_discover,
-                                   mock_sync):
+                                   mock_assets, mock_summary, mock_sync):
         """--yes flag should skip the confirmation prompt entirely."""
         mock_conn = MockConnector.return_value
         mock_conn.extract_groups.return_value = []
@@ -2879,10 +2890,10 @@ class TestAdaptiveThrottler(unittest.TestCase):
         # res_batch = 35/20 = 1, usr_batch = 35/8 = 4
         self.assertEqual(t._optimal_res_batch, 1)
         self.assertEqual(t._optimal_usr_batch, 4)
-        # res_delay = max(3.0, 1 * 20 * 0.3) = 6.0
-        self.assertAlmostEqual(t._optimal_res_delay, 6.0, places=1)
-        # usr_delay = max(3.0, 4 * 8 * 0.3) = 9.6
-        self.assertAlmostEqual(t._optimal_usr_delay, 9.6, places=1)
+        # res_delay = max(3.0, 1 * 20 * 0.6) = 12.0
+        self.assertAlmostEqual(t._optimal_res_delay, 12.0, places=1)
+        # usr_delay = max(3.0, 4 * 8 * 0.6) = 19.2
+        self.assertAlmostEqual(t._optimal_usr_delay, 19.2, places=1)
 
     def test_compute_optimal_with_throttle(self):
         """Probe throttle: conservative params."""
@@ -3241,6 +3252,461 @@ class TestKCMCleanupCommand(unittest.TestCase):
 
         mock_comm.assert_not_called()
         mock_del.assert_not_called()
+
+
+class TestDetectDbType(unittest.TestCase):
+    """Tests for _detect_db_type_from_docker."""
+
+    @patch('subprocess.run')
+    def test_postgresql_detected(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='POSTGRES_USER=guac\nPOSTGRES_PASSWORD=secret\n')
+        result = PAMProjectKCMImportCommand._detect_db_type_from_docker('db-1')
+        self.assertEqual(result, 'postgresql')
+
+    @patch('subprocess.run')
+    def test_mysql_detected(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='MYSQL_USER=guac\nMYSQL_PASSWORD=secret\n')
+        result = PAMProjectKCMImportCommand._detect_db_type_from_docker('db-1')
+        self.assertEqual(result, 'mysql')
+
+    @patch('subprocess.run')
+    def test_both_prefers_postgresql(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='POSTGRES_PASSWORD=x\nMYSQL_PASSWORD=y\n')
+        result = PAMProjectKCMImportCommand._detect_db_type_from_docker('db-1')
+        self.assertEqual(result, 'postgresql')
+
+    @patch('subprocess.run')
+    def test_fallback_mysql(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout='PATH=/usr/bin\nHOME=/root\n')
+        result = PAMProjectKCMImportCommand._detect_db_type_from_docker('db-1')
+        self.assertEqual(result, 'mysql')
+
+    @patch('subprocess.run', side_effect=FileNotFoundError)
+    def test_docker_not_found(self, mock_run):
+        result = PAMProjectKCMImportCommand._detect_db_type_from_docker('db-1')
+        self.assertEqual(result, 'mysql')
+
+
+class TestDiscoverDockerContainer(unittest.TestCase):
+    """Tests for _discover_docker_container."""
+
+    @patch('subprocess.run')
+    def test_single_candidate(self, mock_run):
+        def side_effect(cmd, **kw):
+            if 'ps' in cmd:
+                return MagicMock(returncode=0, stdout='web-1\ndb-1\nredis-1\n')
+            # docker inspect for each container
+            name = cmd[-1]
+            if name == 'db-1':
+                return MagicMock(returncode=0,
+                                 stdout='POSTGRES_PASSWORD=secret\n')
+            return MagicMock(returncode=0, stdout='PATH=/usr/bin\n')
+        mock_run.side_effect = side_effect
+        result = PAMProjectKCMImportCommand._discover_docker_container()
+        self.assertEqual(result, 'db-1')
+
+    @patch('subprocess.run')
+    def test_kcm_db_preferred(self, mock_run):
+        """Prefer container with 'kcm' + 'db' in name over others."""
+        def side_effect(cmd, **kw):
+            if 'ps' in cmd:
+                return MagicMock(returncode=0,
+                                 stdout='app-db-1\nkcm-setup-db-1\nother-db-1\n')
+            return MagicMock(returncode=0,
+                             stdout='POSTGRES_PASSWORD=secret\n')
+        mock_run.side_effect = side_effect
+        result = PAMProjectKCMImportCommand._discover_docker_container()
+        self.assertEqual(result, 'kcm-setup-db-1')
+
+    @patch('subprocess.run')
+    def test_guacamole_db_preferred(self, mock_run):
+        """Prefer container with 'guacamole' + 'db' over just 'guacamole'."""
+        def side_effect(cmd, **kw):
+            if 'ps' in cmd:
+                return MagicMock(returncode=0,
+                                 stdout='app-db-1\nguacamole-db-1\nguacamole-app-1\n')
+            return MagicMock(returncode=0,
+                             stdout='POSTGRES_PASSWORD=secret\n')
+        mock_run.side_effect = side_effect
+        result = PAMProjectKCMImportCommand._discover_docker_container()
+        self.assertEqual(result, 'guacamole-db-1')
+
+    @patch('subprocess.run')
+    def test_no_candidates_raises(self, mock_run):
+        def side_effect(cmd, **kw):
+            if 'ps' in cmd:
+                return MagicMock(returncode=0, stdout='web-1\nredis-1\n')
+            return MagicMock(returncode=0, stdout='PATH=/usr/bin\n')
+        mock_run.side_effect = side_effect
+        with self.assertRaises(CommandError):
+            PAMProjectKCMImportCommand._discover_docker_container()
+
+
+class TestBuildRedactedCommand(unittest.TestCase):
+    """Tests for _build_redacted_command."""
+
+    def test_redacts_password_record(self):
+        kwargs = {
+            'docker_detect': True,
+            'db_type': 'postgresql',
+            'db_host': '192.168.64.5',
+            'db_password_record': 'secret-uid-123',
+            'auto_confirm': True,
+        }
+        result = PAMProjectKCMImportCommand._build_redacted_command(kwargs)
+        self.assertIn('--docker-detect', result)
+        self.assertIn('--db-type "postgresql"', result)
+        self.assertIn('--db-host "192.168.64.5"', result)
+        self.assertIn('[REDACTED]', result)
+        self.assertNotIn('secret-uid-123', result)
+        self.assertIn('--yes', result)
+
+    def test_empty_kwargs(self):
+        result = PAMProjectKCMImportCommand._build_redacted_command({})
+        self.assertEqual(result, 'pam project kcm-import')
+
+
+class TestBuildImportReport(unittest.TestCase):
+    """Tests for _build_import_report."""
+
+    def test_report_contains_sections(self):
+        report = PAMProjectKCMImportCommand._build_import_report(
+            project_name='Test Project',
+            config_uid='cfg-123',
+            is_new_project=True,
+            assets={'gateway_name': 'Test GW', 'gateway_uid': 'gw-1',
+                    'app_uid': 'app-1',
+                    'res_sf_name': 'Test - Resources', 'res_sf_uid': 'sf-1',
+                    'usr_sf_name': 'Test - Users', 'usr_sf_uid': 'sf-2'},
+            num_resources=100,
+            num_users=50,
+            created=145,
+            expected=150,
+            total_time=3600.0,
+            throttler_summary={
+                'throttle_count': 2, 'total_batches': 50,
+                'final_res_batch': 1, 'final_res_delay': 12.0,
+                'final_usr_batch': 4, 'final_usr_delay': 19.0,
+                'base_rtt': 1.5},
+            warnings=['5 records missing password'],
+            kwargs={'docker_detect': True, 'db_type': 'postgresql'},
+        )
+        self.assertIn('Test Project', report)
+        self.assertIn('PROJECT ASSETS', report)
+        self.assertIn('Test GW', report)
+        self.assertIn('IMPORT RESULTS', report)
+        self.assertIn('145', report)
+        self.assertIn('THROTTLE STATISTICS', report)
+        self.assertIn('WARNINGS', report)
+        self.assertIn('GATEWAY DEPLOYMENT', report)
+        self.assertIn('NEXT STEPS', report)
+        self.assertIn('COMMAND (redacted)', report)
+
+    def test_no_gateway_deploy_for_extend(self):
+        report = PAMProjectKCMImportCommand._build_import_report(
+            project_name='Existing',
+            config_uid='cfg-456',
+            is_new_project=False,
+            assets={},
+            num_resources=10,
+            num_users=5,
+            created=15,
+            expected=15,
+            total_time=60.0,
+            throttler_summary={'throttle_count': 0, 'total_batches': 5,
+                               'final_res_batch': 2, 'final_res_delay': 12.0,
+                               'final_usr_batch': 4, 'final_usr_delay': 19.0},
+            warnings=[],
+            kwargs={},
+        )
+        self.assertNotIn('GATEWAY DEPLOYMENT', report)
+        self.assertIn('EXISTING', report)
+
+    def test_report_includes_gateway_token(self):
+        """Gateway token should appear in report when captured."""
+        report = PAMProjectKCMImportCommand._build_import_report(
+            project_name='Token Project',
+            config_uid='cfg-789',
+            is_new_project=True,
+            assets={'gateway_name': 'GW', 'gateway_uid': 'gw-1',
+                    'gateway_token': 'MY_SECRET_TOKEN_123'},
+            num_resources=5, num_users=2, created=7, expected=7,
+            total_time=30.0, throttler_summary=None, warnings=[],
+            kwargs={},
+        )
+        self.assertIn('GATEWAY DEPLOYMENT', report)
+        self.assertIn('Access Token: MY_SECRET_TOKEN_123', report)
+        self.assertIn('GATEWAY_CONFIG="MY_SECRET_TOKEN_123"', report)
+
+    def test_report_missing_token_placeholder(self):
+        """When no token captured, report shows placeholder."""
+        report = PAMProjectKCMImportCommand._build_import_report(
+            project_name='No Token',
+            config_uid='cfg-000',
+            is_new_project=True,
+            assets={},
+            num_resources=5, num_users=2, created=7, expected=7,
+            total_time=30.0, throttler_summary=None, warnings=[],
+            kwargs={},
+        )
+        self.assertIn('Token not captured', report)
+        self.assertIn('<access_token>', report)
+
+    def test_report_per_record_breakdown(self):
+        """Per-record tracking should render in the report."""
+        results = [
+            {'name': 'Server1', 'type': 'pamMachine', 'phase': 'resource',
+             'status': 'ok', 'reason': ''},
+            {'name': 'Server2', 'type': 'pamMachine', 'phase': 'resource',
+             'status': 'ok', 'reason': ''},
+            {'name': 'DB1', 'type': 'pamDatabase', 'phase': 'resource',
+             'status': 'skipped', 'reason': 'missing field X'},
+            {'name': 'admin', 'type': 'pamUser', 'phase': 'user',
+             'status': 'ok', 'reason': ''},
+            {'name': 'broke_user', 'type': 'login', 'phase': 'user',
+             'status': 'error', 'reason': 'API timeout'},
+        ]
+        report = PAMProjectKCMImportCommand._build_import_report(
+            project_name='Detail Test',
+            config_uid='cfg-det',
+            is_new_project=False,
+            assets={},
+            num_resources=3, num_users=2, created=3, expected=5,
+            total_time=120.0, throttler_summary=None, warnings=[],
+            kwargs={}, import_results=results,
+        )
+        self.assertIn('FAILED / SKIPPED RECORDS', report)
+        self.assertIn('RECORD BREAKDOWN', report)
+        self.assertIn('SKIP', report)
+        self.assertIn('ERR', report)
+        self.assertIn('pamMachine', report)
+        self.assertIn('pamDatabase', report)
+        self.assertIn('DB1', report)
+        self.assertIn('broke_user', report)
+        # Check the breakdown table has TOTAL row
+        self.assertIn('TOTAL', report)
+
+    def test_report_no_failures_no_detail_section(self):
+        """When all records succeed, no FAILED section shown."""
+        results = [
+            {'name': 'Server1', 'type': 'pamMachine', 'phase': 'resource',
+             'status': 'ok', 'reason': ''},
+        ]
+        report = PAMProjectKCMImportCommand._build_import_report(
+            project_name='All OK',
+            config_uid='cfg-ok',
+            is_new_project=False,
+            assets={},
+            num_resources=1, num_users=0, created=1, expected=1,
+            total_time=10.0, throttler_summary=None, warnings=[],
+            kwargs={}, import_results=results,
+        )
+        self.assertNotIn('FAILED / SKIPPED RECORDS', report)
+        self.assertIn('RECORD BREAKDOWN', report)
+
+
+class TestCreateProjectSkeletonReturn(unittest.TestCase):
+    """Test that _create_project_skeleton returns (config_uid, gateway_token)."""
+
+    @patch('keepercommander.vault_extensions')
+    @patch('keepercommander.api.sync_down')
+    @patch('keepercommander.commands.pam_import.edit.PAMProjectImportCommand.execute')
+    def test_captures_gateway_token(self, mock_edit_execute, mock_sync, mock_ve):
+        """Skeleton creation should capture access_token from edit.py output."""
+
+        # edit.py's execute prints JSON with access_token
+        def fake_execute(params, **kw):
+            print(json.dumps({
+                'access_token': 'CAPTURED_TOKEN_XYZ',
+                'device_uid': 'dev-1',
+            }, indent=2))
+
+        mock_edit_execute.side_effect = fake_execute
+
+        # Mock vault_extensions.find_records to return a config
+        mock_cfg = MagicMock()
+        mock_cfg.title = 'TestProj Configuration'
+        mock_cfg.record_uid = 'cfg-uid-001'
+        mock_ve.find_records.return_value = [mock_cfg]
+
+        params = MagicMock()
+        params.record_cache = {}
+
+        pam_json = {
+            'project': 'TestProj',
+            'pam_data': {'resources': [{'title': 'x'}], 'users': []},
+        }
+
+        config_uid, gw_token = PAMProjectKCMImportCommand._create_project_skeleton(
+            params, 'TestProj', pam_json)
+
+        self.assertEqual(config_uid, 'cfg-uid-001')
+        self.assertEqual(gw_token, 'CAPTURED_TOKEN_XYZ')
+
+    @patch('keepercommander.vault_extensions')
+    @patch('keepercommander.api.sync_down')
+    @patch('keepercommander.commands.pam_import.edit.PAMProjectImportCommand.execute')
+    def test_returns_empty_token_when_not_captured(self, mock_edit_execute, mock_sync, mock_ve):
+        """When edit.py doesn't print token, returns empty string."""
+        mock_edit_execute.side_effect = lambda params, **kw: print('no token here')
+
+        mock_cfg = MagicMock()
+        mock_cfg.title = 'TestProj Configuration'
+        mock_cfg.record_uid = 'cfg-uid-002'
+        mock_ve.find_records.return_value = [mock_cfg]
+
+        params = MagicMock()
+        params.record_cache = {}
+
+        pam_json = {
+            'project': 'TestProj',
+            'pam_data': {'resources': [], 'users': []},
+        }
+
+        config_uid, gw_token = PAMProjectKCMImportCommand._create_project_skeleton(
+            params, 'TestProj', pam_json)
+
+        self.assertEqual(config_uid, 'cfg-uid-002')
+        self.assertEqual(gw_token, '')
+
+
+class TestFilterByGroups(unittest.TestCase):
+    """Tests for _filter_by_groups."""
+
+    def _make_groups(self):
+        return [
+            {'connection_group_id': 1, 'connection_group_name': 'Production',
+             'parent_id': None, 'ksm_config': None},
+            {'connection_group_id': 2, 'connection_group_name': 'Staging',
+             'parent_id': None, 'ksm_config': None},
+            {'connection_group_id': 3, 'connection_group_name': 'SSH Connections',
+             'parent_id': 1, 'ksm_config': None},
+            {'connection_group_id': 4, 'connection_group_name': 'Incomplete Stuff',
+             'parent_id': None, 'ksm_config': None},
+            {'connection_group_id': 5, 'connection_group_name': 'Test Lab',
+             'parent_id': 2, 'ksm_config': None},
+        ]
+
+    def _make_items(self):
+        resources = [
+            {'title': 'Prod SSH 1', '_group_id': 3},
+            {'title': 'Prod SSH 2', '_group_id': 3},
+            {'title': 'Staging DB', '_group_id': 2},
+            {'title': 'Root Item', '_group_id': None},
+            {'title': 'Incomplete Box', '_group_id': 4},
+            {'title': 'Test VM', '_group_id': 5},
+        ]
+        users = [
+            {'title': 'admin', '_group_id': 1},
+            {'title': 'tester', '_group_id': 5},
+        ]
+        return resources, users
+
+    def test_include_filter_wildcard(self):
+        groups = self._make_groups()
+        resolver = KCMGroupResolver(groups, mode='exact')
+        resources, users = self._make_items()
+        filtered_res, filtered_usr = PAMProjectKCMImportCommand._filter_by_groups(
+            resources, users, groups, resolver,
+            include_pattern='Production*', exclude_pattern='')
+        titles = [r['title'] for r in filtered_res]
+        self.assertIn('Prod SSH 1', titles)
+        self.assertIn('Prod SSH 2', titles)
+        self.assertNotIn('Staging DB', titles)
+        self.assertNotIn('Root Item', titles)
+        # admin is in group 1 (Production) — should match via path segment
+        usr_titles = [u['title'] for u in filtered_usr]
+        self.assertIn('admin', usr_titles)
+
+    def test_exclude_filter_wildcard(self):
+        groups = self._make_groups()
+        resolver = KCMGroupResolver(groups, mode='exact')
+        resources, users = self._make_items()
+        filtered_res, filtered_usr = PAMProjectKCMImportCommand._filter_by_groups(
+            resources, users, groups, resolver,
+            include_pattern='', exclude_pattern='Incomplete*,Test*')
+        titles = [r['title'] for r in filtered_res]
+        self.assertIn('Prod SSH 1', titles)
+        self.assertIn('Staging DB', titles)
+        self.assertNotIn('Incomplete Box', titles)
+        self.assertNotIn('Test VM', titles)
+        # Root items excluded when any filter is active
+        self.assertNotIn('Root Item', titles)
+
+    def test_include_excludes_root_items(self):
+        groups = self._make_groups()
+        resolver = KCMGroupResolver(groups, mode='exact')
+        resources, users = self._make_items()
+        filtered_res, _ = PAMProjectKCMImportCommand._filter_by_groups(
+            resources, users, groups, resolver,
+            include_pattern='Staging*', exclude_pattern='')
+        titles = [r['title'] for r in filtered_res]
+        self.assertNotIn('Root Item', titles)
+        self.assertIn('Staging DB', titles)
+        self.assertIn('Test VM', titles)  # child of Staging
+
+    def test_combined_include_and_exclude(self):
+        groups = self._make_groups()
+        resolver = KCMGroupResolver(groups, mode='exact')
+        resources, users = self._make_items()
+        filtered_res, _ = PAMProjectKCMImportCommand._filter_by_groups(
+            resources, users, groups, resolver,
+            include_pattern='Staging*',
+            exclude_pattern='Test*')
+        titles = [r['title'] for r in filtered_res]
+        self.assertIn('Staging DB', titles)
+        self.assertNotIn('Test VM', titles)  # excluded by Test*
+
+    def test_no_filters_returns_all(self):
+        groups = self._make_groups()
+        resolver = KCMGroupResolver(groups, mode='exact')
+        resources, users = self._make_items()
+        filtered_res, filtered_usr = PAMProjectKCMImportCommand._filter_by_groups(
+            resources, users, groups, resolver,
+            include_pattern='', exclude_pattern='')
+        self.assertEqual(len(filtered_res), len(resources))
+        self.assertEqual(len(filtered_usr), len(users))
+
+    def test_no_match_returns_empty(self):
+        groups = self._make_groups()
+        resolver = KCMGroupResolver(groups, mode='exact')
+        resources, users = self._make_items()
+        filtered_res, filtered_usr = PAMProjectKCMImportCommand._filter_by_groups(
+            resources, users, groups, resolver,
+            include_pattern='NonExistent*', exclude_pattern='')
+        self.assertEqual(len(filtered_res), 0)
+        self.assertEqual(len(filtered_usr), 0)
+
+
+class TestGetContainerIp(unittest.TestCase):
+    """Tests for _get_container_ip."""
+
+    @patch('subprocess.run')
+    def test_returns_first_ip(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout='192.168.64.5 172.17.0.3 ')
+        ip = PAMProjectKCMImportCommand._get_container_ip('mydb')
+        self.assertEqual(ip, '192.168.64.5')
+
+    @patch('subprocess.run')
+    def test_returns_empty_on_failure(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1, stdout='')
+        ip = PAMProjectKCMImportCommand._get_container_ip('missing')
+        self.assertEqual(ip, '')
+
+    @patch('subprocess.run')
+    def test_handles_timeout(self, mock_run):
+        import subprocess
+        mock_run.side_effect = subprocess.TimeoutExpired('docker', 10)
+        ip = PAMProjectKCMImportCommand._get_container_ip('slow')
+        self.assertEqual(ip, '')
 
 
 if __name__ == '__main__':
