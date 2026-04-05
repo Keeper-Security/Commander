@@ -19,7 +19,6 @@ import ipaddress
 import json
 import logging
 import os
-import socket
 import subprocess
 import tempfile
 import time
@@ -139,14 +138,24 @@ class KCMDatabaseConnector:
                 'PostgreSQL driver not found. Install psycopg2: pip3 install psycopg2-binary')
 
     def validate_schema(self):
+        required_tables = [
+            'guacamole_connection',
+            'guacamole_connection_parameter',
+            'guacamole_connection_group',
+        ]
         try:
+            placeholders = ','.join(f"'{t}'" for t in required_tables)
             self.cursor.execute(
-                "SELECT 1 FROM information_schema.tables "
-                "WHERE table_name = 'guacamole_connection'"
+                "SELECT table_name FROM information_schema.tables "
+                f"WHERE table_name IN ({placeholders})"
             )
-            if not self.cursor.fetchone():
+            found = {row['table_name'] if isinstance(row, dict)
+                     else row[0] for row in self.cursor.fetchall()}
+            missing = [t for t in required_tables if t not in found]
+            if missing:
                 raise CommandError('kcm-import',
-                    'KCM schema not found: guacamole_connection table does not exist')
+                    f'KCM schema not found: missing table(s) '
+                    f'{", ".join(missing)}')
         except CommandError:
             raise
         except Exception as e:
@@ -181,7 +190,11 @@ def _set_nested(d, dotted_path, value):
     """Set a value in a nested dict using a dotted key path."""
     keys = dotted_path.split('.')
     for key in keys[:-1]:
-        d = d.setdefault(key, {})
+        child = d.get(key)
+        if not isinstance(child, dict):
+            child = {}
+            d[key] = child
+        d = child
     d[keys[-1]] = value
 
 
@@ -266,7 +279,10 @@ class KCMParameterMapper:
             resource['host'] = value
             return
         if arg == 'port':
-            resource['pam_settings']['connection']['port'] = value
+            try:
+                resource['pam_settings']['connection']['port'] = str(int(value))
+            except (ValueError, TypeError):
+                resource['pam_settings']['connection']['port'] = value
             return
         if arg.startswith('totp-') and value:
             self._handle_totp(user, arg, value)
@@ -302,7 +318,7 @@ class KCMParameterMapper:
         if mapping == 'ignore':
             return
         if mapping == 'log':
-            logging.debug('KCM parameter logged but not mapped: %s', value)
+            logging.debug('KCM parameter not mapped (action=log)')
             return
         if mapping is None:
             return
@@ -987,7 +1003,8 @@ class PAMProjectKCMImportCommand(Command):
         except Exception as e:
             logging.debug('Database error: %s: %s', type(e).__name__, e)
             raise CommandError('kcm-import',
-                               f'Database connection failed: {type(e).__name__}: {e}')
+                               f'Database connection failed: {type(e).__name__}. '
+                               f'Use --debug for details.')
         finally:
             connector.close()
             # Clear credentials from memory (best effort — Python strings are immutable)
@@ -1665,7 +1682,7 @@ class PAMProjectKCMImportCommand(Command):
                     issues.append(
                         f'SFTP enabled but missing: {", ".join(missing_sftp)}')
 
-            # Check user login for protocols that require it
+            # Check user login and passphrase for protocols that require it
             launch_cred = conn.get('launch_credentials', '')
             if protocol in login_required and launch_cred:
                 matched_users = user_by_title.get(launch_cred, [])
@@ -1674,6 +1691,14 @@ class PAMProjectKCMImportCommand(Command):
                         issues.append(
                             f'User "{launch_cred}" has no login '
                             f'(required for {protocol})')
+                        break
+                # Warn if private key exists but passphrase was dropped
+                for u in matched_users:
+                    if u.get('private_pem_key') and not u.get('passphrase'):
+                        issues.append(
+                            f'User "{launch_cred}" has a private key but '
+                            f'its passphrase was not imported (if the key '
+                            f'is encrypted, authentication will fail)')
                         break
 
             if not issues:
@@ -2023,7 +2048,11 @@ class PAMProjectKCMImportCommand(Command):
 
     @staticmethod
     def _is_local_host(host):
-        """Check if host is a local/private address (no SSL warning needed)."""
+        """Check if host is a local/private address (no SSL warning needed).
+
+        Only trusts literal IP addresses and 'localhost'. Does NOT resolve
+        hostnames via DNS to prevent TOCTOU / SSRF bypass of SSL enforcement.
+        """
         if not host:
             return False
         if host in ('localhost', '127.0.0.1', '::1'):
@@ -2031,11 +2060,8 @@ class PAMProjectKCMImportCommand(Command):
         try:
             addr = ipaddress.ip_address(host)
         except ValueError:
-            try:
-                resolved = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-                addr = ipaddress.ip_address(resolved[0][4][0])
-            except (socket.gaierror, IndexError, ValueError):
-                return False
+            # Hostname, not a literal IP — treat as remote (require SSL)
+            return False
         if addr.is_loopback:
             return True
         return any(addr in net for net in PAMProjectKCMImportCommand._PRIVATE_NETS)
@@ -2056,12 +2082,12 @@ class PAMProjectKCMImportCommand(Command):
         try:
             result = subprocess.run(
                 ['docker', 'inspect', '--format',
-                 '{{range .Config.Env}}{{println .}}{{end}}', container],
+                 '{{range .Config.Env}}{{println .}}{{end}}', '--', container],
                 capture_output=True, text=True, timeout=10
             )
         except (subprocess.TimeoutExpired, FileNotFoundError) as e:
             raise CommandError('kcm-import',
-                f'Docker inspect failed: {e}')
+                f'Docker inspect failed: {type(e).__name__}')
 
         if result.returncode != 0:
             logging.debug('Docker stderr: %s', result.stderr.strip())
@@ -2139,7 +2165,7 @@ class PAMProjectKCMImportCommand(Command):
             result = subprocess.run(
                 ['docker', 'inspect', '--format',
                  '{{range $net, $conf := .NetworkSettings.Networks}}'
-                 '{{$net}} {{end}}', source_container],
+                 '{{$net}} {{end}}', '--', source_container],
                 capture_output=True, text=True, timeout=10
             )
             if result.returncode != 0:
@@ -2189,7 +2215,7 @@ class PAMProjectKCMImportCommand(Command):
         def _walk(obj):
             if isinstance(obj, dict):
                 for k, v in obj.items():
-                    if k in sensitive_keys and isinstance(v, str) and v:
+                    if k in sensitive_keys and v:
                         obj[k] = '[REDACTED]'
                     else:
                         _walk(v)
@@ -2263,6 +2289,7 @@ class PAMProjectKCMCleanupCommand(Command):
         # Step 2: Find the gateway
         gateway_uid = None
         gateway_name = None
+        gw_match = None
         try:
             controller = configuration_controller_get(
                 params, CommonHelperMethods.url_safe_str_to_bytes(
@@ -2280,11 +2307,7 @@ class PAMProjectKCMCleanupCommand(Command):
         # Step 3: Find the KSM app
         ksm_app_uid = None
         ksm_app_name = None
-        if gateway_uid:
-            all_gw = gateway_helper.get_all_gateways(params)
-            gw_match = next((g for g in all_gw
-                             if g.controllerUid == gateway_uid), None)
-            if gw_match and gw_match.applicationUid:
+        if gw_match and gw_match.applicationUid:
                 ksm_app_uid = utils.base64_url_encode(gw_match.applicationUid)
                 # Find app name from shared_folder_cache or record_cache
                 app_rec = vault.KeeperRecord.load(params, ksm_app_uid)
@@ -2343,11 +2366,11 @@ class PAMProjectKCMCleanupCommand(Command):
             if answer not in ('y', 'yes'):
                 raise CommandError('kcm-cleanup', 'Cleanup cancelled.')
 
-        # Step 6: Delete records
+        # Step 6: Delete records (same API as api.delete_record but batched
+        # to avoid N individual sync_down calls)
         deleted_count = 0
         if record_uids:
             logging.warning('Deleting %d records...', len(record_uids))
-            # Batch delete to avoid overwhelming the API
             uid_list = list(record_uids)
             batch_size = 50
             for i in range(0, len(uid_list), batch_size):

@@ -25,6 +25,7 @@ from keepercommander.commands.pam_import.kcm_import import (
     KCMGroupResolver,
     KCMParameterMapper,
     PAMProjectKCMImportCommand,
+    PAMProjectKCMCleanupCommand,
     _set_nested,
 )
 
@@ -33,11 +34,12 @@ def _make_row(connection_id=1, name='TestConn', protocol='ssh',
               parameter_name=None, parameter_value=None,
               attribute_name=None, attribute_value=None,
               connection_group_id=None, parent_id=None,
-              group_name=None):
+              group_name=None, max_connections=None):
     return {
         'connection_id': connection_id,
         'name': name,
         'protocol': protocol,
+        'max_connections': max_connections,
         'parameter_name': parameter_name,
         'parameter_value': parameter_value,
         'connection_group_id': connection_group_id,
@@ -3168,6 +3170,77 @@ class TestDiscoverSharedFolderNames(unittest.TestCase):
 
         self.assertIsNone(res)
         self.assertIsNone(usr)
+
+
+class TestKCMCleanupCommand(unittest.TestCase):
+    """Tests for PAMProjectKCMCleanupCommand."""
+
+    def test_missing_args_raises(self):
+        """Should require --name or --config."""
+        cmd = PAMProjectKCMCleanupCommand()
+        params = MagicMock()
+        with self.assertRaises(CommandError) as ctx:
+            cmd.execute(params)
+        self.assertIn('--name or --config', str(ctx.exception))
+
+    @patch('keepercommander.api.sync_down')
+    def test_config_not_found_raises(self, mock_sync):
+        """Should raise if config UID doesn't exist in vault."""
+        cmd = PAMProjectKCMCleanupCommand()
+        params = MagicMock()
+        with patch('keepercommander.commands.pam_import.kcm_import.vault.KeeperRecord.load',
+                   return_value=None):
+            with self.assertRaises(CommandError) as ctx:
+                cmd.execute(params, config_uid='nonexistent')
+        self.assertIn('not found', str(ctx.exception))
+
+    @patch('keepercommander.api.sync_down')
+    def test_project_name_not_found_raises(self, mock_sync):
+        """Should raise if project name doesn't match any config."""
+        cmd = PAMProjectKCMCleanupCommand()
+        params = MagicMock()
+        params.shared_folder_cache = {}
+        params.folder_cache = {}
+        params.subfolder_record_cache = {}
+
+        # vault_extensions is imported locally inside execute()
+        mock_ve = MagicMock()
+        mock_ve.find_records.return_value = []
+        with patch.dict('sys.modules',
+                        {'keepercommander.vault_extensions': mock_ve}):
+            with self.assertRaises(CommandError) as ctx:
+                cmd.execute(params, project_name='DoesNotExist')
+        self.assertIn('not found', str(ctx.exception))
+
+    @patch('keepercommander.api.sync_down')
+    @patch('keepercommander.api.communicate')
+    @patch('keepercommander.api.delete_record')
+    def test_dry_run_no_deletions(self, mock_del, mock_comm, mock_sync):
+        """Dry run should not delete anything."""
+        cmd = PAMProjectKCMCleanupCommand()
+        params = MagicMock()
+        params.shared_folder_cache = {}
+        params.folder_cache = {}
+        params.subfolder_record_cache = {}
+
+        mock_config = MagicMock()
+        mock_config.title = 'TestProject Configuration'
+        mock_config.record_uid = 'cfg_uid_123'
+
+        mock_config_helper = MagicMock()
+        mock_config_helper.configuration_controller_get.side_effect = Exception('skip')
+        mock_gw_helper = MagicMock()
+
+        with patch('keepercommander.commands.pam_import.kcm_import.vault.KeeperRecord.load',
+                   return_value=mock_config):
+            with patch.dict('sys.modules', {
+                'keepercommander.commands.pam.config_helper': mock_config_helper,
+                'keepercommander.commands.pam.gateway_helper': mock_gw_helper,
+            }):
+                cmd.execute(params, config_uid='cfg_uid_123', dry_run=True)
+
+        mock_comm.assert_not_called()
+        mock_del.assert_not_called()
 
 
 if __name__ == '__main__':
