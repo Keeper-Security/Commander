@@ -587,7 +587,8 @@ class TestE2EExecuteDryRun(unittest.TestCase):
                         db_host='127.0.0.1',
                         db_type='mysql',
                         config='existing-pam-config-uid',
-                        auto_confirm=True)
+                        auto_confirm=True,
+                        auto_throttle=False)
 
         # Phase 2a (users) + 2b (resources) = multiple extend calls
         self.assertGreaterEqual(mock_extend_cmd.execute.call_count, 2)
@@ -645,7 +646,8 @@ class TestE2EExecuteDryRun(unittest.TestCase):
                         db_host='127.0.0.1',
                         db_type='mysql',
                         project_name='Import Test',
-                        auto_confirm=True)
+                        auto_confirm=True,
+                        auto_throttle=False)
 
         # Phase 1: skeleton was created
         mock_skeleton.assert_called_once()
@@ -1431,7 +1433,7 @@ class TestEstimate(unittest.TestCase):
         """Verify API call estimate math."""
         resources = self._make_resources(['pamMachine'] * 10)
         users = self._make_users(5)
-        # Expected: 20 (setup) + 10*34 (resources) + 5*6 (users) = 390
+        # Expected: 20 (setup) + 10*20 (resources) + 5*8 (users) = 260
         from io import StringIO
         import sys
         captured = StringIO()
@@ -1443,7 +1445,7 @@ class TestEstimate(unittest.TestCase):
                 include_disabled=False, total_connections=10)
         finally:
             sys.stdout = old_stdout
-        self.assertIn('~  390', captured.getvalue())
+        self.assertIn('~  260', captured.getvalue())
 
     def test_estimate_sftp_no_extra_api_calls(self):
         """SFTP connection settings should NOT add extra API calls (not separate records)."""
@@ -1467,8 +1469,8 @@ class TestEstimate(unittest.TestCase):
         output = captured.getvalue()
         # SFTP is a connection setting, not separate records — no extra line
         self.assertNotIn('SFTP sub-resources', output)
-        # 20 (setup) + 2*34 (resources) + 0 (users) = 88
-        self.assertIn('~   88', output)
+        # 20 (setup) + 2*20 (resources) + 0 (users) = 60
+        self.assertIn('~   60', output)
 
     def test_estimate_duration_formatting(self):
         """Duration formatter should handle seconds, minutes, and hours."""
@@ -1619,7 +1621,8 @@ class TestImportConfirmation(unittest.TestCase):
              patch('builtins.input') as mock_input:
             cmd.execute(params, db_host='127.0.0.1',
                         project_name='Auto Test',
-                        auto_confirm=True)
+                        auto_confirm=True,
+                        auto_throttle=False)
 
         # input() should NOT have been called
         mock_input.assert_not_called()
@@ -1961,19 +1964,6 @@ _LIVE_DB_USER = os.environ.get('KCM_TEST_DB_USER', 'guacamole_user')
 _LIVE_DB_PASS = os.environ.get('KCM_TEST_DB_PASS', '')
 _LIVE_DB_TYPE = os.environ.get('KCM_TEST_DB_TYPE', 'postgresql')
 _LIVE_DOCKER_CONTAINER = os.environ.get('KCM_TEST_DOCKER', 'guacamole-postgres')
-
-
-def _db_available():
-    """Check if the live KCM database is reachable."""
-    try:
-        conn = KCMDatabaseConnector(
-            _LIVE_DB_TYPE, _LIVE_DB_HOST, _LIVE_DB_PORT,
-            _LIVE_DB_USER, _LIVE_DB_PASS, _LIVE_DB_NAME)
-        conn.connect()
-        conn.close()
-        return True
-    except Exception:
-        return False
 
 
 _SKIP_LIVE = not os.environ.get('KCM_TEST_DB_HOST')
@@ -2853,6 +2843,201 @@ class TestComputeBatchParams(unittest.TestCase):
             200, 60, override_size=None, override_delay=5.0)
         self.assertEqual(res, 2)
         self.assertEqual(delay, 5.0)
+
+
+class TestAdaptiveThrottler(unittest.TestCase):
+    """AdaptiveThrottler: probe-based adaptive batch parameter management."""
+
+    def test_defaults(self):
+        """Default state: enabled, standard batch params."""
+        from keepercommander.commands.pam_import.kcm_import import AdaptiveThrottler
+        t = AdaptiveThrottler()
+        self.assertTrue(t.enabled)
+        self.assertEqual(t.res_batch_size, 2)
+        self.assertEqual(t.usr_batch_size, 8)
+        self.assertEqual(t.res_delay, 15.0)
+        self.assertEqual(t.usr_delay, 15.0)
+        self.assertEqual(t.throttle_count, 0)
+
+    def test_disabled_skips_adaptation(self):
+        """When disabled, record_batch does nothing."""
+        from keepercommander.commands.pam_import.kcm_import import AdaptiveThrottler
+        t = AdaptiveThrottler(enabled=False)
+        result = t.record_batch(100.0, 2, is_resource=True)
+        self.assertFalse(result['adapted'])
+        self.assertEqual(t.res_batch_size, 2)  # unchanged
+
+    def test_compute_optimal_no_throttle(self):
+        """No throttle: budget-based batch, call-proportional delays."""
+        from keepercommander.commands.pam_import.kcm_import import AdaptiveThrottler
+        t = AdaptiveThrottler()
+        t.base_rtt = 3.0  # fast server
+        t._compute_optimal_params(probe_throttled=False)
+        # budget = 50 * 0.7 = 35
+        # res_batch = 35/20 = 1, usr_batch = 35/8 = 4
+        self.assertEqual(t._optimal_res_batch, 1)
+        self.assertEqual(t._optimal_usr_batch, 4)
+        # res_delay = max(3.0, 1 * 20 * 0.3) = 6.0
+        self.assertAlmostEqual(t._optimal_res_delay, 6.0, places=1)
+        # usr_delay = max(3.0, 4 * 8 * 0.3) = 9.6
+        self.assertAlmostEqual(t._optimal_usr_delay, 9.6, places=1)
+
+    def test_compute_optimal_with_throttle(self):
+        """Probe throttle: conservative params."""
+        from keepercommander.commands.pam_import.kcm_import import AdaptiveThrottler
+        t = AdaptiveThrottler()
+        t.base_rtt = 5.0
+        t._compute_optimal_params(probe_throttled=True)
+        self.assertEqual(t._optimal_res_batch, 1)
+        # delay = max(15.0, 5.0 * 3) = 15.0
+        self.assertEqual(t._optimal_res_delay, 15.0)
+        self.assertEqual(t._optimal_usr_delay, 15.0)
+
+    def test_adapt_down_on_slow_batch(self):
+        """Throttle detected: only offending type's batch halved, delay doubled."""
+        from keepercommander.commands.pam_import.kcm_import import AdaptiveThrottler
+        t = AdaptiveThrottler()
+        t.base_rtt = 2.0
+        t.res_batch_size = 4
+        t.usr_batch_size = 8
+        t.res_delay = 10.0
+        t.usr_delay = 5.0
+        # Simulate a very slow resource batch (triggers throttle detection)
+        result = t.record_batch(200.0, 4, is_resource=True)
+        self.assertTrue(result['adapted'])
+        self.assertEqual(result['direction'], 'down')
+        self.assertEqual(t.res_batch_size, 2)   # halved
+        self.assertEqual(t.usr_batch_size, 8)    # untouched
+        self.assertEqual(t.res_delay, 20.0)      # doubled
+        self.assertEqual(t.usr_delay, 5.0)       # untouched
+        self.assertEqual(t.throttle_count, 1)
+
+    def test_adapt_up_after_clean_batches(self):
+        """Recovery: batch_size increases after N clean batches (type-specific)."""
+        from keepercommander.commands.pam_import.kcm_import import AdaptiveThrottler
+        t = AdaptiveThrottler()
+        t.base_rtt = 2.0
+        t._optimal_res_batch = 3
+        t._optimal_usr_batch = 8
+        t._optimal_res_delay = 5.0
+        t._optimal_usr_delay = 5.0
+        t.res_batch_size = 1    # currently below optimal
+        t.res_delay = 20.0      # currently above optimal
+        t.usr_delay = 5.0
+        # Need CLEAN_BATCHES_TO_RECOVER (3) clean batches
+        for i in range(2):
+            result = t.record_batch(3.0, 1, is_resource=True)
+            self.assertFalse(result['adapted'])
+        # 3rd clean batch triggers recovery
+        result = t.record_batch(3.0, 1, is_resource=True)
+        self.assertTrue(result['adapted'])
+        self.assertEqual(result['direction'], 'up')
+        self.assertEqual(t.res_batch_size, 2)    # 1 → 2
+        self.assertLess(t.res_delay, 20.0)       # decreased
+        self.assertEqual(t.usr_delay, 5.0)        # untouched
+
+    def test_no_recover_above_optimal(self):
+        """Don't speed up beyond optimal params."""
+        from keepercommander.commands.pam_import.kcm_import import AdaptiveThrottler
+        t = AdaptiveThrottler()
+        t.base_rtt = 2.0
+        t._optimal_res_batch = 2
+        t._optimal_usr_batch = 8
+        t._optimal_res_delay = 5.0
+        t._optimal_usr_delay = 5.0
+        t.res_batch_size = 2  # already at optimal
+        t.usr_batch_size = 8
+        t.res_delay = 5.0     # already at optimal
+        for _ in range(5):
+            result = t.record_batch(3.0, 2, is_resource=True)
+            self.assertFalse(result['adapted'])
+        # Params unchanged
+        self.assertEqual(t.res_batch_size, 2)
+        self.assertEqual(t.res_delay, 5.0)
+
+    def test_adapt_down_min_batch_size(self):
+        """batch_size never goes below 1."""
+        from keepercommander.commands.pam_import.kcm_import import AdaptiveThrottler
+        t = AdaptiveThrottler()
+        t.base_rtt = 2.0
+        t.res_batch_size = 1
+        t.res_delay = 10.0
+        # Simulate throttle
+        t.record_batch(200.0, 1, is_resource=True)
+        self.assertEqual(t.res_batch_size, 1)  # floor
+        self.assertEqual(t.res_delay, 20.0)
+
+    def test_adapt_down_max_delay(self):
+        """delay never exceeds MAX_DELAY."""
+        from keepercommander.commands.pam_import.kcm_import import AdaptiveThrottler
+        t = AdaptiveThrottler()
+        t.base_rtt = 2.0
+        t.res_delay = 40.0
+        t.record_batch(200.0, 1, is_resource=True)  # throttle
+        self.assertEqual(t.res_delay, 60.0)  # MAX_DELAY
+        t.record_batch(200.0, 1, is_resource=True)  # throttle again
+        self.assertEqual(t.res_delay, 60.0)  # capped
+
+    def test_summary(self):
+        """get_summary returns all fields."""
+        from keepercommander.commands.pam_import.kcm_import import AdaptiveThrottler
+        t = AdaptiveThrottler()
+        t.base_rtt = 2.5
+        t.probe_rtts = [2.0, 2.5, 3.0]
+        t.record_batch(3.0, 1, is_resource=True)
+        s = t.get_summary()
+        self.assertEqual(s['base_rtt'], 2.5)
+        self.assertEqual(s['probe_rtts'], [2.0, 2.5, 3.0])
+        self.assertEqual(s['total_batches'], 1)
+        self.assertIn('final_res_batch', s)
+        self.assertIn('final_res_delay', s)
+        self.assertIn('final_usr_delay', s)
+
+    def test_probe_skipped_when_disabled(self):
+        """Probe skipped when auto_throttle=False."""
+        from keepercommander.commands.pam_import.kcm_import import AdaptiveThrottler
+        t = AdaptiveThrottler(enabled=False)
+        result = t.run_probe(None, None, {'pam_data': {'resources': [], 'users': []}}, None)
+        self.assertTrue(result['skipped'])
+
+    def test_probe_skipped_no_records(self):
+        """Probe skipped when no records to probe with."""
+        from keepercommander.commands.pam_import.kcm_import import AdaptiveThrottler
+        t = AdaptiveThrottler()
+        result = t.run_probe(None, 'cfg', {'pam_data': {'resources': [], 'users': []}}, None)
+        self.assertTrue(result['skipped'])
+
+    def test_user_batch_adaptation_independent(self):
+        """User throttle only affects user params, not resource params."""
+        from keepercommander.commands.pam_import.kcm_import import AdaptiveThrottler
+        t = AdaptiveThrottler()
+        t.base_rtt = 1.0
+        t.usr_batch_size = 6
+        t.res_batch_size = 2
+        t.usr_delay = 10.0
+        t.res_delay = 8.0
+        # Throttle on user batch
+        t.record_batch(200.0, 6, is_resource=False)
+        self.assertEqual(t.usr_batch_size, 3)     # halved
+        self.assertEqual(t.res_batch_size, 2)     # untouched
+        self.assertEqual(t.usr_delay, 20.0)       # doubled
+        self.assertEqual(t.res_delay, 8.0)        # untouched
+
+    def test_consecutive_clean_resets_on_throttle(self):
+        """Throttle resets the clean batch counter."""
+        from keepercommander.commands.pam_import.kcm_import import AdaptiveThrottler
+        t = AdaptiveThrottler()
+        t.base_rtt = 2.0
+        t._optimal_res_batch = 5
+        t.res_batch_size = 1
+        t.res_delay = 15.0
+        # 2 clean batches
+        t.record_batch(3.0, 1, is_resource=True)
+        t.record_batch(3.0, 1, is_resource=True)
+        self.assertEqual(t.consecutive_clean, 2)
+        # Throttle resets counter
+        t.record_batch(200.0, 1, is_resource=True)
+        self.assertEqual(t.consecutive_clean, 0)
 
 
 class TestRewriteFolderPaths(unittest.TestCase):

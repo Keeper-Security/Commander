@@ -465,6 +465,367 @@ class KCMGroupResolver:
         return sorted(folders)
 
 
+class AdaptiveThrottler:
+    """Probe-based adaptive batch throttler for Keeper API imports.
+
+    Sends small probe batches before the real import to measure server
+    response times, then computes optimal batch parameters. During import,
+    continuously monitors batch timing and adjusts if throttles are detected
+    or headroom is available.
+
+    The API rate limit is global per device token (~50 calls before HTTP 403).
+    Each record type has a known API call cost:
+      - Resource + nested user: ~20 calls (measured avg 19.2)
+      - External user (login): ~8 calls (measured avg 8.0)
+
+    Batch sizes are bounded by: budget / calls_per_record.
+    Delays are per-type: proportional to calls_per_batch so the rate window
+    can absorb each batch before the next one starts.
+
+    Adaptation is type-specific:
+      On throttle: only the offending type's batch_size halved, delay doubled
+      On recovery:  3 clean batches → type's batch_size += 1, delay *= 0.85
+    """
+
+    # API call costs per record type (measured via instrumentation)
+    CALLS_PER_RESOURCE = 20   # PAM resource + nested user (measured avg 19.2)
+    CALLS_PER_USER = 8        # External login record (measured avg 8.0)
+    SECS_PER_CALL = 0.3       # Empirical: ~100-120 calls/min rate limit
+
+    # Adaptation parameters
+    CLEAN_BATCHES_TO_RECOVER = 3   # consecutive clean batches before speeding up
+    MIN_DELAY = 3.0                # never go below 3s delay
+    MAX_DELAY = 60.0               # never exceed 60s delay
+    MIN_BATCH_SIZE = 1
+    MAX_BATCH_SIZE = 10
+
+    # Throttle detection: if batch takes longer than
+    # base_rtt * batch_size * THROTTLE_RATIO, consider it throttled.
+    # Ratio > 3x the expected time means the server injected backoff.
+    THROTTLE_RATIO = 3.0
+    # Minimum absolute headroom (seconds) to avoid false positives on
+    # small batches where even a short network hiccup looks like 3x.
+    THROTTLE_HEADROOM_SECS = 30.0
+
+    def __init__(self, enabled=True):
+        self.enabled = enabled
+        self.probe_rtts = []        # round-trip times from probe batches
+        self.base_rtt = None        # median probe RTT
+
+        # Active batch parameters (set after probe or from defaults)
+        self.res_batch_size = 2
+        self.usr_batch_size = 8
+        self.res_delay = 15.0
+        self.usr_delay = 15.0
+
+        # Runtime state
+        self.throttle_count = 0
+        self.consecutive_clean = 0
+        self.total_batches = 0
+
+        # Optimal values (computed from probe, used as floor for recovery)
+        self._optimal_res_batch = 2
+        self._optimal_usr_batch = 8
+        self._optimal_res_delay = 15.0
+        self._optimal_usr_delay = 15.0
+
+    def run_probe(self, params, config_uid, pam_json, extend_cmd_factory):
+        """Run probe batches to measure server response characteristics.
+
+        Sends 3 single-record probe batches with decreasing delays (10s, 5s, 2s)
+        to determine the server's baseline RTT and throttle sensitivity.
+
+        Args:
+            params: Keeper session params
+            config_uid: PAM config UID for extend calls
+            pam_json: Full PAM JSON (used as template for probe batches)
+            extend_cmd_factory: Callable returning a PAMProjectExtendCommand instance
+
+        Returns:
+            dict with probe results: base_rtt, probed_window, recommended params
+        """
+        if not self.enabled:
+            return {'skipped': True, 'reason': 'auto-throttle disabled'}
+
+        all_resources = pam_json['pam_data'].get('resources', [])
+        all_users = pam_json['pam_data'].get('users', [])
+
+        # Pick a small probe record (prefer users — cheaper at ~8 API calls)
+        probe_items = all_users[:1] if all_users else all_resources[:1]
+        if not probe_items:
+            return {'skipped': True, 'reason': 'no records to probe with'}
+        is_user_probe = bool(all_users)
+
+        probe_delays = [8.0, 4.0, 1.0]  # decreasing delays between probes
+        probe_was_throttled = False
+
+        logging.warning('[Probe] Measuring server response (3 probe batches)...')
+
+        for i, probe_delay in enumerate(probe_delays):
+            # Build minimal batch JSON
+            batch_json = copy.deepcopy(pam_json)
+            if is_user_probe:
+                batch_json['pam_data']['resources'] = []
+                batch_json['pam_data']['users'] = probe_items
+            else:
+                batch_json['pam_data']['resources'] = probe_items
+                batch_json['pam_data']['users'] = []
+
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix='.json')
+            try:
+                with os.fdopen(tmp_fd, 'w') as tmp:
+                    json.dump(batch_json, tmp, indent=2)
+
+                batch_start = time.time()
+                cmd = extend_cmd_factory()
+                cmd.execute(params, config=config_uid,
+                            file_name=tmp_path, dry_run=False)
+                rtt = time.time() - batch_start
+                self.probe_rtts.append(rtt)
+
+                logging.warning('[Probe %d/3] RTT=%.1fs (delay before next: %.0fs)',
+                                i + 1, rtt, probe_delay if i < 2 else 0)
+
+                # Check for throttle signature: RTT > 30s suggests server
+                # injected a backoff (rest_api.py sleeps 30-120s on 403)
+                if rtt > 30.0:
+                    probe_was_throttled = True
+                    logging.warning('[Probe] Throttle detected at probe %d '
+                                    '(RTT=%.1fs > 30s threshold)', i + 1, rtt)
+                    break  # Don't stress the server further
+
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+
+            if i < len(probe_delays) - 1:
+                time.sleep(probe_delay)
+
+        if not self.probe_rtts:
+            return {'skipped': True, 'reason': 'all probes failed'}
+
+        # Compute baseline RTT (median, excluding throttled values)
+        clean_rtts = [r for r in self.probe_rtts if r < 30.0]
+        if clean_rtts:
+            sorted_rtts = sorted(clean_rtts)
+            mid = len(sorted_rtts) // 2
+            self.base_rtt = sorted_rtts[mid]
+        else:
+            # All probes were slow — server is heavily throttled
+            self.base_rtt = min(self.probe_rtts)
+
+        # Compute optimal parameters from probe data
+        self._compute_optimal_params(probe_was_throttled)
+
+        result = {
+            'base_rtt': self.base_rtt,
+            'probe_rtts': self.probe_rtts,
+            'throttle_detected': probe_was_throttled,
+            'optimal_res_batch': self._optimal_res_batch,
+            'optimal_usr_batch': self._optimal_usr_batch,
+            'optimal_res_delay': self._optimal_res_delay,
+            'optimal_usr_delay': self._optimal_usr_delay,
+        }
+
+        logging.warning(
+            '[Probe] Results: base_rtt=%.1fs, throttle=%s → '
+            'res: batch=%d delay=%.0fs, usr: batch=%d delay=%.0fs',
+            self.base_rtt, probe_was_throttled,
+            self._optimal_res_batch, self._optimal_res_delay,
+            self._optimal_usr_batch, self._optimal_usr_delay)
+
+        # Apply optimal params
+        self.res_batch_size = self._optimal_res_batch
+        self.usr_batch_size = self._optimal_usr_batch
+        self.res_delay = self._optimal_res_delay
+        self.usr_delay = self._optimal_usr_delay
+
+        # Let the rate window clear after probe before real import starts.
+        # The probe's API calls are still in the server's sliding window.
+        cooldown = max(10, int(self.base_rtt * 5)) if not probe_was_throttled else 30
+        logging.warning('[Probe] Cooldown %ds (clearing rate window)...', cooldown)
+        time.sleep(cooldown)
+
+        return result
+
+    def _compute_optimal_params(self, probe_throttled):
+        """Compute optimal batch parameters from probe results.
+
+        The API rate limit is global (~50 calls before HTTP 403 on EU).
+        Batch sizes are bounded by: budget / calls_per_record.
+        Delays are per-type: calls_per_batch * SECS_PER_CALL, so each
+        batch's API calls can be absorbed by the server's rate window
+        before the next batch starts.
+        """
+        # API call budget: stay under 70% of throttle window per batch
+        budget = 50 * 0.7  # ~35 calls safe per batch
+
+        if probe_throttled:
+            # Server is already rate-limiting — very conservative
+            self._optimal_res_batch = 1
+            self._optimal_usr_batch = 2
+            self._optimal_res_delay = max(15.0, self.base_rtt * 3)
+            self._optimal_usr_delay = max(15.0, self.base_rtt * 3)
+        else:
+            # Batch size = budget / calls_per_record, capped at MAX_BATCH
+            self._optimal_res_batch = max(
+                self.MIN_BATCH_SIZE,
+                min(self.MAX_BATCH_SIZE,
+                    int(budget / self.CALLS_PER_RESOURCE)))
+            self._optimal_usr_batch = max(
+                self.MIN_BATCH_SIZE,
+                min(self.MAX_BATCH_SIZE,
+                    int(budget / self.CALLS_PER_USER)))
+            # Delay per type: proportional to API calls in the batch.
+            # This gives heavier batches more time for the rate window
+            # to absorb and prevents oscillating throttle/recovery.
+            res_calls = self._optimal_res_batch * self.CALLS_PER_RESOURCE
+            usr_calls = self._optimal_usr_batch * self.CALLS_PER_USER
+            self._optimal_res_delay = max(
+                self.MIN_DELAY, res_calls * self.SECS_PER_CALL)
+            self._optimal_usr_delay = max(
+                self.MIN_DELAY, usr_calls * self.SECS_PER_CALL)
+
+    def record_batch(self, batch_elapsed, num_records, is_resource=True):
+        """Record a completed batch and adapt parameters if needed.
+
+        Throttle detection is purely timing-based: if the batch took more
+        than THROTTLE_RATIO × the expected time (based on probe RTT),
+        the server likely injected a backoff.
+
+        Args:
+            batch_elapsed: Wall-clock time for the batch (seconds)
+            num_records: Number of records in the batch
+            is_resource: True for resource batches, False for user batches
+
+        Returns:
+            dict with adaptation info (for logging)
+        """
+        self.total_batches += 1
+        if not self.enabled:
+            return {'adapted': False}
+
+        # Expected time scales linearly with records. Use base_rtt as
+        # per-record baseline. Resources are ~5x heavier than users.
+        if self.base_rtt and self.base_rtt > 0:
+            weight = 5.0 if is_resource else 1.0
+            expected = num_records * self.base_rtt * weight + 5.0
+        else:
+            expected = num_records * (15.0 if is_resource else 3.0) + 10.0
+
+        # Throttle = batch took much longer than expected
+        threshold = max(expected * self.THROTTLE_RATIO,
+                        expected + self.THROTTLE_HEADROOM_SECS)
+        throttled = batch_elapsed > threshold
+
+        if throttled:
+            return self._adapt_down(batch_elapsed, expected, is_resource)
+        else:
+            return self._adapt_up(is_resource)
+
+    def _adapt_down(self, batch_elapsed, expected_time, is_resource):
+        """Throttle detected — reduce the offending type's batch size and
+        increase its delay.  The other type is left untouched."""
+        self.throttle_count += 1
+        self.consecutive_clean = 0
+
+        if is_resource:
+            old_batch = self.res_batch_size
+            old_delay = self.res_delay
+            self.res_batch_size = max(self.MIN_BATCH_SIZE,
+                                      self.res_batch_size // 2)
+            self.res_delay = min(self.MAX_DELAY, self.res_delay * 2)
+            logging.warning(
+                '  [Throttle #%d] Resource batch took %.0fs (expected ~%.0fs). '
+                'Adjusting: res_batch %d→%d, res_delay %.0fs→%.0fs',
+                self.throttle_count, batch_elapsed, expected_time,
+                old_batch, self.res_batch_size,
+                old_delay, self.res_delay)
+        else:
+            old_batch = self.usr_batch_size
+            old_delay = self.usr_delay
+            self.usr_batch_size = max(self.MIN_BATCH_SIZE,
+                                      self.usr_batch_size // 2)
+            self.usr_delay = min(self.MAX_DELAY, self.usr_delay * 2)
+            logging.warning(
+                '  [Throttle #%d] User batch took %.0fs (expected ~%.0fs). '
+                'Adjusting: usr_batch %d→%d, usr_delay %.0fs→%.0fs',
+                self.throttle_count, batch_elapsed, expected_time,
+                old_batch, self.usr_batch_size,
+                old_delay, self.usr_delay)
+
+        return {
+            'adapted': True, 'direction': 'down',
+            'res_batch': self.res_batch_size,
+            'usr_batch': self.usr_batch_size,
+            'res_delay': self.res_delay,
+            'usr_delay': self.usr_delay,
+        }
+
+    def _adapt_up(self, is_resource):
+        """Clean batch — potentially increase the current type's throughput."""
+        self.consecutive_clean += 1
+
+        if self.consecutive_clean < self.CLEAN_BATCHES_TO_RECOVER:
+            return {'adapted': False}
+
+        changed = False
+
+        if is_resource:
+            old_batch = self.res_batch_size
+            old_delay = self.res_delay
+            if self.res_batch_size < self._optimal_res_batch:
+                self.res_batch_size = min(self._optimal_res_batch,
+                                          self.res_batch_size + 1)
+                changed = True
+            if self.res_delay > self._optimal_res_delay:
+                self.res_delay = max(self._optimal_res_delay,
+                                     self.res_delay * 0.85)
+                changed = True
+            if changed:
+                self.consecutive_clean = 0
+                logging.warning(
+                    '  [Recovery] %d clean batches → res_batch %d→%d, '
+                    'res_delay %.0fs→%.0fs',
+                    self.CLEAN_BATCHES_TO_RECOVER,
+                    old_batch, self.res_batch_size,
+                    old_delay, self.res_delay)
+        else:
+            old_batch = self.usr_batch_size
+            old_delay = self.usr_delay
+            if self.usr_batch_size < self._optimal_usr_batch:
+                self.usr_batch_size = min(self._optimal_usr_batch,
+                                          self.usr_batch_size + 1)
+                changed = True
+            if self.usr_delay > self._optimal_usr_delay:
+                self.usr_delay = max(self._optimal_usr_delay,
+                                     self.usr_delay * 0.85)
+                changed = True
+            if changed:
+                self.consecutive_clean = 0
+                logging.warning(
+                    '  [Recovery] %d clean batches → usr_batch %d→%d, '
+                    'usr_delay %.0fs→%.0fs',
+                    self.CLEAN_BATCHES_TO_RECOVER,
+                    old_batch, self.usr_batch_size,
+                    old_delay, self.usr_delay)
+
+        return {'adapted': changed, 'direction': 'up' if changed else 'none'}
+
+    def get_summary(self):
+        """Return summary dict for post-import stats."""
+        return {
+            'probe_rtts': self.probe_rtts,
+            'base_rtt': self.base_rtt,
+            'throttle_count': self.throttle_count,
+            'total_batches': self.total_batches,
+            'final_res_batch': self.res_batch_size,
+            'final_usr_batch': self.usr_batch_size,
+            'final_res_delay': self.res_delay,
+            'final_usr_delay': self.usr_delay,
+        }
+
+
 class PAMProjectKCMImportCommand(Command):
     _PRIVATE_NETS = (
         ipaddress.ip_network('10.0.0.0/8'),
@@ -543,6 +904,12 @@ class PAMProjectKCMImportCommand(Command):
     parser.add_argument('--batch-delay', dest='batch_delay', type=float,
                         default=None,
                         help='Seconds to wait between batches (default: 10)')
+    parser.add_argument('--auto-throttle', dest='auto_throttle',
+                        action='store_true', default=True,
+                        help='Enable adaptive throttling with probe (default: on)')
+    parser.add_argument('--no-auto-throttle', dest='auto_throttle',
+                        action='store_false',
+                        help='Disable adaptive throttling, use fixed batch params')
 
     def get_parser(self):
         return PAMProjectKCMImportCommand.parser
@@ -854,21 +1221,9 @@ class PAMProjectKCMImportCommand(Command):
             pam_json['pam_data']['shared_folders'] = [actual_res, actual_usr]
 
         # Phase 2: Populate records via batched extend calls.
-        #
-        # API call costs (traced through extend.py → base.py → rest_api):
-        #   External user (login):    ~6 calls (create + BreachWatch + syncs)
-        #   Non-RBI resource:        ~20 calls (create + DAG + tunnel + syncs)
-        #   Nested pamUser:          ~14 calls (create + DAG + rotation)
-        #   RBI resource:            ~20 calls (create + DAG + tunnel + syncs)
-        #   New folder:               ~2 calls (create + sync)
-        #
-        # Keeper EU throttle window: ~50 requests triggers HTTP 403 with 60s
-        # backoff. Batching with delays between extend.py calls avoids this.
-        #
-        # Phase 2a: Import external users (RBI login records) in small batches
-        # Phase 2b: Import resources (with nested users) — users=[] since
-        #           external users already exist in vault and are found by
-        #           title match in extend.py's map_records().
+        # Phase 2a: External users (login records) in small batches
+        # Phase 2b: Resources (with nested users) — users=[] since external
+        #           users already exist and are found by title match.
 
         from .extend import PAMProjectExtendCommand
         from ... import api
@@ -876,38 +1231,72 @@ class PAMProjectKCMImportCommand(Command):
         all_resources = pam_json['pam_data']['resources']
         all_users = pam_json['pam_data']['users']
 
-        # Auto-scale batch sizes based on import volume
-        res_batch, usr_batch, delay = self._compute_batch_params(
-            len(all_resources), len(all_users),
-            kwargs.get('batch_size'), kwargs.get('batch_delay'))
+        # Set up adaptive throttler
+        auto_throttle = kwargs.get('auto_throttle', True)
+        override_size = kwargs.get('batch_size')
+        override_delay = kwargs.get('batch_delay')
+        # Disable adaptive throttle if user set manual batch params
+        if override_size is not None or override_delay is not None:
+            auto_throttle = False
+
+        throttler = AdaptiveThrottler(enabled=auto_throttle)
+
+        if auto_throttle:
+            # Probe phase: measure server response before importing
+            probe_result = throttler.run_probe(
+                params, config_uid, pam_json,
+                extend_cmd_factory=PAMProjectExtendCommand)
+            if probe_result.get('skipped'):
+                logging.info('[Probe] Skipped: %s — using static params',
+                             probe_result.get('reason', 'unknown'))
+                # Fall back to static params
+                res_batch, usr_batch, delay = self._compute_batch_params(
+                    len(all_resources), len(all_users), None, None)
+                throttler.res_batch_size = res_batch
+                throttler.usr_batch_size = usr_batch
+                throttler.res_delay = delay
+                throttler.usr_delay = delay
+        else:
+            # Static batch params (manual overrides or auto-throttle off)
+            res_batch, usr_batch, delay = self._compute_batch_params(
+                len(all_resources), len(all_users),
+                override_size, override_delay)
+            throttler.res_batch_size = res_batch
+            throttler.usr_batch_size = usr_batch
+            throttler.res_delay = delay
+            throttler.usr_delay = delay
 
         pre_count = len(params.record_cache)
         tmp_path = None
         import_start = time.time()
-        throttle_count = 0
 
-        # Log import plan
+        # Log import plan (batch counts use current throttler params)
+        res_batch = throttler.res_batch_size
+        usr_batch = throttler.usr_batch_size
         res_batches_n = ((len(all_resources) + res_batch - 1) // res_batch
                          if all_resources else 0)
         usr_batches_n = ((len(all_users) + usr_batch - 1) // usr_batch
                          if all_users else 0)
         total_phases = usr_batches_n + res_batches_n
+        throttle_mode = 'adaptive' if auto_throttle else 'fixed'
         logging.warning(
-            '[Phase 2] Import plan: %d users in %d batches (size %d) '
-            '+ %d resources in %d batches (size %d), %.0fs delay',
-            len(all_users), usr_batches_n, usr_batch,
-            len(all_resources), res_batches_n, res_batch, delay)
+            '[Phase 2] Import plan (%s): %d users in %d batches '
+            '(size %d, %.0fs delay) + %d resources in %d batches '
+            '(size %d, %.0fs delay)',
+            throttle_mode,
+            len(all_users), usr_batches_n, usr_batch, throttler.usr_delay,
+            len(all_resources), res_batches_n, res_batch, throttler.res_delay)
 
         try:
             # Phase 2a: External users (RBI login records)
             if all_users:
                 logging.warning('[Phase 2a] Importing %d external users...',
                                 len(all_users))
-                user_batches = usr_batches_n
-                for ub in range(user_batches):
-                    ustart = ub * usr_batch
-                    uend = ustart + usr_batch
-                    batch_users = all_users[ustart:uend]
+                ui = 0  # user index pointer
+                ub = 0  # batch counter
+                while ui < len(all_users):
+                    batch_size = throttler.usr_batch_size
+                    batch_users = all_users[ui:ui + batch_size]
 
                     batch_json = copy.deepcopy(pam_json)
                     batch_json['pam_data']['resources'] = []
@@ -919,14 +1308,14 @@ class PAMProjectKCMImportCommand(Command):
                     with os.fdopen(tmp_fd, 'w') as tmp:
                         json.dump(batch_json, tmp, indent=2)
 
-                    step = ub + 1
                     elapsed = time.time() - import_start
                     logging.warning(
-                        '[%d/%d] Users batch %d/%d: users %d-%d of %d '
-                        '[%.0fs elapsed]',
-                        step, total_phases, ub + 1, user_batches,
-                        ustart + 1, min(uend, len(all_users)),
-                        len(all_users), elapsed)
+                        '[Phase 2a] Users batch %d: users %d-%d of %d '
+                        '[%.0fs elapsed, batch_size=%d, delay=%.0fs]',
+                        ub + 1, ui + 1,
+                        min(ui + batch_size, len(all_users)),
+                        len(all_users), elapsed,
+                        batch_size, throttler.usr_delay)
 
                     batch_start = time.time()
                     cmd = PAMProjectExtendCommand()
@@ -936,33 +1325,31 @@ class PAMProjectKCMImportCommand(Command):
                                 dry_run=False)
                     batch_elapsed = time.time() - batch_start
 
-                    # Detect if throttle occurred (extend.py sleeps 60s
-                    # on throttle, so batch time >> expected ~2s/record)
-                    expected_time = len(batch_users) * 2.0 + 10
-                    if batch_elapsed > expected_time + 45:
-                        throttle_count += 1
-                        logging.warning(
-                            '  Throttle detected (batch took %.0fs, '
-                            'expected ~%.0fs)', batch_elapsed, expected_time)
+                    # Record batch timing for adaptive adjustment
+                    throttler.record_batch(batch_elapsed, len(batch_users),
+                                           is_resource=False)
 
-                    if ub < user_batches - 1:
-                        time.sleep(delay)
+                    ui += len(batch_users)
+                    ub += 1
+                    if ui < len(all_users):
+                        time.sleep(throttler.usr_delay)
 
                 logging.warning(
-                    '[Phase 2a] Complete: %d users imported [%.0fs]',
-                    len(all_users), time.time() - import_start)
+                    '[Phase 2a] Complete: %d users imported in %d batches '
+                    '[%.0fs]',
+                    len(all_users), ub, time.time() - import_start)
 
             # Phase 2b: Resources (nested users travel with parent resource)
             if all_resources:
                 logging.warning(
                     '[Phase 2b] Importing %d resources...',
                     len(all_resources))
-                res_batches = res_batches_n
                 phase2b_start = time.time()
-                for rb in range(res_batches):
-                    rstart = rb * res_batch
-                    rend = rstart + res_batch
-                    batch_resources = all_resources[rstart:rend]
+                ri = 0  # resource index pointer
+                rb = 0  # batch counter
+                while ri < len(all_resources):
+                    batch_size = throttler.res_batch_size
+                    batch_resources = all_resources[ri:ri + batch_size]
 
                     batch_json = copy.deepcopy(pam_json)
                     batch_json['pam_data']['resources'] = batch_resources
@@ -974,22 +1361,24 @@ class PAMProjectKCMImportCommand(Command):
                     with os.fdopen(tmp_fd, 'w') as tmp:
                         json.dump(batch_json, tmp, indent=2)
 
-                    step = usr_batches_n + rb + 1
                     elapsed = time.time() - import_start
                     # Estimate remaining time based on average batch time
                     if rb > 0:
                         avg_batch = (time.time() - phase2b_start) / rb
-                        remaining = avg_batch * (res_batches - rb)
+                        remaining_items = len(all_resources) - ri
+                        remaining_batches = (remaining_items + batch_size - 1) // batch_size
+                        remaining = avg_batch * remaining_batches
                         eta_str = f', ~{remaining:.0f}s remaining'
                     else:
                         eta_str = ''
 
                     logging.warning(
-                        '[%d/%d] Resources batch %d/%d: resources %d-%d '
-                        'of %d [%.0fs elapsed%s]',
-                        step, total_phases, rb + 1, res_batches,
-                        rstart + 1, min(rend, len(all_resources)),
-                        len(all_resources), elapsed, eta_str)
+                        '[Phase 2b] Resources batch %d: resources %d-%d '
+                        'of %d [%.0fs elapsed%s, batch_size=%d, delay=%.0fs]',
+                        rb + 1, ri + 1,
+                        min(ri + batch_size, len(all_resources)),
+                        len(all_resources), elapsed, eta_str,
+                        batch_size, throttler.res_delay)
 
                     batch_start = time.time()
                     cmd = PAMProjectExtendCommand()
@@ -999,19 +1388,19 @@ class PAMProjectKCMImportCommand(Command):
                                 dry_run=False)
                     batch_elapsed = time.time() - batch_start
 
-                    expected_time = len(batch_resources) * 5.0 + 10
-                    if batch_elapsed > expected_time + 45:
-                        throttle_count += 1
-                        logging.warning(
-                            '  Throttle detected (batch took %.0fs, '
-                            'expected ~%.0fs)', batch_elapsed, expected_time)
+                    # Record batch timing for adaptive adjustment
+                    throttler.record_batch(batch_elapsed, len(batch_resources),
+                                           is_resource=True)
 
-                    if rb < res_batches - 1:
-                        time.sleep(delay)
+                    ri += len(batch_resources)
+                    rb += 1
+                    if ri < len(all_resources):
+                        time.sleep(throttler.res_delay)
 
                 logging.warning(
-                    '[Phase 2b] Complete: %d resources imported [%.0fs]',
-                    len(all_resources), time.time() - import_start)
+                    '[Phase 2b] Complete: %d resources imported in %d batches '
+                    '[%.0fs]',
+                    len(all_resources), rb, time.time() - import_start)
 
             api.sync_down(params)
             post_count = len(params.record_cache)
@@ -1036,12 +1425,17 @@ class PAMProjectKCMImportCommand(Command):
                                 '(%d resources, %d users)',
                                 created, num_resources, num_users)
 
-            # Import statistics
+            # Import statistics with throttler summary
+            summary = throttler.get_summary()
             logging.warning(
-                'Import stats: %.0fs total, %d throttle events detected, '
-                '%d batches (%d user + %d resource)',
-                total_time, throttle_count,
-                total_phases, usr_batches_n, res_batches_n)
+                'Import stats: %.0fs total, %d throttle events, '
+                '%d batches, final params: res=%d@%.0fs usr=%d@%.0fs%s',
+                total_time, summary['throttle_count'],
+                summary['total_batches'],
+                summary['final_res_batch'], summary['final_res_delay'],
+                summary['final_usr_batch'], summary['final_usr_delay'],
+                f' (probe RTT: {summary["base_rtt"]:.1f}s)'
+                if summary.get('base_rtt') else '')
 
             # Set max instances for gateway pooling (new gateways only)
             max_instances = kwargs.get('max_instances', 0)
@@ -1060,23 +1454,15 @@ class PAMProjectKCMImportCommand(Command):
                               override_size=None, override_delay=None):
         """Compute batch sizes and delay to avoid API throttling.
 
-        API call costs per record (extend.py → rest_api):
-          External user:   ~6 calls   →  batch of 8  = ~48 calls
-          Resource+user:  ~34 calls   →  batch of 4  = ~136 calls (too many)
-          RBI resource:   ~20 calls   →  batch of 4  = ~80 calls
+        API call costs per record (measured via instrumentation):
+          External user:   ~8 calls   →  batch of 8  = ~64 calls
+          Resource+user:  ~20 calls   →  batch of 2  = ~40 calls (safe)
 
         Keeper EU throttle window: ~50 requests triggers HTTP 403 + 60s
         backoff. Conservative batching with 15s delays avoids throttles.
 
         Returns (resource_batch_size, user_batch_size, delay_seconds).
         """
-        # Each resource generates ~20 API calls + ~14 per nested user.
-        # Each external user generates ~6 API calls.
-        # Keeper EU throttle window: ~50 requests before HTTP 403.
-        # Target: stay under 50 API calls per extend.py invocation.
-        #   Resources: 2 per batch × ~34 calls = ~68 (may still throttle)
-        #              1 per batch × ~34 calls = ~34 (safe)
-        #   Users: 8 per batch × ~6 calls = ~48 (safe)
         total = num_resources + num_users
         if total <= 50:
             res_batch, usr_batch, delay = 2, 8, 12.0
@@ -1128,13 +1514,12 @@ class PAMProjectKCMImportCommand(Command):
         num_users = len(users) if not skip_users else 0
         num_resources = len(resources)
 
-        # Estimate API calls per record type (measured empirically):
-        #   resource + nested user: ~34 calls (create, DAG, tunnel, settings,
-        #       rotation, linking, folder creation, sync)
-        #   external user (login): ~6 calls
+        # Estimate API calls per record type (measured via instrumentation):
+        #   resource + nested user: ~20 calls (avg 19.2, range 16-25)
+        #   external user (login): ~8 calls (avg 8.0, range 6-10)
         #   project setup: ~20 calls (folders, KSM app, gateway, config)
-        api_per_resource = 34
-        api_per_user = 6
+        api_per_resource = 20
+        api_per_user = 8
         api_setup = 20
         est_api_calls = (api_setup
                          + num_resources * api_per_resource
@@ -1813,3 +2198,231 @@ class PAMProjectKCMImportCommand(Command):
                     _walk(item)
         _walk(redacted)
         return redacted
+
+
+class PAMProjectKCMCleanupCommand(Command):
+    """Remove a KCM-imported project: shared folders, records, gateway, KSM app.
+
+    Usage:
+        pam project kcm-cleanup --name "KCM-Import-20260404-203552"
+        pam project kcm-cleanup --config <PAM_CONFIG_UID>
+    """
+
+    parser = argparse.ArgumentParser(prog='pam project kcm-cleanup')
+    parser.add_argument('--name', '-n', dest='project_name', action='store',
+                        help='Project name (matches PAM config title prefix)')
+    parser.add_argument('--config', '-c', dest='config_uid', action='store',
+                        help='PAM config record UID')
+    parser.add_argument('--dry-run', '-d', dest='dry_run', action='store_true',
+                        default=False, help='Show what would be deleted')
+    parser.add_argument('--yes', '-y', dest='auto_confirm', action='store_true',
+                        default=False, help='Skip confirmation prompt')
+
+    def get_parser(self):
+        return PAMProjectKCMCleanupCommand.parser
+
+    def execute(self, params, **kwargs):
+        project_name = kwargs.get('project_name') or ''
+        config_uid = kwargs.get('config_uid') or ''
+        dry_run = kwargs.get('dry_run', False)
+        auto_confirm = kwargs.get('auto_confirm', False)
+
+        if not project_name and not config_uid:
+            raise CommandError('kcm-cleanup',
+                'Either --name or --config is required')
+
+        from ... import api as keeper_api
+        from ..pam import gateway_helper
+        from ..pam.config_helper import configuration_controller_get
+        from ...loginv3 import CommonHelperMethods
+
+        keeper_api.sync_down(params)
+
+        # Step 1: Find the PAM config record
+        config_record = None
+        if config_uid:
+            config_record = vault.KeeperRecord.load(params, config_uid)
+            if not config_record:
+                raise CommandError('kcm-cleanup',
+                    f'PAM config record "{config_uid}" not found')
+            project_name = config_record.title.replace(' Configuration', '')
+        else:
+            # Search by project name
+            config_name = f'{project_name} Configuration'
+            from ... import vault_extensions
+            for cfg in vault_extensions.find_records(params, record_version=6):
+                if cfg.title == config_name:
+                    config_record = cfg
+                    config_uid = cfg.record_uid
+                    break
+            if not config_record:
+                raise CommandError('kcm-cleanup',
+                    f'PAM config "{config_name}" not found. '
+                    f'Use --config with the exact UID.')
+
+        # Step 2: Find the gateway
+        gateway_uid = None
+        gateway_name = None
+        try:
+            controller = configuration_controller_get(
+                params, CommonHelperMethods.url_safe_str_to_bytes(
+                    config_record.record_uid))
+            if controller and controller.controllerUid:
+                gateway_uid = controller.controllerUid
+                all_gw = gateway_helper.get_all_gateways(params)
+                gw_match = next((g for g in all_gw
+                                 if g.controllerUid == gateway_uid), None)
+                if gw_match:
+                    gateway_name = gw_match.controllerName
+        except Exception as e:
+            logging.debug('Could not resolve gateway: %s', e)
+
+        # Step 3: Find the KSM app
+        ksm_app_uid = None
+        ksm_app_name = None
+        if gateway_uid:
+            all_gw = gateway_helper.get_all_gateways(params)
+            gw_match = next((g for g in all_gw
+                             if g.controllerUid == gateway_uid), None)
+            if gw_match and gw_match.applicationUid:
+                ksm_app_uid = utils.base64_url_encode(gw_match.applicationUid)
+                # Find app name from shared_folder_cache or record_cache
+                app_rec = vault.KeeperRecord.load(params, ksm_app_uid)
+                if app_rec:
+                    ksm_app_name = getattr(app_rec, 'title', ksm_app_uid)
+
+        # Step 4: Find shared folders
+        sf_names = []
+        sf_uids = []
+        res_name = f'{project_name} - Resources'
+        usr_name = f'{project_name} - Users'
+        for sf_uid, sf in params.shared_folder_cache.items():
+            name = sf.get('name_unencrypted', '')
+            if name in (res_name, usr_name) or name.startswith(f'{project_name} '):
+                sf_names.append(name)
+                sf_uids.append(sf_uid)
+
+        # Step 5: Count records in shared folders
+        record_uids = set()
+        for sf_uid in sf_uids:
+            sf = params.shared_folder_cache.get(sf_uid, {})
+            for rec in sf.get('records', []):
+                rec_uid = rec.get('record_uid', '')
+                if rec_uid:
+                    record_uids.add(rec_uid)
+
+        # Also count records in subfolders
+        for folder_uid, folder in params.folder_cache.items():
+            if hasattr(folder, 'shared_folder_uid') and folder.shared_folder_uid in sf_uids:
+                for rec_uid in params.subfolder_record_cache.get(folder_uid, []):
+                    record_uids.add(rec_uid)
+
+        # Display what will be deleted
+        print()
+        print('=' * 60)
+        print('KCM Project Cleanup')
+        print('=' * 60)
+        print()
+        print(f'  Project:          {project_name}')
+        print(f'  PAM Config:       {config_uid}')
+        print(f'  Gateway:          {gateway_name or "(not found)"}')
+        print(f'  KSM App:          {ksm_app_name or "(not found)"}')
+        print(f'  Shared Folders:   {len(sf_names)}')
+        for name in sorted(sf_names):
+            print(f'    - {name}')
+        print(f'  Records:          {len(record_uids)}')
+        print()
+
+        if dry_run:
+            print('  (dry run — no changes made)')
+            print('=' * 60)
+            return
+
+        if not auto_confirm:
+            answer = input('  Delete all of the above? [y/N]: ').strip().lower()
+            if answer not in ('y', 'yes'):
+                raise CommandError('kcm-cleanup', 'Cleanup cancelled.')
+
+        # Step 6: Delete records
+        deleted_count = 0
+        if record_uids:
+            logging.warning('Deleting %d records...', len(record_uids))
+            # Batch delete to avoid overwhelming the API
+            uid_list = list(record_uids)
+            batch_size = 50
+            for i in range(0, len(uid_list), batch_size):
+                batch = uid_list[i:i + batch_size]
+                try:
+                    rq = {'command': 'record_update', 'delete_records': batch}
+                    keeper_api.communicate(params, rq)
+                    deleted_count += len(batch)
+                except Exception as e:
+                    logging.warning('Failed to delete batch: %s', e)
+
+        # Step 7: Delete shared folders
+        if sf_uids:
+            logging.warning('Removing %d shared folder(s)...', len(sf_uids))
+            for sf_uid in sf_uids:
+                try:
+                    # Build folder delete request
+                    folder = params.folder_cache.get(sf_uid)
+                    if folder:
+                        del_obj = {
+                            'delete_resolution': 'unlink',
+                            'object_uid': folder.uid,
+                            'object_type': folder.type,
+                        }
+                        parent = params.folder_cache.get(folder.parent_uid)
+                        if parent:
+                            del_obj['from_uid'] = parent.uid
+                            del_obj['from_type'] = parent.type
+                        else:
+                            del_obj['from_type'] = 'user_folder'
+                        rq = {
+                            'command': 'pre_delete',
+                            'objects': [del_obj]
+                        }
+                        rs = keeper_api.communicate(params, rq)
+                        if rs.get('result') == 'success':
+                            pdr = rs.get('pre_delete_response', {})
+                            del_rq = {
+                                'command': 'delete',
+                                'pre_delete_token': pdr.get('pre_delete_token', '')
+                            }
+                            keeper_api.communicate(params, del_rq)
+                except Exception as e:
+                    logging.warning('Failed to remove shared folder %s: %s',
+                                    sf_uid, e)
+
+        # Step 8: Remove gateway
+        if gateway_uid:
+            logging.warning('Removing gateway "%s"...', gateway_name or gateway_uid)
+            try:
+                gateway_helper.remove_gateway(params, gateway_uid)
+            except Exception as e:
+                logging.warning('Failed to remove gateway: %s', e)
+
+        # Step 9: Remove KSM app
+        if ksm_app_uid:
+            logging.warning('Removing KSM app "%s"...', ksm_app_name or ksm_app_uid)
+            try:
+                from ..ksm import KSMCommand
+                KSMCommand.remove_v5_app(params, ksm_app_uid,
+                                         purge=True, force=True)
+            except Exception as e:
+                logging.warning('Failed to remove KSM app: %s', e)
+
+        # Step 10: Delete PAM config record
+        if config_uid:
+            logging.warning('Deleting PAM config record...')
+            try:
+                keeper_api.delete_record(params, config_uid)
+            except Exception as e:
+                logging.warning('Failed to delete config record: %s', e)
+
+        keeper_api.sync_down(params)
+
+        print()
+        print('=' * 60)
+        print(f'Cleanup complete: {deleted_count} records deleted')
+        print('=' * 60)
