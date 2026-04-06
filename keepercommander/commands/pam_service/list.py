@@ -56,7 +56,7 @@ class PAMActionServiceListCommand(PAMGatewayActionDiscoverCommandBase):
                     if user_record is None:
                         continue
                     acl = user_service.get_acl(resource_record.record_uid, user_record.record_uid)
-                    if acl is None or (acl.is_service is False and acl.is_task is False):
+                    if acl is None or (acl.is_service is False and acl.is_task is False and acl.is_iis_pool is False):
                         continue
                     if user_record.record_uid not in service_map:
                         service_map[user_record.record_uid] = {
