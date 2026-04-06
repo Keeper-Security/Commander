@@ -3610,7 +3610,7 @@ class PAMCreateGatewayCommand(Command):
 
 class PAMEditGatewayCommand(Command):
     parser = argparse.ArgumentParser(prog='pam gateway edit')
-    parser.add_argument('--gateway', '-g', required=True, dest='gateway',
+    parser.add_argument('--gateway', '-g', required=False, dest='gateway',
                         help='Gateway UID or Name', action='store')
     parser.add_argument('--name', '-n', required=False, dest='gateway_name',
                         help='Name of the Gateway', action='store')
@@ -3622,8 +3622,10 @@ class PAMEditGatewayCommand(Command):
 
     def execute(self, params: KeeperParams, **kwargs):
         gateway_uid = kwargs.get('gateway')
-        gateway_name = kwargs.get('gateway_name')
         node_id_arg = kwargs.get('node_id')
+
+        if not gateway_uid:
+            raise CommandError('pam gateway edit', 'Argument --gateway is required')
 
         gateways = gateway_helper.get_all_gateways(params)
 
@@ -3647,6 +3649,8 @@ class PAMEditGatewayCommand(Command):
             resolved_node_id = nodes[0]['node_id']
         else:
             resolved_node_id = gateway.nodeId
+
+        gateway_name = kwargs.get('gateway_name') if kwargs.get('gateway_name') else gateway.controllerName
 
         gateway_helper.edit_gateway(params, gateway.controllerUid, gateway_name, resolved_node_id)
         logging.info('Gateway %s has been edited.', gateway_uid)

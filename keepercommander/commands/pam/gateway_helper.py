@@ -91,6 +91,5 @@ def edit_gateway(params, gateway_uid, gateway_name, node_id):
     rq.controllerUid = gateway_uid
     rq.controllerName = gateway_name
     rq.nodeId = node_id
-    api.communicate_rest(params, rq, 'pam/modify_controller',
-                         rs_type=pam_pb2.PAMControllersResponse)
+    api.communicate_rest(params, rq, 'pam/modify_controller')
     
