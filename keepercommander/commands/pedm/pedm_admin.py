@@ -1379,8 +1379,10 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
         policy_uid = utils.generate_uid()
         controls = PedmPolicyMixin.get_policy_controls(policy_type, **kwargs)
 
-        if policy_type != 'LeastPrivilege' and not controls:
-            raise base.CommandError(f'At least one --control is required for {policy_type} policy type')
+        arg_status = kwargs.get('status')
+        effective_status = arg_status if isinstance(arg_status, str) else 'enforce'
+        if policy_type != 'LeastPrivilege' and effective_status == 'enforce' and not controls:
+            raise base.CommandError(f'At least one --control is required for {policy_type} policy type when status is enforce')
 
         policy_data: Dict[str, Any] = {
             'PolicyName': kwargs.get('policy_name') or '',
@@ -1539,16 +1541,6 @@ class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
             on_success['Controls'] = controls
             policy_data['OnSuccess'] = on_success
 
-        if p_type and policy_type != 'LeastPrivilege' and not controls:
-            existing_actions = policy_data.get('Actions')
-            existing_controls = []
-            if isinstance(existing_actions, dict):
-                on_success = existing_actions.get('OnSuccess')
-                if isinstance(on_success, dict):
-                    existing_controls = on_success.get('Controls') or []
-            if not existing_controls:
-                raise base.CommandError(f'At least one --control is required for {policy_type} policy type')
-
         policy_name = kwargs.get('policy_name')
         if policy_name:
             policy_data['PolicyName'] = policy_name
@@ -1561,6 +1553,16 @@ class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
             policy_data['Status'] = arg_status
 
         effective_status = policy_data.get('Status', '')
+
+        if p_type and policy_type != 'LeastPrivilege' and effective_status == 'enforce' and not controls:
+            existing_actions = policy_data.get('Actions')
+            existing_controls = []
+            if isinstance(existing_actions, dict):
+                on_success = existing_actions.get('OnSuccess')
+                if isinstance(on_success, dict):
+                    existing_controls = on_success.get('Controls') or []
+            if not existing_controls:
+                raise base.CommandError(f'At least one --control is required for {policy_type} policy type when status is enforce')
         notification_message = kwargs.get('notification_message')
         require_ack = kwargs.get('require_acknowledgement')
         if notification_message is not None or require_ack is not None:
