@@ -3622,6 +3622,7 @@ class PAMEditGatewayCommand(Command):
 
     def execute(self, params: KeeperParams, **kwargs):
         gateway_uid = kwargs.get('gateway')
+        new_name = kwargs.get('gateway_name')
         node_id_arg = kwargs.get('node_id')
 
         if not gateway_uid:
@@ -3635,6 +3636,9 @@ class PAMEditGatewayCommand(Command):
 
         if not gateway:
             raise CommandError('', f'{bcolors.FAIL}Gateway "{gateway_uid}" not found{bcolors.ENDC}')
+
+        if not node_id_arg and not new_name:
+            raise CommandError('pam gateway edit', 'Nothing to do. At least one of --name or --node-id is required to edit the gateway')
 
         if node_id_arg is not None and str(node_id_arg).strip():
             if not params.enterprise or 'nodes' not in params.enterprise:
@@ -3650,7 +3654,7 @@ class PAMEditGatewayCommand(Command):
         else:
             resolved_node_id = gateway.nodeId
 
-        gateway_name = kwargs.get('gateway_name') if kwargs.get('gateway_name') else gateway.controllerName
+        gateway_name = new_name if new_name else gateway.controllerName
 
         gateway_helper.edit_gateway(params, gateway.controllerUid, gateway_name, resolved_node_id)
         logging.info('Gateway %s has been edited.', gateway_uid)
