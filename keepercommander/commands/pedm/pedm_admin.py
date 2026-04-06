@@ -1463,6 +1463,8 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
         arg_enable = kwargs.get('enable')
         if isinstance(arg_enable, str):
             disabled = arg_enable == 'off'
+            if disabled:
+                policy_data['Status'] = 'off'
 
         policy_key = utils.generate_aes_key()
         add_policy = admin_types.PedmPolicy(
@@ -1537,7 +1539,7 @@ class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
             on_success['Controls'] = controls
             policy_data['OnSuccess'] = on_success
 
-        if policy_type != 'LeastPrivilege' and not controls:
+        if p_type and policy_type != 'LeastPrivilege' and not controls:
             existing_actions = policy_data.get('Actions')
             existing_controls = []
             if isinstance(existing_actions, dict):
@@ -1573,6 +1575,10 @@ class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
         arg_enable = kwargs.get('enable')
         if isinstance(arg_enable, str):
             disabled = arg_enable == 'off'
+            if disabled:
+                policy_data['Status'] = 'off'
+            elif policy_data.get('Status') == 'off':
+                policy_data['Status'] = arg_status if isinstance(arg_status, str) else 'enforce'
 
         pu = admin_types.PedmUpdatePolicy(policy_uid=policy.policy_uid, data=policy_data, disabled=disabled)
 
