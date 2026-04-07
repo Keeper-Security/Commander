@@ -1478,7 +1478,7 @@ class PedmPolicyAddCommand(base.ArgparseCommand, PedmPolicyMixin):
                 raise base.CommandError(f'Failed to add policy "{status.entity_uid}": {status.message}')
 
         policy_name = policy_data.get('PolicyName') or ''
-        logging.info('Successfully created policy "%s" with Policy ID: %s', policy_name, policy_uid)
+        print(f'Successfully created policy "{policy_name}" with Policy ID: {policy_uid}')
 
 
 class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
@@ -1591,7 +1591,7 @@ class PedmPolicyEditCommand(base.ArgparseCommand, PedmPolicyMixin):
                 raise base.CommandError(f'Failed to update policy "{status.entity_uid}": {status.message}')
 
         updated_name = policy_data.get('PolicyName') or policy.policy_uid
-        logging.info('Successfully updated policy "%s" (Policy ID: %s)', updated_name, policy.policy_uid)
+        print(f'Successfully updated policy "{updated_name}" (Policy ID: {policy.policy_uid})')
 
 
 class PedmPolicyViewCommand(base.ArgparseCommand):

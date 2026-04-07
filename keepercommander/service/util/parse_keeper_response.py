@@ -138,10 +138,9 @@ class KeeperResponseParser:
 
         # If from log output, use command-specific parser if available, else generic logging parser
         if is_from_log:
-            if parser_method_name != '_parse_logging_based_command':
-                parser_method = getattr(KeeperResponseParser, parser_method_name)
-                return parser_method(command, response_str)
             return KeeperResponseParser._parse_logging_based_command(command, response_str)
+        
+        parser_method_name = KeeperResponseParser._find_parser_method(command)
         parser_method = getattr(KeeperResponseParser, parser_method_name)
         
         # Call the parser method with appropriate arguments
