@@ -1038,7 +1038,7 @@ class PedmPolicyMixin:
     policy_filter.add_argument('--date-filter', dest='date_filter', action='append',
                         help='Policy date filter. Date range in ISO format. YYYY-MM-DD:YYYY-MM-DD')
     policy_filter.add_argument('--time-filter', dest='time_filter', action='append',
-                        help='Policy time filter. Time. 24 hours format: HH:MM-HH:MM')
+                        help='Policy time filter. Hour range in 24-hour format: HH-HH (e.g. 9-17)')
     policy_filter.add_argument('--day-filter', dest='day_filter', action='append',
                         help='Policy day filter. Day of Week')
     policy_filter.add_argument('--risk-level', dest='risk_level', type=int, help='Policy risk level')
@@ -1090,19 +1090,18 @@ class PedmPolicyMixin:
         if not v:
             return None
 
-        try:
-            tc = [int(x) for x in v.split(':')]
-            while len(tc) < 3:
-                tc.append(0)
-            if tc[0] >= 24:
-                raise base.CommandError(f'time value "{v}" is not valid. Hours: 0 - 23')
-            if tc[1] >= 60:
-                raise base.CommandError(f'time value "{v}" is not valid. Minutes: 0 - 59')
-            if tc[2] >= 60:
-                raise base.CommandError(f'time value "{v}" is not valid. Seconds: 0 - 59')
+        if ':' in v:
+            raise base.CommandError(
+                f'time value "{v}" is not valid. Use hour-only format (0-23), e.g. --time-filter 9-17')
 
-            return ':'.join((f'{x:02d}' for x in tc))
-        except Exception as e:
+        try:
+            hour = int(v)
+            if hour < 0 or hour >= 24:
+                raise base.CommandError(f'time value "{v}" is not valid. Hours: 0 - 23')
+            return str(hour)
+        except base.CommandError:
+            raise
+        except Exception:
             raise base.CommandError(f'time value "{v}" is not valid.')
 
     @staticmethod
@@ -1110,11 +1109,10 @@ class PedmPolicyMixin:
         if not isinstance(v, str):
             return None
         try:
-            tc = [int(x) for x in v.split(':')]
-            tc = tc[:3]
-            if tc[2] == 0:
-                tc = tc[:2]
-            return ':'.join((f'{x:02d}' for x in tc))
+            # Handle both legacy HH:MM:SS format and current integer-hour format
+            hour = int(v.split(':')[0]) if ':' in v else int(v)
+            if 0 <= hour <= 23:
+                return str(hour)
         except Exception:
             pass
 
@@ -1164,7 +1162,7 @@ class PedmPolicyMixin:
 
     @staticmethod
     def resolve_times(t_values: List[str]) -> List[Dict[str, str]]:
-        #   { "StartTime" : "09:00:00", "EndTime" : "18:00:00" }
+        #   { "StartTime" : "9", "EndTime" : "18" }
         result: List[Dict[str, str]] = []
         if not t_values:
             return result
